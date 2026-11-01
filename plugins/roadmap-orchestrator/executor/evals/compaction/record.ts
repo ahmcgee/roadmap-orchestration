@@ -21,7 +21,8 @@ export function parseRecord(text: string): readonly Decision[] {
     for (const name of ['Items', 'Replacement', 'Gives up', 'Why', 'Approved']) if (!values.get(name)) throw new Error(`record: missing ${name}`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(values.get('Approved')!)) throw new Error('record: Approved must be YYYY-MM-DD');
     if (values.has('Applied') && values.has('Blocked')) throw new Error('record: both Applied and Blocked');
-    const ids = itemIds(values.get('Items')!);
+    // Parenthetical provenance (e.g. "anchored to T-52") is not an item being changed.
+    const ids = itemIds(values.get('Items')!.replace(/\((?:active,\s*must-hold,\s*)?anchored (?:to|on) [^)]*\)/g, ''));
     if (ids.length === 0) throw new Error('record: Items needs estate ids');
     return { id: `K-${h[1]}`, action: h[2] as Action, items: values.get('Items')!, ids, replacement: values.get('Replacement')!, givesUp: values.get('Gives up')!, why: values.get('Why')!, approved: values.get('Approved')!, applied: values.get('Applied') ?? null, blocked: values.get('Blocked') ?? null };
   });

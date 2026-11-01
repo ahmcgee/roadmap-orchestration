@@ -31,16 +31,6 @@ import { forgeStore,writeForge } from '../m4a/setup.ts';
 import { productFiles } from './product.ts';
 import { estateId,estateSpec,setName,type Key,type SetName } from './spec.ts';
 
-/** Curation oracle metadata, independent of executor inputs. */
-export type RulingSidecar = {
-  id: import('../../src/core/ids.ts').RulingId; statement: string; kind: string; lifetime: string; status: string;
-  trigger: string; ruledBy: {type: string};
-  supersedes: {id: string; part: string | null}[];
-  docRefs: ({rule: string; textSha256: string; relation?: string} | {path: string; anchor: string; quotedText: string; relation?: string})[];
-  obligationDispositions: {id: string; disposition: string}[];
-  consistency: {judgedRevs: unknown; verdict: string; by: {type: string}};
-};
-
 export const CLI = fileURLToPath(new URL('../../bin/roadmap', import.meta.url));
 export const CORPUS_FILE = 'docs/corpus/register.md';
 export const RULE_FILE = 'register.md';
@@ -71,25 +61,10 @@ export function obligation(id: string, rule: string, text: string, statement = t
     proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } };
 }
 
-export function sidecar(id: string, statement: string, head: string, over: Record<string, unknown> = {}): RulingSidecar {
-  return { schema: 'roadmap/ruling-m3', id: id as RulingSidecar['id'], statement, kind: 'constraint', ruledBy: { type: 'architect' }, trigger: 'Owner policy review', supersedes: [], condition: null,
-    docRefs: [{ path: CORPUS_FILE, anchor: 'Register', quotedText: 'Register', relation: 'consistent' }], contractRefs: [], contractOps: [], obligations: [], obligationDispositions: [], cites: [], evidence: [], appliesTo: { type: 'arc' }, lifetime: 'standing', status: 'active',
-    consistency: { verdict: 'consistent', judgedRevs: { head, ledgerSha256: sha256Hex('previous ledger'), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } }, ...over } as RulingSidecar;
-}
-export function ledgerText(sidecars: readonly RulingSidecar[]): string {
-  const text = '# Rulings\n\n' + sidecars.map((s) => `${s.id} — ${s.status === 'superseded' ? 'withdrawn by C-40' : s.statement}`).join('\n') + '\n';
-  parseRulings(text, 'rulings.md');
-  return text;
-}
-export function loadSidecars(inputs: string): readonly RulingSidecar[] {
-  return readdirSync(join(inputs, 'rulings.md.d')).sort((a, b) => Number(a.slice(2, -5)) - Number(b.slice(2, -5))).map((f) => readJson(join(inputs, 'rulings.md.d', f)) as RulingSidecar);
-}
-
-function writeInputs(l: Layout, inputs: string, baseline: string, obligations: unknown, ledger: string, sidecars: readonly RulingSidecar[], set: SetName, chain?: { previousArc: string; previousHead: string }): void {
+function writeInputs(l: Layout, inputs: string, baseline: string, obligations: unknown, ledger: string, set: SetName, chain?: { previousArc: string; previousHead: string }): void {
   mkdirSync(inputs, { recursive: true });
   write(join(inputs, 'obligations.json'), json(parseObligations(obligations)));
   write(join(inputs, 'rulings.md'), ledger);
-  for (const s of sidecars) write(join(inputs, 'rulings.md.d', `${s.id}.json`), json(s));
   write(join(inputs, 'phase0.json'), json(parsePhase0Record({ schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [{ id: 'P-1', rank: 1, text: 'What is the dispatch cutoff?', files: ['register.md'], bears: [estateId(set, 'T-33')], assumption: set === 'dev' ? '72 hours' : 'seven days', state: { type: 'answered', answer: set === 'dev' ? '48 hours before the tide' : 'three days before the loan', at: '2026-10-01T00:00:00.000Z' } }],
     debt: Array.from({ length: 15 }, (_, i) => ({ id: `B-${i + 1}`, disposition: { type: 'keep', reason: 'Index work follows the current slip slice.' } })),  slice: { advances: ['V-1'], why: 'Complete reliable slips for the next operator.' } })));
   write(join(inputs, 'slips.json'), json({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit: 'slips', rev: 1, lanes: [{ ...lane('unit'), state: 'active' }], acceptance: [{ id: 'A1', clause: `Print the recipient and return date on the slip (${estateId(set, 'T-21')}).`, failLoudIfUndelivered: true, state: 'active' }],  resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [estateId(set, 'C-12'), 'C-38'] }, obligations: ['I-21'] }));
@@ -155,15 +130,8 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   git(l.product, 'config', 'commit.gpgsign', 'false');
   git(l.product, 'add', '.');
   git(l.product, 'commit', '--quiet', '-m', 'Register policies and CLI');
-  const head = git(l.product, 'rev-parse', 'HEAD');
-  const sidecars = Object.entries(spec.rulings).sort(([a], [b]) => Number(a.slice(2)) - Number(b.slice(2))).map(([id, statement]) => sidecar(id, statement, head, {
-    ...(id === estateId(set, 'C-5') ? { docRefs: [{ rule: estateId(set, 'T-49'), textSha256: ruleTextSha256(spec.rules[estateId(set, 'T-49')]!), relation: 'consistent' }] } : {}),
-    ...(id === 'C-34' ? { obligations: ['I-20'], docRefs: [{ rule: estateId(set, 'T-20'), textSha256: ruleTextSha256(spec.rules[estateId(set, 'T-20')]!), relation: 'consistent' }] } : {}),
-    ...(id === 'C-38' ? { lifetime: 'arc' } : {}), ...(id === 'C-39' ? { status: 'superseded' } : {}),
-    ...(id === 'C-40' ? { supersedes: [{ id: 'C-39', part: null }] } : {}),
-    ...(['C-30', 'C-31', 'C-32'].includes(id) ? { kind: 'disposition', obligations: [`I-${Number(id.slice(2)) + 24}`], obligationDispositions: [{ id: `I-${Number(id.slice(2)) + 24}`, disposition: id === 'C-30' ? 'retired' : id === 'C-31' ? 'waived' : 'deferred' }] } : {}),
-  }));
-  const ledger = ledgerText(sidecars);
+  const ledger = '# Rulings\n\n' + Object.entries(spec.rulings).sort(([a], [b]) => Number(a.slice(2)) - Number(b.slice(2)))
+    .map(([id, text]) => `${id} — ${id === 'C-39' ? 'withdrawn by C-40' : text}`).join('\n') + '\n';
   write(join(l.product, '.roadmap/constraints.md'), renderConstraints(parseRulings(ledger, 'rulings.md'), 'close-out'));
   write(join(l.product, 'docs/last-check-in.md'), `# Last check-in\n\n${spec.context}\n\nRecent findings: F-1 and F-2 found violations of ${id('T-20')} / I-20 during register mutation. Both were fixed before completion.\nNext slice advances V-1; the slip rule ${id('T-21')} serves it.\n`);
   git(l.product, 'add', '.');
@@ -174,7 +142,7 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   git(l.product, 'push', '--quiet', 'origin', 'arc/previous');
   writeForge(l, forgeStore(l));
   const previous = join(l.inputs, 'arc-previous');
-  writeInputs(l, previous, previousHead, obligations, ledger, sidecars, set);
+  writeInputs(l, previous, previousHead, obligations, ledger, set);
   await pin(l, previous);
   await completePrevious(l, previous, previousHead);
   git(l.product, 'switch', '--quiet', '-c', 'work/arc-next');
@@ -182,12 +150,12 @@ export async function fixture(dir: string, set: SetName): Promise<Fixture> {
   const baseline = git(l.product, 'rev-parse', 'HEAD');
   git(l.product, 'branch', 'arc/next', baseline);
   const next = join(l.inputs, 'arc-next');
-  // Step 5 drops the already retired obligation; step 12 keeps C-38 (spec cite), drops C-39.
+  // Phase 0 omits the already-retired obligation and withdrawn C-39; cited C-38 stays.
   const carried = parseObligations({ ...obligations, obligations: obligations.obligations.filter((o) => o.id !== 'I-54'),
     mapping: { systems: obligations.mapping.systems.map((p) => ({ ...p, obligations: p.obligations.filter((id) => id !== 'I-54') })) },
     census: obligations.census!.map((e) => e.rule === 'T-54' ? { rule: e.rule, state: { type: 'prod-only' } } : e) });
-  const carriedSidecars = sidecars.filter((s) => s.id !== 'C-39');
-  writeInputs(l, next, baseline, carried, ledgerText(carriedSidecars), carriedSidecars, set, { previousArc: 'arc-previous', previousHead });
+  const carriedLedger = ledger.split('\n').filter((line) => !line.startsWith('C-39 — ')).join('\n');
+  writeInputs(l, next, baseline, carried, carriedLedger, set, { previousArc: 'arc-previous', previousHead });
   await pin(l, next);
   write(join(l.dir, 'key.json'), json(spec.key));
   write(join(l.dir, 'golden-compaction.md'), spec.key.goldenRecord);

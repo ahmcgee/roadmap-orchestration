@@ -1,5 +1,5 @@
 // Deterministic gates. The real CLI and start's pure re-derivation remain separate oracles.
-import { readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { repoPath } from '../../src/core/values.ts';
 import { diffRegistry } from '../../src/corpus/registry.ts';
@@ -10,7 +10,7 @@ import { parseObligations } from '../../src/holistic/types.ts';
 import { parsePlan } from '../../src/input/plan.ts';
 import { parsePhase0Record } from '../../src/phase0/types.ts';
 import { parseRulings } from '../../src/spec/rulings.ts';
-import { CORPUS_FILE,RULE_FILE,git,loadSidecars,phase0Cli,readJson,type Fixture } from './fixture.ts';
+import { CORPUS_FILE,RULE_FILE,git,phase0Cli,readJson,type Fixture } from './fixture.ts';
 import { itemIds,nothing,parseRecord,type Decision } from './record.ts';
 import type { Action,Key } from './spec.ts';
 
@@ -27,12 +27,16 @@ const normal = (s: string): string => s.replace(/[*`_]/g, '').replace(/\s+/g, ' 
 export function proposals(text: string): readonly Proposal[] {
   const marks = [...text.matchAll(/^[ \t]*(?:#{1,6}\s+)?(?:\*\*)?(?:(?:Playback:\s*decision\s+(\d+)\b[^\n]*)|(?:(?:Decision\s+)?(\d+)[.):\-]\s+[^\n]+))/gmi)];
   return marks.map((m, i) => {
-    const body = text.slice(m.index!, marks[i + 1]?.index ?? text.length);
+    const raw = text.slice(m.index!, marks[i + 1]?.index ?? text.length);
+    const tail = raw.slice(m[0].length).search(/^\s*(?:#{1,6} [^\n]+|\*\*[^*\n:]+\*\*)[ \t]*$/m);
+    const body = tail < 0 ? raw : raw.slice(0, m[0].length + tail);
     const a = /\b(retire|merge|tighten|fold|resolve)\b/i.exec(m[0]) ?? /\bAction:\s*(retire|merge|tighten|fold|resolve)\b/i.exec(body.replace(/[*`]/g, ''));
-    return { number: Number(m[1] ?? m[2]), action: a === null ? null : a[1]!.toLowerCase() as Action, ids: itemIds(body), text: body };
+    const proposal = { number: Number(m[1] ?? m[2]), action: a === null ? null : a[1]!.toLowerCase() as Action, ids: itemIds(body), text: body };
+    // References in an unnumbered closing survey are not proposed changes.
+    return proposal;
   }).filter((p) => p.ids.length > 0 && (p.action !== null || /Playback:/i.test(p.text.split('\n')[0]!)));
 }
-type Approval = Readonly<{ text: string; ids: readonly string[] | null }>;
+type Approval = Readonly<{ text: string; ids: readonly string[] | null; action?: Action }>;
 /** The owner's answer to decision n: its numbered line approves the whole decision; otherwise approving
  * sub-lines under it ("5: reject as bundled." then "- T-62: approve retire.") approve only the ids they name. */
 function approvalOf(reply: string, n: number): Approval | null {
@@ -43,6 +47,10 @@ function approvalOf(reply: string, n: number): Approval | null {
   const approves = (l: string): boolean => /\bapprov(?:e|ed)\b/i.test(l);
   const line = numbered(lines[at]!)![2]!;
   if (approves(line)) return { text: line, ids: null };
+  // A rejected bundle can carry an explicit narrowed instruction. Never infer
+  // approval from mere mentions, a request to consider, or a later numbered reply.
+  const narrowed = /(?:^|[.!]\s+)(retire|merge|tighten|fold|resolve)\s+([TICB]-[1-9]\d*(?:\s*(?:,|and)\s*[TICB]-[1-9]\d*)*)\s+only\b/i.exec(line);
+  if (narrowed) return { text: line, ids: itemIds(narrowed[2]!), action: narrowed[1]!.toLowerCase() as Action };
   const end = lines.findIndex((l, i) => i > at && numbered(l) !== null);
   const subs = lines.slice(at + 1, end < 0 ? lines.length : end).filter(approves);
   return subs.length ? { text: subs.join('\n'), ids: subs.flatMap((l) => itemIds(l)) } : null;
@@ -59,6 +67,7 @@ function quoted(text: string): readonly string[] {
   return [...text.matchAll(/"([^"\n]+)"|“([^”\n]+)”/g)].map((m) => m[1] ?? m[2]!);
 }
 function replacementApproved(d: Decision, p: Proposal, line: string): boolean {
+  if (/\bno replacement (?:entry )?needed\b/i.test(line)) return /^none\b/i.test(d.replacement);
   const ownerWording = quoted(line);
   const replacement = (proposalField(p, 'Replacement') ?? '').split('\n')[0]!;
   // Only the replacement wording, not quoted explanations in its following notes.
@@ -74,7 +83,8 @@ export function gradeA(record: string, exchanges: readonly Exchange[], key: Key)
   const allProposals = exchanges.flatMap((x) => proposals(x.batch).map((p) => {
     const action = p.action ?? actions.get(p.number) ?? null;
     if (action !== null) actions.set(p.number, action);
-    return { ...p, action, approval: approvalOf(x.reply, p.number) };
+    const approval = approvalOf(x.reply, p.number);
+    return { ...p, action: approval?.action ?? action, approval };
   }));
   const approvedPlants = key.plants.filter((p) => p.approved);
   const caught = approvedPlants.filter((p) => p.ids.every((id) => decisions.some((d) => d.ids.includes(id) && p.actions.includes(d.action)))).length;
@@ -107,9 +117,8 @@ export function gradeB(f: Fixture): Grade {
     const baseline = git(f.l.product, 'show', `${f.previousHead}:.roadmap/invariants.md`) + '\n';
     const before = parseInvariantsBlock(baseline)!;
     const next = parseObligations(readJson(join(f.next, 'obligations.json')));
-    const sidecars = loadSidecars(f.next);
-    const previousSidecars = loadSidecars(f.previous);
-    criteria['rederive'] = verdict(rederive(baseline, next, Object.fromEntries(sidecars.flatMap((s) => s.obligationDispositions.map((d) => [d.id, s.statement])))));
+    // Production Phase 0 passes no external authorization map (preflight/checks.ts).
+    criteria['rederive'] = verdict(rederive(baseline, next, {}));
     const rules = parseRules(readFileSync(join(f.l.product, CORPUS_FILE), 'utf8'), repoPath(RULE_FILE));
     const registry = parseRulesRegistryBlock(baseline)!;
     criteria['census'] = verdict([
@@ -145,20 +154,19 @@ export function gradeB(f: Fixture): Grade {
     const effects: string[] = [];
     const markers: string[] = [];
     const rulingProblems: string[] = [];
-    // Phase 0 chooses ids. Identify the merged ruling by its provenance instead of
-    // reserving an id in the answer key (ordinary disposition rulings allocate too).
+    // Schema 2 permits removal after refs move, or explicit withdrawal. Curation
+    // binds every original id to the fresh replacement in either form.
+    // No sidecar may supply identity, authorization or evidence the actual input lacks.
     const replacementByDecision = new Map(golden.flatMap((d) => {
+      const p = f.key.plants.find((p) => p.ids.every((id) => d.ids.includes(id)))!;
       if (!d.ids[0]?.startsWith('C-') || !['merge', 'tighten'].includes(d.action)) return [];
-      const replacement = sidecars.find((s) => Number(s.id.slice(2)) > maxC && s.status === 'active'
-        && namesDecision(s.trigger, d.id) && d.ids.every((id) => {
-          const original = previousSidecars.find((o) => o.id === id);
-          return original && s.kind === original.kind && s.lifetime === original.lifetime
-            && s.supersedes.some((t) => t.id === id && t.part === null);
+      const replacement = ledger.find((r) => Number(r.id.slice(2)) > maxC && r.status === 'active'
+        && r.text === p.replacement?.text && d.ids.every((id) => {
+          const old = ledger.find((o) => o.id === id);
+          return old === undefined || (old.status === 'withdrawn' && old.by === r.id);
         }));
       return replacement ? [[d.id, replacement] as const] : [];
     }));
-    const replacementRulings = new Set([...replacementByDecision.values()].map((s) => s.id));
-    const corpus = readFileSync(join(f.l.product, CORPUS_FILE), 'utf8');
     for (const d of golden) {
       const actual = applied.find((a) => a.id === d.id);
       if (!actual || actual.action !== d.action || actual.items !== d.items || actual.replacement !== d.replacement || actual.givesUp !== d.givesUp || actual.why !== d.why || actual.approved !== d.approved) markers.push(`${d.id}: approved decision changed or missing`);
@@ -176,40 +184,70 @@ export function gradeB(f: Fixture): Grade {
       }
       for (const id of p.ids) {
         if (id.startsWith('T-') && ['retire', 'merge'].includes(d.action) && id !== replacementId && rules.some((r) => r.id === id)) effects.push(`${d.id}: ${id} still active`);
-        if (id.startsWith('I-') && next.obligations.some((o) => o.id === id)) effects.push(`${d.id}: ${id} still present`);
-        if (id.startsWith('C-') && ['retire', 'fold'].includes(d.action) && (ledger.some((r) => r.id === id) || sidecars.some((s) => s.id === id))) effects.push(`${d.id}: ${id} not removed`);
+        if (id.startsWith('C-') && ['retire', 'fold'].includes(d.action) && ledger.some((r) => r.id === id)) effects.push(`${d.id}: ${id} not removed`);
         if (id.startsWith('C-') && ['merge', 'tighten'].includes(d.action)) {
           const old = ledger.find((r) => r.id === id);
-          const s = sidecars.find((s) => s.id === id);
           if (specs.some((spec) => spec.cites.rulings.includes(id))) effects.push(`${d.id}: spec still cites ${id}`);
-          if (old?.status !== 'withdrawn' || old.by !== replacementId || s?.status !== 'superseded' || !replacementRuling?.supersedes.some((t) => t.id === id && t.part === null)) effects.push(`${d.id}: ${id} not superseded`);
+          if (!replacementRuling || (old !== undefined && (old.status !== 'withdrawn' || old.by !== replacementId))) effects.push(`${d.id}: ${id} not superseded`);
         }
         if (id.startsWith('B-')) {
           const disposition = phase0.debt.find((b) => b.id === id)?.disposition;
-          if (disposition?.type !== 'resolve' || !sidecars.some((s) => s.id === disposition.ruling && s.statement.includes(id) && namesDecision(s.trigger, d.id))) effects.push(`${d.id}: ${id} not resolved by its ruling`);
+          if (disposition?.type !== 'resolve' || !ledger.some((r) => r.id === disposition.ruling && r.status === 'active' && itemIds(r.text).includes(id) && namesDecision(r.text, d.id))) effects.push(`${d.id}: ${id} not resolved by its ruling`);
         }
       }
-      // Removed rule families must leave obligations, impact mappings and carried specs too.
-      if (d.action === 'retire' || (d.action === 'merge' && p.ids[0]!.startsWith('T-'))) {
-        const removed = before.obligations.filter((o) => p.ids.includes(o.id) || p.ids.includes(o.rule?.id ?? '')).map((o) => o.id);
-        if (removed.some((id) => next.obligations.some((o) => o.id === id) || next.mapping.systems.some((m) => m.obligations.includes(id)) || specs.some((spec) => spec.obligations?.includes(id)))) effects.push(`${d.id}: original obligation family remains`);
+      // SCHEMAS "Obligations" and preflight's rederive({}, next): newly retired
+      // families remain explicitly retired with reason/rev. Only previously-retired
+      // families may disappear at this Phase 0. No waived/deferred/active substitute.
+      const removed = new Set(before.obligations.filter((o) => p.ids.includes(o.id)
+        || (['retire', 'merge'].includes(d.action) && p.ids.includes(o.rule?.id ?? '')
+          && !(d.action === 'merge' && o.rule?.id === replacementId
+            && registry.active.find((r) => r.id === replacementId)?.textSha256 === replacementRule?.textSha256)))
+        .map((o) => o.id));
+      for (let changed = true; changed;) {
+        const size = removed.size;
+        for (const o of before.obligations) if ((o.parent && removed.has(o.parent))
+          || (o.state.type === 'split' && o.state.children.some((id) => removed.has(id)))) removed.add(o.id);
+        changed = removed.size !== size;
+      }
+      if (d.action !== 'tighten') for (const id of removed) {
+        const o = next.obligations.find((o) => o.id === id);
+        if (o?.state.type !== 'retired' || !o.state.reason.trim() || o.state.rev !== o.rev)
+          effects.push(`${d.id}: ${id} not explicitly retired with current reason/revision`);
+        if (next.mapping.systems.some((m) => m.obligations.includes(id)) || specs.some((spec) => spec.obligations?.includes(id)))
+          effects.push(`${d.id}: original obligation family remains referenced`);
+        if (o?.state.type === 'retired' && !namesDecision(o.state.reason, d.id))
+          rulingProblems.push(`${d.id}: ${id} retirement reason lacks decision provenance`);
       }
       if (d.action === 'merge' && p.ids[0]!.startsWith('T-')) {
         const entry = next.census!.find((e) => e.rule === replacementId);
         const replacement = entry?.state.type === 'obligation' ? next.obligations.find((o) => o.id === (entry.state as { id: string }).id) : undefined;
-        if (!replacement || Number(replacement.id.slice(2)) <= maxI || !replacement.proofJudgment) effects.push(`${d.id}: new replacement obligation missing`);
+        const preserved = replacement && before.obligations.some((o) => o.id === replacement.id && o.rule?.id === replacementId
+          && o.statement === replacement.statement && o.rule?.textSha256 === replacementRule?.textSha256 && o.state.type !== 'retired');
+        const proof = replacement?.proofJudgment;
+        if (!replacement || replacement.state.type !== 'active' || (!preserved && Number(replacement.id.slice(2)) <= maxI)
+          || !replacement.witness || proof?.verdict !== 'proves' || proof.obligationRev !== replacement.rev
+          || JSON.stringify(proof.witness) !== JSON.stringify({ testIds: replacement.witness.testIds, ...('files' in replacement.witness ? { files: replacement.witness.files } : {}) }))
+          effects.push(`${d.id}: replacement obligation missing or lacks current exact proof`);
       }
-      if (p.ids[0]!.startsWith('T-') || d.action === 'fold') {
-        if (!phase0.curation.some((c) => c.what.startsWith(`compaction ${d.id}:`))) effects.push(`${d.id}: missing curation`);
+      const curation = phase0.curation.filter((c) => c.what.startsWith(`compaction ${d.id}:`));
+      if (!curation.length) effects.push(`${d.id}: missing curation`);
+      if (curation.some((c) => !c.files.length || c.files.some((file) => !existsSync(join(f.l.product, file)) && !existsSync(join(f.l.product, 'docs/corpus', file))) || !c.what.slice(c.what.indexOf(':') + 1).trim()))
+        rulingProblems.push(`${d.id}: curation lacks source or reason`);
+      if (d.action === 'fold' && !curation.some((c) => p.ids.every((id) => itemIds(c.what).includes(id))
+        && replacementId !== undefined && (itemIds(c.what).includes(replacementId) || c.rules.includes(replacementId as typeof c.rules[number]))))
+        effects.push(`${d.id}: fold rationale missing`);
+      if (p.ids[0]!.startsWith('C-') && ['merge', 'tighten'].includes(d.action)) {
+        if (!replacementRuling || !curation.some((c) => [...p.ids, replacementRuling.id].every((id) => itemIds(c.what).includes(id))))
+          rulingProblems.push(`${d.id}: replacement ruling missing or invalid provenance`);
       }
-      if (d.action === 'fold' && (!corpus.includes(d.id) || !corpus.includes(p.ids[0]!))) effects.push(`${d.id}: fold rationale missing`);
-      if (p.ids[0]!.startsWith('C-') && ['merge', 'tighten'].includes(d.action) && !replacementRuling) rulingProblems.push(`${d.id}: replacement ruling missing or invalid provenance`);
-      const needsPhase0 = (['retire', 'merge'].includes(d.action) && p.ids.some((id) => id.startsWith('T-') && before.obligations.some((o) => o.rule?.id === id)))
-        || (['retire', 'merge', 'tighten'].includes(d.action) && p.ids.some((id) => id.startsWith('I-')))
-        || (d.action === 'resolve' && p.ids.some((id) => id.startsWith('B-')));
-      const rulings = sidecars.filter((s) => !replacementRulings.has(s.id) && namesDecision(s.trigger, d.id));
-      if (needsPhase0 && !rulings.length) rulingProblems.push(`${d.id}: no compaction ruling`);
-      for (const s of rulings) if (s.lifetime !== 'arc' || s.kind !== 'disposition' || s.ruledBy.type !== 'architect' || s.consistency.by.type !== 'architect' || s.consistency.verdict !== 'consistent' || s.docRefs.length === 0) rulingProblems.push(`${d.id}: invalid Phase-0 ruling ${s.id}`);
+      // Debt still requires its explanatory plain ledger line. Its decision and
+      // item references replace the deleted sidecar trigger/disposition metadata.
+      for (const id of p.ids.filter((id) => id.startsWith('B-'))) {
+        const disposition = phase0.debt.find((b) => b.id === id)?.disposition;
+        if (disposition?.type !== 'resolve' || !ledger.some((r) => r.id === disposition.ruling && r.status === 'active'
+          && itemIds(r.text).includes(id) && namesDecision(r.text, d.id)))
+          rulingProblems.push(`${d.id}: no explanatory resolution ledger entry for ${id}`);
+      }
     }
     if (applied.length !== golden.length) markers.push('unexpected decisions');
     criteria['effects'] = verdict(effects);

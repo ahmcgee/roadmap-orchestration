@@ -110,10 +110,11 @@ export function estateSpec(set: SetName): EstateSpec {
     plant('demo slide choice', ['C-23'], ['retire'], 'The first demo slide template requirement.', null, true),
     plant('obsolete queue debt', ['B-2'], ['resolve'], `Cleanup of the removed ${oldModule} retry queue.`, null, false, true, []),
     plant('duplicate index debt', ['B-6'], ['resolve'], 'nothing'),
-    plant('punctuation debt', ['B-11'], ['resolve'], 'Success message punctuation stays inconsistent with the help footer.', null, true),
+    // The product has no help footer: this work is obsolete, not a live punctuation demand.
+    plant('punctuation debt', ['B-11'], ['resolve'], 'nothing', null, true),
   ];
   const sentence = (text: string): string => `${text.replace(/\.+$/, '')}.`;
-  const ownerAnswers = plants.map((p) => `${p.ids.join(', ')} (${p.name}): ${p.approved ? `approve ${p.actions.join(' or ')}; ${sentence(p.replacement === null ? 'no replacement needed' : `replacement: ${p.replacement.text}`)} Accept loss: ${sentence(p.givesUp)}` : 'keep it; reject retirement.'}`);
+  const ownerAnswers = plants.map((p) => `${p.ids.join(', ')} (${p.name}): ${p.approved ? `approve ${p.actions.join(' or ')}; ${sentence(p.replacement === null ? p.ids[0]!.startsWith('B-') ? 'no replacement requirement; add the explanatory C-n ledger entry required for resolve.ruling' : 'no replacement needed' : `replacement: ${p.replacement.text}`)} Accept loss: ${sentence(p.givesUp)}` : 'keep it; reject retirement.'}`);
   ownerAnswers.push(`Keep ${rules['T-20']} It is safety critical. Preserve both JSON and CSV cancellation inclusion. Do not merge the waiver C-31. Flag any change to the slip rule T-21: it serves the current V-1 slice. For any other decision, reject it. Answer each numbered decision explicitly, terse: "1: approve", "2: reject". If you rewrite wording, say the exact wording and approve it explicitly on playback.`);
   const result: EstateSpec = { key: { set, domain, goldenRecord: '', plants, traps: { lossy: ['T-36', 'T-37'], lostProperty: 'CSV exports include cancelled records', loadBearing: 'T-20', disposition: 'C-31', advanced: 'T-21' }, ownerAnswers }, rules, rulings, debt, world,
     context: `${domain} is a Node CLI maintaining a local register. The ${oldModule} and all its code were removed in the previous arc. Owner answered P-1: use ${dev ? '48 hours' : 'three days'}; T-72 records that answer. T-33 is the remaining old assumption. T-27 is covered by T-41. The archive and token policies remain standing truths. T-20 is cited by recent findings F-1/F-2 and C-34, witnessed as must-hold I-20. T-21 serves V-1, which the next slice advances.` };
