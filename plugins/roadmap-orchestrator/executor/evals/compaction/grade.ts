@@ -63,16 +63,32 @@ function proposalField(p: Proposal, name: string): string | null {
   const f = fields[at]!;
   return text.slice(f.index! + f[0].length, fields[at + 1]?.index ?? text.length).trim();
 }
-function quoted(text: string): readonly string[] {
-  return [...text.matchAll(/"([^"\n]+)"|“([^”\n]+)”/g)].map((m) => m[1] ?? m[2]!);
+function quoted(text: string, omitLossNotes = false): readonly string[] {
+  const words: string[] = [];
+  let sentence = '';
+  let end = 0;
+  for (const m of text.matchAll(/"([^"\n]+)"|“([^”\n]+)”/g)) {
+    // Keep quoted punctuation out of sentence boundaries. Loss commentary is
+    // about Gives up, not a new Replacement (e.g. record that loss, not "nothing").
+    sentence = (sentence + text.slice(end, m.index)).split(/[.!?]\s+|\n/).at(-1)!;
+    const lossAt = [...sentence.matchAll(/\b(?:accept(?:ed)?(?:\s+(?:that|this|the))?\s+loss|gives? up)\b/gi)].at(-1)?.index ?? -1;
+    const replacementAt = [...sentence.matchAll(/\b(?:replacement|(?:exact|my) wording)\s*:/gi)].at(-1)?.index ?? -1;
+    if (!omitLossNotes || lossAt <= replacementAt) words.push(m[1] ?? m[2]!);
+    end = m.index + m[0].length;
+  }
+  return words;
 }
 function replacementApproved(d: Decision, p: Proposal, line: string): boolean {
   if (/\bno replacement (?:entry )?needed\b/i.test(line)) return /^none\b/i.test(d.replacement);
-  const ownerWording = quoted(line);
+  const ownerWording = quoted(line, true);
   const replacement = (proposalField(p, 'Replacement') ?? '').split('\n')[0]!;
+  // A backticked ledger line is the replacement. JSON keys in a following
+  // disposition example are not replacement wording.
+  const ledgerLine = [...p.text.matchAll(/`(C-[1-9]\d* — [^`]+)`/g)]
+    .map((m) => m[1]!).find((text) => replacement.startsWith(text));
   // Only the replacement wording, not quoted explanations in its following notes.
   // "none. Its wording drifted to ..." quotes the removed item, not new text.
-  const wording = ownerWording.length ? ownerWording : /^none\b/i.test(replacement) ? [] : quoted(replacement);
+  const wording = ownerWording.length ? ownerWording : /^none\b/i.test(replacement) ? [] : ledgerLine ? [ledgerLine] : quoted(replacement);
   return wording.every((q) => normal(d.replacement).includes(normal(q)));
 }
 export function gradeA(record: string, exchanges: readonly Exchange[], key: Key): Grade {

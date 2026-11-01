@@ -56,6 +56,12 @@ Corpus windows are Phase 0, the between-arc commit and application of an owner's
 
 Keep arc inputs in a dedicated directory outside the product working tree. Produce one coherent pack, review it in proportion to the change, and review material deltas. A strong review checks actual code and witnesses, not only agreement among documents.
 
+Apply pending owner-approved compaction through [estate-compaction](../estate-compaction/SKILL.md), including its
+worked record/curation/debt example. Each `curation.what` starts `compaction K-n:` and names ids, reason, loss and
+approval; `files` names existing source evidence under the corpus root, including for ledger/debt-only changes.
+Resolving B-n requires both its `resolve.ruling` disposition and an active `C-n — …` ledger line naming B-n and K-n
+with the resolution reason. Mark the unchanged approved record Applied only after start, or Blocked on refusal.
+
 The pack must establish:
 
 - **Target and slice.** A committed corpus, pin, confirmed vision, and Phase-0 record. `slice.advances` equals `holistic.advances`; include every clause delivered by the units and at least one active world clause. Explain why this slice now. Sweep prose for claims missing from rules and rules that combine distinct claims.
