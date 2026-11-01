@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1730" viewBox="0 0 1920 1730" role="img" aria-labelledby="title desc">
-<title id="title">Detailed arc process in BPMN notation</title><desc id="desc">Three participant pools show owner confirmation, root planning and intervention, and executor unit and milestone assurance lanes. Events, tasks, gateways, loops and dashed message flows describe the implemented schema-2 process.</desc>
+<title id="title">Detailed arc process in BPMN notation</title><desc id="desc">Three participant pools show owner confirmation, root planning and intervention, and executor unit and milestone assurance lanes. Events, tasks, gateways, loops and dashed message flows describe the implemented schema-2 process. Judgments start fresh; one invalid answer repairs in its own session, schema and checkout. Directives require revise.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#334155" stroke-width="1.6"/></marker></defs><style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b45} .title{font-size:30px;font-weight:700}.sub{font-size:17px;fill:#475569}.label{font-size:16px}.small{font-size:14px;fill:#475569}.task{stroke:#476581;stroke-width:1.6}.edge{fill:none;stroke:#334155;stroke-width:1.8;marker-end:url(#arrow)}.msg{stroke-dasharray:7 5}.pool{fill:#fff;stroke:#94a3b8;stroke-width:1.3}</style>
 <rect width="1920" height="1730" fill="#fff"/>
 <text x="60" y="52" class="title" text-anchor="start"><tspan x="60" dy="0">Command-center arc · detailed process</tspan></text>
@@ -66,7 +66,7 @@
 <rect x="1220" y="630" width="240" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1340.0" y="661.0" class="label" text-anchor="middle"><tspan x="1340.0" dy="0">Quiesce and capture</tspan><tspan x="1340.0" dy="24">Salvage / teardown</tspan><tspan x="1340.0" dy="24">Certify lanes / witnesses</tspan></text>
 <rect x="1530" y="630" width="240" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="1650.0" y="661.0" class="label" text-anchor="middle"><tspan x="1650.0" dy="0">Fresh verifier gate</tspan><tspan x="1650.0" dy="24">Reach vs intent/non-goals</tspan><tspan x="1650.0" dy="24">Standing items + evidence</tspan></text>
+<text x="1650.0" y="661.0" class="label" text-anchor="middle"><tspan x="1650.0" dy="0">Fresh verifier gate · one repair</tspan><tspan x="1650.0" dy="24">Reach vs intent/non-goals</tspan><tspan x="1650.0" dy="24">Standing items + evidence</tspan></text>
 <polyline points="148,680 180,680" class="edge"/>
 <polyline points="420,680 447,680" class="edge"/>
 <polyline points="503,680 540,680" class="edge"/>

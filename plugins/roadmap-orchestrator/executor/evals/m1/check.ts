@@ -15,7 +15,7 @@ import { protectedPaths } from '../../src/input/protected.ts';
 //   diff-product-only    `git diff main...integration` passes the transient check (src/git/transient.ts)
 //   snapshot-verifies    refs/roadmap/<arc> verifies against its own manifest (verifySnapshot) and its
 //                        high-water mark is at or after the last integration.ff done
-//   judgment-fresh       no judgment invocation's launch argv resumes; every judgment session id is distinct
+//   judgment-fresh       fresh named judgment sessions; only one repair may resume its own attempt/schema/cwd
 //   meter-covers-calls   exactly one usage fact (meter or usage-unavailable) per backend invocation, none other
 //   no-model-ids         no model id in any run-dir file outside inv/*/launch.json and captured backend output
 //                        (stdout, stderr, the Codex -o file), nor
@@ -27,9 +27,10 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import type { Event, Fact, IntentOf, StageOutcomeFact } from '../../src/core/events.ts';
 import { type ArcId, type OpId, arcId, invocationId } from '../../src/core/ids.ts';
+import { canonicalJson } from '../../src/core/json.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { readJournal } from '../../src/core/log.ts';
-import { RUNNER_FILE_READERS } from '../../src/core/records.ts';
+import { type LaunchFile, RUNNER_FILE_READERS } from '../../src/core/records.ts';
 import { type AbsPath, absPath, repoPath } from '../../src/core/values.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
 import { git, refTarget, revParse } from '../../src/git/git.ts';
@@ -195,24 +196,45 @@ function launchOf(run: Run, i: IntentOf<'proc.spawn'>) {
   return { inv, launch: RUNNER_FILE_READERS['launch.json'](JSON.parse(readFileSync(path, 'utf8')), path) };
 }
 
-function judgmentFresh(run: Run): Verdict {
+/** A judgment is independent; its one repair belongs to the same parent, role, schema and checkout.
+ * DESIGN-1.0 §2.1 and SCHEMAS "Backend invocation and result": repair resumes its own session.
+ */
+export function judgmentSessionProblems(calls: readonly Readonly<{inv: string; parent: IntentOf<'proc.spawn'>['parent']; launch: LaunchFile}>[]): readonly string[] {
   const problems: string[] = [];
-  const seen = new Map<string, string>();
-  for (const i of spawnIntents(run)) {
-    const role = backendRole(i);
-    if (role === null || !JUDGMENT_ROLES.has(role)) continue;
-    const { inv, launch } = launchOf(run, i);
-    if (launch.argv.includes('--resume')) problems.push(`${inv}: judgment argv resumes`);
-    const t = launch.terminal;
-    if (t.type !== 'backend' || t.session.mode !== 'fresh' || !('id' in t.session)) {
-      problems.push(`${inv}: judgment session is not a fresh named session`);
+  const seen = new Map<string, (typeof calls)[number]>();
+  const repaired = new Set<string>();
+  for (const call of calls) {
+    const {inv, launch} = call, t = launch.terminal;
+    if (t.type !== 'backend' || !('id' in t.session)) {
+      problems.push(`${inv}: judgment session is not a named session`);
       continue;
     }
     const other = seen.get(t.session.id);
-    if (other !== undefined) problems.push(`${inv} reuses session ${t.session.id} of ${other}`);
-    seen.set(t.session.id, inv);
+    const flag = t.session.mode === 'fresh' ? '--session-id' : '--resume';
+    if (launch.argv[launch.argv.indexOf(flag) + 1] !== t.session.id || !launch.argv.includes(flag)
+      || launch.argv.includes(t.session.mode === 'fresh' ? '--resume' : '--session-id')) problems.push(`${inv}: judgment session and argv disagree`);
+    if (t.session.mode === 'fresh') {
+      if (other !== undefined) problems.push(`${inv} reuses session ${t.session.id} of ${other.inv}`);
+      seen.set(t.session.id, call);
+    } else {
+      const first = other?.launch.terminal;
+      if (other === undefined || first?.type !== 'backend' || first.session.mode !== 'fresh'
+        || first.role !== t.role || first.routingRev !== t.routingRev || first.schemaPath !== t.schemaPath
+        || other.launch.cwd !== launch.cwd || canonicalJson(other.parent) !== canonicalJson(call.parent)
+        || repaired.has(t.session.id)) problems.push(`${inv}: judgment resume is not its own single repair turn`);
+      repaired.add(t.session.id);
+    }
   }
-  return { pass: problems.length === 0 && seen.size > 0, detail: problems.length > 0 ? problems.join('; ') : `${seen.size} judgment invocations, ${seen.size} distinct fresh sessions` };
+  return problems;
+}
+
+function judgmentFresh(run: Run): Verdict {
+  const calls = spawnIntents(run).filter((i) => {
+    const role = backendRole(i);
+    return role !== null && JUDGMENT_ROLES.has(role);
+  }).map((i) => ({...launchOf(run, i), parent: i.parent}));
+  const problems = judgmentSessionProblems(calls);
+  return {pass: problems.length === 0 && calls.length > 0, detail: problems.length > 0 ? problems.join('; ') : `${calls.length} judgment invocations, independent sessions with at most one own repair`};
 }
 
 function meterCoversCalls(run: Run): Verdict {

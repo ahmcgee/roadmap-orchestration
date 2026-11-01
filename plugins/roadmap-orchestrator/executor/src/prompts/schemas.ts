@@ -264,21 +264,36 @@ export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'escalate'; directives: readonly []; ordering?: OrderingWait | null }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
 
-export const GATE_SCHEMA: Schema = sObj({
+const GATE_FINDING_FIELDS = {
+  evidence: sArr(S_STR), severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+  debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable({type: 'string', pattern: '^R-[1-9][0-9]*$'}), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
+} as const;
+const GATE_FIELDS = {
   standing: sArr(sObj({id: S_STR, disposition: sEnum(['addressed', 'rebutted']), evidence: sArr(S_STR)})),
   decision: sEnum(GATE_DECISIONS),
   ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
-  findings: sArr(sObj({
-    evidence: sArr(S_STR), severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
-    debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable(S_STR), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
-  })),
+  findings: sArr(sObj(GATE_FINDING_FIELDS)),
   directives: sArr(S_STR),
   reasons: sArr(S_STR),
   premises: S_PREMISES,
 
   clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
-  rulings: sArr(sObj({ finding: S_STR, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
-});
+  rulings: sArr(sObj({ finding: {type: 'string', pattern: '^R-[1-9][0-9]*$'}, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
+} as const;
+// The discriminator constrains directives and ordering in the model's schema as well as the reader.
+export const GATE_SCHEMA: Schema = {
+  ...sObj(GATE_FIELDS) as object,
+  anyOf: GATE_DECISIONS.map((decision) => sObj({
+    ...GATE_FIELDS,
+    decision: sEnum([decision]),
+    directives: {type: 'array', items: S_STR, ...(decision === 'revise' ? {minItems: 1} : {maxItems: 0})},
+    ordering: decision === 'escalate' ? GATE_FIELDS.ordering : {type: 'null'},
+    findings: decision === 'approve' ? sArr(sObj({
+      ...GATE_FINDING_FIELDS,
+      severity: sEnum(FINDING_SEVERITIES_DEV17.filter((s) => s !== 'blocking')),
+    })) : GATE_FIELDS.findings,
+  })),
+};
 
 const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
 const hunkRef: Read<HunkRef> = object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) }));
@@ -626,7 +641,13 @@ export function validatePolishJudgeOutput(value: unknown): PolishJudgeOutput {
 // ---------------------------------------------------------------------------------------------------
 // One milestone experience verdict, with a mode-specific payload.
 export type ExperienceOutput = Readonly<{final: true; mode: 'walkthrough'; verdict: WalkthroughOutput}> | Readonly<{final: true; mode: 'polish'; verdict: PolishJudgeOutput}>;
-export const EXPERIENCE_SCHEMA: Schema = {anyOf: [sObj({final: S_FINAL, mode: sEnum(['walkthrough']), verdict: WALKTHROUGH_SCHEMA}), sObj({final: S_FINAL, mode: sEnum(['polish']), verdict: POLISH_JUDGE_SCHEMA})]};
+export const EXPERIENCE_SCHEMA: Schema = {
+  ...sObj({final: S_FINAL, mode: sEnum(['walkthrough', 'polish']), verdict: {anyOf: [WALKTHROUGH_SCHEMA, POLISH_JUDGE_SCHEMA]}}) as object,
+  anyOf: [
+    sObj({final: S_FINAL, mode: sEnum(['walkthrough']), verdict: WALKTHROUGH_SCHEMA}),
+    sObj({final: S_FINAL, mode: sEnum(['polish']), verdict: POLISH_JUDGE_SCHEMA}),
+  ],
+};
 export const experienceOutput: Read<ExperienceOutput> = tagged<'walkthrough' | 'polish', ExperienceOutput>('mode', {
   walkthrough: object((f) => ({final: f.get('final', literal(true)), mode: f.get('mode', literal('walkthrough')), verdict: f.get('verdict', walkthroughOutput)})),
   polish: object((f) => ({final: f.get('final', literal(true)), mode: f.get('mode', literal('polish')), verdict: f.get('verdict', polishJudgeOutput)})),

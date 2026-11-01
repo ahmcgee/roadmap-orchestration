@@ -895,6 +895,10 @@ diagnosis failures where applicable. No model identity is a role input.
 | experienceVerdict | `{final:true,mode:'walkthrough',verdict:{final,journeys,findings,polish,premises,reasons}}` or `{final:true,mode:'polish',verdict:{final,decision:keep|drop,evidence,reasons,premises}}` |
 | packReview | `{findings,dispositions,reasons,premises}`; findings bind severity/target/claim/evidence `{path,line}`; delta review dispositions name prior job/index |
 
+Every backend output schema has top-level `type: object`, including the discriminated experience verdict.
+Verifier directives are nonempty for revise and empty for approve/escalate; only escalate can carry ordering.
+`reraises` and dispute ruling finding ids name R-n ledger entries, never pre-build standing item ids.
+
 Every judgment role gets at most one repair turn in its own session/schema/cwd when the answer fails validation;
 a second invalid answer follows the role's failure path. See `src/prompts/{inputs,schemas}.ts` and pipeline/dispatch.ts.
 

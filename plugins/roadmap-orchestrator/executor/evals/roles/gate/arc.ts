@@ -9,8 +9,8 @@ import { systemName } from '../../../src/core/ids.ts';
 // run.ts `--read-only`, readonly.ts) runs the real gate's call rewritten into the dev.12 gate's judgment profile.
 //
 // While the gate runs, a monitor reads its stream every 5 s: a trace line every 30 s (tools by name, subagents with model
-// and tokens, time to the first Read and Agent, coverage so far, token load, denials, calls of unavailable tools) and the
-// harness's brakes (no Read or Agent in 3 minutes while files are not inlined; coverage flat over 8 tool turns; token load
+// and tokens, time to the first inspection and Agent, coverage so far, token load, denials, calls of unavailable tools) and the
+// harness's brakes (no inspection or delegation in 3 minutes while files are not inlined; coverage flat over 8 tool turns; token load
 // over 3x the cell's median), which kill the session and void the trial as `runaway`; and the spend brake (`trialCap`,
 // run.ts `--trial-cap`): the session's live spend at list price (transcript.ts `liveUsd`, every gate call of the trial)
 // over the cap kills it and voids the trial as `cap`. Brakes are the harness's, never the gate's: method choices are
@@ -30,7 +30,6 @@ import { EMPTY_REGISTRY } from '../../../src/corpus/registry.ts';
 import { openSource } from '../../../src/corpus/source.ts';
 import { boundedDiff,diffPaths } from '../../../src/git/boundeddiff.ts';
 import { diffBase } from '../../../src/git/transient.ts';
-import { laneRevOf,parseObligations } from '../../../src/holistic/types.ts';
 import { GATE_DIFF_BUDGET,largeDiffOf } from '../../../src/pipeline/gate.ts';
 import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { judgmentOutput,judgmentSpawns } from '../../../src/pipeline/stages.ts';
@@ -46,10 +45,9 @@ import { type ArcDescriptor,type ArcRun,U1,contextFor,isGateCall,laneJson,outcom
 import { PHASE0_FILE,PIN_FILE,writePhase0 } from '../../../test/helpers/corpusarc.ts';
 import { tmpDir } from '../../../test/helpers/repo.ts';
 import { type Step,readCalls,writeScenario } from '../../../test/helpers/scenario.ts';
-import { witnessLaneArgv,writeWitnessControl } from '../../../test/helpers/witness.ts';
 import { repositoryPaths,scanTranscript } from '../../m4a/transcript.ts';
 import { TEST_ARGV } from '../gen/tsrepo.ts';
-import { type Transcript,type Usage,parseEvents,readTranscript,sumUsage,toolCounts,unavailableCalls,usageOf } from '../transcript.ts';
+import { type Transcript,type Usage,hasInspection,parseEvents,readTranscript,sumUsage,toolCounts,unavailableCalls,usageOf } from '../transcript.ts';
 import { type Cell,isCorpusCell } from './cells.ts';
 import { type AnswerKey,DERIVED,DERIVED_PATTERNS,type Fixture,buildFixture,materialise } from './fixture.ts';
 import { type ClusterGrade,type Graded,grade,gradeClusters,touched } from './grade.ts';
@@ -238,7 +236,7 @@ function startMonitor(
     const t = readTranscript(parseEvents(readStdout(r, inv), true));
     const now = Date.now();
     const s = (ms: number | null): string => (ms === null ? '-' : `${Math.round(ms / 1000)}s`);
-    if (live.firstRead === null && t.calls.some((c) => c.name === 'Read' || c.name === 'Grep')) live.firstRead = now - live.startedAt;
+    if (live.firstRead === null && hasInspection(t)) live.firstRead = now - live.startedAt;
     if (live.firstAgent === null && t.calls.some((c) => c.name === 'Agent' || c.name === 'Task')) live.firstAgent = now - live.startedAt;
     firstRead ??= live.firstRead;
     firstAgent ??= live.firstAgent;
@@ -247,7 +245,7 @@ function startMonitor(
     while (live.coverage.length < t.toolTurns.length) live.coverage.push(covered);
     // Only when the prompt left something out: with every file inlined, answering without a tool is a method choice.
     if (omitted.length > 0 && live.firstRead === null && live.firstAgent === null && now - live.startedAt > NO_READ_MS) {
-      braked = { rule: 'no-read', detail: `no Read, Grep or Agent in ${NO_READ_MS / 60_000} minutes with ${omitted.length} files not inlined` };
+      braked = { rule: 'no-read', detail: `no inspection or delegation in ${NO_READ_MS / 60_000} minutes with ${omitted.length} files not inlined` };
     }
     const recent = live.coverage.slice(-FLAT_TURNS - 1);
     if (braked === null && omitted.length > 0 && covered < omitted.length && recent.length > FLAT_TURNS && recent[0] === recent.at(-1)) {
@@ -461,11 +459,11 @@ function writeCorpusInputs(repo: string, planDir: string, base: string): void {
   const pin = derived.pin;
   writePin(absPath(join(planDir, PIN_FILE)), pin);
   writePhase0(planDir, {});
-  const control = join(planDir, 'witness-control.json');
-  writeWitnessControl(control, { trees: { '*': { outcomes: { export: 'pass' } } } });
-  const lane = { ...laneJson({ id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control) }), reporter: 'jsonl' };
-  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'export', lanes: [lane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
-  const witness = { lane: 'journey', testIds: ['export'] };
+  // Report the product's visible export test through the production reporter. A wrapper around a
+  // scripted witness leaked the executor source path to the judge and did not execute this test.
+  const testPath = 'packages/*/test/vessel-export.test.ts';
+  const lane = {...laneJson({id: 'journey', argv: ['node', '--test', testPath]}), reporter: 'node-test', testPaths: [testPath]};
+  const witness = { lane: 'journey', testIds: ['export record shape'] };
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
     schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { systems: [] },
     obligations: [{ id: 'I-1', rev: 1, statement: 'Vessel exports satisfy the export contract.', rule: { id: 'T-1', textSha256: pin.rules[0]!.textSha256 }, serves: ['V-1'], witness,

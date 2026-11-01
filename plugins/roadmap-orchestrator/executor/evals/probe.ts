@@ -810,7 +810,7 @@ async function main(): Promise<void> {
         const out = await runCompare(h);
         const view = r.journal.view;
         const started = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'compare-started');
-        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.parent.type === 'job' && i.parent.job === 'compare-1' && i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict');
         const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
         const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
         const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');

@@ -88,7 +88,6 @@ export function schemaViolation(schema: unknown, value: unknown, at = '$'): stri
   }
   if (s['const'] !== undefined && canonicalJson(s['const']) !== canonicalJson(value)) return fail(`expected ${JSON.stringify(s['const'])}`);
   if (Array.isArray(s['enum']) && !s['enum'].some((e) => canonicalJson(e) === canonicalJson(value))) return fail('not in enum');
-  if (Array.isArray(s['anyOf']) && !s['anyOf'].some((sub) => schemaViolation(sub, value, at) === null)) return fail('matches no anyOf branch');
   if (typeof value === 'string') {
     if (typeof s['minLength'] === 'number' && [...value].length < s['minLength']) return fail(`shorter than ${s['minLength']}`);
     if (typeof s['maxLength'] === 'number' && [...value].length > s['maxLength']) return fail(`longer than ${s['maxLength']}`);
@@ -125,6 +124,8 @@ export function schemaViolation(schema: unknown, value: unknown, at = '$'): stri
       }
     }
   }
+  // Report shared required/type errors before trying the discriminated alternatives.
+  if (Array.isArray(s['anyOf']) && !s['anyOf'].some((sub) => schemaViolation(sub, value, at) === null)) return fail('matches no anyOf branch');
   return null;
 }
 

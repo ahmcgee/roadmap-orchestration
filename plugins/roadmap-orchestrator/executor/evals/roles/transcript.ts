@@ -243,3 +243,6 @@ const listed = (tools: readonly string[], name: string): boolean => tools.includ
 
 /** Calls of tools the init event did not list (attempts at unavailable tools). */
 export const unavailableCalls = (t: Transcript): readonly string[] => t.calls.filter((c) => t.tools.length > 0 && !listed(t.tools, c.name)).map((c) => c.name);
+
+/** Acting judges may inspect through their shell as well as the dedicated read tools. */
+export const hasInspection = (t: Transcript): boolean => t.calls.some((c) => ['Read', 'Grep', 'Glob', 'Bash'].includes(c.name));
