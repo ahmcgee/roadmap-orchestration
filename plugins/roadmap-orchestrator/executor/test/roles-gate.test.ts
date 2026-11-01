@@ -121,8 +121,8 @@ const KEY: AnswerKey = {
 const PROMPT = 'diff --git a/packages/oak/src/rough-edge.ts b/packages/oak/src/rough-edge.ts\n+x\n<not_inlined>\npackages/fern/src/early-index.ts\npackages/fern/src/late-gate.ts\n</not_inlined>\n';
 const SHOWN: DiffShown = { inlined: [repoPath('packages/oak/src/rough-edge.ts')], notInlined: [repoPath('packages/fern/src/early-index.ts'), repoPath('packages/fern/src/late-gate.ts')] };
 const CITE: GateOutput = {rulings: [], 
-  decision: 'revise', findings: [{ severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
-  directives: ['Restore it.'], reasons: [], premises: [], unreviewed: [], clusters: null, 
+  decision: 'revise', findings: [{evidence: ["fixture:1"],  severity: 'blocking', path: KEY.plant!.path, text: 'operator flipped', contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null }],
+  directives: ['Restore it.'], reasons: [], premises: [], standing: [], clusters: null,
 };
 
 const tool = (id: string, name: string, input: Record<string, unknown>, result: string, parent: string | null = null): readonly Record<string, unknown>[] => [
@@ -164,16 +164,7 @@ test('roles.lucky: citing a not-inlined plant without reading it is lucky; a Rea
   assert.equal(s.detection.k, 1, 'a lucky catch is not a detection');
 });
 
-test('roles.unreviewed: the gate\'s claimed unreviewed parts beside what it really looked at; silent = not-inlined files neither read nor declared', () => {
-  const none = readTranscript([]);
-  assert.deepEqual(grade(KEY, SHOWN, PROMPT, none, CITE).unreviewed, { claimed: 0, declared: 0, silent: 2 }, 'claimed full coverage, read nothing');
-  const declared = grade(KEY, SHOWN, PROMPT, none, { ...CITE, unreviewed: [{ path: 'packages/fern/src/late-*.ts', reason: 'mechanical rename' }] });
-  assert.deepEqual(declared.unreviewed, { claimed: 1, declared: 1, silent: 1 });
-  const byDir = grade(KEY, SHOWN, PROMPT, none, { ...CITE, unreviewed: [{ path: 'packages/fern/', reason: 'not read' }] });
-  assert.deepEqual(byDir.unreviewed, { claimed: 1, declared: 2, silent: 0 });
-  const read = readTranscript(tool('r1', 'Read', { file_path: `/run/attach/files/${KEY.plant!.path}.diff` }, 'x'));
-  assert.deepEqual(grade(KEY, SHOWN, PROMPT, read, { ...CITE, unreviewed: null }).unreviewed, { claimed: null, declared: 0, silent: 1 }, 'a dev.11 answer: unknown claim');
-});
+
 
 test('roles.transcript-cost: a captured subagent run: subagent calls by parent_tool_use_id, per-model cost from modelUsage summing to total_cost_usd', () => {
   const events = parseEvents(readFileSync(SUBAGENT_STREAM, 'utf8'));
@@ -213,12 +204,12 @@ test('roles.arm: --risk picks the built-in gate seat (Opus at every tier since d
   assert.throws(() => rebindConfig(['cheap=claude-opus-5-5:high']), /cheap/);
   assert.throws(() => rebindConfig(['economy=claude-haiku-5-5:huge']), /effort/);
   assert.throws(() => rebindConfig(['economy=claude-opus-5-5:high', 'economy=claude-haiku-5-5:low']), /rebound twice/);
-  assert.throws(() => gateArm('low', rebindConfig(['frontier=gpt-5.6-luna:low'])), /no prompt for gate on gpt-5.6-luna/);
+  assert.throws(() => gateArm('low', rebindConfig(['frontier=gpt-5.6-luna:low'])), /no prompt for verifier on gpt-5.6-luna/);
   // The trial arc (test/fixtures/unit-common.ts contextFor) resolves its routing under the descriptor's config.
   const d = setupArc({ steps: [] });
   const r = contextFor({ ...d, config: config! });
   try {
-    assert.deepEqual(r.ctx.routing(null).table.gate.low, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
+    assert.deepEqual(r.ctx.routing(null).table.verifier.low, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
     assert.deepEqual(r.ctx.routingBase.config, { ...config, systemsMap: d.config!.systemsMap });
   } finally {
     r.journal.close();
@@ -331,9 +322,9 @@ test('roles.checkout-tree-act: checkoutTree commits exactly the given commit\'s 
 });
 
 test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough, polish-judge and verifier evals too; unrelated paths none', () => {
-  assert.deepEqual(triggeredRoles(['src/prompts/gate/claude-opus-5-5.ts']), ['gate']);
-  assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['gate']);
-  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold']);
-  assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), []);
+  assert.deepEqual(triggeredRoles(['src/prompts/verifier/claude-opus-5-5.ts']), ['verifier', 'pre-build']);
+  assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['verifier']);
+  assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit']);
+  assert.deepEqual(triggeredRoles(['src/holistic/audit.ts', 'test/gate.test.ts']), ['campaignAudit']);
   assert.deepEqual(triggeredRoles(['evals/roles/triggers.ts']), []);
 });

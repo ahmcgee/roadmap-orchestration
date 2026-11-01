@@ -1,8 +1,9 @@
+import { followContext } from './fixtures/route-common.ts';
 // Unit lifecycle across parks (src/commands/apply.ts `resume`, src/pipeline/{unit,arc}.ts), integrated and
 // fake-backed: a unit parked at a judgment stage re-opens after an applied spec revision (`roadmap apply`), the needs-user of a
 // park names what `resume` does and its evidence, a unit parked `routing-changed` re-enters without a spec
 // edit once its implementer seat's routing is restored, a build whose seat a risk raise moved starts a
-// fresh session. Named tests: reopen.plan-check-park, reopen.paused-and-parked, reopen.gate-park-keeps-session,
+// fresh session. Named tests: reopen.pre-build-park, reopen.paused-and-parked, reopen.gate-park-keeps-session,
 // reopen.risk-raise-moves-seat, reroute.routing-changed-park.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -29,7 +30,7 @@ import { type ArcRun, MUL, U1, applyBody, codexStep, contextFor, gateStep, mulBu
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
 const live = (): Gate => admitAll;
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** The executor's writer for a parked unit's item: parented by the attempt that parked it. */
 function raiseParked(r: ArcRun, unit: typeof U1, content: NeedsUserContent): NeedsUserId {
@@ -74,12 +75,12 @@ const addClause = (spec: Record<string, unknown>): void => {
   spec['acceptance'] = [...(spec['acceptance'] as unknown[]), NEW_CLAUSE];
 };
 
-test('reopen.plan-check-park: resume is rejected until a revision of the spec (the next rev) is applied, then re-opens the unit at plan-check (its item acknowledged), which runs to merge on the new spec', T, async () => {
+test('reopen.pre-build-park: resume is rejected until a revision of the spec (the next rev) is applied, then re-opens the unit at pre-build (its item acknowledged), which runs to merge on the new spec', T, async () => {
   const d = setupArc({
     steps: [
       // W3: the check at the escalation seat reads the first check's decision and reasons.
-      planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' }, { stdinContains: ['<escalation>', 'decided escalate, and the unit was routed up'] }),
-      planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
+      planCheckStep({decision:'approve'}),mulBuild(),gateStep({decision:'escalate'}),gateStep({decision:'escalate'}, {stdinContains:['<escalation>']}),
+      planCheckStep({decision:'approve'}),codexStep([],{argv:['exec','resume']}),gateStep({decision:'approve'}),
     ],
   });
   const r = contextFor(d);
@@ -90,7 +91,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
     const specPath = join(r.ctx.planDir, 'u1.json');
     assert.match(parked.needsUser.recommendation, /set "rev" to 2, run `roadmap apply`, then `roadmap resume u1`/);
     assert.match(parked.needsUser.summary, /at rev 1/);
-    const checks = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'planCheck');
+    const checks = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier' && i.parent.type==='stage' && i.parent.stage==='gate');
     const deciding = checks.at(-1)!;
     assert.deepEqual(parked.needsUser.evidence, [
       join(invocationDir(r.ctx.runDir, invocationId(deciding.op, deciding.ordinal)), 'result.json'),
@@ -98,6 +99,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
       keptSpecPath(r.ctx, r.unit('u1')),
     ], 'the spec in force as kept, not the live file');
     assert.equal(readFileSync(keptSpecPath(r.ctx, r.unit('u1')), 'utf8'), readFileSync(specPath, 'utf8'), 'unedited so far: the same bytes');
+    const priorAttempts=r.journal.view.unit(U1).counters.attempts;
     const item = raiseParked(r, U1, parked.needsUser);
 
     const noRevision = { kind: 'rejected', reason: `unit u1 is parked (escalation); revise its spec ${specPath} (in force at rev 1; \`roadmap inputs export\` shows it): the revision takes your file's rev + 1; run \`roadmap apply\`, then resume` };
@@ -117,17 +119,17 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
     const reopened = await resume(r);
     assert.equal(reopened.outcome.kind, 'applied');
     const u = r.journal.view.unit(U1);
-    assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev], ['active', 'plan-check', null, 2]);
+    assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev], ['active', 'pre-build', null, 2]);
     assert.equal(r.journal.view.ackOf(item)?.command, applied.id, 'the apply closes the changed unit subject');
     assert.deepEqual(openBlocking(r.journal.view), []);
     assert.deepEqual(await resume(r).then((x) => x.outcome.kind), 'applied', 'a second resume of the running unit is a no-op');
 
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d), ['plan-check:escalate', 'plan-check:escalate', ...STRAIGHT]);
+    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0,7),'gate:escalate','gate:escalate',...STRAIGHT]);
     const calls = readCalls(d.scenarioPath);
-    assert.ok(calls[2]!.stdin.includes('mul(0, 5) is 0'), 'the re-opened plan-check reads the edited spec');
-    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 3, 'approved on rev 2, its design record landing as rev 3 (dev.17)');
-    assert.equal(r.journal.view.unit(U1).counters.attempts, STRAIGHT.length + 3, 'the counters of the parked run are kept');
+    assert.ok(calls[4]!.stdin.includes('mul(0, 5) is 0'), 'the re-opened pre-build reads the edited spec');
+    assert.equal(r.journal.view.unit(U1).approval?.fingerprint.specRev, 2, 'approved on rev 2, its design record landing as rev 3 (dev.17)');
+    assert.equal(r.journal.view.unit(U1).counters.attempts, priorAttempts + STRAIGHT.length + 1, 'the counters of the parked run are kept');
     assert.ok(calls.every((c) => c.step !== null));
   } finally {
     r.journal.close();
@@ -135,7 +137,7 @@ test('reopen.plan-check-park: resume is rejected until a revision of the spec (t
 });
 
 test('reopen.paused-and-parked: one resume of a unit both paused and parked clears the pause and re-opens it; while the park cannot re-open, it clears the pause alone', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })] });
+  const d = setupArc({ steps: [planCheckStep({decision:'approve'}),mulBuild(),gateStep({decision:'escalate'}),gateStep({decision:'escalate'})] });
   const r = contextFor(d);
   try {
     const parked = await runUnit(r.ctx, r.unit('u1'), live());
@@ -165,7 +167,7 @@ test('reopen.paused-and-parked: one resume of a unit both paused and parked clea
     assert.equal(both.outcome.kind, 'applied');
     assert.deepEqual(r.journal.view.control().pausedUnits, [], 'the pause is cleared');
     const u = r.journal.view.unit(U1);
-    assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev, u.reopened?.command], ['active', 'plan-check', null, 2, both.id], 'and the unit re-opened');
+    assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev, u.reopened?.command], ['active', 'pre-build', null, 2, both.id], 'and the unit re-opened');
     assert.equal(r.journal.view.ackOf(item)?.command, paused.id, 'the first successful subject action closes the park');
   } finally {
     r.journal.close();
@@ -205,7 +207,7 @@ test('reopen.gate-park-keeps-session: a unit parked at the gate re-opens after a
   }
 });
 
-test('reopen.risk-raise-moves-seat: a re-opened unit whose plan-check raises the risk onto another implementer binding builds in a fresh session on the kept branch, told the spec was amended and that the worktree holds the earlier work', T, async () => {
+test('reopen.risk-raise-moves-seat: a re-opened unit whose pre-build raises the risk onto another implementer binding builds in a fresh session on the kept branch, told the spec was amended and that the worktree holds the earlier work', T, async () => {
   const thread = '00000000-0000-4000-8000-00000000cafe';
   const d = setupArc({
     steps: [
@@ -224,18 +226,19 @@ test('reopen.risk-raise-moves-seat: a re-opened unit whose plan-check raises the
   // The repo seats build.high on frontier, so the raise moves the implementer (every built-in build seat is efficient since dev.17).
   const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
   try {
-    const parked = await runUnit(r.ctx, r.unit('u1'), live());
+    const parked = await runUnit(followContext(r),r.unit('u1'),live());
     assert.ok(parked.kind === 'parked');
     raiseParked(r, U1, parked.needsUser);
     editSpec(r, (s) => {
       addClause(s);
       s['rev'] = 2;
     });
+    const plan=JSON.parse(readFileSync(d.planPath,'utf8'));plan.units.find((u:{id:string;risk:string})=>u.id==='u1').risk='high';writeFileSync(d.planPath,JSON.stringify(plan));
     assert.equal((await apply(r)).outcome.kind, 'applied');
     assert.equal((await resume(r)).outcome.kind, 'applied');
-    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(await runUnit(followContext(r),r.unit('u1'),live()), { kind: 'merged' });
     assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:escalate', 'gate:escalate', ...STRAIGHT]);
-    const [first, raised] = r.journal.view.dispatchesOf(U1);
+    const first=r.journal.view.dispatchesOf(U1)[0],raised=r.journal.view.dispatchesOf(U1).at(-1);
     assert.deepEqual([first?.riskFloor, raised?.riskFloor], ['med', 'high']);
     assert.notEqual(raised?.implementerSeatRev, first?.implementerSeatRev, 'the raise moved the implementer seat');
     const calls = readCalls(d.scenarioPath);
@@ -270,7 +273,7 @@ test('reroute.routing-changed-park: resume is rejected while the implementer sea
     assert.equal(r.journal.view.unit(U1).status, 'park-pending', 'a rejected resume changes nothing');
 
     // The architect restores build.med; another seat keeps its new class, so the rev still differs.
-    const restored = rerouted(r, { gate: { med: 'summit' } });
+    const restored = rerouted(r, { verifier: { med: 'summit' } });
     assert.notEqual(restored.routing(null).rev, pinned.routingRev);
     const resumed = await resume(r, U1, restored);
     assert.equal(resumed.outcome.kind, 'applied');

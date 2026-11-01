@@ -12,7 +12,7 @@ import { type Sha,sha } from '../src/core/ids.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { stageSuiteLanes,suiteStandIns } from '../src/pipeline/lanes.ts';
-import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,planCheck } from '../src/pipeline/stages.ts';
+import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,preBuild } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
 import {
 BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
@@ -64,15 +64,15 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
       codexBuild([{ type: 'commit', message: 'lint', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' } }], { argv: ['exec', 'resume'] }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   // build → quiesce → evidence → salvage → teardown → lanes, through the driver.
   while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
 
-  // The plan-check's call, then the build's.
+  // The pre-build's call, then the build's.
   const fresh = readCalls(run.scenario.path)[1];
   assert.ok(fresh !== undefined);
   // The builder is shown the resource-free suite lane it may use for targeted checks, as its exact command; never the identical or the estate one.
-  assert.match(fresh.stdin, /# Suite lanes[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
+  assert.match(fresh.stdin, /<suite_lanes>[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
   assert.doesNotMatch(fresh.stdin, /- same \(|- e2e \(/);
 
   const red = run.journal.view.unit(U1).decided;

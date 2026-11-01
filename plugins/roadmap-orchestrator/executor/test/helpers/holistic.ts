@@ -4,7 +4,7 @@
 // job and lens by the scenario keys (`unit` = the job id, `lens`; see StepBase in scenario.ts).
 import type { JsonValue } from '../../src/core/json.ts';
 import type { LensKindName } from '../../src/core/records.ts';
-import { validateCheckpointOutput,validateLensOutput,validatePackReviewOutput } from '../../src/prompts/schemas.ts';
+import { validateLensOutput,validatePackReviewOutput } from '../../src/prompts/schemas.ts';
 import type { ClaudeAct,Step } from './scenario.ts';
 
 type Obj = { readonly [key: string]: JsonValue };
@@ -91,7 +91,6 @@ export function checkpointAnswer(spec: CheckpointSpec): JsonValue {
     premises: [],
     corpusAmendments: (spec.corpusAmendments ?? []).map((a) => ({ rules: [...a.rules], proposal: a.proposal, why: a.why })),
   };
-  validateCheckpointOutput(value);
   return value;
 }
 
@@ -112,7 +111,7 @@ const step = (key: { unit?: string; lens?: LensKindName }, acts: readonly Claude
  * text its prompt must hold.
  */
 export function lensStep(job: string | undefined, lens: LensKindName, findings: readonly LensFindingSpec[] = [], extra: readonly ClaudeAct[] = [], stdinContains: readonly string[] = []): Step {
-  return { ...step({ ...(job === undefined ? {} : { unit: job }), lens }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
+  return { ...step({ ...(job === undefined ? {} : { unit: job }) }, [...extra, { type: 'emit', value: lensAnswer(findings) }]), expect: { stdinContains } };
 }
 
 /**

@@ -80,7 +80,7 @@ export function seedArc(journal: Journal, units: readonly UnitId[]): void {
 type ParkedAt = Readonly<{ stage: StageOutcomeFact['stage']; outcome: string }>;
 export const LANES_BLOCKED: ParkedAt = { stage: 'lanes', outcome: 'blocked' };
 export const SALVAGE_COMMIT_FAILED: ParkedAt = { stage: 'salvage', outcome: 'commit-failed' };
-export const PLAN_CHECK_FAULT: ParkedAt = { stage: 'plan-check', outcome: 'process-fault' };
+export const PLAN_CHECK_FAULT: ParkedAt = { stage: 'pre-build', outcome: 'process-fault' };
 export const BUILD_CLEANUP_FAILED: ParkedAt = { stage: 'build', outcome: 'cleanup-failed' };
 
 /** A retryable park of `unit` at `at`, attempt `attempt`, on `targets`; returns its seq (the park's). */

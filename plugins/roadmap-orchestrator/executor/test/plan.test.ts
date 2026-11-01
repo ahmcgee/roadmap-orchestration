@@ -48,7 +48,7 @@ const WRONG: { readonly [K in (typeof REQUIRED)[number] | 'routing' | 'architect
   suite: { lanes: 'npm test' },
   resources: [{ name: 'integration-slot', probe: tool, teardown: tool }],
   units: [],
-  routing: { gate: { high: { backend: 'codex', model: 'claude-opus-5-5', effort: 'high' } } },
+  routing: { verifier: { high: { backend: 'codex', model: 'claude-opus-5-5', effort: 'high' } } },
 };
 
 describe('plan.json (M1)', () => {
@@ -72,7 +72,7 @@ describe('plan.json (M1)', () => {
   });
 
   it('routing is optional and, when present, parses as a layer of classes', () => {
-    const routing = { gate: { high: 'summit', escalation: 'frontier' }, build: { low: 'frontier' } };
+    const routing = { verifier: { high: 'summit', escalation: 'frontier' }, build: { low: 'frontier' } };
     assert.deepEqual(parsePlan({ ...validPlan(), routing }).routing, routing);
     assert.equal('routing' in parsePlan(validPlan()), false);
   });

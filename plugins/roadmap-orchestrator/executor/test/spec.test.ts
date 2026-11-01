@@ -55,7 +55,7 @@ const RAW_SPEC = { intent: 'Implement the stated acceptance.', nonGoals: ['No un
 };
 const SPEC: SpecM1 = specM1(RAW_SPEC, 'spec');
 
-const BY = { role: 'planCheck', routingRev: '0123456789abcdef', inv: 'arc-1/5#1' };
+const BY = { role: 'executor', inv: 'arc-1/5#1' };
 const patch = (ops: readonly unknown[], expectRev = 1): SpecPatch => specPatch({ expectRev, by: BY, ops }, 'patch');
 
 /** A redirect exercising every op kind. */

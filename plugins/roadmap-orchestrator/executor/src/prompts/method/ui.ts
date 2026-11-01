@@ -1,0 +1,1 @@
+export const METHOD = "Use the product in the declared states and journeys. Judge visible behavior, hierarchy, spacing, typography, accessibility and error/empty/loading states against the design references and intent. Evidence may include executor captures; do not infer runtime behavior from source alone.";

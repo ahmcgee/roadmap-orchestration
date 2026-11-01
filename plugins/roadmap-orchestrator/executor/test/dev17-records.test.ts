@@ -1,6 +1,6 @@
 import { systemName } from '../src/core/ids.ts';
 // dev.17 record types (SCHEMAS.md "dev.17 records"): the spec's design record and revision pins with their read-time
-// defaults, the plan-check design decisions' payloads, the findings ledger and approval blobs, the flaky ledger. Readers
+// defaults, the pre-build design decisions' payloads, the findings ledger and approval blobs, the flaky ledger. Readers
 // only: behaviour is tested where it is wired.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -12,7 +12,7 @@ import { approvalBlobs, findingsLedgerEntry } from '../src/core/review.ts';
 import { designSize } from '../src/core/design.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { repoPath } from '../src/core/values.ts';
-import { pocDecision, scaffoldDecision, splitDecision } from '../src/prompts/schemas.ts';
+import {   } from '../src/prompts/schemas.ts';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -77,7 +77,7 @@ describe('spec design record and pins', () => {
   });
 });
 
-describe('plan-check design decisions', () => {
+describe('pre-build design decisions', () => {
   // dev.17 (design pass): a child is the parent's items it takes and its own design, the spec built by code (src/pipeline/split.ts).
   const child = (unit: string): Record<string, unknown> => ({
     unit, systems: [systemName('app')], items: ['a1'], obligations: [],
@@ -85,27 +85,6 @@ describe('plan-check design decisions', () => {
       kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 10 }], interfaces: [], failureModes: [], clauses: [], breaks: { tests: [], docs: [] }, experiments: [],
       newSystem: null, verification: null,
     },
-  });
-
-  it('split: two or more distinct children, edges between distinct children, a skeleton among them', () => {
-    const d = splitDecision({ children: [child('u1a'), child('u1b')], edges: [{ from: 'u1a', to: 'u1b' }], skeleton: { unit: 'u1a', lane: 'e2e' } }, 'split');
-    assert.equal(d.children.length, 2);
-    refuses(() => splitDecision({ children: [child('u1a')], edges: [], skeleton: null }, 'split'), /^split\.children$/);
-    refuses(() => splitDecision({ children: [child('u1a'), child('u1a')], edges: [], skeleton: null }, 'split'), /^split\.children/);
-    refuses(() => splitDecision({ children: [child('u1a'), child('u1b')], edges: [{ from: 'u1a', to: 'u9' }], skeleton: null }, 'split'), /^split\.edges\[0\]$/);
-    refuses(() => splitDecision({ children: [child('u1a'), child('u1b')], edges: [], skeleton: { unit: 'u9', lane: 'e2e' } }, 'split'), /^split\.skeleton\.unit$/);
-    refuses(() => splitDecision({ children: [child('u1a'), { ...child('u1b'), items: [] }], edges: [], skeleton: null }, 'split'), /^split\.children\[1\]\.items$/);
-  });
-
-  it('scaffold and poc', () => {
-    const s = scaffoldDecision({
-      newSystem: { name: 'billing', paths: ['src/billing/**'], tests: ['src/billing/**/*.test.ts'] }, entryPoints: ['src/billing/index.ts'], exports: ['charge'],
-      loadTest: { lane: 'unit', testId: 'billing loads' }, manifest: [{ path: 'package.json', entry: 'workspaces: src/billing' }],
-    }, 'scaffold');
-    assert.equal(s.newSystem.name, 'billing');
-    const p = pocDecision({ questions: [{ id: 'PQ-1', question: 'Does the API page?', whyItMatters: 'sizes the client' }], brief: 'call it' }, 'poc');
-    assert.equal(p.questions[0]!.id, 'PQ-1');
-    refuses(() => pocDecision({ questions: [], brief: 'x' }, 'poc'), /^poc\.questions$/);
   });
 });
 

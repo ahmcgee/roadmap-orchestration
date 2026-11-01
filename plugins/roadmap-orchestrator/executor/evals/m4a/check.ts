@@ -56,7 +56,7 @@ import { existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,statSy
 import { tmpdir } from 'node:os';
 import { basename,join,relative,resolve } from 'node:path';
 import { computeBrief } from '../../src/brief.ts';
-import { type ArcRef,amendmentsOf,arcsWithRefs,committedAcks,completedHeadOf,readArcRef,unackedStarts } from '../../src/chain.ts';
+import { type ArcRef,arcsWithRefs,committedAcks,completedHeadOf,readArcRef,unackedStarts } from '../../src/chain.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
 import type { Event,Fact } from '../../src/core/events.ts';
 import { type ArcId,type Sha256Hex } from '../../src/core/ids.ts';
@@ -250,7 +250,6 @@ function stackedPrs(run: Run): Verdict {
   if (p2.length !== 1 || p2[0]!.baseRefName !== b1) problems.push(`arc 2's PRs: ${JSON.stringify(p2.map((p) => `${p.headRefName}→${p.baseRefName}`))}`);
   if (store.pulls.length !== 2) problems.push(`the forge holds ${store.pulls.length} PRs`);
   for (const p of [...p1, ...p2]) if (!p.body.includes(MERGE_COMMIT_LINE)) problems.push(`PR ${p.number}'s body lacks the merge-commit line`);
-  for (const a of amendmentsOf(one)) if (p1[0] !== undefined && !p1[0].body.includes(a.id)) problems.push(`PR 1's body does not list ${a.id}`);
   const tip = (branch: string) => git(absPath(run.l.origin), ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).trim();
   for (const [ref, branch] of [[one, b1], [two, b2]] as const) {
     const head = completedHeadOf(ref)?.head;
@@ -258,7 +257,7 @@ function stackedPrs(run: Run): Verdict {
   }
   const seed = (JSON.parse(readFileSync(join(run.l.dir, SEED_FILE), 'utf8')) as { main: string }).main;
   if (tip(MAIN) !== seed) problems.push(`origin's main moved from ${seed} to ${tip(MAIN)}`);
-  return verdict(problems, `${b1} → main, ${b2} → ${b1}; ${amendmentsOf(one).length} amendments listed; origin main unchanged`);
+  return verdict(problems, `${b1} → main, ${b2} → ${b1}; origin main unchanged`);
 }
 
 function config(run: Run): Verdict {

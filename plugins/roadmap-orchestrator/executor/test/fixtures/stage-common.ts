@@ -237,8 +237,8 @@ export function setupUnit(opts: SetupOptions): StageRun {
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
-    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }, ...(opts.resourceDefs ?? [])],
-    units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', systems: Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: opts.resources ?? [], ...opts.unit }],
+    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
+    units: [{ ...(opts.steps.some((s) => s.review) ? {review: 'always'} : {}), id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', systems: Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: opts.resources ?? [], ...opts.unit }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),
     ...(opts.routing === undefined ? {} : { routing: opts.routing }),
@@ -273,7 +273,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
 // Scenario steps
 
 export type PlanCheckAnswer = Readonly<{
-  decision: 'approve' | 'redirect' | 'split' | 'scaffold' | 'poc' | 'infeasible' | 'escalate';
+  decision: 'approve' | 'redirect' | 'split' | 'infeasible' | 'escalate';
   risk?: RiskTier;
   patch?: readonly JsonValue[];
   notes?: string;
@@ -293,24 +293,24 @@ export type PlanCheckAnswer = Readonly<{
   poc?: JsonValue;
 }>;
 
-/** A plan-check the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
+/** A pre-build the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
 /**
- * The plan-check's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
- * the fakes match a plan-check call by.
+ * The pre-build's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
+ * the fakes match a pre-build call by.
  */
-export const PLAN_CHECK_TOOLS_ARGV = ['--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch'] as const;
+export const PLAN_CHECK_TOOLS_ARGV = ['--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent'] as const;
 
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   // A judgment's fresh session persists (no --no-session-persistence) so its repair turn can resume it (dev.12: every role).
   const argv = ['-p', ...PLAN_CHECK_TOOLS_ARGV, '--permission-mode', 'bypassPermissions', '--session-id', ...(expect.argv ?? [])];
   return {
-    as: 'claude',
+    as: 'claude', review: true,
     expect: { ...expect, argv, argvLacks: ['--resume', '--no-session-persistence'] },
-    acts: [...before, { type: 'planCheck', value: planCheckAnswer(a) }],
+    acts: [...before, { type: 'emit', value: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: a.notes ? [a.notes] : ['Checked'], premises: [...(a.premises ?? [])], standing: [], clusters: null, rulings: []} }],
   };
 }
 
-/** A plan-check's answer as the fake emits it. */
+/** A pre-build's answer as the fake emits it. */
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   ({
     decision: a.decision, ordering: a.ordering ?? null, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
@@ -320,18 +320,18 @@ export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   }) as JsonValue;
 
 /**
- * 2026-10-15: a plan-check's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
+ * 2026-10-15: a pre-build's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
  * the stdin carries (`stdinContains` adds to the directive's opening).
  */
 export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
     expect: { argv: ['-p', ...PLAN_CHECK_TOOLS_ARGV, '--resume'], argvLacks: ['--session-id', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
-    acts: [...before, { type: 'planCheck', value: planCheckAnswer(a) }],
+    acts: [...before, { type: 'emit', value: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: a.notes ? [a.notes] : ['Checked'], premises: [...(a.premises ?? [])], standing: [], clusters: null, rulings: []} }],
   };
 }
 
-export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final: true } as const;
+export const BUILD_REPORT = { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true } as const;
 
 /** Stdin-matching pattern for a failing lane's stdout/stderr dir of this run, as a fix round lists it. */
 export function laneEvidencePattern(run: StageRun, lane: string): string {

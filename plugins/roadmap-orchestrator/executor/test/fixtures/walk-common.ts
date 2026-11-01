@@ -17,7 +17,7 @@ import { git, tmpDir } from '../helpers/repo.ts';
 import type { ClaudeAct, Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
 import { admitSpecWire } from '../helpers/holistic.ts';
-import { BUILD_REPORT, type LaneJson, planCheckStep } from './stage-common.ts';
+import { BUILD_REPORT, type LaneJson } from './stage-common.ts';
 import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
 import { publishArc } from './publish-common.ts';
 import { wired } from './sched-m3-common.ts';
@@ -184,11 +184,11 @@ export function proposal(d: Readonly<{ planPath: string }>, id: string, text: st
 
 /** The build of polish unit `unit` (risk high: the efficient class since dev.17, Codex under the default profile): it commits `files`. */
 export const polishBuild = (unit: string, files: Readonly<Record<string, string>>): Step => ({
-  as: 'codex', unit, expect: { argv: ['exec', '-C'] },
+  as: 'claude', unit, expect: {argv: ['--model', 'claude-opus-5-5']},
   acts: [{ type: 'commit', message: `polish ${unit}`, files }, { type: 'emit', value: BUILD_REPORT }],
 });
 export const polishSteps = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => [
-  { ...planCheckStep({ decision: 'approve', risk: 'high' }), unit }, polishBuild(unit, files), { ...gateStep({ decision: 'approve' }), unit },
+  polishBuild(unit, files), { ...gateStep({ decision: 'approve' }), unit },
 ];
 
 /** tw-keep's build: the greeting configured, and the reference says so. */

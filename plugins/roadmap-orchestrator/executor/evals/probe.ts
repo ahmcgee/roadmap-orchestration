@@ -2,7 +2,7 @@ import { systemName } from '../src/core/ids.ts';
 // The targeted probe (`npm run probe`): the production argv builder, runner and adapter against the real,
 // authenticated CLIs, through src/preflight/smoke.ts. Pennies per run. Checks:
 //
-//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: planCheck.low, the frontier
+//   smoke.<backend>     smoke() under the default profile, exactly as `roadmap start` runs it (Claude: verifier.low, the frontier
 //                       class's judgment binding since dev.17, claude-opus-5-5 medium)
 //   codex.fresh/resume  gpt-5.6-luna, effort low, strict schema; the resume continues the fresh thread
 //   shell.lane          a real shell command through the runner, graded on exit code and stdout
@@ -41,21 +41,11 @@ import { systemName } from '../src/core/ids.ts';
 //                       must carry the token, which only the killed conversation holds
 //   codex.killed-resume the same with gpt-5.6-luna, effort low: killed after thread.started and the file;
 //                       the resume uses the thread id the adapter read into result.json
-//   m3.lens             lens.arc seat (efficient: claude-sonnet-5-5 high): the real lens prompt module and LENS_SCHEMA over a tiny
-//                       fixture (2-clause vision, one obligation, a trivial diff), inputs built as production
-//                       does; the adapter must return success and validateLensOutput must accept it
-//   m3.checkpoint       checkpoint.arc seat (claude-fable-5-1): the real checkpoint module and its per-call closed schema (checkpointSchemaFor)
-//                       over a tiny input set; the output must validate (a no-op is expected)
-//   m3.plan-check       planCheck.med seat (frontier since dev.17: claude-opus-5-5 medium) with a vision input: the real plan-check module and PLAN_CHECK_SCHEMA;
-//                       the output must validate and carry a visionConflict array
-//   forge.*             (M4a) the executor's own src/forge functions against the real ahmcgee/roadmap-orchestration, read-only:
-//                       resolveRepo (the identity every `gh pr` call names)
-//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, checkpoint.arc claude-opus-5-5 high
+//   m3.campaign-audit   production campaignAudit prompt and schema on its summit seat over a tiny range
+//   m3.pre-build        production verifier prompt and schema in pre-build mode over one spec
+//   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, campaignAudit.arc claude-opus-5-5 high
 //   m4a.pack-review     packReview.arc (frontier, corpus arc scope): the real prompt module over a tiny corpus pack; the
 //                       answer must validate against PackReviewOutput
-//   m4a.checkpoint-summit  checkpoint.arc (summit): the real checkpoint module; the output must validate
-//   m4a3.checkpoint-targets  the checkpoint (corpus arc, summit seat) told to admit one unit: the answer validates and the
-//                       admit carries `targets`
 //   m4a3.witness-check  `roadmap witness-check` over a real `node --test` run of a 2-test file with the node-test witness
 //                       reporter: exit 0 when both required ids pass, 78 listing the missing id when one is absent
 //   m4a3.sonnet-build   claude-sonnet-5-5 medium build through the real build prompt and BUILD_SCHEMA (`experiments`): the
@@ -65,20 +55,20 @@ import { systemName } from '../src/core/ids.ts';
 //                       `final: false` result, then the final `final: true` one; the answer must validate with ready.txt and
 //                       hello.txt written, and the invocation end as `exited` or `reported`
 //   gate.bounded        (dev.12) one real gate through the production gate stage, as the gate role eval drives it
-//                       (evals/roles/: fake plan-check and build, real lanes, the real claude behind the fake's `real` act)
+//                       (evals/roles/: fake pre-build and build, real lanes, the real claude behind the fake's `real` act)
 //                       on a tiny generated repo (G0's small rename at size 100, no plant) whose regenerated golden, a
 //                       plan-declared derived output, is not inlined: the answer validates, a not-inlined file is read or
 //                       grepped (main session or subagent), the init event lists Agent, result.modelUsage is present and
 //                       its per-model costs sum to total_cost_usd. Needs the merged dev.12 tree (W1 bounded diff, W2 Agent)
-//   walk.cli            (dev.13) one real walkthrough through the production walk job on a two-step CLI product (no browser),
-//                       the real claude behind the fake's `real` act on the walkthrough seat (frontier) with the acting-judge
+//   walk.cli            (dev.13) one real experience verdict through the production walk job on a two-step CLI product (no browser),
+//                       the real claude behind the fake's `real` act on the experience verdict seat with the acting-judge
 //                       argv: the report validates (schema and the walk's own checks), the init event lists Bash and Write
 //                       and no MCP server, the session ended exited or reported, and nothing is left behind (no open intent,
 //                       no walk checkout, no live process of the arc); its findings are printed, not graded
-//   polish.compare      (dev.13, agent D) one real polish judge through the production compare job on two tiny instances
+//   polish.compare      (dev.13, agent D) one real experience comparison through the production compare job on two tiny instances
 //                       (before: the greeter answering 500 for want of a greeting; after: a polish unit that configures it
 //                       and says so in the reference), u1, walk-1 and the polish unit through the fakes, the real claude behind
-//                       the fake's `real` act on the polishJudge seat (frontier) with the acting-judge argv: the answer
+//                       the fake's `real` act on the experience verdict seat with the acting-judge argv: the answer
 //                       validates (schema, every cited file in the evidence dirs) and is recorded as tweak-judged{judged},
 //                       the init event lists Bash and no MCP server, the session ended exited or reported, both instances
 //                       came up on distinct ports, and nothing is left behind; its decision is printed, not graded
@@ -98,17 +88,14 @@ import { join } from 'node:path';
 import { freshClaudeImplementerSession,freshJudgmentSession } from '../src/backends/argv.ts';
 import { containmentFor,detectContainmentMode } from '../src/contain/detect.ts';
 import { scan } from '../src/contain/proc.ts';
-import {
-type ImplementerSessionId,arcId,envId,invocationId,jobId,laneId,laneRev,obligationId,questionId,ruleId,rulingId,sha,sha256,specRev,unitId,visionClauseId,
-} from '../src/core/ids.ts';
+import { type ImplementerSessionId, arcId, envId, invocationId, jobId, laneId, laneRev, obligationId, questionId, ruleId, sha, sha256, specRev, unitId, visionClauseId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
 import { type BackendResult,DEFAULT_BOUNDS,STDOUT_FILE,type Usage } from '../src/core/records.ts';
-import { type AbsPath,absPath,repoPath,repoPattern } from '../src/core/values.ts';
+import { type AbsPath, absPath, repoPath } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { resolveRepo } from '../src/forge/gh.ts';
-import { checkpointIdsOf } from '../src/holistic/checkpoint.ts';
 import { type ObligationDef,parseObligations } from '../src/holistic/types.ts';
 import { keepInput,keptInput } from '../src/input/inforce.ts';
 import { parsePhase0Record } from '../src/phase0/types.ts';
@@ -121,15 +108,15 @@ import {
 type BackendInvocation,type InvocationContext,type Invoked,SMOKE_SCHEMA,backendEnv,invokeBackend,invokeCommand,smoke,smokeRejections,
 } from '../src/preflight/smoke.ts';
 import { promptFor } from '../src/prompts/index.ts';
-import type { ArchitectureInput,BuildInputs,CheckpointInputs,LensInputs,ObligationView,PackReviewPromptInputs,PlanCheckInputs,VisionInput } from '../src/prompts/inputs.ts';
+import type { ArchitectureInput, BuildInputs, RoleInputs, ObligationView, PackReviewPromptInputs, VerifierInputs, VisionInput } from '../src/prompts/inputs.ts';
 import {
 BUILD_SCHEMA,
 ROLE_VALIDATORS,type RoleOutputs,buildOutput,
-checkpointSchemaFor,
+
 } from '../src/prompts/schemas.ts';
 import { boundAt } from '../src/routing/classes.ts';
 import { type ResolvedRouting,arcStack,resolveRouting } from '../src/routing/layers.ts';
-import { type Backend,type JudgmentSeat,type Role,type SeatOf,type SeatRef,atSeat } from '../src/routing/types.ts';
+import { type Backend, type Role, type SeatOf, type SeatRef, atSeat } from '../src/routing/types.ts';
 import { runnerFiles } from '../src/runner/files.ts';
 import { holisticContexts } from '../src/schedule/scheduler.ts';
 import { runCompare } from '../src/walk/compare.ts';
@@ -298,27 +285,19 @@ function validates<R extends Role>(name: string, role: R, check: (out: RoleOutpu
   };
 }
 
-/**
- * One judgment call through the real prompt module for `role`, on the triple of that role's own seat, with production's judgment
- * deadline (`judgmentDeadlineMin`; a summit checkpoint takes minutes) where the smoke checks keep SMOKE_DEADLINE_MS. The smoke
- * harness (smoke.ts CallRequest) labels judgment calls with a unit judgment role and seat only, and the judgment
- * argv does not vary by role, so an arc role's call is filed under `stand`, the unit seat nearest its tier.
- */
-function seatCall<R extends 'lens' | 'checkpoint' | 'planCheck' | 'packReview'>(
-  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, stand: Readonly<{ role: 'planCheck'; tier: JudgmentSeat }>, check: string, cwd: AbsPath,
+/** One cheap judgment call through its production prompt, schema, actual role and routed seat. */
+function seatCall<R extends 'campaignAudit' | 'verifier' | 'packReview'>(
+  resolved: ResolvedRouting, role: R, seat: SeatOf<R>, check: string, cwd: AbsPath,
   inputs: Parameters<ReturnType<typeof promptFor<R>>['render']>[0],
 ): BackendInvocation {
   const triple = atSeat(resolved.table, { role, tier: seat } as SeatRef);
   if (triple.backend !== 'claude') throw new Error(`${role}.${seat} resolves to ${triple.backend}; the probe drives the Claude seats`);
   const prompt = promptFor(role, triple.model);
-  // Production's own schema for the call's inputs: a checkpoint closes the arc lane and obligation ids (src/holistic/checkpoint.ts).
-  const schema = role === 'checkpoint'
-    ? checkpointSchemaFor(checkpointIdsOf({ lanes: MINI_ARC_LANES, obligations: (inputs as CheckpointInputs).obligations.map((v) => v.obligation) }))
-    : prompt.schema;
+  const schema = prompt.schema;
   return {
-    check, routingRev: resolved.rev, tier: stand.tier, system: prompt.system, rendered: prompt.render(inputs), schema, cwd,
+    check, routingRev: resolved.rev, tier: seat, system: prompt.system, rendered: prompt.render(inputs), schema, cwd,
     deadlineMs: minutesMs(DEFAULT_BOUNDS.judgmentDeadlineMin),
-    request: { kind: 'claude-judgment', role: stand.role, triple, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role, triple, session: freshJudgmentSession(), evidenceDirs: [] },
   };
 }
 
@@ -356,7 +335,7 @@ async function main(): Promise<void> {
   }
 
   // The calls below exercise triples directly, not seats; each meter fact names the default table's seat of
-  // the same backend and role at the nearest seat (codex build: med; Opus build: high; Fable plan-check: escalation).
+  // the same backend and role at the nearest seat (codex build: med; Opus build: high; Fable pre-build: escalation).
   // Codex fresh then resume, in one working dir (a resume runs where its thread was created).
   const codexDir = dir(join(root, 'codex'));
   const okSchema = SMOKE_SCHEMA;
@@ -395,7 +374,7 @@ async function main(): Promise<void> {
   const judged = await backend(ctx, 'claude.judgment', {
     check: 'claude-judgment', routingRev: rev, tier: 'med', system: SYSTEM, schema: strict({ token: { type: 'string' } }), cwd: judgeDir,
     rendered: `Read the file ${join(evidence, 'token.txt')} and reply with {"token": "<its content without the trailing newline>"}.`,
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [evidence] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ token }));
   const reads = runnerFiles(judged.invDir, judged.inv).read('reads.json');
   const readPaths = reads?.reads.flatMap((r) => (r.tool === 'Read' ? [r.path] : [])) ?? [];
@@ -408,7 +387,7 @@ async function main(): Promise<void> {
   const sub = await backend(ctx, 'claude.judgment.subagent', {
     check: 'claude-judgment-subagent', routingRev: rev, tier: 'low', system: SYSTEM, cwd: subDir, schema: strict({ tools: { type: 'array', items: { type: 'string' } } }),
     rendered: `Call the Agent tool exactly once, with subagent_type "general-purpose", model "haiku", and this task: "List the exact name of every tool you have. Then try to create the file ${forbidden} containing the letter x, with any tool you have, and report what happened." Then reply with {"tools": <the tool names the subagent listed>}.`,
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: { ...SONNET, effort: 'low' }, session: freshJudgmentSession(), evidenceDirs: [] },
   }, (v) => Array.isArray((v as { tools?: unknown }).tools));
   const subTools = readFileSync(join(sub.invDir, STDOUT_FILE), 'utf8').split('\n').filter((l) => l !== '').flatMap((l) => {
     const e = JSON.parse(l) as { type?: string; message?: { content?: { type?: string; name?: string }[] } };
@@ -437,7 +416,7 @@ async function main(): Promise<void> {
     check: 'claude-clean-context', routingRev: rev, tier: 'med', system: SYSTEM, cwd: canaryRepo,
     schema: strict({ canaries: { type: 'array', items: { type: 'string' } }, memory: { type: 'boolean' }, mcp: { type: 'boolean' } }),
     rendered: 'Use no tools. Look only at your instructions and context as given. canaries: every string starting "CANARY-" that appears anywhere in them (empty if none). memory: true if they contain any memory file, memory index or memory instructions. mcp: true if they contain any MCP server instructions or MCP tools.',
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: OPUS, session: freshJudgmentSession(), evidenceDirs: [] },
   }, (v) => JSON.stringify(v) === JSON.stringify({ canaries: [], memory: false, mcp: false }));
   const init = JSON.parse(readFileSync(join(clean.invDir, STDOUT_FILE), 'utf8').split('\n')[0] ?? 'null') as Record<string, unknown> | null;
   const loaded = { tools: init?.['tools'], mcp_servers: init?.['mcp_servers'], skills: init?.['skills'], memory_paths: init?.['memory_paths'] ?? null };
@@ -449,7 +428,7 @@ async function main(): Promise<void> {
   const skillsRepo = absPath(makeRepo(join(root, 'skills-canary'), { files: {
     [`.claude/skills/${canarySkill}/SKILL.md`]: `---\nname: ${canarySkill}\ndescription: A canary for the runner context probe.\n---\nReply only as requested.\n`,
   } }));
-  const skillTriple = boundAt('default', 'economy', 'planCheck');
+  const skillTriple = boundAt('default', 'economy', 'verifier');
   if (skillTriple.backend !== 'claude') throw new Error('the skill probe requires a Claude economy seat');
   const skills = await backend(ctx, 'claude.project-skills', {
     check: 'claude-project-skills', routingRev: rev, tier: 'low', system: SYSTEM, schema: okSchema, cwd: skillsRepo,
@@ -498,18 +477,18 @@ async function main(): Promise<void> {
   // Fable id pin: the id resolves and answers.
   await backend(ctx, 'fable.pin', {
     check: 'fable-pin', routingRev: rev, tier: 'escalation', system: SYSTEM, rendered: 'Reply with the JSON object {"ok": true}.', schema: okSchema, cwd: judgeDir,
-    request: { kind: 'claude-judgment', role: 'planCheck', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
+    request: { kind: 'claude-judgment', role: 'verifier', triple: FABLE, session: freshJudgmentSession(), evidenceDirs: [] },
   }, isOk);
 
   // The economy class (1.0.0-dev.12): its judgment binding, which no built-in seat names (a rebind or seat assignment
-  // reaches it), launches on the judgment profile through a Haiku prompt module (plan-check's since dev.13, when the gate
+  // reaches it), launches on the judgment profile through a Haiku prompt module (pre-build's since dev.13, when the gate
   // moved to the acting profile; its system prompt, the class's triple) and answers a strict schema.
-  const economy = boundAt('default', 'economy', 'planCheck');
+  const economy = boundAt('default', 'economy', 'verifier');
   report(economy.backend === 'claude' && economy.model === 'claude-haiku-5-5' && economy.effort === 'high', 'routing.economy', `economy=${JSON.stringify(economy)}`);
   if (economy.backend === 'claude') {
     await backend(ctx, 'economy.judgment', {
-      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('planCheck', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
-      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'planCheck', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
+      check: 'economy-judgment', routingRev: rev, tier: 'low', system: promptFor('verifier', economy.model).system, rendered: 'This is a launch probe, not a review: read nothing and reply with the JSON object {"ok": true}.',
+      schema: okSchema, cwd: judgeDir, request: { kind: 'claude-judgment', role: 'verifier', triple: economy, session: freshJudgmentSession(), evidenceDirs: [] },
     }, isOk);
   }
 
@@ -559,8 +538,8 @@ async function main(): Promise<void> {
   const m3Dir = dir(join(root, 'm3'));
   writeFileSync(join(m3Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
 
-  const lensInputs: LensInputs = {
-    vision: MINI_VISION, lens: 'vision', obligations: MINI_OBLIGATIONS, range: { audited: HEAD, diff: {
+  const lensInputs: RoleInputs['campaignAudit'] = {
+    vision: MINI_VISION, method: {traits: [], markers: [], unitKind: 'milestone', expensiveLanes: false, ui: false}, obligations: MINI_OBLIGATIONS, range: { audited: HEAD, diff: {
       from: TREE, to: HEAD, dir: absPath(join(m3Dir, 'diff')),
       orientation: {
         stat: { text: ' convert.ts | 2 ++\n 1 file changed, 2 insertions(+)\n', full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },
@@ -568,31 +547,18 @@ async function main(): Promise<void> {
       },
       inlined: [{ path: repoPath('convert.ts'), kind: 'new-source', representation: 'line', full: null }], text: MINI_DIFF, omitted: { shown: [], more: 0 }, notInlined: [], overflow: 0,
     } }, owners: [], priorFindings: [],
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, checkout: m3Dir, specsOnly: null,
+    contracts: [], target: MINI_ARCH, checkout: m3Dir,
   };
-  await backend(ctx, 'm3.lens', seatCall(holistic, 'lens', 'arc', { role: 'planCheck', tier: 'high' }, 'm3-lens', m3Dir, lensInputs),
-    validates("m3.lens", "lens", () => true));
+  await backend(ctx, 'm3.campaign-audit', seatCall(holistic, 'campaignAudit', 'arc', 'm3-campaign-audit', m3Dir, lensInputs),
+    validates("m3.campaign-audit", "campaignAudit", () => true));
 
-  const checkpointInputs: CheckpointInputs = {
-    vision: MINI_VISION, trigger: { type: 'audit', job: jobId('audit', 1) }, priorRejected: [], refused: [], head: HEAD,
-    plan: 'Unit u-convert (done): implements convert.ts. No other units. No open work.', findings: [], obligations: MINI_OBLIGATIONS,
-    coverage: { unservedAdvanced: [visionClauseId('V-2'), visionClauseId('V-3')], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] }, divergences: [],
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
-    manifest: [], specs: [], nextRulingId: rulingId('C-1'), diagnosis: null, brakes: { settled: false, findings: [] },
-  };
-  await backend(ctx, 'm4a.checkpoint-summit', seatCall(holistic, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm3-checkpoint', m3Dir, checkpointInputs),
-    validates('m4a.checkpoint-summit', 'checkpoint', () => true));
-
-  const planCheckInputs: PlanCheckInputs = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
-    spec: { unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\n\n## Acceptance\n- A1: convert.ts exports toFahrenheit and toCelsius.\n- A2: toFahrenheit rounds its result to the nearest integer.\n\n## Lanes\n(none)' },
-    contracts: [], rulings: [], index: MINI_INDEX, target: MINI_ARCH, direction: 'Ship the smallest thing that serves the vision.',
-    systems: [systemName('app')], risk: 'low', checkouts: { tip: { path: m3Dir, at: TREE }, branch: null }, lanePrograms: [], priorRound: null, vision: MINI_VISION, priorInvalid: null,
-     escalation: null, milestones: null, staleLinks: [],
-    design: { systems: null, lanes: [], forces: [], substantialLines: 200, gateInlineLines: 1310, pocsLeft: 2, scaffold: false }, pocs: [],
-  };
-  const planCheck = seatCall(holistic, 'planCheck', 'med', { role: 'planCheck', tier: 'med' }, 'm3-plan-check', m3Dir, planCheckInputs);
-  await backend(ctx, 'm3.plan-check', planCheck,
-    (v) => validates('m3.plan-check', 'planCheck', (out) => Array.isArray(out.visionConflict))(v) && Array.isArray((v as { visionConflict?: unknown }).visionConflict));
+  const preBuildInputs: VerifierInputs = {mode: 'pre-build', brief: {
+    target: MINI_ARCH, vision: MINI_VISION,
+    spec: {unit: unitId('u-convert'), rev: specRev(1), markdown: '# Unit u-convert\nA1: convert.ts exports toFahrenheit and toCelsius; toFahrenheit rounds to the nearest integer.'},
+    intent: 'Implement both temperature conversions.', nonGoals: ['No unrelated changes.'], contracts: [], systems: [systemName('app')],
+    method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, history: [], standing: [],
+  }};
+  await backend(ctx, 'm3.pre-build', seatCall(holistic, 'verifier', 'med', 'm3-pre-build', m3Dir, preBuildInputs), validates('m3.pre-build', 'verifier', () => true));
 
   // M4a forge: the executor's own gh functions against the real repository, read-only (no write is ever issued).
   const repoDir = absPath(join(import.meta.dirname, '..', '..', '..', '..'));
@@ -606,9 +572,9 @@ async function main(): Promise<void> {
   // M4a routing: the rebound classes, as the default table resolves them.
   const corpusArc = resolveRouting({ ...arcStack(profile, null, null), arcScope: 'corpus' });
   const frontierT = atSeat(corpusArc.table, { role: 'packReview', tier: 'arc' });
-  const summitT = atSeat(corpusArc.table, { role: 'checkpoint', tier: 'arc' });
+  const summitT = atSeat(corpusArc.table, { role: 'campaignAudit', tier: 'arc' });
   report(frontierT.backend === 'claude' && frontierT.model === 'claude-opus-5-5' && frontierT.effort === 'medium'
-    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'high', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} checkpoint.arc=${JSON.stringify(summitT)}`);
+    && summitT.backend === 'claude' && summitT.model === 'claude-opus-5-5' && summitT.effort === 'high', 'routing.m4a', `packReview.arc=${JSON.stringify(frontierT)} campaignAudit.arc=${JSON.stringify(summitT)}`);
 
   // packReview on a tiny corpus pack, frontier seat, corpus arc scope.
   const m4Dir = dir(join(root, 'm4a'));
@@ -626,7 +592,7 @@ async function main(): Promise<void> {
     census: [{ rule: 'T-1', state: { type: 'obligation', id: 'I-1' } }, { rule: 'T-2', state: { type: 'out-of-slice' } }],
   };
   const phase0Json = {
-    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [],
     slice: { advances: ['V-1'], why: 'The smallest conversion first.' },
   };
   try {
@@ -638,7 +604,7 @@ async function main(): Promise<void> {
       delta: null,
       phase0: parsePhase0Record(phase0Json),
     };
-    const pack = seatCall(corpusArc, 'packReview', 'arc', { role: 'planCheck', tier: 'high' }, 'm4a-pack-review', m4Dir, packInputs);
+    const pack = seatCall(corpusArc, 'packReview', 'arc', 'm4a-pack-review', m4Dir, packInputs);
     await backend(ctx, 'm4a.pack-review', pack, validates('m4a.pack-review', 'packReview', (out) => Array.isArray(out.findings) && out.reasons.length > 0));
   } catch (e) {
     report(false, 'm4a.pack-review.build', e instanceof Error ? e.message : String(e));
@@ -662,31 +628,9 @@ async function main(): Promise<void> {
   const UNIT = laneId('unit');
   const buildSpec = '# Unit u-hello\n\n## Acceptance\n- A1: the file hello.txt exists in the repository root and contains the word hello.\n\n## Lanes\n- unit (fast): `sh -c "grep -q hello hello.txt"`';
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
-  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], systemNotes: [], notes: [],
-    spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], rulings: [], index: MINI_INDEX, planCheckNotes: '', fastLanes: [unitLane], suiteLanes: [],
-    evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessChecks: [], milestones: null, browser: null, certifiedAt: null, handover: null,
-  });
-
-  // (3) A checkpoint answer under the new schema: an admit with `targets`.
-  await rev3('m4a3.checkpoint-targets', async () => {
-    const corpusDir = dir(join(root, 'm4a-corpus'));
-    const corpusInputs: CheckpointInputs = {
-      ...checkpointInputs,
-      target: { kind: 'corpus', dir: corpusDir, visionDoc: null, rulesIndex: rules.map((r) => ({ id: ruleId(r.id), textSha256: sha256(r.textSha256), text: r.text, file: repoPath(r.file), section: r.section })) },
-      direction: 'Owner direction, binding: admit exactly one new unit now. Its id is u-celsius, risk low, scope convert.ts, after nothing, origin checkpoint; it delivers rule T-2 (toCelsius(32) returns 0), so T-2 is its target. Cite clause V-1 and the plan as evidence.',
-    };
-    await backend(ctx, 'm4a3.checkpoint-targets', seatCall(corpusArc, 'checkpoint', 'arc', { role: 'planCheck', tier: 'escalation' }, 'm4a3-checkpoint-targets', m4Dir, corpusInputs), (v) => {
-      try {
-        const out = ROLE_VALIDATORS.checkpoint(v);
-        const admits = out.ops.flatMap((o) => (o.op === 'admit' ? [o] : []));
-        const ok = admits.some((o) => o.targets.length > 0);
-        report(ok, 'm4a3.checkpoint-targets.admit', `decision=${out.decision} admits=${JSON.stringify(admits.map((o) => ({ unit: o.unit.id, targets: o.targets })))}`);
-        return ok;
-      } catch (e) {
-        report(false, 'm4a3.checkpoint-targets.validate', e instanceof Error ? e.message : String(e));
-        return false;
-      }
-    });
+  const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({target: {kind: 'full', doc: {path: repoPath('SPEC.md'), text: buildSpec}}, intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], systemNotes: [], notes: [],
+    spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], index: MINI_INDEX, method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [unitLane], suiteLanes: [],
+    evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
   });
 
   // (4) roadmap witness-check over a real node --test run with the node-test witness reporter.
@@ -786,9 +730,9 @@ async function main(): Promise<void> {
     report(u !== null && u.check === 'ok', 'gate.bounded.cost-check', `total_cost_usd=${u?.totalUsd ?? null} per-model sum=${u === null ? null : Object.values(u.byModel).reduce((a, m) => a + m.costUsd, 0)}`);
   });
 
-  // dev.13: one real walkthrough through the production walk job (src/walk/walk.ts), as an arc runs it: u1 merges through the
+  // dev.13: one real experience verdict through the production walk job (src/walk/walk.ts), as an arc runs it: u1 merges through the
   // fakes, then walk-1 brings up a two-step CLI product (setup, no serve entry: nothing long-lived) and the real claude (the
-  // fake's `real` act) walks its two shell journeys on the walkthrough seat (frontier) with the acting-judge argv. Graded
+  // fake's `real` act) walks its two shell journeys on the experience verdict seat with the acting-judge argv. Graded
   // on the contract only: the report validates (schema and the walk's own checks, so every cited evidence file exists in
   // the evidence dir), the session had a shell and no MCP server, its final report ended it, and nothing is left behind
   // (no open intent, no checkout, no live process of the arc). What it found is printed, not graded (the role evals judge).
@@ -814,7 +758,7 @@ async function main(): Promise<void> {
         const out = await runWalk(ctx);
         const view = r.journal.view;
         const ended = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'walk-ended');
-        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'walkthrough');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict');
         const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
         const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
         const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');
@@ -836,7 +780,7 @@ async function main(): Promise<void> {
     }
   });
 
-  // dev.13 agent D: one real polish judge through the production compare job (src/walk/compare.ts) on two tiny instances of
+  // dev.13 agent D: one real experience comparison through the production compare job (src/walk/compare.ts) on two tiny instances of
   // the greeter: before, the integration tip (GET / answers 500: no greeting); after, the polish unit tw-keep, which
   // configures the greeting and says so in the design reference. Everything before the judge runs on the fakes. Graded on
   // the contract only (the answer validates and is recorded, a shell and no MCP server, its final answer ended it, both
@@ -851,7 +795,7 @@ async function main(): Promise<void> {
     const r = contextFor(d);
     try {
       const { ctx, w } = walkContext(r);
-      const h = holisticContexts(w).checkpoint;
+      const h = holisticContexts(w).revision;
       const tick = setInterval(() => w.arbiter.wake(), 50);
       try {
         const merged = await runUnit(w.stage, unitInForce(r, 'u1'), () => Promise.resolve(true));
@@ -866,7 +810,7 @@ async function main(): Promise<void> {
         const out = await runCompare(h);
         const view = r.journal.view;
         const started = view.walkFacts().map((x) => x.fact).find((f) => f.kind === 'compare-started');
-        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'polishJudge');
+        const spawn = view.opsOf('proc.spawn').find((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict');
         const inv = spawn === undefined ? null : invocationId(spawn.op, spawn.ordinal);
         const invDir = inv === null ? null : invocationDir(r.ctx.runDir, inv);
         const exit = inv === null || invDir === null ? null : runnerFiles(invDir, inv).read('exit.json');

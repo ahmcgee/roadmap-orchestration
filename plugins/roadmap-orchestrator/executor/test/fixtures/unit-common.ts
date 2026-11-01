@@ -19,12 +19,12 @@ import type { CommandBody,RevisionManifest } from '../../src/core/records.ts';
 import { type AbsPath,absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
 import { inForceFiles,readInputFiles,revisionManifestOf } from '../../src/input/inforce.ts';
-import { type PlanUnit,parsePlan } from '../../src/input/plan.ts';
+import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
 import { backendEnv } from '../../src/preflight/smoke.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { type RepoConfig,arcStack,parseRepoConfig,resolveRouting } from '../../src/routing/layers.ts';
+import { type RepoConfig, planStack, resolveRouting } from '../../src/routing/layers.ts';
 import type { ArcRoleSet,RiskTier } from '../../src/routing/types.ts';
 import { makeRepo,revParse,tmpDir } from '../helpers/repo.ts';
 import { type CallRecord,type ClaudeAct,type CodexAct,type Expect,type Step,writeScenario } from '../helpers/scenario.ts';
@@ -119,7 +119,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
     worktreeRoot: tmpDir('unit-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
     direction: 'Keep it small.', suite: { lanes: (opts.suite ?? [SUITE_LANE]).map(laneJson) }, resources: [],
     units: units.map((u) => ({
-      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', systems: (u.systems ?? Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1)).map((s) => systemName(s)), resources: [], ...(u.after === undefined ? {} : { after: u.after }),
+      ...(opts.steps.some((s) => s.review && (s.unit === undefined || s.unit === u.id)) ? {review: 'always'} : {}), id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', systems: (u.systems ?? Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1)).map((s) => systemName(s)), resources: [], ...(u.after === undefined ? {} : { after: u.after }),
     })),
   }));
   const scenarioDir = tmpDir('unit-scenario');
@@ -142,7 +142,7 @@ export function contextFor(d: ArcDescriptor): ArcRun {
   if (journal.view.planApplied() === null) {
     recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null, d.arcRoles ?? 'm4b');
   }
-  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, null), arcRoles: d.arcRoles ?? 'm4b' });
+  const routing = resolveRouting(planStack('default', d.config ?? null, plan, d.arcRoles ?? 'm4b'));
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
@@ -209,12 +209,13 @@ const GATE: Expect = {
 };
 
 export type GateAnswer = Readonly<{
+  reasons?: readonly string[];
   decision: 'approve' | 'revise' | 'escalate';
   ordering?: Readonly<{ blockers: readonly string[] }> | null;
   directives?: readonly string[];
   findings?: readonly JsonValue[];
   premises?: readonly JsonValue[];
-  unreviewed?: readonly JsonValue[];
+  standing?: readonly JsonValue[];
   clusters?: readonly JsonValue[] | null;
   /** dev.17: the rulings on the disputes the gate was given; default none. */
   rulings?: readonly JsonValue[];
@@ -235,13 +236,13 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
  */
 const dev17Finding = (f: JsonValue): JsonValue => {
   const o = f as Readonly<Record<string, JsonValue>>;
-  return { defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
+  return { evidence: [typeof o['path'] === 'string' ? `${o['path']}:1` : 'fixture:1'], defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
 };
 
 const gateAnswer = (a: GateAnswer): JsonValue => ({
   rulings: [...(a.rulings ?? [])],
-  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null,
+  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: [...(a.reasons ?? ['A1 holds'])], premises: [...(a.premises ?? [])],
+  standing: [...(a.standing ?? [])], clusters: a.clusters ?? null,
 }) as JsonValue;
 
 /**
@@ -261,12 +262,12 @@ export function gateRepairStep(a: GateAnswer, stdinContains: readonly string[] =
 
 /** A gate call: a Claude judgment whose schema is the gate's (the one with directives), whatever its prompt module. */
 export function isGateCall(c: CallRecord): boolean {
-  return c.as === 'claude' && (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"directives"');
+  return c.as === 'claude' && c.cwd.includes('.gate-') && (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"directives"');
 }
 
-/** dev.17: a plan-check call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
+/** dev.17: a pre-build call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
 export function isPlanCheckCall(c: CallRecord): boolean {
-  return c.as === 'claude' && (c.argv[c.argv.indexOf('--tools') + 1] ?? '').includes('WebSearch');
+  return c.as === 'claude' && c.stdin.includes('<mode>pre-build</mode>');
 }
 
 /** A Codex implementer round: `acts`, then the report. */
@@ -281,6 +282,11 @@ export function mulBuild(extra: Readonly<Record<string, string>> = {}, acts: rea
 
 /** Appends steps to the arc's scenario before any call: for steps that name the run dir, known only once laid out. */
 export function appendSteps(d: ArcDescriptor, steps: readonly Step[]): void {
+  if (steps.some((s) => s.review)) {
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as {units: {id: string; review?: string}[]};
+    for (const unit of plan.units) if (steps.some((s) => s.review && (s.unit === undefined || s.unit === unit.id))) unit.review = 'always';
+    writeFileSync(d.planPath, JSON.stringify(plan));
+  }
   const file = JSON.parse(readFileSync(d.scenarioPath, 'utf8')) as { steps: Step[] };
   file.steps.push(...steps);
   writeFileSync(d.scenarioPath, `${JSON.stringify(file, null, 2)}\n`);

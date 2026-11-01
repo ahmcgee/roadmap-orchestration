@@ -1,8 +1,8 @@
-// The executable checks before the gate (M4a rev 3, D1 witness presence, D2 mutation smoke, E plan-check shape) over
+// The executable checks before the gate (M4a rev 3, D1 witness presence, D2 mutation smoke, E pre-build shape) over
 // corpus-unit's arc: u1 adds `mul` in a corpus arc whose one obligation I-1 (at T-1) is witnessed on the fake `journey`
 // lane, scripted per tree through the arc's control file (`scriptTree`). Options shape I-1 (activation, deliverers, test
 // ids), what u1's spec declares (I-1, witness items), the journey lane (testPaths, a wrapper argv), u1's risk and the
-// plan (more units, known defects, the plan-check shape).
+// plan (more units, known defects, the pre-build shape).
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
@@ -51,7 +51,7 @@ export type ChecksOptions = Readonly<{
   trees?: Readonly<Record<string, TreePlan>>;
   /** More units, each a copy of u1's spec with its own id (the plan gains them after u1). */
   more?: readonly string[];
-  /** Edits of the plan JSON (known defects, the plan-check shape), after everything else. */
+  /** Edits of the plan JSON (known defects, the pre-build shape), after everything else. */
   plan?: (p: Json & { units: Json[] }) => void;
 }>;
 

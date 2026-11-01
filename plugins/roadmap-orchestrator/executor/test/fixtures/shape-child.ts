@@ -1,4 +1,4 @@
-// A child executor for the plan-check shape crash tests (test/plancheck-shape.test.ts): argv <ArcDescriptor json> <unit>.
+// A child executor for the pre-build shape crash tests (test/plancheck-shape.test.ts): argv <ArcDescriptor json> <unit>.
 // As unit-child, but the routing's plan layer comes from ROADMAP_TEST_ROUTING_LAYER (JSON; absent: none), so a medium
 // unit's builder can be a frontier one. Runs the unit driver to its end and prints the result as JSON.
 import { resolveRouting } from '../../src/routing/layers.ts';

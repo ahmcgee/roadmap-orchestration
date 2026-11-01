@@ -313,7 +313,7 @@ describe('incremental snapshots', () => {
     const next = openArc(r.runDir);
     next.done(spawn.op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(result)), summary: { type: 'backend', outcome: 'success' } }, null);
     const spec = keepInput(r.runDir, Buffer.from('{"new":"spec"}\n'), SPEC_INPUT);
-    next.fact({ kind: 'judgment-inputs', unit: UNIT, stage: 'plan-check', attempt: 1, tip: sha('b'.repeat(40)), head: null, specRev: specRev(2), specSha256: spec, planRev: planRev(1), routingRev: routingRev('0123456789abcdef') });
+    next.fact({ kind: 'judgment-inputs', unit: UNIT, stage: 'pre-build', attempt: 1, tip: sha('b'.repeat(40)), head: null, specRev: specRev(2), specSha256: spec, planRev: planRev(1), routingRev: routingRev('0123456789abcdef') });
     const startPath = join(r.runDir, 'start.json');
     const start = JSON.parse(readFileSync(startPath, 'utf8'));
     writeFileSync(startPath, JSON.stringify({ ...start, generation: 2 }) + '\n');

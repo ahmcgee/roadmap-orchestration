@@ -2,22 +2,20 @@
 // store: `finding-opened` and `finding-transition` facts, folded into `HolisticFold.findings` (src/core/state.ts). This
 // module decides what is written and derives everything else from the fold.
 //
-// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s and plan-check (R17). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
+// - **Opening and dedupe.** Openers: an audit's lenses, code's witness P1s and pre-build (R17). `key = findingKey(lens, obligation, cause)`. A key matching an active finding (open, owned,
 //   fixed-on-branch) merges into it: nothing is written. A key matching a finding ruled `dismissed` is suppressed unless
 //   a cited evidence blob changed (a path both cite, with a different blob): a dismissal lasts the arc's lifetime (the
 //   growth control is its scope: the arc's own log, never carried into the next arc); one matching a finding ruled
 //   `released` (dev.13) is suppressed whatever its evidence. A vacuity finding's mutant patch
 //   is made at admission and kept content-addressed first (`admitMutant`: the lens's edits made a patch by git,
 //   `editsPatch`, or a recorded pre-M4b patch syntax-checked, `checkPatch`; then `keepMutantPatch`,
-//   `inputs/<sha256>.patch`), so its fact names kept bytes; a mutant that cannot be made refuses the draft (H6). Within one
-//   audit, a second lens's draft with an equal `crossKey` corroborates the first (`corroborateFinding`, H7).
+//   `inputs/<sha256>.patch`), so its fact names kept bytes; a mutant that cannot be made refuses the draft.
 // - **States (R5).** `open → owned → fixed-on-branch → resolved`, or `ruled`. Ownership follows the units that repair a
 //   finding (`ownershipMoves`, driven by src/pipeline/reproduce.ts `syncRepairs`): the first live unit whose spec
 //   repairs it owns it; its gate's approval standing makes it `fixed-on-branch`; its publication resolves it. A
 //   `witness` P1 is also resolved by any unit repairing its obligation that publishes after it opened (the brake proved
-//   the obligation held with integrated evidence). Ruling a finding is `ruleFinding`: P1s never bank (a checkpoint may
-//   only dismiss one; deferring, accepting or releasing it takes a disposition ruling). dev.13: what a checkpoint's
-//   dispositions become when applied, and which findings code releases then, is src/holistic/tail.ts.
+//   the obligation held with integrated evidence). Root disposition rulings and close-out govern `ruleFinding`;
+//   P1s never bank.
 // - **Blocking (G10).** An active P1 over an obligation a candidate selects blocks it, unless the unit's spec repairs
 //   that obligation (`p1Blocking`): at admission (src/schedule/ready.ts), before green and before the ff
 //   (src/pipeline/integrate.ts `findingBlocking`).
@@ -28,12 +26,10 @@
 //   and its item loses nothing.
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
 //   timeToResolveMs}`, over the log's events (their times).
-import { isAbsolute } from 'node:path';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+
+import { canonicalJson } from '../core/json.ts';
 import type { Event, HolisticFact, Parent } from '../core/events.ts';
-import {
-  type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds, sha256,
-} from '../core/ids.ts';
+import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -44,16 +40,13 @@ import { checkPatch } from '../git/patchcheck.ts';
 import { keepInput } from '../input/inforce.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
-import {
-  type FindingDisposition, type FindingEvidence, type FindingLens, type FindingRuledBy, type FindingSeverity, type FindingSource, type FindingStateName,
-  type FindingTo, type LensKind, FINDING_MOVES, findingKey,
-} from './types.ts';
+import { type FindingDisposition, type FindingEvidence, type FindingLens, type FindingRuledBy, type FindingSeverity, type FindingStateName, type FindingTo, FINDING_MOVES, findingKey } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Opening and dedupe
 
 /**
- * A finding before its id and key: what a lens, code over a witness, or plan-check (R17) reports. `cause` feeds the key
+ * A finding before its id and key: what a lens, code over a witness, or pre-build (R17) reports. `cause` feeds the key
  * and is not recorded. A vacuity finding's mutant patch is already kept (`keepMutantPatch`).
  */
 export type FindingDraft = Omit<Extract<HolisticFact, { kind: 'finding-opened' }>, 'kind' | 'id' | 'key'> & Readonly<{ cause: string }>;
@@ -123,7 +116,7 @@ export type FindingOpen = Readonly<{ kind: 'opened' | 'merged'; id: FindingId }>
 
 /**
  * Opens a finding from `draft` (a `finding-opened` fact with the next id), or merges or suppresses it (nothing written).
- * The one store every opener uses (audits, code's witness P1s, plan-check, the checkpoint).
+ * The one store every opener uses (audits, code's witness P1s, pre-build, the checkpoint).
  */
 export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen {
   const key = findingKey(draft.lens, draft.obligation, draft.cause);
@@ -134,25 +127,6 @@ export function openFinding(journal: Journal, draft: FindingDraft): FindingOpen 
   // dev.13: a walkthrough finding keeps its cause, which the next walk is shown (so it re-reports the defect alike).
   journal.fact({ kind: 'finding-opened', id, key, ...fields, visionClauses: canonicalIds(draft.visionClauses), ...(draft.lens === 'walkthrough' ? { cause } : {}) });
   return { kind: 'opened', id };
-}
-
-/**
- * The cross-lens key of a draft (H7, R62): its repo evidence paths (relative ones; absolute and evidence-dir paths are
- * not the product's), sorted and once each, its obligation and its cause; the lens is left out. Within one audit, a
- * second lens's draft with an equal key is the same defect (src/holistic/audit.ts); across audits `findingKey` dedupes.
- */
-export function crossKey(draft: FindingDraft): Sha256Hex {
-  const paths = [...new Set(draft.evidence.map((e) => e.path).filter((p) => !isAbsolute(p)))].sort();
-  return sha256(sha256Hex(canonicalJson({ paths, obligation: draft.obligation, cause: draft.cause })));
-}
-
-/**
- * Records that `lens` saw finding `id` too (`finding-corroborated`, keeping its claim as the rationale), once: a resumed
- * audit asking the same lens again writes nothing new.
- */
-export function corroborateFinding(journal: Journal, id: FindingId, lens: LensKind, claim: string): void {
-  if (journal.view.holistic().corroborations.some((c) => c.id === id && c.lens === lens && c.claim === claim)) return;
-  journal.fact({ kind: 'finding-corroborated', id, lens, claim });
 }
 
 /**
@@ -167,17 +141,6 @@ export function witnessFindingDraft(input: Readonly<{
     cause: 'witness not held', evidence: input.evidence, mutant: null, source: { type: 'job', job: input.job }, gateHadPassed: input.gateHadPassed,
   };
 }
-
-/** Plan-check's vision conflict (R17): a P3 for the checkpoint, never a redirect by itself. */
-export function visionConflictDraft(input: Readonly<{
-  unit: UnitId; attempt: number; clauses: readonly VisionClauseId[]; note: string;
-}>): FindingDraft {
-  return {
-    lens: 'plan-check', severity: 'P3', obligation: null, visionClauses: input.clauses, claim: input.note, cause: `${input.unit}: ${input.note}`,
-    evidence: [], mutant: null, source: { type: 'stage', unit: input.unit, stage: 'plan-check', attempt: input.attempt }, gateHadPassed: false,
-  };
-}
-
 
 // ---------------------------------------------------------------------------------------------------
 // Ruling

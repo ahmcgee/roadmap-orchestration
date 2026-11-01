@@ -1,3 +1,8 @@
+import { appliedRevisions } from '../holistic/coverage.ts';
+import { arcScopeOf, provenanceStack, resolveRouting } from '../routing/layers.ts';
+import { hasMilestones } from '../input/plan.ts';
+import { claudeBuilderRouting } from '../routing/eligibility.ts';
+import { proofNotLocal, diagnosed } from './surface.ts';
 // Dispatch: who acts for a unit, on which seat, under which pinned authority, and the backend call that
 // puts them to work (plan "Authority", R2; DESIGN-1.0.md §4 Independence, Actors are roles).
 //
@@ -53,7 +58,7 @@ STDOUT_FILE,
 boundsOfRecord,
 } from '../core/records.ts';
 import type { SpecState } from '../core/state.ts';
-import { type AbsPath,type BranchName,type IsoTime,type RefName,type RepoPattern,absPath,branchName,isoTimeOf,refName } from '../core/values.ts';
+import { type AbsPath, type BranchName, type IsoTime, type RefName, absPath, branchName, isoTimeOf, refName } from '../core/values.ts';
 import { type RoutingBase,inputPath,keepInput } from '../input/inforce.ts';
 import { type PlanUnit,boundsOf } from '../input/plan.ts';
 import { routingChangedRecommendation } from '../needsuser.ts';
@@ -96,7 +101,7 @@ export type StageContext = ResourceContext & Readonly<{
   planDir: AbsPath;
   /**
    * The plan file and the arc's routing base (profile, repo config, arc roles): what a stage needs to evaluate a proposal
-   * through the apply core (`evaluateRevision`; 2026-10-15, a plan-check redirect's patch).
+   * through the apply core (`evaluateRevision`; 2026-10-15, a pre-build redirect's patch).
    */
   planFile: AbsPath;
   routingBase: RoutingBase;
@@ -193,22 +198,14 @@ export function buildStarted(view: JournalView, unit: UnitId): boolean {
  * `record` re-pinned under `routing` (a new dispatch fact, same scope and floor) when the unit can absorb the
  * change: no build has started for it, or the seat it builds on (`build.<buildTier>`) keeps its session key (R4: an
  * effort-only change is absorbed, and the session resumes with the new effort); null when it cannot. On the floor the
- * seat is the pinned `implementerSeatRev` (`seatTripleOf`). TEMPORARY SCAFFOLDING (dev.17 routing, src/core/upgrade.ts):
- * when the pinned rev is the routing in force's stack under dev.16's built-in seats (`preDev17Rev`: a release upgrade,
- * not an owner edit) and the floor is unchanged, the unit is re-pinned keeping its pinned seat, which
- * it builds on through to its merge (`implementerSeatKept`). Delete once no dev.16 arc is in flight. An escalated unit (A11) no longer
- * builds on its floor, so a change there is absorbed; its `build.high` seat is not pinned, and its session
+ * seat is the pinned `implementerSeatRev` (`seatTripleOf`). An escalated unit no longer builds on its floor, so a change
+ * there is absorbed; its session
  * resumes only under the routing it ran on (rounds.ts `spawnSeatRev`), else a fresh one is told the worktree
  * holds the work. The stages call it when the rev in force differs from the pinned one, and so does
  * `resume <unit>` of a unit parked `routing-changed` (commands/apply.ts).
  */
 export function repin(journal: Journal, routing: ResolvedRouting, record: DispatchRecord, update: PinUpdate = {}): DispatchRecord | null {
-  const seat = routing.table.build[update.riskFloor ?? record.riskFloor];
-  const onFloor = (journal.view.unit(record.unit).buildTier ?? record.riskFloor) === record.riskFloor;
-  const pinnedSeat = seatTripleOf(record.implementerSeatRev);
-  if (onFloor && !sameSession(pinnedSeat, seat) && buildStarted(journal.view, record.unit)) {
-    return null;
-  }
+  if (buildStarted(journal.view, record.unit) && !sameSession(seatTripleOf(record.implementerSeatRev), routing.table.build[update.riskFloor ?? record.riskFloor])) return null;
   return pin(journal, routing, record, update);
 }
 
@@ -247,9 +244,20 @@ const unchanged = (update: PinUpdate): boolean =>
 
 /** `record` under the plan and routing in force: itself when neither changed it; else re-pinned, or the park. */
 function inForce(ctx: StageContext, record: DispatchRecord): Pinned<DispatchRecord> {
-  const routing = ctx.routing(record.unit);
+  const routing = unitRouting(ctx, record.unit);
   const update = pinUpdate(ctx, record);
-  if (record.routingRev === routing.rev && unchanged(update)) return { kind: 'pinned', dispatch: record };
+  const triple = buildTriple(ctx, record.unit, update.riskFloor ?? record.riskFloor);
+  if (record.routingRev === routing.rev && unchanged(update) && record.implementerSeatRev === tripleSeatRev(triple)) return { kind: 'pinned', dispatch: record };
+  if (record.implementerSeatRev !== tripleSeatRev(triple)) {
+    const history = appliedRevisions(ctx).map(({payload}) => ({payload, base: resolveRouting(provenanceStack(payload.routingProvenance, arcScopeOf(ctx.plan()), record.unit, hasMilestones(ctx.plan())))}));
+    const previous = (history.findLast(({base}) => base.rev === record.routingRev) ?? history.findLast(({base}) => [claudeBuilderRouting(base).rev, claudeBuilderRouting(base, ['high']).rev].includes(record.routingRev)))?.payload.routingProvenance;
+    const current = ctx.journal.view.planApplied()?.routingProvenance;
+    const profileChanged = previous !== undefined && current !== undefined && (previous.planLayer?.profile ?? previous.profile) !== (current.planLayer?.profile ?? current.profile);
+    const rootReentry = ctx.journal.view.unit(record.unit).reopened !== null && update.riskFloor !== undefined;
+    const eligibilityChanged = routing.rev !== ctx.routing(record.unit).rev;
+    if (buildStarted(ctx.journal.view, record.unit) && !sameSession(seatTripleOf(record.implementerSeatRev), triple) && !profileChanged && !eligibilityChanged && !rootReentry) return routingChanged(record);
+    return {kind: 'pinned', dispatch: pin(ctx.journal, routing, record, update, tripleSeatRev(triple))};
+  }
   const next = repin(ctx.journal, routing, record, update);
   return next === null ? routingChanged(record) : { kind: 'pinned', dispatch: next };
 }
@@ -275,22 +283,22 @@ export function firstPin(ctx: Pick<StageContext, 'plan' | 'routing'>, unit: Plan
   };
 }
 
-/** The pinned record, which every stage after plan-check requires. */
+/** The pinned record, which every stage after pre-build requires. */
 export function dispatchOf(view: JournalView, unit: UnitId): DispatchRecord {
   const record = view.dispatchOf(unit);
-  if (record === null) throw new Error(`unit ${unit} has no dispatch record: plan-check pins it first`);
+  if (record === null) throw new Error(`unit ${unit} has no dispatch record: pre-build pins it first`);
   return record;
 }
 
 export const riskAbove = (a: RiskTier, b: RiskTier): boolean => RISK_TIERS.indexOf(a) > RISK_TIERS.indexOf(b);
 
 /**
- * A plan-check raised the risk: re-pin with the same scope and the higher floor (a new dispatch fact) at the
+ * A pre-build raised the risk: re-pin with the same scope and the higher floor (a new dispatch fact) at the
  * spec it read, under the routing in force, so the implementer seat's hash is the raised seat's.
  */
 export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskTier, spec: SpecState): DispatchRecord {
   if (!riskAbove(risk, record.riskFloor)) throw new Error(`raiseRisk: ${risk} is not above the floor ${record.riskFloor} of ${record.unit}`);
-  const routing = ctx.routing(record.unit);
+  const routing = unitRouting(ctx, record.unit);
   const next: DispatchRecord = {
     ...record, specRev: spec.rev, specSha256: spec.sha256, riskFloor: risk, routingRev: routing.rev, implementerSeatRev: implementerSeatRev(routing, risk), at: now(),
   };
@@ -307,11 +315,11 @@ export function raiseRisk(ctx: StageContext, record: DispatchRecord, risk: RiskT
  */
 export type JudgmentDispatch =
   | Readonly<{ role: JudgmentRole; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>
-  | Readonly<{ role: 'verifier'; tier: RiskTier; triple: ClaudeTriple; routingRev: RoutingRev }>;
+  | Readonly<{ role: 'verifier'; tier: JudgmentSeat; triple: ClaudeTriple; routingRev: RoutingRev }>;
 /** `seatRev`: the pinned `implementerSeatRev`, the hash of `triple`: a session resumes only on its session key (R4). */
 export type ImplementerDispatch = Readonly<{ role: 'build'; tier: RiskTier; triple: ClaudeTriple | CodexTriple; routingRev: RoutingRev; seatRev: SeatRev }>;
 
-const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
+const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'pre-build': 'verifier', gate: 'verifier' };
 
 /**
  * The seat of a judgment dispatch: the unit's risk, or the escalation seat after a route-up or a risk trigger. A gate passes
@@ -329,21 +337,6 @@ export function judgmentDispatch(ctx: StageContext, unit: UnitId, stage: Judgmen
   return { kind: 'pinned', dispatch: { role, tier, triple, routingRev: pinned.dispatch.routingRev } };
 }
 
-/** dev.17 (design pass): the scaffold writer's seat, `scaffold.<risk floor>` (economy in the built-in seats). */
-export type ScaffoldDispatch = Readonly<{ role: 'scaffold'; tier: RiskTier; triple: ClaudeTriple; routingRev: RoutingRev }>;
-
-/**
- * The scaffold writer's seat at the unit's pinned risk floor. Only an arc of the `dev17` role set has the role in force
- * (plan-check refuses a `scaffold` decision elsewhere: src/pipeline/design.ts), and its seat is Claude by its prompt table.
- */
-export function scaffoldDispatch(ctx: StageContext, unit: UnitId): Pinned<ScaffoldDispatch> {
-  const pinned = inForce(ctx, dispatchOf(ctx.journal.view, unit));
-  if (pinned.kind !== 'pinned') return pinned;
-  const tier = pinned.dispatch.riskFloor;
-  const triple = ctx.routing(unit).table.scaffold[tier];
-  if (triple.backend !== 'claude') throw new Error(`the scaffold seat ${tier} resolves to ${triple.backend}; the scaffold writer is Claude only`);
-  return { kind: 'pinned', dispatch: { role: 'scaffold', tier, triple, routingRev: pinned.dispatch.routingRev } };
-}
 
 /**
  * dev.17: the verifier's seat for a unit's docs-only claim: `verifier.<risk floor>` under the routing in force (the unit's
@@ -360,7 +353,7 @@ export function verifierDispatch(ctx: StageContext, unit: UnitId): Pinned<Judgme
 }
 
 /**
- * The implementer's seat: the unit's build tier (`UnitState.buildTier`), its (possibly plan-check-raised) risk floor, or
+ * The implementer's seat: the unit's build tier (`UnitState.buildTier`), its (possibly pre-build-raised) risk floor, or
  * `high` in a dev.16 arc whose unit an `implementer-escalated` fact moved there (D4, retired in dev.17). On the floor the
  * seat's rev is the pinned `implementerSeatRev`; escalated, it is `build.high`'s under the routing in force.
  */
@@ -376,7 +369,7 @@ export function implementerDispatch(ctx: StageContext, unit: UnitId): Pinned<Imp
  */
 export function steerDispatch(ctx: StageContext, unit: UnitId): ImplementerDispatch {
   const record = dispatchOf(ctx.journal.view, unit);
-  const routing = ctx.routing(unit);
+  const routing = unitRouting(ctx, unit);
   const update = pinUpdate(ctx, record);
   const kept = record.routingRev === routing.rev && unchanged(update);
   return seated(ctx, kept ? record : pin(ctx.journal, routing, record, update));
@@ -387,7 +380,7 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
   const { unit, riskFloor, routingRev, implementerSeatRev: floorSeat } = record;
   const tier = ctx.journal.view.unit(unit).buildTier;
   if (tier === null) throw new Error(`unit ${unit} is dispatched but has no build tier`);
-  const routing = ctx.routing(unit);
+  const routing = unitRouting(ctx, unit);
   if (tier === riskFloor) return { role: 'build', tier, triple: seatTripleOf(floorSeat), routingRev, seatRev: floorSeat };
   return { role: 'build', tier, triple: routing.table.build[tier], routingRev, seatRev: implementerSeatRev(routing, tier) };
 }
@@ -397,8 +390,6 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
 
 export type BackendRequest =
   | Readonly<{ kind: 'judgment'; dispatch: JudgmentDispatch; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
-  /** dev.17 (design pass): the scaffold writer in the unit worktree, a fresh session. */
-  | Readonly<{ kind: 'scaffold'; dispatch: ScaffoldDispatch; session: JudgmentSession }>
   /**
    * `mcpConfig` (dev.13): the `--mcp-config` text of a Claude build in a milestone with a `browser` journey
    * (src/backends/mcp.ts `walkMcpConfig`), kept under the run dir's inputs like an acting judge's; null for none.
@@ -433,13 +424,10 @@ function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, in
   if (r.kind === 'judgment') {
     const { role, triple } = r.dispatch;
     // dev.13 (owner 2026-10-18): the gate judges by acting, with a shell in its own checkout of the unit's tip and no MCP
-    // server; dev.17 (design pass): so does plan-check, in its checkouts, with web search and fetch besides. The docs-only
+    // server; dev.17 (design pass): so does pre-build, in its checkouts, with web search and fetch besides. The docs-only
     // verifier (dev.17) reads.
-    return role === 'verifier'
-      ? { kind: 'claude-judgment', role, triple, session: r.session, schemaText, system: spec.system, evidenceDirs: r.evidenceDirs }
-      : { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs, denyWrites };
+    return { kind: 'claude-acting-judge', role, triple, session: r.session, schemaText, system: spec.system, mcpConfig: null, evidenceDirs: r.evidenceDirs, denyWrites };
   }
-  if (r.kind === 'scaffold') return { kind: 'claude-scaffold', triple: r.dispatch.triple, session: r.session, schemaText, system: spec.system };
   const { triple } = r.dispatch;
   const s = r.session;
   if (triple.backend === 'claude') {
@@ -458,8 +446,6 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
     case 'claude-judgment':
     case 'claude-acting-judge':
       return { ...base, outputPath: stdout, role: c.role, session: c.session };
-    case 'claude-scaffold':
-      return { ...base, outputPath: stdout, role: 'scaffold', session: c.session };
     case 'claude-build':
       return { ...base, outputPath: stdout, role: 'build', session: c.session };
     case 'codex-build':
@@ -536,11 +522,10 @@ export const judgeSystem = (system: string): string => `${system}\n\n${JUDGE_SUB
 export async function callBackend(ctx: StageContext, given: BackendCallSpec): Promise<BackendCallOutcome> {
   let spec = given;
   if (given.request.kind === 'judgment') {
-    // An acting judge's system text (the gate's, dev.13; plan-check's, dev.17) is appended to Claude Code's default prompt,
+    // An acting judge's system text (the gate's, dev.13; pre-build's, dev.17) is appended to Claude Code's default prompt,
     // which names its `--add-dir` dirs itself; the docs-only verifier's (dev.17, a read-only judgment) replaces it.
-    const { system, evidenceDirs } = given.request.dispatch.role === 'verifier'
-      ? judgmentSurface(ctx, judgeSystem(given.system), given.request.evidenceDirs)
-      : { system: judgeSystem(given.system), evidenceDirs: judgmentReadDirs(ctx, given.request.evidenceDirs) };
+    const system = judgeSystem(given.system);
+    const evidenceDirs = judgmentReadDirs(ctx, given.request.evidenceDirs);
     spec = { ...given, system, request: { ...given.request, evidenceDirs } };
   }
   const r = spec.request;
@@ -550,7 +535,7 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
   const mcpConfig = r.kind === 'implementer' && r.mcpConfig !== null ? inputFile(ctx.runDir, r.mcpConfig, MCP_CONFIG_INPUT) : null;
   // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
-  // dev.13: the gate (and, dev.17, plan-check) writes only in its own checkout (its cwd); its file-writing tools are denied the
+  // dev.13: the gate (and, dev.17, pre-build) writes only in its own checkout (its cwd); its file-writing tools are denied the
   // repository and the run dir.
   const denyWrites = r.kind === 'judgment' ? actingWriteDenials(ctx, [spec.cwd]) : [];
   const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir, mcpConfig, denyWrites), spec.rendered), 'prompt.txt');
@@ -627,7 +612,7 @@ export function isRepairTurnOf(runDir: AbsPath, inv: InvocationId, of: Invocatio
 }
 
 /**
- * The judgment repair turn (dev.12, one for every judgment role; 2026-10-15 plan-check and the checkpoint): an answer the
+ * The judgment repair turn (dev.12, one for every judgment role; 2026-10-15 pre-build and the checkpoint): an answer the
  * executor refuses (off its schema, or refused by the role's own validator) goes back once, in its own session, resumed,
  * with every reason (`judgmentRepairDirective`), the call's own schema and in its own cwd (a resumed Claude session is
  * found by its cwd, so the caller makes that checkout again first when it removed it). The repair turn's answer is the
@@ -975,3 +960,18 @@ export async function runPrepared<K extends OpKind, R>(
 export async function runOp<K extends OpKind, R>(journal: Journal, op: StageOp<K, R>, key: string, parent: Parent, request: R): Promise<IntentOf<K>> {
   return runPrepared(journal, op, key, parent, await op.prepare(request));
 }
+
+/** Default's single eligibility rule. M1 and executor UI captures do not exclude Codex. */
+export function unitRouting(ctx: StageContext, id: UnitId): ResolvedRouting {
+  const routing = ctx.routing(id);
+  const unit = ctx.plan().units.find((u) => u.id === id);
+  if (unit === undefined) throw new Error(`unknown build unit ${id}`);
+  const design = ctx.plan().milestones?.some((m) => m.design !== undefined && 'unit' in m.design && m.design.unit === id) ?? false;
+  return design || proofNotLocal(ctx, unit) || diagnosed(ctx.journal.view, id)
+    ? claudeBuilderRouting(routing) : unit.risk === 'high' || ctx.journal.view.dispatchOf(id)?.riskFloor === 'high' ? claudeBuilderRouting(routing, ['high']) : routing;
+}
+export function buildTriple(ctx: StageContext, id: UnitId, risk: RiskTier): Triple {
+  return unitRouting(ctx, id).table.build[risk];
+}
+
+export const interruptedCall = (called: BackendCallOutcome): boolean => called.kind === 'result' && called.result.outcome.kind === 'cancelled';

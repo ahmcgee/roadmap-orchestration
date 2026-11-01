@@ -272,7 +272,7 @@ export function withRecoveryHolds(
 
 /** Whether the restart consumes `unit`'s open attempt from its backend call (src/pipeline/unit.ts `consumeRecorded`). */
 function consumable(run: OracleRun, unit: string, stage: string, attempt: number): boolean {
-  if (!['plan-check', 'build', 'gate'].includes(stage)) return false;
+  if (!['pre-build', 'build', 'gate'].includes(stage)) return false;
   const key = canonicalJson({ type: 'stage', unit, stage, attempt });
   const spawn = run.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && canonicalJson(i.parent) === key).at(-1);
   if (spawn === undefined) return false;

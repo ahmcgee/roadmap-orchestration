@@ -24,7 +24,7 @@ import {
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
-const PRE_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const PRE_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const MERGED = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
@@ -133,7 +133,7 @@ describe('I3: the build answer schema', () => {
       const schema = schemaOf(build!) as unknown as JsonSchema;
       assert.equal(Object.hasOwn(schema.properties, 'lanesRun'), false);
       assert.equal(schema.required?.includes('lanesRun'), false);
-      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'changedPaths', 'docsOnlySince', 'experiments', 'final', 'summary']);
+      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'experiments', 'final', 'grounding', 'notes', 'summary', 'tooBig']);
       const experiments = schema.properties['experiments']!;
       assert.deepEqual(Object.keys(experiments.items.properties).sort(), ['argv', 'exit', 'name']);
       assert.ok(schema.required?.includes('experiments'), 'experiments is required');
@@ -150,7 +150,7 @@ describe('I3: the build answer schema', () => {
     const r = contextFor(d);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'build');
-      assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:success']);
+      assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:success']);
     } finally {
       r.journal.close();
     }
@@ -192,9 +192,9 @@ describe('I3: the build answer schema', () => {
     const r = contextFor(d);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'build');
-      assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:malformed'], 'the deleted legacy report form is refused');
+      assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:malformed'], 'the deleted legacy report form is refused');
       await stepUntil(r, 'u1', (f) => f.stage === 'lanes');
-      assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:malformed', ...PRE_LANES.slice(1), 'lanes:red']);
+      assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:malformed', ...PRE_LANES.slice(1), 'lanes:red']);
       assert.equal(r.journal.view.unit(U1).counters.unchargedLanesReds, 1);
       assert.equal(r.journal.view.unit(U1).approval, null);
     } finally {

@@ -74,7 +74,7 @@ export const moduleFiles = (name: string, op: string): Readonly<Record<string, s
   [`test/${name}.test.js`]: `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { ${name} } from '../src/${name}.js';\n\ntest('${name}', () => {\n  assert.equal(typeof ${name}(6, 3), 'number');\n});\n`,
 });
 
-/** The steps that take `unit` through plan-check, a build committing `files` and an approving gate. */
+/** The steps that take `unit` through pre-build, a build committing `files` and an approving gate. */
 export function unitSteps(unit: string, files: Readonly<Record<string, string>>, gate: Readonly<{ clusters?: readonly JsonValue[] | null }> = {}): readonly Step[] {
   return [
     { ...planCheckStep({ decision: 'approve' }), unit },

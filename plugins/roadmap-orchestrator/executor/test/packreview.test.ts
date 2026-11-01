@@ -190,7 +190,7 @@ describe('the hold before the first admission (K14, H9)', () => {
     const x = await arcWith([packReviewStep('review-1'), { ...planCheckStep({ decision: 'approve' }), unit: 'u1' }]);
     try {
       assert.equal((await runPackReview(x.ctx)).kind, 'ended');
-      await stepTo(followContext(x.r), 'u1', (f) => f.stage === 'plan-check');
+      await stepTo(followContext(x.r), 'u1', (f) => f.stage === 'pre-build');
       await x.editPack('A new direction after the first admission.');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'none' });
       assert.equal(packReviewPending(x.ctx), false);

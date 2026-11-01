@@ -41,13 +41,13 @@ export function related(entry: Entry, display: Display | null): Related[] {
         description: 'Recorded replacement lineage. Open this version’s status, specification and activity; it is not a prerequisite edge.', target: { type: 'entry', entry: target } });
     }
     const latest = (role: string) => display.invocations.filter((inv) => inv.unit === unit && inv.role === role).sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-    const planner = latest('planCheck'); const builder = latest('build');
+    const planner = latest('verifier'); const builder = latest('build');
     if (planner) {
       const initial = originalInput(planner, display);
       const input = initial ?? planner;
-      rows.push({ id: `input:${input.id}`, label: `Plan-check ${input.inputKind === 'repair' ? 'repair prompt' : 'input'} · attempt ${input.attempt}`, description: input.inputKind === 'repair' ? 'Correction prompt for a refused answer; the original input is unavailable.' : 'The original retained prompt asking the planner to assess and design this unit.', target: { type: 'log', inv: input.id, source: 'prompt' } });
-      if (initial) rows.push({ id: `input:${planner.id}`, label: `Plan-check repair prompt · attempt ${planner.attempt}`, description: 'The executor asked this resumed turn to correct a refused answer. See Result for its response.', target: { type: 'log', inv: planner.id, source: 'prompt' } });
-      rows.push({ id: `result:${planner.id}`, label: `Plan-check result · attempt ${planner.attempt}`, description: 'Open the recorded planning decision, reasons and proposed design.', target: { type: 'log', inv: planner.id, source: 'result' } });
+      rows.push({ id: `input:${input.id}`, label: `Verifier ${input.inputKind === 'repair' ? 'repair prompt' : 'input'} · attempt ${input.attempt}`, description: input.inputKind === 'repair' ? 'Correction prompt for a refused answer; the original input is unavailable.' : 'The original retained prompt asking the verifier to review this unit.', target: { type: 'log', inv: input.id, source: 'prompt' } });
+      if (initial) rows.push({ id: `input:${planner.id}`, label: `Verifier repair prompt · attempt ${planner.attempt}`, description: 'The executor asked this resumed turn to correct a refused answer. See Result for its response.', target: { type: 'log', inv: planner.id, source: 'prompt' } });
+      rows.push({ id: `result:${planner.id}`, label: `Verifier result · attempt ${planner.attempt}`, description: 'Open the recorded verifier decision, findings and evidence.', target: { type: 'log', inv: planner.id, source: 'result' } });
     }
     if (builder) rows.push({ id: `messages:${builder.id}`, label: `Build transcript · attempt ${builder.attempt}`, description: 'Open the latest recorded build invocation and its messages.', target: { type: 'log', inv: builder.id, source: 'transcript' } });
   }

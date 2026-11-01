@@ -7,7 +7,7 @@ import {
 } from './ids.ts';
 import { type Pinned, type SpecPin, UNPINNED, specPin } from './pins.ts';
 import { type RepoPath, repoPath } from './values.ts';
-import { type Read, Fields, SchemaError, arrayOf, assertUnique, literal, object, oneOf, positive, sortedBy, str, tagged } from './validate.ts';
+import { type Read, Fields, SchemaError, arrayOf, assertUnique, literal, object, positive, sortedBy, tagged } from './validate.ts';
 
 /**
  * What a revision changed that links name: a requirement whose normative rev rose (`from` → `to`), a contract a ruling's
@@ -28,7 +28,7 @@ export type StaleCause =
 export type SpecLinkTarget = Readonly<{ type: 'requirement'; id: ObligationId }> | Readonly<{ type: 'contract'; path: RepoPath }>;
 
 /**
- * A link a revision left stale. The unit links (`spec`, `failure-mode`, `interface`) are an unmerged unit's: its plan-check
+ * A link a revision left stale. The unit links (`spec`, `failure-mode`, `interface`) are an unmerged unit's: its pre-build
  * updates or confirms each (`staleLinkKey` names it there). `obligation`: an obligation serving a changed vision clause that
  * the revision did not revise (the checkpoint's to reconcile; a vision revision triggers a drift audit). `witness`: merged
  * artifacts, the declared witness files of an obligation the change reaches, which a propagation unit re-witnesses.
@@ -40,19 +40,16 @@ export type StaleLink =
   | Readonly<{ type: 'obligation'; obligation: ObligationId; cause: Extract<StaleCause, { type: 'vision-clause' }> }>
   | Readonly<{ type: 'witness'; obligation: ObligationId; files: readonly RepoPath[]; cause: Exclude<StaleCause, { type: 'vision-clause' }> }>;
 
-/** The links of one unit, which its plan-check answers. */
+/** The links of one unit, which its pre-build answers. */
 export type UnitStaleLink = Extract<StaleLink, { unit: UnitId }>;
 
 /** A revision's stale set: its targets (non-empty) and the links they leave stale, transitively. */
 export type StaleSet = Readonly<{ targets: readonly StaleTarget[]; links: readonly StaleLink[] }>;
 
 /**
- * How a unit's plan-check answered one of its stale links (`staleLinkKey`): `updated` (its redirect's patch changes the spec
+ * How a unit's pre-build answered one of its stale links (`staleLinkKey`): `updated` (its redirect's patch changes the spec
  * to the change) or `confirmed` (the spec holds as written under the change), with why.
  */
-export const STALE_OUTCOMES = ['updated', 'confirmed'] as const;
-export type StaleOutcome = (typeof STALE_OUTCOMES)[number];
-export type StaleAnswer = Readonly<{ link: string; outcome: StaleOutcome; reason: string }>;
 
 /** What a propagation unit re-witnesses: a changed requirement at its new rev, or a changed contract. */
 export type PropagationTarget = Readonly<{ type: 'requirement'; id: ObligationId; rev: number }> | Readonly<{ type: 'contract'; path: RepoPath }>;
@@ -60,7 +57,7 @@ export type PropagationTarget = Readonly<{ type: 'requirement'; id: ObligationId
 /** A cause's identity text (`pinTarget`'s form). */
 export const causeKey = (c: StaleCause | SpecLinkTarget | PropagationTarget): string => (c.type === 'contract' ? `contract:${c.path}` : `${c.type}:${c.id}`);
 
-/** The key a unit's plan-check answers a stale link of it by: unique among the unit's links. */
+/** The key a unit's pre-build answers a stale link of it by: unique among the unit's links. */
 export function staleLinkKey(l: UnitStaleLink): string {
   switch (l.type) {
     case 'spec':
@@ -72,7 +69,7 @@ export function staleLinkKey(l: UnitStaleLink): string {
   }
 }
 
-/** Whether a stale link is a unit's (plan-check answers it). */
+/** Whether a stale link is a unit's (pre-build answers it). */
 export const isUnitLink = (l: StaleLink): l is UnitStaleLink => l.type === 'spec' || l.type === 'failure-mode' || l.type === 'interface';
 
 const oid: Read<ObligationId> = (v, p) => obligationId(v, p);
@@ -137,8 +134,6 @@ export function staleSetFields(f: Fields): StaleSet {
   return out;
 }
 export const staleSet: Read<StaleSet> = object(staleSetFields);
-
-export const staleAnswer: Read<StaleAnswer> = object((f) => ({ link: f.get('link', str), outcome: f.get('outcome', oneOf(STALE_OUTCOMES)), reason: f.get('reason', str) }));
 
 export const propagationTarget: Read<PropagationTarget> = tagged<PropagationTarget['type'], PropagationTarget>('type', {
   requirement: object((f) => ({ type: f.get('type', literal('requirement')), id: f.get('id', oid), rev: f.get('rev', positive) })),

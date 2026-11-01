@@ -5,7 +5,7 @@
 // prepended, and every build step ends with the implementer's report.
 //
 //   {"steps": [
-//     {"role": "planCheck", "answer": <plan-check output>},
+//     {"role": "verifier", "answer": <pre-build annotation>},
 //     {"role": "build", "round": "fresh" | "resume", "acts": [<world acts>], "stdinContains"?: [...]},
 //     {"role": "gate", "answer": <gate output>, "stdinContains"?: [...]}
 //   ]}
@@ -14,11 +14,11 @@
 // relative to the call's working directory, the unit worktree.
 import { readFileSync } from 'node:fs';
 import type { JsonValue } from '../../src/core/json.ts';
-import type { ProfileName } from '../../src/routing/types.ts';
+import type { ProfileName,RiskTier } from '../../src/routing/types.ts';
 import type { Expect, Step, WorldAct } from '../../test/helpers/scenario.ts';
 
 export type M1Step =
-  | Readonly<{ role: 'planCheck' | 'gate'; answer: JsonValue; stdinContains?: readonly string[] }>
+  | Readonly<{ role: 'verifier' | 'gate'; answer: JsonValue; stdinContains?: readonly string[] }>
   | Readonly<{ role: 'build'; round: 'fresh' | 'resume'; acts: readonly WorldAct[]; stdinContains?: readonly string[] }>;
 
 export type M1Scenario = Readonly<{ steps: readonly M1Step[] }>;
@@ -49,7 +49,7 @@ function m1Step(v: unknown, field: string): M1Step {
   const stdinContains = strings(v['stdinContains'], `${field}.stdinContains`);
   const extra = stdinContains === undefined ? {} : { stdinContains };
   switch (v['role']) {
-    case 'planCheck':
+    case 'verifier':
     case 'gate':
       onlyKeys(v, ['role', 'answer', 'stdinContains'], field);
       if (!isRecord(v['answer'])) throw new ScenarioError(`${field}.answer`, `expected an object, got ${JSON.stringify(v['answer'])}`);
@@ -68,7 +68,7 @@ function m1Step(v: unknown, field: string): M1Step {
       return { role: 'build', round, acts: acts as WorldAct[], ...extra };
     }
     default:
-      throw new ScenarioError(`${field}.role`, `expected planCheck, build or gate, got ${JSON.stringify(v['role'])}`);
+      throw new ScenarioError(`${field}.role`, `expected preBuild, build or gate, got ${JSON.stringify(v['role'])}`);
   }
 }
 
@@ -80,18 +80,18 @@ export function readScenario(path: string): M1Scenario {
 }
 
 /** The report every fake build ends with (the build role's output schema). */
-const BUILD_REPORT: JsonValue = { summary: 'Did the work.', changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final: true };
+const BUILD_REPORT: JsonValue = { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true };
 const SMOKE_OK: JsonValue = { ok: true };
 
 /**
  * A judgment call: a fresh session id, never a resume. Its session persists (dev.12: every judgment's repair turn may resume
- * it). Both act: the gate (dev.13: a shell and bypassPermissions in its own checkout, no MCP server) and plan-check (dev.17:
+ * it). Both act: the gate (dev.13: a shell and bypassPermissions in its own checkout, no MCP server) and pre-build (dev.17:
  * the same in its checkouts, with web search and fetch besides).
  */
-const judgment = (role: 'planCheck' | 'gate'): Expect => (role === 'gate'
+const judgment = (role: 'verifier' | 'gate'): Expect => (role === 'gate'
   ? { argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'], argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'] }
   : {
-    argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch', '--permission-mode', 'bypassPermissions', '--session-id'],
+    argv: ['-p', '--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent', '--permission-mode', 'bypassPermissions', '--session-id'],
     argvLacks: ['--resume', '--mcp-config', '--no-session-persistence'],
   });
 
@@ -108,14 +108,16 @@ function buildExpect(profile: ProfileName, round: 'fresh' | 'resume'): Expect {
 }
 
 /** The fake backend steps that play `scenario` under `profile`. */
-export function fakeSteps(scenario: M1Scenario, profile: ProfileName): readonly Step[] {
+export function fakeSteps(scenario: M1Scenario, profile: ProfileName, risk: RiskTier = 'med'): readonly Step[] {
+  const highRisk = risk === 'high';
   const steps = scenario.steps.map((s): Step => {
+
     const stdin: Expect = s.stdinContains === undefined ? {} : { stdinContains: s.stdinContains };
-    // dev.17: a plan-check answer carries the design payload keys (`planCheck` act: an approve's design record defaulted).
-    if (s.role !== 'build') return { as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: s.role === 'planCheck' ? 'planCheck' : 'emit', value: { ordering: null, ...s.answer as Record<string, JsonValue> } }] };
+    // Review annotation does not change the builder's risk; the caller supplies the plan's risk.
+    if (s.role !== 'build') return { ...(s.role === 'verifier' ? {review: true as const} : {}), as: 'claude', expect: { ...judgment(s.role), ...stdin }, acts: [{ type: 'emit', value: { ordering: null, ...s.answer as Record<string, JsonValue> } }] };
     const acts = [...s.acts, { type: 'emit', value: BUILD_REPORT } as const];
-    const expect = { ...buildExpect(profile, s.round), ...stdin };
-    return profile === 'default' ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };
+    const expect = {...buildExpect(highRisk ? 'claude-only' : profile, s.round), ...stdin};
+    return profile === 'default' && !highRisk ? { as: 'codex', expect, acts } : { as: 'claude', expect, acts };
   });
   return [...smokeSteps(profile), ...steps];
 }

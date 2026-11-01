@@ -58,18 +58,18 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
   const ctx = followContext(r);
   try {
     const arcRev = ctx.routing(null).rev;
-    await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u1', (f) => f.stage === 'pre-build');
     assert.equal(r.journal.view.dispatchOf(U1)?.routingRev, arcRev);
 
     syncInputs(r);
-    editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
+    editUnit(d, 'u1', (u) => void (u['routing'] = { verifier: { med: 'summit' } }));
     appliedOk(await apply(r, ctx));
     const u1Rev = ctx.routing(U1).rev;
     assert.notEqual(u1Rev, arcRev, 'the unit layer gives u1 its own rev');
     assert.equal(ctx.routing(U2).rev, arcRev, 'u2 has no layer: the arc\'s rev');
     assert.deepEqual(r.journal.view.planApplied()?.changes, [{ type: 'routing', routingRev: u1Rev, unit: U1 }]);
 
-    await stepTo(ctx, 'u2', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u2', (f) => f.stage === 'pre-build');
     await stepTo(ctx, 'u1', (f) => f.stage === 'gate');
     assert.deepEqual(outcomes(d, 'u1').at(-1), 'gate:revise');
     const u1Records = r.journal.view.dispatchesOf(U1);
@@ -82,7 +82,7 @@ test('routing.unit-layer-rev: a unit routing layer gives that unit its own routi
 
     syncInputs(r);
     // A layer that moves u1's implementer seat after its build started, and u2's before its build.
-    editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' }, build: { med: 'frontier' } }));
+    editUnit(d, 'u1', (u) => void (u['routing'] = { verifier: { med: 'summit' }, build: { med: 'frontier' } }));
     editUnit(d, 'u2', (u) => void (u['routing'] = { build: { med: 'frontier' } }));
     appliedOk(await apply(r, ctx));
     const [u1Moved, u2Moved] = [ctx.routing(U1).rev, ctx.routing(U2).rev];
@@ -112,9 +112,9 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
   const configPath = join(d.repo, '.roadmap', 'config.json');
   const sonnet = (effort: string): Json => ({ backend: 'claude', model: 'claude-sonnet-5-5', effort });
   mkdirSync(join(d.repo, '.roadmap'), { recursive: true });
-  writeFileSync(configPath, JSON.stringify({ systemsMap: d.config!.systemsMap!, routing: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } } }));
-  editPlan(d, (p) => void (p['routing'] = { planCheck: { low: 'summit' } }));
-  editUnit(d, 'u1', (u) => void (u['routing'] = { gate: { med: 'summit' } }));
+  writeFileSync(configPath, JSON.stringify({ systemsMap: d.config!.systemsMap!, routing: { seats: { verifier: { high: 'summit' } }, classes: { efficient: sonnet('medium') } } }));
+  editPlan(d, (p) => void (p['routing'] = { verifier: { low: 'summit' } }));
+  editUnit(d, 'u1', (u) => void (u['routing'] = { verifier: { med: 'summit' } }));
   // As a start does (src/preflight/checks.ts `settlePlan`): the routing base is the profile and the repo config read now.
   const base: RoutingBase = { profile: 'default', config: readRepoConfig(absPath(d.repo)), arcRoles: 'm4b' };
   recordFirst(d, base);
@@ -124,19 +124,19 @@ test('routing.provenance-recorded: plan-applied records the profile, the repo co
     const provenance = r.journal.view.planApplied()?.routingProvenance;
     assert.deepEqual(provenance, {
       profile: 'default',
-      repoConfig: { seats: { gate: { high: 'summit' } }, classes: { efficient: sonnet('medium') } },
-      planLayer: { planCheck: { low: 'summit' } },
-      unitLayers: { u1: { gate: { med: 'summit' } } },
+      repoConfig: { seats: { verifier: { high: 'summit' } }, classes: { efficient: sonnet('medium') } },
+      planLayer: { verifier: { low: 'summit' } },
+      unitLayers: { u1: { verifier: { med: 'summit' } } },
       arcRoles: 'm4b',
     });
-    await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u1', (f) => f.stage === 'pre-build');
     const record = r.journal.view.dispatchOf(U1)!;
     const reproduced = resolveRouting(provenanceStack(provenance!, 'none', U1, false));
     assert.equal(record.routingRev, reproduced.rev, 'the provenance reproduces the unit\'s dispatch rev');
     const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
     assert.equal(reproduced.rev, unitRouting(base, plan, unitOf(ctx, 'u1')).rev, 'the same routing the start resolved');
     assert.deepEqual(
-      [reproduced.bindings.efficient, reproduced.sources.gate.med, reproduced.sources.gate.high, reproduced.sources.planCheck.low],
+      [reproduced.bindings.efficient, reproduced.sources.verifier.med, reproduced.sources.verifier.high, reproduced.sources.verifier.low],
       ['repo-config', 'unit', 'repo-config', 'plan'],
     );
     assert.equal(reproduced.table.build.med.model, 'claude-sonnet-5-5', 'the repo config rebinds the efficient class');
@@ -184,25 +184,25 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
   const r = contextFor(d);
   const ctx = followContext(r);
   try {
-    await stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u1', (f) => f.stage === 'pre-build');
     const first = r.journal.view.dispatchOf(U1)!;
     assert.deepEqual(first.bounds, boundsOf(ctx.plan(), unitOf(ctx, 'u1')));
     assert.deepEqual(first.bounds, {
-      chargeable: 3, redirects: 2, reviseRounds: 1, candidateReds: 1, retries: 1, judgmentDeadlineMin: 3, freshBuildMin: 2, editAllowanceMin: 5, smokeRounds: 1, smokeRuns: 2, certifications: 1,
+      chargeable: 3, reviseRounds: 1, candidateReds: 1, retries: 1, judgmentDeadlineMin: 3, freshBuildMin: 2, editAllowanceMin: 5, smokeRounds: 1, smokeRuns: 2, certifications: 1,
     }, 'the built-in bounds, the plan\'s limits, then the unit\'s own');
     assert.equal(first.transientRules, 'm3');
 
     // lanes red (a charged fix round), gate revise (the one revise round), gate revise again: beyond 1 round, route up.
     await stepTo(ctx, 'u1', (f) => f.stage === 'gate' && r.journal.view.unit(U1).counters.reviseRounds === 1 && f.class === 'route-up');
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:revise',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:revise',
     ]);
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.counters.reviseRounds, u.counters.chargeableFailures, u.routedUp], [1, 2, ['gate']], 'the second revise routed up, uncharged');
 
-    about(windowOf(spawnsOf(r, 'planCheck')[0]!), 3 * MIN, 'plan-check');
+    about(windowOf(spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='pre-build')[0]!), 3 * MIN, 'pre-build');
     const builds = spawnsOf(r, 'build');
     assert.equal(builds.length, 3);
     about(windowOf(builds[0]!), 2 * MIN, 'the fresh build');
@@ -210,7 +210,7 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
       const w = windowOf(fix);
       assert.ok(w > 5 * MIN - 5_000 && w < 6 * MIN, `a fix round: the edit allowance plus the measured lane series, got ${w} ms`);
     }
-    for (const g of spawnsOf(r, 'gate')) about(windowOf(g), 3 * MIN, 'a gate');
+    for (const g of spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='gate')) about(windowOf(g), 3 * MIN, 'a gate');
 
     // A limits apply below what u1 spent is refused; one above it re-pins u1's next dispatch.
     syncInputs(r);
@@ -227,11 +227,11 @@ test('limits.windows-and-bounds: the plan\'s and the unit\'s limits are pinned a
     assert.equal(records.length, 2);
     assert.deepEqual(records[1]!.bounds, { ...first.bounds, judgmentDeadlineMin: 4 }, 're-pinned with the new bounds at the next dispatch');
     assert.deepEqual([records[1]!.routingRev, records[1]!.riskFloor, records[1]!.transientRules], [first.routingRev, first.riskFloor, 'm3']);
-    const gates = spawnsOf(r, 'gate');
+    const gates = spawnsOf(r, 'verifier').filter(i=>i.parent.type==='stage'&&i.parent.stage==='gate');
     about(windowOf(gates.at(-1)!), 4 * MIN, 'the gate after the re-pin');
     const calls = readCalls(d.scenarioPath);
     assert.ok(calls.every((c) => c.step !== null));
-    assert.equal(seatOf(calls.filter(isGateCall).at(-1)!.argv), SUMMIT, 'the routed-up gate sits on the escalation seat');
+    assert.equal(seatOf(calls.filter(isGateCall).at(-1)!.argv), FRONTIER, 'the routed-up verifier stays on Opus medium');
   } finally {
     r.journal.close();
   }
@@ -269,7 +269,7 @@ test('route.risk-floor: a risk below its Phase-0 floor is refused unless the uni
   const ctx = followContext(r);
   try {
     await stepTo(ctx, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
-    await stepTo(ctx, 'u2', (f) => f.stage === 'plan-check');
+    await stepTo(ctx, 'u2', (f) => f.stage === 'pre-build');
 
     syncInputs(r);
     editUnit(d, 'u3', (u) => void (u['risk'] = 'med'));

@@ -55,13 +55,12 @@ const OP_CLASS: { readonly [K in OpKind]: 'own' | 'shared' | 'process' | 'reserv
 
 /** The stages a unit may park `executor-fault` at: every outcome stage but `ff` and `snapshot`, which hold the slot. */
 type FaultStage = Exclude<OutcomeStage, 'ff' | 'snapshot'>;
-const FAULT_STAGES: readonly FaultStage[] = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'];
+const FAULT_STAGES: readonly FaultStage[] = ['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'];
 
 /** The arc jobs whose faults are contained (their scheduler track key), with the job kinds their work runs under. */
 export const JOB_FAULT_TRACKS: Readonly<Record<string, Readonly<{ name: string; kinds: readonly JobKind[] }>>> = {
   'holistic:audit': { name: 'audit', kinds: ['audit'] },
   'holistic:walk': { name: 'milestone walk', kinds: ['walk'] },
-  'holistic:checkpoint': { name: 'checkpoint', kinds: ['ckpt'] },
   'holistic:baseline': { name: 'baseline', kinds: ['baseline'] },
 };
 
@@ -128,7 +127,7 @@ function faultedAttempt(ctx: StageContext, unit: PlanUnit): (StageParent & Reado
   const view = ctx.journal.view;
   const open = openAttempt(view, unit.id);
   const u = view.unit(unit.id);
-  const next = open === null ? upcoming(u, specFacts(ctx)(unit).reproduces) : null;
+  const next = open === null ? upcoming(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review) : null;
   const stage = open?.stage ?? next?.stage ?? null;
   const fault = FAULT_STAGES.find((s) => s === stage);
   if (fault === undefined) return null;

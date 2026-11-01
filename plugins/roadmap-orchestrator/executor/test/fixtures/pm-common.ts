@@ -126,7 +126,7 @@ export const STRAIGHT: Scenario = {
   hooks: () => [],
 };
 export const STRAIGHT_OUTCOMES = {
-  u1: ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
+  u1: ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
 } as const;
 
 /**
@@ -142,9 +142,8 @@ export const BUMPY: Scenario = {
   // u2 is gated after u1 merged: the explicit edge the serial story meant (an M2 arc schedules a DAG).
   arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, cadence: 'candidate' }] }),
   steps: (r) => [
-    planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: DECISION }] }),
-    { ...planCheckStep({ decision: 'approve' }), expect: { ...planCheckStep({ decision: 'approve' }).expect, stdinContains: [DECISION.text] } },
-    codexStep([{ type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
+    planCheckStep({decision: 'approve'}),
+    codexStep([{type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: JSON.stringify({decisions: [DECISION]})}, { type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
     codexStep([
       { type: 'readFromPrompt', pattern: laneOutput(r, 'u1', 'mul'), file: 'stdout', contains: 'MUL-MARKER' },
       { type: 'commit', message: 'fix mul', files: { 'src/mul.js': MUL['src/mul.js'] } },
@@ -169,11 +168,11 @@ export const BUMPY: Scenario = {
 const BUILT = ['build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'] as const;
 export const BUMPY_OUTCOMES = {
   u1: [
-    'plan-check:redirect', 'plan-check:approve', ...BUILT, 'lanes:red', ...BUILT, 'lanes:green', 'gate:revise', ...BUILT, 'lanes:green', 'gate:approve',
+    'pre-build:approve', ...BUILT, 'lanes:red', ...BUILT, 'lanes:green', 'gate:revise', ...BUILT, 'lanes:green', 'gate:approve',
     'candidate:green', 'ff:published', 'snapshot:published',
   ],
   u2: [
-    'plan-check:approve', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:conflict', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:red',
+    'pre-build:approve', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:conflict', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:red',
     ...BUILT, 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published',
   ],
 } as const;
@@ -197,7 +196,7 @@ export const MALFORMED_CONSUMED: Scenario = {
   steps: () => [planCheckStep({ decision: 'approve' }), mulBuild(), { ...gateStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] }, gateStep({ decision: 'approve' })],
 };
 export const MALFORMED_OUTCOMES = {
-  u1: ['plan-check:approve', ...BUILT, 'lanes:green', 'gate:malformed', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
+  u1: ['pre-build:approve', ...BUILT, 'lanes:green', 'gate:malformed', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
 } as const;
 
 /**
@@ -234,7 +233,7 @@ export const CANCEL: Scenario = {
     ];
   },
 };
-export const CANCEL_OUTCOMES = { u1: ['plan-check:approve', 'build:interrupted', ...STRAIGHT_OUTCOMES.u1.slice(1)] } as const;
+export const CANCEL_OUTCOMES = { u1: ['pre-build:approve', 'build:interrupted', ...STRAIGHT_OUTCOMES.u1.slice(1)] } as const;
 
 /** Straight, for a crash inside ff while integration is moved under the dead executor (`whileDown`). */
 export const STALE: Scenario = {

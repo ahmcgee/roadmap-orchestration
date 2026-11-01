@@ -1,0 +1,1 @@
+export const METHOD = "Local green checks do not establish the delivered claim. Identify the actual environment and proof point, which witnesses can run there, and what remains unproven. Keep environment failure separate from product failure; report missing evidence explicitly.";

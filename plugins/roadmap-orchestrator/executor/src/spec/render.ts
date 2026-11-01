@@ -8,7 +8,7 @@
 // M3 (A13): the obligations a unit declares and what a repair unit repairs follow, each only when the spec has it.
 // M4a rev 3: a spec's witness items follow its facts, and a spec lane's `inputs` its evidence, each only when present, so
 // a spec without them renders as before. Scope growth (2026-10-15): what the unit removes or renames follows its scope, only
-// when declared. dev.17 (design pass): the design record a plan-check settled closes the spec, only when it has one.
+// when declared. dev.17 (design pass): the design record a pre-build settled closes the spec, only when it has one.
 import { type DesignRecord, designSize } from '../core/design.ts';
 import type { ItemState, LaneDef, NoteDef, SpecM1, WitnessItemDef } from '../core/records.ts';
 import { buildLanes } from '../resources/reserve.ts';

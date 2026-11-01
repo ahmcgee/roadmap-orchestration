@@ -9,7 +9,7 @@ import { walkContext } from './walk-common.ts';
 const r = contextFor(JSON.parse(process.argv[2]!));
 const what = process.argv[3];
 const { w } = walkContext(r);
-const h = holisticContexts(w).checkpoint;
+const h = holisticContexts(w).revision;
 const tick = setInterval(() => w.arbiter.wake(), 50);
 try {
   if (what !== 'polish' && what !== 'compare') throw new Error(`polish-child: ${what} is neither polish nor compare`);

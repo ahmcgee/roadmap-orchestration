@@ -19,7 +19,7 @@ import { type Gate,runUnit } from '../src/pipeline/unit.ts';
 import { NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,resolveUnmetDirective } from '../src/prompts/directives.ts';
 import { type Handover,handoverText } from '../src/prompts/inputs.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { editPlan,editSpec } from './fixtures/route-common.ts';
+import { editPlan,editSpec,followContext } from './fixtures/route-common.ts';
 import { addUnit } from './fixtures/sched-m3-common.ts';
 import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import {
@@ -72,7 +72,7 @@ const handoverNow = (r: ArcRun, unit: UnitId): Handover | null =>
 /** The first line of any handover: its presence in a prompt, without naming its prose. */
 const HANDOVER_OPENS = (h: Handover): string => handoverText(h).split('\n')[0]!;
 
-const isBuildCall = (c: CallRecord): boolean => c.as === 'codex' || (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"changedPaths"');
+const isBuildCall = (c: CallRecord): boolean => c.as === 'codex' || (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"grounding"');
 const flag = (argv: readonly string[], name: string): string | undefined => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
 
 /** A Claude implementer round: `acts`, then the report. */
@@ -91,10 +91,10 @@ test('handover.reentry: a re-entry\'s first build is a fresh session given the h
       as: 'codex', expect: { argv: ['exec', 'resume', thread] },
       acts: [{ type: 'commit', message: 'fix mul', files: MUL }, { type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: decisions }, { type: 'emit', value: BUILD_REPORT }],
     },
-    gateStep({rulings: [],  decision: 'revise', directives: ['HANDOVER-DIRECTIVE: test mul(0, n)'], findings: [{ severity: 'blocking', path: 'src/mul.js', text: 'HANDOVER-FINDING: mul(0, n) untested', contractRef: null, experiments: [], debt: null }] }),
+    gateStep({rulings: [],  decision: 'revise', directives: ['HANDOVER-DIRECTIVE: test mul(0, n)'], findings: [{evidence: ["src/mul.js:1"],  severity: 'blocking', path: 'src/mul.js', text: 'HANDOVER-FINDING: mul(0, n) untested', contractRef: null, experiments: [], debt: null }] }),
     { as: 'codex', expect: { argv: ['exec', 'resume', thread] }, acts: [{ type: 'commit', message: 'more tests', files: { 'test/mul-two.test.js': MUL['test/mul.test.js'] } }, { type: 'emit', value: fixReport }] },
     gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' }),
-    // u2: plan-check, then the fresh build the test checks, then the gate.
+    // u2: pre-build, then the fresh build the test checks, then the gate.
     planCheckStep({ decision: 'approve' }),
     codexStep([{ type: 'commit', message: 'mul zero', files: MUL_ZERO_TEST }], { argv: ['exec', '-C'], argvLacks: ['resume'] }),
     gateStep({ decision: 'approve' }),
@@ -104,7 +104,7 @@ test('handover.reentry: a re-entry\'s first build is a fresh session given the h
     const attempt = await park(r);
     assert.equal(handoverNow(r, U1) === null, false, 'u1 has earlier builds');
     r = await reenter(r, attempt);
-    await stepUntil(r, 'u2', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+    await stepUntil(r, 'u2', (f) => f.stage === 'pre-build' && f.outcome === 'approve');
 
     const h = handoverNow(r, U2);
     assert.ok(h !== null);
@@ -156,7 +156,7 @@ test('handover.reopen-keeps-session: a reopen resumes the kept implementer sessi
     });
     assert.equal((await command(r, applyBody(d))).kind, 'applied');
     assert.equal((await command(r, { type: 'resume', target: { type: 'unit', unit: U1 } })).kind, 'applied');
-    await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+    await stepUntil(r, 'u1', (f) => f.stage === 'pre-build' && f.outcome === 'approve');
     const h = handoverNow(r, U1);
     assert.ok(h !== null, 'a fresh session would get one');
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
@@ -173,7 +173,7 @@ test('handover.reopen-keeps-session: a reopen resumes the kept implementer sessi
   }
 });
 
-test('handover.seat-move: a reopen whose plan-check moves the implementer seat to another model builds fresh, given the handover and the fresh respec directive', T, async () => {
+test('handover.seat-move: a reopen whose pre-build moves the implementer seat to another model builds fresh, given the handover and the fresh respec directive', T, async () => {
   const thread = '00000000-0000-4000-8000-0000000ab002';
   const d = setupArc({
     steps: [
@@ -194,13 +194,14 @@ test('handover.seat-move: a reopen whose plan-check moves the implementer seat t
       s['acceptance'] = [...(s['acceptance'] as unknown[]), NEW_CLAUSE];
       s['rev'] = 2;
     });
+    editPlan(d,p=>{(p['units'] as Record<string,unknown>[]).find(u=>u['id']==='u1')!['risk']='high';});
     assert.equal((await command(r, applyBody(d))).kind, 'applied');
     assert.equal((await command(r, { type: 'resume', target: { type: 'unit', unit: U1 } })).kind, 'applied');
-    await stepUntil(r, 'u1', (f) => f.stage === 'plan-check' && f.outcome === 'approve');
+    await stepUntil(r, 'u1', (f) => f.stage === 'pre-build' && f.outcome === 'approve');
     const h = handoverNow(r, U1);
     assert.ok(h !== null);
     assert.deepEqual([h.lineage, h.gate?.decision, h.gate?.attempt, h.unmet], [[U1], 'escalate', attempt, [{ clause: 'A2', text: 'mul(0, 5) is 0', why: 'new' }]]);
-    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(await runUnit(followContext(r),r.unit('u1'),live()), { kind: 'merged' });
     const moved = readCalls(d.scenarioPath).filter(isBuildCall).at(-1)!;
     assert.equal(moved.as, 'claude');
     assert.ok(moved.stdin.includes(handoverText(h)));

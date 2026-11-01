@@ -659,19 +659,19 @@ test('roles.walk-caps: --trial-cap kills an overspending session (void cap, its 
 test('roles.walk-seat: the arm is the walkthrough seat (frontier, Opus 5.5 medium); --rebind moves it through the repo config; a seat with no walkthrough prompt is refused', () => {
   assert.equal(walkSeat(null).arm, 'walkthrough.arc frontier claude-opus-5-5:medium');
   assert.equal(walkSeat(rebindConfig(['frontier=claude-opus-5-5:xhigh'])).arm, 'walkthrough.arc frontier (rebound) claude-opus-5-5:xhigh');
-  assert.throws(() => walkSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /walkthrough/);
+  assert.throws(() => walkSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /experienceVerdict/);
   assert.throws(() => walkSeat(rebindConfig(['frontier=gpt-5.6-sol:high'])), /Claude only|walkthrough|frontier/);
   assert.equal(substitutePorts('http://127.0.0.1:{port:web}/x', { web: 4100 } as never), 'http://127.0.0.1:4100/x');
   assert.throws(() => substitutePorts('{port:api}', { web: 1 } as never), /names no allocated port/);
 });
 
 test('roles.walk-triggers: walkthrough paths trigger the walkthrough eval; the bring-up, the MCP config and the product the polish judge\'s too; the compare and the polish revision only the polish judge; the shared harness every role; the gate\'s own paths only the gate', () => {
-  assert.deepEqual(triggeredRoles(['src/prompts/walkthrough/claude-opus-5-5.ts']), ['walkthrough']);
+  assert.deepEqual(triggeredRoles(['src/prompts/experienceVerdict/claude-opus-5-5.ts']), ['walkthrough', 'polishJudge']);
   for (const p of ['src/walk/walk.ts', 'src/walk/report.ts', 'src/walk/milestones.ts']) assert.deepEqual(triggeredRoles([p]), ['walkthrough'], p);
   for (const p of ['src/walk/bringup.ts', 'src/backends/mcp.ts']) assert.deepEqual(triggeredRoles([p]), ['walkthrough', 'polishJudge'], p);
   assert.deepEqual(triggeredRoles(['evals/roles/walkthrough/ledgerly/web/pages/entries.js']), ['walkthrough', 'polishJudge']);
-  assert.deepEqual(triggeredRoles(['src/backends/argv.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold']);
-  assert.deepEqual(triggeredRoles(['evals/roles/run.ts']), ['gate', 'walkthrough', 'polishJudge', 'verifier', 'scaffold']);
-  assert.deepEqual(triggeredRoles(['evals/roles/gate/arc.ts', 'evals/roles/gen/plant.ts']), ['gate']);
-  for (const p of ['src/prompts/polishJudge/claude-opus-5-5.ts', 'src/walk/compare.ts', 'src/walk/polish.ts', 'evals/roles/polish/arc.ts']) assert.deepEqual(triggeredRoles([p]), ['polishJudge'], p);
+  assert.deepEqual(triggeredRoles(['src/backends/argv.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit']);
+  assert.deepEqual(triggeredRoles(['evals/roles/run.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit']);
+  assert.deepEqual(triggeredRoles(['evals/roles/gate/arc.ts', 'evals/roles/gen/plant.ts']), ['verifier']);
+  for (const p of ['src/walk/compare.ts', 'src/walk/polish.ts', 'evals/roles/polish/arc.ts']) assert.deepEqual(triggeredRoles([p]), ['polishJudge'], p);
 });

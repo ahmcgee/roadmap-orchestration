@@ -27,28 +27,26 @@ import { milestoneProgress } from '../src/walk/milestones.ts';
 import { applyPolish } from '../src/walk/polish.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer } from './helpers/holistic.ts';
-import { checkpointPending, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, contextFor } from './fixtures/unit-common.ts';
-import { ACTING_ARGV, KEEP_FILES, SCOPE, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { ACTING_ARGV, KEEP_FILES, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 import { COMPARE_JOB, POLISH_REVISION, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 3 };
 
 type Json = Record<string, unknown>;
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 const planOf = (r: ArcRun) => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
 
 /** The polish and compare context (the checkpoint's: a walk's plus the fenced commit's) over the run's one arbiter. */
 function polishContext(r: ArcRun) {
   const { w } = walkContext(r);
-  return { h: holisticContexts(w).checkpoint, w };
+  return { h: holisticContexts(w).revision, w };
 }
 
 async function ticking<T>(r: ArcRun, f: (h: ReturnType<typeof polishContext>['h']) => Promise<T>): Promise<T> {
@@ -140,7 +138,6 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       const w1 = await runWalk(ctx).finally(() => clearInterval(tick));
       assert.deepEqual(w1, { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: true });
       assert.deepEqual(factsOf(r, 'walk-ended').map((f) => [f.proposals, f.dropped]), [[['X-1', 'X-2', 'X-3', 'X-4'], []]]);
-      assert.equal(checkpointPending(polishContext(r).h), false, 'walk-1 opened nothing: its trigger has nothing new, no checkpoint');
       const m = milestonesOf(planOf(r))[0]!;
       const pending = milestoneProgress(r.journal.view, planOf(r), m, repairUnits(ctx));
       assert.ok(pending.kind === 'round-open' && pending.round.pending === 'polish', JSON.stringify(pending));
@@ -201,7 +198,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.deepEqual(r.journal.view.openIntents(), []);
       assert.equal(/compare-[0-9]+\./.test(git(d.repo, 'worktree', 'list', '--porcelain')), false, 'no compare checkout left');
       assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), [], 'every backend call matched its step');
-      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'tw-noref' && c.step !== null).length, 3, 'tw-noref: plan-check, build, gate; no judge');
+      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'tw-noref' && c.step !== null).length, 2, 'tw-noref: build and gate; no compare judge');
     } finally {
       r.journal.close();
     }
@@ -301,53 +298,6 @@ describe('the compare brake (lead ruling 2026-10-18)', () => {
       r.journal.close();
     }
   });
-});
-
-// ---------------------------------------------------------------------------------------------------
-// The checkpoint's walk trigger (plan §4 "Class 1 and 2 go through the checkpoint")
-
-describe('the checkpoint\'s walk trigger (dev.13 agent D)', () => {
-  for (const severity of ['P1', 'P2'] as const) {
-    test(`checkpoint.walk-trigger: a walk ${severity} nobody weighed triggers the checkpoint, its evidence dir readable and named; once weighed, nothing is due`, T, async () => {
-      const broken = walkAnswer({
-        journeys: [{ journey: 'J-1', outcome: severity === 'P1' ? 'blocked' : 'completed' }, { journey: 'J-2', outcome: 'completed' }],
-        findings: [{ class: severity === 'P1' ? 'breaks' : 'deviates', journey: 'J-1', claim: severity === 'P1' ? 'GET / answers 500' : 'The error omits its remedy', cause: severity === 'P1' ? 'GET /: server error' : 'error text', against: severity === 'P1' ? { type: 'journey' } : { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }],
-      });
-      const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')) });
-      appendSteps(d, [
-        walkStep('walk-1', broken),
-        {
-          as: 'claude', unit: 'ckpt-1',
-          // The evidence dir lies under the run dir, which every judgment's read surface holds (judgmentReadDirs).
-          expect: { argv: ['--add-dir', d.runDir], stdinContains: ['the walkthrough walk-1 of milestone MS-1 (round 1)', 'F-1', `${d.runDir}/evidence/jobs/walk-1`] },
-          acts: [{ type: 'emit', value: checkpointAnswer({ decision: 'no-op' }) }],
-        },
-      ]);
-      const r = contextFor(d);
-      try {
-        await run(r, 'u1', () => Promise.resolve(true));
-        const { ctx, w } = walkContext(r);
-        const tick = setInterval(() => w.arbiter.wake(), 50);
-        try {
-          await runWalk(ctx);
-          const h = holisticContexts(w);
-          assert.equal(checkpointPending(h.checkpoint), true, `the walk's ${severity} is unweighed`);
-          const out = await runCheckpoint(h.checkpoint);
-          assert.equal(out.kind, 'decided', JSON.stringify(out));
-          const [captured] = factsOf(r, 'checkpoint-inputs');
-          assert.deepEqual(captured!.trigger, { type: 'walk', job: 'walk-1' });
-          assert.equal(checkpointPending(h.checkpoint), false, 'weighed: no checkpoint due');
-          const m = milestonesOf(planOf(r))[0]!;
-          assert.equal(milestoneProgress(r.journal.view, planOf(r), m, repairUnits(ctx)).kind, 'settled', 'the checkpoint decided nothing: the round admitted nothing');
-        } finally {
-          clearInterval(tick);
-        }
-        assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), [], 'every backend call matched its step');
-      } finally {
-        r.journal.close();
-      }
-    });
-  }
 });
 
 // ---------------------------------------------------------------------------------------------------

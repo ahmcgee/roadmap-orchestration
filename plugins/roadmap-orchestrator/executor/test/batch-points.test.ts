@@ -32,7 +32,7 @@ const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
 type Json = Record<string, unknown>;
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 
 /** A batch lane: green while `marker` is absent, red (exit 1) while it exists. */
 const batchLane = (marker: string, extra: Partial<LaneJson> = {}): LaneJson => ({
@@ -158,7 +158,7 @@ describe('the milestone batch point (dev.17)', () => {
       const spec = JSON.parse(readFileSync(join(planDir, 'u1.json'), 'utf8')) as Json;
       writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'] }));
       await applyPlanEdit(r, walkContext(r).w as never, (plan) => {
-        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', systems: [systemName('product')], resources: [], origin: 'repair' });
+        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', review: 'always', systems: [systemName('product')], resources: [], origin: 'repair' });
       });
       await merge(r, 'r1');
       assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: true });

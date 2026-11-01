@@ -62,7 +62,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
   }, { type: 'clean-merged', new: C }),
   'spec.patch': intent('spec.patch', {
     path: absPath('/run/specs/u1.json'), oldSha256: H, expectRev: specRev(1),
-    patch: { expectRev: specRev(1), by: { role: 'planCheck', routingRev: rev, inv }, ops: [
+    patch: { expectRev: specRev(1), by: { role: 'verifier', routingRev: rev, inv }, ops: [
       { op: 'add', section: 'acceptance', item: { id: clauseId('A2'), clause: 'x', failLoudIfUndelivered: true } },
       { op: 'replace', section: 'lanes', item: { id: laneId('L1'), argv: ['npm', 'test'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'strike', id: clauseId('F1') },
@@ -83,7 +83,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
     ref: refName('refs/roadmap-run/arc-1/docs/docs-1'), old: null, pub: jobId('docs', 1), integrationTip: A, worktree: wt, commit: commit([A] as const),
   }, { new: B }),
   'mutant.apply': intent('mutant.apply', { worktree: wt, at: A, finding: findingId('F-1'), patchSha256: H }, null),
-  'revision.commit': intent('revision.commit', { source: { type: 'bundle', job: jobId('ckpt', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
+  'revision.commit': intent('revision.commit', { source: { type: 'walk', job: jobId('walk', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
 };
 
 // Every outcome variant of every kind.
@@ -114,7 +114,7 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
 const FACTS: readonly Fact[] = [
   { kind: 'tail-discarded', offset: 1024, length: 17, sha256: H },
   { kind: 'containment-mode', mode: 'session' },
-  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'gate', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
+  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'verifier', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
@@ -165,7 +165,7 @@ describe('events', () => {
       { ...INTENTS['worktree.create'], parent: { type: 'arc' }, deadlineAt: null, expect: { path: wt, checkout: { type: 'detached', at: B } } },
       { ...INTENTS['proc.spawn'], ordinal: 2, parent: { type: 'command', command: commandId('cmd-0123456789abcdef') }, expect: { subject: { purpose: 'lane', unit, lane: laneId('L1'), set: 'suite', at: A }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], parent: { type: 'op', op: opId(arc, 3) }, expect: { subject: { purpose: 'teardown', unit: null, resource: resourceName('db') }, launchSha256: H } },
-      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'gate', tier: 'low', routingRev: rev } }, launchSha256: H } },
+      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'verifier', tier: 'low', routingRev: rev } }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'shell', target: { type: 'command' } }, launchSha256: H } },
       { ...INTENTS['mergein.prepare'], expect: { ...INTENTS['mergein.prepare'].expect, merge: { type: 'conflicted', conflicts: [repoPath('src/a.ts')] } }, post: { type: 'conflicted' } },
       { ...INTENTS['snapshot.publish'], expect: { ...INTENTS['snapshot.publish'].expect, old: null, commit: commit([] as const) } },

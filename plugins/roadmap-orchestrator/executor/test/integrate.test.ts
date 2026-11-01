@@ -105,14 +105,14 @@ test('merge.transient-refusal: salvage refuses a transient path and sends the un
     const result = await runUnit(r.ctx, r.unit('u1'), live());
     assert.deepEqual(result, { kind: 'merged' });
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
       'candidate:green', 'ff:published', 'snapshot:published',
     ]);
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, `a transient violation charges: ${outcomes(d).join(' ')}`);
     const gates = readCalls(d.scenarioPath).filter(isGate);
     assert.equal(gates.length, 1, 'the refused salvage never reached a gate');
-    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'scope growth promoted the next judgment');
+    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('medium'), 'scope growth promoted the next judgment');
     assert.ok(!git(d.repo, 'ls-tree', '-r', '--name-only', 'main').includes('evidence/'), 'nothing transient reached integration');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
@@ -154,7 +154,7 @@ test('memory: salvage keeps the build report and decisions; candidate concatenat
       { type: 'writeToPrompt', pattern: workDirPattern(d), file: 'decisions.json', text: JSON.stringify({ decisions: [{ id: 'D1', text: decision }] }) },
       { type: 'emit', value: { ...BUILD_REPORT, summary: first } },
     ] },
-    gateStep({ decision: 'revise', findings: [{ severity: 'blocking', path: 'src/mul.js', text: 'Clarify operand names.', contractRef: null, experiments: [], debt: null }], directives: ['Clarify operand names.'] }),
+    gateStep({ decision: 'revise', findings: [{evidence: ["src/mul.js:1"],  severity: 'blocking', path: 'src/mul.js', text: 'Clarify operand names.', contractRef: null, experiments: [], debt: null }], directives: ['Clarify operand names.'] }),
     { as: 'codex', expect: {}, acts: [
       { type: 'dirty', files: { 'src/mul.js': 'export function mul(left, right) { return left * right; }\n' } },
       { type: 'emit', value: { ...BUILD_REPORT, summary: second } },

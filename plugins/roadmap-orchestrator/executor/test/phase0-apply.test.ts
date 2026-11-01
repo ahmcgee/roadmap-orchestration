@@ -13,7 +13,7 @@ import { describe,it } from 'node:test';
 import { type ApplyVerdict,evaluateApply,evaluateRevision } from '../src/commands/apply.ts';
 import { corpusPin } from '../src/commands/corpus.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { commandId,jobId,sha,unitId,visionClauseId } from '../src/core/ids.ts';
+import { commandId, sha, unitId } from '../src/core/ids.ts';
 import { canonicalJson,sha256Hex } from '../src/core/json.ts';
 import { EVENTS_FILE,type OpenJournal,openJournal } from '../src/core/log.ts';
 import { type AbsPath,absPath } from '../src/core/values.ts';
@@ -323,12 +323,6 @@ describe('the specs against the census at every revision (run 10, C)', () => {
       const row = canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' }] });
       assert.deepEqual(rejected(await apply(a, j)), [row], 'the apply: the classifier\'s row alone, naming unit, item and rule');
       const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env };
-      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [],  });
-      assert.equal(bundle.kind, 'rejected');
-      if (bundle.kind !== 'rejected') return;
-      assert.deepEqual(bundle.reasons, [
-        `${row}: unit u1's acceptance clause A2 names T-2, which is out of slice: to work on T-2, admit it as a target of an opportunity whose obligation split anchors a child at T-2 (the census moves), or drop the T-2 citation from A2`,
-      ]);
       editJsonFile(join(a.planDir, 'u1.json'), (s) => ({ ...s, acceptance: (s['acceptance'] as Json[]).map((x) => (x['id'] === 'A2' ? { ...x, clause: 'A booking names its berth.' } : x)) }));
       accepted(await apply(a, j));
     } finally {
@@ -405,10 +399,6 @@ describe('the vision confirmed against the pin', () => {
   });
 });
 
-describe('the vision leak (row 12)', () => {
-
-});
-
 describe('vision edits publish (dev.16)', () => {
   const V3 = { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' };
   const renderMap = (v: Extract<ApplyVerdict, { kind: 'accepted' }>): ReadonlyMap<string, string> =>
@@ -464,7 +454,6 @@ describe('vision edits publish (dev.16)', () => {
       b.j.close();
     }
   });
-
 
 });
 
@@ -536,7 +525,6 @@ describe('holistic arcs target a corpus (H4)', () => {
   });
 });
 
-
 // Revision delta (2026-10-27; 1.0.0-dev.26): old defects remain visible without blocking unrelated work.
 describe('revision plan-defect delta', () => {
   const milestone = (id: string, references: readonly string[]): Json => ({
@@ -582,7 +570,7 @@ describe('revision plan-defect delta', () => {
         { id: 'u1-child', spec: 'u1-child.json', risk: 'low', systems: [systemName('app')], resources: [] },
         { ...(p['units'] as Json[])[1], after: ['u1-child'] },
       ] }));
-      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env }, filesOf(a), { type: 'split', unit: unitId('u1'), children });
+      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env }, filesOf(a), { type: 'apply', reason: 'Split the parent into focused children' });
       assert.equal(v.kind, 'rejected', JSON.stringify(v));
       assert.ok(v.kind === 'rejected');
       assert.deepEqual(v.reasons.map((s) => JSON.parse(s)), [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: 'I-1', file: 'test/new.test.ts', units: ['u2'] }] }]);

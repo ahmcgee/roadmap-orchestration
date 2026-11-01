@@ -189,12 +189,12 @@ export function readNeedsUserAck(runDir: AbsPath, id: NeedsUserId): NeedsUserAck
 // What a park's recommendation says: exactly what `resume` does for it
 
 /**
- * A unit parked at a judgment stage (plan-check or gate): `resume <unit>` re-opens it once a revision of its
+ * A unit parked at a judgment stage (pre-build or gate): `resume <unit>` re-opens it once a revision of its
  * spec is applied (commands/apply.ts), so that is what the item recommends.
  */
 export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecRev): string {
   return `Read the evidence. To re-run the unit, edit its spec ${specPath} in place and set "rev" to ${rev + 1}, run \`roadmap apply\`, `
-    + `then \`roadmap resume ${unit}\`: it re-enters at plan-check on the new revision, keeping the unit's branch, worktree and implementer `
+    + `then \`roadmap resume ${unit}\`: it re-enters at pre-build on the new revision, keeping the unit's branch, worktree and implementer `
     + 'session. Or acknowledge this item to leave the unit parked.';
 }
 

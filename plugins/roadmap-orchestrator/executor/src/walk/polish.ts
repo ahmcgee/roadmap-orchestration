@@ -2,7 +2,7 @@ import { systemsMapInForce } from '../input/systems.ts';
 import { referenceCoverageReasons } from './report.ts';
 // The code-applied polish revision (dev.13, plan §4 "Polish skips the checkpoint", R3 revised; SCHEMAS.md "dev.13"): a
 // walk's polish proposals are full units the walkthrough authored, and code admits them as one plan revision under the
-// revision fence, through THE admit path a checkpoint `admit` takes (src/holistic/bundle.ts `admitUnit` and
+// revision fence, through THE admit path a checkpoint `admit` takes (src/holistic/admission.ts `admitUnit` and
 // `fillMappedObligations`, then the classifier, `evaluateRevision`): one admit path, two authors. No model call.
 //
 // Due (`polishDue`): the first walk, in log order, that ended `reported` with an applied proposal (its proposals less its
@@ -27,7 +27,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { SchemaError } from '../core/validate.ts';
 import type { AbsPath } from '../core/values.ts';
 import { absPath } from '../core/values.ts';
-import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/bundle.ts';
+import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/admission.ts';
 import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
 import { type Milestone,type PlanM1,milestoneOf,parsePlan } from '../input/plan.ts';
 import { type WalkRecord,refusedProposals,walksOf } from './milestones.ts';

@@ -253,7 +253,7 @@ describe('fold: lineage, cut, build tier, scheduling', () => {
     const cut = [planApplied(1, [U1, U2]), planApplied(2, [U1, U2], [{ type: 'unit-cut', unit: U2 }])];
     assert.equal(folded(cut).unit(U2).status, 'cut');
     refuses([...cut, dispatch(U2)], 3, /dispatch of u2, which is cut/);
-    refuses([...cut, outcome(U2, 'plan-check', 1, 'approve', 'advance')], 3, /which is cut/);
+    refuses([...cut, outcome(U2, 'pre-build', 1, 'approve', 'advance')], 3, /which is cut/);
     refuses([planApplied(1, [U1]), outcome(U1, 'snapshot', 1, 'published', 'retire'), planApplied(2, [U1], [{ type: 'unit-cut', unit: U1 }])], 3, /cuts u1, which is retired/);
   });
 

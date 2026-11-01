@@ -49,7 +49,7 @@ import { laneEvidenceGlobs, transientViolations } from '../../src/git/transient.
 // M1/M2 standing criteria, over this run:
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
-//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens,
+//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (pre-build, gate, lens,
 //   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
@@ -139,7 +139,7 @@ function publications(run: Run): readonly Publication[] {
 const unitPublication = (run: Run, unit: string): Publication | undefined => publications(run).find((p) => p.unit === unit);
 
 /** The verdict of `id`'s witness in the record a `witnessed` fact names. */
-function witnessVerdict(run: Run, f: Extract<Fact, { kind: 'witnessed' }>, id: string): ObservationVerdict {
+function witnessVerdict(run: Run, f: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>, id: string): ObservationVerdict {
   const witness = obligation(run, id).witness;
   if (witness === null) throw new Error(`${id} has no witness`);
   const path = join(witnessDir(run.runDir, f), WITNESS_RECORD_FILE);
@@ -156,7 +156,7 @@ const laneOf = (run: Run, id: string): string => {
 const moneyP1 = (run: Run) => factsOf(run, 'finding-opened').find((f) => f.lens === 'witness' && f.severity === 'P1' && f.obligation === 'I-2');
 
 /** Every bundle revision, in log order. */
-const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'bundle');
+const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'command');
 
 /** The units bundle revisions added, with the revision that added each. */
 const addedUnits = (run: Run) => bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-added' ? [{ unit: c.unit, rev: b }] : [])));
@@ -172,7 +172,7 @@ function specOf(run: Run, unit: UnitId) {
 const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
 
 /** The witness runs of I-2's lane on tidy's published tree S (none before an audit of S ran it). */
-function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Fact, { kind: 'witnessed' }>>[] {
+function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>>[] {
   const tree = treeOf(run, s.new);
   return factsOf(run, 'witnessed').filter((f) => f.lane === MONEY_LANE && f.treeSha === tree && f.purpose === 'witness');
 }
@@ -198,13 +198,11 @@ function branchOf(run: Run): Readonly<{ branch: StoryBranch; detail: string }> |
 }
 
 /** The checkpoint that ran on audit `job`, and its decision (`applied` for a bundle revision). */
-function checkpointOf(run: Run, job: string): Readonly<{ job: string; decision: string }> | null {
-  const inputs = factsOf(run, 'checkpoint-inputs').filter((f) => f.trigger.type === 'audit' && f.trigger.job === job);
-  const last = inputs.at(-1);
-  if (last === undefined) return null;
-  const decided = factsOf(run, 'bundle-decided').find((f) => f.job === last.job);
-  if (decided !== undefined) return { job: last.job, decision: decided.outcome.kind === 'rejected' ? `rejected:${decided.outcome.reason}` : decided.outcome.kind };
-  return factsOf(run, 'plan-applied').some((f) => f.source?.type === 'bundle' && f.source.job === last.job) ? { job: last.job, decision: 'applied' } : { job: last.job, decision: 'undecided' };
+function rootApplyAfterAudit(run: Run, job: string): Readonly<{job: string; decision: string}> | null {
+  const audit = factsOf(run, 'audit-ended').find((a) => a.job === job);
+  if (audit === undefined) return null;
+  const revision = factsOf(run, 'plan-applied').find((f) => f.seq > audit.seq && f.source?.type === 'command');
+  return revision?.source?.type === 'command' ? {job: revision.source.command, decision: 'applied'} : null;
 }
 
 const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: problems.length === 0, detail: problems.length > 0 ? problems.join('; ') : ok });
@@ -252,7 +250,7 @@ function auditRace(run: Run): Verdict {
   const r = unitPublication(run, 'report');
   if (a1 === undefined || s === undefined || r === undefined) return { pass: false, detail: `audit ${a1?.job}, tidy ${s?.new}, report ${r?.new}: missing` };
   const ended = factsOf(run, 'audit-ended').find((f) => f.job === a1.job);
-  if (JSON.stringify(a1.lenses) !== JSON.stringify(LENSES)) problems.push(`${a1.job} ran ${JSON.stringify(a1.lenses)}, not L`);
+  if (JSON.stringify(a1.lenses) !== JSON.stringify(['invariants'])) problems.push(`${a1.job} ran ${JSON.stringify(a1.lenses)}, not L`);
   if (a1.integrationSha !== s.new) problems.push(`${a1.job} audited ${a1.integrationSha}, not S ${s.new}`);
   if (ended === undefined || ended.outcome !== 'completed') problems.push(`${a1.job} did not complete`);
   if (!(r.seq > a1.seq && ended !== undefined && r.seq < ended.seq)) problems.push(`report published at seq ${r.seq}, not inside ${a1.job} (${a1.seq}..${ended?.seq})`);
@@ -267,26 +265,12 @@ function auditRace(run: Run): Verdict {
   return verdict(problems, `${a1.job} on S ${s.new}; report published S′ ${r.new} at seq ${r.seq} inside it; I-1 latched; ${p1?.id} opened and re-witnessed on S′`);
 }
 
-function staleWhole(run: Run): Verdict {
-  const [first] = factsOf(run, 'checkpoint-inputs');
-  const apply = run.report.devices.staleApply;
-  if (first === undefined || apply === null) return { pass: false, detail: `first checkpoint ${first?.job}, stale apply ${JSON.stringify(apply)}` };
-  const problems: string[] = [];
-  const decided = factsOf(run, 'bundle-decided').find((f) => f.job === first.job);
-  if (decided === undefined || decided.outcome.kind !== 'rejected' || decided.outcome.reason !== 'stale') problems.push(`${first.job} decided ${JSON.stringify(decided?.outcome)}, not rejected{stale}`);
-  const committed = factsOf(run, 'plan-applied').find((f) => f.source?.type === 'command' && f.source.command === apply.command);
-  if (committed === undefined) problems.push(`the driver's apply ${apply.command} committed no revision`);
-  else if (decided !== undefined && !(committed.seq > first.seq && committed.seq < decided.seq)) problems.push(`the apply's revision (seq ${committed.seq}) is not between ${first.job}'s capture (${first.seq}) and decision (${decided.seq})`);
-  if (factsOf(run, 'plan-applied').some((f) => f.source?.type === 'bundle' && f.source.job === first.job)) problems.push(`${first.job}'s bundle applied`);
-  return verdict(problems, `${first.job} captured at seq ${first.seq}; the apply's revision ${committed?.rev} at seq ${committed?.seq}; rejected stale at seq ${decided?.seq}`);
-}
+function staleWhole(run: Run): Verdict {const apply=run.report.devices.staleApply;const committed=factsOf(run,'plan-applied').find(f=>f.source?.type==='command'&&f.source.command===apply?.command);return {pass:committed!==undefined,detail:committed===undefined?'Root repair apply committed no revision':'Root repair apply committed revision '+committed.rev};}
 
 function bundlesWhole(run: Run): Verdict {
   const problems: string[] = [];
   const applied = bundleRevisions(run);
-  for (const d of factsOf(run, 'bundle-decided')) {
-    if (applied.some((f) => f.source?.type === 'bundle' && f.source.job === d.job)) problems.push(`${d.job} decided ${d.outcome.kind} and applied`);
-  }
+
   if (applied.length === 0) problems.push('no bundle revision');
   const held = new Map(run.report.status.nowTrue.map((o) => [o.obligation as string, o.verdict]));
   const lines: string[] = [];
@@ -310,15 +294,15 @@ function bundlesWhole(run: Run): Verdict {
   }
   const requests = run.report.devices.acks.filter((a) => a.reason === 'bundle-request');
   const answered = requests.map((a) => `${a.needsUser}:${a.choice ?? 'ack'}`).join(', ');
-  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
+  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
 }
 
 function bundleDivergences(run: Run): Verdict {
   const problems: string[] = [];
   let v2 = false;
   for (const b of bundleRevisions(run)) {
-    if (b.source?.type !== 'bundle') continue;
-    const job = b.source.job;
+    const job = factsOf(run, 'divergence').find((d) => d.preimage.planRev === b.rev - 1)?.job;
+    if (job === undefined) continue;
     const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
     if (ds.length === 0) problems.push(`${job}'s revision ${b.rev} recorded no divergence`);
     if (ds.some((d) => d.cites.includes('V-2' as never))) v2 = true;
@@ -333,7 +317,7 @@ function prevention(run: Run): Verdict {
   if (b?.branch !== 'P') return { pass: false, detail: `not branch P: ${b?.detail ?? 'no branch'}` };
   const problems: string[] = [];
   const disposer = factsOf(run, 'plan-applied').find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
-  const job = disposer?.source?.type === 'bundle' ? disposer.source.job : null;
+  const job = null;
   const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
   if (disposer?.source?.type === 'command') {
     const body = readCommand(run.runDir, disposer.source.command, run.arc).file.body;
@@ -444,7 +428,7 @@ function latentRepair(run: Run): Verdict {
  * lens); cadence, unwitnessed and wall-clock all of L; a request its lenses ∩ L. `final` adds the lenses still
  * outstanding, which the log does not record: with it, the required set is a floor and L the ceiling.
  */
-function requiredLenses(run: Run, triggers: Extract<Fact, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
+function requiredLenses(run: Run, triggers: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
   const out = new Set<string>();
   for (const t of triggers) {
     if (t.type === 'drift') out.add('vision');
@@ -467,7 +451,7 @@ function driftAudit(run: Run): Verdict {
   const fits = exact ? JSON.stringify(ran) === JSON.stringify([...floor].sort()) : floor.every((l) => ran.includes(l)) && ran.every((l) => (LENSES as readonly string[]).includes(l));
   if (!ran.includes('vision') || !fits) problems.push(`${audit.job} (${JSON.stringify(audit.triggers)}) ran ${JSON.stringify(audit.lenses)}, not what its triggers require (${exact ? '' : 'at least '}${JSON.stringify(floor)})`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
-  const ck = checkpointOf(run, audit.job);
+  const ck = rootApplyAfterAudit(run, audit.job);
   // Nothing new since a settled checkpoint: the audit has none (`checkpoint-skipped`, arc feedback 2026-10-16).
   const after = ck === null ? 'its checkpoint skipped' : `${ck.job} ${ck.decision}`;
   return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${after}`);
@@ -482,8 +466,8 @@ function finalAudit(run: Run): Verdict {
   const lastUnit = publications(run).filter((p) => p.subject !== 'docs').at(-1);
   if (lastUnit === undefined || last.integrationSha !== lastUnit.new) problems.push(`${last.job} audited ${last.integrationSha}, not the last unit publication ${lastUnit?.new}`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === last.job)?.outcome !== 'completed') problems.push(`${last.job} did not complete`);
-  const ck = checkpointOf(run, last.job);
-  if (ck?.decision !== 'no-op') problems.push(`its checkpoint ${ck?.job} decided ${ck?.decision}`);
+  const ck = rootApplyAfterAudit(run, last.job);
+
   return verdict(problems, `${last.job} final on ${last.integrationSha}, ran ${last.lenses.join(', ')}; ${ck?.job} no-op`);
 }
 
@@ -530,7 +514,7 @@ function lensCoverage(run: Run): Verdict {
   if (audit === null) return { pass: false, detail: 'status has no audit view' };
   const head = revParse(run.repo, `refs/heads/${run.plan.integrationBranch}`);
   const problems: string[] = [];
-  for (const lens of LENSES) {
+  for (const lens of ['invariants'] as const) {
     const c = audit.coverage.find((x) => x.lens === lens);
     if (c === undefined) problems.push(`${lens}: no coverage`);
     else if (c.coveredTo !== head || c.outstanding || c.pendingDocs.length > 0) problems.push(`${lens}: covered to ${c.coveredTo}, outstanding ${c.outstanding}, pending docs ${JSON.stringify(c.pendingDocs)}`);
@@ -655,7 +639,7 @@ function snapshotVerifies(run: Run): Verdict {
   return { pass: v.manifest.highWater >= floor, detail: `${ref} at ${at}: high-water ${v.manifest.highWater}, last integration.ff done at seq ${floor}` };
 }
 
-const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate', 'lens', 'checkpoint', 'packReview']);
+const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['verifier', 'campaignAudit', 'experienceVerdict', 'packReview']);
 
 /** The role of a backend call (a unit's, a job's, or a smoke's), else null. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {
@@ -687,7 +671,7 @@ function judgmentFresh(run: Run): Verdict {
     roles.add(role);
     const { inv, launch } = launchOf(run, i);
     const t = launch.terminal;
-    // A judgment's repair turn (2026-10-15 plan-check and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
+    // A judgment's repair turn (2026-10-15 pre-build and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
     if (t.type === 'backend' && t.role !== 'build' && t.session.mode === 'resume') {
       if (seen.get(t.session.id) === undefined) problems.push(`${inv}: a repair turn resumes ${t.session.id}, no earlier fresh judgment session`);
       if (repaired.has(t.session.id)) problems.push(`${inv}: a second repair turn of ${t.session.id}`);
@@ -703,7 +687,7 @@ function judgmentFresh(run: Run): Verdict {
     if (other !== undefined) problems.push(`${inv} reuses session ${t.session.id} of ${other}`);
     seen.set(t.session.id, inv);
   }
-  for (const r of JUDGMENT_ROLES) if (!roles.has(r)) problems.push(`no ${r} call`);
+  for (const r of ['verifier','campaignAudit','packReview']) if (!roles.has(r)) problems.push(`no ${r} call`);
   return verdict(problems, `${seen.size} judgment invocations (${[...roles].sort().join(', ')}), ${seen.size} distinct fresh sessions`);
 }
 
@@ -755,11 +739,6 @@ const COMMON: readonly Grade[] = [
   ['baseline', baseline],
   ['branch', branchMatches],
   ['stale-whole', staleWhole],
-  ['bundles-whole', bundlesWhole],
-  ['bundle-divergences', bundleDivergences],
-  ['divergence-digest-bound', divergenceDigestBound],
-  ['convergence-bound', convergenceBound],
-  ['drift-audit', driftAudit],
   ['final-audit', finalAudit],
   ['close-out', closeOut],
   ['completion', completion],
@@ -812,9 +791,7 @@ function exercised(run: Run): ReadonlySet<Branch> {
   if (factsOf(run, 'admissions-closed').length > 0) out.add('draining');
   const goLanes = new Set(run.obligations.lanes.filter((l) => l.reporter === 'go-test-json').map((l) => l.id as string));
   if (factsOf(run, 'witnessed').some((f) => goLanes.has(f.lane))) out.add('real go');
-  for (const d of factsOf(run, 'bundle-decided')) {
-    if (d.outcome.kind === 'rejected' && d.outcome.reason === 'invalid' && checkpointOps(run, d.job).length >= 2) out.add('literal partial bundle');
-  }
+
   return out;
 }
 

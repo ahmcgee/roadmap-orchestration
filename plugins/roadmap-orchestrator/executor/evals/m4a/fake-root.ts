@@ -1,4 +1,4 @@
-import { systemName } from '../../src/core/ids.ts';
+
 // The scripted root agent of fake M4a runs (`driver --fake <script>`): it stands in for the headless `claude -p` session,
 // one process per turn, speaking the same stream-json the driver reads (an init event, a Bash `tool_use` and its
 // `tool_result` per command, the final text, a `result`), and keeps its state in `fake/root-state.json`. It follows
@@ -34,7 +34,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { closeSync,cpSync,existsSync,mkdirSync,openSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { amendmentsOf,readArcRef } from '../../src/chain.ts';
+import { readArcRef } from '../../src/chain.ts';
 import type { Fact } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
@@ -43,12 +43,12 @@ import { parseDebtBlock } from '../../src/docs/debt.ts';
 import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import {
 type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,FIXTURE_SYSTEMS,OBLIGATIONS,
-PASS_PATH,
+PASS_PATH,OPPORTUNITY,FITS_WITNESS,
 SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
 specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
 import { MAIN,layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER,CHECKPOINT_AMENDMENT,DRIFT_CHECKPOINT } from './scenario.ts';
+import { BLOCKED_SEEN_BARRIER } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -276,17 +276,10 @@ type Ctx = Readonly<{ t: Turn; dir: string; state: State }>;
 
 /** Reads arc n-1's amendments and the baseline's open debt; dispositions per the golden story. */
 function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline: string) {
-  if (previous === undefined) return { debt: [], amendments: [] };
+  if (previous === undefined) return { debt: [],  };
   const l = layout(c.dir);
   const ref = readArcRef(absPath(l.product), arcId(previous.arc));
   if (ref === null) throw new Error(`no ref for ${previous.arc}`);
-  const amendments = amendmentsOf(ref).map((a) => {
-    // Arc 2 applies arc 1's checkpoint amendment as T-24; arc 3 applies arc 2's converted day-view admit as T-25.
-    const fromCheckpoint = n === 2 && a.fact.source.type === 'checkpoint' && a.fact.proposal === CHECKPOINT_AMENDMENT.proposal;
-    const fromAdmit = n === 3 && a.fact.source.type === 'admit';
-    if (fromCheckpoint || fromAdmit) return { id: a.id, disposition: { type: 'applied', rules: [fromCheckpoint ? 'T-24' : 'T-25'] } };
-    return { id: a.id, disposition: { type: 'deferred', reason: 'the high-water heights wait for the visiting-yacht scene (V-7)' } };
-  });
   const debtMd = c.t.git('show', `${baseline}:.roadmap/debt.md`);
   const ledger = parseDebtBlock(debtMd);
   if (ledger === null) throw new Error('the baseline has no debt block');
@@ -294,7 +287,7 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
     id: i.id,
     disposition: n === 2 && i.bankReason === 'finding-deferred' ? { type: 'promote', unit: 'notice' } : { type: 'keep', reason: 'cosmetic; the harbour has no other name in use yet' },
   }));
-  return { debt, amendments };
+  return { debt };
 }
 
 /** Composes arc n's inputs (pin, obligations, specs, ledger, Phase-0 record, plan), its branch, and checks it. */
@@ -321,7 +314,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     const raw = JSON.parse(c.t.roadmap(['corpus', 'pin', '--repo', l.product, '--commit', seed, '--baseline', seed, '--out', join(inputs, 'preimage.corpus.json')])) as { sha256: string; pin: { files: readonly { path: string; sha256: string }[] } };
     preimage = { pinSha256: raw.sha256, files: raw.pin.files.filter((f) => f.path === '0030_Bookings.md') };
   }
-  const { debt, amendments } = dispositions(c, n, opts.previous, baseline);
+  const { debt } = dispositions(c, n, opts.previous, baseline);
   const question = opts.answer === undefined ? { ...ARC1_QUESTION, state: { type: 'open' } } : { ...ARC1_QUESTION, state: { type: 'answered', ...opts.answer } };
   // Arc 1 writes the corpus's suite gate (plant S); a later arc carries the previous arc's suite lanes as they ended.
   const previousRef = opts.previous === undefined ? null : readArcRef(absPath(l.product), arcId(opts.previous.arc));
@@ -332,7 +325,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     curation: n === 1 ? ARC1_CURATION : [{ tier: 'structural', what: n === 2 ? 'applied arc-1/M-1 as T-24; T-23 replaces T-9 per the owner\'s answer to P-1' : 'added the harbour master\'s day view as T-25', files: n === 2 ? ['0030_Bookings.md', '0040_Notifications.md'] : ['0060_Operations.md'], rules: n === 2 ? ['T-23', 'T-24'] : ['T-25'] }],
     corpusDivergences: n === 1 ? [{ tier: 'semantic', what: 'removed the busy-week override that let the harbour master double-book a berth: V-2 says never', preimage, cites: ['V-2'], rules: ['T-7'] }] : [],
     questions: opts.draft === 'vision-silent' ? [{ ...ARC1_QUESTION, state: { type: 'open' } }] : [question],
-    debt, amendments, slice,
+    debt, slice,
   }));
   writeFile(join(inputs, 'plan.json'), json({
     schema: 'roadmap/plan-m1', arc, integrationBranch: `arc/${arc}`, baseline, worktreeRoot: l.worktrees,
@@ -342,7 +335,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint admits the opportunity.
     holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
     limits: { convergenceK: 3 },
-    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
+    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, review: 'always', risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
     ...(opts.previous === undefined ? {} : { chain: { previousArc: opts.previous.arc, previousHead: opts.previous.head } }),
   }));
   c.t.git('branch', `arc/${arc}`, baseline);
@@ -557,18 +550,45 @@ function logIntervention(c: Ctx, arc: string, lever: string, bullets: Readonly<{
 function superviseArc2(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
-  c.t.untilFact(a.arc, `checkpoint ${DRIFT_CHECKPOINT} decided`, (facts) => facts.find((x) => x.kind === 'bundle-decided' && x.job === DRIFT_CHECKPOINT));
-  const decided = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
-  const o = decided.opportunities;
-  if (o.length !== 1 || o[0]!.units.join() !== 'fits') throw new Error(`the checkpoint should have admitted fits as the one opportunity: ${JSON.stringify(o)}`);
-  if (!decided.needsUser.some((x) => x.reason === 'divergence-digest')) throw new Error(`the bundle raised no divergence digest: ${JSON.stringify(decided.needsUser)}`);
+  c.t.roadmap(['audit', ...at]);
+  c.t.untilFact(a.arc, 'the campaign audit reported', (facts) => facts.find((x) => x.kind === 'audit-ended' && x.job === 'audit-1'));
+  const exported = join(l.inputs, `${a.arc}-root-fits`);
+  const base = JSON.parse(c.t.roadmap(['inputs', 'export', ...at, '--out', exported])) as {planRev: number};
+  const plan = JSON.parse(readFileSync(join(exported, 'plan.json'), 'utf8'));
+  const obligations = JSON.parse(readFileSync(join(exported, 'obligations.json'), 'utf8'));
+  const fit = OPPORTUNITY.fits;
+  const spec = {...specOf({id: fit.unit.id, systems: fit.unit.systems, unitLane: fit.unitLane, acceptance: fit.acceptance}), obligations: ['I-1', FITS_WITNESS.parent, FITS_WITNESS.child.id]};
+  writeFile(join(exported, 'fits.json'), json(spec));
+  plan.units.push({...fit.unit, origin: 'planned', review: 'always', spec: 'fits.json', resources: []});
+  plan.holistic.advances = [...FITS_WITNESS.cites];
+  const parent = obligations.obligations.find((o: {id: string}) => o.id === FITS_WITNESS.parent);
+  const witness = {lane: FITS_WITNESS.child.lane, testIds: [FITS_WITNESS.child.test], files: ['journeys/berths.journey.js']};
+  const pin = JSON.parse(readFileSync(join(exported, plan.corpus), 'utf8')) as Pin;
+  const draughtRule = pin.rules.find((r) => r.id === FITS_WITNESS.child.rule);
+  if (draughtRule === undefined) throw new Error('the exported corpus has no draught rule');
+  obligations.obligations.push(
+    {...parent, id: FITS_WITNESS.restated, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], activation: 'must-hold', deliveredBy: [], proofJudgment: {...parent.proofJudgment, obligationRev: 1}},
+    {...parent, id: FITS_WITNESS.child.id, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], statement: FITS_WITNESS.child.statement, rule: {id: draughtRule.id, textSha256: draughtRule.textSha256}, witness, activation: 'future', deliveredBy: ['fits'], proofJudgment: {verdict: 'proves', obligationRev: 1, witness: {testIds: witness.testIds, files: witness.files}}},
+  );
+  parent.state = {type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id]};
+  parent.witness = null;
+  parent.proofJudgment = null;
+  obligations.census.find((e: {rule: string}) => e.rule === FITS_WITNESS.child.rule).state = {type: 'obligation', id: FITS_WITNESS.child.id};
+  writeFile(join(exported, 'plan.json'), json(plan));
+  writeFile(join(exported, 'obligations.json'), json(obligations));
+  c.t.roadmap(['apply', ...at, '--from', exported, '--rev', String(base.planRev), '--reason', 'The root adds fits with its draught witness and keeps the parent obligation as a split restatement.']);
+  c.t.untilFact(a.arc, 'the root fits revision applied', (facts) => facts.find((f) => f.kind === 'plan-applied' && f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits')));
+  // The ruler notice is raised asynchronously after the revision. Clear it during this root turn, just as the
+  // arc-1 flow revision notice is cleared; otherwise it can race the next held-unit wake.
+  const ruler = c.t.until(a.arc, 'the root revision ruler notice', (s) => s.needsUser.some((n) => n.reason === 'ruler-changed')).needsUser.find((n) => n.reason === 'ruler-changed')!;
   c.t.roadmap(['run-only', '--clear', ...at]);
+  c.t.untilFact(a.arc, 'run-only clear to close the ruler notice', (facts) => facts.find((f) => f.kind === 'needs-user-acked' && f.id === ruler.id));
   const hung = c.t.until(a.arc, `notice running its ${SLOW_LANE.id} lane`, (s) => unitOf(s, 'notice').running?.lane?.id === SLOW_LANE.id);
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
   c.t.roadmap(['pause', 'notice', ...at]);
   c.t.until(a.arc, 'notice held', (s) => unitOf(s, 'notice').state === 'held');
   return [
-    `cutoff merged; notice waited behind my run-only limit for the checkpoints. The checkpoint admitted fits as this arc's opportunity (O-1, V-7) and converted the day view into an amendment (D-1 is in the digest); then I lifted the run-only limit.`,
+    `cutoff merged; notice waited behind my run-only limit for the campaign audit. The root admitted fits with its witness using apply --reason and left the day view for a later slice; then I lifted the run-only limit.`,
     `notice's ${SLOW_LANE.id} lane hung: I paused notice and resume it on the next wake. ${RUNNING(a)}`,
   ].join('\n');
 }
@@ -587,7 +607,7 @@ function resumePaused(c: Ctx, a: ArcState): string {
     change: 'a per-lane time budget from the lane\'s own history would end a lane that progresses forever without me',
   });
   c.state.paused = null;
-  return `Resumed ${paused.unit} after my pause (OP-1 in the operator log). The divergence digest (D-1, the opportunity) goes to the owner at the next check-in. ${RUNNING(a)}`;
+  return `Resumed ${paused.unit} after my pause (OP-1 in the operator log). The root-authored fits revision remains in force. ${RUNNING(a)}`;
 }
 
 function turn(c: Ctx, prompt: string): string {

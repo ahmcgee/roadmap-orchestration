@@ -3,35 +3,11 @@
 // brief ack marker and the brief payload (C4). Types and readers only.
 import { OUTCOME_STAGES,type OutcomeStage } from '../core/events.ts';
 
-import {
-type AmendmentRef,type ArcId,
-type BriefId,
-type ClauseId,type DebtId,type DivergenceId,
-type FindingId,
-type JobId,
-type MilestoneId,
-type NeedsUserId,type ObligationId,
-type OpportunityId,
-type PhaseQuestionId,
-type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,
-type WitnessItemId,
-amendmentRef,
-amendmentRefKey,
-arcId,briefId,clauseId,
-compareIds,
-debtId,divergenceId,
-findingId,
-idList,jobIdOf,
-milestoneId,
-needsUserId,obligationId,
-opportunityId,
-phaseQuestionId,ruleId,sha,sha256,unitId,visionClauseId,
-witnessItemId,
-} from '../core/ids.ts';
+import { type ArcId, type BriefId, type ClauseId, type DebtId, type DivergenceId, type FindingId, type JobId, type MilestoneId, type NeedsUserId, type ObligationId,  type PhaseQuestionId, type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, type WitnessItemId, arcId, briefId, clauseId, compareIds, debtId, divergenceId, findingId, idList, jobIdOf, milestoneId, needsUserId, obligationId,  phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, witnessItemId } from '../core/ids.ts';
 import { type Read,SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged } from '../core/validate.ts';
 import { type IsoTime,type RepoPath,isoTime,repoPath } from '../core/values.ts';
 import { type DebtDisposition,debtDisposition } from '../debt/types.ts';
-import { CENSUS_STATES,CONVERSION_REASONS,type ConversionReason,DIVERGENCE_KINDS,type DivergenceKind } from '../holistic/types.ts';
+import { CENSUS_STATES,DIVERGENCE_KINDS,type DivergenceKind } from '../holistic/types.ts';
 
 /** A census state's name (`obligation`, `out-of-slice`, `untestable`, `prod-only`). */
 export type CensusStateName = (typeof CENSUS_STATES)[number];
@@ -64,10 +40,6 @@ export type QuestionState = Readonly<{ type: 'open' }> | Readonly<{ type: 'answe
 export type PhaseQuestion = Readonly<{
   id: PhaseQuestionId; rank: number; text: string; files: readonly RepoPath[]; bears: readonly (RuleId | VisionClauseId)[]; assumption: string; state: QuestionState;
 }>;
-export type AmendmentDisposition =
-  | Readonly<{ type: 'applied'; rules: readonly RuleId[] }>
-  | Readonly<{ type: 'rejected' | 'deferred'; reason: string }>;
-
 export type Phase0Record = Readonly<{
   schema: typeof PHASE0_SCHEMA;
   curation: readonly Curation[];
@@ -77,7 +49,6 @@ export type Phase0Record = Readonly<{
   /** One per `open` item of the baseline's debt block, ascending by id. */
   debt: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
   /** One per amendment of the previous arc's verified ref, ascending. */
-  amendments: readonly Readonly<{ id: AmendmentRef; disposition: AmendmentDisposition }>[];
   slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }>;
 }>;
 
@@ -110,12 +81,6 @@ const phaseQuestion: Read<PhaseQuestion> = object((f) => ({
   assumption: f.get('assumption', str),
   state: f.get('state', questionState),
 }));
-const amendmentDisposition: Read<AmendmentDisposition> = tagged('type', {
-  applied: object((f): AmendmentDisposition => ({ type: f.get('type', literal('applied')), rules: f.get('rules', rules) })),
-  rejected: object((f): AmendmentDisposition => ({ type: f.get('type', literal('rejected')), reason: f.get('reason', str) })),
-  deferred: object((f): AmendmentDisposition => ({ type: f.get('type', literal('deferred')), reason: f.get('reason', str) })),
-});
-
 export const phase0Record: Read<Phase0Record> = object((f) => {
   const out: Phase0Record = {
     schema: f.get('schema', literal(PHASE0_SCHEMA)),
@@ -123,7 +88,6 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
     corpusDivergences: f.get('corpusDivergences', arrayOf(corpusDivergence)),
     questions: f.get('questions', arrayOf(phaseQuestion)),
     debt: f.get('debt', arrayOf(object((g) => ({ id: g.get('id', (v, p) => debtId(v, p)), disposition: g.get('disposition', debtDisposition) })))),
-    amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => amendmentRefKey(a.id), { order: 'by arc, then id' })),
     slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) }))),
   };
   out.questions.forEach((q, i) => {
@@ -172,7 +136,6 @@ export type Phase0Problem =
   | Readonly<{ type: 'census-dangling'; rules: readonly RuleId[] }>
   | Readonly<{ type: 'obligation-rule-unresolved'; obligation: ObligationId }>
   | Readonly<{ type: 'debt-undispositioned' | 'debt-kept-twice-unasked'; id: DebtId }>
-  | Readonly<{ type: 'amendment-undispositioned'; id: AmendmentRef }>
   | Readonly<{ type: 'question-reused'; id: PhaseQuestionId }>
   /**
    * The owner-answer channel (src/answers.ts): a question whose latest recorded owner answer (`roadmap answer`) the new
@@ -196,7 +159,6 @@ export const phase0Problem: Read<Phase0Problem> = tagged('type', {
   'obligation-rule-unresolved': object((f): Phase0Problem => ({ type: f.get('type', literal('obligation-rule-unresolved')), obligation: f.get('obligation', (v, p) => obligationId(v, p)) })),
   'debt-undispositioned': debtProblem('debt-undispositioned'),
   'debt-kept-twice-unasked': debtProblem('debt-kept-twice-unasked'),
-  'amendment-undispositioned': object((f): Phase0Problem => ({ type: f.get('type', literal('amendment-undispositioned')), id: f.get('id', (v, p) => amendmentRef(v, p)) })),
   'question-reused': object((f): Phase0Problem => ({ type: f.get('type', literal('question-reused')), id: f.get('id', (v, p) => phaseQuestionId(v, p)) })),
   'answer-unapplied': object((f): Phase0Problem => ({ type: f.get('type', literal('answer-unapplied')), question: f.get('question', (v, p) => phaseQuestionId(v, p)) })),
   'spec-census-mismatch': object((f): Phase0Problem => ({
@@ -317,20 +279,12 @@ export type BriefArc = Readonly<{
     dispositioned: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
   }>;
   questions: readonly Readonly<{ id: PhaseQuestionId; rank: number; text: string; assumption: string; state: QuestionState }>[];
-  /** M4a rev 3 (OR-A1): `admit` names the converted checkpoint admit an amendment came from (R35); null otherwise. */
-  amendments: readonly Readonly<{ id: AmendmentRef; rules: readonly RuleId[]; proposal: string; admit: BriefConversion | null }>[];
   /** The pack reviews' `note` findings (a blocking one is its review's needs-user item), each by `(job, index)` (K13). */
   packReviewNotes: readonly Readonly<{ job: JobId; index: number; claim: string }>[];
   /** `% held` = held / obligationRules (obligation-state rules held on the head); null outside a corpus arc. */
   census: Readonly<{ held: number; obligationRules: number; outOfSlice: number; untestable: number; prodOnly: number }> | null;
   timings: readonly StageTiming[];
   pr: BriefPr;
-  /** M4a rev 3 (OR-A1; corpus arcs, empty elsewhere): the checkpoint admits the delta classified, in log order. */
-  admits: readonly BriefAdmit[];
-  /** The arc's opportunities at its ref (not a delta). */
-  opportunities: readonly BriefOpportunity[];
-  /** The drift indicator at the ref: each merged non-opportunity admit with findings attributed to its merge outside the slice. */
-  drift: readonly BriefDrift[];
   /**
    * dev.13: the arc's demo at its ref (not a delta; src/demo/promote.ts `demoView`): the promoted milestone and SHA, whether
    * promotion is held and the demo up, what changed since the promotion before it, and the rough edges (the open
@@ -348,17 +302,6 @@ export type BriefDemo = Readonly<{
   since: Readonly<{ milestones: readonly MilestoneId[]; tweaks: readonly UnitId[]; fixes: readonly UnitId[] }>;
   roughEdges: readonly FindingId[];
 }>;
-
-export const ADMIT_CLASS_NAMES = ['repair', 'oversight', 'opportunity'] as const;
-export type BriefConversion = Readonly<{ job: JobId; index: number; reason: ConversionReason }>;
-export type BriefAdmit = Readonly<{
-  job: JobId; index: number; unit: UnitId; class: (typeof ADMIT_CLASS_NAMES)[number]; clauses: readonly VisionClauseId[]; followUp: OpportunityId | null;
-}>;
-export type BriefOpportunity = Readonly<{
-  id: OpportunityId; clauses: readonly VisionClauseId[]; units: readonly UnitId[]; followUps: number; spentUsd: number;
-  overrun: readonly Readonly<{ job: JobId; index: number }>[];
-}>;
-export type BriefDrift = Readonly<{ unit: UnitId; job: JobId; findings: readonly Readonly<{ id: FindingId; clauses: readonly VisionClauseId[] }>[] }>;
 
 export type BriefPayload = Readonly<{
   schema: typeof BRIEF_SCHEMA;
@@ -380,14 +323,6 @@ const briefPr: Read<BriefPr> = tagged('type', {
   unavailable: object((f): BriefPr => ({ type: f.get('type', literal('unavailable')), reason: f.get('reason', str) })),
 });
 const divR: Read<DivergenceId> = (v, p) => divergenceId(v, p);
-const briefConversion: Read<BriefConversion> = object((g) => ({
-  job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), reason: g.get('reason', oneOf(CONVERSION_REASONS)),
-}));
-/** A non-negative finite number (a spend in USD). */
-const nonNegative: Read<number> = (v, p) => {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'a non-negative number', v);
-  return v;
-};
 const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
   slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) })))),
@@ -403,9 +338,6 @@ const briefArc: Read<BriefArc> = object((f) => ({
   questions: f.get('questions', arrayOf(object((g) => ({
     id: g.get('id', (v, p) => phaseQuestionId(v, p)), rank: g.get('rank', positive), text: g.get('text', str), assumption: g.get('assumption', str), state: g.get('state', questionState),
   })))),
-  amendments: f.get('amendments', arrayOf(object((g) => ({
-    id: g.get('id', (v, p) => amendmentRef(v, p)), rules: g.get('rules', rules), proposal: g.get('proposal', str), admit: g.get('admit', nullable(briefConversion)),
-  })))),
   packReviewNotes: f.get('packReviewNotes', arrayOf(object((g) => ({ job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), claim: g.get('claim', str) })))),
   census: f.get('census', nullable(object((g) => ({
     held: g.get('held', nat), obligationRules: g.get('obligationRules', nat), outOfSlice: g.get('outOfSlice', nat), untestable: g.get('untestable', nat), prodOnly: g.get('prodOnly', nat),
@@ -415,18 +347,6 @@ const briefArc: Read<BriefArc> = object((f) => ({
     count: g.get('count', positive), p50Ms: g.get('p50Ms', nat), maxMs: g.get('maxMs', nat),
   })))),
   pr: f.get('pr', briefPr),
-  admits: f.get('admits', arrayOf(object((g): BriefAdmit => ({
-    job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), unit: g.get('unit', (v, p) => unitId(v, p)), class: g.get('class', oneOf(ADMIT_CLASS_NAMES)),
-    clauses: g.get('clauses', idList(vidR)), followUp: g.get('followUp', nullable((v, p) => opportunityId(v, p))),
-  })))),
-  opportunities: f.get('opportunities', arrayOf(object((g): BriefOpportunity => ({
-    id: g.get('id', (v, p) => opportunityId(v, p)), clauses: g.get('clauses', idList(vidR, { nonEmpty: true })), units: g.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
-    followUps: g.get('followUps', nat), spentUsd: g.get('spentUsd', nonNegative), overrun: g.get('overrun', arrayOf(object((h) => ({ job: h.get('job', (v, p) => jobIdOf(v, p)), index: h.get('index', nat) })))),
-  })))),
-  drift: f.get('drift', arrayOf(object((g): BriefDrift => ({
-    unit: g.get('unit', (v, p) => unitId(v, p)), job: g.get('job', (v, p) => jobIdOf(v, p)),
-    findings: g.get('findings', arrayOf(object((h) => ({ id: h.get('id', (v, p) => findingId(v, p)), clauses: h.get('clauses', idList(vidR, { nonEmpty: true })) })), { nonEmpty: true })),
-  })))),
   demo: f.get('demo', nullable(object((g): BriefDemo => ({
     milestone: g.get('milestone', (v, p) => milestoneId(v, p)), sha: g.get('sha', (v, p) => sha(v, p)), held: g.get('held', bool), up: g.get('up', bool),
     since: g.get('since', object((h) => ({

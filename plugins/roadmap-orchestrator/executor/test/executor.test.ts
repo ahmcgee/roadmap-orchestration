@@ -41,7 +41,7 @@ after(assertNoSurvivors);
 const T = { timeout: EXEC_TIMEOUT_MS };
 const WAIT_MS = 60_000;
 const U2 = unitId('u2');
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const AFTER_BUILD = STRAIGHT.slice(1);
 
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
@@ -159,7 +159,7 @@ test('executor.pause-holds-then-resume: a pause mid-build interrupts it (held, u
   const exit = await run.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
-  assert.deepEqual(outcomes(r), ['plan-check:approve', 'build:interrupted', ...AFTER_BUILD]);
+  assert.deepEqual(outcomes(r), ['pre-build:approve', 'build:interrupted', ...AFTER_BUILD]);
   const builds = journalOf(r).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'build' ? [e.fact.attempt] : []));
   assert.equal(builds.length, 2);
   assert.notEqual(builds[0], builds[1], 'the resumed build is a new attempt');
@@ -202,7 +202,7 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
   const first = startExec(r);
   await reached(r.scenarioDir, 'check1', WAIT_MS);
   await cli(r, ['pause', '--all']);
-  await until(() => has(r, 'plan-check:interrupted'), WAIT_MS, 'the plan-check to be interrupted');
+  await until(() => has(r, 'pre-build:interrupted'), WAIT_MS, 'the pre-build to be interrupted');
   await cli(r, ['stop']);
   const stopped = await first.exit;
   assert.equal(stopped.code, 0, stopped.stderr);
@@ -225,12 +225,12 @@ test('executor.restart-clears-stop-not-pause: a restart after pause and stop cle
   const exit = await second.exit;
   assert.equal(exit.code, 0, exit.stderr);
   assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
-  assert.deepEqual(outcomes(r), ['plan-check:interrupted', ...STRAIGHT]);
+  assert.deepEqual(outcomes(r), ['pre-build:interrupted', ...STRAIGHT]);
   assert.deepEqual(started(r), [1, 2]);
 });
 
 test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user keeps the executor in its loop; a root cut closes the item and completes the arc', T, async (t) => {
-  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })] });
+  const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({decision:'approve'}), mulBuild(), gateStep({decision:'escalate'}), gateStep({decision:'escalate'})] });
   const run = startExec(r);
   let id = '';
   await until(async () => {
@@ -243,7 +243,7 @@ test('executor.blocking-needs-user-waits: a parked unit\'s blocking needs-user k
   assert.equal(run.child.exitCode, null, 'the executor waits');
   const raise = journalOf(r).view.opsOf('needsuser.raise');
   assert.equal(raise.length, 1, 'raised once, though the loop re-reads the arc every poll');
-  assert.deepEqual(raise[0]!.parent, { type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 2 }, 'parented by the attempt that parked the unit');
+  assert.deepEqual(raise[0]!.parent, { type: 'stage', unit: 'u1', stage: 'gate', attempt: journalOf(r).view.unit(U1).decided!.attempt }, 'parented by the attempt that parked the unit');
 
   await cutPark(r, id);
   const exit = await run.exit;
@@ -307,19 +307,19 @@ test('executor.park-raised-promptly: a unit that parks has its needs-user raised
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
-      ...SMOKE_DEFAULT, ...of('u1', [planCheckStep({ decision: 'escalate' }), planCheckStep({ decision: 'escalate' })]),
+      ...SMOKE_DEFAULT, ...of('u1', [planCheckStep({decision:'approve'}),mulBuild(),gateStep({decision:'escalate'}),gateStep({decision:'escalate'})]),
       ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step, mulBuild(), gateStep({ decision: 'approve' })]),
     ],
   });
   const run = startExec(r);
   await reached(r.scenarioDir, 'u2check', WAIT_MS);
-  await until(() => openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 to park, u2 still at its plan-check');
+  await until(() => openBlocking(journalOf(r).view).length === 1, WAIT_MS, 'u1 to park, u2 still at its pre-build');
   const view = journalOf(r).view;
   const [item] = openBlocking(view);
-  assert.ok(item !== undefined, 'u1\'s needs-user is raised while u2\'s plan-check is in flight');
+  assert.ok(item !== undefined, 'u1\'s needs-user is raised while u2\'s pre-build is in flight');
   const raise = view.opsOf('needsuser.raise');
   assert.equal(raise.length, 1);
-  assert.deepEqual(raise[0]!.parent, { type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 2 });
+  assert.deepEqual(raise[0]!.parent, { type: 'stage', unit: 'u1', stage: 'gate', attempt: view.unit(U1).decided!.attempt });
   assert.deepEqual(view.unit(U2).decided, null, 'u2 has decided nothing yet');
   const s = await statusOf(r);
   assert.equal(s.run.state, 'running', 'a unit-scoped park with a later unit running is running, not parked');
@@ -351,11 +351,11 @@ test('cli.start-wait-flag: start waits 240 s for readiness by default; --wait ov
 });
 
 test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatched: with u1 parked on an open blocking unit-scoped needs-user, the arc waits at paused u2 without dispatching it; resumed, u2 runs; the run completes once a root cut closes the item', T, async (t) => {
-  const escalate = planCheckStep({ decision: 'escalate' });
+  const escalate = gateStep({decision:'escalate'});
   const r = setupExec(t, {
     units: [{ id: 'u1' }, { id: 'u2' }],
     steps: [
-      ...SMOKE_DEFAULT, { ...escalate, acts: [{ type: 'barrier', name: 'u1check', timeoutMs: 120_000 }, ...escalate.acts] } as Step, escalate,
+      ...SMOKE_DEFAULT, planCheckStep({decision:'approve'}), mulBuild(), { ...escalate, acts: [{ type: 'barrier', name: 'u1check', timeoutMs: 120_000 }, ...escalate.acts] } as Step, escalate,
       planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
     ],
   });
@@ -377,7 +377,7 @@ test('executor.unit-park-does-not-hold-arc, executor.paused-unit-never-dispatche
   assert.equal(view.dispatchOf(U2), null, 'no dispatch fact for the paused unit');
   assert.deepEqual(outcomes(r, 'u2'), []);
   assert.equal(view.unit(U2).counters.attempts, 0, 'no stage of u2 started');
-  assert.equal(readCalls(r.scenarioPath).length, 4, 'the two smoke calls and u1\'s two plan-checks only');
+  assert.equal(readCalls(r.scenarioPath).length, 6, 'two smokes, u1 review, build and two gate calls only');
   const s = await statusOf(r);
   assert.equal(s.run.state, 'held', 'nothing can proceed: the next unit is paused');
   await cli(r, ['resume', 'u2']);

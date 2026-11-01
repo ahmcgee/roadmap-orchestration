@@ -41,7 +41,7 @@ import { modelInfo } from '../../../src/routing/models.ts';
 import type { RiskTier } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
 import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
-import { BUILD_REPORT,planCheckAnswer } from '../../../test/fixtures/stage-common.ts';
+import { BUILD_REPORT } from '../../../test/fixtures/stage-common.ts';
 import { type ArcDescriptor,type ArcRun,U1,contextFor,isGateCall,laneJson,outcomes,stepUntil } from '../../../test/fixtures/unit-common.ts';
 import { PHASE0_FILE,PIN_FILE,writePhase0 } from '../../../test/helpers/corpusarc.ts';
 import { tmpDir } from '../../../test/helpers/repo.ts';
@@ -71,7 +71,7 @@ const LANE = { id: 'unit', argv: TEST_ARGV } as const;
 // ---------------------------------------------------------------------------------------------------
 // The arc
 
-const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null });
+const finding = (path: string, text: string): JsonValue => ({evidence: ["fixture:1"],  severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null });
 
 /**
  * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over
@@ -80,10 +80,10 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
 function fakeAnswer(kind: Exclude<FakeGate, 'overspend'>, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
   const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
-  const revise = (findings: JsonValue[]): JsonValue => ({ rulings: [], decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters,  ordering: null });
+  const revise = (findings: JsonValue[]): JsonValue => ({ rulings: [], decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], standing: [], clusters,  ordering: null });
   switch (kind) {
     case 'approve-all':
-      return {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters,  ordering: null };
+      return {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], standing: [], clusters,  ordering: null };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':
@@ -122,9 +122,9 @@ function overThreshold(repo: string, base: string, head: string, removes: readon
  */
 export function gateArm(risk: RiskTier, config: RepoConfig | null, readOnly = false): string {
   const r = resolveRouting(arcStack('default', config, null));
-  const t = r.table.gate[risk];
-  promptFor('gate', t.model); // a rebind onto a model with no gate prompt fails here, before any trial
-  return `gate.${risk} ${r.classes.gate[risk]}${r.bindings[r.classes.gate[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}${readOnly ? ' read-only' : ''}`;
+  const t = r.table.verifier[risk];
+  promptFor('verifier', t.model); // a rebind onto a model with no gate prompt fails here, before any trial
+  return `gate.${risk} ${r.classes.verifier[risk]}${r.bindings[r.classes.verifier[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}${readOnly ? ' read-only' : ''}`;
 }
 
 /** The scripted build call's backend and argv: the build seat the unit's risk picks under the run's routing. */
@@ -134,7 +134,7 @@ function buildCall(risk: RiskTier, config: RepoConfig | null): Pick<Step, 'as' |
 }
 
 /**
- * Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). `readOnly`:
+ * Lays out the fixture's repo, plan, spec and scenario (pre-build approves; the build commits the unit's tree). `readOnly`:
  * a real gate runs as the read-only comparison arm.
  */
 export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null, readOnly = false): ArcDescriptor {
@@ -162,8 +162,7 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
   const scenarioDir = tmpDir('roles-scenario');
   const runDir = tmpDir('roles-run');
   const steps: Step[] = [
-    // The plan-check's risk is the dispatch's: it picks the gate's seat.
-    { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'planCheck', value: planCheckAnswer({ decision: 'approve', risk }) }] },
+    // The pre-build's risk is the dispatch's: it picks the gate's seat.
     // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
     { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
     ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.removes), readOnly ? { repo, runDir } : null),
@@ -228,7 +227,7 @@ function startMonitor(
     }
   };
   const tick = (): void => {
-    const open = r.journal.view.openIntents().find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'gate');
+    const open = r.journal.view.openIntents().find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier');
     if (open === undefined || open.kind !== 'proc.spawn') return;
     const inv = invocationId(open.op, open.ordinal);
     if (braked !== null) return kill(inv);
@@ -344,7 +343,7 @@ export type TrialOptions = Readonly<{
   seed: string;
   size: number;
   gate: GateKind;
-  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
+  /** The unit's risk tier (the plan's and the pre-build's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
   risk: RiskTier;
   /** The repo config whose `routing.classes` rebinds classes for the trial (run.ts `--rebind`), or null: the built-in bindings. */
   config: RepoConfig | null;

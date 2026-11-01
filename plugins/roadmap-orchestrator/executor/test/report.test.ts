@@ -27,7 +27,7 @@ const LINGER_MS = 120_000;
 const INTERIM_WAIT_MS = REPORT_GRACE_MS + 5_000;
 const T = { timeout: REPORT_GRACE_MS + 60_000 };
 
-const report = (summary: string, final: boolean) => ({ summary, changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final });
+const report = (summary: string, final: boolean) => ({ summary, grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final });
 
 type Run = Readonly<{ exit: ExitFile; result: BackendResult; wallMs: number }>;
 
@@ -71,14 +71,6 @@ describe('report: the final report ends the build', { concurrency: true }, () =>
   });
 
   for (const as of ['claude', 'codex'] as const) {
-    it(`report.${as}-legacy-lingers: a reported answer with removed lanesRun is refused by the current reader`, T, async () => {
-      const legacy = { ...report('legacy', true), lanesRun: [{ lane: 'old', exit: 0 }] };
-      const run = await build(as, [{ type: 'emit', value: legacy }, { type: 'hang', ms: LINGER_MS }]);
-      assert.equal(run.exit.cause, 'reported');
-      assert.deepEqual(run.result.outcome, { kind: 'success', value: legacy });
-      assert.throws(() => buildOutput(legacy, 'build'), /lanesRun/);
-      assert.ok(run.wallMs >= REPORT_GRACE_MS && run.wallMs < REPORT_GRACE_MS + 20_000);
-    });
   }
 
   it('report.claude-descendant: a final result, the CLI exits, a descendant lives on → killed after the grace, cause reported', T, async () => {

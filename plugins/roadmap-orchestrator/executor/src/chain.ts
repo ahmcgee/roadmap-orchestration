@@ -12,7 +12,7 @@
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { type Event, type Fact, parseEventLine, prevHash } from './core/events.ts';
-import { type AmendmentRef, type ArcId, type BriefId, type CommandId, type PhaseQuestionId, type Sha, type Sha256Hex, amendmentRefOf, arcId } from './core/ids.ts';
+import { type ArcId, type BriefId, type CommandId, type PhaseQuestionId, type Sha, type Sha256Hex, arcId } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, readJournal } from './core/log.ts';
 import { type RevisionManifest } from './core/records.ts';
@@ -106,11 +106,6 @@ export function completedHeadOf(ref: ArcRef): CompletedHead | null {
   const c = ref.view.holistic().completion;
   const done = c !== null && c.seq === completed.seq && (c.active || ref.view.lastWorkSeq() <= c.seq);
   return { head: completed.fact.head, done };
-}
-
-/** The `corpus-amendment` facts of the arc, as cited across arcs (`<arc>/M-n`). */
-export function amendmentsOf(ref: ArcRef): readonly Readonly<{ id: AmendmentRef; fact: Extract<Fact, { kind: 'corpus-amendment' }> }>[] {
-  return factsOf(ref).flatMap((f) => (f.fact.kind === 'corpus-amendment' ? [{ id: amendmentRefOf(ref.arc, f.fact.id), fact: f.fact }] : []));
 }
 
 /** Every Phase-0 question any revision of the arc kept (by id; a later revision's text wins only if equal, else both are seen). */

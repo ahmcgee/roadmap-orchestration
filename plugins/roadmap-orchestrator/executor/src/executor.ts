@@ -84,7 +84,7 @@ import { type ResolvedRouting,arcScopeOf,provenanceStack,resolveRouting } from '
 import { type ProfileName,profileName } from './routing/types.ts';
 import { type Arbiter,createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
-import { type SchedulerEnd,designRoute,holisticContexts,raiseResult,schedule } from './schedule/scheduler.ts';
+import { type SchedulerEnd,holisticContexts,raiseResult,schedule } from './schedule/scheduler.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
 export const REJECTION_FILE = 'status.rejection.json';
@@ -271,11 +271,10 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
  * no dead attempt keeps it from being cut, re-entered or respecified meanwhile.
  */
 async function consumeRecovered(x: Exec): Promise<void> {
-  const route = designRoute(holisticContexts(x));
   for (const unit of x.stage.plan().units) {
     const s = await consume(x.stage, unit);
     if (s === null) holdAbandoned(x.stage, unit);
-    else if (s.kind !== 'continue') raiseResult(x.stage, unit.id, s, route);
+    else if (s.kind !== 'continue') raiseResult(x.stage, unit.id, s);
   }
 }
 
@@ -342,7 +341,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     routingBase,
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
-    routing: (unit) => ({ profile, resolved: routing(unit) }),
+    routing: (unit) => ({ profile: inForce().plan.routing?.profile ?? profile, resolved: routing(unit) }),
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };

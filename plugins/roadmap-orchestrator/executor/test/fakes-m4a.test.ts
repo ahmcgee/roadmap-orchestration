@@ -6,7 +6,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { CORPUS_GUIDE_FENCE, parseCorpusGuide } from '../src/corpus/types.ts';
-import { validateCheckpointOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
+import {  validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { DEFAULT_REPO, type Forge, makeForge } from './helpers/forge.ts';
 import { checkpointAnswer, checkpointStep, packReviewAnswer, packReviewStep, packTargetOf } from './helpers/holistic.ts';
 import { buildCorpus, sampleCorpus } from './helpers/corpus.ts';
@@ -179,23 +179,5 @@ describe('fakes.pack-review', () => {
   it('an answer the reader refuses is never built', () => {
     assert.throws(() => packReviewAnswer([{ severity: 'major' as 'note' }]));
     assert.throws(() => packReviewAnswer([{ target: { type: 'unit' } }]));
-  });
-});
-
-describe('fakes.checkpoint-m4a', () => {
-  it('carries corpusAmendments in the frozen shape through the shim', () => {
-    const answer = checkpointAnswer({ decision: 'no-op', corpusAmendments: [{ rules: ['T-3'], proposal: 'reword', why: 'drift' }] });
-    const s = writeScenario(tmpDir('scenario'), [checkpointStep('ckpt-1', answer)]);
-    const r = spawnSync('claude', ['-p', '--session-id', '00000000-0000-4000-8000-000000000001'], {
-      input: 'checkpoint inputs', encoding: 'utf8', cwd: tmpDir('elsewhere'), env: { PATH: `${s.binDir}:/usr/bin:/bin`, RESOURCE_OWNER: 'arc/ckpt-1' },
-    });
-    const out = validateCheckpointOutput((JSON.parse(r.stdout.split('\n').filter((l) => l !== '').at(-1) as string) as { structured_output: unknown }).structured_output);
-    assert.deepEqual(out.corpusAmendments, [{ rules: ['T-3'], proposal: 'reword', why: 'drift' }]);
-  });
-
-  it('an answer always carries corpusAmendments (the schema requires it), empty unless its spec names some', () => {
-    const plain = checkpointAnswer({ decision: 'no-op' }) as Record<string, unknown>;
-    assert.deepEqual(plain['corpusAmendments'], []);
-    assert.deepEqual(validateCheckpointOutput(plain).corpusAmendments, []);
   });
 });

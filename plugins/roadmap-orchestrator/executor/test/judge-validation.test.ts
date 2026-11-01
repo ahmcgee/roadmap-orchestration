@@ -6,7 +6,6 @@
 //   classify.witness-reuse           a witness item naming an obligation restates its witness exactly (every proposer)
 //   stage.witness-lane-park          a dev.9 arc whose spec in force holds such an item parks the unit at build, naming it,
 //                                    with no build call (it crash-looped the supervisor before)
-//   schemas.checkpoint-ruling-text   a checkpoint answer recorded before structured rulings reads its JSON text as written
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
@@ -91,15 +90,11 @@ describe('a spec in force from an arc started on 1.0.0-dev.9', () => {
       assert.equal(parked.needsUser.blocking, true);
       assert.match(parked.needsUser.summary, /^Unit u1: unit u1's witness item W-1 names lane unit-lane, which is not an arc lane in force/);
       assert.match(parked.needsUser.recommendation, /roadmap resume u1/);
-      assert.deepEqual(outcomes(a.d), ['plan-check:approve', 'build:witness-lane-missing']);
-      assert.equal(readCalls(a.d.scenarioPath).length, 1, 'the plan-check only: no build call');
+      assert.deepEqual(outcomes(a.d), ['pre-build:approve', 'build:witness-lane-missing']);
+      assert.equal(readCalls(a.d.scenarioPath).length, 1, 'the pre-build only: no build call');
       assert.equal(r.journal.view.unit(r.unit('u1').id).counters.chargeableFailures, 0, 'uncharged');
     } finally {
       r.journal.close();
     }
   });
-});
-
-describe('checkpoint rulings (arc feedback #3)', () => {
-  
 });

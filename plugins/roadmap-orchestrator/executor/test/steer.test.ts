@@ -49,7 +49,7 @@ const BRIEF = 'STEER-BRIEF-MARKER: keep mul as it is and document it in one comm
 
 /** Plan-check, build, lanes green, then two gate escalations: the unit parks (escalation) after its build. */
 const TO_PARK: readonly Step[] = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' })];
-const STRAIGHT_TO_GATE = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green'];
+const STRAIGHT_TO_GATE = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green'];
 /** The steer pass's chain after its build, up to its lanes. */
 const PASS_TO_LANES = ['build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 

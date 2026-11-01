@@ -304,7 +304,7 @@ export function routingProvenanceOf(base: RoutingBase, plan: PlanM1): RoutingPro
   const unitLayers: Record<UnitId, RoutingLayer> = {};
   for (const u of [...plan.units].sort((a, b) => (a.id < b.id ? -1 : 1))) if (u.routing !== undefined) unitLayers[u.id] = u.routing;
   return {
-    profile: base.profile,
+    profile: plan.routing?.profile ?? base.profile,
     repoConfig: { seats: base.config?.routing?.seats ?? null, classes: base.config?.routing?.classes ?? null },
     planLayer: plan.routing ?? null,
     unitLayers,

@@ -1,5 +1,5 @@
 import { systemName } from '../src/core/ids.ts';
-// dev.13 prompt inputs (agent F): a milestone's design references reach the plan-check, build and gate of every unit it
+// dev.13 prompt inputs (agent F): a milestone's design references reach the pre-build, build and gate of every unit it
 // lists, and of its design unit, as documents; a unit in no milestone gets none. A build in a milestone with a `browser`
 // journey gets the walkthrough MCP servers (`--mcp-config`, `{evidence}` its evidence dir); no other build does.
 import assert from 'node:assert/strict';

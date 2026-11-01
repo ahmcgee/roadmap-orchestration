@@ -41,7 +41,7 @@ test('system notes: build and gate receive paths only, and an edit lands as an o
   plan.units[0].systems = ['api'];
   writeFileSync(original.planPath, JSON.stringify(plan));
   const d = { ...original, config: parseRepoConfig({ systemNotesDir: 'memory', systemsMap: { systems: { api: { paths: ['src/**', 'test/**', 'memory/api.md'] } } } }) };
-  const expected = ['<system_notes>\nmemory/api.md\n</system_notes>'];
+  const expected = ['memory/api.md'];
   const build = mulBuild({ 'memory/api.md': 'Record the seam discovered while building mul.\n' });
   appendSteps(d, [planCheckStep({ decision: 'approve' }), { ...build, expect: { ...build.expect, stdinContains: expected } }, gateStep({ decision: 'approve' }, { stdinContains: expected })]);
   const r = contextFor(d);
@@ -52,7 +52,7 @@ test('system notes: build and gate receive paths only, and an edit lands as an o
     assert.equal(calls.length, 2, 'both build and gate receive the notes input');
     for (const call of calls) {
       const slot = call.stdin.split('<system_notes>')[1]!.split('</system_notes>')[0]!;
-      assert.equal(slot, '\nmemory/api.md\n');
+      assert.ok(slot.includes('Non-normative build memory') && slot.trimEnd().endsWith('memory/api.md'));
       if (call.as === 'codex') assert.ok(!call.stdin.includes('PRIVATE NOTES CONTENT'), 'the build receives a path, without inline note contents');
       else assert.ok(call.stdin.includes('PRIVATE NOTES CONTENT'), 'the gate still sees the notes edit in its ordinary diff');
       assert.ok(!call.stdin.includes('memory/unrelated.md'));

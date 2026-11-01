@@ -32,7 +32,7 @@ import { SUPERVISOR_HOST,crashCells } from './matrix.ts';
 after(assertNoSurvivors);
 
 const T = { timeout: EXEC_TIMEOUT_MS };
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 const exitReason = (r: ExecRun): { reason: string; generation: number } => JSON.parse(readFileSync(hostFile(r, EXIT_REASON_FILE), 'utf8')) as { reason: string; generation: number };
 
@@ -96,7 +96,7 @@ test('supervisor.stop-order: stop → the executor writes exit.reason{stop} and 
   const seen = await watchEnd(r, supervisor, executor);
   assert.ok(seen.executorGone > 0 && seen.executorGone <= seen.lockGone && seen.lockGone <= seen.supervisorGone, JSON.stringify(seen));
   assert.deepEqual(exitReason(r), { v: 2, generation, reason: 'stop' });
-  assert.equal(outcomes(r).at(-1), 'plan-check:interrupted', 'the running stage was cancelled before the executor exited');
+  assert.equal(outcomes(r).at(-1), 'pre-build:interrupted', 'the running stage was cancelled before the executor exited');
   assert.deepEqual(journalOf(r).view.openIntents(), [], 'nothing left open');
   assert.deepEqual(stateOf(r).crashes, []);
 });
@@ -116,7 +116,7 @@ test('supervisor.crash-stage: a killed executor leaves its signal and open stage
   assert.equal(end.killEvidence?.cause, 'external-unknown');
   assert.ok(end.killEvidence?.pressure.memory.kind === 'readable' || end.killEvidence?.pressure.memory.kind === 'unavailable');
   assert.ok(end.stages.kind === 'known');
-  assert.deepEqual(end.stages.open, [{ type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 1 }]);
+  assert.deepEqual(end.stages.open, [{ type: 'stage', unit: 'u1', stage: 'pre-build', attempt: 1 }]);
   assert.deepEqual(end.stages.last, end.stages.open[0]);
 });
 

@@ -38,7 +38,7 @@ import { systemName } from '../../src/core/ids.ts';
 //       regression, branch R only)
 //   I-3 must-hold, serves V-3: unknown commands exit 2
 //
-// The regression (lead ruling after paid runs 1 and 2, whose plan-checks read a rounding change in tidy's spec and
+// The regression (lead ruling after paid runs 1 and 2, whose pre-builds read a rounding change in tidy's spec and
 // redirected it): tidy's diff holds no rounding code at all. Its spec is a one-line consistency change in
 // src/cli.js: `format` prints through `formatDisplay`, the helper `total` already prints through, so both commands
 // show amounts alike (`format 1234.5` prints `1,234.50`). formatDisplay rounds with `toFixed` (binary), which
@@ -323,7 +323,7 @@ export async function setup(dir: string): Promise<void> {
   const pinned = await corpusPin({ repo: absPath(l.repo), commit: baseline, baseline: sha(baseline), out: absPath(l.pin) });
   if (pinned.kind !== 'pinned') throw new Error(`corpus pin refused: ${JSON.stringify(pinned.rejection)}`);
   write(l.phase0, json({
-    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [],
     slice: { advances: ADVANCES, why: 'the first slice: the whole month-end story' },
   }));
 
@@ -351,7 +351,7 @@ export async function setup(dir: string): Promise<void> {
     resources: [],
     holistic: { advances: ADVANCES, obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } },
     limits: { convergenceK: CONVERGENCE_K },
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: systemsForPaths(SCOPES[id]), resources: [], after: after[id] })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: systemsForPaths(SCOPES[id]), resources: [], after: after[id] })),
   }));
 }
 

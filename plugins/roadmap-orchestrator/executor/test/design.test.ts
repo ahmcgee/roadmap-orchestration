@@ -1,76 +1,30 @@
-import { setTimeout as delay } from 'node:timers/promises';
-import { evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
-import { holdFence } from '../src/core/fence.ts';
-import { commitRevisionNow,inForceFiles,requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
-import { parsePlan } from '../src/input/plan.ts';
-import { readNeedsUser } from '../src/needsuser.ts';
-import { reached as barrierReached,release as barrierRelease } from './helpers/barrier.ts';
-// The design pass (dev.17; DESIGN-1.0.md "Design pass"): the plan-check's design record and its code-checked binding,
-// integrated and fake-backed over a unit-common arc (real git, real lanes, the fake claude and codex behind PATH shims).
-//
-// design.record-lands: an approve's design record lands on the spec's next revision, its interfaces and broken files pinned
-//   at their blobs at the tip the check read, written by the plan-check's own spec patch; the build reads it in the spec.
-// design.unmapped-repair: a failure mode proven by a lane the unit does not have is refused through the repair turn, which
-//   names it; the corrected answer approves.
-// design.reachability-defect: a test item in a lane whose systems the design never selects is a plan defect: the repair turn,
-//   then an uncharged plan-defect park naming it.
-// design.clause-unexercised (item 10): an acceptance clause whose only lane lists systems the design never selects (it
-//   cannot run before the unit merges) is a plan defect naming the three fixes: the repair turn, then an uncharged park.
-//   (A batch lane's and an unavailable environment's halves: environments.test.ts env.unavailable-to-arc and the shared
-//   `cannotRun`.)
-// design.clause-unnamed (item 10): a clause no witness item and no clauses entry names is refused through the repair turn;
-//   the answer naming a runnable lane for it approves, the lanes landing in the record.
-// design.oversize-split: an oversize design (two systems each substantial) is refused; the repair turn's split of mixed
-//   concerns lands as one revision: the unit cut, its skeleton and module children added after it with their specs built
-//   from its own (items partitioned, designs pinned), its dependent moved onto both children.
-// design.split-defect: a split whose children do not partition the parent's items is refused twice: a plan-defect park.
-// design.unscoped-growth: a design change outside the scope envelope is a verified scope-growth proposal: the hold.
-// design.scaffold-not-in-force: a scaffold decision in an arc of an earlier role set is refused.
-// design.poc: a PoC builds on the unit's builder seat in a throwaway checkout of the tip; its diff is kept as evidence, the
-//   checkout removed and nothing merged; the next plan-check reads its report; past the unit's two a PoC is refused through
-//   the repair turn; the build is told the lessons, never the code.
-// design.departure-and-contract: the build changes an existing test the design does not list (a departure recorded among
-//   the spec's decisions, never refused) and a contract it does not declare (the salvage's risk trigger, and the gate told
-//   which contract); the gate's inputs record the design's size estimate.
-// split.crash.*, poc.crash.*: the matrix rows DESIGN_SPLIT and POC_STAGE (test/matrix.ts).
+
+// Retained design validation over root-authored revisions, and design evidence consumed by the gate.
 import assert from 'node:assert/strict';
-import { existsSync,readFileSync,writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe,test } from 'node:test';
-import type { Fact,StageOutcomeFact } from '../src/core/events.ts';
-import { arcId,commandId,unitId } from '../src/core/ids.ts';
+import {readFileSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {unitId} from '../src/core/ids.ts';
+import {splitCutReason} from '../src/input/classify.ts';
+import { test } from 'node:test';
+import type { Fact } from '../src/core/events.ts';
+import { arcId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
-import { absPath,repoPattern } from '../src/core/values.ts';
-import { splitCutReason } from '../src/input/classify.ts';
-import {  } from '../src/pipeline/design.ts';
+import { absPath } from '../src/core/values.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type Gate,consume,runUnit } from '../src/pipeline/unit.ts';
-import { recover } from '../src/recover/recover.ts';
-import { intents } from './fixtures/invoke-specs.ts';
-import { recoveryContext } from './fixtures/rec-common.ts';
+import { type Gate, runUnit } from '../src/pipeline/unit.ts';
 import { editSpec } from './fixtures/route-common.ts';
-import { SCENARIO_TIMEOUT_MS,planCheckRepairStep,planCheckStep } from './fixtures/stage-common.ts';
-import { followingContext,unitInForce } from './fixtures/steer-common.ts';
-import { type ArcDescriptor,MUL,U1,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
-import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { git,tmpDir } from './helpers/repo.ts';
+import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { DESIGN_SPLIT,POC_STAGE,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Admits every stage but `stop`: the unit's task ends there, held. */
 const until = (stop: string): Gate => async (next) => next.stage !== stop;
 
 const facts = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const outcomeOf = (d: ArcDescriptor, stage: string): StageOutcomeFact => {
-  const f = facts(d).filter((x): x is StageOutcomeFact => (x.kind === 'stage-outcome' && 'unit' in x) && x.stage === stage).at(-1);
-  if (f === undefined) throw new Error(`no ${stage} outcome`);
-  return f;
-};
 
-/** A design record as the plan-check writes it, `over` its defaults (one small module change of src/**). */
+/** A design record as the pre-build writes it, `over` its defaults (one small module change of src/**). */
 const design = (over: Readonly<Record<string, JsonValue>> = {}): JsonValue => ({
   kind: 'module', changes: [{ system: null, paths: ['src/**'], lines: 40 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A1', lanes: ['mul'] }], breaks: { tests: [], docs: [] }, experiments: [],
   newSystem: null, verification: null, ...over,
@@ -82,87 +36,6 @@ const SYSTEMS = {
   docs: ['*.md'],
 };
 
-test('design.record-lands: an approve lands its pinned design record on the spec\'s next revision, by the plan-check\'s own patch', T, async () => {
-  const record = design({
-    interfaces: [{ type: 'contract', path: 'contracts/api.md' }, { type: 'file', path: 'src/add.js' }],
-    failureModes: [{ id: 'FM-1', mode: 'mul of a negative', proof: { type: 'test', test: { type: 'test', lane: 'mul', testId: 'mul' } }, requirements: [] }],
-    breaks: { tests: ['test/add.test.js'], docs: [] },
-    experiments: [{ command: 'node --test', output: 'ok 1' }],
-  });
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve', design: record }), mulBuild()] });
-  const r = contextFor(d);
-  try {
-    const held = await runUnit(r.ctx, r.unit('u1'), until('lanes'));
-    assert.equal(held.kind, 'held', JSON.stringify(held));
-    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released']);
-    const { spec } = loadUnitSpec(r.ctx, r.unit('u1'));
-    assert.equal(spec.rev, 2);
-    const tip = git(d.repo, 'rev-parse', 'main');
-    assert.deepEqual(spec.design?.interfaces, [
-      { type: 'contract', path: 'contracts/api.md', blob: git(d.repo, 'rev-parse', `${tip}:contracts/api.md`) },
-      { type: 'file', path: 'src/add.js', blob: git(d.repo, 'rev-parse', `${tip}:src/add.js`) },
-    ]);
-    assert.deepEqual(spec.design?.breaks.tests, [{ type: 'file', path: 'test/add.test.js', blob: git(d.repo, 'rev-parse', `${tip}:test/add.test.js`) }]);
-    assert.deepEqual(spec.design?.failureModes.map((m) => m.proof), [{ type: 'test', test: { type: 'test', lane: 'mul', testId: 'mul' } }]);
-    const patches = intents(d.runDir, 'spec.patch');
-    assert.equal(patches.length, 1);
-    assert.ok(patches[0]!.kind === 'spec.patch' && patches[0]!.parent.type === 'stage' && patches[0]!.parent.stage === 'plan-check');
-    assert.deepEqual(patches[0]!.kind === 'spec.patch' && patches[0]!.expect.patch.by.role, 'planCheck');
-    // The plan-check acted (shell and web tools), and the build reads the record in its spec.
-    const [check, built] = readCalls(d.scenarioPath);
-    assert.ok(check !== undefined && built !== undefined);
-    assert.equal(check.argv[check.argv.indexOf('--tools') + 1], 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch');
-    assert.ok(check.argv.includes('--disallowedTools'), 'its file-writing tools are denied the repository and the run dir');
-    assert.match(built.stdin, /## Design[\s\S]*FM-1[\s\S]*mul of a negative/);
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('design.unmapped-repair: a failure mode proven by no lane the unit has is refused through the repair turn; the corrected answer approves', T, async () => {
-  const bad = design({ failureModes: [{ id: 'FM-1', mode: 'overflow', proof: { type: 'test', test: { type: 'test', lane: 'nope', testId: 't' } }, requirements: [] }] });
-  const good = design({ failureModes: [{ id: 'FM-1', mode: 'overflow', proof: { type: 'untested', reason: 'numbers are doubles here' }, requirements: [] }] });
-  const d = setupArc({
-    steps: [planCheckStep({ decision: 'approve', design: bad }), planCheckRepairStep({ decision: 'approve', design: good }, ['failure mode FM-1 is unmapped: test "t" of lane nope'])],
-  });
-  const r = contextFor(d);
-  try {
-    assert.equal((await runUnit(r.ctx, r.unit('u1'), until('build'))).kind, 'held');
-    assert.deepEqual(outcomes(d), ['plan-check:approve']);
-    assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.design?.failureModes.map((m) => m.proof.type), ['untested']);
-    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('design.reachability-defect: a test item in a lane the design\'s systems never select is a plan defect: the repair turn, then an uncharged park', T, async () => {
-  const unreachable = design({
-    changes: [{ system: 'core', paths: ['src/**'], lines: 40 }],
-    failureModes: [{ id: 'FM-1', mode: 'the contract drifts', proof: { type: 'test', test: { type: 'test', lane: 'api-suite', testId: 'contract' } }, requirements: [] }],
-  });
-  const d = setupArc({
-    steps: [planCheckStep({ decision: 'approve', design: unreachable }), planCheckRepairStep({ decision: 'approve', design: unreachable }, ['never select'])],
-    suite: [{ id: 'suite', argv: ['node', '--test'] }, { id: 'api-suite', argv: ['node', '--test'], cadence: 'candidate', systems: ['api'] }],
-    systemsMap: SYSTEMS,
-  });
-  const r = contextFor(d);
-  try {
-    const parked = await runUnit(r.ctx, r.unit('u1'), until('build'));
-    assert.ok(parked.kind === 'parked', JSON.stringify(parked));
-    assert.equal(parked.needsUser.reason, 'plan-defect');
-    assert.match(parked.needsUser.summary, /test "contract" of lane api-suite sits in lane api-suite, which lists systems \(api\) the design's changes never select/);
-    assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
-    const f = outcomeOf(d, 'plan-check');
-    assert.deepEqual([f.class, f.chargeable, f.park], ['park', false, { class: 'operator', kind: 'env' }]);
-    assert.ok(f.detail?.kind === 'design-defect' && f.detail.reasons.length === 1);
-    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
-    assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.rev, 1, 'nothing of the answer landed');
-  } finally {
-    r.journal.close();
-  }
-});
-
 /** u1 with a second acceptance clause A2, under the systems map, and a candidate suite lane `api-suite` of system api. */
 function twoClauseArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor {
   const d = setupArc({
@@ -173,40 +46,6 @@ function twoClauseArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescri
   });
   return d;
 }
-
-test('design.clause-unexercised: a clause exercised only by a lane that cannot run before the unit merges is a plan defect: the repair turn, then an uncharged park naming the fixes', T, async () => {
-  const batchOnly = design({ changes: [{ system: 'core', paths: ['src/**'], lines: 40 }], clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['api-suite'] }] });
-  const d = twoClauseArc([planCheckStep({ decision: 'approve', design: batchOnly }), planCheckRepairStep({ decision: 'approve', design: batchOnly }, ['acceptance clause A2'])]);
-  const r = contextFor(d);
-  try {
-    const parked = await runUnit(r.ctx, r.unit('u1'), until('build'));
-    assert.ok(parked.kind === 'parked', JSON.stringify(parked));
-    assert.equal(parked.needsUser.reason, 'plan-defect');
-    assert.match(parked.needsUser.summary, /acceptance clause A2's behaviour is exercised by no lane that can run in this arc before the unit merges \(api-suite lists systems \(api\) the design's changes never select\)/);
-    assert.match(parked.needsUser.summary, /static harness witness[\s\S]*split A2 into its own unit[\s\S]*defer/);
-    assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
-    const f = outcomeOf(d, 'plan-check');
-    assert.ok(f.detail?.kind === 'design-defect' && f.detail.reasons.length === 1, JSON.stringify(f.detail));
-    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('design.clause-unnamed: a clause no lane is named for is refused through the repair turn; the answer naming a runnable lane approves', T, async () => {
-  const unnamed = design();
-  const named = design({ clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['api-suite', 'suite'] }] });
-  const d = twoClauseArc([planCheckStep({ decision: 'approve', design: unnamed }), planCheckRepairStep({ decision: 'approve', design: named }, ['acceptance clause A2\'s behaviour is exercised by no lane: name its lanes'])]);
-  const r = contextFor(d);
-  try {
-    assert.equal((await runUnit(r.ctx, r.unit('u1'), until('build'))).kind, 'held');
-    assert.deepEqual(outcomes(d), ['plan-check:approve']);
-    assert.deepEqual(loadUnitSpec(r.ctx, r.unit('u1')).spec.design?.clauses, [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['api-suite', 'suite'] }]);
-    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
-  } finally {
-    r.journal.close();
-  }
-});
 
 /** u1 with a second acceptance clause (so a split can partition its items) and u2 after it. */
 function splitArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor {
@@ -221,99 +60,6 @@ function splitArc(steps: Parameters<typeof setupArc>[0]['steps']): ArcDescriptor
   return d;
 }
 
-const MIXED = design({
-  changes: [{ system: 'core', paths: ['src/**'], lines: 300 }, { system: 'api', paths: ['contracts/**'], lines: 300 }],
-  clauses: [{ clause: 'A1', lanes: ['mul'] }, { clause: 'A2', lanes: ['mul'] }],
-});
-/** A child of u1's split taking `items`, changing `system` by `lines`. */
-const child = (unit: string, items: readonly string[], system: 'core' | 'api', lines: number, proven = false): JsonValue => ({
-  unit, systems: [system], items, obligations: [],
-  design: design({
-    changes: [{ system, paths: [system === 'core' ? 'src/**' : 'contracts/**'], lines }], clauses: items.map((clause) => ({ clause, lanes: ['mul'] })),
-    failureModes: proven ? [{ id: 'FM-1', mode: 'the seam breaks', proof: { type: 'test', test: { type: 'test', lane: 'e2e', testId: 'seam' } }, requirements: [] }] : [],
-  }),
-});
-
-test('design.oversize-split: an oversize design is refused; the split of mixed concerns lands as one revision, skeleton first, the dependent on both children', T, async () => {
-  const split = { children: [child('u1-skel', ['A1'], 'core', 300, true), child('u1-api', ['A2'], 'api', 300)], edges: [{ from: 'u1-skel', to: 'u1-api' }], skeleton: { unit: 'u1-skel', lane: 'e2e' } };
-  const d = splitArc([planCheckStep({ decision: 'approve', design: MIXED }), planCheckRepairStep({ decision: 'split', split }, ['oversize: the design changes api and core substantially'])]);
-  const r = contextFor(d);
-  try {
-    const held = await runUnit(r.ctx, r.unit('u1'), until('build'));
-    assert.deepEqual(held, { kind: 'held', needsUser: null });
-    assert.deepEqual(outcomes(d), ['plan-check:split']);
-    assert.deepEqual(outcomeOf(d, 'plan-check').detail, { kind: 'split', children: ['u1-skel', 'u1-api'] });
-    const f = followingContext(r);
-    const plan = f.plan();
-    assert.deepEqual(plan.units.map((u) => u.id), ['u1', 'u1-skel', 'u1-api', 'u2'], 'the children after their parent, skeleton first');
-    assert.deepEqual(unitInForce(f, 'u1').cut, { reason: splitCutReason([unitId('u1-skel'), unitId('u1-api')]) });
-    assert.equal(r.journal.view.unit(U1).status, 'cut');
-    assert.deepEqual(unitInForce(f, 'u1-api').after, ['u1-skel']);
-    assert.deepEqual([...unitInForce(f, 'u2').after].sort(), ['u1-api', 'u1-skel'], 'the dependent waits on every child');
-    const applied = r.journal.view.planApplied();
-    assert.ok(applied?.source.type === 'split' && applied.source.unit === 'u1');
-    const skel = loadUnitSpec(f, unitInForce(f, 'u1-skel')).spec;
-    const api = loadUnitSpec(f, unitInForce(f, 'u1-api')).spec;
-    assert.deepEqual([skel.rev, skel.acceptance.map((a) => a.id), api.acceptance.map((a) => a.id)], [1, ['A1'], ['A2']], 'the parent\'s items partitioned');
-    assert.equal(api.acceptance[0]!.clause, 'the contract names mul', 'an item\'s text unchanged');
-    assert.deepEqual(plan.units.filter((u) => ['u1-skel', 'u1-api'].includes(u.id)).map((u) => u.systems), [['core'], ['api']]);
-    assert.deepEqual(skel.design?.failureModes.map((m) => m.id), ['FM-1'], 'each child carries its own pinned design');
-    assert.equal(skel.forces, undefined, 'a candidate spanning lane needs no force');
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('design.split-systems: a declared child system outside its parent is a plan defect', T, async () => {
-  const split = { children: [child('u1a', ['A1'], 'core', 20), child('u1b', ['A2'], 'api', 20)], edges: [], skeleton: null };
-  const d = splitArc([planCheckStep({ decision: 'split', split }), planCheckRepairStep({ decision: 'split', split }, ['child u1b names systems outside parent u1: api'])]);
-  const raw = JSON.parse(readFileSync(d.planPath, 'utf8'));
-  raw.units[0].systems = ['core'];
-  writeFileSync(d.planPath, JSON.stringify(raw));
-  const r = contextFor(d);
-  try {
-    const parked = await runUnit(r.ctx, r.unit('u1'), until('build'));
-    assert.ok(parked.kind === 'parked', JSON.stringify(parked));
-    assert.equal(parked.needsUser.reason, 'plan-defect');
-    assert.match(parked.needsUser.summary, /child u1b names systems outside parent u1: api/);
-    assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
-    assert.equal(r.journal.view.planApplied()!.rev, 1, 'no split revision');
-  } finally { r.journal.close(); }
-});
-
-test('design.split-defect: a split whose children do not partition the parent\'s items is refused twice: an uncharged plan-defect park', T, async () => {
-  const split = { children: [child('u1a', ['A1'], 'core', 20), child('u1b', ['A1'], 'core', 20)], edges: [], skeleton: null };
-  const d = splitArc([planCheckStep({ decision: 'split', split }), planCheckRepairStep({ decision: 'split', split }, ['the children take A1 more than once'])]);
-  const r = contextFor(d);
-  try {
-    const parked = await runUnit(r.ctx, r.unit('u1'), until('build'));
-    assert.ok(parked.kind === 'parked', JSON.stringify(parked));
-    assert.equal(parked.needsUser.reason, 'plan-defect');
-    assert.match(parked.needsUser.summary, /no child takes the parent's A2/);
-    assert.deepEqual(outcomes(d), ['plan-check:plan-defect']);
-    assert.deepEqual(followingContext(r).plan().units.map((u) => u.id), ['u1', 'u2'], 'no revision');
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('design.scaffold-not-in-force: a scaffold decision in an arc of an earlier role set is refused through the repair turn', T, async () => {
-  const scaffold: JsonValue = {
-    newSystem: { name: 'billing', paths: ['src/billing/**'], tests: [] }, entryPoints: ['src/billing/index.js'], exports: [], loadTest: { lane: 'journey', testId: 't1' }, manifest: [],
-  };
-  const record = design({ changes: [{ system: null, paths: ['src/billing/**'], lines: 20 }], newSystem: { name: 'billing', paths: ['src/billing/**'], tests: [] } });
-  const d = setupArc({
-    steps: [planCheckStep({ decision: 'scaffold', design: record, scaffold }), planCheckRepairStep({ decision: 'approve' }, ['the scaffold role is not in force in this arc'])],
-  });
-  const r = contextFor(d);
-  try {
-    assert.equal((await runUnit(r.ctx, r.unit('u1'), until('build'))).kind, 'held');
-    assert.deepEqual(outcomes(d), ['plan-check:approve']);
-  } finally {
-    r.journal.close();
-  }
-});
-
 test('design.departure-and-contract: an unlisted test change is a departure recorded among the decisions; an undeclared contract change triggers and is named to the gate', T, async () => {
   const d = setupArc({
     steps: [
@@ -323,17 +69,18 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
     ],
     systemsMap: SYSTEMS,
   });
+  editSpec(d, 'u1', (s) => { s['design'] = {kind: 'module', changes: [{system: null, paths: ['src/**'], lines: 10}], interfaces: [], failureModes: [], clauses: [{clause: 'A1', lanes: ['mul']}], breaks: {tests: [], docs: []}, experiments: []}; });
   const r = contextFor(d);
   try {
     const held = await runUnit(r.ctx, r.unit('u1'), until('candidate'));
     assert.equal(held.kind, 'held', JSON.stringify(held));
-    assert.deepEqual(outcomes(d), ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed-contract-touched', 'teardown:released', 'lanes:green', 'gate:approve']);
+    assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed-contract-touched', 'teardown:released', 'lanes:green', 'gate:approve']);
     const decisions = loadUnitSpec(r.ctx, r.unit('u1')).spec.decisions;
     assert.equal(decisions.length, 1);
     assert.match(decisions[0]!.id, /^departure\.[0-9a-f]{12}$/);
     assert.equal(decisions[0]!.text, 'Departure from the design record: the build changed the existing test test/add.test.js, which its breaks do not list.');
     const gate = readCalls(d.scenarioPath).find(isGateCall);
-    assert.ok(gate !== undefined && gate.argv.includes('claude-opus-5-5') && gate.argv.includes('high'), 'the contract touched put the gate on its escalation seat');
+    assert.ok(gate !== undefined && gate.argv.includes('claude-opus-5-5') && gate.argv.includes('medium'), 'the contract touched put the gate on its escalation seat');
     const inputs = facts(d).find((f) => f.kind === 'judgment-inputs' && f.stage === 'gate');
     assert.ok(inputs?.kind === 'judgment-inputs' && inputs.designEstimate === 10, 'the gate records the design\'s size estimate');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
@@ -342,142 +89,167 @@ test('design.departure-and-contract: an unlisted test change is a departure reco
   }
 });
 
-test('design.poc: a PoC builds in a throwaway checkout, its report goes to a fresh plan-check, a third is refused, and the build gets the lessons', T, async () => {
-  const poc = { questions: [{ id: 'PQ-1', question: 'Does mul overflow?', whyItMatters: 'decides the number type' }], brief: 'Multiply two large numbers.' };
-  const answer = (n: number) => ({
-    answers: [{ questionId: 'PQ-1', answer: `ANSWER-${n}`, evidence: `ran probe ${n}`, confidence: 'high' }], lessons: [`LESSON-${n}`], surprises: [],
-  });
-  const d = setupArc({
-    steps: [
-      planCheckStep({ decision: 'poc', poc }),
-      {
-        as: 'codex', expect: { argv: ['exec', '-C'], stdinContains: ['Multiply two large numbers.', 'PQ-1: Does mul overflow?'] },
-        acts: [{ type: 'dirty', files: { 'src/probe.js': 'export const big = 2 ** 60 * 3;\n' } }, { type: 'emit', value: answer(1) }],
-      },
-      planCheckStep({ decision: 'poc', poc }, { stdinContains: ['<proofs_of_concept>', 'ANSWER-1', 'LESSON-1'] }),
-      { as: 'codex', expect: { argv: ['exec', '-C'], stdinContains: ['<earlier_lessons>', 'LESSON-1'] }, acts: [{ type: 'emit', value: answer(2) }] },
-      planCheckStep({ decision: 'poc', poc }, { stdinContains: ['proofs of concept left for this unit: 0', 'ANSWER-2'] }),
-      planCheckRepairStep({ decision: 'approve' }, ['the unit has run its 2 proofs of concept']),
-      codexStep([{ type: 'commit', message: 'add mul', files: MUL }], { argv: ['exec', '-C'], stdinContains: ["Lessons from this unit's proofs of concept", '- LESSON-1', '- LESSON-2'] }),
-    ],
-  });
-  const r = contextFor(d);
+// The root supplies design records now. The same pin, reachability and clause checks remain independently covered.
+import {pinDesign, designFaults, designSelects, clauseFaults, oversize, substantialSystems, mixedConcerns} from '../src/pipeline/design.ts';
+import {integrationTip} from '../src/pipeline/stages.ts';
+import type {DesignAnswer} from '../src/prompts/schemas.ts';
+import {laneId, clauseId, systemName} from '../src/core/ids.ts';
+import {repoPattern} from '../src/core/values.ts';
+import {command, followContext} from './fixtures/route-common.ts';
+import {applyBody} from './fixtures/unit-common.ts';
+
+function pinnedDesign(r: ReturnType<typeof contextFor>, over: Readonly<Record<string, JsonValue>> = {}) {
+  const result = pinDesign(r.ctx, design(over) as unknown as DesignAnswer, integrationTip(r.ctx));
+  assert.equal(result.kind, 'pinned', JSON.stringify(result));
+  if (result.kind !== 'pinned') throw new Error('design refused');
+  return result.record;
+}
+
+test('design.record-lands: a root apply lands a pinned record and the spec preserves interface and broken-file blobs', T, async () => {
+  const d = setupArc({steps: [], systemsMap: SYSTEMS}), r = contextFor(d);
   try {
-    const held = await runUnit(r.ctx, r.unit('u1'), until('lanes'));
-    assert.equal(held.kind, 'held', JSON.stringify(held));
-    assert.deepEqual(outcomes(d), ['plan-check:poc', 'poc:answered', 'plan-check:poc', 'poc:answered', 'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released']);
-    assert.equal(r.journal.view.unit(U1).pocs, 2);
-    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'a PoC is uncharged');
-    assert.ok(!git(d.repo, 'worktree', 'list', '--porcelain').includes('.poc-'), 'every PoC checkout removed');
-    const pocs = intents(d.runDir, 'worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.stage === 'poc');
-    assert.equal(pocs.length, 2);
-    for (const i of pocs) assert.ok(i.kind === 'worktree.create' && i.expect.checkout.type === 'detached', 'a PoC checkout makes no branch');
-    const first = pocs[0]!;
-    assert.ok(first.parent.type === 'stage');
-    const root = join(d.runDir, 'evidence', 'u1', `${first.parent.attempt}-poc`);
-    assert.match(readFileSync(join(root, 'poc.diff'), 'utf8'), /src\/probe\.js/, 'the PoC diff kept as evidence');
-    assert.ok(existsSync(join(root, 'poc-report.json')));
-    assert.ok(!git(d.repo, 'ls-tree', '-r', '--name-only', 'main').includes('src/probe.js'), 'nothing of a PoC merges');
-    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null), 'every call matched its step');
-  } finally {
-    r.journal.close();
-  }
+    const record = pinnedDesign(r, {interfaces: [{type: 'contract', path: 'contracts/api.md'}, {type: 'file', path: 'src/add.js'}], breaks: {tests: ['test/add.test.js'], docs: ['ARCHITECTURE.md']}});
+    assert.equal(record.interfaces.length, 2);
+    assert.ok(record.interfaces.every((p) => /^[0-9a-f]{40}$/.test(p.blob)));
+    assert.ok(record.breaks.tests[0]!.blob.length === 40 && record.breaks.docs[0]!.blob.length === 40);
+    editSpec(d, 'u1', (spec) => {spec['rev'] = 2; spec['design'] = record;});
+    const result = await command(r, r.ctx, applyBody(d));
+    assert.equal(result.kind, 'applied', JSON.stringify(result));
+    assert.deepEqual(loadUnitSpec(followContext(r), r.unit('u1')).spec.design, record);
+  } finally {r.journal.close();}
 });
 
-describe(`matrix row ${DESIGN_SPLIT}`, () => {
-  for (const { label } of crashCells(DESIGN_SPLIT)) {
-    test(`split.crash.${label}: the restart lands the split once from the recorded answer, never asking again`, T, async () => {
-      const split = { children: [child('u1-skel', ['A1'], 'core', 300, true), child('u1-api', ['A2'], 'api', 300)], edges: [{ from: 'u1-skel', to: 'u1-api' }], skeleton: { unit: 'u1-skel', lane: 'e2e' } };
-      const d = splitArc([planCheckStep({ decision: 'approve', design: MIXED }), planCheckRepairStep({ decision: 'split', split })]);
-      const trigger = writeTrigger(tmpDir('design-crash'), { label, occurrence: 1, unit: 'u1' });
-      const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: SCENARIO_TIMEOUT_MS });
-      assert.equal(first.signal, 'SIGKILL', `killed at the label: ${first.stderr}`);
-      assertFired(trigger);
-      const r = contextFor(d);
-      try {
-        await recover(recoveryContext(r));
-        const s = await consume(r.ctx, r.unit('u1'));
-        assert.deepEqual(s, label === 'split.after-hold' ? { kind: 'held', needsUser: null } : null, 'what the startup finishes');
-        assert.equal(r.journal.view.unit(U1).status, 'cut');
-        assert.deepEqual(followingContext(r).plan().units.map((u) => u.id), ['u1', 'u1-skel', 'u1-api', 'u2']);
-        assert.equal(facts(d).filter((f) => f.kind === 'plan-applied' && f.source.type === 'split').length, 1, 'one split revision');
-        assert.equal(readCalls(d.scenarioPath).length, 2, 'the plan-check was asked once, with its repair turn');
-        assert.deepEqual(await consume(r.ctx, r.unit('u1')), null, 'nothing left to finish');
-        assert.deepEqual(r.journal.view.openIntents(), []);
-      } finally {
-        r.journal.close();
-      }
-    });
-  }
-});
-
-describe(`matrix row ${POC_STAGE}`, () => {
-  for (const { label } of crashCells(POC_STAGE)) {
-    test(`poc.crash.${label}: the next attempt records the PoC from its report; the builder is asked once, its checkout gone`, T, async () => {
-      const poc = { questions: [{ id: 'PQ-1', question: 'Does mul overflow?', whyItMatters: 'decides the number type' }], brief: 'Multiply two large numbers.' };
-      const report = { answers: [{ questionId: 'PQ-1', answer: 'ANSWER-1', evidence: 'ran it', confidence: 'medium' }], lessons: ['LESSON-1'], surprises: [] };
-      const d = setupArc({
-        steps: [
-          planCheckStep({ decision: 'poc', poc }),
-          { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'dirty', files: { 'src/probe.js': 'export const p = 1;\n' } }, { type: 'emit', value: report }] },
-          planCheckStep({ decision: 'approve' }, { stdinContains: ['ANSWER-1'] }),
-        ],
-      });
-      const trigger = writeTrigger(tmpDir('poc-crash'), { label, occurrence: 1, unit: 'u1' });
-      const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: SCENARIO_TIMEOUT_MS });
-      assert.equal(first.signal, 'SIGKILL', `killed at the label: ${first.stderr}`);
-      assertFired(trigger);
-      const r = contextFor(d);
-      try {
-        await recover(recoveryContext(r));
-        assert.equal((await runUnit(r.ctx, r.unit('u1'), until('build'))).kind, 'held');
-        assert.deepEqual(outcomes(d), ['plan-check:poc', 'poc:answered', 'plan-check:approve']);
-        assert.equal(readCalls(d.scenarioPath).filter((c) => c.as === 'codex').length, 1, 'the builder was asked once');
-        assert.ok(!git(d.repo, 'worktree', 'list', '--porcelain').includes('.poc-'), 'no PoC checkout left');
-        assert.deepEqual(r.journal.view.openIntents(), []);
-      } finally {
-        r.journal.close();
-      }
-    });
-  }
-});
-
-
-test('split.revision-race: a concurrent revision is preserved, the split retries and emits a nonblocking revision notice', T, async () => {
-  const split = {children: [child('u1-core', ['A1'], 'core', 100), child('u1-api', ['A2'], 'api', 100)], edges: [], skeleton: null};
-  const d = splitArc([planCheckStep({decision: 'split', split}, {}, [{type: 'barrier', name: 'split-race', timeoutMs: 30000}])]);
-  const r = contextFor(d);
-  const pending = runUnit(r.ctx, r.unit('u1'), until('build'));
-  await barrierReached(d.scenarioDir, 'split-race', 30000);
-  const {release} = await holdFence(r.journal);
-  let unlocked = false;
+test('design.pin-refusals: missing files, undeclared contracts, systems and requirements are refused together', () => {
+  const d = setupArc({steps: [], systemsMap: SYSTEMS}), r = contextFor(d);
   try {
-    barrierRelease(d.scenarioDir, 'split-race');
-    for (let i = 0; i < 2000 && r.journal.view.unit(U1).interrupted?.outcome !== 'split'; i++) await delay(5);
-    assert.equal(r.journal.view.unit(U1).interrupted?.outcome, 'split');
-    const force = requirePlanInForce(r.ctx.runDir, r.journal.view);
-    const rev = revisionInForce(r.ctx.runDir, force);
-    const current = inForceFiles(r.ctx.runDir, r.journal.view, force, rev, r.ctx.planFile, r.ctx.repo);
-    const raw = {...JSON.parse(current.planBytes.toString('utf8')), direction: 'Keep the concurrent direction.'};
-    const next = {...current, plan: parsePlan(raw), planBytes: Buffer.from(JSON.stringify(raw))};
-    const evaluated = evaluateRevision({runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: r.ctx.planFile, routingBase: r.ctx.routingBase, laneEnv: r.ctx.hostEnv}, next, {type: 'apply', reason: 'Concurrent direction edit'});
-    assert.equal(evaluated.kind, 'accepted');
-    if (evaluated.kind !== 'accepted') throw new Error(JSON.stringify(evaluated));
-    keepRevision(r.ctx.runDir, evaluated);
-    const id = commandId('cmd-0000000000000011');
-    commitRevisionNow(r.journal, r.ctx.runDir, payloadOf(evaluated.draft, {type: 'command', command: id}), {type: 'command', command: id});
-    release(); unlocked = true;
-    assert.deepEqual(await pending, {kind: 'held', needsUser: null});
-    const f = followingContext(r);
-    assert.equal(f.plan().direction, 'Keep the concurrent direction.');
-    assert.equal(r.journal.view.planApplied()?.rev, 3);
-    assert.equal(r.journal.view.unit(U1).status, 'cut');
-    const notices = r.journal.view.needsUser().map((n) => readNeedsUser(r.ctx.runDir, n.id)!).filter((n) => n.reason === 'revision-notice');
-    assert.equal(notices.length, 1);
-    assert.equal(notices[0]!.blocking, false);
-    assert.equal(r.journal.view.needsUser().some((n) => n.blocking), false);
-  } finally {
-    if (!unlocked) release();
-    r.journal.close();
-  }
+    const result = pinDesign(r.ctx, design({interfaces: [{type: 'contract', path: 'missing.md'}, {type: 'file', path: 'absent.ts'}], changes: [{system: 'unknown', paths: ['src/**'], lines: 1}], failureModes: [{id: 'FM-1', mode: 'unknown requirement', proof: {type: 'untested', reason: 'no rig'}, requirements: ['I-99']}]}) as unknown as DesignAnswer, integrationTip(r.ctx));
+    assert.equal(result.kind, 'refused');
+    if (result.kind !== 'refused') throw new Error('unexpected pin');
+    for (const match of [/no plan contract/, /no file/, /no obligation/, /does not declare/]) assert.ok(result.reasons.some((s) => match.test(s)), result.reasons.join('; '));
+  } finally {r.journal.close();}
+});
+
+test('design.reachability-defect: a proof lane excluded by systems is still a plan defect', () => {
+  const d = twoClauseArc([]), r = contextFor(d);
+  try {
+    const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec;
+    const record = pinnedDesign(r, {changes: [{system: 'core', paths: ['src/**'], lines: 20}], failureModes: [{id: 'FM-1', mode: 'seam', requirements: [], proof: {type: 'test', test: {type: 'test', lane: 'api-suite', testId: 'seam'}}}], clauses: [{clause: 'A1', lanes: ['mul']}, {clause: 'A2', lanes: ['mul']}]});
+    assert.match(designFaults(r.ctx, spec, record).defects.join('; '), /lists systems \(api\).*never select/);
+    assert.equal(designSelects(d.config?.systemsMap ?? null, {systems: [systemName('api')]}, record.changes), false);
+    assert.equal(designSelects(null, {systems: [systemName('api')]}, record.changes), true);
+  } finally {r.journal.close();}
+});
+
+for (const mode of ['unnamed', 'unknown-clause', 'unknown-lane', 'unreachable', 'runnable'] as const) {
+  test(`design.clause-${mode}: acceptance remains tied to runnable named lanes`, () => {
+    const d = twoClauseArc([]), r = contextFor(d);
+    try {
+      const spec = loadUnitSpec(r.ctx, r.unit('u1')).spec, lane = spec.lanes[0]!;
+      const lanes = new Map([[lane.id, lane]]);
+      const record = {clauses: mode === 'unnamed' ? [] : [{clause: clauseId(mode === 'unknown-clause' ? 'A99' : 'A1'), lanes: [laneId(mode === 'unknown-lane' ? 'missing' : 'mul')]}, {clause: clauseId('A2'), lanes: [lane.id]}]};
+      const faults = clauseFaults(spec, record, lanes, () => mode === 'unreachable' ? 'environment unavailable' : null);
+      if (mode === 'runnable') assert.deepEqual(faults, {reasons: [], defects: []});
+      if (mode === 'unnamed') {assert.equal(faults.defects.length, 2); assert.match(faults.defects.join('; '), /static harness witness.*split.*defer/);}
+      if (mode === 'unknown-clause') assert.match(faults.reasons.join('; '), /no active acceptance clause/);
+      if (mode === 'unknown-lane') assert.match(faults.reasons.join('; '), /no spec, suite or arc lane/);
+      if (mode === 'unreachable') assert.match(faults.defects.join('; '), /environment unavailable/);
+    } finally {r.journal.close();}
+  });
+}
+
+test('design.split-sizing: substantial mixed concerns and oversized records remain root split signals', () => {
+  const changes = [{system: systemName('core'), paths: [repoPattern('src/**')], lines: 300}, {system: systemName('api'), paths: [repoPattern('contracts/**')], lines: 300}];
+  assert.deepEqual(substantialSystems(changes), ['api', 'core']);
+  assert.equal(mixedConcerns(changes), true);
+  assert.match(oversize({changes})!, /mixed concerns: split it/);
+  assert.match(oversize({changes: [{...changes[0]!, lines: 100_000}]})!, /over the .*gate reads inline/);
+  assert.equal(oversize({changes: [{...changes[0]!, lines: 10}]}), null);
+});
+
+test('design.unmapped-repair: an unknown proof lane remains a design validation reason', () => {
+  const d = setupArc({steps: [], systemsMap: SYSTEMS}), r = contextFor(d);
+  try {
+    const record = pinnedDesign(r, {failureModes: [{id: 'FM-1', mode: 'the seam breaks', requirements: [], proof: {type: 'test', test: {type: 'test', lane: 'missing', testId: 'seam'}}}]});
+    assert.match(designFaults(r.ctx, loadUnitSpec(r.ctx, r.unit('u1')).spec, record).reasons.join('; '), /failure mode FM-1 is unmapped.*no spec, suite or arc lane/);
+  } finally {r.journal.close();}
+});
+
+test('design.oversize-split: a root apply cuts the mixed parent, partitions its items, pins children and rewires dependents', T, async () => {
+  const d = splitArc([]), r = contextFor(d);
+  try {
+    const children = [unitId('u1-core'), unitId('u1-api')];
+    const source = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Record<string, unknown>;
+    source['acceptance'] = [...source['acceptance'] as {id: string}[]];
+    for (const [index, id] of children.entries()) {
+      const clause = index === 0 ? 'A1' : 'A2';
+      const record = pinnedDesign(r, {changes: [{system: index === 0 ? 'core' : 'api', paths: [index === 0 ? 'src/**' : 'contracts/**'], lines: 40}], clauses: [{clause, lanes: ['mul']}], interfaces: index === 0 ? [] : [{type: 'contract', path: 'contracts/api.md'}]});
+      writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...source, unit: id, rev: 1, acceptance: (source['acceptance'] as {id: string}[]).filter((a) => a.id === clause), design: record}));
+    }
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as {units: Record<string, unknown>[]};
+    plan.units = [
+      {...plan.units[0], cut: {reason: splitCutReason(children)}},
+      {id: children[0], spec: `${children[0]}.json`, risk: 'med', systems: ['core'], resources: [], after: []},
+      {id: children[1], spec: `${children[1]}.json`, risk: 'med', systems: ['api'], resources: [], after: [children[0]]},
+      {...plan.units[1], after: children},
+    ];
+    writeFileSync(d.planPath, JSON.stringify(plan));
+    const result = await command(r, r.ctx, applyBody(d));
+    assert.equal(result.kind, 'applied', JSON.stringify(result));
+    const ctx = followContext(r), units = ctx.plan().units;
+    assert.equal(r.journal.view.unit(unitId('u1')).status, 'cut');
+    assert.deepEqual(units.find((u) => u.id === unitId('u2'))!.after, children);
+    assert.deepEqual(units.find((u) => u.id === children[1])!.after, [children[0]]);
+    const specs = children.map((id) => loadUnitSpec(ctx, units.find((u) => u.id === id)!).spec);
+    assert.deepEqual(specs.map((s) => s.acceptance.map((a) => a.id)), [['A1'], ['A2']]);
+    assert.equal(specs[1]!.design?.interfaces[0]?.type, 'contract');
+    assert.ok(specs[1]!.design?.interfaces[0]?.blob.length === 40);
+    assert.deepEqual(readCalls(d.scenarioPath), [], 'root decisions need no retired seat call');
+  } finally {r.journal.close();}
+});
+
+test('design.clause-unexercised: root apply refuses an acceptance clause whose only lane cannot run before merge', T, async () => {
+  const d = twoClauseArc([]), r = contextFor(d);
+  try {
+    const record = pinnedDesign(r, {changes: [{system: 'core', paths: ['src/**'], lines: 40}], clauses: [{clause: 'A1', lanes: ['mul']}, {clause: 'A2', lanes: ['api-suite']}]});
+    editSpec(d, 'u1', (s) => {s['design'] = record;});
+    const before = r.journal.view.planApplied()!.rev;
+    const result = await command(r, r.ctx, applyBody(d));
+    assert.equal(result.kind, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /acceptance clause A2.*no lane.*before the unit merges/);
+    assert.match(JSON.stringify(result), /api-suite lists systems.*never select/);
+    assert.match(JSON.stringify(result), /static harness witness.*split.*defer/);
+    assert.equal(r.journal.view.planApplied()!.rev, before);
+    assert.equal(r.journal.view.unit(unitId('u1')).counters.chargeableFailures, 0);
+    assert.deepEqual(readCalls(d.scenarioPath), []);
+  } finally {r.journal.close();}
+});
+
+test('split.revision-race: a root split exported before a concurrent plan revision refuses CAS and keeps the concurrent change', T, async () => {
+  const d = splitArc([]), r = contextFor(d);
+  try {
+    const original = readFileSync(d.planPath, 'utf8');
+    const initialStatus = r.journal.view.unit(unitId('u1')).status;
+    const source = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8'));
+    const children = [unitId('u1-core'), unitId('u1-api')];
+    for (const [index, id] of children.entries()) writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...source, unit: id, rev: 1, acceptance: source.acceptance.filter((a: {id: string}) => a.id === (index === 0 ? 'A1' : 'A2'))}));
+    const split = JSON.parse(original);
+    split.units = [{...split.units[0], cut: {reason: splitCutReason(children)}}, ...children.map((id) => ({id, spec: `${id}.json`, risk: 'med', systems: ['core'], resources: [], after: []})), {...split.units[1], after: children}];
+    const splitBytes = JSON.stringify(split);
+    writeFileSync(d.planPath, splitBytes);
+    const stale = applyBody(d);
+    const concurrent = JSON.parse(original);
+    concurrent.units[0].priority = 'high';
+    writeFileSync(d.planPath, JSON.stringify(concurrent));
+    assert.equal((await command(r, r.ctx, applyBody(d))).kind, 'applied');
+    const rev = r.journal.view.planApplied()!.rev;
+    writeFileSync(d.planPath, splitBytes);
+    const result = await command(r, followContext(r), stale);
+    assert.equal(result.kind, 'rejected', JSON.stringify(result));
+    assert.match(JSON.stringify(result), /stale.*plan|plan.*stale/);
+    assert.equal(r.journal.view.planApplied()!.rev, rev);
+    assert.equal(followContext(r).plan().units.find((u) => u.id === unitId('u1'))!.priority, 'high');
+    assert.equal(r.journal.view.unit(unitId('u1')).status, initialStatus);
+    assert.ok(!followContext(r).plan().units.some((u) => children.includes(u.id)));
+    assert.deepEqual(readCalls(d.scenarioPath), []);
+  } finally {r.journal.close();}
 });

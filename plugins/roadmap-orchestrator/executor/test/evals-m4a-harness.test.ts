@@ -316,24 +316,24 @@ const meter = (seq: number, inv: string, role: string, costUsd: number | null, s
 
 test('evals-m4a.cost-deltas-and-unknowns: per-invocation rows keep unknowns explicit, root rows are deltas of the cumulative total, post-run activity is totalled apart', () => {
   const events = [
-    spawn(10, 'a1/10', 'implementer'), meter(12, 'a1/10#1', 'implementer', 0.5),
-    spawn(20, 'a1/20', 'gate'), meter(22, 'a1/20#1', 'gate', null),
-    spawn(30, 'a1/30', 'implementer'), fact(32, 'usage-unavailable', { inv: 'a1/30#1', routingRev: 1, subject: { type: 'seat', role: 'implementer', tier: 'frontier', unit: 'u1', attempt: 1 }, reason: 'no-result' }),
-    spawn(40, 'a1/40', 'gate'),
-    spawn(50, 'a1/50', 'implementer'), meter(52, 'a1/50#1', 'implementer', 2),
-    meter(36, 'a1/36#1', 'lens', 0.25, { type: 'job', role: 'lens', tier: 'frontier', job: 'J-1', attempt: 1 }),
+    spawn(10, 'a1/10', 'build'), meter(12, 'a1/10#1', 'build', 0.5),
+    spawn(20, 'a1/20', 'verifier'), meter(22, 'a1/20#1', 'verifier', null),
+    spawn(30, 'a1/30', 'build'), fact(32, 'usage-unavailable', { inv: 'a1/30#1', routingRev: 1, subject: { type: 'seat', role: 'build', tier: 'frontier', unit: 'u1', attempt: 1 }, reason: 'no-result' }),
+    spawn(40, 'a1/40', 'verifier'),
+    spawn(50, 'a1/50', 'build'), meter(52, 'a1/50#1', 'build', 2),
+    meter(36, 'a1/36#1', 'campaignAudit', 0.25, { type: 'job', role: 'campaignAudit', tier: 'frontier', job: 'J-1', attempt: 1 }),
     // Not a backend call: never an invocation row.
     { type: 'intent' as const, seq: 60, op: 'a1/60', kind: 'proc.spawn', ordinal: 1, expect: { subject: { purpose: 'lane', unit: 'u1', lane: 'l', set: 'spec', at: 'x' }, launchSha256: 'x' } },
   ] as unknown as readonly Event[];
   const rows = invocationCosts('a1', events, 35);
   const brief = rows.map((r) => [r.inv, r.role, r.costUsd, r.unknown, r.postRun]);
   assert.deepEqual(brief, [
-    ['a1/10#1', 'implementer', 0.5, null, false],
-    ['a1/20#1', 'gate', null, 'the CLI reported no cost', false],
-    ['a1/30#1', 'implementer', null, 'usage unavailable: no-result', false],
-    ['a1/36#1', 'lens', 0.25, null, true],
-    ['a1/40#1', 'gate', null, 'no usage fact', true],
-    ['a1/50#1', 'implementer', 2, null, true],
+    ['a1/10#1', 'build', 0.5, null, false],
+    ['a1/20#1', 'verifier', null, 'the CLI reported no cost', false],
+    ['a1/30#1', 'build', null, 'usage unavailable: no-result', false],
+    ['a1/36#1', 'campaignAudit', 0.25, null, true],
+    ['a1/40#1', 'verifier', null, 'no usage fact', true],
+    ['a1/50#1', 'build', 2, null, true],
   ]);
 
   // The root: result events carry the cumulative total; turn 2 has none, turn 5 falls.

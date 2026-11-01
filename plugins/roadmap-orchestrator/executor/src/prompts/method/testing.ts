@@ -1,0 +1,1 @@
+export const METHOD = "Test observable behavior through the real entry point. Preserve existing assertions. Check boundaries, default paths and plausible wrong implementations; a green test must show that the claimed behavior ran. Run targeted checks while building; the executor runs certification lanes.";

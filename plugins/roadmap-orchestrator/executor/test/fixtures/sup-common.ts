@@ -20,13 +20,13 @@ import { BUILD_REPORT,planCheckStep } from './stage-common.ts';
 import { MUL,gateStep } from './unit-common.ts';
 
 export const CLAUDE_ONLY = ['--profile', 'claude-only'] as const;
-/** One unit straight through under claude-only: plan-check, the Claude implementer's build, the gate. */
+/** One unit straight through under claude-only: pre-build, the Claude implementer's build, the gate. */
 export const UNIT_CLAUDE_ONLY: readonly Step[] = [
   planCheckStep({ decision: 'approve' }),
   { as: 'claude', expect: { argv: ['-p', '--permission-mode'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: BUILD_REPORT }] },
   gateStep({ decision: 'approve' }),
 ];
-/** A plan-check that parks at barrier `name` (until released or killed), then approves. */
+/** A pre-build that parks at barrier `name` (until released or killed), then approves. */
 export function blockedCheck(name: string): Step {
   const step = planCheckStep({ decision: 'approve' });
   return { ...step, acts: [{ type: 'barrier', name, timeoutMs: 120_000 }, ...step.acts] } as Step;

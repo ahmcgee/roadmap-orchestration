@@ -38,7 +38,7 @@ export function deflakeContext(r: ArcRun): Readonly<{ ctx: DeflakeContext; w: Re
   const base = wired(r);
   // The rank over the plan in force too (a deflake unit the job added waits in the arbiter's queue).
   const w = { ...base, stage: { ...base.stage, rank: (u: UnitId) => rankOf(r.journal.view, base.stage.plan(), u) } };
-  return { ctx: holisticContexts(w).checkpoint, w };
+  return { ctx: holisticContexts(w).revision, w };
 }
 
 export type { ArcDescriptor };

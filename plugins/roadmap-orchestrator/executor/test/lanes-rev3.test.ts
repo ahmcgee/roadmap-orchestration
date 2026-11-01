@@ -266,7 +266,7 @@ describe('the gate after a full reuse (Q3)', () => {
       assert.deepEqual(again.ledger.map((l) => l.reused !== null), [true]);
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       assert.deepEqual(outcomes(r.d).slice(6), ['lanes:green', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
-      assert.equal(readCalls(r.d.scenarioPath).filter((c) => c.as === 'claude').length, 2, 'one plan-check, one gate');
+      assert.equal(readCalls(r.d.scenarioPath).filter((c) => c.as === 'claude').length, 2, 'one pre-build, one gate');
     } finally {
       r.journal.close();
     }
@@ -443,7 +443,7 @@ const FIX_STEPS = [
   gateStep({ decision: 'approve' }),
 ];
 const FIX_OUTCOMES = [
-  'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
+  'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
   'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
   'candidate:green', 'ff:published', 'snapshot:published',
 ];
@@ -504,7 +504,7 @@ describe('crash rows', () => {
   test('lanes.reuse-requires-certificate / crash SERIES_CERTIFIED (lanes.after-census-before-certified): killed before the certificate; the restart reruns every lane', T, async () => {
     const { d } = await crashThenResume([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], labelOf(SERIES_CERTIFIED));
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released',
       'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published',
     ]);
     assert.equal(arcSpawns(d, 'stable').length, 2, 'uncertified: run again');

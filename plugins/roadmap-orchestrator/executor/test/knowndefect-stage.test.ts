@@ -31,7 +31,7 @@ import { editPlan } from './fixtures/route-common.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U1 = unitId('u1');
 
-const PRE_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const PRE_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const MERGED = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const STRAIGHT = [...PRE_LANES, 'lanes:green', ...MERGED];
 

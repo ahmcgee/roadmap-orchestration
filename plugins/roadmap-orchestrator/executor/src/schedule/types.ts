@@ -14,8 +14,8 @@ import type { Backend } from '../routing/types.ts';
 // ---------------------------------------------------------------------------------------------------
 // Stages: admission boundaries and chains (F5)
 
-/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` since M3; `scaffold` and `poc` since dev.17. */
-export const ADMISSION_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'] as const satisfies readonly OutcomeStage[];
+/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` runs a vacuity repair's mutant first. */
+export const ADMISSION_STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'lanes', 'gate', 'candidate'] as const satisfies readonly OutcomeStage[];
 export type AdmissionStage = (typeof ADMISSION_STAGES)[number];
 /**
  * Mandatory chain stages: they run to completion whatever pause or drain says, so a build's retained
@@ -50,7 +50,7 @@ export type ResourceRequest = Readonly<{
 }>;
 
 /**
- * Each stage's entry reservation (F6), taken before the stage's first journaled op: plan-check and gate
+ * Each stage's entry reservation (F6), taken before the stage's first journaled op: pre-build and gate
  * `@cpu`×1; build calibrated `@cpu` only (unit.cpu overrides); lanes the first lane's set; candidate the
  * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
  */

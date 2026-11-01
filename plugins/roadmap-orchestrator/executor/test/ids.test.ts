@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  type ImplementerSessionId, type JudgmentSessionId, type NumberedId, type RuleId, InvalidIdError, amendmentRef, amendmentRefKey, answerIds, canonicalIds,
+  type ImplementerSessionId, type JudgmentSessionId, type NumberedId, type RuleId, InvalidIdError, answerIds, canonicalIds,
   compareIds, idKey, idList, obligationId, ruleId, visionClauseId, arcId, clauseId, commandId, hostNeedsUserId,
   implementerSessionId, invocationDirName, invocationId, invocationIdOf, judgmentSessionId, laneId, needsUserId,
   needsUserIdForOp, opId, opIdOf, opKey, parseInvocationId, parseOpId, resourceName, routingRev, rulingId, sha, sha256,
@@ -142,10 +142,5 @@ describe('ids.numbered-order', () => {
     const read = answerIds((v, p) => ruleId(v, p));
     assert.deepEqual(read(['T-120', 'T-42', 'T-9'], 'answer.rules'), ['T-9', 'T-42', 'T-120']);
     assert.throws(() => read(['T-42', 'T-42'], 'answer.rules'), (err: unknown) => err instanceof SchemaError);
-  });
-
-  it('amendmentRefKey orders by arc, then by number', () => {
-    const refs = ['b/M-1', 'a/M-10', 'a/M-9'].map((r) => amendmentRef(r));
-    assert.deepEqual(refs.sort((x, y) => (amendmentRefKey(x) < amendmentRefKey(y) ? -1 : 1)), ['a/M-9', 'a/M-10', 'b/M-1']);
   });
 });

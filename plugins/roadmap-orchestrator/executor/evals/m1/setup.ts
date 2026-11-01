@@ -97,7 +97,7 @@ const SPECS: Readonly<Record<(typeof UNITS)[number], unknown>> = {
       clause('A3', 'test/slug.test.js covers A1 and A2 and passes under the slug lane (C-2).'),
     ],
      resources: [RESOURCE],
-    decisions: [],
+    decisions: [{id:'D1',text:'slugify has no special case for an empty result; pageId owns the empty slug (contract one).',state:'active'}],
     facts: [{ id: 'F1', text: 'package.json declares "type": "module", so src/*.js are ES modules.', state: 'active' }],
     cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2'] },
   },
@@ -186,7 +186,7 @@ export function setup(dir: string): void {
     },
     resources: [resourceDecl(l.resource)],
     // `page-id` builds on `slug` (it imports slugify): an explicit edge, since an M2 arc schedules a DAG.
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', systems: [systemName('app')], resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: [systemName('app')], resources: [RESOURCE], ...(id === 'page-id' ? { after: ['slug'] } : {}) })),
   }));
 }
 

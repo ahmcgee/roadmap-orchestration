@@ -6,13 +6,7 @@ import type { IntentOf,OpOutcome,Parent,PlanAppliedFact,PlanChange,RevisionPaylo
 import { JUDGMENT_STAGES,probeTargetKey } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { exclusivePublish } from '../core/fsx.ts';
-import {
-type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,
-type UnitId,
-canonicalIds,
-invocationId,opKey,parseResourceUnit,
-planRev,resourceInstance
-} from '../core/ids.ts';
+import { type CommandId, type NeedsUserId, type PlanRev, type ResourceInstance, type ResourceName, type UnitId, invocationId, opKey, parseResourceUnit, planRev, resourceInstance } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CommandBody,CommandFile,NeedsUserAck,NeedsUserContent,ResidueKey,RevisionManifest,SpecM1,Stage } from '../core/records.ts';
@@ -331,7 +325,7 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
   }
   const verified: string[] = [];
   ctx.journal.fact({ kind: 'reopened', unit: unitId, command: id, specRev: revision.rev, specSha256: revision.sha256 });
-  verified.push(`unit ${unitId} re-opened at plan-check on spec rev ${revision.rev}`);
+  verified.push(`unit ${unitId} re-opened at pre-build on spec rev ${revision.rev}`);
   return { kind: 'applied', verified };
 }
 
@@ -407,7 +401,7 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       };
       // Run again after a crash past the reopen: its fact is the postcondition.
       if (u.reopened?.command === id) {
-        return { kind: 'applied', verified: [`unit ${target.unit} re-opened at plan-check on spec rev ${u.reopened.specRev}`, ...unpause()] };
+        return { kind: 'applied', verified: [`unit ${target.unit} re-opened at pre-build on spec rev ${u.reopened.specRev}`, ...unpause()] };
       }
       if (u.status === 'park-pending') {
         const parked = await resumeParked(ctx, id, target.unit);
@@ -667,14 +661,7 @@ export function evaluateRevision(
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
   const publication = publicationOf(ctx.view, revision, verdict.inputs, proposal);
   if ('reasons' in publication) return { kind: 'rejected', reasons: publication.reasons };
-  const divergences: DivergenceDraft[] = verdict.dropped.map((d) => {
-    if (proposer.type !== 'bundle') throw new Error(`a split dropping text proposed by ${proposer.type}: the classifier refuses it`);
-    return {
-      job: proposer.job, type: 'split-dropped', from: `${d.obligation} (plan rev ${inForce.rev})`, what: `the split of ${d.obligation} drops ${d.sentences.map((t) => JSON.stringify(t)).join(', ')}`,
-      cites: canonicalIds(proposer.cites), evidence: proposer.evidence, preimage: obligationsPreimage(inForce, revision),
-      compensation: { hint: `\`roadmap reverse\` restores the obligations before the split of ${d.obligation}`, kind: 'restore-revision' },
-    };
-  });
+  const divergences: DivergenceDraft[] = [];
   // dev.17 (propagation): what the revision leaves stale, by code (src/holistic/staleset.ts), over the units still to land.
   const stale = staleSetOf({
     obligations: { before: revision.obligations?.value ?? null, after: verdict.inputs.obligations },
@@ -801,11 +788,6 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
  */
 export function applyWarnings(view: JournalView, plan: PlanM1, changes: readonly PlanChange[]): readonly string[] {
   const out: string[] = [];
-  for (const c of view.holistic().checkpoints) {
-    if (c.decided !== null) continue;
-    out.push(`warning: checkpoint ${c.inputs.job} is running on plan rev ${c.inputs.vector.plan}; a bundle of it that touches what this revision changes `
-      + 'is rejected stale when it lands, and its spend is wasted (apply after it decides unless the edit cannot wait)');
-  }
   for (const c of changes) {
     if (c.type !== 'unit-reentered' || c.reset) continue;
     const unit = plan.units.find((u) => u.id === c.unit);

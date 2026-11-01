@@ -1,13 +1,12 @@
 // Projections shared by live runtime readers. Schema-2 has no historical record adoption.
-import type { CensusEntry,CheckpointTrigger,ClassifiedAdmit,Conversion,Obligations } from '../holistic/types.ts';
+import type { CensusEntry, Obligations } from '../holistic/types.ts';
 import type { PressureAvailability } from '../host/pressure.ts';
 import type { CpuBasis } from './cpu.ts';
-import type { DiffShown,GateLargeDiff,JudgmentInputs,MutantOf,RevisionSource } from './events.ts';
+import type { DiffShown, GateLargeDiff, JudgmentInputs, MutantOf } from './events.ts';
 import type { FindingId,Sha256Hex } from './ids.ts';
 import type { LaunchCpu } from './records.ts';
 import type { ApprovalBlobs,GateReview } from './review.ts';
 export const censusOf = (o: Obligations): readonly CensusEntry[] | null => o.census ?? null;
-export const bundleClassesOf = (s: Extract<RevisionSource, {type: 'bundle'}>): Readonly<{admits: readonly ClassifiedAdmit[]; conversions: readonly Conversion[]}> | 'unclassified' => s.admits === undefined || s.conversions === undefined ? 'unclassified' : {admits: s.admits, conversions: s.conversions};
 export const spawnPressureOf = (s: Readonly<{pressure?: number | null}>): number | null => s.pressure ?? null;
 export const startPressureOf = (s: Readonly<{pressure?: PressureAvailability}>): PressureAvailability => s.pressure!;
 export const exitCpuOf = (s: Readonly<{cpu?: LaunchCpu | null}>): LaunchCpu | null => s.cpu ?? null;
@@ -16,7 +15,6 @@ export const gateDiffShownOf = (s: JudgmentInputs): DiffShown => s.diffShown!;
 export const gateLargeDiffOf = (s: JudgmentInputs): GateLargeDiff | null => s.largeDiff ?? null;
 export const gateReviewOf = (s: JudgmentInputs): GateReview | null => s.review ?? null;
 export const approvalBlobsOf = (s: Readonly<{unit?: string; blobs: ApprovalBlobs | null}>): ApprovalBlobs | null => s.blobs;
-export const checkpointSkipTriggerOf = (s: Readonly<{trigger?: CheckpointTrigger}>): CheckpointTrigger => s.trigger!;
 export const spawnCpuKeyOf = (s: Readonly<{cpuKey?: Sha256Hex}>): Sha256Hex | null => s.cpuKey ?? null;
 export const reservationCpuBasisOf = (s: Readonly<{cpuBasis?: CpuBasis}>): CpuBasis | null => s.cpuBasis ?? null;
 export const reservationTokenWaitOf = (s: Readonly<{tokenWaitMs?: number}>): number | null => s.tokenWaitMs ?? null;

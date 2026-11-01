@@ -1,7 +1,7 @@
 import { systemsMapInForce } from '../../../src/input/systems.ts';
 // One walkthrough trial end to end, through the production walk job, as the gate eval runs the production gate: a
 // holistic arc whose repository is the cell's product (product.ts) and whose plan has one milestone (fixture.ts) over one
-// unit, u1. u1 merges through the arc harness (fake plan-check, build and gate; its lanes, the product's own tests, run
+// unit, u1. u1 merges through the arc harness (fake pre-build, build and gate; its lanes, the product's own tests, run
 // for real), which makes the milestone's walk due; then `runWalk` (src/walk/walk.ts) runs walk-1 exactly as an arc does:
 // the capture, the detached checkout, the bring-up (src/walk/bringup.ts), the inputs, the acting-judge call
 // (dispatch.ts `callActingJudge`, the walkthrough seat, the repo config's walkthrough MCP servers substituted by
@@ -34,7 +34,7 @@ import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { holisticInForce } from '../../../src/pipeline/stages.ts';
 import { runUnit } from '../../../src/pipeline/unit.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type WalkthroughOutput, validateWalkthroughOutput } from '../../../src/prompts/schemas.ts';
+import { type WalkthroughOutput, experienceWalk } from '../../../src/prompts/schemas.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import { profileName } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
@@ -128,10 +128,10 @@ const RULINGS = '# Rulings\n\nC-1 — Every ledgerly surface follows the design 
 /** The walk seat under the run's routing (the built-in seats with the walk roles in force, `--rebind` applied), as the arm names it. */
 export function walkSeat(config: RepoConfig | null): Readonly<{ arm: string }> {
   const r = resolveRouting({ ...arcStack('default', config, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
-  const t = r.table.walkthrough.arc;
+  const t = r.table.experienceVerdict.arc;
   if (t.backend !== 'claude') throw new Error(`the walkthrough seat bound to ${t.model}: walks run on Claude only (codex-judgment)`);
-  promptFor('walkthrough', t.model); // a rebind onto a model with no walkthrough prompt fails here, before any trial
-  const cls = r.classes.walkthrough.arc;
+  promptFor('experienceVerdict', t.model); // a rebind onto a model with no walkthrough prompt fails here, before any trial
+  const cls = r.classes.experienceVerdict.arc;
   return { arm: `walkthrough.arc ${cls}${r.bindings[cls] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}` };
 }
 
@@ -256,7 +256,7 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'main'), worktreeRoot: tmpDir('walk-wt'),
     contracts: [`${REFERENCE}/api.md`], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Ship the milestone to its design reference.',
     suite: { lanes: [laneJson({ ...lane, id: 'suite' })] }, resources: [],
-    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', systems: ['app'], resources: [] }],
+    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', review: 'always', systems: ['app'], resources: [] }],
     holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'], every: 100 } },
     milestones: [JSON.parse(JSON.stringify(f.milestone)) as JsonValue],
   }));
@@ -282,7 +282,7 @@ export type Brake = Readonly<{ rule: 'load' | 'cap' | 'deadline'; detail: string
 export type WatchedRole = 'walkthrough' | 'polishJudge';
 
 /** The `role` calls' spawn intents, in order. */
-export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === role);
+export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict' && i.parent.type === 'job' && (role === 'walkthrough' ? String(i.parent.job).startsWith('walk-') : String(i.parent.job).startsWith('compare-')));
 const walkSpawns = (r: ArcRun) => roleSpawns(r, 'walkthrough');
 
 export function readStdout(r: ArcRun, inv: InvocationId): string {
@@ -347,7 +347,7 @@ export const filesUnder = (dir: string): readonly string[] =>
 function refusals(r: ArcRun, value: unknown): string {
   let output: WalkthroughOutput;
   try {
-    output = validateWalkthroughOutput(value);
+    output = experienceWalk(value);
   } catch (e) {
     if (e instanceof SchemaError) return `off its schema: ${e.message}`;
     throw e;
@@ -396,7 +396,7 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
     return { stdout, events, usage: result === undefined ? null : usageOf(result) };
   });
   perCall.forEach((c, i) => writeFileSync(join(o.out, `walk-${i + 1}.jsonl`), c.stdout));
-  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, and dev.17 their plan-checks, so both are left out).
+  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, and dev.17 their pre-builds, so both are left out).
   const calls = readCalls(d.scenarioPath).filter((c) => c.argv.includes('--strict-mcp-config') && c.argv.includes('bypassPermissions') && !isGateCall(c) && !isPlanCheckCall(c));
   writeFileSync(join(o.out, 'prompt.txt'), calls[0]?.stdin ?? '');
   writeFileSync(join(o.out, 'argv.json'), `${JSON.stringify(calls[0]?.argv ?? [], null, 2)}\n`);
@@ -412,7 +412,7 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
   const value = reading !== null && reading.output.kind === 'present' ? reading.output.value : null;
   if (value !== null) writeFileSync(join(o.out, 'answer.json'), `${JSON.stringify(value, null, 2)}\n`);
   const reported = ended?.kind === 'ended' && ended.outcome === 'reported';
-  const answer = reported && value !== null ? validateWalkthroughOutput(value) : null;
+  const answer = reported && value !== null ? experienceWalk(value) : null;
   const hits = scanTranscript(transcriptFile, [o.out, dirname(o.out), 'evals/roles', ...repositoryPaths()]);
   const brake = monitor.brake();
   const voided: WalkRow['void'] = brake !== null ? { reason: brake.rule === 'cap' ? 'cap' : 'runaway', detail: `${brake.rule}: ${brake.detail}` }

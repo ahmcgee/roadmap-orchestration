@@ -139,14 +139,7 @@ function readText(path: string): string | null {
  * Keep the launched schema strict for every other field and preserve schemas of adopted invocations.
  * The build reader still validates the legacy field's shape when consuming the report.
  */
-export function backendSchemaViolation(schema: unknown, value: unknown, role: BackendTerminal['role']): string | null {
-  if (role === 'build' && isObject(schema) && isObject(schema['properties'])
-    && !Object.hasOwn(schema['properties'], 'lanesRun') && isObject(value)) {
-    const { lanesRun: _legacy, ...report } = value;
-    return schemaViolation(schema, report);
-  }
-  return schemaViolation(schema, value);
-}
+export function backendSchemaViolation(schema: unknown, value: unknown, _role: BackendTerminal['role']): string | null { return schemaViolation(schema, value); }
 
 function read(terminal: BackendTerminal, stdoutPath: AbsPath, model: string): BackendReading {
   const backend = terminal.session.backend;

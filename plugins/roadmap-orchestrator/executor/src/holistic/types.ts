@@ -11,19 +11,19 @@ type EnvId,
 type FindingId,type InvocationId,type JobId,type LaneId,type LaneRev,
 type MilestoneId,
 type ObligationId,
-type OpportunityId,
+
 type PlanRev,type QuestionId,type RoutingRev,type RuleId,
 type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,envId,findingId,
 idList,idsAscending,
 invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
 milestoneId,
 obligationId,
-opportunityId,
+
 planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,
 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
-LENS_KIND_NAMES,type LaneDef,type LensKindName,type RepairRef,type Stage,laneDef,laneDefOf,laneEnv,repairRef,
+LENS_KIND_NAMES,type LaneDef,type LensKindName,type Stage,laneDef,laneDefOf,laneEnv,
 } from '../core/records.ts';
 
 import {
@@ -310,7 +310,7 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  *   derived-overlaps-corpus   a derived output that may reach the corpus file set.
  *   milestone-references-oversize (2026-10-21; 1.0.0-dev.16) a milestone whose reference dirs hold more text at the tip
  *                             than `MILESTONE_REFERENCES_BUDGET` (src/phase0/rows.ts): every text file under them is
- *                             inlined whole into each plan-check, build and gate prompt of its units and its walkthrough.
+ *                             inlined whole into each pre-build, build and gate prompt of its units and its walkthrough.
  *                             `bytes` the total, `largest` its largest text files (at most five, largest first).
  */
 export type PlanDefect =
@@ -340,7 +340,7 @@ export function planDefectText(d: PlanDefect): string {
       return `Derived output ${d.output} may reach the corpus file set.`;
     case 'milestone-references-oversize':
       return `Milestone ${d.milestone}'s references hold ${d.bytes} bytes of text, over the ${d.budget}-byte budget: every text file under them is inlined into `
-        + `each plan-check, build and gate prompt of its units and its walkthrough. The largest: ${d.largest.map((f) => `${f.path} (${f.bytes} bytes)`).join(', ')}. `
+        + `each pre-build, build and gate prompt of its units and its walkthrough. The largest: ${d.largest.map((f) => `${f.path} (${f.bytes} bytes)`).join(', ')}. `
         + 'Narrow `references` to the design documents; build output and comps belong outside them.';
   }
 }
@@ -665,13 +665,13 @@ const rulingRef: Read<RulingRef> = (value, path) => typeof value === 'object' &&
 
 export const FINDING_SEVERITIES = ['P1', 'P2', 'P3'] as const;
 export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
-/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or plan-check (R17). */
+/** Who opened it: a lens, code over a witness (a must-hold not held on an audit snapshot), or pre-build (R17). */
 /**
  * dev.13: `walkthrough` (a milestone walk opens a P1 for a break, a P2 for a deviation, never a P3; code opens a P1 for a
  * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may
  * have no obligation.
  */
-export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'plan-check', 'walkthrough'] as const;
+export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'pre-build', 'walkthrough'] as const;
 export type FindingLens = (typeof FINDING_LENSES)[number];
 /** `fixed-on-branch` (R5): the owner's gate approved. `resolved` and `ruled` are terminal. */
 export const FINDING_STATES = ['open', 'owned', 'fixed-on-branch', 'resolved', 'ruled'] as const;
@@ -679,35 +679,20 @@ export type FindingStateName = (typeof FINDING_STATES)[number];
 /** A cited evidence item: a path (repo or evidence dir) and its blob when it names one; a changed blob lifts a dismissal. */
 export type FindingEvidence = Readonly<{ path: string; blob: Sha | null }>;
 /**
- * `stage`: a plan-check's vision conflict (R17), or (M4a rev 3, E; recorded before dev.17) the in-session assessment's at the unit's build attempt;
- * both open P3 `plan-check`-lens findings.
+ * `stage`: a pre-build's vision conflict (R17), or (M4a rev 3, E; recorded before dev.17) the in-session assessment's at the unit's build attempt;
+ * both open P3 `pre-build`-lens findings.
  */
 /** dev.13: `demo`, the demo's bring-up of `sha` failed (`demo-failed`): a walkthrough P1 with no job. */
 export type FindingSource =
   | Readonly<{ type: 'job'; job: JobId }>
-  | Readonly<{ type: 'stage'; unit: UnitId; stage: 'plan-check' | 'build'; attempt: number }>
+  | Readonly<{ type: 'stage'; unit: UnitId; stage: 'pre-build' | 'build'; attempt: number }>
   | Readonly<{ type: 'demo'; sha: Sha }>;
 /** A vacuity finding's mutant: the patch (kept content-addressed) and the lane that should kill it. */
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
-/**
- * Why code released a finding when checkpoint `job`'s decision was applied (dev.13, the convergence tail, owner ruling
- * 2026-10-20; src/holistic/tail.ts): `p3`, a P3 the decision did not fix (P3 is never debt); `regress`, a P2 or P3 below
- * the regress brake (code a finding-origin unit introduced: only a P1 spawns a unit); `settled`, one below the settled
- * brake (every milestone passed and every planned unit merged).
- */
-export const RELEASE_REASONS = ['p3', 'regress', 'settled'] as const;
-export type ReleaseReason = (typeof RELEASE_REASONS)[number];
-/** Who ruled a finding: a checkpoint's `findingDispositions`, a ruling, or code (a mutant not reproduced). */
-/**
- * `code`: a reproduce that killed the mutant dismisses its finding (`not-reproduced`); run 10 (F) the close-out defers an
- * open P2 with no obligation (`close-out`; dev.13: it releases such a P3). dev.13 `release`: code released it when
- * checkpoint `job`'s decision was applied, for `reason` (only with disposition `released`).
- */
+/** A root ruling, mutant reproduction, or close-out disposition that ruled a finding. */
 export type FindingRuledBy =
-  | Readonly<{ type: 'checkpoint'; job: JobId }>
   | Readonly<{ type: 'ruling'; ruling: RulingId }>
-  | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>
-  | Readonly<{ type: 'release'; job: JobId; reason: ReleaseReason }>;
+  | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>;
 /**
  * dev.13 `released` (owner ruling 2026-10-20: "if we do not fix a nitpick right away, it is released"): a finding nobody
  * will act on, recorded but never debt, and never reopened by the same key (`admissionOf`). `accepted`: real, and handled
@@ -740,7 +725,7 @@ export const findingEvidence: Read<FindingEvidence> = object((f) => ({ path: f.g
 export const findingSource: Read<FindingSource> = tagged('type', {
   job: object((f): FindingSource => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
   stage: object((f): FindingSource => ({
-    type: f.get('type', literal('stage')), unit: f.get('unit', (v, p) => unitId(v, p)), stage: f.get('stage', oneOf(['plan-check', 'build'] as const)),
+    type: f.get('type', literal('stage')), unit: f.get('unit', (v, p) => unitId(v, p)), stage: f.get('stage', oneOf(['pre-build', 'build'] as const)),
     attempt: f.get('attempt', positive),
   })),
   demo: object((f): FindingSource => ({ type: f.get('type', literal('demo')), sha: f.get('sha', shaR) })),
@@ -755,14 +740,11 @@ export const findingTo: Read<FindingTo> = tagged('state', {
     const out = {
       state: f.get('state', literal('ruled')),
       disposition: f.get('disposition', oneOf(FINDING_DISPOSITIONS)),
-      by: f.get('by', tagged<'checkpoint' | 'ruling' | 'code' | 'release', FindingRuledBy>('type', {
-        checkpoint: object((g) => ({ type: g.get('type', literal('checkpoint')), job: g.get('job', jobR) })),
+      by: f.get('by', tagged<'ruling' | 'code', FindingRuledBy>('type', {
         ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
         code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
-        release: object((g) => ({ type: g.get('type', literal('release')), job: g.get('job', jobR), reason: g.get('reason', oneOf(RELEASE_REASONS)) })),
       })),
     };
-    if (out.by.type === 'release' && out.disposition !== 'released') throw new SchemaError(`${f.path}.disposition`, 'released (a code release releases)', out.disposition);
     return out;
   }),
 });
@@ -772,51 +754,32 @@ export const findingTo: Read<FindingTo> = tagged('state', {
 
 /** Why an audit runs (coalesced into one `audit-started`). */
 export type AuditTrigger =
+  | Readonly<{type: 'milestone'; milestone: MilestoneId}>
   /** Every N publications (D3, N = `holistic.audit.every`, default 5). */
   | Readonly<{ type: 'cadence' }>
   /** R8: a publication left a selected active future (not latched) obligation unwitnessed; never an exempt one. */
   | Readonly<{ type: 'unwitnessed'; obligation: ObligationId }>
   /**
    * A revision from a rule, a bundle, `reverse`, or an architect spec, obligation or vision edit: `L ∩ {drift, vision}`.
-   * `specsOnly` (M4a rev 3, H2, R61): a bundle revision changing only these units and their specs, which runs the vision
-   * lens alone over the spec deltas (non-empty, ascending); absent: a full drift (lasting).
    */
-  | Readonly<{ type: 'drift'; planRev: number; specsOnly?: readonly UnitId[] }>
+  | Readonly<{ type: 'drift'; planRev: number }>
   | Readonly<{ type: 'wall-clock' }>
   | Readonly<{ type: 'requested'; command: string }>
   /** H9: at the final head, every lens in L with an outstanding range. */
   | Readonly<{ type: 'final' }>;
 
 export const auditTrigger: Read<AuditTrigger> = tagged('type', {
+  milestone: object((f): AuditTrigger => ({type: f.get('type', literal('milestone')), milestone: f.get('milestone', (v, p) => milestoneId(v, p))})),
   cadence: object((f): AuditTrigger => ({ type: f.get('type', literal('cadence')) })),
   unwitnessed: object((f): AuditTrigger => ({ type: f.get('type', literal('unwitnessed')), obligation: f.get('obligation', oid) })),
-  drift: object((f): AuditTrigger => {
-    const specsOnly = f.optional('specsOnly', sortedBy((v, p) => unitId(v, p), (u) => u, { nonEmpty: true }));
-    return { type: f.get('type', literal('drift')), planRev: f.get('planRev', positive), ...(specsOnly === undefined ? {} : { specsOnly }) };
-  }),
+  drift: object((f): AuditTrigger => ({type: f.get('type', literal('drift')), planRev: f.get('planRev', positive)})),
   'wall-clock': object((f): AuditTrigger => ({ type: f.get('type', literal('wall-clock')) })),
   requested: object((f): AuditTrigger => ({ type: f.get('type', literal('requested')), command: f.get('command', (v, p) => { const s = str(v, p); if (!/^cmd-[0-9a-f]{16}$/.test(s)) throw new SchemaError(p, 'a command id', v); return s; }) })),
   final: object((f): AuditTrigger => ({ type: f.get('type', literal('final')) })),
 });
 
 /**
- * What a checkpoint runs for: K retired milestones, an operator-design park, an audit P1/final audit (all audits in
- * an arc without milestones), or a walk round's unweighed blocking finding. Old audit/walk captures stay readable.
- */
-export type CheckpointTrigger =
-  | Readonly<{ type: 'audit'; job: JobId }>
-  | Readonly<{ type: 'park'; unit: UnitId; seq: number }>
-  | Readonly<{ type: 'walk'; job: JobId }>
-  | Readonly<{ type: 'milestone'; milestones: readonly MilestoneId[] }>;
-export const checkpointTrigger: Read<CheckpointTrigger> = tagged('type', {
-  milestone: object((f): CheckpointTrigger => ({ type: f.get('type', literal('milestone')), milestones: f.get('milestones', idList((v, p) => milestoneId(v, p), { nonEmpty: true })) })),
-  audit: object((f): CheckpointTrigger => ({ type: f.get('type', literal('audit')), job: f.get('job', jobR) })),
-  park: object((f): CheckpointTrigger => ({ type: f.get('type', literal('park')), unit: f.get('unit', (v, p) => unitId(v, p)), seq: f.get('seq', positive) })),
-  walk: object((f): CheckpointTrigger => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
-});
-
-/**
- * The revision vector a checkpoint read (`checkpoint-inputs`) and a bundle's staleness check compares (H3: the
+ * The revision vector read for a revision proposal and compared by its staleness check (H3: the
  * vision sha always): the plan rev, each spec's rev, the obligations, ledger and vision bytes, the contract blobs.
  */
 export type RevisionVector = Readonly<{
@@ -844,84 +807,8 @@ export const revisionVector: Read<RevisionVector> = object((f) => ({
   contracts: f.get('contracts', contractRevs),
 }));
 
-/**
- * A bundle's outcome other than an applied revision (which is its `plan-applied{source: bundle}`). `busy` (M4a rev 3, C5,
- * R50): the bundle touched a unit with an open stage attempt (`units`, ascending by unit); it is decided again only once
- * each attempt has closed, and never counts toward `secondInvalid`.
- */
-export const BUNDLE_REJECTIONS = ['stale', 'evidence', 'invalid', 'busy'] as const;
-export type BundleRejection = (typeof BUNDLE_REJECTIONS)[number];
-/** An open stage attempt a `busy` rejection names. */
+/** An open stage attempt a root edit must wait for. */
 export type BusyAttempt = Readonly<{ unit: UnitId; stage: Stage; attempt: number }>;
-export type BundleOutcome =
-  /** `conversions` (M4a rev 3, OR-A1): every op converted (none left to apply); absent: none (lasting). */
-  | Readonly<{ kind: 'no-op'; conversions?: readonly Conversion[] }>
-  /** `units` exactly on a `busy` rejection (non-empty). */
-  | Readonly<{ kind: 'rejected'; reason: BundleRejection; detail: string; units?: readonly BusyAttempt[] }>
-  /** Held for the architect: a `bundle-request` (A9, draining, a brake) or an `owner-request` (A16). */
-  | Readonly<{ kind: 'requested'; needsUser: string }>;
-
-// ---------------------------------------------------------------------------------------------------
-// Checkpoint admit classes (M4a rev 3, OR-A1, LR-k; src/holistic/admits.ts classifies, N2)
-
-/** Opportunities an arc may admit (OR-A1); unmeasured. */
-export const OPPORTUNITY_BUDGET = 1;
-/** Follow-up repairs one opportunity may carry (LR-k, R48). */
-export const OPPORTUNITY_FOLLOW_UPS = 1;
-/**
- * The class code gives a checkpoint `admit` (R45's decision table, corpus arcs only, LR-h). `repair`: it restores an
- * in-slice obligation or behaviour that does not hold (`refs`: its spec's repairs, non-empty), the follow-up of
- * opportunity `followUp` when its attribution lies wholly in that opportunity's lineage. `oversight`: a gap within the
- * owner-selected slice. `opportunity`: it advances clauses outside the slice (`clauses`, joining `holistic.advances`).
- * `unrelated` is never a class: such an admit converts.
- */
-export type AdmitClass =
-  | Readonly<{ type: 'repair'; refs: readonly RepairRef[]; followUp: OpportunityId | null }>
-  | Readonly<{ type: 'oversight'; clauses: readonly VisionClauseId[] }>
-  | Readonly<{ type: 'opportunity'; id: OpportunityId; clauses: readonly VisionClauseId[] }>;
-/** An admit of a bundle as its decision record keeps it: the op's index in the checkpoint answer, its unit, its class. */
-export type ClassifiedAdmit = Readonly<{ index: number; unit: UnitId; class: AdmitClass }>;
-/**
- * dev.13 (the convergence tail, src/holistic/tail.ts): `regress-brake`, `settled-brake`: an admit whose every repair is a
- * finding below that brake (any arc, not only a corpus arc); the findings it named are released or banked when the
- * decision is applied, never a corpus amendment.
- */
-export const CONVERSION_REASONS = ['unrelated', 'over-budget', 'unwitnessed', 'follow-up-overrun', 'regress-brake', 'settled-brake'] as const;
-export type ConversionReason = (typeof CONVERSION_REASONS)[number];
-/** The conversions a brake makes (dev.13): no amendment, the findings settled by the tail rules. */
-export const BRAKE_CONVERSIONS = ['regress-brake', 'settled-brake'] as const satisfies readonly ConversionReason[];
-export const isBrakeConversion = (r: ConversionReason): r is (typeof BRAKE_CONVERSIONS)[number] => (BRAKE_CONVERSIONS as readonly string[]).includes(r);
-/**
- * An admit code dropped from a bundle (R35): it becomes a corpus amendment (and, for `follow-up-overrun`, a debt item
- * naming `opportunity`); a brake's conversion (dev.13) becomes neither. `opportunity` is non-null exactly for `follow-up-overrun`.
- */
-export type Conversion = Readonly<{ index: number; unit: UnitId; reason: ConversionReason; opportunity: OpportunityId | null }>;
-
-const repairRefsR: Read<readonly RepairRef[]> = (value, path) => {
-  const out = arrayOf(repairRef, { nonEmpty: true })(value, path);
-  assertUnique(out, (r) => r, path);
-  return out;
-};
-export const admitClass: Read<AdmitClass> = tagged('type', {
-  repair: object((f): AdmitClass => ({ type: f.get('type', literal('repair')), refs: f.get('refs', repairRefsR), followUp: f.get('followUp', nullable((v, p) => opportunityId(v, p))) })),
-  oversight: object((f): AdmitClass => ({ type: f.get('type', literal('oversight')), clauses: f.get('clauses', idList(vid, { nonEmpty: true })) })),
-  opportunity: object((f): AdmitClass => ({
-    type: f.get('type', literal('opportunity')), id: f.get('id', (v, p) => opportunityId(v, p)), clauses: f.get('clauses', idList(vid, { nonEmpty: true })),
-  })),
-});
-export const classifiedAdmit: Read<ClassifiedAdmit> = object((f) => ({ index: f.get('index', nat), unit: f.get('unit', (v, p) => unitId(v, p)), class: f.get('class', admitClass) }));
-export const conversion: Read<Conversion> = object((f) => {
-  const out = {
-    index: f.get('index', nat), unit: f.get('unit', (v, p) => unitId(v, p)), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
-    opportunity: f.get('opportunity', nullable((v, p) => opportunityId(v, p))),
-  };
-  if ((out.reason === 'follow-up-overrun') !== (out.opportunity !== null)) {
-    throw new SchemaError(`${f.path}.opportunity`, out.reason === 'follow-up-overrun' ? 'the opportunity a follow-up overran' : 'null (only a follow-up overrun names one)', out.opportunity);
-  }
-  return out;
-});
-/** A bundle's admits or conversions: ascending by op index, each index once. */
-export const byIndex = <T extends Readonly<{ index: number }>>(item: Read<T>): Read<readonly T[]> => sortedBy(item, (x) => String(x.index).padStart(6, '0'), { nonEmpty: true, order: 'by op index' });
 
 // ---------------------------------------------------------------------------------------------------
 // A witness-check lane file (`<evidenceDir>/witness/<lane>.json`, M4a rev 3 D1, R56): what `roadmap witness-check` runs

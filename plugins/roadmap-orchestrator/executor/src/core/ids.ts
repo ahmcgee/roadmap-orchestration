@@ -310,31 +310,6 @@ export const debtId: IdReader<DebtId> = B.read;
 export const debtIdOf = B.of;
 export const debtSeq = B.n;
 
-/** A corpus amendment: `M-<n>`, numbered within its arc; cited across arcs as `<arc>/M-<n>` (`AmendmentRef`). */
-export type AmendmentId = Brand<string, 'AmendmentId'>;
-const M = numbered('AmendmentId', 'M');
-export const amendmentId: IdReader<AmendmentId> = M.read;
-export const amendmentIdOf = M.of;
-export const amendmentSeq = M.n;
-
-/** An amendment cited outside its arc: `<arc>/M-<n>`. */
-export type AmendmentRef = Brand<string, 'AmendmentRef'>;
-const AMENDMENT_REF = new RegExp(`^(${SLUG})/(M-${POS})$`);
-export const amendmentRef: IdReader<AmendmentRef> = textual('AmendmentRef', AMENDMENT_REF, '<arc>/M-<n>');
-export function amendmentRefOf(arc: ArcId, id: AmendmentId): AmendmentRef {
-  return amendmentRef(`${arc}/${id}`);
-}
-export function parseAmendmentRef(ref: AmendmentRef): Readonly<{ arc: ArcId; id: AmendmentId }> {
-  const m = AMENDMENT_REF.exec(ref);
-  if (m === null) throw new InvalidIdError('AmendmentRef', 'AmendmentRef', '<arc>/M-<n>', ref);
-  return { arc: m[1] as ArcId, id: m[2] as AmendmentId };
-}
-/** An amendment ref's sort key: by arc, then canonically by id (`a/M-9` before `a/M-10`). */
-export function amendmentRefKey(ref: AmendmentRef): string {
-  const { arc, id } = parseAmendmentRef(ref);
-  return `${arc}\u0000${idKey(id)}`;
-}
-
 /**
  * A ranked Phase-0 question: `P-<n>`, global, never reused. No registry: the next id is 1 + the max across every
  * Phase-0 record in the verified chain closure (H23); a carried-forward question keeps its id and text.
@@ -408,7 +383,7 @@ export const serveName: IdReader<ServeName> = textual('ServeName', new RegExp(`^
 // Plain string order stays for keys that are not numbered ids (paths, slugs, job and needs-user ids).
 
 export type NumberedId =
-  | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | AmendmentId | PhaseQuestionId | RulingId | KnownDefectId
+  | VisionClauseId | QuestionId | ObligationId | FindingId | DivergenceId | RuleId | DebtId | PhaseQuestionId | RulingId | KnownDefectId
   | OpportunityId | WitnessItemId | MilestoneId | JourneyId | PolishId;
 
 const NUMBERED_ID = /^([A-Z]{1,2})-([0-9]+)$/;
@@ -492,12 +467,6 @@ export type FailureModeId = Brand<string, 'FailureModeId'>;
 const FM = numbered('FailureModeId', 'FM');
 export const failureModeId: IdReader<FailureModeId> = FM.read;
 export const failureModeIdOf = FM.of;
-
-/** A question of a plan-check `poc` decision: `PQ-<n>`, unique in its decision. */
-export type PocQuestionId = Brand<string, 'PocQuestionId'>;
-const PQ = numbered('PocQuestionId', 'PQ');
-export const pocQuestionId: IdReader<PocQuestionId> = PQ.read;
-export const pocQuestionIdOf = PQ.of;
 
 /** A gate finding in the arc's findings ledger: `R-<n>`, numbered arc-wide in ledger order, never reused. */
 export type ReviewFindingId = Brand<string, 'ReviewFindingId'>;

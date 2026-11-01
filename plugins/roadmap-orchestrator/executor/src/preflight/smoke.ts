@@ -120,7 +120,7 @@ export type SmokeSubject = Extract<SpawnSubject, { purpose: 'smoke' }>;
  * role is any fresh read-only role, the arc roles included (M3), so a probe can call `lens.arc` or `checkpoint.arc`.
  */
 export type CallRequest =
-  | Readonly<{ kind: 'claude-judgment'; role: FreshRole | 'planCheck'; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
+  | Readonly<{ kind: 'claude-judgment'; role: FreshRole | 'verifier'; triple: ClaudeTriple; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'claude-build'; triple: ClaudeTriple; session: ClaudeImplementerSession; evidenceDirs: readonly AbsPath[] }>
   | Readonly<{ kind: 'codex-build'; triple: CodexTriple; session: CodexSession }>;
 
@@ -225,8 +225,6 @@ function backendTerminal(b: BackendInvocation, call: BackendCall, invDir: AbsPat
     case 'claude-judgment':
     case 'claude-acting-judge':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: call.role, session: call.session };
-    case 'claude-scaffold':
-      return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'scaffold', session: call.session };
     case 'claude-build':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'build', session: call.session };
     case 'codex-build':
@@ -320,9 +318,9 @@ function smokeRequest(resolved: ResolvedRouting, backend: Backend): Readonly<{ s
   const triple = atSeat(resolved.table, seat);
   if (triple.backend === 'claude') {
     if (seat.role === 'build') return { seat, request: { kind: 'claude-build', triple, session: freshClaudeImplementerSession(), evidenceDirs: [] } };
-    // The first Claude seat is always plan-check's: it comes first in seat order and resolves to Claude (startup refuses a
+    // The first Claude seat is always pre-build's: it comes first in seat order and resolves to Claude (startup refuses a
     // Codex judgment seat), ahead of the gate (an acting judge since dev.13) and the arc seats.
-    if (seat.role !== 'planCheck') throw new Error(`seat ${seatName(seat)}: only a plan-check seat is a Claude backend's first seat`);
+    if (seat.role !== 'verifier') throw new Error(`seat ${seatName(seat)}: only a pre-build seat is a Claude backend's first seat`);
     return { seat, request: { kind: 'claude-judgment', role: seat.role, triple, session: freshJudgmentSession(), evidenceDirs: [] } };
   }
   if (seat.role !== 'build') throw new Error(`seat ${seatName(seat)} resolves to Codex judgment, which the unsupported-routing row refuses before the smoke`);

@@ -100,7 +100,7 @@ export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId
 export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
 
 /** Where a re-entry's prepared worktree enters (M2): absent, the preparation decides from the merge. */
-export const REENTRY_POINTS = ['plan-check', 'build', 'verify'] as const;
+export const REENTRY_POINTS = ['pre-build', 'build', 'verify'] as const;
 export type ReentryPoint = (typeof REENTRY_POINTS)[number];
 /**
  * `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures.
@@ -147,8 +147,6 @@ export type Holistic = Readonly<{
   advances: readonly VisionClauseId[];
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
-  /** Retired milestones per steering checkpoint; absent: 2. */
-  checkpoint?: Readonly<{ everyMilestones?: number }>;
   audit?: Readonly<{
     /** Publications per cadence audit (D3); absent: 5. */
     every?: number;
@@ -160,8 +158,6 @@ export type Holistic = Readonly<{
 }>;
 /** An `architecture-doc` plan's holistic block: the vision file (`roadmap/vision-m3`), relative to the plan's directory. */
 export type HolisticDoc = Holistic & Readonly<{ vision: PlanPath }>;
-export const DEFAULT_AUDIT = { every: 5, wallClockMin: 360 } as const;
-export const DEFAULT_CHECKPOINT = { everyMilestones: 2 } as const;
 
 export type PlanUnit = Readonly<{
   id: UnitId;
@@ -170,6 +166,7 @@ export type PlanUnit = Readonly<{
   risk: RiskTier;
   /** The unit systems whose build memory is available to its roles. Required by the P2 cutover. */
   systems: readonly SystemName[];
+  review?: 'always' | 'never';
   resources: readonly ResourceName[];
   /**
    * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
@@ -208,12 +205,6 @@ export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'no
  * `knownDefectActive` (src/schedule/ready.ts) holds: until `fixUnit`'s lineage merges. Ids are plan-scoped and never reused.
  */
 export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
-
-/**
- * M4a rev 3 (E, R40) to dev.16: how plan-check ran, per builder class (`by-builder`) or for every unit alike (`uniform`).
- * Removed in dev.17 (every plan-check is one fresh call); a plan in force carrying it reads as uniform (`planCheckShapeDefault`).
- */
-const LEGACY_PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
 
 /**
  * Files the build derives from others (a bundle from its sources), checked by regeneration.
@@ -460,10 +451,6 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
     throw new SchemaError(`${f.path}.vision`, withVision ? 'the vision file (an architecture-doc plan)' : 'absent (a corpus plan\'s vision is <repo>/.roadmap/vision.json)', vision);
   }
   const obligations = f.optional('obligations', (v, p) => planPath(v, p));
-  const checkpoint = f.optional('checkpoint', object((g) => {
-    const everyMilestones = g.optional('everyMilestones', positive);
-    return everyMilestones === undefined ? {} : { everyMilestones };
-  }));
   const audit = f.optional('audit', object((g) => {
     const every = g.optional('every', positive);
     const lenses = g.optional('lenses', sortedBy(oneOf(LENS_KINDS), (l) => l, { nonEmpty: true }));
@@ -473,8 +460,7 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
   return {
     ...(vision === undefined ? {} : { vision }),
     advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true })),
-    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }),
-    ...(checkpoint === undefined ? {} : { checkpoint }) };
+    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }) };
 });
 
 /** A unit's bounds: the built-in ones, then the plan's `limits`, then the unit's own (M3). */
@@ -490,7 +476,7 @@ export function advancesOf(plan: PlanM1): readonly VisionClauseId[] {
 }
 
 /** The arc's required lens set L (H9): `holistic.audit.lenses`, or all four. */
-export const lensSetOf = (h: Holistic): readonly LensKind[] => h.audit?.lenses ?? LENS_KINDS;
+export const lensSetOf = (h: Holistic): readonly LensKind[] => ['invariants'];
 
 const toolCommand: Read<ToolCommand> = object((f) => ({
   argv: f.get('argv', arrayOf(str, { nonEmpty: true })),
@@ -571,11 +557,13 @@ const cut: Read<Cut> = object((f) => {
 const planUnit: Read<PlanUnit> = object((f) => {
   const systems = f.get('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
+  const review = f.optional('review', oneOf(['always', 'never'] as const));
   const out = {
     id: f.get('id', (v, p) => unitId(v, p)),
     spec: f.get('spec', (v, p) => planPath(v, p)),
     risk: f.get('risk', riskTier),
     ...(f.optional('spike', object((g) => ({ question: g.get('question', str) }))) === undefined ? {} : { spike: f.get('spike', object((g) => ({ question: g.get('question', str) }))) }),
+    ...(review === undefined ? {} : { review }),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
     after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
     contingent: f.optional('contingent', arrayOf(object((g) => ({ id: g.get('id', (v, p) => edgeId(v, p)), condition: g.get('condition', str) })))) ?? [],
@@ -790,8 +778,6 @@ export function parsePlan(value: unknown): PlanM1 {
     const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
-    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
-    const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
 
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));

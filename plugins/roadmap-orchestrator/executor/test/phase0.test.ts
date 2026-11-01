@@ -1,3 +1,4 @@
+
 // M4a step C1: `roadmap phase0 check` and the shared Phase-0 rows (src/phase0/rows.ts) over real repos, real pins
 // (`roadmap corpus pin`) and real snapshot refs for the chain (src/chain.ts).
 // The classifier's and the apply's and start's sides are test/phase0-apply.test.ts. M4a rev 3 (N5):
@@ -7,9 +8,9 @@ import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acksDir,amendmentsOf,arcsWithRefs,chainBack,completedHeadOf,readArcRef } from '../src/chain.ts';
+import { acksDir,arcsWithRefs,chainBack,completedHeadOf,readArcRef } from '../src/chain.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { amendmentIdOf,arcId,divergenceIdOf,obligationId,ruleId,unitId } from '../src/core/ids.ts';
+import { arcId, obligationId, ruleId } from '../src/core/ids.ts';
 import { canonicalJson,sha256Hex } from '../src/core/json.ts';
 import { specM1 } from '../src/core/records.ts';
 import { normalizeText } from '../src/corpus/rules.ts';
@@ -112,7 +113,6 @@ describe('phase0 check', () => {
     const a = await corpusArc({ plan: { contracts: ['docs/api.md', 'docs/corpus/sub/0099_New.md'] } });
     assert.deepEqual(await corpusProblems(a), [{ type: 'contract-overlaps-corpus', path: 'docs/corpus/sub/0099_New.md' }]);
   });
-
 
 });
 
@@ -260,15 +260,10 @@ describe('the chain (src/chain.ts)', () => {
   /** Arc 1 sealed with one amendment, the between-arc commit on its head, arc 2 chained over it. */
   async function twoArcs(): Promise<Readonly<{ a1: CorpusArc; h1: string; a2: CorpusArc }>> {
     const a1 = await corpusArc();
-    const h1 = await seal(a1, {
-      before: (j) => j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [ruleId('T-2')],
-        proposal: 'Name the tide window in every booking.', why: 'D-1', evidence: [],
-      }),
-    });
+    const h1 = await seal(a1);
     betweenArc(a1.repo, h1);
     const a2 = await nextArc(a1, h1, 'arc-2');
-    editPhase0(a2, (r) => ({ ...r, amendments: [{ id: 'arc-1/M-1', disposition: { type: 'applied', rules: ['T-2'] } }] }));
+    editPhase0(a2, (r) => ({ ...r,  }));
     return { a1, h1, a2 };
   }
 
@@ -280,18 +275,9 @@ describe('the chain (src/chain.ts)', () => {
     const chain = chainBack(a1.repo, arcId('arc-2'));
     assert.deepEqual([chain.arcs.map((r) => r.arc), chain.missing], [['arc-1', 'arc-2'], null]);
     assert.deepEqual(chain.arcs.map((r) => completedHeadOf(r)), [{ head: h1, done: true }, { head: h2, done: true }]);
-    assert.deepEqual(amendmentsOf(chain.arcs[0]!).map((x) => x.id), ['arc-1/M-1']);
     assert.equal(chain.arcs[1]!.plan.chain?.previousArc, 'arc-1');
     assert.equal(readArcRef(a1.repo, arcId('arc-9')), null);
     assert.deepEqual(chainBack(a1.repo, arcId('arc-9')), { arcs: [], missing: 'arc-9' });
-  });
-
-  it('phase0.amendment-undispositioned: every amendment of the previous arc\'s verified ref needs a disposition', T, async () => {
-    const { a2 } = await twoArcs();
-    editPhase0(a2, (r) => ({ ...r, amendments: [] }));
-    assert.deepEqual(await phase0Problems(a2), [{ type: 'amendment-undispositioned', id: 'arc-1/M-1' }]);
-    editPhase0(a2, (r) => ({ ...r, amendments: [{ id: 'arc-1/M-1', disposition: { type: 'deferred', reason: 'next arc' } }, { id: 'arc-1/M-2', disposition: { type: 'rejected', reason: 'no' } }] }));
-    assert.deepEqual((await check(a2)).rows.map((r) => (r.kind === 'plan-invalid' && r.problem.type === 'schema' ? r.problem.field : r.kind)), ['plan.phase0.amendments.arc-1/M-2']);
   });
 
   it('phase0.chain-baseline-previous-head: plan.chain.previousHead is not the previous arc\'s completed head', T, async () => {

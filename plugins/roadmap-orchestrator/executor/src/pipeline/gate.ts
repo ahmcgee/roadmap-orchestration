@@ -1,4 +1,5 @@
-import { systemReach, systemTraits, pathSystems } from '../input/systems.ts';
+import { methodContext, reviewItems, runReview, builderTouches, reachBackstop } from './surface.ts';
+import { systemReach, systemTraits } from '../input/systems.ts';
 import { mapInForce } from './lanes.ts';
 import { bytesSha256 } from '../spec/spec.ts';
 // The gate stage (plan "Pipeline", gate row; Authority and Gate inputs, R2; DESIGN-1.0.md §4 Independence).
@@ -8,7 +9,7 @@ import { bytesSha256 } from '../spec/spec.ts';
 // (1.0.0-dev.12, "The large-diff gate" below). Its inputs, snapshotted at the integration tip
 // T the gate judges against: the rendered spec, the spec's cited contracts and active C-nn rulings in full
 // and an index of the rest (arc-1 feedback item 12), the architecture doc or its digest, the Direction, the
-// approving plan-check's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
+// approving pre-build's notes, the merge-base diff `diffBase(T, head)..head` (recomputed on every call, so
 // after a merge-in the base is T; attached within `GATE_DIFF_BUDGET` by src/git/boundeddiff.ts, what it does not inline
 // written beside the attempt's evidence and readable, and what it inlined recorded on `judgment-inputs`), the lane ledger of the unit's latest spec series and its evidence dirs,
 // the build's evidence (decisions.json), the declared systems and the diff's reach outside them, and on
@@ -22,7 +23,7 @@ import { bytesSha256 } from '../spec/spec.ts';
 //
 // Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
 // (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
-// before any call (park) · refusal, malformed and faults as at plan-check. An answer off its schema takes the one judgment
+// before any call (park) · refusal, malformed and faults as at pre-build. An answer off its schema takes the one judgment
 // repair turn first (dev.12, `repairTurnOf` in dispatch.ts): its own session resumed with why; refused again, `malformed`.
 //
 // The approval fingerprint (R2) = {unitCommit, specRev, contractRevs, rulingRevs, obligationRevs, corpus}: contractRevs
@@ -109,23 +110,7 @@ import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
-import {
-type JudgmentReader,
-type PlanCheckDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,
-escalationOf,fastSuiteRoot,fastSuiteLanes,
-holisticInForce,inMs,integrationTip,
-judgedAnswer,
-judgmentOutput,
-judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,planCheckNotes,planCheckRead,record,releaseJudgment,
-removeJudgmentCheckouts,
-start,
-
-targetDirs,
-unitImpactInput,
-unitMilestones,
-unitTarget,
-verdictKind,
-writeJudgmentInputs } from './stages.ts';
+import { type JudgmentReader, type PreBuildDone, type StageDone, at, changedPremiseFiles, corpusInForce, enterJudgment, escalationOf, fastSuiteRoot, fastSuiteLanes, holisticInForce, inMs, integrationTip, judgedAnswer, judgmentOutput, judgmentSpawns, ledger, ledgerDir, library, loadUnitSpec, record, releaseJudgment, removeJudgmentCheckouts, start, targetDirs, unitImpactInput, unitMilestones, unitTarget, verdictKind, writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -224,7 +209,7 @@ export function fingerprintValid(ctx: StageContext, unit: PlanUnit): (fingerprin
 const gateSpawns = (ctx: JudgmentReader, unit: UnitId) => judgmentSpawns(ctx, unit, 'gate');
 
 /** A unit's latest gate answer as status shows it (dev.12 round 2): its attempt, decision, findings and `unreviewed`. */
-export type GateAnswerView = Readonly<{ attempt: number; decision: GateOutput['decision']; findings: GateOutput['findings']; unreviewed: GateOutput['unreviewed'] }>;
+export type GateAnswerView = Readonly<{ attempt: number; decision: GateOutput['decision']; findings: GateOutput['findings']; standing: GateOutput['standing'] }>;
 
 /** The unit's latest gate spawn that gave a valid answer, read back from its result; null before any. */
 export function latestGateAnswer(ctx: JudgmentReader, unit: UnitId): GateAnswerView | null {
@@ -234,7 +219,7 @@ export function latestGateAnswer(ctx: JudgmentReader, unit: UnitId): GateAnswerV
     const out = judgmentOutput(ctx, spawn, validateGateOutput);
     if (out === null) continue;
     if (spawn.parent.type !== 'stage') throw new Error(`${unit}: a gate spawn outside a stage attempt`);
-    return { attempt: spawn.parent.attempt, decision: out.decision, findings: out.findings, unreviewed: out.unreviewed };
+    return { attempt: spawn.parent.attempt, decision: out.decision, findings: out.findings, standing: out.standing };
   }
   return null;
 }
@@ -350,7 +335,7 @@ function gateAnswerAt(ctx: StageContext, unit: UnitId, attempt: number): (value:
   if (inputs === null || inputs.head === null) throw new Error(`gate ${unit}#${attempt}: a gate answer without its judgment-inputs`);
   const largeDiff = gateLargeDiffOf(inputs);
   const review = gateReviewOf(inputs);
-  const rules = review === null ? null : reviewRules(ctx.repo, inputs.head, review);
+  const rules = standingRules(inputs.standingReview ?? [], review === null ? (x) => x : reviewRules(ctx.repo, inputs.head, review));
   return gateAnswerFor(largeDiff, largeDiff === null ? [] : diffPaths(ctx.repo, diffBase(ctx.repo, inputs.tip, inputs.head), inputs.head), rules);
 }
 
@@ -469,8 +454,10 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const map = mapInForce(ctx.journal.view);
     if (map === null) throw new Error('gate requires a systems map');
     const reach = systemReach(map, unit.systems, paths);
+    const touches = builderTouches(ctx, unit.id);
+    const reachTraits = reachBackstop(ctx, unit, spec, paths, touches);
     const seat = seated.dispatch;
-    const prompt = promptFor('gate', seat.triple.model);
+    const prompt = promptFor('verifier', seat.triple.model);
     const chosen = selectedForGate(ctx, unit, tip, head);
     const prior = priorRound(ctx, unit.id, head);
     const target = unitTarget(ctx, tip, 'without-vision', chosen.selected, ruleMentions(renderSpec(spec) + '\n' + (prior?.findings.map((f) => f.contractRef ?? '').join('\n') ?? '')));
@@ -478,10 +465,11 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const covered = largeDiff === null ? [] : diffPaths(ctx.repo, base, head);
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
-    const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, unit.spike === undefined ? {} : { spike: unit.spike }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
+    const measured = renderPrompt(prompt, {mode: 'gate', brief: {
+      touches, standing: reviewItems(ctx.journal.view, unit.id), method: methodContext(ctx, unit, spec, [...paths, ...touches]),
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
-      direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
+      direction: ctx.plan().direction,
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),
       standingObligations: chosen.standing,
       diff: {
@@ -492,7 +480,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
           obligations: chosen.selected.map((o) => o.id),
         },
       },
-      laneLedger, evidence, systems: unit.systems, reach, traits: systemTraits(map, unit.systems), reachTraits: systemTraits(map, paths.flatMap((p) => [...pathSystems(map, p)])),
+      laneLedger, evidence, systems: unit.systems, reach, traits: systemTraits(map, unit.systems), reachTraits,
       priorRound: prior,
       // M4a rev 3 (D1, D2): the executable checks of the series it judges (corpus arcs; null elsewhere).
       checks: gateChecks(ctx, unit, series, head, paths),
@@ -504,15 +492,15 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
       // dev.17 (design pass): the contracts the diff touches that the design record does not declare (the salvage's risk
       // trigger has put the gate on its escalation seat for them).
       undeclaredContracts: undeclaredContracts(ctx, spec, paths),
-    });
+    }});
     writeJudgmentInputs(ctx, parent, {
       tip, head, specRev: spec.rev, specSha256: sha256, routingRev: seat.routingRev, fingerprint,
-      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff, review,
+      diffShown: { inlined: bounded.inlined.map((f) => f.path).sort(), notInlined: bounded.notInlined }, largeDiff, review, standingReview: reviewItems(ctx.journal.view, unit.id),
       designEstimate: spec.design === undefined ? null : designSize(spec.design),
     });
     return {
       kind: 'captured', fingerprint, seat, ...measured, system: prompt.system, schema: prompt.schema, evidence, head, dirs: targetDirs(target),
-      validate: gateAnswerFor(largeDiff, covered, reviewRules(ctx.repo, head, review)),
+      validate: gateAnswerFor(largeDiff, covered, standingRules(reviewItems(ctx.journal.view, unit.id), reviewRules(ctx.repo, head, review))),
     };
   });
   if (captured.kind === 'delta-empty') {
@@ -547,7 +535,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
  * read): an approval records exactly it, and ff re-checks it against the inputs then in force. An approval fact
  * this attempt already recorded is kept, not recorded twice.
  *
- * `repair` is the live attempt's repair turn (dev.12, as at plan-check): an answer off its schema goes back once, in the
+ * `repair` is the live attempt's repair turn (dev.12, as at pre-build): an answer off its schema goes back once, in the
  * same session, with every reason, before anything is recorded; the repair turn's answer is then read as the attempt's,
  * and refused again it is `malformed`. A call consumed after a crash gets none (`repair` null).
  */
@@ -638,19 +626,22 @@ function bankGateNotes(ctx: StageContext, unit: UnitId, attempt: number, finding
 // A judgment call a crash left unrecorded (F1)
 
 /**
- * Records a plan-check or gate attempt from the call recovery closed after a crash, against the attempt's
+ * Records a pre-build or gate attempt from the call recovery closed after a crash, against the attempt's
  * durable `judgment-inputs`: a gate's approval records the fingerprint captured with them (`gateRead`), so it
  * binds what it reviewed, whatever moved since. The unit driver calls it in place of a read at the current tip.
  */
 export async function consumeJudgment(
   ctx: StageContext, unit: PlanUnit, parent: StageParent, called: BackendCallOutcome,
-): Promise<PlanCheckDone | GateDone> {
+): Promise<PreBuildDone | GateDone> {
   if (called.kind === 'lost') throw new Error(`${called.inv}: a lost judgment call is never consumed`);
   const { result } = called;
   if (result.role === 'build') throw new Error(`${called.inv}: an implementer result at ${parent.stage}`);
   switch (parent.stage) {
-    case 'plan-check':
-      return planCheckRead(ctx, unit, at(parent, 'plan-check'), called, result.session);
+    case 'pre-build': {
+      await runReview(ctx, unit, parent, 'pre-build');
+      await releaseJudgment(ctx, parent);
+      return {...record(ctx, at(parent, 'pre-build'), 'approve'), session: null, specRev: loadUnitSpec(ctx, unit).spec.rev};
+    }
     case 'gate': {
       const inputs = ctx.journal.view.judgmentInputs(unit.id, 'gate', parent.attempt);
       if (inputs === null) throw new Error(`gate ${unit.id}#${parent.attempt}: a judgment call without judgment-inputs`);
@@ -662,4 +653,23 @@ export async function consumeJudgment(
     default:
       throw new Error(`${unit.id} ${parent.stage}#${parent.attempt}: no judgment call to consume`);
   }
+}
+
+export function standingRules(items: readonly import('../core/events.ts').ReviewItem[], next: (out: GateOutput) => GateOutput = (x) => x): (out: GateOutput) => GateOutput {
+  return (out) => {
+    const ids = new Set(items.map((f) => f.id));
+    const answered = new Set<string>();
+    for (const a of out.standing) {
+      if (!ids.has(a.id) || answered.has(a.id) || a.evidence.length === 0) throw new SchemaError('gate.standing', 'one evidence-backed response per standing item', a.id);
+      answered.add(a.id);
+    }
+    if (out.decision === 'approve' && items.some((f) => !answered.has(f.id))) throw new SchemaError('gate.standing', 'every pre-build finding addressed or rebutted with evidence before approval', out.standing);
+    return next(out);
+  };
+}
+
+export function gateFindingEvidence(ctx: StageContext, parent: StageParent): readonly string[] {
+  const spawn = gateSpawns(ctx, parent.unit).filter((i) => canonicalJson(i.parent) === canonicalJson(parent)).at(-1);
+  const out = spawn === undefined ? null : judgmentOutput(ctx, spawn, validateGateOutput);
+  return out?.findings.map((f) => `${f.severity}: ${f.text}\nEvidence: ${[...f.evidence, ...f.experiments.map((e) => `${e.command}: ${e.output}`)].join('; ')}`) ?? [];
 }

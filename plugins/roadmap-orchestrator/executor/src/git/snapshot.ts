@@ -298,6 +298,9 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
       case 'reopened':
         input(f.specSha256, SPEC_INPUT, by);
         break;
+      case 'review-completed':
+        if (f.note !== null) input(f.note, BRIEF_INPUT, by);
+        break;
       case 'noted':
       case 'steered':
         input(f.brief, BRIEF_INPUT, by);

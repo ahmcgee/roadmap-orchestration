@@ -19,7 +19,6 @@ import type { CommandBody } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { renderConstraints } from '../src/docs/constraints.ts';
 import { runAudit } from '../src/holistic/audit.ts';
-import { runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { quiescentGenerations } from '../src/holistic/convergence.ts';
 import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
 import { m3Blocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../src/needsuser.ts';
@@ -43,7 +42,7 @@ import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-com
 import { type ArcDescriptor,type ArcRun,appendSteps,applyBody,codexStep,commandContextFor,contextFor,syncInputs,setupArc } from './fixtures/unit-common.ts';
 import { reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer,checkpointStep,lensStep,noteLensStep,twoOpBundleSecondInvalid } from './helpers/holistic.ts';
+import { checkpointStep, lensStep, noteLensStep } from './helpers/holistic.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
@@ -56,7 +55,7 @@ const head = (d: ArcDescriptor): Sha => sha(git(d.repo, 'rev-parse', 'main'));
 /** The log's facts with their seqs, as `status` reads them. */
 const facts = (r: ArcRun): readonly (Fact & { seq: number })[] =>
   readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [{ ...e.fact, seq: e.seq }] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }> & { seq: number } => f.kind === kind && (kind !== 'stage-outcome' || 'unit' in f));
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> & { seq: number } => f.kind === kind);
 const terminalSnapshots = (r: ArcRun) => r.journal.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'arc' && r.journal.view.doneOf(i.op) !== null);
 const submit = (r: ArcRun, body: CommandBody) => submitCommand(r.ctx.runDir, r.journal.view.arc, body).id;
 const itemOf = (r: ArcRun, reason: string): NeedsUserId | null => r.journal.view.needsUser().find((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === reason)?.id ?? null;
@@ -75,7 +74,7 @@ async function stopAndClose(r: ArcRun, s: ReturnType<typeof startHolistic>): Pro
   r.journal.close();
 }
 
-/** u1's plan-check and a build that commits nothing: its gate parks it `empty-diff` (a design park). */
+/** u1's pre-build and a build that commits nothing: its gate parks it `empty-diff` (a design park). */
 const emptyBuild = (): readonly Step[] => [{ ...planCheckStep({ decision: 'approve' }), unit: 'u1' }, { ...codexStep([], { argv: ['exec', '-C'] }), unit: 'u1' }];
 
 describe('completion (§2.10, A8, A20, G8)', () => {
@@ -90,7 +89,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < firstOutcome), 'the baseline witnessed before any unit stage (A6)');
       const [started] = factsOf(r, 'audit-started');
       assert.deepEqual(started!.triggers, [{ type: 'final' }], 'the final audit, no work left');
-      assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'no-op']]);
+      assert.deepEqual(r.journal.view.stageJobOutcomes().map((f) => [f.stage, f.verdict, f.findings]), [['campaign-audit', 'completed', 0]]);
       const [published] = factsOf(r, 'docs-published');
       assert.deepEqual([published!.pub, published!.source, published!.commit], ['docs-1', 'close-out', head(d)], 'the close-out published the head');
       const [covered] = factsOf(r, 'docs-covered');
@@ -113,64 +112,6 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       await runToComplete(r);
       assert.equal(factsOf(r, 'arc-completed').length, 1);
       assert.equal(terminalSnapshots(r).length, 1);
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  /** checkpointArc's u1, its final audit, and two invalid bundles: ckpt-2 raises a non-blocking bundle request. Run in process up to it. */
-  async function requestedArc(): Promise<Readonly<{ r: ArcRun; id: NeedsUserId }>> {
-    const d = checkpointArc([
-      ...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'),
-      checkpointStep('ckpt-1', twoOpBundleSecondInvalid()), checkpointStep('ckpt-2', twoOpBundleSecondInvalid()),
-    ]);
-    const r = contextFor(d);
-    const w = wired(r);
-    const h = contextsOf(r);
-    const tick = setInterval(() => w.arbiter.wake(), 50);
-    try {
-      assert.deepEqual(await runBaseline(h.audit), { kind: 'held' });
-      assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
-      const audited = await runAudit(h.audit);
-      assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
-      for (const _ of [1, 2]) assert.equal((await runCheckpoint(h.checkpoint)).kind, 'decided');
-    } finally {
-      clearInterval(tick);
-    }
-    assert.deepEqual(factsOf(r, 'bundle-decided').map((f) => [f.job, f.outcome.kind]), [['ckpt-1', 'rejected'], ['ckpt-2', 'requested']]);
-    assert.deepEqual(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }), ['generation-not-quiescent', 'close-out'], 'the unanswered request holds the generation open');
-    return { r, id: itemOf(r, 'bundle-request')! };
-  }
-
-  test('sched.declined-request-quiescent (paid M3 run 5): an invalid-twice bundle request acknowledged without `apply` ends its trigger\'s decision; the generation is quiescent and close-out and completion follow', T, async () => {
-    const { r, id } = await requestedArc();
-    try {
-      const acked = await applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id, choice: 'acknowledge' }));
-      assert.equal(acked.kind, 'applied', JSON.stringify(acked));
-      await runToComplete(r);
-      const g = factsOf(r, 'checkpoint-inputs').at(-1)!.generation;
-      assert.ok(quiescentGenerations(r.journal.view, r.journal.view.planApplied()!.visionSha256!).has(g));
-      assert.equal(factsOf(r, 'checkpoint-inputs').length, 2, 'no further checkpoint: the declined request settled its trigger');
-      assert.deepEqual(factsOf(r, 'needs-user-declined'), [], 'the owner answered: the close-out declined nothing');
-      assert.equal(r.journal.view.ackOf(id)?.choice, 'acknowledge');
-      assert.equal(factsOf(r, 'docs-published').at(-1)?.source, 'close-out');
-      assert.equal(factsOf(r, 'arc-completed').length, 1);
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  test('sched.close-out-declines-request (run 10, E): an unanswered non-blocking bundle request never holds completion: the close-out declines it (no amendment outside a corpus arc), then publishes and completes', T, async () => {
-    const { r, id } = await requestedArc();
-    try {
-      await runToComplete(r);
-      const declined = factsOf(r, 'needs-user-declined');
-      assert.deepEqual(declined.map((f) => [f.id, f.choice]), [[id, 'decline']]);
-      const published = factsOf(r, 'docs-published').at(-1)!;
-      assert.ok(declined[0]!.seq < published.seq && published.source === 'close-out', 'declined before the close-out publication');
-      assert.deepEqual(factsOf(r, 'corpus-amendment'), [], 'an architecture-doc arc carries no amendment');
-      assert.equal(factsOf(r, 'checkpoint-inputs').length, 2);
-      assert.equal(factsOf(r, 'arc-completed').length, 1);
     } finally {
       r.journal.close();
     }
@@ -208,7 +149,7 @@ describe('completion (§2.10, A8, A20, G8)', () => {
     const r = contextFor(d);
     try {
       await runToComplete(r);
-      const g1 = factsOf(r, 'checkpoint-inputs')[0]!;
+      const g1 = factsOf(r, 'audit-started')[0]!;
       await applyVision(r, wired(r), [{ id: 'V-3', kind: 'good', text: 'Errors are explicit.', rank: null, state: 'active' }]);
       const visionNow = r.journal.view.planApplied()!.visionSha256!;
       assert.notEqual(visionNow, g1.visionSha256);
@@ -218,8 +159,8 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.equal(r.journal.view.holistic().completion?.active, false);
       await runToComplete(r);
       const [, a2] = factsOf(r, 'audit-started');
-      assert.deepEqual([a2!.lenses, a2!.triggers.map((t) => t.type)], [['vision'], ['drift']]);
-      const g2 = factsOf(r, 'checkpoint-inputs')[1]!;
+      assert.deepEqual([a2!.lenses, a2!.triggers.map((t) => t.type)], [['invariants'], ['final']]);
+      const g2 = factsOf(r, 'audit-started')[1]!;
       assert.deepEqual([g2.generation, g2.visionSha256], [2, visionNow]);
       assert.deepEqual([...quiescentGenerations(r.journal.view, visionNow)], [2]);
       const completions = factsOf(r, 'arc-completed');
@@ -246,14 +187,14 @@ describe('completion (§2.10, A8, A20, G8)', () => {
       assert.deepEqual(blockers(), ['audit-pending', 'coverage-outstanding', 'audit-owed', 'close-out'], 'merged: the final audit is owed');
       const audited = await runAudit(h.audit);
       assert.ok(audited.kind === 'ended' && audited.outcome === 'completed', JSON.stringify(audited));
-      assert.deepEqual(blockers(), ['checkpoint-pending', 'generation-not-quiescent', 'close-out']);
-      assert.equal((await runCheckpoint(h.checkpoint)).kind, 'decided');
+      assert.deepEqual(blockers(), ['close-out']);
+      assert.deepEqual(r.journal.view.stageJobOutcomes().map((f) => f.verdict), ['completed']);
       assert.deepEqual(blockers(), ['close-out'], 'quiescent: only the close-out is left');
       assert.equal((await publishCloseOut(h.docs)).kind, 'published');
       assert.deepEqual(blockers(), []);
       // A non-blocking item never blocks `complete`.
       raiseNeedsUser(r.journal, r.ctx.runDir, {
-        blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary: 'owed', recommendation: 'run it', options: [], evidence: [],
+        blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary: 'owed', recommendation: 'run it', options: [], evidence: [],
       }, { type: 'arc' });
       assert.deepEqual(blockers(), []);
     } finally {
@@ -397,12 +338,12 @@ describe('holistic jobs in the scheduler', () => {
     const s = startHolistic(r);
     try {
       await reached(d.scenarioDir, 'lens', WAIT_MS);
-      const b = submit(r, { type: 'audit', lenses: ['vision'] });
+      const b = submit(r, { type: 'audit', lenses: ['invariants'] });
       await until(() => terminalReceipt(r.ctx.runDir, b) !== null, WAIT_MS, 'the second audit request applied');
       assert.equal(terminalReceipt(r.ctx.runDir, b)!.state, 'applied');
       assert.deepEqual(factsOf(r, 'audit-started').map((f) => f.job), ['audit-1'], 'one audit at a time');
       release(d.scenarioDir, 'lens');
-      await until(() => factsOf(r, 'bundle-decided').length === 2, WAIT_MS, 'both audits and their checkpoints');
+      await until(() => factsOf(r, 'audit-ended').length === 2, WAIT_MS, 'both campaign audits');
       const [s1, s2] = factsOf(r, 'audit-started');
       const [e1] = factsOf(r, 'audit-ended');
       assert.ok(e1!.seq < s2!.seq, 'audit-2 starts after audit-1 ended');
@@ -410,51 +351,6 @@ describe('holistic jobs in the scheduler', () => {
       assert.deepEqual(s2!.triggers, [{ type: 'requested', command: b }]);
       const baseline = factsOf(r, 'witnessed').filter((f) => f.for.type === 'job' && f.for.job === 'baseline-1');
       assert.ok(baseline.length > 0 && baseline.every((f) => f.seq < s1!.seq), 'the baseline first');
-    } finally {
-      await stopAndClose(r, s);
-    }
-  });
-
-  test('sched.design-park-checkpoint (OR-Q1): a design park goes to the checkpoint with its item held back; a respec re-opens the unit; its second design park raises respec-second', T, async () => {
-    const cite = { op: 'patch-spec', unit: 'u1', patch: [{ op: 'cite', contracts: ['contracts/api.md'], rulings: ['C-1'] }], cites: ['V-1'], evidence: ['u1 parked on an empty diff'] };
-    const respec = checkpointAnswer({ decision: 'bundle', ops: [cite] });
-    const d = checkpointArc([...emptyBuild(), checkpointStep('ckpt-1', respec), ...emptyBuild()], { units: [{ id: 'u1', lanes: [] }] });
-    const r = contextFor(d);
-    const s = startHolistic(r);
-    try {
-      let second: NeedsUserId | null = null;
-      await until(() => (second = itemOf(r, 'respec-second')) !== null, WAIT_MS, 'respec-second');
-      const parks = factsOf(r, 'stage-outcome').filter((f) => f.unit === 'u1' && f.outcome === 'empty-diff');
-      assert.equal(parks.length, 2);
-      const parentOf = (f: (typeof parks)[number]) => ({ type: 'stage' as const, unit: f.unit, stage: f.stage, attempt: f.attempt });
-      assert.equal(raisedFor(r.journal.view, parentOf(parks[0]!)), null, 'the first park\'s own item was held back for the checkpoint');
-      assert.equal(raisedFor(r.journal.view, parentOf(parks[1]!)), second, 'the second park raised respec-second, not its own item');
-      assert.equal(readNeedsUser(r.ctx.runDir, second!)!.blocking, true);
-      const [reopened] = factsOf(r, 'reopened');
-      const [applied] = factsOf(r, 'plan-applied').filter((f) => f.source?.type === 'bundle');
-      assert.ok(reopened !== undefined && applied !== undefined && reopened.command === null && reopened.seq > applied.seq, 'the respec re-opened the unit');
-      assert.ok(reopened!.seq < parks[1]!.seq);
-      assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.unit?.startsWith('ckpt-') === true).map((c) => c.unit), ['ckpt-1']);
-    } finally {
-      await stopAndClose(r, s);
-    }
-  });
-
-  test('sched.design-park-no-op (OR-Q1): a checkpoint that decides nothing for a design park raises the park\'s own item after its decision', T, async () => {
-    const d = checkpointArc([...emptyBuild(), checkpointStep('ckpt-1', NOOP)], { units: [{ id: 'u1', lanes: [] }] });
-    const r = contextFor(d);
-    const s = startHolistic(r);
-    try {
-      let id: NeedsUserId | null = null;
-      await until(() => {
-        const park = factsOf(r, 'stage-outcome').find((f) => f.outcome === 'empty-diff');
-        return park !== undefined && (id = raisedFor(r.journal.view, { type: 'stage', unit: park.unit, stage: park.stage, attempt: park.attempt })) !== null;
-      }, WAIT_MS, 'the park item');
-      const [decided] = factsOf(r, 'bundle-decided');
-      assert.equal(decided!.outcome.kind, 'no-op');
-      const raise = r.journal.view.opsOf('needsuser.raise').find((i) => i.expect.id === id)!;
-      assert.ok(opSeq(raise.op) > decided!.seq, 'raised after the checkpoint decided');
-      assert.equal(readNeedsUser(r.ctx.runDir, id!)!.reason, 'empty-diff');
     } finally {
       await stopAndClose(r, s);
     }
@@ -576,11 +472,11 @@ describe('the M3 commands and items', () => {
     const r = contextFor(completingArc());
     try {
       const w = wired(r);
-      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['drift'] }));
-      assert.ok(bad.kind === 'rejected' && /outside the arc's required lens set \(vision\)/.test(bad.reason), JSON.stringify(bad));
-      const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['vision'] });
+      const bad = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['vision'] }));
+      assert.ok(bad.kind === 'rejected' && /outside the arc's required lens set \(invariants\)/.test(bad.reason), JSON.stringify(bad));
+      const ok = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'audit', lenses: ['invariants'] });
       assert.equal((await applyCommand(w.commands, ok)).kind, 'applied');
-      assert.deepEqual(factsOf(r, 'audit-requested').map((f) => [f.command, f.lenses]), [[ok.id, ['vision']]]);
+      assert.deepEqual(factsOf(r, 'audit-requested').map((f) => [f.command, f.lenses]), [[ok.id, ['invariants']]]);
     } finally {
       r.journal.close();
     }
@@ -597,7 +493,7 @@ describe('the M3 commands and items', () => {
     assert.equal(m3Blocking('owner-request'), true);
     assert.equal(m3Blocking('obligation-baseline'), true);
     assert.equal(m3Blocking('respec-second'), true);
-    for (const reason of ['bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest'] as const) assert.equal(m3Blocking(reason), false);
+    for (const reason of ['bundle-request', 'convergence-bound', 'convergence-identity', 'revision-notice', 'divergence-digest'] as const) assert.equal(m3Blocking(reason), false);
     assert.equal(m3Blocking('base-red'), null, 'an earlier reason: its raiser decides');
     const r = contextFor(completingArc());
     try {

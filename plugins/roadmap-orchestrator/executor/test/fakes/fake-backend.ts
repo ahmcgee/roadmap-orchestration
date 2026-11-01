@@ -16,7 +16,7 @@ import type { LensKindName } from '../../src/core/records.ts';
 import { unitBarrierName, waitAtBarrier } from '../helpers/barrier.ts';
 import { git, writeFiles, type FileSet } from '../helpers/repo.ts';
 import {
-  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, defaultDesign, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
+  type Act, CALLS_FILE, CAPACITY_TEXT, CLAIMS_DIR, CLAUDE_USAGE_LIMIT, CODEX_CONTEXT_EXCEEDED, CODEX_RESUME_COLLISION, CODEX_USAGE_LIMIT, type CallRecord, type Expect, type FakeName, type ScenarioFile, type Step, readCalls,
 } from '../helpers/scenario.ts';
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/backend-output/', import.meta.url));
@@ -25,7 +25,7 @@ type Call = Readonly<{ as: FakeName; argv: readonly string[]; cwd: string; stdin
 
 /**
  * The unit a call belongs to: the owner label `<arc>/<unit>`, else the cwd's basename up to its first dot
- * (see Step): a unit worktree is `<unit>`, a judgment's checkout `<unit>.plan-check-<n>` or `<unit>.verify-<n>`,
+ * (see Step): a unit worktree is `<unit>`, a judgment's checkout `<unit>.pre-build-<n>` or `<unit>.verify-<n>`,
  * and unit ids are slugs, which have no dot.
  */
 export function callUnit(env: Readonly<Record<string, string>>, cwd: string): string | null {
@@ -37,6 +37,7 @@ export function callUnit(env: Readonly<Record<string, string>>, cwd: string): st
 
 /** The lens kind a lens prompt names: `lens` then the kind, however the inputs serialise it (`"lens": "drift"`, `lens: drift`). */
 export function callLens(stdin: string): LensKindName | null {
+  if (stdin.includes('<audited_range') && stdin.includes('<prior_findings>')) return 'invariants';
   const found = /\blens\W{1,4}(invariants|drift|vacuity|vision)\b/.exec(stdin)?.[1];
   return found === undefined ? null : (found as LensKindName);
 }
@@ -262,37 +263,6 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
   process.exit(r.status ?? 1);
 }
 
-/**
- * A `planCheck` act's answer: the dev.17 payload keys it lacks are null, but an approve's or a scaffold's missing `design`,
- * which is `defaultDesign` of the call's first scope pattern, its spec's active acceptance clauses and a lane that runs them.
- */
-function planCheckValue(call: Call, value: JsonValue, scenarioDir: string): JsonValue {
-  const v = value as Record<string, JsonValue>;
-  const designs = v['decision'] === 'approve' || v['decision'] === 'scaffold';
-  // A repair turn's stdin is its directive alone: the scope is in the prompt of the session it resumes.
-  const prompt = (): string => {
-    const resumed = flagValue(call.argv, '--resume');
-    return resumed === undefined ? call.stdin
-      : readCalls(join(scenarioDir, 'scenario.json')).find((c) => flagValue(c.argv, '--session-id') === resumed)?.stdin ?? '';
-  };
-  const design = (): JsonValue => {
-    const text = prompt();
-    const first = /<unit_systems>/.test(text) ? 'src/**' : undefined;
-    if (first === undefined) throw new Error('fake claude: a planCheck act needs unit systems in the prompt');
-    const acceptance = /## Acceptance\n\n([\s\S]*?)\n\n## /.exec(text)?.[1] ?? '';
-    const clauses = [...acceptance.matchAll(/^- `([^`]+)` \[active\]/gm)].map((m) => m[1]!);
-    const lanes = [...(/<test_lanes>\n([\s\S]*?)<\/test_lanes>/.exec(text)?.[1] ?? '').matchAll(/^- (\S+) \((spec|suite|arc), cadence (\w+)([^\n]*)\)$/gm)]
-      .map((m) => ({ id: m[1]!, kind: m[2]!, cadence: m[3]!, unavailable: m[4]!.includes('(unavailable') }));
-    const lane = lanes.find((l) => l.kind === 'spec' && (l.cadence === 'build' || l.cadence === 'unit') && !l.unavailable)
-      ?? lanes.find((l) => l.cadence !== 'batch' && !l.unavailable);
-    return defaultDesign(first, clauses, lane?.id ?? null);
-  };
-  return {
-    split: null, scaffold: null, poc: null, ...v,
-    design: Object.hasOwn(v, 'design') ? v['design']! : designs ? design() : null,
-  };
-}
-
 // ---------------------------------------------------------------------------------------------------
 
 function paths(files: FileSet): string[] {
@@ -306,9 +276,21 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
   switch (act.type) {
     case 'emit':
     case 'noUsage': {
-      const text = JSON.stringify(act.value);
+      let value = act.value;
+      const wireSchema = flagValue(call.argv, '--json-schema');
+      if (wireSchema !== undefined && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const schema = JSON.parse(wireSchema) as Record<string, unknown>;
+        const data = value as Record<string, JsonValue>;
+        if (Array.isArray(schema['anyOf']) && wireSchema.includes('"mode"') && wireSchema.includes('"walkthrough"') && data['mode'] === undefined) {
+          if (data['journeys'] !== undefined) value = {final: true, mode: 'walkthrough', verdict: value};
+          else if (data['decision'] === 'keep' || data['decision'] === 'drop') value = {final: true, mode: 'polish', verdict: value};
+        }
+        const props = schema['properties'] as Record<string, unknown> | undefined;
+        if (props?.['requests'] !== undefined && props?.['findings'] !== undefined && data['requests'] === undefined && data['findings'] !== undefined) value = {...data, requests: []};
+      }
+      const text = JSON.stringify(value);
       if (codex) codexEmit(call.argv, thread(), text, [], act.type === 'emit');
-      else claudeResult(session(), { result: text, structured_output: act.value }, act.type === 'noUsage' ? ['modelUsage'] : []);
+      else claudeResult(session(), { result: text, structured_output: value }, act.type === 'noUsage' ? ['modelUsage'] : []);
       return;
     }
     case 'capacityText': {
@@ -338,11 +320,6 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
     case 'advised':
       claudeAdvisedResult(call, session(), act.value);
       return;
-    case 'planCheck': {
-      const value = planCheckValue(call, act.value, scenarioDir);
-      claudeResult(session(), { result: JSON.stringify(value), structured_output: value });
-      return;
-    }
     case 'globAboveAddDir': {
       const first = flagValue(call.argv, '--add-dir');
       if (first === undefined) throw new Error('fake claude: globAboveAddDir needs an --add-dir in argv');

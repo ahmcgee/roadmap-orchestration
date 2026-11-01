@@ -5,7 +5,7 @@ import { routingRev } from '../src/core/ids.ts';
 import { reservationCpuBasisOf,spawnCpuKeyOf } from '../src/core/projections.ts';
 import { laneDef } from '../src/core/records.ts';
 import { laneRevOf } from '../src/holistic/types.ts';
-import { build,buildEntry,evidence,planCheck,quiesce,salvage,teardown } from '../src/pipeline/stages.ts';
+import { build,buildEntry,evidence,preBuild,quiesce,salvage,teardown } from '../src/pipeline/stages.ts';
 import { buildCpuKey,calibratedCpu,cpuDemand,laneCpuKey } from '../src/resources/calibrate.ts';
 import { buildCpu,laneCpu,requestOf } from '../src/resources/pool.ts';
 import { cleanup,reserve } from '../src/resources/reserve.ts';
@@ -81,7 +81,7 @@ test('a calibrated reservation journals its exact tokens and basis; earlier reco
 test('build spawn and reservation journal the same role/class/routing-revision basis', { timeout: 60_000 }, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), { as: 'codex', expect: {}, acts: [{ type: 'emit', value: BUILD_REPORT }] }] });
   try {
-    started(await planCheck(run.ctx, run.unit));
+    started(await preBuild(run.ctx, run.unit));
     const routing = run.ctx.routing(run.unit.id);
     const key = buildCpuKey({ role: 'build', class: routing.classes.build.med, routingRev: routing.rev });
     assert.deepEqual(buildEntry(run.ctx, run.unit)?.cpuBasis, { kind: 'default', key, value: 4, samples: 0 });

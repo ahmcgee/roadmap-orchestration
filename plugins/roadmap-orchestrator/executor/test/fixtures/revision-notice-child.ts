@@ -7,6 +7,6 @@ const [descriptor, json] = process.argv.slice(2);
 if (descriptor === undefined || json === undefined) throw new Error('usage: revision-notice-child <arc json> <payload json>');
 const r = contextFor(JSON.parse(descriptor) as ArcDescriptor);
 const payload = parseRevisionPayload(JSON.parse(json));
-if (payload.source.type !== 'bundle') throw new Error('expected a bundle revision');
+if (payload.source.type !== 'walk') throw new Error('expected a walk revision');
 commitRevisionNow(r.journal, r.ctx.runDir, payload, { type: 'job', job: payload.source.job });
 r.journal.close();

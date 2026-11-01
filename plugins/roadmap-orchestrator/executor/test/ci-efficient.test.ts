@@ -68,7 +68,7 @@ test('ci reuse: explicit inputs filter ls-tree even without a systems map, inclu
 test('ci attempts: all uncharged attempts count; plan-check excluded; M4 at 8/20 and hard cap at 16/40; chain cleanup is allowed', async () => {
   const run = setupUnit({ steps: [], lanes: [] });
   for (let n = 1; n <= 7; n++) run.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'build', attempt: n, outcome: 'interrupted', class: 'hold', chargeable: false });
-  for (let n = 8; n < 13; n++) run.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'plan-check', attempt: n, outcome: 'interrupted', class: 'hold', chargeable: false });
+  for (let n = 8; n < 13; n++) run.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'pre-build', attempt: n, outcome: 'interrupted', class: 'hold', chargeable: false });
   assert.deepEqual(attemptSignals(run.journal, U1, true), { builds: 7, judged: 7, capped: false });
   run.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'build', attempt: 13, outcome: 'interrupted', class: 'hold', chargeable: false });
   assert.deepEqual(attemptSignals(run.journal, U1, true), { builds: 8, judged: 8, capped: false });

@@ -5,7 +5,7 @@
 //   1. each key flaking again after two deflake units raises one non-blocking `flake-recurring` item (subject the arc,
 //      evidence the flake's red and green runs); no third deflake is minted. Raised once per flake (`recurringRaised`).
 //   2. the keys due a deflake unit are admitted as deflake units in one revision under the revision fence, through THE admit
-//      path (src/holistic/bundle.ts `admitUnit`, `fillMappedObligations`, then the classifier, `evaluateRevision`): one
+//      path (src/holistic/admission.ts `admitUnit`, `fillMappedObligations`, then the classifier, `evaluateRevision`): one
 //      unit per lane and count, `deflake-<n>`, origin `deflake` with its keys, risk `med`, `after: []` and in no milestone
 //      (milestone-exempt), ranked with the repair units (`ORIGIN_RANK`). Its spec seed (`deflakeSpec`) carries the lane
 //      (a spec lane copied from the unit that saw it; a suite lane in `forces`; an arc lane's failing tests as witness
@@ -31,12 +31,12 @@ import { type ClauseId,type SystemName,type UnitId,unitId,witnessItemIdOf } from
 import type { Journal,JournalView } from '../core/interfaces.ts';
 import { type LaneDef,SPEC_SCHEMA,type SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath,type RepoPattern,absPath,repoPattern } from '../core/values.ts';
-import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/bundle.ts';
+import { type AbsPath, absPath } from '../core/values.ts';
+import { type RawPlan,admitUnit,fillMappedObligations } from '../holistic/admission.ts';
 import { lineageMembers } from '../input/lineage.ts';
 import { type InputFile,type InputFiles,inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,parsePlan } from '../input/plan.ts';
-import { type SystemsMap,dependenciesClosure,pathSystems,systemsMapInForce } from '../input/systems.ts';
+import { dependenciesClosure, pathSystems, systemsMapInForce } from '../input/systems.ts';
 import { raiseNeedsUser,raisedWithReason,readNeedsUser } from '../needsuser.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { type MintGroup,type Recurring,deflakeDue,deflakeState,deflakeUnits,flakeRuns,keyLabel } from './deflake.ts';
@@ -57,7 +57,6 @@ function raisedFor(view: JournalView, runDir: AbsPath, reason: 'flake-recurring'
 /** Whether `r`'s item is raised: a `flake-recurring` item whose evidence names its flake's red run. */
 const recurringRaised = (view: JournalView, runDir: AbsPath, r: Recurring): boolean =>
   raisedFor(view, runDir, 'flake-recurring', invocationDir(runDir, r.flake.fact.event.red));
-
 
 function due(ctx: Readonly<{ runDir: AbsPath; journal: Readonly<{ view: JournalView }> }>, plan: PlanM1): Readonly<{ mint: readonly MintGroup[]; recurring: readonly Recurring[] }> {
   const view = ctx.journal.view;
@@ -115,7 +114,6 @@ function laneSource(ctx: DeflakeContext, current: InputFiles, plan: PlanM1, g: M
   return lane === undefined ? null : { spec: lane };
 }
 
-
 function deflakeSystems(runDir: AbsPath, view: JournalView, plan: PlanM1, g: MintGroup): readonly SystemName[] {
   const map = systemsMapInForce(view.planApplied());
   if (map !== null) {
@@ -146,7 +144,7 @@ function deflakeSpec(id: UnitId, g: MintGroup, lane: SpecM1['lanes'][number] | n
     decisions: [{
       id: 'D-1', state: 'active',
       text: 'Two outcomes only. Fix the test or the code under it so that it is deterministic; or, when the lane needs more cpu or resources than it '
-        + 'declares, say so (an infeasible plan-check naming the need), and the owner declares it through an apply. A cause outside the repository is the '
+        + 'declares, say so (an infeasible pre-build naming the need), and the owner declares it through an apply. A cause outside the repository is the '
         + 'environment probe\'s to catch, never a reason to release the flake. Never quarantine, skip or weaken the test.',
     }],
     facts: [

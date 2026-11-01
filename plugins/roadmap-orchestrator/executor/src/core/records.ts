@@ -25,12 +25,7 @@ import {
 type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
 positive,sortedBy,str,stringMap,tagged,text,version,
 } from './validate.ts';
-import {
-type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,
-matchesPattern,
-nonce,
-repoPath,repoPattern,
-} from './values.ts';
+import { type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce, repoPath, repoPattern } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
 import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
@@ -98,10 +93,9 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
  * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
  * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
  * `reproduce` (M3) is a vacuity repair's first stage: the finding's mutant applied in a detached worktree and
- * its lane run under `purpose: mutant`. dev.17 (design pass, appended): `scaffold` writes a new system's skeleton a plan-check's
- * `scaffold` decision specifies before the first build; `poc` builds a plan-check's proof of concept in a throwaway worktree.
+ * its lane run under `purpose: mutant`. Pre-build is a conditional verifier annotation before the first build.
  */
-export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire', 'scaffold', 'poc'] as const;
+export const STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
 
@@ -179,7 +173,7 @@ function binding(f: Fields): InvocationBinding {
 }
 
 /**
- * A judgment session: fresh, or (dev.12, every judgment role; 2026-10-15 plan-check and the checkpoint only) the same session
+ * A judgment session: fresh, or (dev.12, every judgment role; 2026-10-15 pre-build and the checkpoint only) the same session
  * resumed once with the reasons its answer was refused: the repair turn.
  */
 export type JudgmentSession = Readonly<{ backend: 'claude'; mode: 'fresh' | 'resume'; id: JudgmentSessionId }>;
@@ -793,8 +787,6 @@ export type Bounds = Readonly<{
   chargeable: number;
   /** Every nth certification red is charged; the preceding reds are uncharged. */
   certifications: number;
-  /** Plan-check redirects since the architect's latest spec revision. */
-  redirects: number;
   reviseRounds: number;
   candidateReds: number;
   /** Uncharged retries per retry stage. */
@@ -809,11 +801,11 @@ export type Bounds = Readonly<{
   smokeRuns: number;
 }>;
 export const BOUND_FIELDS = [
-  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
+  'chargeable', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
 ] as const satisfies readonly (keyof Bounds)[];
 /** The bound fields a 1.0.0-dev.6 dispatch record carries; later fields read as the defaults. */
 export const DEFAULT_BOUNDS: Bounds = {
-  chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
+  chargeable: 3, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
   smokeRounds: 1, smokeRuns: 2, certifications: 4,
 };
 export type BoundsRecord = Bounds;
@@ -825,7 +817,7 @@ export type TransientRules = (typeof TRANSIENT_RULES)[number];
 
 /**
  * Pinned once when a unit is dispatched; a redirect cannot lower `riskFloor`.
- * `specRev` and `specSha256` are the spec revision the dispatching plan-check read and its file's hash.
+ * `specRev` and `specSha256` are the spec revision the dispatching pre-build read and its file's hash.
  * `implementerSeatRev` hashes the triple of the implementer's seat (`build.<riskFloor>`) under `routingRev`,
  * so a routing change can be judged by whether it moves the implementer without naming a model.
  */
@@ -1036,7 +1028,7 @@ export type Stated<T> = T & Readonly<{ state: ItemState }>;
 /**
  * What a unit's judgment and build prompts embed in full: plan contracts and C-nn rulings (arc-1 feedback
  * item 12). Every other contract and ruling reaches a prompt as a one-line index entry, readable on demand.
- * Filled at spec authoring; a plan-check redirect may add to it (the `cite` op), nothing removes from it.
+ * Filled at spec authoring; a pre-build redirect may add to it (the `cite` op), nothing removes from it.
  */
 export type SpecCites = Readonly<{ contracts: readonly RepoPath[]; rulings: readonly RulingId[] }>;
 
@@ -1075,7 +1067,7 @@ export type SpecM1 = Readonly<{
   witnesses?: readonly Stated<WitnessItemDef>[];
   /**
    * Scope growth (2026-10-15): what the unit removes or renames (repository paths, route strings, symbols: each a literal
-   * `git grep -F` searches for). The Phase-0 row `scope-references-outside` and the plan-check list every file outside the
+   * `git grep -F` searches for). The Phase-0 row `scope-references-outside` and the pre-build list every file outside the
    * unit's scope that still names one (non-empty when present, unique; absent: none, lasting, `specRemoves`).
    */
   removes?: readonly string[];
@@ -1086,16 +1078,16 @@ export type SpecM1 = Readonly<{
    */
   forces?: readonly LaneId[];
   /**
-   * dev.17 (design pass): the design record the unit's plan-check settled (src/core/design.ts). Absent: none yet (a dev.16
-   * spec, or one no plan-check has designed), whose unit reads as kind `module` (`specKindOf`, warned).
+   * dev.17 (design pass): the design record the unit's pre-build settled (src/core/design.ts). Absent: none yet (a dev.16
+   * spec, or one no pre-build has designed), whose unit reads as kind `module` (`specKindOf`, warned).
    */
   design?: DesignRecord;
   /**
    * dev.17 (propagation): the revision each of the spec's links was written against, one pin per target (unique): a
    * requirement pin per obligation it declares, repairs or a witness item names, a contract pin per cited contract. Its
-   * writers: a plan-check redirect's patch (`SpecPatch.pins`: every link at the revisions the check read) and a propagation
+   * writers: a pre-build redirect's patch (`SpecPatch.pins`: every link at the revisions the check read) and a propagation
    * unit's minted spec (src/holistic/propagation.ts). A pin whose link a later edit removed names nothing and is never read.
-   * Absent (a dev.16 spec, or an owner's spec no plan-check has revised; lasting): every link reads `unpinned`,
+   * Absent (a dev.16 spec, or an owner's spec no pre-build has revised; lasting): every link reads `unpinned`,
    * stale-unknown (`specPinOf`). A link with no pin in a present list (one a later edit added) reads `unpinned` too.
    */
   pins?: readonly SpecPin[];
@@ -1105,7 +1097,7 @@ export type SpecM1 = Readonly<{
  * A witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses acceptance clause `clause`; `skeleton` is the
  * test's shape as the spec states it. D1 requires its active items (`requiredWitnesses`, src/holistic/required.ts).
  * `obligation` (paid M4b run 6): the obligation the unit delivers whose witness already proves the clause; the item then
- * names that witness's lane and one of its test ids exactly (a plan-check redirect is refused otherwise), so the build
+ * names that witness's lane and one of its test ids exactly (a pre-build redirect is refused otherwise), so the build
  * never holds two required names for one test. Absent: no obligation's witness proves it (lasting).
  */
 export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string; obligation?: ObligationId }>;
@@ -1236,17 +1228,17 @@ export type SpecPatchOp =
   | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
   | Readonly<{ op: 'cite' } & SpecCites>
   /**
-   * dev.17 (design pass): the design record a plan-check's approve or scaffold settled, pinned by code at the tip it read,
+   * dev.17 (design pass): the root-authored design record, pinned by code at the tip it read,
    * replacing any the spec held. Executor-written only: no model's patch schema offers it (`wireOp`, S_PATCH_OP).
    */
   | Readonly<{ op: 'design'; record: DesignRecord }>;
 
 /**
- * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
+ * Who patched: a pre-build redirect (the judgment invocation), or the executor appending the implementer's
  * `decisions.json` after a build round's evidence snapshot (`inv` is the build invocation that wrote it).
  */
 export type SpecPatchBy =
-  | Readonly<{ role: 'planCheck'; routingRev: RoutingRev; inv: InvocationId }>
+  | Readonly<{ role: 'verifier'; routingRev: RoutingRev; inv: InvocationId }>
   | Readonly<{ role: 'executor'; inv: InvocationId }>;
 
 export type SpecPatch = Readonly<{
@@ -1254,7 +1246,7 @@ export type SpecPatch = Readonly<{
   by: SpecPatchBy;
   ops: readonly SpecPatchOp[];
   /**
-   * dev.17 (propagation): the pins of every link the patched spec carries, at the revisions its writer read (a plan-check
+   * dev.17 (propagation): the pins of every link the patched spec carries, at the revisions its writer read (a pre-build
    * redirect: src/holistic/staleset.ts `pinsOf`), which replace the spec's pins. Absent: the spec's pins carry over unchanged
    * (lasting: the executor's decisions patch, and every patch written before dev.17).
    */
@@ -1304,8 +1296,8 @@ export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
 export const specPatch: Read<SpecPatch> = object((f) => {
   const out = {
     expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
-    by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
-      planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
+    by: f.get('by', tagged<'verifier' | 'executor', SpecPatchBy>('role', {
+      verifier: object((g): SpecPatchBy => ({ role: g.get('role', literal('verifier')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
       executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
     })),
     ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
@@ -1683,7 +1675,8 @@ export const receipt: Read<Receipt> = tagged('state', {
 // needs-user: `needs-user/<id>.json` (write-once) and `needs-user/<id>.ack.json`
 
 export const NEEDS_USER_REASONS = [
-  'attempt-cap', 'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
+  'attempt-cap', 'spec-wrong', 'split-proposal',
+  'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
   'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',
@@ -1696,17 +1689,17 @@ export const NEEDS_USER_REASONS = [
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
   // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
   // the divergence digest (H11).
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'divergence-digest',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
   // the first (K14, H9).
   'pack-review',
-  // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
+  // Paid M4b run 5, blocking: a gate's or pre-build's approve after the CLI refused one of its reads, again after its retry.
   // No longer raised since 2026-10-16 (a refused read voids nothing); kept so a 1.0.0-dev.11 item still reads (scaffolding).
   'read-denied',
   'witness-lane-missing',
   // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
   'plan-defect',
-  // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
+  // 2026-10-16, blocking: a pre-build, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
   'context-exceeded',
   // 1.0.0-dev.17, non-blocking: the executor threw inside a unit's task or an arc job while it held only that unit's or job's
   // own state (src/schedule/fault.ts): the unit parked `executor-fault`, or the job ended faulted; the item cites the stack.
@@ -1726,7 +1719,7 @@ export const NEEDS_USER_REASONS = [
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
+  'bundle-request', 'convergence-bound', 'convergence-identity', 'divergence-digest', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

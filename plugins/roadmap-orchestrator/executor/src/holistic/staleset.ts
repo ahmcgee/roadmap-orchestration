@@ -1,6 +1,5 @@
 // Propagation in code (dev.17, experience-won E; DESIGN-1.0.md §2.8 "Propagation"; SCHEMAS.md "dev.17: propagation"), the
-// pure half: what a revision leaves stale, what a unit's plan-check must answer, the pins a plan-check writes, and the code
-// edges a propagation unit holds. No model, no effect; src/holistic/propagation.ts mints the propagation units.
+// pure half: what a revision leaves stale. Boundary reopening gives unfinished units the revised inputs.
 //
 //   stale set     at every revision (the apply core, src/commands/apply.ts `evaluateRevision`): its targets are the
 //                 requirements whose normative rev rose, the contracts its landing rulings' contract ops rewrite, and the vision
@@ -11,21 +10,12 @@
 //                 failure modes and contract interfaces) are stale; the merged artifacts are the declared witness files of each
 //                 changed requirement and of each active obligation binding a changed contract (`witness`). A witness without
 //                 declared `files` (an arc started before dev.11) names none, so nothing merged is re-witnessed for it.
-//   unit links    a unit's plan-check is given its stale links recorded since its last answer (`unitStaleLinks`) and must
-//                 answer each by its key, `updated` (a redirect) or `confirmed`, with a reason (`staleAnswerReasons`).
-//   pins          a plan-check redirect's patch pins every link of the patched spec at the revisions the check read
-//                 (`pinsOf`): the requirements at the plan rev its inputs captured, the contracts at the tip it read.
-//   edges         a unit's gate waits while a propagation unit is neither merged nor cut when the unit links its target
-//                 (a requirement or contract link) or its design record's breaks touch a file it re-witnesses
-//                 (`propagationHolds`). A propagation unit never waits on another.
-import type { ObligationId,PlanRev,Sha,UnitId,VisionClauseId } from '../core/ids.ts';
-import type { JournalView } from '../core/interfaces.ts';
+import type { ObligationId, UnitId, VisionClauseId } from '../core/ids.ts';
+
 import { canonicalJson } from '../core/json.ts';
-import { type ContractPin,type RequirementPin,type SpecPin,UNPINNED } from '../core/pins.ts';
+import { UNPINNED } from '../core/pins.ts';
 import { type SpecM1,specPinOf,specRequirementLinks } from '../core/records.ts';
-import {
-type StaleAnswer,type StaleCause,type StaleLink,type StaleSet,type StaleTarget,type UnitStaleLink,causeKey,isUnitLink,staleLinkKey
-} from '../core/stale.ts';
+import { type StaleCause, type StaleLink, type StaleSet, type StaleTarget } from '../core/stale.ts';
 import type { RepoPath } from '../core/values.ts';
 import type { Obligations,Vision } from './types.ts';
 
@@ -116,91 +106,6 @@ export function staleSetOf(i: StaleInputs): StaleSet | null {
   return { targets, links };
 }
 
-// ---------------------------------------------------------------------------------------------------
-// A unit's stale links and its plan-check's answer
-
-/** A unit's stale link with the stale set that recorded it (its plan rev) and the target that changed. */
-export type StaleLinkAt = Readonly<{ rev: PlanRev; link: UnitStaleLink; target: StaleTarget }>;
-
-/**
- * The stale links of `unit` its plan-check attempt `attempt` answers: every unit link of the stale sets recorded up to plan rev
- * `upTo` (the revisions the check's inputs captured) and after the latest rev any other plan-check of the unit answered,
- * one per key (the latest set's when several name it), in log order.
- */
-export function unitStaleLinks(view: JournalView, unit: UnitId, upTo: PlanRev, attempt: number): readonly StaleLinkAt[] {
-  const facts = view.propagationFacts();
-  const answered = facts.reduce((n, x) => (x.fact.kind === 'stale-answered' && x.fact.unit === unit && x.fact.attempt !== attempt ? Math.max(n, x.fact.rev) : n), 0);
-  const byKey = new Map<string, StaleLinkAt>();
-  for (const x of facts) {
-    const set = x.fact;
-    if (set.kind !== 'stale-set' || set.rev <= answered || set.rev > upTo) continue;
-    for (const l of set.links) {
-      if (!isUnitLink(l) || l.unit !== unit) continue;
-      const target = set.targets.find((t) => causeKey(t) === causeKey(l.cause));
-      if (target === undefined) throw new Error(`the stale set of rev ${set.rev} has a link caused by ${causeKey(l.cause)}, none of its targets`);
-      byKey.set(staleLinkKey(l), { rev: set.rev, link: l, target });
-    }
-  }
-  return [...byKey.values()];
-}
-
-/** What changed under a stale link, in one line for the plan-check (its key leads). */
-export function staleLinkText(s: StaleLinkAt): string {
-  const t = s.target;
-  const change = t.type === 'requirement'
-    ? `requirement ${t.id} moved from rev ${t.from} to rev ${t.to}`
-    : t.type === 'contract' ? `contract ${t.path} was rewritten by a ruling's contract ops` : `vision clause ${t.id} changed (vision rev ${t.visionRev})`;
-  const l = s.link;
-  const what = l.type === 'spec'
-    ? `the spec links ${causeKey(l.target)}${l.cause.type === 'vision-clause' ? `, an obligation serving ${l.cause.id}` : ''} (pinned ${l.pinned === UNPINNED ? 'nowhere: written before pins or never revised by a plan-check' : l.pinned.type === 'requirement' ? `at rev ${l.pinned.rev}` : `at blob ${l.pinned.blob.slice(0, 12)}`})`
-    : l.type === 'failure-mode' ? `design failure mode ${l.failureMode} bears on ${l.requirement} (pinned at rev ${l.pinned})` : `design interface ${l.path} (pinned at blob ${l.pinned.slice(0, 12)})`;
-  return `${staleLinkKey(l)}: ${what}; ${change} at plan rev ${s.rev}`;
-}
-
-/**
- * Why a plan-check's stale-link answers do not settle `links`: an approve, a scaffold or a redirect answers each link once, by its key,
- * and only a redirect (whose patch changes the spec) answers `updated`. Empty when they settle them (or the decision is
- * neither, which settles nothing).
- */
-export function staleAnswerReasons(links: readonly StaleLinkAt[], answers: readonly StaleAnswer[], decision: string): readonly string[] {
-  // A scaffold (dev.17, the design pass) goes on to its build as an approve does, so it answers them too; a split's children
-  // and a poc's next plan-check answer them instead.
-  if (decision !== 'approve' && decision !== 'scaffold' && decision !== 'redirect') return [];
-  const keys = new Set(links.map((s) => staleLinkKey(s.link)));
-  const reasons: string[] = [];
-  const seen = new Set<string>();
-  for (const a of answers) {
-    if (!keys.has(a.link)) reasons.push(`staleLinks answers ${a.link}, which is no stale link of this unit (they are: ${[...keys].join(', ') || 'none'})`);
-    else if (seen.has(a.link)) reasons.push(`staleLinks answers ${a.link} twice`);
-    else if (a.outcome === 'updated' && decision !== 'redirect') reasons.push(`staleLinks answers ${a.link} updated, but the decision is ${decision}: only a redirect's patch updates the spec`);
-    seen.add(a.link);
-  }
-  const missing = [...keys].filter((k) => !seen.has(k));
-  if (missing.length > 0) reasons.push(`staleLinks leaves ${missing.join(', ')} unanswered: answer each stale link, updated or confirmed, with a reason`);
-  return reasons;
-}
-
-// ---------------------------------------------------------------------------------------------------
-// Pins
-
-/**
- * The pins of every link `spec` carries, at the revisions read: each requirement link at its rev in `obligations` (a link
- * to no obligation there is left unpinned), each cited contract at its blob (`blobAt`; one absent there is left unpinned).
- */
-export function pinsOf(spec: SpecM1, obligations: Obligations | null, blobAt: (path: RepoPath) => Sha | null): readonly SpecPin[] {
-  const revs = new Map((obligations?.obligations ?? []).map((o) => [o.id, o.rev]));
-  const requirements = specRequirementLinks(spec).flatMap((id): RequirementPin[] => {
-    const rev = revs.get(id);
-    return rev === undefined ? [] : [{ type: 'requirement', id, rev }];
-  });
-  const contracts = spec.cites.contracts.flatMap((path): ContractPin[] => {
-    const blob = blobAt(path);
-    return blob === null ? [] : [{ type: 'contract', path, blob }];
-  });
-  return [...requirements, ...contracts];
-}
-
-// ---------------------------------------------------------------------------------------------------
 // Code edges
 
 /** What a unit's spec links that a propagation edge reads: its requirements, its contracts and the files its design breaks. */

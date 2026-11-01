@@ -2,7 +2,7 @@
   "routing": {
     "seats": {
       "build": { "low": "frontier" },
-      "gate": { "med": "summit" }
+      "verifier": { "med": "summit" }
     }
   }
 }

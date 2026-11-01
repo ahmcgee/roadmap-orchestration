@@ -10,7 +10,6 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
-import { brief } from '../src/commands/brief.ts';
 import { arcId, laneId, sha, unitId } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import { sha256Hex } from '../src/core/json.ts';
@@ -18,10 +17,9 @@ import { type LaneDef, failureRef } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { git, gitRun, lsTree } from '../src/git/git.ts';
 import { snapshotRef, snapshotRequestOf, verifySnapshot } from '../src/git/snapshot.ts';
-import { CAPTURE_WAIT_MAX_MIN, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { reentryRecommendation } from '../src/needsuser.ts';
-import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
+import { type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
 import { type LaneFailure, failuresText, laneFailures } from '../src/pipeline/failures.ts';
 import { type LaneRuntime, laneOrder, reserveNow, runLaneSeries, seriesOrder, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { executorIdentity, loadUnitSpec } from '../src/pipeline/stages.ts';
@@ -30,21 +28,17 @@ import { specFacts } from '../src/pipeline/reproduce.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
 import { admitter } from '../src/schedule/ready.ts';
 import { type Status, status } from '../src/status.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { withForge } from './helpers/corpusarc.ts';
 import { sampleCorpus } from './helpers/corpus.ts';
-import { checkpointAnswer, checkpointStep, lensStep } from './helpers/holistic.ts';
 import { tmpDir } from './helpers/repo.ts';
-import type { Step } from './helpers/scenario.ts';
-import { admitOp, checkpointContext, completedAudit, witnessSplit } from './fixtures/checkpoint-common.ts';
-import { type CorpusHolisticArc, corpusHolisticArc } from './fixtures/corpus-holistic.ts';
+import { admitOp } from './fixtures/checkpoint-common.ts';
+import { type CorpusHolisticArc } from './fixtures/corpus-holistic.ts';
 import { VISION_PATH } from './fixtures/corpus-unit.ts';
 import { EXEC_TIMEOUT_MS, SMOKE_DEFAULT, cli, setupExec, startExec, statusOf, until } from './fixtures/exec-common.ts';
 import { runOp } from './fixtures/git-common.ts';
-import { editPlan, followContext, stepTo, unitOf } from './fixtures/route-common.ts';
-import { SCENARIO_TIMEOUT_MS, type LaneJson, type StageRun, U1, admitAll, keptSpec, planCheckStep, setupUnit } from './fixtures/stage-common.ts';
+import { editPlan } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS, type LaneJson, type StageRun, U1, keptSpec, planCheckStep, setupUnit } from './fixtures/stage-common.ts';
 import { idle, pausedFromTheStart, startCli, startLine } from './fixtures/sup-common.ts';
-import { type ArcRun, appendSteps, contextFor, gateStep, mulBuild, setupArc } from './fixtures/unit-common.ts';
+import { type ArcRun, contextFor, gateStep, mulBuild, setupArc } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const TE = { timeout: EXEC_TIMEOUT_MS };
@@ -221,86 +215,3 @@ function visionWithHorizon(): string {
   }, null, 2)}\n`;
 }
 const admitStep = (a: CorpusHolisticArc, id: string, cites: readonly string[]): JsonValue => ({ ...(admitOp(a.d, id) as Json), cites: [...cites] } as JsonValue);
-
-test('status.checkpoint-busy-wait: a checkpoint rejected busy shows "waiting for <unit> <stage> boundary" until the attempt closes', T, async () => {
-  const pc = planCheckStep({ decision: 'approve' });
-  const limitsU1: JsonValue = { op: 'limits', unit: 'u1', limits: [{ field: 'chargeable', value: 2 }], cites: ['V-1'], evidence: ['audit-1'] };
-  const a = await corpusHolisticArc([
-    lensStep('audit-1', 'vision'),
-    { ...pc, acts: [{ type: 'barrier', name: 'pc', timeoutMs: 120_000 }, ...pc.acts] } as Step,
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [limitsU1] })),
-  ], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
-  const r = contextFor(a.d);
-  const { ctx } = checkpointContext(r);
-  try {
-    await completedAudit(r, ctx);
-    const unit = stepTo(ctx, 'u1', (f) => f.stage === 'plan-check');
-    await reached(a.d.scenarioDir, 'pc', 120_000);
-    // Past R-20's bounded wait for the plan-check (a capture waits while a unit is in plan-check).
-    const first = await withForge(a.forge, () => runCheckpoint({ ...ctx, clock: () => CAPTURE_WAIT_MAX_MIN }));
-    assert.ok(first.kind === 'decided' && first.decision.kind === 'rejected' && first.decision.reason === 'busy', JSON.stringify(first));
-    const waiting = await withForge(a.forge, () => statusOfRun(r));
-    assert.deepEqual(waiting.checkpointWaits, [{ job: 'ckpt-1', waitingFor: [{ unit: 'u1', stage: 'plan-check', attempt: 1 }], line: 'checkpoint ckpt-1 waiting for u1 plan-check boundary' }]);
-    release(a.d.scenarioDir, 'pc');
-    await unit;
-    assert.deepEqual((await withForge(a.forge, () => statusOfRun(r))).checkpointWaits, [], 'the boundary passed');
-  } finally {
-    r.journal.close();
-  }
-});
-
-test('status.drift-indicator / brief.admits-and-opportunities: an oversight, an opportunity and a converted admit; a finding outside the slice on the oversight\'s merge is drift, a mixed one is not; the brief carries the admits, the opportunity, the drift and the converted admit under its amendment', T, async () => {
-  const a = await corpusHolisticArc([lensStep('audit-1', 'vision')], { baseline: { '.roadmap/vision.json': visionWithHorizon() } });
-  appendSteps(a.d, [
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [admitStep(a, 'over', ['V-1']), admitStep(a, 'opp', ['V-1', 'V-3']), admitStep(a, 'aside', ['V-2']), witnessSplit('opp', 'V-3')] })),
-    planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }),
-    lensStep('audit-2', 'vision', [
-      { severity: 'P2', visionClauses: ['V-4'], claim: 'mul shows no day view', cause: 'mul: no day view', evidence: [{ path: 'src/mul.js', line: 1 }] },
-      { severity: 'P3', visionClauses: ['V-1', 'V-4'], claim: 'mul berths without a view', cause: 'mul: berths blind', evidence: [{ path: 'src/mul.js', line: 2 }] },
-    ]),
-  ]);
-  const r = contextFor(a.d);
-  const base = checkpointContext(r);
-  const follow = followContext(r);
-  const ctx = { ...base.ctx, plan: follow.plan, routing: follow.routing };
-  try {
-    await completedAudit(r, ctx);
-    const decided = await withForge(a.forge, () => runCheckpoint(ctx));
-    assert.ok(decided.kind === 'decided' && decided.decision.kind === 'applied', JSON.stringify(decided));
-    assert.deepEqual(await runUnit(follow, unitOf(follow, 'over'), admitAll), { kind: 'merged' });
-    await completedAudit(r, ctx);
-
-    const s = await withForge(a.forge, () => statusOfRun(r));
-    assert.deepEqual(s.admits.map(({ seq: _, ...x }) => x), [
-      { job: 'ckpt-1', index: 0, unit: 'over', class: 'oversight', clauses: ['V-1'], followUp: null },
-      { job: 'ckpt-1', index: 1, unit: 'opp', class: 'opportunity', clauses: ['V-3'], followUp: null },
-    ]);
-    assert.deepEqual(s.opportunities, [{ id: 'O-1', clauses: ['V-3'], units: ['opp'], followUps: 0, spentUsd: 0, overrun: [] }], 'opp never ran: nothing spent');
-    const f1 = r.journal.view.holistic().findings.find((f) => f.claim === 'mul shows no day view')!;
-    assert.deepEqual(s.drift, [
-      { unit: 'over', job: 'ckpt-1', class: 'oversight', merged: ['over'], findings: [{ id: f1.id, severity: 'P2', clauses: ['V-4'], claim: 'mul shows no day view' }] },
-    ]);
-    assert.deepEqual(s.amendments.filter((m) => m.source.type === 'admit').map((m) => m.source), [{ type: 'admit', job: 'ckpt-1', index: 2, reason: 'unrelated' }]);
-
-    // The brief reads the arc's snapshot ref: publish one at the head of the log.
-    await runOp(r.journal, snapshotPublishOp(absPath(a.d.repo)), `snapshot:${a.d.arc}:status-rev3`, snapshotRequestOf({
-      view: r.journal.view, runDir: r.ctx.runDir, identity: executorIdentity(), message: `roadmap ${a.d.arc}: snapshot\n`,
-    }));
-    const b = await withForge(a.forge, () => brief({ repo: absPath(a.d.repo), ack: null }));
-    assert.equal(b.kind, 'brief');
-    if (b.kind !== 'brief') throw new Error('unreachable');
-    const arc = b.payload.arcs.find((x) => x.arc === a.d.arc)!;
-    assert.deepEqual(arc.admits, [
-      { job: 'ckpt-1', index: 0, unit: 'over', class: 'oversight', clauses: ['V-1'], followUp: null },
-      { job: 'ckpt-1', index: 1, unit: 'opp', class: 'opportunity', clauses: ['V-3'], followUp: null },
-    ]);
-    assert.deepEqual(arc.opportunities, s.opportunities);
-    assert.deepEqual(arc.drift, [{ unit: 'over', job: 'ckpt-1', findings: [{ id: f1.id, clauses: ['V-4'] }] }]);
-    assert.deepEqual(arc.amendments.filter((m) => m.admit !== null).map((m) => m.admit), [{ job: 'ckpt-1', index: 2, reason: 'unrelated' }]);
-    assert.match(b.markdown, /#### Opportunities\n\n- O-1 advances V-3: units opp; 0 follow-ups; \$0/);
-    assert.match(b.markdown, new RegExp(`- over \\(ckpt-1\\): 1 — ${f1.id} V-4`));
-    assert.match(b.markdown, /\[converted admit ckpt-1#2: unrelated\]/);
-  } finally {
-    r.journal.close();
-  }
-});
