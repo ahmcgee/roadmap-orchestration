@@ -1,3 +1,4 @@
+import { externalVerdict } from './holistic/external.ts';
 import { type Certification,type WorkRun,certification,workRuns } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
@@ -1148,6 +1149,7 @@ export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: 
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
     const units = obligationBlockingUnits(view, o);
+    if (lane.witnessClass === 'external') return { verdict: externalVerdict(repo, view, tree, lane, o) ?? 'not-covered', witnessed: [], units };
     const found = onTree(lane);
     if (found === null) return { verdict: 'not-covered', witnessed: [], units };
     const entry = witnessed.get(found.seq);

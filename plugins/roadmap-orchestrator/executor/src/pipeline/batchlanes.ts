@@ -21,8 +21,12 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { StageContext } from './dispatch.ts';
 import { type JourneyEnd, jobSeriesCheckout, laneNow, passedOnInput, runJourneySeries, suiteJourneyLane } from './lanes.ts';
 
-/** The plan's batch lanes, in declared order. */
-export const batchLanesOf = (ctx: Pick<StageContext, 'plan'>): readonly LaneDef[] => ctx.plan().suite.lanes.filter((l) => l.cadence === 'batch');
+/** Plain batch suites plus this milestone's explicit additions, in declared order. */
+export const batchLanesOf = (ctx: Pick<StageContext, 'plan'>, milestone: Milestone | null = null): readonly LaneDef[] => {
+  const selected = new Set((ctx.plan().milestones ?? []).flatMap((m) => m.lanes ?? []));
+  const additional = new Set(milestone?.lanes ?? []);
+  return ctx.plan().suite.lanes.filter((l) => l.cadence === 'batch' && (!selected.has(l.id) || additional.has(l.id)));
+};
 
 /** The findings job `job` opened for its batch lanes' reds (a resumed job's earlier ones), in id order. */
 export function batchFindingsOf(ctx: Pick<StageContext, 'journal'>, job: JobId): readonly FindingId[] {
@@ -33,9 +37,9 @@ export function batchFindingsOf(ctx: Pick<StageContext, 'journal'>, job: JobId):
  * The batch lanes job `job` runs at `at` (see the header): those whose newest run on their input there is not a clean pass,
  * less those the job already found red.
  */
-export function batchLanesDue(ctx: StageContext, job: JobId, at: Sha): readonly LaneDef[] {
+export function batchLanesDue(ctx: StageContext, job: JobId, at: Sha, milestone: Milestone | null = null): readonly LaneDef[] {
   const redHere = new Set(ctx.journal.view.holistic().findings.flatMap((f) => (f.lane !== undefined && f.source.type === 'job' && f.source.job === job ? [f.lane] : [])));
-  return batchLanesOf(ctx).filter((l) => !redHere.has(l.id) && !passedOnInput(ctx, l, laneNow(ctx, l, at)));
+  return batchLanesOf(ctx, milestone).filter((l) => !redHere.has(l.id) && !passedOnInput(ctx, l, laneNow(ctx, l, at)));
 }
 
 /** Code's P1 for batch lane `lane` red at `at` under `job` (see the header); `milestone` null at an audit. */
@@ -57,7 +61,7 @@ export type BatchOutcome = Readonly<{ kind: 'ran' }> | Readonly<{ kind: 'no-verd
 export async function runBatchPoint(
   ctx: StageContext & Readonly<{ acquireFirst: AcquireFirst }>, job: JobId, at: Sha, milestone: Milestone | null, open: (draft: FindingDraft) => void,
 ): Promise<BatchOutcome> {
-  const lanes = batchLanesDue(ctx, job, at);
+  const lanes = batchLanesDue(ctx, job, at, milestone);
   if (lanes.length === 0) return { kind: 'ran' };
   const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, lanes.map(suiteJourneyLane), {
     path: jobSeriesCheckout(ctx, job, 'batch'), checkout: { type: 'detached', at },

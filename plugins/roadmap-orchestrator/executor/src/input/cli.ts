@@ -2,7 +2,7 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
+type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
 type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
 import { DEMO_ACTS,type DemoAct,LENS_KIND_NAMES,type LensKindName,type PauseTarget,type ResumeTarget } from '../core/records.ts';
@@ -58,6 +58,7 @@ export type Command =
   | Readonly<{ command: 'reverse'; divergence: DivergenceId; run: RunLocator }>
   /** M3: an alternate implementer entry for a parked or preparing unit; `class` null keeps its routing. */
   | Readonly<{ command: 'steer'; unit: UnitId; brief: string; budgetMin: number; class: BuildClass | null; resume: boolean; run: RunLocator }>
+  | Readonly<{ command: 'witness'; obligation: ObligationId; result: 'pass' | 'fail'; evidence: string; run: RunLocator }>
   | Readonly<{ command: 'note'; unit: UnitId; brief: string; run: RunLocator }>
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
   /** M3: an audit of these lenses (`--lens a,b`, ascending), or of the arc's lens set (null). */
@@ -285,6 +286,10 @@ export function parseCommand(argv: readonly string[]): Command {
       const p = parseRest(rest, LOCATOR, command);
       return { command, divergence: arg(command, '<D-n>', divergenceId, onePositional(p, command, '<D-n>')), run: locator(p, command) };
     }
+    case 'witness': {
+      const p = parseRest(rest, { ...LOCATOR, result: 'value', evidence: 'value' }, command);
+      return { command, obligation: arg(command, '<obligation>', obligationId, onePositional(p, command, '<obligation>')), result: arg(command, '--result', (v, p = 'result') => oneOf(['pass', 'fail'] as const)(v, p), required(p, command, 'result', 'pass|fail')), evidence: required(p, command, 'evidence', '<file|url>'), run: locator(p, command) };
+    }
     case 'note': {
       const p = parseRest(rest, { ...LOCATOR, brief: 'value' }, command);
       return { command, unit: arg(command, '<unit>', unitId, onePositional(p, command, '<unit>')), brief: required(p, command, 'brief', '<file>'), run: locator(p, command) };
@@ -409,7 +414,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
       );
   }
 }

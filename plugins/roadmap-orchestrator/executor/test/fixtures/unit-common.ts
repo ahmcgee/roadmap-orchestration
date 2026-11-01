@@ -84,6 +84,9 @@ export function laneJson(l: LaneJson): Record<string, unknown> {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cost === undefined ? {} : { cost: l.cost }),
+    ...(l.placement === undefined ? {} : { placement: l.placement }),
+    ...(l.kind === undefined ? {} : { kind: l.kind }), ...(l.capture === undefined ? {} : { capture: l.capture }),
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
   };

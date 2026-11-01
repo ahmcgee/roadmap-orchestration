@@ -62,6 +62,7 @@ import { closeAdmissions } from './admissions.ts';
 import { requestAudit } from './audit.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
+import { witness } from './witness.ts';
 import { note } from './note.ts';
 import { isControl,readCommand,readReceipt,receiptPath,receiptSha256,writeReceipt } from './queue.ts';
 import { reverse } from './reverse.ts';
@@ -143,7 +144,7 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
   }
   const rejected = readReceipt(ctx.runDir, id, 'rejected');
   if (rejected !== null && rejected.state === 'rejected') {
-    raiseDropped(ctx, id, rejected.reason);
+    raiseRejectedItems(ctx, id, rejected.reason);
     return { kind: 'rejected', reason: rejected.reason };
   }
 
@@ -153,7 +154,7 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
   if (effect.kind === 'rejected') {
     writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'rejected', at, reason: effect.reason });
     crashPoint('command.apply.after-rejected-receipt');
-    raiseDropped(ctx, id, effect.reason);
+    raiseRejectedItems(ctx, id, effect.reason);
     return { kind: 'rejected', reason: effect.reason };
   }
   const verified = [...effect.verified];
@@ -174,6 +175,7 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     }
     if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
     if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});
+    if (b.type === 'witness') subjects.splice(0, subjects.length);
     for (const subject of subjects) verified.push(...closeItemsFor(ctx, subject, id));
   }
   const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified });
@@ -186,8 +188,17 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
  * raises one `apply-dropped` item naming the dropped edit, once (after its rejected receipt, so recovery raises it too). Its
  * operator was told it would land; nothing drops it silently.
  */
-function raiseDropped(ctx: CommandContext, id: CommandId, reason: string): void {
+function raiseRejectedItems(ctx: CommandContext, id: CommandId, reason: string): void {
   const view = ctx.journal.view;
+  // An apply still needs owner approval to introduce a spike's resource. The rejected receipt makes
+  // this escalation replayable: a crash after rejection cannot lose the blocking owner item.
+  if (/spike resource .* is new: escalate to the owner/.test(reason) && raisedWithReason(view, ctx.runDir, parentOf(id), 'owner-request') === null) {
+    raiseNeedsUser(ctx.journal, ctx.runDir, {
+      blocking: true, subject: { type: 'arc' }, reason: 'owner-request', summary: reason,
+      recommendation: 'Ask the owner to approve and declare the resource before assigning it to a spike.',
+      options: [], evidence: [receiptPath(ctx.runDir, id, 'rejected')],
+    }, parentOf(id));
+  }
   const queued = view.applyQueued(id);
   if (queued === null || raisedWithReason(view, ctx.runDir, parentOf(id), 'apply-dropped') !== null) return;
   raiseNeedsUser(ctx.journal, ctx.runDir, {
@@ -222,6 +233,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return applyPlan(ctx, command.id, body);
     case 'reverse':
       return reverse(ctx, command.id, body.divergence);
+    case 'witness':
+      return witness(ctx, command.id, body);
     case 'note':
       return note(ctx, command.id, body);
     case 'steer':

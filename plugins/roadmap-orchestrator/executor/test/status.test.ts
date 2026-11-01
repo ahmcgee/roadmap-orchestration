@@ -539,7 +539,8 @@ test('status.certification: timeout red spends allowance, next series is red-fir
     await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.attempt > previous);
     u = statusNow(r).units[0]!;
     assert.deepEqual(u.certification?.lanes.map((l) => [l.id, l.redFirst, l.state]), [['slow', true, 'red'], ['fast', false, 'queued'], ['tail', false, 'queued']]);
-    assert.equal(u.certification?.used, 2);
+    assert.equal(u.certification?.used, 1, 'the repeated timeout is also red at the base, so it spends no further allowance');
+    assert.equal(r.journal.view.unit(unitId('u1')).decided?.outcome, 'base-red');
   } finally { r.journal.close(); }
   const reuse = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'revise', directives: ['Explain your implementation.'] }), codexStep([])],
     units: [{ id: 'u1', lanes: [{ id: 'stable', argv: ['true'] }] }], suite: [] });

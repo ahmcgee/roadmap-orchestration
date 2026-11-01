@@ -222,9 +222,15 @@ export function candidateLanes(ctx: StageContext, tip: Sha, candidate: Sha): rea
 async function suite(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>,
 ): Promise<Series> {
+  // Candidate-cadence spec lanes run on this candidate on the current tip, owned by the delivering unit.
+  // Their separate series preserves `set: spec`, evidence and red/fix attribution (including tip-alone diagnostics).
+  const spec = loadUnitSpec(ctx, ctx.plan().units.find((u) => u.id === parent.unit)!).spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'candidate');
+  const own = spec.length === 0 ? null : await runLaneSeries(ctx, parent, spec, 'spec', checkout, absPath(join(root, '_spec')), laneRuntime(ctx, parent.unit), false);
+  if (own !== null && own.tree !== null) await removeVerificationTree(ctx, own.tree, parent);
+  if (own !== null && (own.end.kind !== 'green' || own.dirty.length > 0)) return { ...own, tree: null };
   const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
-  return series;
+  return own === null ? series : { ...series, ledger: [...own.ledger, ...series.ledger] };
 }
 
 /** A suite that did not pass, or that changed its checkout (never certified under a SHA). */
@@ -420,7 +426,12 @@ export function gradeTree(
   claims: Claims, runs: readonly JourneyRun[], completing: ReadonlySet<ObligationId>, repairs: ReadonlySet<ObligationId>, p1: ReadonlySet<ObligationId>,
 ): TreeGrade {
   const records = new Map(runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
+  const external = new Set(claims.obligations.lanes.filter((l) => l.witnessClass === 'external').map((l) => l.id));
   const defs = claims.obligations.obligations;
+  const externalIds = new Set(defs.filter((o) => external.has(o.witness?.lane!)).map((o) => o.id));
+  claims = { ...claims, selected: new Set([...claims.selected].filter((id) => !externalIds.has(id))) };
+  completing = new Set([...completing].filter((id) => !externalIds.has(id)));
+  repairs = new Set([...repairs].filter((id) => !externalIds.has(id)));
   const verdict = (_o: ObligationDef, w: WitnessRef): ObservationVerdict | null => {
     const rec = records.get(w.lane);
     return rec === undefined ? null : verdictOf(rec, w);
@@ -433,6 +444,7 @@ export function gradeTree(
   // non-exempt child holds. Not its effect: a held future child completing here is `latch`, one delivered elsewhere
   // `measured`, and neither is `discharged` (paid m3 run 7: a repair of a latched parent split into such children).
   const holds = (o: ObligationDef): boolean => {
+    if (externalIds.has(o.id)) return true; // Root evidence follows publication, including a split parent's external leaves.
     if (o.state.type !== 'split') return o.witness !== null && verdict(o, o.witness) === 'held';
     return o.state.children.every((c) => {
       const child = byId.get(c);

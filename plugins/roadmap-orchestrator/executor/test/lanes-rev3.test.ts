@@ -181,8 +181,8 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.deepEqual(reuses(run), []);
   });
 
-  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.no-systems-reruns-on-new-sha (dev.17: inputs folded into the reuse key): across SHAs only a lane whose systems the diff leaves alone is reused', T, async () => {
-    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'] }], {
+  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.explicit-whole-input-reruns-on-new-sha: systems reuse and explicit whole-tree input invalidation across SHAs', T, async () => {
+    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'], inputs: ['**'] }], {
       systems: { add: { paths: ['src/add.js'], tests: ['test/add.test.js'] }, other: { paths: ['src/other.js'] } },
     });
     writeFiles(run.repo, { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
@@ -191,7 +191,7 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(first.end.kind, 'green');
     const other = commit(run, { 'src/other.js': 'export const other = 1;\n' });
     const second = await series(run, 2, specLanes(run), other);
-    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, listing no systems, reran');
+    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, declaring whole-tree inputs, reran');
     const touched = commit(run, { 'test/add.test.js': `${readFileSync(join(run.repo, 'test', 'add.test.js'), 'utf8')}\n// touched\n` });
     const third = await series(run, 3, specLanes(run), touched);
     assert.deepEqual(third.ledger.map((l) => l.reused), [null, null], 'its system changed: add reran');
@@ -224,14 +224,14 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(laneSpawns(run, 'script').length, 2);
   });
 
-  test('lanes.inputs-refused-off-spec: a suite lane or an arc lane declaring inputs is refused (a spec lane\'s are dropped since dev.17)', () => {
+  test('lanes.inputs-kept: suite and arc lanes retain declared reuse inputs', () => {
     const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
       architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
     };
-    assert.throws(() => parsePlan(plan), /plan\.suite\.lanes\[0\]\.inputs/);
-    assert.throws(() => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane, reporter: 'jsonl' }], obligations: [], mapping: { systems: [] } }), /inputs/);
+    assert.deepEqual(parsePlan(plan).suite.lanes[0]!.inputs, ['src/**']);
+    assert.deepEqual(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane, reporter: 'jsonl' }], obligations: [], mapping: { systems: [] } }).lanes[0]!.inputs, ['src/**']);
   });
 
   test('lanes.full-reuse-creates-checkout / lanes.series-tree-own-path: a series reusing every lane still makes, censuses and certifies its checkout; seriesTree finds the series\' own checkout among others its attempt made', T, async () => {
@@ -414,7 +414,7 @@ describe('certified-only journey reuse (R51)', () => {
 const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] };
 /** The fix commit touches only `mul`'s system, so the stable lane (system `add`) reads the same input across it. */
 const CRASH_MAP: JsonValue = { systems: { add: { paths: ['src/add.js', 'test/add.test.js'] }, mul: { paths: ['src/mul.js', 'test/mul.test.js'] } } };
-const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'] };
+const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'], systems: ['mul'] };
 const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
 
 /** The one label a crash row's cell crashes (test/matrix.ts). */

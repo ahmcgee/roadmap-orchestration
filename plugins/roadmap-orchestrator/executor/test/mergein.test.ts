@@ -231,7 +231,7 @@ type Parked = Readonly<{ r: ArcRun; old: Sha; tip: Sha; item: NeedsUserId; branc
 
 /** u1 driven to its gate park (its needs-user raised as the executor does), then `main` advanced by `advance`. */
 async function parkedArc(advance: Readonly<Record<string, string>>, after: readonly Step[] = []): Promise<Parked> {
-  const d = setupArc({ steps: [...TO_PARK, ...after] });
+  const d = setupArc({ steps: [...TO_PARK, ...after], units: [{ id: 'u1', systems: ['app', 'documentation'] }] });
   const r = contextFor(d);
   const parked = await runUnit(r.ctx, r.unit('u1'), admitAll);
   assert.ok(parked.kind === 'parked' && parked.needsUser.reason === 'escalation', JSON.stringify(parked));

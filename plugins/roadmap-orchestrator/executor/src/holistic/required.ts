@@ -95,7 +95,7 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
     if (targets.has(id) || !binding(o) || !isMustHold(o, latchedInTree)) continue;
     rows.push(...obligationRows(o, 'preservation'));
   }
-  return [...new Map(rows.map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));
+  return [...new Map(rows.filter((r) => !obligations.lanes.some((l) => l.id === r.lane && l.witnessClass === 'external')).map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));
 }
 
 function compareRows(a: RequiredWitness, b: RequiredWitness): number {

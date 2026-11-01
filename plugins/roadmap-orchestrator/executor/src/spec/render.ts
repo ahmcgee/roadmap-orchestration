@@ -13,7 +13,7 @@ import { type DesignRecord, designSize } from '../core/design.ts';
 import type { ItemState, LaneDef, NoteDef, SpecM1, WitnessItemDef } from '../core/records.ts';
 import { buildLanes } from '../resources/reserve.ts';
 
-export type RenderOptions = Readonly<{ buildLanesOnly?: boolean }>;
+export type RenderOptions = Readonly<{ buildLanesOnly?: boolean; spike?: Readonly<{ question: string }> }>;
 
 const sorted = (values: readonly string[]): string[] => [...values].sort();
 const code = (value: string): string => `\`${value}\``;
@@ -37,6 +37,8 @@ function lane(l: LaneDef & Readonly<{ state: ItemState }>): string {
     `  - resources: ${l.resources.length === 0 ? '(none)' : sorted(l.resources).map(code).join(', ')}`,
     `  - evidence: ${l.evidenceGlobs.length === 0 ? '(none)' : sorted(l.evidenceGlobs).map(code).join(', ')}`,
     ...(l.evidenceExcludes.length === 0 ? [] : [`  - evidence excludes: ${sorted(l.evidenceExcludes).map(code).join(', ')}`]),
+    ...(l.inputs === undefined ? [] : [`  - inputs: ${sorted(l.inputs).map(code).join(', ')}`]),
+    ...(l.cost === undefined ? [] : [`  - cost: ${l.cost}`]),
     ...(l.systems === undefined ? [] : [`  - systems: ${sorted(l.systems).map(code).join(', ')}`]),
     ...(l.testArgv === undefined ? [] : [`  - test argv: ${code(JSON.stringify(l.testArgv))}`]),
     ...(l.stochastic === undefined ? [] : [`  - stochastic: passes when ${l.stochastic.minPasses} of up to ${l.stochastic.runs} runs pass`]),
@@ -84,6 +86,7 @@ export function renderSpec(spec: SpecM1, options: RenderOptions = {}): string {
   const cites = [...sorted(spec.cites.contracts).map((c) => `- contract ${code(c)}`), ...sorted(spec.cites.rulings).map((r) => `- ruling ${r}`)];
   const sections = [
     `# Spec for unit ${code(spec.unit)}, rev ${spec.rev}`,
+    ...(options.spike === undefined ? [] : [`## Spike\n\nQuestion: ${options.spike.question}\n\nThe report and its evidence are the deliverable; changes from this spike do not merge. Use declared resources and escalate new resources to the owner.`]),
     `## Acceptance\n\n${acceptance.join('\n')}`,
     `## Intent\n\n${spec.intent}`,
     `## Non-goals\n\n${spec.nonGoals.map((g) => `- ${g}`).join('\n')}`,

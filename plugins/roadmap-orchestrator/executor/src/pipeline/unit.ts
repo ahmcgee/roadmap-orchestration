@@ -1,3 +1,4 @@
+import { attemptSignals } from './attempts.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
 // parked, held or stopped. The scheduler (src/schedule/scheduler.ts) runs one per unit in flight, as that
 // unit's task.
@@ -246,13 +247,16 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const batch = memberBatchCandidate(view, at);
   if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
   // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  const root = candidateSeriesRoot(ctx.runDir, at);
+  const specRoot = absPath(join(root, '_spec'));
+  const head = latestCandidate(ctx, unit.id).post.new;
+  const suite = [...seriesLedger(ctx, at, loadUnitSpec(ctx, unit).spec.lanes, 'spec', head, specRoot), ...seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', head, root)];
   // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
   const survived = mutantFix(ctx, at);
   if (survived !== null) return { fix: survived, suite };
   const failing = suite.filter((l) => l.verdict !== 'pass');
   // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
-  if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
+  if (failing.length === 0 && [...seriesDirty(view, root), ...seriesDirty(view, specRoot)].length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
   return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
 }
 
@@ -357,8 +361,10 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
     }
-    default:
-      return laneFixRound(series, dirty, tip);
+    default: {
+      const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
+      return laneFixRound(series, dirty, tip, compared);
+    }
   }
 }
 
@@ -650,7 +656,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const u = ctx.journal.view.unit(unit.id);
   // M3 (B7): a repair batch's ff retired the unit with its gate's approval still its decision: only its retire is left.
   if (u.status === 'retired') {
-    await retire(ctx, unit);
+    if (unit.spike === undefined) await retire(ctx, unit);
     return { kind: 'merged' };
   }
   if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
@@ -677,6 +683,12 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   }
 }
 
+/** The one owner item for a total-attempt cap, including a root-reactivated unit still over its cap. */
+function attemptCapResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' }>> {
+  const count = ctx.journal.view.attemptCounts(unit.id);
+  return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
+}
+
 /**
  * The result of a unit its latest decision parked or stopped, with its needs-user content, read without
  * running anything; null for any other unit. The scheduler raises a restarted arc's due items from it.
@@ -684,6 +696,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
   const u = ctx.journal.view.unit(unit.id);
   const f = u.decided;
+  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) return attemptCapResult(ctx, unit);
   // An entry a command set runs next, whatever the decision before it (M3).
   if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
@@ -794,8 +807,16 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
  */
 export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
+    const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
+    const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
+    if (count.capped) return attemptCapResult(ctx, unit);
     const u = ctx.journal.view.unit(unit.id);
     const next = upcoming(u, specFacts(ctx)(unit).reproduces);
+    if (unit.spike !== undefined && next?.stage === 'candidate') {
+      await retire(ctx, unit);
+      ctx.journal.fact({ kind: 'spike-completed', unit: unit.id });
+      return { kind: 'merged' };
+    }
     if (next !== null) {
       assertQuiescent(ctx, unit.id);
       if (!(await gate(next))) {

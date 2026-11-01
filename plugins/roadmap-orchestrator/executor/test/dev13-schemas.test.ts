@@ -78,7 +78,7 @@ describe('dev.13 plan: milestones', () => {
     const none = parsePlan(PLAN);
     assert.deepEqual([milestonesOf(none), hasMilestones(none), walkRoundsOf(none), DEFAULT_WALK_ROUNDS], [[], false, 3, 3]);
     const plan = parsePlan({ ...withMilestone({}), limits: { walkRounds: 2 } });
-    assert.deepEqual(plan.milestones, [MILESTONE]);
+    assert.deepEqual(plan.milestones, [{ ...MILESTONE, lanes: [] }]);
     assert.equal(walkRoundsOf(plan), 2);
     assert.equal(designUnitOf(plan.milestones![0]!), 'd1');
     assert.equal(designUnitOf(parsePlan(withMilestone({ design: { supplied: true } })).milestones![0]!), null);

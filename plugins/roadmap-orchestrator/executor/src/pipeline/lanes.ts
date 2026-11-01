@@ -1,3 +1,4 @@
+import { externalVerdict } from '../holistic/external.ts';
 // Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §4 Verification, Lanes): the
 // executor runs a series of lanes serially, verbatim, under their reservations, in a clean detached
 // checkout, in cadence order (build, unit, candidate, batch; dev.17), and keeps one evidence dir per lane. The same series
@@ -67,6 +68,7 @@
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
 // record is its last passing run (else its last run). Never the red-lane protocol, never flaky. A deflake unit's
 // verification (dev.17, `verify` on its spawns) runs its lane the same way with every run required to pass.
+import { captureLaunch } from './capture.ts';
 import { existsSync,mkdirSync,readFileSync } from 'node:fs';
 import { basename,dirname,join,posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -258,7 +260,7 @@ export function seriesOrder<L extends LaneDef>(lanes: readonly L[], red: Readonl
 
 /** The spec's series: struck and deferred lanes do not run. */
 export function laneOrder(spec: SpecM1): readonly SpecLane[] {
-  return seriesOrder(spec.lanes.filter((l) => l.state === 'active'));
+  return seriesOrder(spec.lanes.filter((l) => l.state === 'active' && cadenceAtOrBefore(l.cadence, 'unit')));
 }
 
 /**
@@ -495,14 +497,14 @@ type ReuseContext = Readonly<{ journal: Readonly<{ view: JournalView }>; repo: A
 export const mapInForce = (view: JournalView): SystemsMap | null => systemsMapInForce(view.planApplied());
 
 /** `lane`'s input on commit `at` under the map in force (src/git/reusekey.ts). */
-export const laneInputAt = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, lane: LaneDef, at: Sha): Sha =>
-  inputShaOf(ctx.repo, revParse(ctx.repo, `${at}^{tree}`), lane, mapInForce(ctx.journal.view));
+export const laneInputAt = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, lane: LaneDef, at: Sha, systems?: LaneDef['systems']): Sha =>
+  inputShaOf(ctx.repo, revParse(ctx.repo, `${at}^{tree}`), { ...lane, ...(lane.systems !== undefined || systems === undefined ? {} : { systems }) }, mapInForce(ctx.journal.view));
 
 /** What a run of a lane at a commit is reused by now: its identity, argv[0], and its input on the commit. */
-export type LaneNow = Readonly<{ identity: LaneIdentity; argv0: Argv0; inputSha: Sha }>;
+export type LaneNow = Readonly<{ identity: LaneIdentity; argv0: Argv0; inputSha: Sha; systems?: LaneDef['systems'] }>;
 
-export function laneNow(ctx: ReuseContext, lane: LaneDef, at: Sha): LaneNow {
-  return { ...laneIdentity(ctx, lane), inputSha: laneInputAt(ctx, lane, at) };
+export function laneNow(ctx: ReuseContext, lane: LaneDef, at: Sha, systems?: LaneDef['systems']): LaneNow {
+  return { ...laneIdentity(ctx, lane), inputSha: laneInputAt(ctx, lane, at, systems), ...(systems === undefined ? {} : { systems }) };
 }
 
 /** An arc lane's reuse key on `tree` (a tree id) in environment `envId`: what its observation is stored under. */
@@ -649,6 +651,7 @@ function laneHistory(ctx: StageContext, unit: UnitId, lane: LaneDef, exclude: St
   const view = ctx.journal.view;
   const ran: LaneHistoryEntry[] = executionsOf(view, lane.id)
     .filter((e) => e.set === 'spec' && e.parent.unit === unit && !sameParent(e.parent, exclude))
+    .filter((e) => seriesRootOf(ctx, invocationId(e.spawns[0]!.op, e.spawns[0]!.ordinal)) === specSeriesRoot(ctx.runDir, e.parent))
     .map((e) => ({ seq: e.seq, parent: e.parent, execution: e.parent, at: e.at, record: spawnRecord(ctx, e.parent, lane, e.spawns, specSeriesRoot(ctx.runDir, e.parent)), reused: false }));
   const reused: LaneHistoryEntry[] = view.holistic().laneReuses
     .filter((r) => r.lane === lane.id && (r.set ?? 'spec') === 'spec' && r.parent.type === 'stage' && r.parent.unit === unit && !sameParent(r.parent, exclude))
@@ -675,7 +678,7 @@ export function reusablePass(ctx: StageContext, parent: StageParent, lane: LaneD
   for (let i = executions.length - 1; i >= 0; i--) {
     const e = executions[i]!;
     if (!sameIdentity(e.identity, now.identity)) continue;
-    if (e.at !== at && laneInputAt(ctx, lane, e.at) !== now.inputSha) continue;
+    if (laneInputAt(ctx, lane, e.at, ctx.plan().units.find((u) => u.id === e.parent.unit)?.systems) !== now.inputSha) continue;
     const record = executionRecord(ctx, lane, e);
     if (record === null || !cleanPass(ctx, record)) return null;
     return { from: { parent: e.parent, inv: record.inv, at: e.at }, record: { ...record, reused: { at: e.at, inv: record.inv } } };
@@ -834,7 +837,7 @@ async function runLane(
         for (const name of Object.keys(extra)) if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.id} declares ${name}, which the executor sets`);
       }
       return {
-        argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()), cwd: absPath(join(tree, lane.cwd)), env: { ...env, ...extra }, stdinPath: null,
+        ...captureLaunch({ ...lane, argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()) }, { ...env, ...extra }, absPath(join(invDir, 'captures'))), cwd: absPath(join(tree, lane.cwd)), stdinPath: null,
         ...command.launch,
       };
     },
@@ -844,7 +847,7 @@ async function runLane(
 
   // One evidence dir per run: its stdout and stderr, and its declared evidence from the checkout.
   let evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
-    source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
+    source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE), ...(lane.capture === undefined ? [] : [repoPattern('captures/**')])], dest: absPath(join(dir, 'output')),
   })).op;
   if (lane.evidenceGlobs.length > 0) {
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
@@ -1005,7 +1008,7 @@ export async function runLaneSeries(
   };
 
   for (const lane of lanes) {
-    const now = laneNow(ctx, lane, at);
+    const now = laneNow(ctx, lane, at, ctx.plan().units.find((u) => u.id === parent.unit)?.systems);
     // dev.17: a deflake unit's verification runs its lane fresh, `runs` times, every run passing (never reused, never test-only).
     const verifyRuns = verify.get(lane.id);
     if (verifyRuns !== undefined) {
@@ -1359,7 +1362,7 @@ export { sameExecution } from '../input/laneexecution.ts';
 /** Each suite lane's identical arc lane among `arc` (the first, by `sameExecution`), by suite lane id; never a stochastic lane's. */
 export function suiteStandIns(suite: readonly LaneDef[], arc: readonly ArcLaneDef[]): ReadonlyMap<LaneId, ArcLaneDef> {
   return new Map(suite.flatMap((s) => {
-    const a = s.stochastic === undefined ? arc.find((l) => sameExecution(s, l)) : undefined;
+    const a = s.stochastic === undefined ? arc.find((l) => l.witnessClass !== 'external' && sameExecution(s, l)) : undefined;
     return a === undefined ? [] : [[s.id, a] as const];
   }));
 }
@@ -1483,6 +1486,10 @@ export function observedViews(
   const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));
   return defs.map((o) => {
     const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
+    if (lane?.witnessClass === 'external') {
+      const verdict = externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o);
+      return { obligation: o, exempt: isExempt(o), latched: latched.has(o.id), observation: verdict === null ? null : { key: { treeSha: tree, lane: lane.id, laneRev: laneRevOf(lane), envId: laneEnvId(ctx, lane) }, verdict } };
+    }
     const found = lane === undefined ? null : reuse(store, arcLaneKey(ctx, tree, lane, laneEnvId(ctx, lane)));
     return { obligation: o, exempt: isExempt(o), latched: latched.has(o.id), observation: found === null || o.witness === null ? null : { key: found.key, verdict: verdictOf(found.record, o.witness) } };
   });
@@ -1566,7 +1573,7 @@ export async function runJourneySeries(
       launch: (invDir) => {
         mkdirSync(dirOf(lane, invDir), { recursive: true });
         return {
-          argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), stdinPath: null,
+          ...captureLaunch(lane.def, envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), absPath(join(invDir, 'captures'))), cwd: absPath(join(checkout.path, lane.def.cwd)), stdinPath: null,
           ...command.launch,
         };
       },
@@ -1576,7 +1583,7 @@ export async function runJourneySeries(
     const dir = dirOf(lane, invDir);
     mkdirSync(dir, { recursive: true });
     let evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, {
-      source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
+      source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE), ...(lane.def.capture === undefined ? [] : [repoPattern('captures/**')])], dest: absPath(join(dir, 'output')),
     })).op;
     if (lane.def.evidenceGlobs.length > 0) {
       evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, globs: lane.def.evidenceGlobs, dest: absPath(join(dir, 'tree')) })).op;
@@ -1659,6 +1666,7 @@ export async function runJourneySeries(
   const counted = (lane: JourneyLane, r: JourneyRan, flaky: boolean): JourneyRun => ({ lane: lane.def.id, inv: r.inv, verdict: r.verdict, flaky, dir: r.dir, record: witness(lane, r) });
 
   for (const lane of lanes) {
+    if (lane.witness?.witnessClass === 'external') continue;
     if (store !== null && lane.witness !== null && !lane.suite) {
       const o = reuse(store, arcLaneKey(ctx, treeSha, lane.witness, laneEnvId(ctx, lane.witness)));
       if (o !== null) {

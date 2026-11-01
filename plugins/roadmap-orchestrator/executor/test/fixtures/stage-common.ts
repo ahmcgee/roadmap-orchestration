@@ -59,6 +59,10 @@ export type LaneJson = Readonly<{
   /** The dev.16 form (default `fast` when no cadence is given). */
   tier?: 'fast' | 'estate';
   /** dev.17: written instead of `tier` when given. */
+  cost?: 'cheap' | 'expensive';
+  placement?: 'local' | 'shared-resource' | 'cross-system';
+  kind?: 'capture';
+  capture?: { up: readonly string[]; script: readonly string[]; states: readonly string[]; port: string };
   cadence?: 'build' | 'unit' | 'candidate' | 'batch';
   resources?: readonly string[];
   evidenceGlobs?: readonly string[];
@@ -84,6 +88,7 @@ export type SetupOptions = Readonly<{
   risk?: RiskTier;
   /** The unit's declared resources (each is a res-tool resource). */
   resources?: readonly string[];
+  resourceDefs?: readonly JsonValue[];
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
@@ -134,6 +139,9 @@ function laneJson(l: LaneJson): Record<string, unknown> {
     ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.stochastic === undefined ? {} : { stochastic: l.stochastic }), ...(l.environment === undefined ? {} : { environment: l.environment }),
+    ...(l.cost === undefined ? {} : { cost: l.cost }),
+    ...(l.placement === undefined ? {} : { placement: l.placement }),
+    ...(l.kind === undefined ? {} : { kind: l.kind }), ...(l.capture === undefined ? {} : { capture: l.capture }),
     state: 'active',
   };
 }
@@ -229,7 +237,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
-    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
+    suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }, ...(opts.resourceDefs ?? [])],
     units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', systems: Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: opts.resources ?? [], ...opts.unit }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),

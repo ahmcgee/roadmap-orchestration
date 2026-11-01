@@ -14,7 +14,10 @@ const T = { timeout: 300_000 };
 
 test('certification: three reds free, fourth charged, allowance resets, twelfth parks at the chargeable bound', T, async () => {
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), ...Array.from({ length: 11 }, (_, i) => codexStep([{ type: 'commit', message: 'repair attempt', files: { 'src/attempt.js': `export const attempt = ${i};\n` } }], { argv: ['exec', 'resume'] }))],
-    units: [{ id: 'u1', lanes: [{ id: 'red', argv: ['node', '-e', 'process.exit(1)'] }] }], suite: [] });
+    // Alternate distinct reds: this exercises the ordinary certification allowance, independently of
+    // repeated-red base comparison (a confirmed repeat follows regression/base-red instead).
+    units: [{ id: 'u1', lanes: [0, 1].map((parity) => ({ id: `red-${parity}`, argv: ['node', '-e',
+      `const fs=require('node:fs'); const n=fs.existsSync('src/attempt.js') ? Number(fs.readFileSync('src/attempt.js','utf8').match(/= (\\d+)/)[1])+1 : 0; process.exit(fs.existsSync('src/mul.js') && n%2===${parity} ? 1 : 0);`] })) }], suite: [] });
   let r = contextFor(d);
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.unchargedLanesReds === 3);

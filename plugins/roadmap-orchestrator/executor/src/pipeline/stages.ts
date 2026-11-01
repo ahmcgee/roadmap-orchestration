@@ -830,7 +830,7 @@ export async function planCheck(ctx: StageContext, unit: PlanUnit): Promise<Plan
     const anchoredBy = impact === null ? [] : selectObligations(impact).map((id) => impact.obligations.obligations.find((o) => o.id === id)!);
     const target = unitTarget(ctx, checkouts.tip.at, 'full', anchoredBy, ruleMentions(renderSpec(now.spec)));
     const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec) }, intent: now.spec.intent, nonGoals: now.spec.nonGoals, ...library(ctx, now.spec, checkouts.tip.at), target,
+      spec: { unit: unit.id, rev: now.spec.rev, markdown: renderSpec(now.spec, unit.spike === undefined ? {} : { spike: unit.spike }) }, intent: now.spec.intent, nonGoals: now.spec.nonGoals, ...library(ctx, now.spec, checkouts.tip.at), target,
       direction: ctx.plan().direction, systems: unit.systems, risk: pinned.riskFloor, checkouts,
       lanePrograms: laneOrder(now.spec).map((l) => ({ lane: l.id, argv0: l.argv[0]!, resolved: resolveArgv0(l, ctx.hostEnv) })),
       priorRound: planCheckPriorRound(ctx, unit.id, checkouts),
@@ -1287,7 +1287,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const state = ctx.journal.view.unit(unit.id);
   const allowance = Math.max(0, state.bounds.certifications - 1 - state.counters.unchargedLanesReds);
   const render = (call: RoundCall) => renderPrompt(prompt, {
-    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
+    spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, { buildLanesOnly: true, ...(unit.spike === undefined ? {} : { spike: unit.spike }) }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...lib,
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)),
     planCheckNotes: planCheckNotes(ctx, unit.id),
@@ -1681,7 +1681,7 @@ export const fastSuiteRoot = (runDir: AbsPath, parent: StageParent, at: 'suite' 
 
 /** The fast suite on the diff base alone: whether it failed (a red lane, or a changed checkout), or no verdict (what the attempt records). */
 type BaseCheck =
-  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean }>
+  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean; evidence: AbsPath }>
   | Readonly<{ kind: 'none'; verdict: LanesVerdict }>;
 
 /**
@@ -1718,31 +1718,31 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
  */
 async function fastSuiteSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime,
-  verify: ReadonlyMap<LaneId, number> = new Map(), carry: ReadonlyMap<LaneId, Reusable> = new Map(),
+  verify: ReadonlyMap<LaneId, number> = new Map(), carry: ReadonlyMap<LaneId, Reusable> = new Map(), set: 'spec' | 'suite' = 'suite',
 ): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify, carry);
+  const series = await runLaneSeries(ctx, parent, lanes, set, checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify, carry);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
 
 /** `lanes` on `base` alone, run once per run for every unit asking (a check without a verdict is not kept). */
-async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime): Promise<BaseCheck> {
+async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime, set: 'spec' | 'suite' = 'suite'): Promise<BaseCheck> {
   const checks = BASE_CHECKS.get(ctx.journal) ?? new Map<string, Promise<BaseCheck>>();
   BASE_CHECKS.set(ctx.journal, checks);
-  const key = canonicalJson({ base, lanes });
+  const key = canonicalJson({ base, lanes, set });
   const known = checks.get(key);
   if (known !== undefined) {
     const check = await known;
     if (check.kind === 'verdict') return check;
   }
   const running = (async (): Promise<BaseCheck> => {
-    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt);
+    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), new Map(), set);
     const fault = suiteFault(ctx, parent.unit, series);
     if (fault !== null) return { kind: 'none', verdict: fault };
     const red = series.end.kind === 'red' ? [series.end.lane.lane] : [];
-    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0 };
+    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'base') };
   })();
   checks.set(key, running);
   const check = await running;
@@ -1801,10 +1801,11 @@ async function fastSuite(
   const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
   // A unit whose commit is its base (nothing of its own) failed on the base in this very run.
   const check: BaseCheck = base === salvaged
-    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0 }
+    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'suite') }
     : await baseCheck(ctx, parent, base, failing, rt);
   if (check.kind === 'none') return { verdict: check.verdict, series };
-  if (!check.failed) return { verdict: { kind: end.kind === 'red' ? 'red' : 'not-certified' }, series };
+  if (end.kind === 'red' && red.has(end.lane.lane) && !end.lane.flaky && !ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass' });
+  if (!check.failed) return { verdict: { kind: end.kind === 'red' ? (red.has(end.lane.lane) && !end.lane.flaky ? 'regression' : 'red') : 'not-certified' }, series };
   return { verdict: { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } }, series };
 }
 
@@ -1848,6 +1849,17 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     const hit = knownDefectHit(ctx, unit, spec, series.ledger);
     if (hit !== null) verdict = { kind: 'known-defect', detail: { kind: 'known-defect', id: hit.id, match: hit.match } };
   }
+  if (verdict.kind === 'red' && end.kind === 'red' && (end.lane.repeat !== null || red.spec.has(end.lane.lane)) && !end.lane.flaky && ctx.journal.view.completedLanesOutcome(unit.id)?.outcome !== 'known-defect') {
+    const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
+    const failing = order.filter((l) => l.id === end.lane.lane);
+    const check: BaseCheck = base === salvaged ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: series.dirty.length > 0, evidence: specSeriesRoot(ctx.runDir, parent) } : await baseCheck(ctx, parent, base, failing, rt, 'spec');
+    if (check.kind === 'none') verdict = check.verdict;
+    else {
+      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass' });
+      if (!check.failed) verdict = { kind: 'regression' };
+      if (check.failed) verdict = { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } };
+    }
+  }
   // The fast suite lanes (the 2026-10-15 batch): only after a green certified spec series.
   const suite = verdict.kind === 'green' ? await fastSuite(ctx, unit, spec, parent, salvaged, rt, carry, red.suite) : null;
   if (suite !== null) verdict = suite.verdict;
@@ -1868,7 +1880,8 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   // A fix round reads the spec series and the fast suite at the salvage SHA (`lanesFixRound`, unit.ts, rebuilds the same).
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
-  const fix = kind === 'red' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged) : null;
+  const compared = ctx.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt);
+  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, compared) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

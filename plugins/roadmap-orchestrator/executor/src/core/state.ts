@@ -9,7 +9,7 @@ import { type BundleOutcome,type FindingStateName,type FindingTo,FINDING_MOVES }
 import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
 type AbortRecord,type AuditInputs,type BackendParkClass,
-type DoneRecord,type Event,type Fact,
+type CiFact,type DoneRecord,type Event,type Fact,
 type Holder,
 type HolisticFact,
 type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
@@ -714,7 +714,7 @@ export class Fold implements JournalView {
   #runOnly: readonly UnitId[] | null = null;
   /** Rank's seqs (F17): each stage-outcome fact's by `<unit>/<stage>#<attempt>`, each published ff's done, each unit's first naming. */
   readonly #outcomeSeqs = new Map<string, number>();
-  readonly #completedLanes = new Map<UnitId, number>();
+  readonly #completedLanes = new Map<UnitId, StageOutcomeFact>();
   readonly #publications: Readonly<{ unit: UnitId; seq: number }>[] = [];
   readonly #addedSeqs = new Map<UnitId, number>();
   // M3
@@ -745,6 +745,7 @@ export class Fold implements JournalView {
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   // Milestone job outcomes
   readonly #stageJobOutcomes: import('./events.ts').JobStageOutcomeFact[] = [];
+  readonly #ciFacts: CiFact[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
   readonly #openWalks = new Map<JobId, PolishId[]>();
@@ -1000,6 +1001,35 @@ export class Fold implements JournalView {
 
   #fact(f: Fact, fail: (detail: string) => never, at: Readonly<{ seq: number; at: IsoTime }>): void {
     switch (f.kind) {
+      case 'external-witness':
+        this.#ciFacts.push(f);
+        return;
+      case 'external-reopened': {
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`external witness reopens unknown unit ${f.unit}`);
+        this.#setUnitState(u, { ...u.state, status: 'active', stage: 'plan-check', decided: null, approval: null, open: null, park: null, entry: null });
+        this.#completion = null;
+        return;
+      }
+      case 'spike-completed': {
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined || u.state.approval === null) return fail(`spike ${f.unit} completed before its report passed the gate`);
+        this.#setUnitState(u, { ...u.state, status: 'retired', entry: null });
+        return;
+      }
+      case 'attempt-marker':
+      case 'lane-base-compared':
+        this.#ciFacts.push(f);
+        return;
+      case 'attempt-capped': {
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`attempt cap for unknown unit ${f.unit}`);
+        this.#setUnitState(u, { ...u.state, status: 'park-pending', entry: null, park: { seq: at.seq, at: at.at, park: { class: 'operator', kind: 'env' }, passed: [] } });
+        return;
+      }
       case 'tail-discarded':
         this.#tail.push(f);
         return;
@@ -1094,7 +1124,7 @@ export class Fold implements JournalView {
         const u = this.#unit(f.unit, f.stage);
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
-        if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f.attempt);
+        if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f);
         if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
@@ -2046,8 +2076,10 @@ export class Fold implements JournalView {
     return seq;
   }
 
+  completedLanesOutcome(unit: UnitId): StageOutcomeFact | null { return this.#completedLanes.get(unit) ?? null; }
+
   completedLanes(unit: UnitId): number | null {
-    return this.#completedLanes.get(unit) ?? null;
+    return this.#completedLanes.get(unit)?.attempt ?? null;
   }
 
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[] {
@@ -2094,6 +2126,17 @@ export class Fold implements JournalView {
   }
 
   stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[] { return this.#stageJobOutcomes; }
+
+  ciFacts(): readonly CiFact[] { return this.#ciFacts; }
+
+  attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }> {
+    const u = this.#units.get(unit);
+    if (u === undefined) return { builds: 0, judged: 0 };
+    const own = [...u.starts.keys()].map((s) => s.slice(0, s.lastIndexOf('#')));
+    const previous = u.state.lineage === null ? { builds: 0, judged: 0 } : this.attemptCounts(u.state.lineage.reenters);
+    return { builds: previous.builds + own.filter((s) => s === 'build').length,
+      judged: previous.judged + own.filter((s) => ['build', 'lanes', 'gate'].includes(s)).length };
+  }
 
   walkFacts(): readonly WalkFactAt[] {
     return this.#walkFacts;

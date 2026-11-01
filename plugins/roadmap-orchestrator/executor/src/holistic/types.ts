@@ -178,7 +178,7 @@ export type Reporter = (typeof REPORTERS)[number];
  * every witness file of the lane lies under it (Phase-0 `plan-defect`, src/holistic/witnessfiles.ts); an arc's inputs
  * recorded before then may lack it (read as undeclared, with a logged warning).
  */
-export type ArcLaneDef = LaneDef & Readonly<{ reporter: Reporter; testPaths?: readonly RepoPattern[] }>;
+export type ArcLaneDef = LaneDef & Readonly<{ reporter: Reporter; witnessClass?: 'external'; testPaths?: readonly RepoPattern[] }>;
 
 export const ACTIVATIONS = ['future', 'must-hold'] as const;
 export type Activation = (typeof ACTIVATIONS)[number];
@@ -267,15 +267,16 @@ export type Obligations = Readonly<{
 export const arcLaneDef: Read<ArcLaneDef> = (value, path) => {
   const g = new Fields(value, path);
   const reporter = g.get('reporter', oneOf(REPORTERS));
+  const witnessClass = g.optional('witnessClass', literal('external'));
   const testPaths = g.optional('testPaths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
-  const { reporter: _reporter, testPaths: _testPaths, ...rest } = value as Record<string, unknown>;
+  const { reporter: _reporter, witnessClass: _witnessClass, testPaths: _testPaths, ...rest } = value as Record<string, unknown>;
   const lane = laneDefOf('arc')(rest, path);
   // The node-test reporter is loaded through NODE_OPTIONS (B1): a lane that sets its own is refused.
   if (reporter === 'node-test' && (Object.hasOwn(lane.env.set, 'NODE_OPTIONS') || lane.env.pass.includes('NODE_OPTIONS'))) {
     throw new SchemaError(`${path}.env`, 'no NODE_OPTIONS on a node-test lane (the witness reporter is loaded through it)', lane.env);
   }
   if (testPaths !== undefined) assertUnique(testPaths, (t) => t, `${path}.testPaths`);
-  return { ...lane, reporter, ...(testPaths === undefined ? {} : { testPaths }) };
+  return { ...lane, reporter, ...(witnessClass === undefined ? {} : { witnessClass }), ...(testPaths === undefined ? {} : { testPaths }) };
 };
 
 const obligationState: Read<ObligationState> = tagged('type', {

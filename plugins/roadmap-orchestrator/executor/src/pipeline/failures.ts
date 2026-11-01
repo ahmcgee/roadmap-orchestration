@@ -20,7 +20,7 @@
 // that evidence is gone.
 import { join } from 'node:path';
 import type { IntentOf } from '../core/events.ts';
-import { type LaneId,type UnitId } from '../core/ids.ts';
+import { type LaneId,type UnitId,invocationId,invocationDirName } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type CommandVerdict,type FailureRef,failureRefOf,isRed,parseFailureRef } from '../core/records.ts';
 import type { FailedOutcome } from '../core/state.ts';
@@ -98,11 +98,13 @@ function classified(parent: StageParent, lane: LaneId, cls: RedClass | null, rer
 export function laneFailures(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, unit: Readonly<{ id: UnitId }>): readonly LaneFailure[] {
   const view = ctx.journal.view;
   const open = view.unit(unit.id).open;
+  const baseSources = new Set(view.opsOf('evidence.snapshot').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'lanes' && i.expect.dest.startsWith(join(specSeriesRoot(ctx.runDir, i.parent), '_base') + '/')).map((i) => i.expect.source));
   // attempt → lane → its spawns, in log order.
   const attempts = new Map<number, Readonly<{ parent: StageParent; lanes: Map<LaneId, IntentOf<'proc.spawn'>[]> }>>();
   for (const i of view.spawnsOfUnit(unit.id)) {
     const s = i.expect.subject;
     if (s.purpose !== 'lane' || s.set !== 'spec' || s.unit !== unit.id || i.parent.type !== 'stage' || i.parent.stage !== 'lanes') continue;
+    if (baseSources.has(absPath(join(ctx.runDir, 'inv', invocationDirName(invocationId(i.op, i.ordinal)))))) continue;
     if (open?.stage === 'lanes' && open.attempt === i.parent.attempt) continue;
     const entry = attempts.get(i.parent.attempt) ?? { parent: i.parent, lanes: new Map() };
     entry.lanes.set(s.lane, [...(entry.lanes.get(s.lane) ?? []), i]);

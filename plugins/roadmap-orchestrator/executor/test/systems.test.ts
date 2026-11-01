@@ -1,3 +1,4 @@
+import { lanePlacementReasons } from '../src/input/ci.ts';
 import { systemName } from '../src/core/ids.ts';
 // Lane topology (dev.17; src/input/systems.ts, src/git/reusekey.ts, the dev.17 lane reader in src/core/records.ts): the
 // systems map's reader, a path's class, candidate selection, a lane's input and its reuse key over real git trees, leaf
@@ -148,7 +149,11 @@ describe('lanes.cadence', () => {
   const LANE = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, resources: [], evidenceGlobs: [], evidenceExcludes: [] };
   it('cadence is required, tier is refused, and each kind takes its cadences', () => {
     assert.throws(() => laneDefOf('spec')({...LANE, tier: 'fast'}, 'l'), /cadence/);
-    assert.throws(() => laneDefOf('spec')({...LANE, cadence: 'candidate'}, 'l'), /cadence/);
+    const later = laneDefOf('spec')({...LANE, cadence: 'candidate'}, 'l');
+    assert.equal(later.cadence, 'candidate');
+    assert.deepEqual(lanePlacementReasons(later, { id: 'u1' } as never), [], 'local candidate lanes keep their delivering unit attribution');
+    assert.match(lanePlacementReasons({ ...later, placement: 'cross-system' }, { id: 'u1' } as never).join(), /except in a spike/);
+    assert.deepEqual(lanePlacementReasons(later, { id: 'u1', spike: { question: 'Does it work?' } } as never), []);
     assert.throws(() => laneDefOf('arc')({...LANE, cadence: 'batch'}, 'l'), /cadence/);
     assert.equal(laneDefOf('suite')({...LANE, cadence: 'batch'}, 'l').cadence, 'batch');
     assert.equal(laneDef({...LANE, cadence: 'build'}, 'l').cadence, 'build');

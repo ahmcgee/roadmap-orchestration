@@ -112,7 +112,7 @@ import { gateSmokeChecks } from './smoke.ts';
 import {
 type JudgmentReader,
 type PlanCheckDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,
-escalationOf,fastSuiteRoot,
+escalationOf,fastSuiteRoot,fastSuiteLanes,
 holisticInForce,inMs,integrationTip,
 judgedAnswer,
 judgmentOutput,
@@ -441,7 +441,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const head = unitTip(ctx, unit.id);
     const paths = unitDiffPaths(ctx.repo, tip, head);
     // An approved empty diff is refused at the gate (DESIGN §3 "Merge"); with nothing to judge, no call is made.
-    if (paths.length === 0) return { kind: 'empty-diff' };
+    if (paths.length === 0 && unit.spike === undefined) return { kind: 'empty-diff' };
     // The latest spec series' own checkout (Q3). Gone, or of another commit: nothing to judge in, so the lanes run again,
     // uncharged (paid M4a run 11: an older executor made none for a spec declaring no lanes).
     const series = latestSpecSeries(ctx, unit.id);
@@ -462,7 +462,8 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const largeDiff = largeDiffOf(bounded);
     const seated = judgmentDispatch(ctx, unit.id, 'gate', largeDiff);
     if (seated.kind !== 'pinned') return { kind: 'routing-changed', needsUser: seated.needsUser };
-    const laneLedger = seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series));
+    const designCited = unitMilestones(ctx, unit.id, tip) !== null;
+    const laneLedger = [...seriesLedger(ctx, series, spec.lanes, 'spec', head, specSeriesRoot(ctx.runDir, series)).filter((record) => designCited || spec.lanes.find((l) => l.id === record.lane)?.kind !== 'capture'), ...fastSuiteLanes(ctx, spec, head).filter((l) => designCited && l.kind === 'capture').flatMap((l) => { const record = laneRecordIn(ctx, series, l, 'suite', head, fastSuiteRoot(ctx.runDir, series, 'suite')); return record === null ? [] : [record]; })];
     // The attached diff's files (what it does not inline) are listed and readable as evidence.
     const evidence = [...laneLedger.map((l) => l.evidenceDir), ...buildEvidence(ctx, unit.id), diffDir];
     const map = mapInForce(ctx.journal.view);
@@ -478,7 +479,7 @@ export async function gate(ctx: StageContext, unit: PlanUnit): Promise<GateDone 
     const list = absPath(join(diffDir, CHANGED_LIST));
     if (largeDiff !== null) writeFileSync(list, covered.map((p) => `${p}\n`).join(''));
     const measured = renderPrompt(prompt, {
-      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
+      spec: { unit: unit.id, rev: spec.rev, markdown: renderSpec(spec, unit.spike === undefined ? {} : { spike: unit.spike }) }, intent: spec.intent, nonGoals: spec.nonGoals, ...library(ctx, spec, tip), target,
       systemNotes: systemNotes(ctx.repo, head, unit.systems, ctx.routingBase.config),
       direction: ctx.plan().direction, planCheckNotes: planCheckNotes(ctx, unit.id),
       obligations: observedViews(ctx, holisticInForce(ctx).obligations, chosen.direct, tip),

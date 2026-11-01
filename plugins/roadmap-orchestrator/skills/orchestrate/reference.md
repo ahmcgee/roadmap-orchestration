@@ -622,3 +622,5 @@ Blocking unless noted. Read the item file before acting.
   `stale-reopened`. Propagation units and their admission holds are removed.
 
 Derived exclusion (2026-10-27; 1.0.0-dev.26): dispatch `excluded` bounds generated writes alongside `derived`; absent means none. Every revision refuses only added plan defects; apply dry runs and receipts also show remaining `plan-defect{defects}` as advisories. Startup and `phase0 check` still report all defects.
+
+`roadmap witness <obligation> --result pass|fail --evidence <file> [--repo <path> --arc <arc>]`

@@ -252,6 +252,7 @@ export const TABLE: Table = {
     green: go(at('gate')),
     // `decide` applies the uncharged certification allowance before the chargeable bound.
     red: charge(build('fix')),
+    regression: charge(build('fix')),
     // A same-commit red then green still needs a fix, but does not consume the unit's design-failure bound.
     flaky: go(build('fix')),
     'not-certified': charge(build('fix')),

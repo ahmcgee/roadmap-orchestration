@@ -558,6 +558,11 @@ test('stage.repeat-park: a retryable park on a target the unit recovered on with
 
 test('rounds.no-escalation: red, a stalled fix round, then the next fix round resumes its session on the same seat; nothing escalates', T, async () => {
   const run = setupUnit({
+    // Distinct checks keep this about session continuity: a repeated lane red is separately base-compared.
+    lanes: [
+      { id: 'first-check', argv: ['sh', '-c', 'test -f src/notes.md || node --test test/add.test.js'] },
+      { id: 'next-check', argv: ['sh', '-c', 'test ! -f src/notes.md || node --test test/add.test.js'] },
+    ],
     unit: { limits: { certifications: 1 } },
     steps: [
       planCheckStep({ decision: 'approve' }),

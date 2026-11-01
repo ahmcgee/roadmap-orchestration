@@ -276,12 +276,12 @@ describe('m4a-rev3 plan and spec', () => {
     assert.throws(() => parsePlan({ ...plan, units: [{ ...unit, priority: 'urgent' }] }), /priority/);
   });
 
-  it('spec.inputs-dropped (dev.17): a dev.16 spec lane\'s inputs read as dropped; a suite or arc lane declaring them is refused', () => {
+  it('spec.inputs-kept: spec, suite and arc lanes preserve declared reuse inputs', () => {
     const withInputs = { ...LANE, inputs: ['src/**', 'package.json'] };
-    assert.throws(() => laneDefOf('spec')(withInputs, 'l'), /inputs/);
-    assert.throws(() => laneDef({ ...laneDefOf('spec')(LANE, 'l'), inputs: ['src/**'] }, 'l'), SchemaError);
-    assert.throws(() => parsePlan({ ...plan, suite: { lanes: [withInputs] } }), SchemaError);
-    assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })), SchemaError);
+    assert.deepEqual(laneDefOf('spec')(withInputs, 'l').inputs, ['src/**', 'package.json']);
+    assert.deepEqual(laneDef({ ...laneDefOf('spec')(LANE, 'l'), inputs: ['src/**'] }, 'l').inputs, ['src/**']);
+    assert.deepEqual(parsePlan({ ...plan, suite: { lanes: [withInputs] } }).suite.lanes[0]!.inputs, ['src/**', 'package.json']);
+    assert.deepEqual(parseObligations(obligationsWith({ ...ARC_LANE, inputs: ['src/**'] })).lanes[0]!.inputs, ['src/**']);
     // An arc lane's testPaths (D2): non-empty when present.
     assert.deepEqual(parseObligations(obligationsWith({ ...ARC_LANE, testPaths: ['test/**'] })).lanes[0]!.testPaths, ['test/**']);
     assert.throws(() => parseObligations(obligationsWith({ ...ARC_LANE, testPaths: [] })), SchemaError);

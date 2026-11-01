@@ -17,6 +17,7 @@ import type { LaneDef } from '../core/records.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
 import { type SystemsMap, laneInput } from '../input/systems.ts';
 import { git } from './git.ts';
+import { matchesPattern } from '../core/values.ts';
 
 export type ReuseKey = Readonly<{ lane: LaneId; laneRev: LaneRev; envId: EnvId; inputSha: Sha }>;
 
@@ -47,16 +48,16 @@ const INPUTS = new WeakMap<object, Map<string, Sha>>();
 const NO_MAP = {};
 
 /** The input of `lane` on `tree` (a tree id) under `map` (see the header), memoised per map, lane systems and tree. */
-export function inputShaOf(repo: AbsPath, tree: Sha, lane: Pick<LaneDef, 'systems'>, map: SystemsMap | null): Sha {
+export function inputShaOf(repo: AbsPath, tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>, map: SystemsMap | null): Sha {
   const memo = INPUTS.get(map ?? NO_MAP) ?? new Map<string, Sha>();
   INPUTS.set(map ?? NO_MAP, memo);
-  const at = `${tree}/${JSON.stringify(lane.systems ?? null)}`;
+  const at = `${tree}/${JSON.stringify([lane.systems ?? null, lane.inputs ?? null])}`;
   const known = memo.get(at);
   if (known !== undefined) return known;
   let out = tree;
-  if (map !== null) {
+  if (map !== null || lane.inputs !== undefined) {
     const entries = listing(repo, tree);
-    const keep = laneInput(map, lane);
+    const keep = lane.inputs === undefined ? laneInput(map!, lane) : (path: RepoPath) => lane.inputs!.some((p) => matchesPattern(path, p));
     out = sha(createHash('sha1').update(entries.filter((e) => keep(e.path)).map((e) => `${e.line}\0`).join('')).digest('hex'));
   }
   memo.set(at, out);

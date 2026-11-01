@@ -1,3 +1,4 @@
+import { ciReasons, lanePlacementReasons } from './ci.ts';
 import { mayOverlap } from '../core/values.ts';
 import { protectedPaths } from './protected.ts';
 import { referenceCommit } from '../phase0/rows.ts';
@@ -485,6 +486,9 @@ export function classify(input: ClassifyInput): Classified {
   const scoped = new Set<UnitId>();
   const busy: BusyAttempt[] = [];
   const { ledger, inputs } = nextInputsOf(input, reasons);
+  for (const unit of plan.units) { const was = cur.units.find((u) => u.id === unit.id); if (was !== undefined && !same(was.spike, unit.spike) && started(view, unit.id)) reasons.push(`unit ${unit.id}: spike question/kind is fixed once started`); }
+  const ciSpecs = [...next.specs.values()].flatMap((f) => { if (f.bytes === null) return []; try { return [parseSpec(f.bytes, f.path)]; } catch { return []; } });
+  reasons.push(...ciReasons(plan, ciSpecs), ...(inputs.obligations?.lanes ?? []).flatMap((l) => lanePlacementReasons(l)));
 
   for (const field of FIXED) {
     if (!same(cur[field], plan[field])) reasons.push(`${field} may never change (in force: ${String(cur[field])}; plan.json: ${String(plan[field])})`);
@@ -682,6 +686,14 @@ export function classify(input: ClassifyInput): Classified {
     checkLimits(unit);
   }
 
+  // A spike can use a declaration through its unit, spec, lane or forced suite. Only Phase 0's
+  // owner-reviewed start may introduce that declaration together with the experiment.
+  const spikeUses = (name: ResourceName): boolean => plan.units.some((u) => {
+    if (u.spike === undefined) return false;
+    const spec = ciSpecs.find((s) => s.unit === u.id);
+    const lanes = [...(spec?.lanes.filter((l) => l.state === 'active') ?? []), ...plan.suite.lanes.filter((l) => spec?.forces?.includes(l.id))];
+    return u.resources.includes(name) || (spec?.resources.includes(name) ?? false) || lanes.some((l) => l.resources.includes(name) || l.environment === name);
+  });
   // Resources and pools: a declaration's units are its name, or every instance of the pool.
   const table = resourceTable(view);
   const names = new Set<ResourceName>([...cur.resources, ...plan.resources].map((r) => r.name));
@@ -690,6 +702,7 @@ export function classify(input: ClassifyInput): Classified {
     const now = plan.resources.find((r) => r.name === name);
     if (was !== undefined && now !== undefined && same(was, now)) continue;
     if (was === undefined) {
+      if (proposer.type !== 'start' && spikeUses(name)) reasons.push(`spike resource ${name} is new: escalate to the owner`);
       changes.push({ type: 'resource', resource: name, edit: 'added' });
       continue;
     }
@@ -710,6 +723,7 @@ export function classify(input: ClassifyInput): Classified {
     const now = environmentOf(plan, name);
     if (was !== null && now !== null && same(was, now)) continue;
     if (was === null) {
+      if (proposer.type !== 'start' && spikeUses(name)) reasons.push(`spike resource ${name} is new: escalate to the owner`);
       changes.push({ type: 'resource', resource: name, edit: 'added' });
       continue;
     }
@@ -1436,6 +1450,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'demo':
         return NONE;
       // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
+      case 'witness':
       case 'reverse':
         return ARC;
       case 'steer':

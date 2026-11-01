@@ -20,6 +20,9 @@ import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
+import { revParse } from '../git/git.ts';
+import { branchRef } from '../core/values.ts';
+import { requirePlanInForce } from '../input/inforce.ts';
 import { START_FILE } from '../executor.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
 import { CliError,type Command,type RunLocator,parseCommand } from '../input/cli.ts';
@@ -49,6 +52,16 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     case 'version':
       process.stdout.write(`${pkg.version}\n`);
       return;
+    case 'witness': {
+      const run = locate(command.run, hostDir);
+      const { view } = readJournal(run.runDir, run.arc);
+      const plan = requirePlanInForce(run.runDir, view).plan;
+      const expectedHead = revParse(startOf(run).repo, branchRef(plan.integrationBranch));
+      const url = /^https?:\/\//.test(command.evidence);
+      const path = absPath(resolve(command.evidence));
+      const evidenceFile = url ? null : { path, sha256: sha256(sha256Hex(readFileSync(path))) };
+      return submit(command.run, hostDir, { type: 'witness', obligation: command.obligation, expectedHead, result: command.result, evidence: url ? new URL(command.evidence).href : path, evidenceFile });
+    }
     case 'pause':
       return submit(command.run, hostDir, { type: 'pause', target: command.target });
     case 'stop':

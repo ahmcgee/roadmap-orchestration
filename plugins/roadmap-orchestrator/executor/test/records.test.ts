@@ -56,6 +56,13 @@ function without(obj: Record<string, unknown>, key: string): Record<string, unkn
 }
 
 describe('records', () => {
+  it('launch.json preserves executor capture/report protocol env but refuses runner identity and arbitrary ROADMAP variables', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    const env = Object.fromEntries(['ROADMAP_WITNESS_FILE', 'ROADMAP_CAPTURE_CONFIG', 'ROADMAP_CAPTURE_DIR', 'ROADMAP_CAPTURE_STATES', 'ROADMAP_CAPTURE_SLOT', 'ROADMAP_CAPTURE_PORT'].map((k) => [k, 'protocol value']));
+    assert.deepEqual(read({ ...RUNNER_SAMPLES['launch.json'], env }, 'launch.json').env, env);
+    for (const name of ['ROADMAP_OP', 'ROADMAP_INV', 'ROADMAP_ROLE', 'ROADMAP_ARBITRARY']) assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], env: { [name]: 'forged' } }, 'launch.json'), SchemaError);
+  });
+
   it('launch.json refuses a grace under MIN_GRACE_MS (the backstop at deadline + 2 * grace must not beat exit.json)', () => {
     const read = RUNNER_FILE_READERS['launch.json'];
     assert.equal(MIN_GRACE_MS, 1_000);

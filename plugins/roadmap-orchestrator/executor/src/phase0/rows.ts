@@ -1,3 +1,4 @@
+import { ciReasons, lanePlacementReasons } from '../input/ci.ts';
 import { inUnitSystems, systemsForPatterns } from '../input/systems.ts';
 // The shared Phase-0 startup rows (M4a "`roadmap phase0 check`", step C1): one rule, run by `start` (src/preflight/
 // checks.ts), `apply` (src/commands/apply.ts) and `roadmap phase0 check` (src/commands/phase0.ts, both modes).
@@ -405,7 +406,7 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
   const binding = obligations.obligations.filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null);
   const out: PlanDefect[] = [];
   for (const lane of obligations.lanes) {
-    if (lane.testPaths !== undefined) continue;
+    if (lane.witnessClass === 'external' || lane.testPaths !== undefined) continue;
     if (fresh) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
   }
   let tip: ReadonlySet<string> | null = null;
@@ -415,6 +416,7 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
   };
   for (const o of binding) {
     const w = o.witness!;
+    if (obligations.lanes.some((l) => l.id === w.lane && l.witnessClass === 'external')) continue;
     if (w.files === undefined) {
       if (fresh) out.push({ type: 'witness-files-undeclared', obligation: o.id });
 
@@ -621,6 +623,7 @@ export function laneTopologyRows(input: Phase0Input): readonly Row<'plan-invalid
   }
   const obligations = visionAndObligations(input).obligations;
   for (const entry of obligations?.mapping.systems ?? []) if (map === null || !Object.hasOwn(map.systems, entry.system)) rows.push(schemaRow('obligations.mapping.systems', `${entry.system}: a declared system in the repo systemsMap is required`));
+  for (const reason of [...ciReasons(input.plan, specs), ...arc.flatMap((l) => lanePlacementReasons(l))]) rows.push(schemaRow('lanes', reason));
   const suite = new Set<string>(input.plan.suite.lanes.map((l) => l.id));
   for (const s of specs) for (const f of specForces(s)) if (!suite.has(f)) rows.push(schemaRow(`spec ${s.unit}.forces`, `${f}: a suite lane of the plan`));
   return rows;
