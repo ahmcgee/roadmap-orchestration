@@ -538,7 +538,11 @@ function pressureRecorded(run: Run): Verdict {
 // The interventions metric (OR-A3, A4): the architect's operator log, never a criterion
 
 /** The closed lever list of an operator-log entry (SKILL.md "Supervising the executor"). */
-export const LEVERS = ['pause', 'resume', 'resume --backend', 'ack', 'apply', 'rule', 'steer', 'reverse', 'merge-in', 'audit', 'close-admissions', 'stop', 'start', 'resume-arc', 'gc', 'inputs export'] as const;
+export const LEVERS = [
+  'pause', 'resume', 'resume --backend', 'ack', 'apply', 'note', 'witness', 'dismiss', 'steer', 'reverse',
+  'sweep', 'resolve-edge', 'run-only', 'merge-in', 'audit', 'close-admissions', 'stop', 'start', 'resume-arc',
+  'gc', 'inputs export', 'demo up', 'demo down', 'demo hold', 'demo release',
+] as const;
 const ENTRY_FIELDS = ['symptom', 'evidence', 'outcome', 'executor change'] as const;
 const ENTRY_HEADING = /^## OP-(\d+) (\d{4}-\d{2}-\d{2}T\S+) arc=(\S+) lever=(.+?)\s*$/;
 

@@ -263,7 +263,7 @@ export type BlockingItem = Readonly<{ id: NeedsUserId; reason: NeedsUserReason; 
 export function blockingItems(runDir: AbsPath, view: JournalView): readonly BlockingItem[] {
   return openBlockingItems(runDir, view).map((id) => {
     const { reason, subject } = recordOf(runDir, id);
-    return { id, reason, subject: subject.type, unit: subject.type === 'unit' ? subject.unit : null };
+    return { id, reason, subject: subject.type === 'findings' ? 'arc' : subject.type, unit: subject.type === 'unit' ? subject.unit : null };
   });
 }
 

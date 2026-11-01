@@ -1,3 +1,6 @@
+import { openFinding } from '../src/holistic/findings.ts';
+import { findingId, obligationId } from '../src/core/ids.ts';
+import { cadence } from '../src/holistic/cadence.ts';
 // M3 step B7: the scheduler joins the holistic layer into the running arc (src/schedule/scheduler.ts), over real arcs
 // (real git, real processes, the fake claude and codex answering by unit, job and lens, fake witness lanes). Named tests:
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
@@ -580,4 +583,22 @@ describe(`matrix row ${TERMINAL_SNAPSHOT}`, () => {
       r.journal.close();
     }
   });
+});
+
+
+test('root dismissal unblocks the final audit, close-out publication and completion', T, async () => {
+  const d = completingArc();
+  const r = contextFor(d);
+  try {
+    await runUnit(r.ctx, r.unit('u1'), admitAll);
+    openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: obligationId('I-1'), visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [{path: 'src/mul.js', blob: null}], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: true});
+    assert.equal(cadence(r.ctx, () => 0)?.due, false, 'the active P1 holds the final audit');
+    const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 't1 passes on integration; src/mul.js retains multiplication'});
+    assert.equal((await applyCommand(commandContextFor(r), cmd)).kind, 'applied');
+    assert.equal(cadence(r.ctx, () => 0)?.due, true);
+    await runToComplete(r);
+    assert.equal(r.journal.view.holistic().completion?.active, true);
+    assert.equal(factsOf(r, 'docs-published').filter((p) => p.source === 'close-out').length, 1);
+    assert.deepEqual(status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir).findings.active, []);
+  } finally {r.journal.close();}
 });

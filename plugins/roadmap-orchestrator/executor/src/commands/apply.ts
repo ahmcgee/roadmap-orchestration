@@ -57,6 +57,7 @@ import { requestAudit } from './audit.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
 import { witness } from './witness.ts';
+import { dismiss } from './dismiss.ts';
 import { note } from './note.ts';
 import { isControl,readCommand,readReceipt,receiptPath,receiptSha256,writeReceipt } from './queue.ts';
 import { reverse } from './reverse.ts';
@@ -169,7 +170,14 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     }
     if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
     if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});
-    if (b.type === 'witness') subjects.splice(0, subjects.length);
+    if (b.type === 'witness' || b.type === 'dismiss') subjects.splice(0, subjects.length);
+    if (b.type === 'dismiss') {
+      const findings = ctx.journal.view.holistic().findings;
+      for (const n of openNeedsUser(ctx.journal.view)) {
+        const subject = readNeedsUser(ctx.runDir, n.id)?.subject;
+        if (subject?.type === 'findings' && subject.findings.includes(b.finding) && subject.findings.every((id) => findings.some((f) => f.id === id && (f.state === 'ruled' || f.state === 'resolved')))) subjects.push(subject);
+      }
+    }
     for (const subject of subjects) verified.push(...closeItemsFor(ctx, subject, id));
   }
   const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified });
@@ -229,6 +237,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return reverse(ctx, command.id, body.divergence);
     case 'witness':
       return witness(ctx, command.id, body);
+    case 'dismiss':
+      return dismiss(ctx, command.id, body);
     case 'note':
       return note(ctx, command.id, body);
     case 'steer':

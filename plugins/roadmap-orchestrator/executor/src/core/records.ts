@@ -1,3 +1,4 @@
+import { nonBlank } from './validate.ts';
 // File-backed records other than the event log: the five runner files, the approval fingerprint and
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
@@ -1058,9 +1059,8 @@ export type SpecM1 = Readonly<{
    */
   witnesses?: readonly Stated<WitnessItemDef>[];
   /**
-   * Scope growth (2026-10-15): what the unit removes or renames (repository paths, route strings, symbols: each a literal
-   * `git grep -F` searches for). The Phase-0 row `scope-references-outside` and the pre-build list every file outside the
-   * unit's scope that still names one (non-empty when present, unique; absent: none, lasting, `specRemoves`).
+   * What the unit removes or renames (paths, route strings, symbols: literals searched with `git grep -F`).
+   * Non-empty when present, unique (`specRemoves`). Plan §9 retired scope-references-outside; reach is verifier input.
    */
   removes?: readonly string[];
   /**
@@ -1539,6 +1539,7 @@ export type CommandBody =
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
   | Readonly<{ type: 'witness'; obligation: ObligationId; expectedHead: Sha; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
+  | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /** Request a fresh whole-campaign audit. */
@@ -1560,7 +1561,7 @@ export type DemoAct = (typeof DEMO_ACTS)[number];
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
 export type LensKindName = (typeof LENS_KIND_NAMES)[number];
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
-export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note'] as const;
+export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss'] as const;
 
 export type CommandFile = Readonly<{ v: SchemaVersion; id: CommandId; arc: ArcId; at: IsoTime; body: CommandBody }>;
 
@@ -1600,6 +1601,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   reverse: object((f): CommandBody => ({ type: f.get('type', literal('reverse')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
   witness: object((f): CommandBody => ({ type: f.get('type', literal('witness')), obligation: f.get('obligation', (v, p) => obligationId(v, p)), expectedHead: f.get('expectedHead', (v, p) => sha(v, p)), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceFile: f.get('evidenceFile', nullable(hashedFile)) })),
+  dismiss: object((f): CommandBody => ({ type: f.get('type', literal('dismiss')), finding: f.get('finding', (v, p) => findingId(v, p)), counterEvidence: f.get('counterEvidence', nonBlank) })),
   note: object((f): CommandBody => ({ type: f.get('type', literal('note')), unit: f.get('unit', unit), brief: f.get('brief', hashedFile) })),
   steer: object((f): CommandBody => ({
     type: f.get('type', literal('steer')),
@@ -1700,7 +1702,7 @@ export const NON_BLOCKING_M3_REASONS = [
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 
-export type NeedsUserSubject = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;
+export type NeedsUserSubject = Readonly<{ type: 'findings'; findings: readonly FindingId[] }> | Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;
 
 export type NeedsUserRecord = Readonly<{
   v: SchemaVersion;
@@ -1727,7 +1729,8 @@ export const needsUserRecord: Read<NeedsUserRecord> = object((f) => {
     arc: f.get('arc', arc),
     raisedAt: f.get('raisedAt', time),
     blocking: f.get('blocking', bool),
-    subject: f.get('subject', tagged<'unit' | 'arc' | 'host', NeedsUserSubject>('type', {
+    subject: f.get('subject', tagged<'unit' | 'arc' | 'host' | 'findings', NeedsUserSubject>('type', {
+      findings: object((g) => ({ type: g.get('type', literal('findings')), findings: g.get('findings', arrayOf((v, p) => findingId(v, p), {nonEmpty: true})) })),
       unit: unitTarget,
       arc: object((g) => ({ type: g.get('type', literal('arc')) })),
       host: object((g) => ({ type: g.get('type', literal('host')) })),

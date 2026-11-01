@@ -65,6 +65,7 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
     claim: 'the test permits a mis-rounding', evidence: [{ path: 'test/round.test.js', blob: A }], mutant: { patchSha256: H2, lane: laneId('journey') },
     source: { type: 'job', job: 'audit-1' }, gateHadPassed: true,
   },
+  'finding-dismissed': {kind: 'finding-dismissed', id: 'F-1', command: CMD, counterEvidence: 'test/round.test.js:17 rejects the reported input', by: {role: 'root', routingRev: routingRev('a'.repeat(16))}},
   'finding-transition': { kind: 'finding-transition', id: 'F-1', to: { state: 'ruled', disposition: 'dismissed', by: { type: 'code', reason: 'not-reproduced' } } },
   'audit-started': {
     kind: 'audit-started', job: 'audit-1', triggers: [{ type: 'final' }, { type: 'requested', command: CMD }], generation: 1, lenses: ['invariants', 'vision'],

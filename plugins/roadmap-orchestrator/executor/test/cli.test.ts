@@ -126,6 +126,7 @@ describe('bin/roadmap', () => {
     mkdirSync(dir, { recursive: true });
     const cases: readonly [readonly string[], unknown][] = [
       [['pause', 'u1'], { type: 'pause', target: { type: 'unit', unit: 'u1' } }],
+      [['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8 disproves the claim'], {type: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8 disproves the claim'}],
       [['stop'], { type: 'stop' }],
       [['ack', 'nu-7', '--choice', 'retry'], { type: 'ack', needsUser: 'nu-7', choice: 'retry' }],
       [['resume', '--backend', 'codex'], { type: 'resume', target: { type: 'backend', backend: 'codex' } }],
@@ -232,4 +233,9 @@ describe('cli: M3 forms', () => {
     assert.equal(gc.code, 78, gc.stderr);
     assert.deepEqual(JSON.parse(gc.stdout), { refused: { kind: 'no-arcs', runtime: join(empty, '.git', 'roadmap-runtime') } });
   });
+});
+
+it('dismiss requires a named finding and non-empty counter-evidence', () => {
+  assert.deepEqual(parseCommand(['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8']), {command: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8', run: HOST});
+  for (const args of [['dismiss', 'F-1'], ['dismiss', 'F-1', '--counter-evidence', '  '], ['dismiss', 'unknown', '--counter-evidence', 'proof']]) assert.throws(() => parseCommand(args), CliError);
 });

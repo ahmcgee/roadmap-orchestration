@@ -1,3 +1,4 @@
+import { nonBlank } from '../core/validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
 // Strict role-result schemas and validators. Verifier pre-build and diagnosis modes annotate;
 // gate mode approves, requests a fix or escalates. Builders report grounding and experiments;
@@ -634,11 +635,11 @@ export function validateExperienceOutput(v: unknown): ExperienceOutput { return 
 export function experienceWalk(v: unknown): WalkthroughOutput { const out = validateExperienceOutput(v); if (out.mode !== 'walkthrough') throw new SchemaError('experience.mode', 'walkthrough', out.mode); return out.verdict; }
 export function experiencePolish(v: unknown): PolishJudgeOutput { const out = validateExperienceOutput(v); if (out.mode !== 'polish') throw new SchemaError('experience.mode', 'polish', out.mode); return out.verdict; }
 export type CampaignAuditOutput = LensOutput & Readonly<{requests: readonly Readonly<{op: 'request'; summary: string; evidence: readonly string[]; dismisses: FindingId | null; counterEvidence: string | null}>[]}>;
-export const CAMPAIGN_AUDIT_SCHEMA: Schema = {...LENS_SCHEMA as object, properties: {...(LENS_SCHEMA as {properties: object}).properties, requests: sArr(sObj({op: sEnum(['request']), summary: S_STR, evidence: sArr(S_STR), dismisses: sNullable(S_STR), counterEvidence: sNullable(S_STR)}))}, required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests']} as Schema;
+export const CAMPAIGN_AUDIT_SCHEMA: Schema = {...LENS_SCHEMA as object, properties: {...(LENS_SCHEMA as {properties: object}).properties, requests: sArr(sObj({op: sEnum(['request']), summary: S_STR, evidence: sArr(S_STR), dismisses: sNullable(S_STR), counterEvidence: sNullable({type: 'string', pattern: '\\S'})}))}, required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests']} as Schema;
 export const campaignAuditOutput: Read<CampaignAuditOutput> = (value, path) => {
   const f = new Fields(value, path);
   const requests = f.get('requests', arrayOf(object((g) => {
-    const out = {op: g.get('op', literal('request')), summary: g.get('summary', text), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true})), dismisses: g.get('dismisses', nullable((v, p) => findingId(v, p))), counterEvidence: g.get('counterEvidence', nullable(text))};
+    const out = {op: g.get('op', literal('request')), summary: g.get('summary', text), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true})), dismisses: g.get('dismisses', nullable((v, p) => findingId(v, p))), counterEvidence: g.get('counterEvidence', nullable(nonBlank))};
     if (out.dismisses !== null && out.counterEvidence === null) throw new SchemaError(`${g.path}.counterEvidence`, 'counter-evidence for a requested finding dismissal', null);
     return out;
   })));

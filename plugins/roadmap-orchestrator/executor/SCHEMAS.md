@@ -358,6 +358,8 @@ Apply still classifies safety/proof/risk/split/contract invariants and stores th
 activated under a fence with plan-applied last. Queued commands retain boundary provenance through restart. Executor CAS
 races retry and produce non-blocking notices; root commands do not auto-raise executor revision notices.
 
+Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for existing future witness files and `{kind:"spanning-proof",obligation,lane,units}` for multi-unit delivery without a spanning candidate/batch lane. They never refuse. Actual baseline vacuity remains execution-derived. Plan §9 retired vision-leak and scope-references-outside.
+
 ## Commands, receipts and needs-user
 
 CLI parsing is pure and closes over Command kinds; run locator is host or paired repo/arc. Complete forms are in the
@@ -366,10 +368,10 @@ brief are not queued command bodies. Brief/note evidence is hashed before submit
 
 Command files are write-once incoming records with accepted/queued/applied/rejected receipts. Accepted/queued does not
 mean applied. Apply receipt may expose remaining plan-defect advisories while refusing new defects. Steer drains a live
-unit before applying; note informs the next build without cancelling it. Resume backend is explicit availability recovery.
+unit before applying; note informs the next build without cancelling it. Resume backend is explicit availability recovery. Dismiss requires a named active finding and non-whitespace counterEvidence. `finding-dismissed {id,command,counterEvidence,by:{role:"root",routingRev}}` folds as ruled/dismissed, including P1. Same-command replay is idempotent; a new command against an unknown/closed finding refuses. It suppresses unchanged-evidence re-raising through the existing admission predicate. Campaign dismisses/counterEvidence fields only raise a root request.
 
 NeedsUserRecord `{v:2,id,arc,raisedAt,blocking,subject,reason,summary,recommendation,options,evidence}` has subject
-unit `{type:'unit',unit}`, arc or host. Options are `{id,label}`; evidence is absolute paths. Ack record is
+unit `{type:'unit',unit}`, arc, host or `{type:'findings',findings:FindingId[]}` (nonempty). A dismissal closes matching finding subjects only when every named finding is resolved or ruled. Options are `{id,label}`; evidence is absolute paths. Ack record is
 `{v:2,id,command,choice:string|null,at}`. Optionless items reject ack; successful subject actions close them. Offered choice
 must exist. Revision-notice and waste-finding are non-blocking. Subject closure preserves publication/recovery ordering
 instead of requiring a second bookkeeping command. The full current reason enum is emitted in the appendix.
@@ -423,7 +425,7 @@ Live fact families:
 |---|---|
 | Work/usage | dispatch, judgment-inputs, approval, stage-outcome, meter, usage-unavailable; exact attempt/role/routing attribution |
 | Control | paused, stop-requested, resumed, backend-park, probe, reopened/unparked, edge-resolved, run-only |
-| Inputs | plan-applied, apply-queued, noted, steered, merged-in, revision-link stale-set/answers/reopening |
+| Inputs | plan-applied, apply-queued, finding-dismissed, noted, steered, merged-in, revision-link stale-set/answers/reopening |
 | CI | external-witness/reopened, spike-completed, attempt-marker/capped, lane-base-compared, lane-reused, series-certified, smoke-ran |
 | Review | review-triggered/completed; gate round/findings-ledger/dispute facts |
 | Target | witnessed, obligation-latched, finding-opened/transition, audit-started/ended/requested, divergence |
@@ -610,6 +612,7 @@ export type CommandBody =
   | Readonly<{ type: 'reverse'; divergence: DivergenceId }>
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   | Readonly<{ type: 'witness'; obligation: ObligationId; expectedHead: Sha; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
+  | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   | Readonly<{ type: 'audit' }>

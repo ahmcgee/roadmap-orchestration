@@ -1403,6 +1403,15 @@ export class Fold implements JournalView {
         this.#findings.set(f.id, [{ seq, finding: { ...rest, state: 'open', owner: null, openedSeq: seq, last: null } }]);
         return;
       }
+      case 'finding-dismissed': {
+        const history = this.#findings.get(f.id);
+        if (history === undefined) return fail(`finding-dismissed of ${f.id}, which was never opened`);
+        const x = history.at(-1)!.finding;
+        if (!FINDING_MOVES[x.state].includes('ruled')) return fail(`finding ${f.id} is already ${x.state}`);
+        const to: FindingTo = { state: 'ruled', disposition: 'dismissed', by: { type: 'root', command: f.command, counterEvidence: f.counterEvidence, ...f.by } };
+        history.push({ seq, finding: { ...x, state: 'ruled', last: to } });
+        return;
+      }
       case 'finding-transition': {
         const history = this.#findings.get(f.id);
         if (history === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);

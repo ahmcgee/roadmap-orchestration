@@ -444,7 +444,17 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
     if ('requests' in output) for (const request of (output as import('../prompts/schemas.ts').CampaignAuditOutput).requests) {
-      if (!ctx.journal.view.opsOf('needsuser.raise').some((i) => i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary)) raiseNeedsUser(ctx.journal, ctx.runDir, {blocking: true, subject: {type: 'arc'}, reason: 'owner-request', summary: request.summary, recommendation: `Evidence: ${request.evidence.join('; ')}. ${request.dismisses === null ? '' : `Dismiss ${request.dismisses} only on counter-evidence: ${request.counterEvidence}. `}The root reviews and amends through apply --reason.`, evidence: [jobEvidenceRoot(ctx.runDir, job)], options: []}, parent);
+      const raised = ctx.journal.view.opsOf('needsuser.raise').some((i) =>
+        i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary);
+      if (raised) continue;
+      const dismissal = request.dismisses === null ? '' : `Dismiss ${request.dismisses} only on counter-evidence: ${request.counterEvidence}. `;
+      raiseNeedsUser(ctx.journal, ctx.runDir, {
+        blocking: true,
+        subject: request.dismisses === null ? {type: 'arc'} : {type: 'findings', findings: [request.dismisses]},
+        reason: 'owner-request', summary: request.summary,
+        recommendation: `Evidence: ${request.evidence.join('; ')}. ${dismissal}The root reviews: dismiss <finding> --counter-evidence for dismissal, apply --reason for plan changes.`,
+        evidence: [jobEvidenceRoot(ctx.runDir, job)], options: [],
+      }, parent);
     }
     const refused: LensRefusal[] = [];
     for (const f of output.findings) {

@@ -1,3 +1,4 @@
+import { nonBlank } from './validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
 // hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
@@ -936,6 +937,7 @@ export type HolisticFact =
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
+  | Readonly<{ kind: 'finding-dismissed'; id: FindingId; command: CommandId; counterEvidence: string; by: Readonly<{ role: 'root'; routingRev: RoutingRev }> }>
   | Readonly<{ kind: 'noted'; unit: UnitId; command: CommandId; brief: Sha256Hex }>
   | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
   | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
@@ -2088,6 +2090,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
   'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
+  'finding-dismissed': object((f): Fact => ({ kind: f.get('kind', literal('finding-dismissed')), id: f.get('id', findingR), command: f.get('command', cmdR), counterEvidence: f.get('counterEvidence', nonBlank), by: f.get('by', object((g) => ({ role: g.get('role', literal('root')), routingRev: g.get('routingRev', (v, p) => routingRev(v, p)) }))) })),
   noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),

@@ -45,12 +45,7 @@ import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
 //                    exists), naming its largest text files (`milestone-references-oversize`). Every such file is inlined
 //                    whole into each prompt that reads the milestone, so an oversize set parks its first paid call
 //                    `context-exceeded` (the field case: a 1.5 MB compiled bundle under a design dir, a 3.3 MB build prompt).
-//  12. vision leak (an apply only; owner ruling 2026-10-16) the vision of the apply's files rebased onto the files in force
-//                  (src/input/rebase.ts) differs from the vision in force, so the owner's vision file changed, and the
-//                  apply does not declare a vision edit (`apply --vision-edit`): `vision-leak{inForce, committed,
-//                  `.roadmap/vision.json` only in the between-arc window, so a draft committed there mid-arc never rides
-//                  along with an unrelated apply. Not one of `phase0Rows`: it reads the revision in force, which only a
-//                  running arc has.
+//  12. Retired by command-center plan §9: vision-leak and scope-references-outside.
 //  13. derived regeneration (advisory): an entry without a generator whose sources or outputs intersect live unit systems.
 //  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
 //                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
@@ -66,7 +61,7 @@ import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerLog,latestAnswers,refQuestions,unappliedOf } from '../answers.ts';
 import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
-import { type ArcId,type DebtId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
+import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
 import { type SpecM1,specForces } from '../core/records.ts';
@@ -147,7 +142,7 @@ export type Phase0Input = Readonly<{
 export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
 
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
+export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -196,7 +191,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input)];
+  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -648,7 +643,7 @@ export function visionAndObligations(input: Phase0Input): Readonly<{ vision: Vis
 }
 
 // ---------------------------------------------------------------------------------------------------
-// 12. The vision leak (an apply only)
+// 12. System and proof advisories (command-center plan §9)
 
 function systemOverlap(input: Phase0Input): readonly Phase0Advisory[] {
   const units = input.plan.units.filter((u) => u.cut === undefined);
@@ -668,5 +663,25 @@ function derivedUnregenerated(input: Phase0Input): readonly Phase0Advisory[] {
     const systems = systemsForPatterns(map, [...d.sources, ...d.outputs]);
     const units = input.plan.units.filter((u) => isLive(input.plan, u) && !input.settled.has(u.id) && u.systems.some((s) => systems.includes(s))).map((u) => u.id).sort();
     return units.length === 0 ? [] : [{ kind: 'derived-unregenerated' as const, outputs: d.outputs, units }];
+  });
+}
+
+/** Read-only proof smells, never verdicts: existing future-test files may already pass; multi-unit delivery needs a spanning lane. */
+function proofAdvisories(input: Phase0Input): readonly Phase0Advisory[] {
+  const obligations = visionAndObligations(input).obligations;
+  if (obligations === null) return [];
+  const paths = new Set(git(input.repo, ['ls-tree', '-r', '-z', '--name-only', referenceCommit(input.repo, input.plan)]).split('\0'));
+  return obligations.obligations.flatMap((o): Phase0Advisory[] => {
+    if (o.state.type !== 'active' || isExempt(o) || o.witness === null) return [];
+    const lane = obligations.lanes.find((l) => l.id === o.witness!.lane);
+    if (lane === undefined || lane.witnessClass === 'external') return [];
+    const out: Phase0Advisory[] = [];
+    const files = o.witness.files ?? [];
+    if (o.activation === 'future' && files.length > 0 && files.every((f) => paths.has(f))) out.push({kind: 'vacuous-future-witness', obligation: o.id, files});
+    const units = input.plan.units.filter((u) => o.deliveredBy.includes(u.id) && u.cut === undefined);
+    const systems = [...new Set(units.flatMap((u) => u.systems))];
+    const spans = (lane.cadence === 'candidate' || lane.cadence === 'batch') && (lane.systems === undefined || systems.every((s) => lane.systems!.includes(s)));
+    if (units.length > 1 && !spans) out.push({kind: 'spanning-proof', obligation: o.id, lane: lane.id, units: units.map((u) => u.id)});
+    return out;
   });
 }

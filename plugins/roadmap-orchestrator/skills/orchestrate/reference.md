@@ -33,6 +33,7 @@ Exit codes: 0 success, 2 CLI/argument error, 75 live host contention, 78 refused
 | `roadmap run-only --clear [--repo <path> --arc <arc>]` | Remove that restriction and close its applicable subject notices. |
 | `roadmap reverse <D-n> [--repo <path> --arc <arc>]` | Construct a compensating revision from a recorded departure's preimage; normal change validation still applies. |
 | `roadmap steer <unit> --brief <file> --budget <min> [--class efficient|frontier|summit] [--resume] [--repo <path> --arc <arc>]` | Steer any unfinished unit, cancelling/quiescing active work first. Save pre-steer state, keep the brief and run one editing round, lanes and gate. Without resume it parks for root review even if green; with resume a green pass proceeds. Class changes its build seat through a routing revision. |
+| `roadmap dismiss <finding> --counter-evidence <line> [--repo <path> --arc <arc>]` | Root dismissal of an active F-n finding, including P1, with required non-empty counter-evidence. Unknown or settled findings refuse. |
 | `roadmap note <unit> --brief <file> [--repo <path> --arc <arc>]` | Keep the brief as a note for the next build round; no cancellation. |
 | `roadmap witness <obligation> --result pass|fail --evidence <file> [--repo <path> --arc <arc>]` | Root attestation for an active external-class witness. Evidence is a regular file or an HTTP(S) URL. File bytes are hashed at submission and kept. |
 | `roadmap merge-in <unit> [--repo <path> --arc <arc>]` | Bring the integration tip into this unit through the executor. |
@@ -121,6 +122,8 @@ An obligation carries id/rev/statement/serves, anchor (`rule:{id,textSha256}` or
 
 Census gives each active rule one state: obligation with id, out-of-slice, untestable or prod-only. A split family is represented by its parent. The Phase-0 record contains structural/fact-currency curation, reversible semantic corpus divergences, ranked P-n questions with exact answers, dispositions for every open baseline debt item, and slice advances/why. No runtime fact should be hand-authored to simulate a review or witness.
 
+Phase 0 refuses schema/plan-invalid, uncommitted inputs, invalid chains (with corpus drift checked against the supplied baseline), dropped obligations, missing lane cwd and missing spec intent/nonGoals. Advisory rows include system-overlap, milestone-unit-before-design, vacuous-future-witness and spanning-proof. Existing future witness files indicate possible vacuity; the baseline run still determines whether the witness already passes. Multi-unit delivery advises unless its candidate/batch lane covers every delivering system (an undeclared lane systems list spans the whole tree). These rows never change the exit code. Command-center plan §9 retired vision-leak and scope-references-outside.
+
 ### Resources, environments and derived output
 
 Tool commands are `{argv,cwd,env}`. Resource declarations have name, probe, teardown and optional pool size. Probe exits: 0 free, 10 owned label, 11 foreign/unlabelled; others are faults. Pool slots bind `RESOURCE_INSTANCE_<NAME>`. Code reserves atomically with CPU before work and tears down before release; leftovers block their resource. Environments have probe and optional up/down/idleMinutes as a group, plus resources they power. Declare identity, lifecycle and labeling correctly before start. New spike resources in a later apply produce a refusal and owner request.
@@ -129,7 +132,7 @@ Derived entries hold sources, outputs and optional regenerate command. The lanes
 
 ## Roles and review
 
-The only recorded roles are `build`, `verifier`, `packReview`, `experienceVerdict`, `campaignAudit`. Verifier modes are pre-build, gate, diagnosis; experience modes walk and compare share a role. Routing layers name classes per role seat. Build seats: low/med/high; verifier adds escalation; arc roles have arc. Classes are efficient/frontier/summit and judgment-only economy. Model ids belong only in config bindings, never the skill or plan's seat values.
+The routed backend roles are `build`, `verifier`, `packReview`, `experienceVerdict`, `campaignAudit`. Verifier modes are pre-build, gate, diagnosis; experience modes walk and compare share a role. Routing layers name classes per role seat. Build seats: low/med/high; verifier adds escalation; arc roles have arc. Classes are efficient/frontier/summit and judgment-only economy. Model ids belong only in config bindings, never the skill or plan's seat values.
 
 Profiles are default and claude-only. Default uses Codex for eligible low/med builds, except M2 and design units; M1 and capture-only units remain eligible. M4 diagnosis falls back to Claude for the remaining builds. Claude builds have a frontier advisor. Judgments stay on Claude. High-risk builds use frontier. A mid-arc profile change is an ordinary routing apply with effective routing revisions retained in historical records.
 
@@ -137,7 +140,7 @@ M1 detects persistent/redacts traits at dispatch and actual reach/touches at gat
 
 Build output includes summary, blockers, experiments, grounding `{specWrong,touches}`, top-level `tooBig`, notes and final. Structured decisions are captured from `decisions.json`, not a build-output field. Verifier output uses the gate schema (decision/reasons/directives/findings/standing and certification details); diagnosis translates findings/reasons into a note. Settled findings cannot be re-raised without new evidence. Blocking findings need evidence. The defect enum classifies; it is not a mandatory reason for refusal. Gates review reach against intent/nonGoals; out-of-system paths alone are not a refusal.
 
-Milestone experience verdict runs bring-up and journeys, classifies breaks vs deviations, and proposes polish units. Its comparison judges before/after changes. Breaks hold downstream work; bounded rounds eventually need the root. Campaign audit is one fresh whole-range judgment of invariants/vacuity/interactions/doc drift at milestone/request/final boundaries. Large diffs use bounded attachments and durable partial coverage. Requests go to the root; findings do not mutate obligations or inputs. Wire finding categories and coverage still carry `lens` names for classification, not independent scheduled seats.
+Milestone experience verdict runs bring-up and journeys, classifies breaks vs deviations, and proposes polish units. Its comparison judges before/after changes. Breaks hold downstream work; bounded rounds eventually need the root. Campaign audit is one fresh whole-range judgment of invariants/vacuity/interactions/doc drift at milestone/request/final boundaries. Large diffs use bounded attachments and durable partial coverage. Requests go to the root; findings do not mutate obligations or inputs. A dismissal request carries dismisses:F-n and non-empty counterEvidence; it creates a finding-subject owner-request, never a dismissal fact. The root assesses it and invokes dismiss. Wire finding categories and coverage still carry `lens` names for classification, not independent scheduled seats.
 
 ## Files and authority
 
@@ -223,11 +226,11 @@ Prefer measured failure patterns over habitual polling.
 - executor change: report stalled progress with the lane evidence and last activity time.
 ```
 
-The fixture checker currently recognizes the established control/apply/steer actions but lacks note/witness action labels.
+The checker recognizes note, witness, dismiss, sweep, resolve-edge, run-only and the four demo actions alongside the other current controls; the retired rule label is refused.
 Keep actual intervention evidence; report that checker limitation when grading those new actions.
 
 ## Chaining
 
 Before chaining, read chain status. A normal next plan names `chain:{previousArc,previousHead}`; the previous arc must be complete and its verified ref/head must match. The baseline is the previous head or permitted single-parent between-arc commit. Foreign-baseline first arcs instead name previousHead at the plan top level; no preceding schema-2 ref is required. Never combine the two forms. Keep future planning detail out of the always-loaded skill.
 
-At completion let final witnesses/audit, batch lanes, close-out documents and snapshots settle. Completion can be active or sealed. P1 needs repair or code-owned not-reproduced dismissal; there is no root finding-disposition CLI/apply field. Close-out can bank substantive remaining P2 debt and release eligible lower findings. Prepare the stacked PR, present the canonical brief/demo/rough edges, and stop or choose another slice within the owner's bound.
+At completion let final witnesses/audit, batch lanes, close-out documents and snapshots settle. Completion can be active or sealed. P1 needs repair, code-owned not-reproduced dismissal, or root `dismiss F-n --counter-evidence "<line>"`. Dismissal is a durable `finding-dismissed` fact with root role/routingRev, folded as ruled/dismissed. It stops finding gates and status blockers and suppresses the same key on unchanged cited blobs. A fresh command against a closed finding refuses; replay of the same command is idempotent. Finding-subject requests close when all their named findings settle; unrelated arc items remain open. Close-out can bank substantive remaining P2 debt and release eligible lower findings. Prepare the stacked PR, present the canonical brief/demo/rough edges, and stop or choose another slice within the owner's bound.

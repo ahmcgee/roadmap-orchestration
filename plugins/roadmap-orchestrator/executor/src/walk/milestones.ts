@@ -246,7 +246,7 @@ export function walkItemsDue(view: JournalView, plan: PlanM1, repairs: readonly 
       out.set(w.job, {
         job: w.job,
         content: {
-          blocking: true, subject: { type: 'arc' }, reason: 'finding-p1-escalated',
+          blocking: true, subject: { type: 'findings', findings: unowned }, reason: 'finding-p1-escalated',
           summary: `Milestone ${m.id}'s walk ${w.job} found ${unowned.join(', ')} (P1, it breaks a journey or a floor), and no unit has owned ${unowned.length > 1 ? 'them' : 'it'} for more than 6 h. `
             + `Milestone ${m.id}'s node stays unpassed, so every unit that descends from it waits.`,
           recommendation: `Admit a repair with \`roadmap apply\` (with concrete counter-evidence for any dismissal), or rule the finding; read the walk's evidence under evidence/jobs/${w.job}/.`,
@@ -275,7 +275,7 @@ export function walkItemsDue(view: JournalView, plan: PlanM1, repairs: readonly 
     out.set(last.job, {
       job: last.job,
       content: {
-        blocking: true, subject: { type: 'arc' }, reason: 'finding-p1-escalated',
+        blocking: true, subject: p1s.length > 0 ? { type: 'findings', findings: p1s } : { type: 'arc' }, reason: 'finding-p1-escalated',
         summary: `Milestone ${m.id}'s walks are over (round ${last.round} of ${walkRoundsOf(plan)}, its last ${last.job}) and its node never passed`
           + `${p1s.length > 0 ? `: ${p1s.join(', ')} still break${p1s.length > 1 ? '' : 's'} it` : ''}. Every unit that descends from ${m.id} waits.`,
         recommendation: `Decide how ${m.id} passes: repair what breaks it and raise limits.walkRounds, or change the milestone with \`roadmap apply\`; then acknowledge this item.`,

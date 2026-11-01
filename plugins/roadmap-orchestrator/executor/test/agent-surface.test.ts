@@ -233,6 +233,7 @@ test('surface.campaign-schema: only request ops, and dismissals require counter-
   assert.throws(() => validateCampaignAuditOutput({...base, requests: [{op: 'cut', unit: 'u1'}]}));
   const request = {op: 'request', summary: 'Reconsider F-1', evidence: ['test/mul.js:1'], dismisses: 'F-1', counterEvidence: null};
   assert.throws(() => validateCampaignAuditOutput({...base, requests: [request]}), /counter-evidence/);
+  for (const counterEvidence of ['', '  ']) assert.throws(() => validateCampaignAuditOutput({...base, requests: [{...request, counterEvidence}]}));
   assert.equal(validateCampaignAuditOutput({...base, requests: [{...request, counterEvidence: 'Restart experiment retained the committed write.'}]}).requests.length, 1);
 });
 
@@ -352,4 +353,34 @@ test('surface.fix-round: a gate revision delivers findings, experiments and live
     assert.equal(cap.certificationAllowance, 3);
   } finally {runtime.journal.close();}
 
+});
+
+
+test('surface.campaign-dismissal: request reaches the root without changing its finding', {timeout: 120_000}, async () => {
+  const { openFinding } = await import('../src/holistic/findings.ts');
+  const { findingId, jobId } = await import('../src/core/ids.ts');
+  const step = lensStep('audit-1', 'invariants');
+  const d = walkArc({steps: [step]});
+  const r = contextFor(d);
+  const {ctx, w} = walkContext(r);
+  const tick = setInterval(() => w.arbiter.wake(), 50);
+  try {
+    openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: null, visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: false});
+    // Replace the scripted audit answer with the current campaign request wire shape.
+    const scenario = JSON.parse(readFileSync(d.scenarioPath, 'utf8'));
+    const emit = scenario.steps[0].acts.find((a: {type: string}) => a.type === 'emit');
+    emit.value.requests = [{op: 'request', summary: 'Dismiss F-1', evidence: ['src/mul.js:1'], dismisses: 'F-1', counterEvidence: 'Restart retains the committed write'}];
+    writeFileSync(d.scenarioPath, JSON.stringify(scenario));
+    r.journal.fact({kind: 'audit-requested', command: (await import('../src/core/ids.ts')).commandId('cmd-1111111111111111')});
+    const before = r.journal.view.planApplied()!.rev;
+    assert.equal((await runAudit({...ctx, clock: () => 0})).kind, 'ended');
+    assert.equal(r.journal.view.holistic().findings[0]?.state, 'open');
+    assert.equal(r.journal.view.planApplied()!.rev, before);
+    const request = r.journal.view.needsUser().map((n) => readNeedsUser(r.ctx.runDir, n.id)).find((n) => n?.summary === 'Dismiss F-1');
+    assert.deepEqual(request?.subject, {type: 'findings', findings: ['F-1']});
+    assert.match(request?.recommendation ?? '', /Restart retains the committed write/);
+    const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 'Restart retains the committed write'});
+    assert.equal((await applyCommand(w.commands, cmd)).kind, 'applied');
+    assert.equal(r.journal.view.ackOf(request!.id)?.command, cmd.id);
+  } finally {clearInterval(tick); r.journal.close();}
 });

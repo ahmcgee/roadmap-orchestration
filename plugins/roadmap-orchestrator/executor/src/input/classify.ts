@@ -1341,6 +1341,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
     switch (body.type) {
       case 'resume':
         return body.target.type === 'all' ? ARC : body.target.type === 'unit' ? unitsScope([body.target.unit]) : NONE;
+      case 'dismiss':
       case 'note':
       case 'sweep':
       case 'resolve-edge':

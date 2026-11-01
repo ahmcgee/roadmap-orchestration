@@ -101,7 +101,7 @@ describe('phase0 check', () => {
 
   it('phase0.slice-candidates: an active world clause only future obligations serve is a candidate (R15)', T, async () => {
     const a = await corpusArc({ activation: 'future' });
-    assert.deepEqual(await check(a), { rows: [], sliceCandidates: ['V-1'], advisories: [] });
+    assert.deepEqual(await check(a), { rows: [], sliceCandidates: ['V-1'], advisories: [{kind: 'vacuous-future-witness', obligation: 'I-1', files: ['test/berths.test.ts']}] });
   });
 
   it('phase0.contract-overlaps-corpus-direct: a plan contract that is a pinned corpus file', T, async () => {

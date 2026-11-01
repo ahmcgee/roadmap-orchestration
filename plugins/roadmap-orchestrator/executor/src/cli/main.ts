@@ -118,6 +118,8 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     }
     case 'reverse':
       return submit(command.run, hostDir, { type: 'reverse', divergence: command.divergence });
+    case 'dismiss':
+      return submit(command.run, hostDir, { type: 'dismiss', finding: command.finding, counterEvidence: command.counterEvidence });
     case 'note':
       return submit(command.run, hostDir, { type: 'note', unit: command.unit, brief: hashedFile('note', command.brief) });
     case 'steer':

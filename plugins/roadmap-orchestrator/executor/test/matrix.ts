@@ -70,6 +70,7 @@ export const GC = 'roadmap gc (M3: verify all → raw evidence → run dir renam
 export const PROBE_JOB = 'probe job (M2: smoke spawn → probe fact)';
 export const HOST_TAKEOVER = 'host takeover';
 export const NEEDSUSER_RAISE = 'needsuser.raise';
+export const DISMISS = 'command.apply: dismiss a finding with root counter-evidence';
 export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
@@ -737,6 +738,17 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the final file hashes to the intent: done raised, reconciled, no second write',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append); nothing follows a raise inside the op' },
+    },
+  },
+  {
+    row: DISMISS,
+    test: 'test/dismiss.test.ts',
+    cells: {
+      B1: {status: 'excluded', why: EXCLUDED_B1},
+      B2: {status: 'crash', labels: ['command.apply.before-effect'], recovery: 'recovery writes one dismissal fact and closes only its settled finding subjects'},
+      B3: {status: 'excluded', why: 'no external operation: the effect is one durable journal fact'},
+      B4: {status: 'crash', labels: ['dismiss.after-fact', 'command.apply.after-effect', 'command.apply.after-receipt'], recovery: 'the fact is the replay marker; recovery writes no second dismissal and completes subject closure and receipt once'},
+      B5: {status: 'excluded', why: 'the done closes the op; redelivery returns the same receipt'},
     },
   },
   {

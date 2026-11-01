@@ -65,7 +65,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    census and Phase-0 record. Every unit names systems; every spec states intent and non-goals. Existing behavior is
    must-hold, future behavior names its delivering units. Milestones define usable end-to-end experiences with
    design references, bring-up, journeys and selected integration lanes. Phase 0 checks typed inputs, committed
-   target bytes, proof reachability and readiness; overlaps and other advisory rows inform judgment.
+   target bytes, proof reachability and readiness; system overlap, possible future-witness vacuity, spanning proof and design ordering advise judgment.
 2. **Start and review.** Startup validates the pack, claims the host and smokes its routed backends. A fresh pack
    review checks it against the target and census. The architect adjudicates blocking findings. The supervisor
    restarts crashed executors; runners keep workloads and terminal evidence durable across recovery.
@@ -83,13 +83,14 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    role walks its journeys and judges polish comparisons. Breaks hold downstream work; deviations can be repaired
    alongside it. Fresh whole-range campaign audits run at milestones, on request and at the final boundary, judging
    invariants, vacuity, interactions and document drift together. Audits report findings and root requests; the
-   architect changes the plan and alone authorizes obligation dispositions.
+   architect changes the plan and alone authorizes obligation dispositions. Audit dismissal requests await the root;
+   `dismiss F-n --counter-evidence "<line>"` records its evidence-backed decision, including for P1 findings.
 6. **Supervise from the command center.** The architect watches actionable events and reads `status --summary` for
    progress, spend versus expectations, milestone verdicts, caught counts and waste. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Successful subject
-   actions close their notices; ack is only for offered options. External witnesses are explicit root attestations
+   actions close their notices; dismissal closes settled finding requests and suppresses the same finding on unchanged code. Ack is only for offered options. External witnesses are explicit root attestations
    with head-bound file/URL evidence. No output matching substitutes for proof.
 7. **Close out and check in.** Final audit, witnesses, batch lanes, document publication and snapshots settle before
    completion. The architect prepares the stacked PR, presents `brief` and the demo/rough edges, then acknowledges

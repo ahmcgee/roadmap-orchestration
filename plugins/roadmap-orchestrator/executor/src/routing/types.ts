@@ -29,7 +29,7 @@ export type Triple =
   | { readonly backend: 'claude'; readonly model: ClaudeModelId; readonly effort: ClaudeEffort }
   | { readonly backend: 'codex'; readonly model: CodexModelId; readonly effort: CodexEffort };
 
-/** The only actors selectable by routing and recordable in schema 2. */
+/** Backend actors selectable by routing in schema 2. Root command decisions record role: root separately. */
 export const ROLES = ['build', 'verifier', 'packReview', 'experienceVerdict', 'campaignAudit'] as const;
 export type Role = (typeof ROLES)[number];
 export const UNIT_ROLES = ['build', 'verifier'] as const satisfies readonly Role[];

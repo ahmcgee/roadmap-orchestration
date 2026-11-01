@@ -1,3 +1,4 @@
+import { nonBlank } from '../core/validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
 // The holistic layer's records (M3, frozen in step 0a; SCHEMAS.md "M3: the holistic layer"): the vision, the
 // obligations file, witness records, ruling sidecars, findings and divergences, and the frozen signatures the
@@ -7,7 +8,7 @@ import { type SystemName,systemName } from '../core/ids.ts';
 // observations, the transition table in table.ts), B3 (findings), B5 (audits, coverage), B6 (checkpoint, bundles,
 // divergences).
 import {
-type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,
+type CommandId,commandId,type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,
 type MilestoneId,
 type ObligationId,
 
@@ -638,6 +639,7 @@ export type FindingSource =
 export type MutantRef = Readonly<{ patchSha256: Sha256Hex; lane: LaneId }>;
 /** A root ruling, mutant reproduction, or close-out disposition that ruled a finding. */
 export type FindingRuledBy =
+  | Readonly<{ type: 'root'; command: CommandId; counterEvidence: string; role: 'root'; routingRev: RoutingRev }>
   | Readonly<{ type: 'ruling'; ruling: RulingId }>
   | Readonly<{ type: 'code'; reason: 'not-reproduced' | 'close-out' }>;
 /**
@@ -687,7 +689,8 @@ export const findingTo: Read<FindingTo> = tagged('state', {
     const out = {
       state: f.get('state', literal('ruled')),
       disposition: f.get('disposition', oneOf(FINDING_DISPOSITIONS)),
-      by: f.get('by', tagged<'ruling' | 'code', FindingRuledBy>('type', {
+      by: f.get('by', tagged<'ruling' | 'code' | 'root', FindingRuledBy>('type', {
+        root: object((g) => ({ type: g.get('type', literal('root')), command: g.get('command', (v, p) => commandId(v, p)), counterEvidence: g.get('counterEvidence', nonBlank), role: g.get('role', literal('root')), routingRev: g.get('routingRev', (v, p) => routingRev(v, p)) })),
         ruling: object((g) => ({ type: g.get('type', literal('ruling')), ruling: g.get('ruling', rid) })),
         code: object((g) => ({ type: g.get('type', literal('code')), reason: g.get('reason', oneOf(['not-reproduced', 'close-out'] as const)) })),
       })),

@@ -301,7 +301,7 @@ export function findingItemsDue(view: JournalView, now: Date): readonly FindingI
       parent: { type: 'stage', unit, stage: d.stage, attempt: d.attempt },
       reason: 'finding-p1-escalated',
       content: {
-        blocking: true, subject: { type: 'arc' }, reason: 'finding-p1-escalated',
+        blocking: true, subject: { type: 'findings', findings: ids }, reason: 'finding-p1-escalated',
         summary: `P1 finding${ids.length > 1 ? 's' : ''} ${ids.join(', ')} ${ids.length > 1 ? 'are' : 'is'} owned by unit ${unit}, parked at ${d.stage} since ${u.park.at}, more than 6 h. `
           + 'A P1 blocks every merge that selects its obligation until its repair publishes.',
         recommendation: `Unblock ${unit} (read its park item and \`roadmap status\`), or re-plan the repair; the finding stays open until a repair publishes or it is ruled.`,
@@ -323,7 +323,7 @@ export function findingItemsDue(view: JournalView, now: Date): readonly FindingI
         parent: { type: 'job', job },
         reason: 'new-finding-draining',
         content: {
-          blocking: true, subject: { type: 'arc' }, reason: 'new-finding-draining',
+          blocking: true, subject: { type: 'findings', findings: ids }, reason: 'new-finding-draining',
           summary: `${job} opened ${ids.join(', ')} (P1 or P2) while the arc is draining (close-admissions ${draining.command}): no new unit is admitted to repair ${ids.length > 1 ? 'them' : 'it'}.`,
           recommendation: 'Decide: admit a repair with `roadmap apply` (an architect admit reopens admissions), or rule the finding, then acknowledge this item.',
           options: [], evidence: [],

@@ -173,12 +173,14 @@ const entry = (n: number, lever: string, over: Partial<Record<string, string>> =
 test('evals-m4a.operator-log-metric: the log counts well-formed entries by lever, lists malformed ones, and a missing log is zero', () => {
   const good = parseOperatorLog(['# Skill feedback', '', 'free text is ignored', '', entry(1, 'apply'), entry(2, 'pause'), entry(3, 'apply'), entry(4, 'inputs export')].join('\n'));
   assert.deepEqual({ n: good.n, byLever: good.byLever, malformed: good.malformed }, { n: 4, byLever: { apply: 2, pause: 1, 'inputs export': 1 }, malformed: [] });
+  assert.equal(parseOperatorLog(entry(1, 'rule')).n, 0, 'retired ruling command is refused');
+  for (const lever of ['note', 'witness', 'dismiss']) assert.equal(parseOperatorLog(entry(1, lever)).n, 1);
   assert.ok(LEVERS.every((x) => parseOperatorLog(entry(1, x)).n === 1), 'every lever of the closed list parses');
 
   const bad = parseOperatorLog([
     entry(1, 'apply'),
     entry(2, 'patch-the-executor'),
-    entry(3, 'rule', { evidence: '' }),
+    entry(3, 'note', { evidence: '' }),
     '## OP-four sometime arc=a lever=rule\n- symptom: x',
     entry(1, 'stop'),
     entry(6, 'gc').replace('- outcome: it moved\n', ''),

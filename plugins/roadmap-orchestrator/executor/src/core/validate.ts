@@ -71,6 +71,13 @@ export const text: Read<string> = (value, path) => {
   return value;
 };
 
+/** Non-whitespace evidence or authorization supplied by the root. */
+export const nonBlank: Read<string> = (value, path) => {
+  const out = str(value, path);
+  if (out.trim() === '') throw new SchemaError(path, 'a non-empty evidence line', value);
+  return out;
+};
+
 export const bool: Read<boolean> = (value, path) => {
   if (typeof value !== 'boolean') throw new SchemaError(path, 'a boolean', value);
   return value;

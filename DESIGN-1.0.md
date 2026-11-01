@@ -101,7 +101,7 @@ admission backoff. Starvation handling remains code, independent of any agent op
 Every unit requires nonempty known systems. SystemsMap declares path/test membership, shared dependents, contract
 consumers and dependency relationships; optional persistent/redacts traits trigger review methods. Systems describe
 responsibility and impact, not exclusive write rights. Paths outside unit systems become neutral gate reach input.
-Phase 0 reports overlaps as advisories. A central protectedPaths definition guards roadmap and same-repo pinned corpus
+Phase 0 reports overlaps as advisories. It also advises possible future-witness vacuity when all declared witness files already exist, and spanning proof when multi-unit delivery lacks a candidate/batch lane covering its systems. These are read-only smells, never admission holds; baseline execution determines actual vacuity. Command-center plan §9 removes vision-leak and scope-references-outside. A central protectedPaths definition guards roadmap and same-repo pinned corpus
 files during salvage, transient validation and recovery. Evidence patterns cannot hide protected paths or tracked files
 of a unit's systems. Unmapped paths select checks conservatively.
 
@@ -174,11 +174,15 @@ chunks, kept inputs, partial coverage and abandoned-job backoff make large-range
 and finding classifications retain lens names; these do not select multiple seats or configurable rolling audits.
 
 Findings have stable identity, severity P1/P2/P3, evidence and optional obligation/vision attribution. Vacuity evidence
-uses a reproduced mutant where required. P1 blocks relevant publication and needs repair or a code-owned not-reproduced dismissal;
-only the root may disposition obligations. Root repair units name the finding/obligation they repair. A repair publication
-resolves its owned finding. Dismissal suppression remains tied to cited evidence identity. There is currently no root finding-disposition command or
-apply input; the proposed evidence-backed root dismissal channel did not land. Root can admit repairs, while reproduction
-can dismiss a finding code proves not reproduced. A false-positive outside that path requires escalation.
+uses a reproduced mutant where required. P1 blocks relevant publication until repair or dismissal. Only the root may
+disposition obligations. Root repair units name the finding/obligation they repair; repair publication resolves ownership.
+`dismiss F-n --counter-evidence "<line>"` dismisses an active finding, including P1, with non-empty counter-evidence.
+A `finding-dismissed` fact records command id, evidence and the root's `{role,routingRev}`; the fold moves it to
+ruled/dismissed. Unknown and settled findings refuse; replay of the same command resumes closure/receipt without a
+second fact. Finding-subject items close only when every named finding settles; unrelated arc items stay open.
+Dismissal suppression uses existing settled-finding refusal: the same key cannot reopen unless a cited blob changes.
+Campaign requests with dismisses/counterEvidence are surfaced to the root, never applied automatically. Reproduction
+can also dismiss a finding code proves not reproduced.
 Close-out may bank substantive remaining P2 debt and release eligible lower findings, with durable facts and explicit
 provenance. Gate notes also bank debt. Neither debt nor a note substitutes for a required witness.
 
