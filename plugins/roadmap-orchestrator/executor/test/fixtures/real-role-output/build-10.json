@@ -1,0 +1,40 @@
+{
+  "summary": "Added src/settings.js (DEFAULT_SETTINGS), src/window.js (holdEnd, holdEndWords, windowWords) and test/window.test.js with the T-5 and T-21 witnesses plus custom-window and time-zone tests (London, Auckland, Kiritimati). The tests pass under TZ=Pacific/Auckland and the witness-check passes. Changes are uncommitted.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "full test suite in Pacific/Auckland",
+      "argv": [
+        "node",
+        "--test",
+        "test/*.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "witness-check",
+      "argv": [
+        "roadmap",
+        "witness-check",
+        "--lane-file",
+        "witness.json"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/settings.js",
+      "src/window.js",
+      "test/window.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "holdEnd takes the window's end day to be the last entry of days and finds the first such day whose `to` instant is strictly after now. A window ending exactly at `now` has ended.",
+    "Time words: on the hour uses words (midnight, noon, 'six'); other times use a form like '5:30pm'.",
+    "Clock-change tests set process.env.TZ at run time. London and Kiritimati only run in the full run; the witness lane's own TZ is Auckland."
+  ],
+  "final": true
+}

@@ -1,0 +1,99 @@
+{
+  "standing": [
+    {
+      "id": "m1-fixture-15ded3125433/136#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "test/page-id.test.js:18 loops over 0, -1, 1.5, NaN, Infinity, undefined and '3', and asserts RangeError specifically for each.",
+        "test/page-id.test.js:7 covers the boundary success at n=1 (pageId('Café', 1) is 'caf-1').",
+        "Mutation in a temp copy: the coercing validator `n % 1 !== 0 || n <= 0` fails the suite (pass 2, fail 1). So do `n < 0`, `n <= 1`, removing validation, and throwing TypeError."
+      ]
+    },
+    {
+      "id": "m1-fixture-15ded3125433/136#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "src/page-id.js:1 imports slugify from ./slug.js, and src/page-id.js:8 calls it. Read at gate.",
+        "test/page-id.test.js:7-9 pins 'Café' to 'caf-1', 'a_b' to 'a-b-1' and '  --a -_- b!  ' to 'a-b-7'.",
+        "Mutation in a temp copy: a local `toLowerCase().replace(/ /g,'-')` slugify fails the suite (pass 1, fail 2).",
+        "test/page-id.test.js:13-14 covers both '!!!' and '' falling back to 'page'."
+      ]
+    },
+    {
+      "id": "m1-fixture-15ded3125433/136#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "src/page-id.js:5 uses Number.isInteger, the conforming reading of the contract's 'positive integer'. The builder did not widen behaviour, as the item instructed.",
+        "node /redacted/path against the real src/page-id.js: \"a\" 1e+21 number => a-1e+21. The gap remains, and closing it needs a contract amendment by the root, so it is carried below as a note."
+      ]
+    }
+  ],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        ".roadmap/contracts/one.md:14",
+        ".roadmap/contracts/one.md:17",
+        "src/page-id.js:5",
+        "src/page-id.js:8"
+      ],
+      "severity": "note",
+      "path": "src/page-id.js",
+      "text": "The spec gap from pre-build standing item m1-fixture-15ded3125433/136#1:2 remains. pageId('a', 1e21) returns 'a-1e+21', because Number.isInteger accepts it and template formatting uses exponent notation. This conforms to the contract as written, which says only 'positive integer', so it does not block this unit. If ids must stay decimal-only, the root needs to amend the contract, for example to require Number.isSafeInteger.",
+      "contractRef": ".roadmap/contracts/one.md",
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "\"a\" 1e+21 number => a-1e+21"
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "src/page-id.js",
+        "line": 5
+      }
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "B1 met: src/page-id.js:1 imports slugify from ./slug.js and returns `${slugify(title) || 'page'}-${n}`. A probe of the real module and the mutation test both confirm this; a local slugify fails the suite.",
+    "B2 met: pageId('!!!', 3) and pageId('', 3) both return 'page-3' when probed. Removing the fallback fails the suite.",
+    "B3 met: 0, -0, -1, 1.5, NaN, Infinity, undefined, '3', null, 3n, a Symbol and a boxed Number all throw RangeError when probed. The error message uses String(n), so a Symbol does not cause a TypeError.",
+    "B4 met: test/page-id.test.js covers B1, B2 and B3. The page-id lane passed, and I reran it locally with 3 of 3 passing. All seven mutations (coercing validator, n<0, n<=1, no validation, TypeError, no fallback, local slugify) fail the suite.",
+    "C-1 and C-2 hold: the module is pure with no dependencies, and there is one test file for the module. `npm test` passes 9 of 9, and package.json declares no dependencies. The diff adds only the two expected files, so the non-goal holds.",
+    "A non-string title throws TypeError from slugify. The contract does not define this case, so it is not a defect."
+  ],
+  "premises": [
+    {
+      "claim": "slugify is exported by src/slug.js (F1), and its behaviour matches the page-id tests' expectations.",
+      "evidence": [
+        {
+          "path": "src/slug.js",
+          "line": 2
+        },
+        {
+          "path": "test/slug.test.js",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "claim": "The contract defines n only as a positive integer, with RangeError otherwise, and does not specify a safe-integer limit.",
+      "evidence": [
+        {
+          "path": ".roadmap/contracts/one.md",
+          "line": 14
+        },
+        {
+          "path": ".roadmap/contracts/one.md",
+          "line": 17
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

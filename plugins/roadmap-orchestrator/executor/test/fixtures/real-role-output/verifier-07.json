@@ -1,0 +1,153 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "public/style.css",
+      "text": "The hand lettering does not render in this environment's Chromium. h1, h2, the Reserve link and the form button all resolve to Liberation Serif, the same face as the book titles, because no font in the --letter stack is installed and the generic `cursive` also falls back. A walk or browser check run here therefore cannot see the lettering V-11 and T-29 describe, and the A4 test only proves the declaration. The builder should report the rendered face plainly in the A1/V-11 report and must not claim hand lettering was seen. Do not bundle or swap a font to fix this: the non-goals rule out a change of lettering, so that decision belongs to the root. Rendering on real phones was not checked.",
+      "contractRef": "T-29",
+      "evidence": [
+        "public/style.css:7",
+        "public/style.css:28",
+        "public/style.css:44",
+        "docs/design/page/README.md:4. The look"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (CDP CSS.getPlatformFontsForNode on the running server at /)",
+          "output": "h1 Liberation Serif\nh2 Liberation Serif\na.reserve Liberation Serif\n.slip button Liberation Serif\n.book-title Liberation Serif"
+        },
+        {
+          "command": "fc-match cursive; fc-match \"Bradley Hand\"; fc-match \"Comic Neue\"",
+          "output": "DejaVuSans.ttf: \"DejaVu Sans\" \"Book\" (all three)"
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "test/floor.test.js",
+      "text": "A3 says test/access.test.js proves the markup on every page, but floor.test.js's flowPages helper is not every page. It omits M6 (busy), both M7 variants, M8 (413), the unknown-path page, the search-results page's sibling case of an empty shelf, and a first-time confirmation reached through a real POST. The access test needs its own list that covers these, otherwise a green result says nothing about them. Existing rigs can be reused: the lock file at `${dataPath}.lock.tmp` for M6 (test/reserve.test.js:291-311), and a body over 4096 bytes for M8. M6 is slow to answer: in my run the busy response took longer than 4 seconds, so allow for that wait. Each page should also assert its expected status and title, so a redirect to `/` cannot pass by accident: /reserved/<id> redirects to the shelf when the book is not held, and fetch follows the redirect.",
+      "contractRef": "A3",
+      "evidence": [
+        "test/floor.test.js:40-54",
+        "src/server.js:14",
+        "src/server.js:129",
+        "test/reserve.test.js:291"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path /redacted/path (GET /reserved/b3 before any hold)",
+          "output": "200 /reserved/b3 {\"title\":\"The Oak Street shelf\",...\"first\":\"FORM.slip search\"} (the shelf page, not the confirmation)"
+        }
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "public/style.css",
+      "text": "W-1 can pass against a plausible wrong stylesheet if it only searches the served CSS for the custom-property values. A4 also requires that body uses the paper and ink and that h1 and h2 use --letter. These sit in separate rules, and --letter is also used by other selectors, so a whole-file match for `font-family: var(--letter)` still passes after the h2 declaration is removed. The test should extract the body, h1 and h2 rule blocks from the /style.css response and assert inside each one. Before finishing, confirm the test goes red when h2's font-family line is removed. The test name must match W-1 exactly: `T-29 the served stylesheet keeps the paper, ink, rust and hand lettering`.",
+      "contractRef": "A4",
+      "evidence": [
+        "public/style.css:12-14",
+        "public/style.css:26-28",
+        "public/style.css:43-44",
+        "public/style.css:103",
+        "public/style.css:112"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/pages.js",
+      "text": "Design section 3 asks for a labelled `<form role=\"search\">`, but the search landmark has no accessible name. The input is correctly named through its label, so A3's bound-label requirement is met. The gap is only the landmark name. If the builder treats this as part of the floor, the fix adds no visible copy: give the label an id and point aria-labelledby on the form at it.",
+      "contractRef": "A3",
+      "evidence": [
+        "src/pages.js:51",
+        "docs/design/page/README.md:3. Markup"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path /redacted/path (ariaSnapshot of /?q=le+guin)",
+          "output": "- main:\n  - search:\n    - text: Find a book by title or author\n    - textbox \"Find a book by title or author\": le guin"
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "test/access.test.js",
+      "text": "A1 and A2 have no repeating witness: the spec declares no lanes for them and the browser check is a one-time report, so a later unit can regress them silently. This matters most for settings-file, which delivers I-20 and I-21 and adds the window line to the header after this tip; the layout has no such line today and no T-25 or T-31 test exists. Although both obligations are listed here, the builder should not take on delivering them. The cheap protection is for access.test.js to also pin what can be checked without a browser: the `:focus-visible` rule's ink outline, min-height 44px on the target rules, and no `user-scalable` in the viewport meta. Keep assertions on the header loose enough for that later line. If no browser tool is available to the build, A1 must fail loud rather than be inferred from CSS. Chromium and playwright-mcp are present on this machine.",
+      "contractRef": "A1",
+      "evidence": [
+        "src/pages.js:19-22",
+        "public/style.css:74",
+        ".roadmap/invariants.md:210-229",
+        ".roadmap/config.json walkthrough.mcp.playwright",
+        "docs/design/page/README.md:Step 1"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "The spec's premises hold, and most of the floor already exists at this tip. In Chromium at 360x640, across shelf, search, M1 to M8 and the 404, there was no sideways scrolling (scrollWidth 360), no target under 44px, and no gap under 8px between neighbouring targets. Headings were H1 then H2s, with the refusal first in main.",
+    "Keyboard alone reached search and the Reserve links, and completed a reservation on the form, with a 3px solid rgb(43,38,32) focus ring. Autofocus lands on #name on M4, M6 and M7.",
+    "The palette contrast in F1 recomputes correctly: ink 14.03, soft ink 5.27, rust 6.34, rule 1.44.",
+    "The remaining work is mainly test/access.test.js, which does not exist yet, including witness W-1, plus the browser report. The findings are notes on how to make those witnesses adequate; none holds the unit."
+  ],
+  "premises": [
+    {
+      "claim": "The long URL in book b1 wraps through the inherited overflow-wrap: anywhere on body, with no sideways scroll at 360px.",
+      "evidence": [
+        {
+          "path": "public/style.css",
+          "line": 17
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "claim": "test/access.test.js does not exist at this tip, though the page system's test list in the config already names it, and npm test's glob picks it up.",
+      "evidence": [
+        {
+          "path": "package.json",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "claim": "Refusals M2 to M8 share refusalBlock, an h2 inside role=alert placed first in main.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 33
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

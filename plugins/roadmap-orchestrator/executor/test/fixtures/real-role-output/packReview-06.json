@@ -1,0 +1,192 @@
+{
+  "findings": [],
+  "dispositions": [
+    {
+      "job": "review-1",
+      "index": 2,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 3,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 4,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 5,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 6,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 7,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 8,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 9,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 10,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 11,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 12,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 13,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 14,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 15,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 16,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 17,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 18,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-2",
+      "index": 0,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-2",
+      "index": 1,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-2",
+      "index": 2,
+      "disposition": "still-open"
+    }
+  ],
+  "reasons": [
+    "The only change since review-2 is the Phase-0 record: revision 3 lists one change, of type phase0, and every spec, the plan, the obligations and the corpus pin keep their hashes as the frame.",
+    "The Phase-0 diff is one state change: P-4 moves from open to answered with \"K = 1\". That answer agrees with chain.k 1 in .roadmap/config.json and with P-4's own working assumption, and no unit rests on it, so it creates no new contradiction.",
+    "I re-read the eight specs that the earlier findings target or depend on (all but search), the corpus files, the existing tests and the seed data, and hunted again for contradictions, unbuildable units, wrong census states and bad witnesses. I found no problem that an earlier finding does not already cover, so the findings list is empty.",
+    "Every census entry is in the obligation state, and every obligation a spec declares has a rule in that state. No acceptance clause names a rule marked out-of-slice, because no rule is marked out-of-slice.",
+    "All the earlier findings aimed at specs, the plan or obligations stay still-open because those files did not change, and I confirmed the cited words still stand in them. None was withdrawn on this reading.",
+    "review-1#18 stays still-open even though P-4 is now answered. P-1, P-2 and P-3 remain open while the pinned corpus answers or overtakes them, T-34 and T-36 still appear in no curation or divergence entry, and the vision still says \"Open questions: none\".",
+    "All earlier findings are notes, so none of them holds the first admission as a blocking finding."
+  ],
+  "premises": [
+    {
+      "claim": ".roadmap/config.json sets chain.k to 1, the same value as the answer now recorded for P-4.",
+      "evidence": [
+        {
+          "path": ".roadmap/config.json",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The pinned keeper corpus already says the commands work on the file in the checkout on the box, reached over ssh, which is the matter P-1 still asks about.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "claim": "The pinned keeper corpus already says a settings change reaches the page when the server next starts, which is the matter P-3 still asks about.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "claim": "The pinned shelf corpus already has T-34 lapse an uncollected reservation, while P-2 still says the corpus gives no way to release one.",
+      "evidence": [
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "claim": "The T-2 witness matches /reserved/i against a list item whose fixture title is \"Marked Reserved Title\", so the match succeeds with the mark gone.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 14
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 42
+        }
+      ]
+    },
+    {
+      "claim": "The test that actually requires the reserved mark is the one in test/shelf.test.js, which the obligations do not list as a witness.",
+      "evidence": [
+        {
+          "path": "test/shelf.test.js",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "claim": "The floor test server always runs with SWAPSHELF_DATA set, so the default path data/shelf.json is never exercised by the T-17 witness.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 21
+        }
+      ]
+    },
+    {
+      "claim": "Seed book b2 has reservedBy \"Priya\" and no reservedUntil, and the seed file has no nextId field.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        }
+      ]
+    }
+  ]
+}

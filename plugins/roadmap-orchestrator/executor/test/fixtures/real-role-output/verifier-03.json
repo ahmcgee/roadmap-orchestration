@@ -1,0 +1,75 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "src/window.js",
+      "text": "windowWords produces the wording A3 requires (\"Saturdays and Sundays, nine to six\"). The design reference's example for the shelf page's window line is different (\"Collect Saturday and Sunday, 9am to 6pm\"). This unit is correct against its spec and makes no page changes. The unit that builds that line (T-31) will have to choose a wording, because this helper does not produce the design's example.",
+      "contractRef": null,
+      "evidence": [
+        "src/window.js:38",
+        "docs/design/page/README.md section 1, Step 1"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "src/window.js",
+        "line": 38
+      }
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "A1 met: src/settings.js exports the name, the address and the window from D1. The T-5 test asserts all of them with strict deepEqual, and it passes.",
+    "A2 met: holdEnd gives the corpus results for Thursday, Saturday morning, 17:59 on Sunday, exactly 18:00 on Sunday and later. An independent calendar-walk reference agreed on 641,025 instant and window combinations across 9 zones, including half-hour DST and midnight-transition zones, with 0 differences. A window ending exactly now rolls to the next week.",
+    "A3 met: holdEndWords takes only the end instant (a Date or a stored ISO string) and never reads a window. windowWords has no default hard-coded, and a custom window words correctly. Noon, midnight, on-the-hour and 5:30pm forms match D2/M1 in the design reference.",
+    "A4 met: in Europe/London a reservation before the 25 October 2026 change, at 01:30 BST and at 02:30 GMT all hold until 18:00 GMT that day, and exactly 18:00 rolls to 1 November. Tests set process.env.TZ, build instants with local-time constructors and pass under Pacific/Auckland. Pacific/Kiritimati gives 2026-10-25T04:00Z, which is 18:00 local there, so the zone switch does take effect.",
+    "Witnesses are adequate. Mutation smoke was inconclusive and the lane ledger is empty, so I ran hand-made mutants on holdEnd and holdEndWords, restoring the file after each. The mutants were day arithmetic in milliseconds, UTC calendar, >= at the boundary, first day instead of last, and a hard-coded hour. Each was killed by at least one test: the T-21 witness killed three, and the London clock-change and custom-window tests caught the other two. TZ=Pacific/Auckland npm test passes 15 of 15 at this head.",
+    "Non-goals respected: only src/settings.js, src/window.js and test/window.test.js changed. There is no settings-file reading, no page change and no exception logic. No imports were added, so T-15 still holds.",
+    "No standing items or builder disputes were supplied. The one finding is a non-blocking note for a later unit."
+  ],
+  "premises": [
+    {
+      "claim": "holdEnd builds candidate ends from local calendar fields, so a clock change cannot shift the local 18:00 end.",
+      "evidence": [
+        {
+          "path": "src/window.js",
+          "line": 11
+        }
+      ]
+    },
+    {
+      "claim": "holdEndWords formats only the instant it is given and takes no window argument.",
+      "evidence": [
+        {
+          "path": "src/window.js",
+          "line": 32
+        }
+      ]
+    },
+    {
+      "claim": "The default window matches D1 and T-5.",
+      "evidence": [
+        {
+          "path": "src/settings.js",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "The clock-change test sets the zone explicitly and restores it afterwards.",
+      "evidence": [
+        {
+          "path": "test/window.test.js",
+          "line": 38
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

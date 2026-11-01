@@ -1,0 +1,32 @@
+{
+  "summary": "I made no code change this round. The T-29 test still passes with this unit's production changes reverted, because it checks look rules that were already in the stylesheet before this unit. It guards them against later regression and does not exercise anything this unit added.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "access tests on current tree",
+      "argv": [
+        "node",
+        "--test",
+        "test/access.test.js"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/pages.js",
+      "public/style.css",
+      "test/access.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "The mutation smoke reverted src/pages.js and public/style.css. The only behaviour W-1 asserts is --paper, --ink, --rust, --letter, and body, h1 and h2 using them. That already existed, and this unit's changes were the search form's aria-label and the wrap rule, neither of which touches it.",
+    "The test is a regression guard. In the previous round I changed it to read the body, h1 and h2 rule blocks separately. Removing h2's font-family turned it red (5 pass, 1 fail), and I restored the line afterwards.",
+    "The fix-round instructions say to leave a test unchanged and say so when it passes without the change because the behaviour already existed. I followed that and did not add a contrived assertion.",
+    "The same applies to the other access tests that pass with the change reverted: the 44px, focus-ring, label and heading checks. Only the search-landmark aria-label and the wrap rule are new behaviour. Both are asserted in test/access.test.js, in the A3 test on every page and in the A1 wrapping test.",
+    "Hand lettering is still not visible in this environment's Chromium, which renders the --letter stack in Liberation Serif. V-11 lettering is not claimed, and the A1 and A2 browser findings from the previous round stand."
+  ],
+  "final": true
+}

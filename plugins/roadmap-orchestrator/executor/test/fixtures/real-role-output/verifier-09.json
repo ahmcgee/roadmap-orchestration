@@ -1,0 +1,164 @@
+{
+  "standing": [
+    {
+      "id": "reserve-and-keep/418#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js acquireLock and withGuard: a breaker takes the guard, re-inspects with lockIsStale, and only then unlinks; releaseLock removes the lock inside the guard only if stillHeld. This follows decision break-under-guard rather than the rename option the item offered.",
+        "test/store.test.js 'waiters starting together on one dead lock are never inside at once': 6 children released together for 8 rounds, with an exclusive marker file.",
+        "Experiment on a /tmp copy: replacing the guarded break with a plain unlink (mutant naivebreak) fails exactly that test: fail 1, pass 28."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js pidIsGone: text that is not a pid returns false, and only ESRCH counts as gone, so EPERM is alive. lockIsStale still applies the 30-second age rule.",
+        "test/store.test.js covers an empty lock, 'not a pid', pid 1 and an out-of-range pid as live. It backdates mtime by 31s with a live pid and with an empty lock. deadPid() gets its pid from an exited child.",
+        "Mutant emptystale (a pid-less lock counts as gone) fails 2 tests: the busy test and the dead-lock waiters test."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js isHeld, hasEnd and instantOf; test/store.test.js has tests for null versus absent reservedUntil, instants versus text, the exact boundary and end+1ms, unreadable ends, and a book with no new keys.",
+        "Probe /redacted/path no-offset end, '8 November', '2020-13-45T00:00:00Z' and numeric 0 all return held."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:3",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js warnOfHoldsWithoutEnd emits one console.warn per load, listing ids only, and says what to do.",
+        "Probe on the seed data printed one line: 'swapshelf: data/shelf.json: no reservedUntil on b2: held until the keeper acts. Mark collected or remove the book, or put a right date in the file.' The name Priya does not appear.",
+        "test/store.test.js 'a book held with no end warns once per load, by id, never by name' runs through a child process with a marked name and asserts empty stdout. The test after it asserts silence on a clean file."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:4",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js exports ShelfBusyError and SHELF_BUSY, and updateShelf lets change's error propagate. docs/systems/store.md 'How to change the shelf' records both shapes.",
+        "test/store.test.js covers a refusal by identity, an unexpected throw, a corrupt file, and a busy failure that neither runs change nor touches the lock, plus an async change holding the lock until it settles."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:5",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js saveShelf uses a pid+uuid temp name, handle.chmod with the existing mode, handle.sync before rename, and unlink(tmp).catch(() => {}) so cleanup cannot mask the original error.",
+        "test/store.test.js covers EISDIR (a failure after the temp file exists), twenty same-process writes, and 0600 preserved.",
+        "Experiment under ulimit -f 8: saveShelf rejected with EFBIG mid-write; the directory held only s.json, with its old content intact."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:6",
+      "disposition": "addressed",
+      "evidence": [
+        "test/store.test.js hammer test: 4 children, 15 updates each, released together, asserting every id and no strays. The helper is at test/helpers/store-child.js, outside the test/*.test.js glob (package.json:9).",
+        "W-1 keeps the exact name, writes through updateShelf in a child, reads through loadShelf and raw, and requires more than 10 generations seen.",
+        "The executor's mutation smoke was inconclusive for T-27, so I ran my own on a /tmp copy: an in-place writeFile fails the T-27 witness, and removing the lock (mutant nolock) fails the hammer test and the twenty-update test."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:7",
+      "disposition": "addressed",
+      "evidence": [
+        "git diff --stat d7229c2 500a909 -- src/pages.js src/server.js data is empty, so the file stays out of scope as asked.",
+        "isHeld treats undefined and null reservedBy as free: test 'isHeld is free with no reservedBy', and the probe's 'free book' cases return false."
+      ]
+    }
+  ],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "test/store.test.js",
+      "text": "Two active decisions are implemented correctly but have no test, so a later refactor could break them silently. Decision isHeld-name-and-unreadable says reservedBy of empty string counts as set; `if (!book?.reservedBy) return false` passes every store test. Decision at-uncomparable-warns says the warning fires whatever the book, so a caller bug shows even on a free book; moving the warning after the free-book return also passes every store test, because the warning test only uses a held book. The current code does both correctly (probe: empty-string reservedBy is held; a free book with a bad at warns once). Adding one assertion for each would close this.",
+      "evidence": [
+        "test/store.test.js 'isHeld warns when the time cannot be compared' uses only a book with reservedBy set",
+        "grep for reservedBy: '' in test/store.test.js finds nothing"
+      ],
+      "contractRef": "isHeld-name-and-unreadable; at-uncomparable-warns",
+      "experiments": [
+        {
+          "command": "python3 /redacted/path emptyfree && node --test test/store.test.js  # in a /tmp copy",
+          "output": "pass 29, fail 0"
+        },
+        {
+          "command": "python3 /redacted/path warnheldonly && node --test test/store.test.js  # in a /tmp copy",
+          "output": "pass 29, fail 0"
+        },
+        {
+          "command": "node /redacted/path",
+          "output": "empty-string reservedBy -> true warns 0; free book + bad at -> false warns 1; free book + null at -> false warns 1"
+        }
+      ],
+      "debt": {
+        "drag": "The next person to tidy isHeld gets no test failure if they change either behaviour."
+      },
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "If writing the pid fails just after the lock is created (for example on a full disk), acquireLock rejects without removing the lock or closing its handle. The caller gets a loud raw error, but the empty lock stays behind and other writers report busy until the 30-second age rule clears it. It recovers by itself and only happens when the disk is already failing, so this does not breach A4. Closing and unlinking in a catch around that write would tidy it.",
+      "evidence": [
+        "src/store.js acquireLock: handle.writeFile(String(process.pid)) has no cleanup on failure"
+      ],
+      "contractRef": "A4",
+      "experiments": [
+        {
+          "command": "bash -c \"trap '' XFSZ; ulimit -f 0; exec node /redacted/path $d/s.json\" 2>&1 | cat",
+          "output": "rejected EFBIG\n[ [ 's.json', 13 ], [ 's.json.lock.tmp', 0 ] ]"
+        }
+      ],
+      "debt": {
+        "drag": "After a disk-full failure, writers see up to 30 seconds of busy."
+      },
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "Prior directive 1 and R-8 are resolved: isHeld warns once per call on an uncomparable at (invalid Date, garbage text, null, true, {}, NaN, Infinity), keeps a dated book held, and names nobody. null no longer coerces to the epoch.",
+    "Prior directive 2 is resolved: new tests assert the console.warn call count, the wording and the absence of the name, and that a valid at stays silent. Existing assertions are kept. Mutant nowarn fails the new test.",
+    "R-9 is resolved by the strict ISO check under decision strict-iso-instants: '8 November' stays held and warns as unreadable. Mutant lax fails 3 tests.",
+    "A1 met: updateShelf loads under the lock, applies change, and saves only if change did not refuse. The T-27 witness fails against an in-place writer.",
+    "A2 met: the temp name is unique per write and in the same directory. A failed write mid-file or at rename leaves the old file whole with no stray (EFBIG experiment and EISDIR test).",
+    "A3 met: child-process hammer and twenty in-process tests pass. My own stress of 8 processes x 30 and 16 processes x 10, 3 rounds each, lost nothing, had no failures and left no files.",
+    "A4 met: dead-pid and aged locks are broken; a live lock gives ShelfBusyError with code SHELF_BUSY after 5s.",
+    "A5 met: isHeld is exported with the decided readings; on the seed data b2 is held and warns once per load, by id.",
+    "A6 met: docs/systems/store.md records the protocol, the reason for the lock and the accepted residual races.",
+    "Non-goals respected: no routes, pages, commands, dependencies or migration; only store, tests and the system note changed.",
+    "Evidence basis: the lane ledger shows no lanes ran and T-27's mutation smoke was inconclusive. I ran npm test four times at this head locally (44 pass, 0 fail each) and ran my own mutations on a /tmp copy; the witness-presence check reports none missing or failing."
+  ],
+  "premises": [
+    {
+      "claim": "The lock and guard files are covered by .gitignore's *.tmp pattern (.gitignore unchanged).",
+      "evidence": [
+        {
+          "path": ".gitignore",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "npm test's glob does not run test/helpers/store-child.js as a test (package.json unchanged).",
+      "evidence": [
+        {
+          "path": "package.json",
+          "line": 9
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

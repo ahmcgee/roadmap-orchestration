@@ -22,12 +22,30 @@ import { specBytes } from '../spec/spec.ts';
 // JSON Schema builders (strict subset: object, array, string, integer, boolean, enum, anyOf, null)
 
 type Schema = JsonValue;
-const S_IDS: Schema = {type: 'array', items: {type: 'string'}};
-const S_STR: Schema = { type: 'string' };
-const S_INT: Schema = { type: 'integer' };
+const S_TEXT: Schema = { type: 'string' };
+const S_STR: Schema = { type: 'string', pattern: '[\\s\\S]+' };
+const sInt = (minimum: number, maximum = Number.MAX_SAFE_INTEGER): Schema => ({ type: 'integer', description: `A safe integer in [${minimum}, ${maximum}], inclusive.` });
+const S_LINE = sInt(1);
+const S_EXIT: Schema = { type: 'integer', enum: Array.from({length: 256}, (_, i) => i) };
+const sPattern = (pattern: string): Schema => ({ type: 'string', pattern });
+const S_SLUG = sPattern('^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$');
+const S_ITEM_ID = sPattern('^[A-Za-z][A-Za-z0-9_.-]{0,63}$');
+const sNumbered = (prefix: string): Schema => sPattern(`^${prefix}-[1-9][0-9]{0,14}$`);
+const S_REVIEW_ID = sNumbered('R');
+// Positive regexes only: Claude's supported pattern subset has no lookaround assertions.
+const REPO_SEGMENT = '(?:[^/\\u0000.][^/\\u0000]*|\\.[^/\\u0000.][^/\\u0000]*|\\.\\.[^/\\u0000][^/\\u0000]*)';
+const S_REPO_PATH = sPattern(`^(?:\\.|${REPO_SEGMENT}(?:/${REPO_SEGMENT})*)$`);
+const S_REPO_PATTERN = sPattern(`^(?:\\.|${REPO_SEGMENT})(?:/(?:\\.|${REPO_SEGMENT})?)*$`);
+// A single segment beginning V- followed solely by digits is interpreted as a VisionClauseId.
+const NON_V_SEGMENT = REPO_SEGMENT.replace('[^/', '[^V/');
+const NON_VISION_SEGMENT = `(?:\\.|${NON_V_SEGMENT}|V(?:[^-/\\u0000][^/\\u0000]*|-(?:[0-9]*[^0-9/\\u0000][^/\\u0000]*)?)?)`;
+const S_FLOOR_SOURCE: Schema = { anyOf: [sNumbered('V'), sPattern(`^(?:${NON_VISION_SEGMENT}|${REPO_SEGMENT}/${REPO_SEGMENT}(?:/${REPO_SEGMENT})*)$`)] };
+const S_ENV_NAME = sPattern('^[A-Za-z_][A-Za-z0-9_]*$');
+const sDescribe = (schema: Schema, description: string): Schema => ({ ...schema as object, description });
+const sUnique = (schema: Schema, key = 'value'): Schema => sDescribe(schema, `Entries must have unique ${key}s.`);
 const S_BOOL: Schema = { type: 'boolean' };
 const sEnum = (values: readonly string[]): Schema => ({ type: 'string', enum: [...values] });
-const sArr = (items: Schema): Schema => ({ type: 'array', items });
+const sArr = (items: Schema, minItems = 0): Schema => ({ type: 'array', items, ...(minItems === 0 ? {} : { minItems }) });
 const sNullable = (s: Schema): Schema => ({ anyOf: [s, { type: 'null' }] });
 function sObj(properties: { readonly [key: string]: Schema }): Schema {
   return { type: 'object', additionalProperties: false, properties, required: Object.keys(properties) };
@@ -44,7 +62,7 @@ function sObj(properties: { readonly [key: string]: Schema }): Schema {
  */
 export type Premise = Readonly<{ claim: string; evidence: readonly Readonly<{ path: string; line: number }>[] }>;
 
-const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_INT })) }));
+const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_LINE })) }));
 const premise: Read<Premise> = object((f) => ({
   claim: f.get('claim', str),
   evidence: f.get('evidence', arrayOf(object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) })))),
@@ -52,18 +70,18 @@ const premise: Read<Premise> = object((f) => ({
 
 // ---------------------------------------------------------------------------------------------------
 const LANE_ITEM_FIELDS = {
-  id: S_STR,
-  argv: sArr(S_STR),
-  cwd: S_STR,
-  env: sObj({ set: sArr(sObj({ name: S_STR, value: S_STR })), pass: sArr(S_STR) }),
-  expectedExit: S_INT,
+  id: S_ITEM_ID,
+  argv: sDescribe(sArr(S_TEXT, 1), 'argv[0] must be a non-empty program name; later arguments may be empty.'),
+  cwd: S_REPO_PATH,
+  env: sObj({ set: sUnique(sArr(sObj({ name: S_ENV_NAME, value: S_TEXT })), 'name'), pass: sDescribe(sArr(S_ENV_NAME), 'Entries must be unique and must not also appear in env.set names.') }),
+  expectedExit: S_EXIT,
   cadence: sEnum(['build', 'unit']),
-  resources: sArr(S_STR),
-  evidenceGlobs: sArr(S_STR),
-  evidenceExcludes: sArr(S_STR),
+  resources: sUnique(sArr(S_SLUG)),
+  evidenceGlobs: sArr(S_REPO_PATTERN),
+  evidenceExcludes: sArr(S_REPO_PATTERN),
 } as const;
-const ACCEPTANCE_ITEM_FIELDS = { id: S_STR, clause: S_STR, failLoudIfUndelivered: S_BOOL } as const;
-const NOTE_ITEM_FIELDS = { id: S_STR, text: S_STR } as const;
+const ACCEPTANCE_ITEM_FIELDS = { id: S_ITEM_ID, clause: S_STR, failLoudIfUndelivered: S_BOOL } as const;
+const NOTE_ITEM_FIELDS = { id: S_ITEM_ID, text: S_STR } as const;
 const sStated = (fields: { readonly [key: string]: Schema }): Schema => sObj({ ...fields, state: sEnum(['active', 'struck', 'deferred']) });
 function laneFromWire(value: unknown, path: string): unknown {
   const item = new Fields(value, path);
@@ -75,18 +93,18 @@ function laneFromWire(value: unknown, path: string): unknown {
 }
 const S_FULL_SPEC = sObj({
   schema: sEnum([SPEC_SCHEMA]),
-  unit: S_STR,
-  rev: S_INT,
-  lanes: sArr(sStated(LANE_ITEM_FIELDS)),
-  acceptance: sArr(sStated(ACCEPTANCE_ITEM_FIELDS)),
+  unit: S_SLUG,
+  rev: S_LINE,
+  lanes: sDescribe(sArr(sStated(LANE_ITEM_FIELDS)), 'Item IDs must be unique across lanes, acceptance, decisions and facts.'),
+  acceptance: sArr(sStated(ACCEPTANCE_ITEM_FIELDS), 1),
   intent: S_STR,
-  nonGoals: S_IDS,
-  resources: S_IDS,
+  nonGoals: sArr(S_STR, 1),
+  resources: sUnique(sArr(S_SLUG)),
   decisions: sArr(sStated(NOTE_ITEM_FIELDS)),
   facts: sArr(sStated(NOTE_ITEM_FIELDS)),
-  cites: sObj({ contracts: S_IDS, rulings: S_IDS }),
-  obligations: S_IDS,
-  repairs: S_IDS,
+  cites: sObj({ contracts: sUnique(sArr(S_REPO_PATH)), rulings: sUnique(sArr(sPattern('^C-[0-9]+$'))) }),
+  obligations: sUnique(sArr(sNumbered('I'))),
+  repairs: sUnique(sArr(sPattern('^[FI]-[1-9][0-9]{0,14}$'))),
 });
 const fullSpec: Read<string> = (value, path) => {
   const f = new Fields(value, path);
@@ -123,11 +141,11 @@ export type BuildOutput = Readonly<{
   summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
   grounding: Grounding; tooBig: TooBig | null; notes: readonly string[]; final: true;
 }>;
-const S_FINAL: Schema = { type: 'boolean', description: 'true for the final report; false only while waiting for something you started.' };
+const S_FINAL: Schema = { type: 'boolean', description: 'true for the final report consumed by the role parser; false only for an interim turn while waiting for something you started. The final-report parser rejects false.' };
 export const BUILD_SCHEMA: Schema = sObj({
-  summary: S_STR, blockers: sArr(S_STR), experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
-  grounding: sObj({ specWrong: sNullable(S_STR), touches: sArr(S_STR) }),
-  tooBig: sNullable(sObj({ estimate: S_STR, suggestedChildren: sArr(S_STR) })), notes: sArr(S_STR), final: S_FINAL,
+  summary: S_STR, blockers: sArr(S_STR), experiments: sArr(sObj({ name: S_STR, argv: sArr(S_TEXT, 1), exit: S_EXIT })),
+  grounding: sObj({ specWrong: sNullable(S_TEXT), touches: sArr(S_TEXT) }),
+  tooBig: sNullable(sObj({ estimate: S_TEXT, suggestedChildren: sArr(S_TEXT, 1) })), notes: sArr(S_STR), final: S_FINAL,
 });
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
@@ -265,20 +283,20 @@ export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
 
 const GATE_FINDING_FIELDS = {
-  evidence: sArr(S_STR), severity: { ...sEnum(FINDING_SEVERITIES_DEV17) as object, description: 'An approve decision forbids blocking severity; use revise or escalate for blocking findings.' }, path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
-  debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable({type: 'string', pattern: '^R-[1-9][0-9]*$'}), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
+  evidence: sDescribe(sArr(S_TEXT), 'Each finding requires at least one experiment or an evidence entry containing path:line (a colon followed by digits).'), severity: { ...sEnum(FINDING_SEVERITIES_DEV17) as object, description: 'An approve decision forbids blocking severity; use revise or escalate for blocking findings.' }, path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+  debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sDescribe(sNullable(S_REVIEW_ID), 'Must name a finding in this unit ledger. A settled finding may be raised as blocking again only if its anchor file blob changed.'), hunk: sNullable(sObj({ path: S_STR, line: S_LINE })),
 } as const;
 const GATE_FIELDS = {
-  standing: sArr(sObj({id: S_STR, disposition: sEnum(['addressed', 'rebutted']), evidence: sArr(S_STR)})),
+  standing: sDescribe(sArr(sObj({id: S_TEXT, disposition: sEnum(['addressed', 'rebutted']), evidence: sArr(S_TEXT, 1)})), 'Only supplied standing-item IDs, each at most once; approval requires an evidence-backed response to every standing item.'),
   decision: sEnum(GATE_DECISIONS),
-  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Non-null only with decision escalate, solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
+  ordering: { anyOf: [sObj({ blockers: sUnique(sArr(S_SLUG, 1)) }), { type: 'null' }], description: 'Non-null only with decision escalate, solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
   findings: sArr(sObj(GATE_FINDING_FIELDS)),
   directives: { type: 'array', items: S_STR, description: 'Nonempty only with decision revise, which requires at least one directive. Must be empty for approve or escalate.' },
-  reasons: sArr(S_STR),
+  reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
 
-  clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
-  rulings: sArr(sObj({ finding: {type: 'string', pattern: '^R-[1-9][0-9]*$'}, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
+  clusters: sDescribe(sNullable(sUnique(sArr(sObj({ id: S_STR, paths: sArr(S_REPO_PATTERN, 1), review: sEnum(CLUSTER_REVIEWS) }), 1), 'id')), 'Null below the supplied large-diff threshold. Above it supply a nonempty cluster map with unique IDs covering each changed path exactly once.'),
+  rulings: sDescribe(sArr(sObj({ finding: S_REVIEW_ID, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })), 'Exactly one ruling per supplied dispute, with unique finding IDs; no extra rulings.'),
 } as const;
 // Backend APIs require a plain object root. The reader enforces cross-field rules described above.
 export const GATE_SCHEMA: Schema = sObj(GATE_FIELDS);
@@ -363,7 +381,7 @@ export function clusterCoverage(clusters: readonly GateCluster[], paths: readonl
 // ---------------------------------------------------------------------------------------------------
 // M3 shared pieces
 
-const S_EVIDENCE_LINES = sArr(sObj({ path: S_STR, line: S_INT }));
+const S_EVIDENCE_LINES = sArr(sObj({ path: S_STR, line: S_LINE }));
 const vid: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
 const oid: Read<ObligationId> = (v, p) => obligationId(v, p);
 const unitR: Read<UnitId> = (v, p) => unitId(v, p);
@@ -401,14 +419,14 @@ export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: r
 export const LENS_SCHEMA: Schema = sObj({
   findings: sArr(sObj({
     severity: sEnum(LENS_SEVERITIES),
-    obligation: sNullable(S_STR),
-    visionClauses: S_IDS,
+    obligation: sNullable(sNumbered('I')),
+    visionClauses: sUnique(sArr(sNumbered('V'))),
     claim: S_STR,
     cause: S_STR,
     evidence: S_EVIDENCE_LINES,
-    mutant: sNullable(sObj({ lane: S_STR, edits: sArr(sObj({ path: S_STR, old: S_STR, new: S_STR })) })),
+    mutant: sNullable(sObj({ lane: sDescribe(S_ITEM_ID, 'Must name a supplied arc lane. Mutant edits must apply to the checkout and be admissible as a confined patch.'), edits: sArr(sObj({ path: sDescribe({anyOf: [S_REPO_PATH, sPattern('^/[^\\u0000]*$')]}, 'A regular file inside the audited checkout, relative to it or absolute under it. Absolute paths are made relative before admission.'), old: sDescribe(S_STR, 'Must occur exactly once in the file after earlier edits to that file.'), new: sDescribe(S_TEXT, 'Must differ from old; an empty replacement deletes old.') }), 1) })),
   })),
-  reasons: sArr(S_STR),
+  reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
 });
 
@@ -454,18 +472,18 @@ export const PACK_REVIEW_SCHEMA: Schema = sObj({
     severity: sEnum(PACK_SEVERITIES),
     target: {
       anyOf: [
-        sObj({ type: sEnum(['unit']), id: S_STR }),
-        sObj({ type: sEnum(['obligation']), id: S_STR }),
-        sObj({ type: sEnum(['census']), rule: S_STR }),
-        sObj({ type: sEnum(['rule']), id: S_STR }),
+        sObj({ type: sEnum(['unit']), id: S_SLUG }),
+        sObj({ type: sEnum(['obligation']), id: sNumbered('I') }),
+        sObj({ type: sEnum(['census']), rule: sNumbered('T') }),
+        sObj({ type: sEnum(['rule']), id: sNumbered('T') }),
         sObj({ type: sEnum(['plan']) }),
       ],
     },
     claim: S_STR,
     evidence: S_EVIDENCE_LINES,
   })),
-  dispositions: sArr(sObj({ job: S_STR, index: S_INT, disposition: sEnum(PACK_DISPOSITIONS) })),
-  reasons: sArr(S_STR),
+  dispositions: sDescribe(sArr(sObj({ job: sNumbered('review'), index: sInt(0), disposition: sEnum(PACK_DISPOSITIONS) })), 'Exactly one disposition per unresolved earlier finding supplied in the delta, identified by (job, index); no duplicates or extras. Empty on a full review.'),
+  reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
 });
 
@@ -534,24 +552,25 @@ export type WalkthroughOutput = Readonly<{
   reasons: readonly string[];
 }>;
 
-const S_EVIDENCE = sArr(S_STR);
+const S_EVIDENCE = sDescribe(sArr(S_STR), 'Each entry must be ONLY the exact path of an existing saved file inside the supplied evidence directory (polish may also cite the original walk evidence directory). Relative paths resolve from that directory. No path:line suffix, colon plus commentary, quotes or explanatory prose: put explanations in note, claim or reasons. File existence and containment are checked against the supplied directories.');
+const WALK_AGAINST_SCHEMAS = {
+  journey: sObj({ type: sEnum(['journey']) }),
+  contract: sObj({ type: sEnum(['contract']), path: S_REPO_PATH, anchor: S_STR, dependents: S_STR }),
+  floor: sObj({ type: sEnum(['floor']), text: S_STR, source: sDescribe(S_FLOOR_SOURCE, 'A non-negotiable active V-n vision clause, or a repository reference quality-floor section.') }),
+  design: sObj({ type: sEnum(['design']), path: S_REPO_PATH, anchor: S_STR }),
+  vision: sObj({ type: sEnum(['vision']), clause: sNumbered('V') }),
+} as const;
+const walkFindingSchema = (kind: WalkFindingClass): Schema => sObj({
+  class: sEnum([kind]), journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'),
+  evidence: {...S_EVIDENCE as object, minItems: 1}, claim: S_STR, cause: S_STR,
+  against: {anyOf: WALK_AGAINST[kind].map((type) => WALK_AGAINST_SCHEMAS[type]), description: 'Contract/design paths must lie inside a supplied milestone reference. Vision clauses must be active; a vision floor must be non-negotiable.'},
+  paths: sUnique(sArr(S_REPO_PATH)),
+});
 export const WALKTHROUGH_SCHEMA: Schema = sObj({
   final: S_FINAL,
-  journeys: sArr(sObj({ journey: S_STR, outcome: sEnum(WALK_JOURNEY_OUTCOMES), evidence: S_EVIDENCE, note: S_STR })),
-  findings: sArr(sObj({
-    class: sEnum(WALK_FINDING_CLASSES), journey: S_STR, evidence: S_EVIDENCE, claim: S_STR, cause: S_STR,
-    against: {
-      anyOf: [
-        sObj({ type: sEnum(['journey']) }),
-        sObj({ type: sEnum(['contract']), path: S_STR, anchor: S_STR, dependents: S_STR }),
-        sObj({ type: sEnum(['floor']), text: S_STR, source: S_STR }),
-        sObj({ type: sEnum(['design']), path: S_STR, anchor: S_STR }),
-        sObj({ type: sEnum(['vision']), clause: S_STR }),
-      ],
-    },
-    paths: S_IDS,
-  })),
-  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, systems: S_IDS, spec: S_FULL_SPEC }) })),
+  journeys: sDescribe(sArr(sObj({ journey: sNumbered('J'), outcome: sDescribe(sEnum(WALK_JOURNEY_OUTCOMES), 'A blocked journey requires at least one breaks finding for the same journey.'), evidence: S_EVIDENCE, note: S_STR }), 1), 'Report every supplied milestone journey exactly once, and no other journey.'),
+  findings: sArr({anyOf: WALK_FINDING_CLASSES.map(walkFindingSchema)}),
+  polish: sDescribe(sArr(sObj({ journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'), evidence: {...S_EVIDENCE as object, minItems: 1}, text: S_STR, unit: sObj({ id: sDescribe(S_SLUG, 'A new unit ID, absent from the plan and unique among proposals.'), systems: sDescribe(sUnique(sArr(S_SLUG, 1)), 'Entries must be unique and cover every milestone reference through the supplied systems map.'), spec: sDescribe(S_FULL_SPEC, 'Must name this proposal unit ID and revision 1.') }) })), 'Each proposal must name a different new unit.'),
   premises: S_PREMISES,
   reasons: sArr(S_STR),
 });
@@ -614,7 +633,7 @@ export const POLISH_DECISIONS = ['keep', 'drop'] as const;
 export type PolishDecision = (typeof POLISH_DECISIONS)[number];
 /** The polish judge's answer: keep or drop the tweak, from walking the journey on both instances; `evidence` its captures. */
 export type PolishJudgeOutput = Readonly<{ final: true; decision: PolishDecision; evidence: readonly string[]; reasons: readonly string[]; premises: readonly Premise[] }>;
-export const POLISH_JUDGE_SCHEMA: Schema = sObj({ final: S_FINAL, decision: sEnum(POLISH_DECISIONS), evidence: S_EVIDENCE, reasons: sArr(S_STR), premises: S_PREMISES });
+export const POLISH_JUDGE_SCHEMA: Schema = sObj({ final: S_FINAL, decision: sEnum(POLISH_DECISIONS), evidence: {...S_EVIDENCE as object, minItems: 1}, reasons: sArr(S_STR, 1), premises: S_PREMISES });
 export const polishJudgeOutput: Read<PolishJudgeOutput> = object((f) => ({
   final: f.get('final', literal(true)),
   decision: f.get('decision', oneOf(POLISH_DECISIONS)),
@@ -642,7 +661,19 @@ export function validateExperienceOutput(v: unknown): ExperienceOutput { return 
 export function experienceWalk(v: unknown): WalkthroughOutput { const out = validateExperienceOutput(v); if (out.mode !== 'walkthrough') throw new SchemaError('experience.mode', 'walkthrough', out.mode); return out.verdict; }
 export function experiencePolish(v: unknown): PolishJudgeOutput { const out = validateExperienceOutput(v); if (out.mode !== 'polish') throw new SchemaError('experience.mode', 'polish', out.mode); return out.verdict; }
 export type CampaignAuditOutput = LensOutput & Readonly<{requests: readonly Readonly<{op: 'request'; summary: string; evidence: readonly string[]; dismisses: FindingId | null; counterEvidence: string | null}>[]}>;
-export const CAMPAIGN_AUDIT_SCHEMA: Schema = {...LENS_SCHEMA as object, properties: {...(LENS_SCHEMA as {properties: object}).properties, requests: sArr(sObj({op: sEnum(['request']), summary: S_STR, evidence: sArr(S_STR), dismisses: sNullable(S_STR), counterEvidence: sNullable({type: 'string', pattern: '\\S'})}))}, required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests']} as Schema;
+const S_REQUEST_FIELDS = {op: sEnum(['request']), summary: S_TEXT, evidence: sArr(S_TEXT, 1)};
+const S_COUNTER_EVIDENCE = sDescribe(sPattern('\\S'), 'Required non-null when dismisses names a finding; otherwise may be null.');
+export const CAMPAIGN_AUDIT_SCHEMA: Schema = {
+  ...LENS_SCHEMA as object,
+  properties: {
+    ...(LENS_SCHEMA as {properties: object}).properties,
+    requests: sArr({anyOf: [
+      sObj({...S_REQUEST_FIELDS, dismisses: {type: 'null'}, counterEvidence: sNullable(S_COUNTER_EVIDENCE)}),
+      sObj({...S_REQUEST_FIELDS, dismisses: sNumbered('F'), counterEvidence: S_COUNTER_EVIDENCE}),
+    ]}),
+  },
+  required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests'],
+} as Schema;
 export const campaignAuditOutput: Read<CampaignAuditOutput> = (value, path) => {
   const f = new Fields(value, path);
   const requests = f.get('requests', arrayOf(object((g) => {

@@ -1,0 +1,67 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "packages/acorn/src/loose-channel.ts",
+      "hunk": {
+        "path": "packages/acorn/src/loose-channel.ts",
+        "line": 12
+      },
+      "defect": "contract-violation",
+      "contractRef": "contracts/api.md",
+      "text": "The rename sweep also flipped an operator. In `acornLooseChannelScore`, the a < b branch changed from `scaleBy(b, 96) - a` to `scaleBy(b, 96) + a`. This is not part of the rename, and it changes the exported function's return value whenever a < b and a != 0: (1,2) returned 193 and now returns 195; (3,4) returned 383 and now returns 389. It violates A1 ('behaviour is unchanged'), A2 ('Nothing else changes'), the contract ('Renames keep behaviour') and the non-goal 'No unrelated changes'. The direction text also requires sweeps to stay mechanical. The green lanes do not detect it: packages/acorn has no test directory, and goldens record only export names, params and called helpers, so regeneration cannot show an operator change.",
+      "evidence": [
+        "packages/acorn/src/loose-channel.ts:12",
+        "tools/gen-goldens.ts:14-24 (goldens record name, params and calls only, not operators)",
+        "Of the 57 changed files under packages, this is the only one that differs from its base version with acornBase replaced by acornRoot"
+      ],
+      "experiments": [
+        {
+          "command": "for f in $(git diff --name-only 7ae47f0 29462d2 -- packages); do diff <(git show 7ae47f0:$f | sed 's/acornBase/acornRoot/g') <(git show 29462d2:$f) || echo \"DIFF $f\"; done",
+          "output": "Only packages/acorn/src/loose-channel.ts differs:\n12c12\n<   const acornLooseChannelScoreAcc = a >= b ? fitLength(a - b + 20) : scaleBy(b, 96) - a;\n---\n>   const acornLooseChannelScoreAcc = a >= b ? fitLength(a - b + 20) : scaleBy(b, 96) + a;"
+        },
+        {
+          "command": "node /redacted/path  # base loose-channel.ts against head, calling acornLooseChannelScore",
+          "output": "1 2 old 193 new 195\n0 1 old 98 new 98\n5 5 old 22 new 22\n9 3 old 28 new 28\n3 4 old 383 new 389"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "In packages/acorn/src/loose-channel.ts:12, restore `scaleBy(b, 96) - a` so that the only change to that line's file is acornBase → acornRoot.",
+    "Rerun `node tools/gen-goldens.ts` and commit whatever it produces. Do not edit goldens by hand.",
+    "Before resubmitting, confirm that every changed file under packages/ matches its base version with acornBase replaced by acornRoot. The lanes and goldens cannot detect an operator change, so this comparison is the check."
+  ],
+  "reasons": [
+    "A1 not met. The rename is complete: no `acornBase` remains anywhere in the tree, including packages/acorn/legacy. But 'behaviour is unchanged' is false, because `acornLooseChannelScore` returns different values when a < b and a != 0.",
+    "A2 not met. The golden file was regenerated correctly: the executor's regeneration check was byte-identical, and the golden diff I read shows only acornBase → acornRoot. But 'Nothing else changes' is false because of the same operator flip.",
+    "The passing unit lane is not evidence for either clause here, because packages/acorn has no tests and goldens do not record operators."
+  ],
+  "premises": [
+    {
+      "claim": "Goldens record export names, parameters and called helpers only, so they cannot detect an arithmetic operator change.",
+      "evidence": [
+        {
+          "path": "tools/gen-goldens.ts",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "claim": "The only change beyond the rename is the operator on line 12 of loose-channel.ts.",
+      "evidence": [
+        {
+          "path": "packages/acorn/src/loose-channel.ts",
+          "line": 12
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

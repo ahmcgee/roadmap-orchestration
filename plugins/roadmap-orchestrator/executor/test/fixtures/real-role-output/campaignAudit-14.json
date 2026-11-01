@@ -1,0 +1,102 @@
+{
+  "findings": [
+    {
+      "severity": "P1",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "authenticate passes its raw token argument to audit.log before validating it, so every authentication attempt, valid or not, sends the unredacted credential to the audit logger. CONTRACT.md forbids writing bearer credentials to logs and says the audit logger is persisted, so the credential would be stored durably. This assumes the token parameter is the bearer credential, and that audit is the persisted audit logger the contract names; the checkout has no definition of audit to confirm the second point.",
+      "cause": "authenticate audit logging: raw bearer token is passed to the persisted audit logger",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P2",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "The only test asserts that authenticate returns true for one fixture token. It never observes the audit.log argument, so it would pass whether the token is logged raw, redacted or not at all, and it gives no evidence for the contract's no-credentials-in-logs rule. It also has no negative case for an invalid token. The test file imports neither assert nor authenticate, and the checkout has no runner or harness that supplies them, so nothing in the checkout shows the test ran. This was found by reading the code; the test was not executed.",
+      "cause": "authenticate test witness: assertion checks only the return value and never observes what reaches the audit logger",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "Audited the whole range: src/unit.js, test/unit.test.js and CONTRACT.md. The vision has no clauses and there are no obligations, so the findings rest on the contract document alone and cite no vision clause or obligation.",
+    "All conclusions come from reading the files. No tool for running code was available, and the checkout has no package manifest, runner or certification lane output, so test results are missing environment evidence and neither finding carries a mutant.",
+    "src/unit.js has no import or definition for audit or validate. Unless the environment injects them as globals, authenticate would throw a ReferenceError at audit.log. The checkout cannot settle this, so it is not reported as a product defect; the request for execution evidence covers it.",
+    "Document drift check: CONTRACT.md states the rule the code breaks. The document is correct and the code is at fault, so there is no drift to report."
+  ],
+  "premises": [
+    {
+      "claim": "The contract forbids writing bearer credentials to logs and states that the audit logger is persisted.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "authenticate calls audit.log with its unmodified token parameter before calling validate.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The test's only assertion is on authenticate's return value, for a single fixture token.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Stop passing the raw token to audit.log in authenticate, and add a witness that runs authenticate through its real entry point with an observed audit logger and asserts the credential never appears in any logged argument, for both valid and invalid tokens.",
+      "evidence": [
+        "src/unit.js:1",
+        "test/unit.test.js:1",
+        "CONTRACT.md:1"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Supply execution evidence for test/unit.test.js, including the runner and how assert, authenticate, audit and validate are bound, since none of them is imported or defined in the checkout.",
+      "evidence": [
+        "src/unit.js:1",
+        "test/unit.test.js:1"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

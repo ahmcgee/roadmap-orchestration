@@ -1,0 +1,136 @@
+{
+  "findings": [
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "unit",
+        "id": "u-convert"
+      },
+      "claim": "Acceptance clause A2, \"toFahrenheit rounds its result to the nearest integer\", contradicts vision clause V-2, \"Results are never rounded silently; the caller chooses the precision\"; convert.ts line 1 already rounds this way with no precision parameter, so meeting A2 as written breaks a non-negotiable clause.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "census",
+        "rule": "T-2"
+      },
+      "claim": "The census marks T-2 (\"toCelsius(32) returns 0\") out-of-slice, but the slice needs it: V-1 requires conversion \"between Celsius and Fahrenheit\", A1 makes u-convert export toCelsius, u-convert is the only unit and the horizon is none, so the Celsius direction ships unproved and nothing is planned to test it, though the unit lane could check it directly.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The vision says \"This arc advances: V-1, V-2, V-3\", but the Phase-0 slice has advances [\"V-1\"] and the only obligation, I-1, serves only V-1, so no obligation serves V-2 (no silent rounding, caller-chosen precision) or V-3 (one-call conversion the traveller can trust), and no spec clause delivers either.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-1"
+      },
+      "claim": "I-1 names u-convert as its deliverer and witness test \"convert\", but the repository contains no test file and the u-convert spec has no acceptance clause requiring that test or the value in T-1; A1 and A2 are already true of the existing convert.ts, so an engineer could satisfy the spec by changing nothing and leave the witness missing.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-1"
+      },
+      "claim": "The witness for I-1 cannot detect a violation of V-2, because toFahrenheit(100) is exactly 212 with or without Math.round, so the test passes unchanged whether or not results are rounded; I-1 proves its own statement but gives no evidence on rounding.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The unit lane runs a bare \"node --test\", while the code under test is TypeScript and the repository has no package.json, tsconfig, or pinned Node version, so whether the lane can discover a TypeScript test or import convert.ts depends on the Node version on the host, and no spec settles the test file's name or language.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The vision lists open question Q-1 (Kelvin) with a working assumption of Celsius and Fahrenheit only, but the Phase-0 record has an empty questions list and so does not carry it; the pack is consistent with the assumption and adding Kelvin later looks cheap, so this is a record gap only.",
+      "evidence": []
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "rule",
+        "id": "T-1"
+      },
+      "claim": "The rules index places T-1 and T-2 in docs/target.md, but that file is not in the working directory, so an engineer at this head cannot read the corpus text and I could not check the rule text against I-1's textSha256.",
+      "evidence": []
+    }
+  ],
+  "dispositions": [],
+  "reasons": [
+    "A file listing of the working directory returned only convert.ts, and I read both of its lines through a repository-wide search for the converter names, the rule ids and rounding.",
+    "I compared the spec's acceptance clauses with the vision clauses and the existing code; A2 directly conflicts with V-2, which makes the pack unable to run as written.",
+    "I cross-checked the census and slice against the vision: T-2 is excluded although V-1 and A1 cover the Celsius direction, and V-2 and V-3 are named by the arc but served by no obligation.",
+    "The rounding and missing-coverage defects are reported once each, and the Phase-0 slice mismatch is folded into the V-2 and V-3 coverage finding because they share one cause.",
+    "I did not run the lane because no execution tool was available, so the Node finding states an unpinned dependency rather than an observed failure, and the rule hash was not verified.",
+    "No date, clock, timeout or negative-witness problems were found, because the unit and its obligation involve no time-dependent behaviour and no negative test."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit in convert.ts applies Math.round to its result and takes only the input temperature, with no precision parameter.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "toCelsius in convert.ts is already exported and returns (f - 32) * 5 / 9 without rounding.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    }
+  ]
+}

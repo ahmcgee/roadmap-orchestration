@@ -1,0 +1,105 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "test/page-id.test.js",
+      "text": "B3's witness should pin the plausible wrong validators, not only one bad value. Assert RangeError specifically for 0, -1, 1.5, NaN, Infinity, undefined and the string '3'. A check written as `n <= 0 || n % 1 !== 0` coerces '3' and would return a page id, and it lets undefined through only by accident of NaN comparison. Also assert a boundary success at n=1. Number.isInteger plus n > 0 rejects all of these; the experiment ran a scratch model of that validator, since src/page-id.js does not exist yet.",
+      "evidence": [
+        ".roadmap/contracts/one.md:17"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (scratch model: Number.isInteger(n) && n > 0, importing the real src/slug.js)",
+          "output": "a string 3 THROWS RangeError\na number 0 THROWS RangeError\na number 1.5 THROWS RangeError\na number NaN THROWS RangeError\na number Infinity THROWS RangeError\na undefined undefined THROWS RangeError"
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null,
+      "contractRef": ".roadmap/contracts/one.md, pageId"
+    },
+    {
+      "severity": "note",
+      "path": "test/page-id.test.js",
+      "text": "B1's 'imports rather than re-implements' cannot be shown by a simple-title test such as 'Hello World', because a local `toLowerCase().replace(...)` also passes it. Use titles that exercise slugify's contract: 'Café' gives 'caf-1' and 'a_b' gives 'a-b-1', with edge-hyphen and separator-run inputs as well. The import itself remains a read-at-gate check on src/page-id.js. B2 should also cover '' as well as '!!!', since both slugify to empty and fall back to 'page'.",
+      "evidence": [
+        "test/slug.test.js:15",
+        "test/slug.test.js:25",
+        "ARCHITECTURE.md:8"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null,
+      "contractRef": ".roadmap/contracts/one.md, pageId"
+    },
+    {
+      "severity": "note",
+      "path": "src/page-id.js",
+      "text": "Spec gap, not a build blocker: for very large integers, string concatenation gives exponent notation. pageId('a', 1e21) would return 'a-1e+21', and Number.isInteger(1e21) is true, so B3 does not reject it. Values above 2^53 also pass with imprecise digits. The contract only says 'positive integer', so Number.isInteger is a conforming reading, and Number.isSafeInteger would be a stricter choice that the contract does not state. The builder should not widen behaviour on its own. If the root wants ids to stay decimal-only, that takes a contract amendment.",
+      "evidence": [
+        ".roadmap/contracts/one.md:14",
+        ".roadmap/contracts/one.md:17"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (scratch model, as above)",
+          "output": "a number 1e+21 => a-1e+21\na number 9007199254740992 => a-9007199254740992"
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null,
+      "contractRef": ".roadmap/contracts/one.md, pageId"
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "The spec's premises hold at this tip: slugify exists and returns '' for empty slugs, so B2's fallback belongs in pageId. Acceptance B1-B4 matches contract one with no drift, and the page-id lane argv fits C-2's one-test-file-per-module rule. The existing suite passes (6 tests). Findings are notes on witness strength and one unstated large-integer edge."
+  ],
+  "premises": [
+    {
+      "claim": "F1 holds at this checkout: src/slug.js exports slugify. The commit is on integration, not yet on main, which is still at b819cd9, so the unit must build on the integration line.",
+      "evidence": [
+        {
+          "path": "src/slug.js",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "slugify has no empty-result fallback, so the 'page' fallback is pageId's responsibility and no slug change is needed.",
+      "evidence": [
+        {
+          "path": "test/slug.test.js",
+          "line": 25
+        },
+        {
+          "path": ".roadmap/contracts/one.md",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "claim": "C-1 and C-2 require a pure module with no dependencies and one test file per module, which src/page-id.js and test/page-id.test.js satisfy as scoped.",
+      "evidence": [
+        {
+          "path": ".roadmap/constraints.md",
+          "line": 3
+        },
+        {
+          "path": ".roadmap/constraints.md",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

@@ -1,0 +1,104 @@
+{
+  "findings": [
+    {
+      "severity": "P1",
+      "obligation": null,
+      "visionClauses": [
+        "V-2",
+        "V-3"
+      ],
+      "claim": "Product defect: toFahrenheit always rounds its result to a whole degree, with no precision parameter and nothing in its signature to show it. By the source, toFahrenheit(36.6) returns 98 rather than about 97.88, and toFahrenheit(21.5) returns 71 rather than about 70.7. This directly violates V-2 (never rounded silently; the caller chooses the precision). It also undermines V-3, because a traveller gets a number that can be off by up to 0.5 degrees F and cannot tell. The sibling toCelsius does not round, so the two directions of the same API treat precision differently. I-1 does not catch this: 100 C converts to exactly 212, so its result is the same with or without Math.round.",
+      "cause": "tofahrenheit result: value is silently rounded to an integer with no caller-chosen precision",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P2",
+      "obligation": "I-1",
+      "visionClauses": [
+        "V-1"
+      ],
+      "claim": "Missing evidence: the recorded I-1 observation does not establish that the witness held on the audited code. The observation's treeSha (aaaa...) has the same value as the range base, not the audited head (bbbb...), and the diff creates convert.ts as a new file in this range, so the audited toFahrenheit is absent from the base. The range adds no test file, and the checkout contains only convert.ts, so the 'tests convert' witness could not be inspected. Reading the source, toFahrenheit(100) does compute 212, so this is not a claim that I-1 is false. Two limits apply: treeSha may be a different identifier type from the range's commit ids, and the checkout may be partial, since docs/arch.md and docs/target.md are also absent from it. No lane was run in this audit because no execution tool was available.",
+      "cause": "i-1 witness observation: recorded against the range base rather than the audited head, with no inspectable convert test",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "The range adds only convert.ts. One product defect was verified: toFahrenheit rounds silently, against V-2 and V-3.",
+    "I-1's claim is correct by reading the source, but its witness observation does not cover the audited head and the test could not be inspected.",
+    "All results come from reading the source and the supplied documents; nothing was executed, so no mutants are offered.",
+    "Short document check: docs/arch.md as supplied matches the diff (one module exporting toFahrenheit and toCelsius). The Q-1 working assumption is respected, as no Kelvin was added. The docs/target.md anchor for I-1 is not in the checkout, so its text could not be checked against the file."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit applies Math.round to c * 9 / 5 + 32 and takes no precision argument, so for c = 100 it computes 212.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "toCelsius returns (f - 32) * 5 / 9 with no rounding and takes no precision argument.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The supplied architecture doc describes one module, convert.ts, exporting both functions, which matches the diff.",
+      "evidence": [
+        {
+          "path": "docs/arch.md",
+          "line": 3
+        },
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Decide whether to add an obligation serving V-2 and V-3 that exercises non-integer results in both conversion directions and caller-chosen precision. I-1 is the only obligation, and its integer-valued case passes with or without rounding.",
+      "evidence": [
+        "convert.ts:1 applies Math.round",
+        "I-1 serves V-1 only and asserts only toFahrenheit(100) returns 212, which is exact without rounding",
+        "no active obligation lists V-2 or V-3"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Re-observe I-1's witness (lane unit, tests convert) on the audited head and confirm that the convert test exists and actually runs convert.ts.",
+      "evidence": [
+        "I-1 observation treeSha has the value aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, the same as the range base; the audited head is bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "the diff creates convert.ts in this range and adds no test file",
+        "a glob of the checkout returned only convert.ts"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

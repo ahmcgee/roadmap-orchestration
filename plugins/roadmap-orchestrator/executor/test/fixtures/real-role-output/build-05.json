@@ -1,0 +1,14 @@
+{
+  "summary": "Waiting for the slow dependency (ready.txt) to finish before writing hello.txt.",
+  "blockers": [],
+  "experiments": [],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "app"
+    ]
+  },
+  "tooBig": null,
+  "notes": [],
+  "final": false
+}

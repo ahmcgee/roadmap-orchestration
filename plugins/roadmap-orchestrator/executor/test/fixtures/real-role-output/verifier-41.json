@@ -1,0 +1,88 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        "packages/xenon/src/vessel-export.ts:2",
+        "corpus 0010_Exports.md T-1",
+        "Obligation I-1 is anchored at T-1"
+      ],
+      "severity": "blocking",
+      "path": "packages/xenon/src/vessel-export.ts",
+      "text": "vesselExport ignores input.id and always returns { vessel: 'anonymous' }. T-1 requires the caller's vessel id to be preserved verbatim in the vessel field, so A1 and obligation I-1 are unmet. Calling it with id 'oak' returns vessel 'anonymous'.",
+      "contractRef": "corpus rule T-1",
+      "experiments": [
+        {
+          "command": "node --experimental-strip-types -e \"import('$PWD/packages/xenon/src/vessel-export.ts').then(m=>console.log(JSON.stringify(m.vesselExport({id:'oak',token:'private'}))))\"",
+          "output": "{\"vessel\":\"anonymous\"}"
+        }
+      ],
+      "debt": null,
+      "defect": "contract-violation",
+      "reraises": null,
+      "hunk": {
+        "path": "packages/xenon/src/vessel-export.ts",
+        "line": 2
+      }
+    },
+    {
+      "evidence": [
+        "packages/xenon/test/vessel-export.test.ts:4",
+        "The unit lane passes against the hard-coded 'anonymous' implementation"
+      ],
+      "severity": "blocking",
+      "path": "packages/xenon/test/vessel-export.test.ts",
+      "text": "The only test asserts that typeof vessel is 'string', so it passes with the constant 'anonymous' return value and cannot detect a T-1 violation. The green unit lane and the witness-presence check therefore say nothing about id preservation. The test required by A1 does not witness the export contract.",
+      "contractRef": "corpus rule T-1",
+      "experiments": [
+        {
+          "command": "node --test packages/xenon/test/vessel-export.test.ts",
+          "output": "ℹ pass 1\nℹ fail 0"
+        }
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": {
+        "path": "packages/xenon/test/vessel-export.test.ts",
+        "line": 4
+      }
+    }
+  ],
+  "directives": [
+    "Make vesselExport return the caller's id verbatim in the vessel field (T-1), and remove the hard-coded 'anonymous' value.",
+    "Replace or strengthen the test so it asserts exact equality with the supplied id, for at least two distinct ids, including one that needs verbatim preservation such as mixed case or surrounding whitespace. It must fail against a constant return value.",
+    "Keep the token out of any log or debug output (T-2).",
+    "Do not hand-edit goldens. Re-run node tools/gen-goldens.ts if the exported signature changes, and make no unrelated changes."
+  ],
+  "reasons": [
+    "A1 NOT MET: the function and test exist at the required paths and the function accepts an id and token, but it returns the constant 'anonymous', which violates T-1. The test cannot detect this.",
+    "A2 MET: the only golden change is one added module entry for vessel-export.ts in goldens/xenon.json, with none removed. The executor's regeneration came out byte-identical, and the diff touches only the three expected files.",
+    "I-1 NOT MET: T-1 is violated by the unit's own code, and the obligation has no observation, which never counts as passed.",
+    "T-2 shows no violation: the implementation neither reads nor logs the token. The function is pure, as contracts/api.md requires. Ruling C-1 is cited by the spec but does not appear in the pinned corpus, so it was not graded."
+  ],
+  "premises": [
+    {
+      "claim": "vesselExport returns a constant and never reads input.id.",
+      "evidence": [
+        {
+          "path": "packages/xenon/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The test checks only the type of the vessel field, not its value.",
+      "evidence": [
+        {
+          "path": "packages/xenon/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

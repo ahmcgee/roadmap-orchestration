@@ -76,8 +76,10 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
    revisions feed fix rounds with original evidence and base comparisons. Every judgment begins in a fresh named
    session; one invalid answer may be repaired in that same session, schema and checkout. Verifier directives
-   accompany only a revise decision, including in annotation modes. Backend schemas use plain object roots;
-   property descriptions state cross-field rules, and parsers enforce them before accepting an answer.
+   accompany only a revise decision, including in annotation modes. Backend schemas use plain object roots
+   and encode supported field constraints; property descriptions state remaining semantic rules.
+   Walk and comparison evidence entries are exact saved file paths; explanations belong in report text.
+   Free real-output replays and schema/parser parity checks guard the contract before paid probes.
 4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
    retain unit attribution; only a green exact head is fast-forwarded. Snapshots and retirement follow. A spike
    answers a declared question and retires its gated report without merging. Cheap local checks run early;

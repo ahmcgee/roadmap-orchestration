@@ -1,0 +1,118 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        "test/unit.test.js:1 uses assert and mul but has no import or require for either",
+        "No package.json exists in the checkout, so no setup file or test configuration is visible that could supply them as globals"
+      ],
+      "severity": "note",
+      "path": "test/unit.test.js",
+      "text": "The named proof does not execute any assertion. test/unit.test.js fails on its first token with ReferenceError: assert is not defined, and it never imports mul from src/unit.js. The spec requires executable assertions, and this file exercises none of src/unit.js. The build must import node:assert and mul from the real source file, and the unit lane must then show the assertions actually ran. Adding only a global shim or a local mul would not satisfy the proof.",
+      "contractRef": "CONTRACT.md",
+      "experiments": [
+        {
+          "command": "node --test test/unit.test.js",
+          "output": "ReferenceError: assert is not defined at test/unit.test.js:1:1; tests 1, pass 0, fail 1"
+        }
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": {
+        "path": "test/unit.test.js",
+        "line": 1
+      }
+    },
+    {
+      "evidence": [
+        "test/unit.test.js:1 asserts only mul(-2,3) and mul(2,3)",
+        "CONTRACT.md:1 requires the signed product"
+      ],
+      "severity": "note",
+      "path": "test/unit.test.js",
+      "text": "Even once it runs, the assertion set would not pin the signed product. It has no case with a negative second operand and no case with both operands negative. An implementation that takes its sign from a alone passes both existing assertions but returns -6 for mul(-2,-3). Keep the two existing assertions and add at least mul(2,-3) === -6 and mul(-2,-3) === 6.",
+      "contractRef": "CONTRACT.md",
+      "experiments": [
+        {
+          "command": "node w.mjs (temp script: imports node:assert, defines mul=(a,b)=>Math.abs(a)*Math.abs(b)*(a<0?-1:1), runs the two assertions from test/unit.test.js, prints mul(-2,-3))",
+          "output": "both spec-file assertions pass with sign-of-a-only impl; mul(-2,-3)= -6"
+        }
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": {
+        "path": "test/unit.test.js",
+        "line": 1
+      }
+    },
+    {
+      "evidence": [
+        "CONTRACT.md:1 says 'signed mathematical product'",
+        "spec says 'Implement mul(a,b) as a*b'",
+        "src/unit.js:1 returns a*b"
+      ],
+      "severity": "note",
+      "path": "src/unit.js",
+      "text": "The contract wording is stricter than the prescribed implementation at IEEE-754 limits. Results lose precision beyond 2^53, overflow to Infinity, carry binary rounding, and can be -0. The spec explicitly prescribes a*b and the number domain is unstated, so this is not a defect to fix in the build. If exact results are intended, the root should amend the plan or contract to state the domain; the builder should not widen the scope to BigInt on its own.",
+      "contractRef": "CONTRACT.md",
+      "experiments": [
+        {
+          "command": "node a.mjs (temp script importing mul from src/unit.js)",
+          "output": "mul(-2,0) is -0; mul(9007199254740993,3) gives 27021597764222976 while the BigInt product is 27021597764222979n; mul(0.1,0.2) gives 0.020000000000000004; mul(1e308,10) gives Infinity"
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "src/unit.js",
+        "line": 1
+      }
+    }
+  ],
+  "directives": [
+    "Make test/unit.test.js executable: import node:assert and import mul from src/unit.js, keeping the two existing assertions.",
+    "Add assertions for a negative second operand and for two negative operands, e.g. mul(2,-3) === -6 and mul(-2,-3) === 6."
+  ],
+  "reasons": [
+    "The spec, intent and contract agree for ordinary numeric operands, and the scope (one pure function plus its test) respects the non-goal.",
+    "src/unit.js already returns correct signed products for the sign combinations probed, and it has no side effects.",
+    "The proof is not yet valid: test/unit.test.js throws before any assertion runs. This is recorded as a standing note for the build, since a pre-build review does not hold the unit.",
+    "Not verified: how the unit lane invokes the test. No lane configuration or package.json is in the checkout, so I ran the file directly with node and node --test."
+  ],
+  "premises": [
+    {
+      "claim": "The implementation matches the spec's a*b and has no side effects.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The contract requires the signed mathematical product and no side effects.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The proof file names assert and mul without importing either, and covers only (-,+) and (+,+) operand signs.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

@@ -1,0 +1,139 @@
+{
+  "findings": [
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "unit",
+        "id": "u-convert"
+      },
+      "claim": "Acceptance clause A2, \"toFahrenheit rounds its result to the nearest integer\", contradicts V-2, \"Results are never rounded silently; the caller chooses the precision\": A2 fixes the rounding with no caller choice, and convert.ts line 1 already does this with Math.round, so building to the spec would keep the behaviour the vision forbids.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The vision says \"This arc advances: V-1, V-2, V-3\", but the Phase-0 slice has \"advances\":[\"V-1\"], I-1 is the only obligation and serves only V-1, and no rule, obligation or acceptance clause covers caller-chosen precision (V-2) or the traveller's one-call trusted conversion (V-3), so two clauses the arc advances have nothing serving them.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "census",
+        "rule": "T-2"
+      },
+      "claim": "T-2 (toCelsius(32) returns 0) is marked out-of-slice although A1 requires toCelsius to be exported, V-1 asks for conversion in both directions, the plan has no later unit and the horizon is none, so toCelsius ships with no test, and nothing planned would ever test it, even though a lane could check T-2 cheaply.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-1"
+      },
+      "claim": "The witness test \"convert\" does not exist at this head and no spec says where it goes, and the repository has no package.json or Node version pin, so whether the bare `node --test` lane can discover a TypeScript test or load convert.ts depends on the host's Node version and its type-stripping support.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-1"
+      },
+      "claim": "The I-1 statement, toFahrenheit(100) returns 212, holds with or without rounding because the exact result is an integer, so the witness cannot detect silent rounding and passes whether or not V-2 is met; once V-2 is served, it needs a separate witness using a non-integer result.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The Phase-0 record has an empty questions list although the vision carries open question Q-1 (Kelvin) with a working assumption, and the record does not say how Q-1 is handled; nothing in the pack contradicts the assumption of Celsius and Fahrenheit only.",
+      "evidence": []
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "rule",
+        "id": "T-1"
+      },
+      "claim": "The rules index places T-1 and T-2 in docs/target.md, but that file is absent from the working directory at this head, so the rule text and the T-1 textSha256 pinned in I-1 cannot be checked against the repository.",
+      "evidence": []
+    }
+  ],
+  "dispositions": [],
+  "reasons": [
+    "This is a first review, so dispositions is empty.",
+    "I read the whole pack and the only file a Glob of the working directory found, convert.ts, which has two lines.",
+    "A2 against V-2 is blocking because the two cannot both be true, and the vision decides what the pack is for.",
+    "The slice mismatch is blocking because the vision and the Phase-0 record disagree on what the arc advances, and V-2 and V-3 have no obligation serving them.",
+    "T-2 is a note and not blocking because the cut line records it as a deliberate choice and Phase-0 explains it as the smallest conversion first; the cost is an untested export with no later unit to test it.",
+    "By reading the code, T-1 holds at this head (100 * 9 / 5 + 32 is 212) and T-2 would hold (0 from 32); I ran nothing because this session has no tool for running commands.",
+    "The lane finding rests on the repository's lack of a test file, package.json and version pin; the installed Node version was not checked, so the lane's failure is stated as a risk and not as a fact.",
+    "No clock, time zone, or real-wait issue applies, because the unit is pure arithmetic with no date or time dependence.",
+    "The Kelvin question Q-1 is left open; no unit depends on it in a way that is costly to undo, so it is raised only as a gap in the Phase-0 record."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit in convert.ts rounds its result with Math.round.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "toCelsius in convert.ts is exported and returns (f - 32) * 5 / 9 without rounding.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "neither export takes a precision argument: toFahrenheit takes only c and toCelsius takes only f.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    }
+  ]
+}

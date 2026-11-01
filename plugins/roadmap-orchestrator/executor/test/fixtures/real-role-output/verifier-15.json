@@ -1,0 +1,219 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "Breaking a stale lock by check-then-unlink can put two writers inside the lock, which would break V-7 and T-32/T-35. Waiter A and waiter B both read the dead pid. A unlinks and re-creates the lock. B then unlinks A's live lock and creates its own. D1 fixes the staleness test but not how the lock is broken, so the build must choose a method where a breaker can only remove the stale lock it inspected. One option is to rename the lock to a name unique to that attempt, re-check the renamed file's contents, and only then remove it; a rename that fails with ENOENT means another waiter won, so go back to the exclusive create. Release must also remove only the holder's own lock. Add a test where several child processes start together against one dead-pid lock and assert that no two are ever inside the lock at once, using an exclusive marker file or a counter. A single-waiter stale test will not catch this.",
+      "contractRef": "A4, D1",
+      "experiments": [
+        {
+          "command": "cd /redacted/path && for i in 1 2 3 4 5; do rm -f r.lock.tmp inside.tmp; node race2.mjs; done  # prototype of naive unlink-based breaking, not product code; 6 synchronised child processes, one dead-pid lock, check-to-unlink gap widened by a 5ms sleep to force the interleaving",
+          "output": "{ workers: 6, overlaps: 3 } { workers: 6, overlaps: 2 } { workers: 6, overlaps: 3 } { workers: 6, overlaps: 4 } { workers: 6, overlaps: 2 }. The same prototype without the widened gap and without synchronised starts (race.mjs, 10 rounds) showed 0 overlaps, so a naive test would pass and hide this."
+        }
+      ],
+      "evidence": [
+        "experiment race2.mjs",
+        "docs/corpus/shelf.md T-32",
+        "docs/corpus/keeper.md T-35"
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "A lock created with writeFile and flag 'wx' is visibly empty for a moment between creation and the pid being written, and that window is often hit. An empty or unparsable lock must not count as 'pid gone', or a waiter breaks a live holder's lock. Treat it as live until the 30-second age rule applies, or publish the pid atomically (write a unique temporary file, then link() it to the lock name, which also fails with EEXIST). Check process.kill(pid, 0) so that EPERM counts as alive: the keeper and the server may run as different users on the box. Test the age rule with a live pid and a backdated mtime via utimes. Get the dead pid from a child that has exited, not a hard-coded number.",
+      "contractRef": "A4, D1",
+      "experiments": [
+        {
+          "command": "cd /redacted/path && node wx.mjs  # one writer loops wx-create then unlink while a reader loops readFile on the same path",
+          "output": "{ reads: 4167, empty: 806 }"
+        }
+      ],
+      "evidence": [
+        "experiment wx.mjs"
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "A5's wording leaves room for three plausible wrong readings. (1) reservedUntil null must behave like absent: new Date(null) is the epoch, so a careless parse frees b2-style books, and D2 makes null a value the file will really contain. (2) Timestamps must be compared as instants, never as strings: reservedUntil carries an offset, and the lexical order below is the wrong way round. (3) An unparsable reservedUntil gives NaN, and every comparison with NaN is false; a hand-edited typo could then free a held book. V-7 favours treating it as held and warning. Test all three, plus the exact boundary (at reservedUntil the book is still held, one millisecond later it is not), and a book with no reservedUntil key at all (non-goal: no migration).",
+      "contractRef": "A5, D2",
+      "experiments": [
+        {
+          "command": "node -e \"console.log(new Date(null).getTime(), Date.parse('garbage'), '2026-11-01T18:00:00+00:00' < '2026-11-01T17:30:00-05:00')\"",
+          "output": "0 NaN false. By instant, 18:00Z is before 22:30Z, so the correct answer to the last comparison is true."
+        }
+      ],
+      "evidence": [
+        "data/shelf.json:3 (b2 has reservedBy and no reservedUntil)",
+        "experiment above"
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "The A5 warning fires on every load, and F1 means a load on every request, so the seed data logs one line per page view and one per updateShelf or keeper command. That is what the spec asks for, so keep it, but build it carefully. Emit one line per load, not one per book, listing book ids. Send it to stderr with console.warn so keeper stdout stays clean (test/floor.test.js already scrapes server stdout for the URL). Never include the reservedBy value: the file holds neighbours' first names and T-18 treats them as private. Say what to do next (V-12). Test it through a child process with a marked name, asserting exactly one warning per load, no name in stderr, and no warning for a clean file or a book with a reservedUntil.",
+      "contractRef": "A5",
+      "experiments": [],
+      "evidence": [
+        "src/server.js:19 (loadShelf per request)",
+        "test/floor.test.js:21-27 (server stdout parsing)",
+        "docs/corpus/shelf.md T-18"
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "Two interfaces the later reserve and keeper units depend on are not pinned by the spec. A1 does not say how change refuses, and A4 does not say how a caller recognises 'busy'. If the caller has to match on message text, T-6, T-23 and the V-12 wording will all be fragile. Choose one explicit shape, for example: change throws and the error propagates unchanged with no save; busy is an error with a stable exported code such as SHELF_BUSY, distinct from a refusal. Record both in docs/systems/store.md. Test that the lock is released and the file bytes are unchanged after a change that refuses, after a change that throws unexpectedly, and after a corrupt file makes the load inside updateShelf throw (keeper.md says hand edits do produce bad commas). Also test that a busy failure neither runs change nor removes the other holder's lock. If change can be async, the lock must be held until it settles.",
+      "contractRef": "A1, A4, A6",
+      "experiments": [],
+      "evidence": [
+        "docs/corpus/keeper.md (hand edit mistypes a comma), T-23",
+        "docs/corpus/shelf.md T-6"
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "text": "A2's premises are confirmed on the current code: pid-only names collide, and a failed rename leaves a stray file. Prove the failure branch with a failure that happens after the temporary file exists, such as the data path being a directory so rename fails with EISDIR. A JSON.stringify failure happens before any temporary file is created, so it would pass while proving nothing. Cleanup failures must not mask the original error. A test that scans the directory for strays must allow for the lock also being named *.tmp, or check after release. Also decide two durability details. (1) Call FileHandle.sync on the temporary file before rename, otherwise a power cut on the box can leave a renamed but empty file, which breaks the durable boundary of T-27. (2) The temporary file is created with default permissions, so a data file the keeper restricted to 0600 becomes 0644 on the first save, exposing neighbours' names on the box; copy the existing mode across if the file exists.",
+      "contractRef": "A2",
+      "experiments": [
+        {
+          "command": "cd /redacted/path && node base.mjs  # calls the current src/store.js saveShelf",
+          "output": "failed write: EISDIR; after failed rename: [ 'd.json', 'd.json.3338987.tmp' ]; 20 concurrent saves rejected: 19 ENOENT; mode after save: 644 (was 600)"
+        }
+      ],
+      "evidence": [
+        "src/store.js:13-17"
+      ],
+      "debt": null,
+      "defect": "data-loss",
+      "reraises": null,
+      "hunk": {
+        "path": "src/store.js",
+        "line": 14
+      }
+    },
+    {
+      "severity": "note",
+      "path": "test/store.test.js",
+      "text": "Requirements for the A3 and W-1 witnesses. A3: the children must really contend, so release them together, run several updates each, and assert that the final state holds every child's every update, not only a count from the last writer. Afterwards, assert that no lock or temporary file remains. Waiters need jittered backoff, otherwise the hammer can starve one child past the few-second busy limit, and the test will flake or tempt someone to raise the limit. A child-process helper must not match test/*.test.js, or npm test will run it as a test. Before finishing, confirm the test fails with the lock removed. W-1: my prototype shows a reader loop catches an in-place writer at any file size, so a large fixture is not required, but the witness must keep reads and writes concurrent for many iterations, read through loadShelf or GET /, and write through updateShelf, not raw saveShelf only. Its name must be exactly the I-9 string 'T-27 readers never see half a file while writers replace it'. Confirm it fails against an in-place writeFile.",
+      "contractRef": "A3, W-1",
+      "experiments": [
+        {
+          "command": "cd /redacted/path && node tear.mjs  # in-place writeFile, 300 writes, concurrent readFile + JSON.parse loop",
+          "output": "{ books: 8, reads: 631, torn: 284 } { books: 200, reads: 372, torn: 9 } { books: 5000, reads: 1692, torn: 1669 }"
+        }
+      ],
+      "evidence": [
+        ".roadmap/invariants.md:89-97",
+        "package.json test script",
+        "experiment tear.mjs"
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/pages.js",
+      "text": "The unit's non-goals keep this file out of scope, so do not change it here. Two things follow for the later page unit. pages.js:29 tests book.reservedBy === null, so it does not use the new shared reading of A5, and a lapsed reservation keeps showing 'reserved' until that unit adopts it. A book with no reservedBy key at all also shows as reserved. Nothing currently breaks, because the file's books all carry the key. The A5 helper should treat undefined and null reservedBy as free, so the later switch is correct.",
+      "contractRef": "A5",
+      "experiments": [],
+      "evidence": [
+        "src/pages.js:29",
+        "data/shelf.json"
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "The spec's premises hold and its boundaries fit the intent: one JSON file, no dependency, no routes. This pre-build review does not hold the unit; the findings are annotations for the build.",
+    "The main risk is the unspecified way of breaking a stale lock. A prototype shows that naive unlink-based breaking can admit two holders when the check-to-unlink gap is widened, while a simple test sees no overlap, and that would threaten V-7.",
+    "All experiments were scratch prototypes or calls to the unchanged src/store.js. Nothing in the product was modified."
+  ],
+  "premises": [
+    {
+      "claim": "F1 holds: nothing calls saveShelf today, and loadShelf is read per request with no cache.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 19
+        },
+        {
+          "path": "src/store.js",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "claim": "A2's premise holds: the temporary name uses only the pid, so concurrent saves in one process collide (19 of 20 rejected with ENOENT in an experiment).",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "claim": "b2 in the seed data has reservedBy set and no reservedUntil, as A5 says.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": ".gitignore's *.tmp covers a lock named like shelf.json.lock.tmp, as D1 requires (confirmed with git check-ignore).",
+      "evidence": [
+        {
+          "path": ".gitignore",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "I-9 is due from this unit and names the exact witness test that W-1 specifies; I-6 is already witnessed by an existing T-17 test.",
+      "evidence": [
+        {
+          "path": ".roadmap/invariants.md",
+          "line": 89
+        },
+        {
+          "path": ".roadmap/invariants.md",
+          "line": 57
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

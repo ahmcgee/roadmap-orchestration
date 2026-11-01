@@ -1,0 +1,148 @@
+{
+  "standing": [
+    {
+      "id": "reserve-and-keep/973#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "Build report 992#1 says plainly: 'Hand lettering was NOT seen... h1 and h2 render in a fallback serif. I did not claim V-11 and did not bundle or swap a font. Real phones were not checked.' Report 1056#1 repeats it.",
+        "The diff adds no font: --letter at public/style.css:8 is unchanged.",
+        "My 360x640 screenshots show the same serif fallback, so the V-11 lettering judgement stays with the walk on a machine that has the fonts."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/973#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "test/access.test.js:35-64 has its own list covering shelf, search, M5, form, M4, both M7 variants, M2, M3, unknown path, M8, M6 via the lock file and a first-time M1 through a real POST and 303. Each page asserts status and title.",
+        "Exception: the empty-shelf page the item also named is NOT in that list. That remainder is carried by this gate's blocking finding, and the decision is revise because of it."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/973#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "The T-29 test reads the :root, body, h1 and h2 blocks separately through rule() (test/access.test.js:133, and the T-29 test at the end of the file). The test name matches W-1 exactly.",
+        "Experiment: removing h2's font-family, h1's font-family, body's background or body's color, or changing the --rust value, each turned T-29 red (fail 1)."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/973#1:3",
+      "disposition": "addressed",
+      "evidence": [
+        "src/pages.js:51 adds aria-label to the search form. The label's markup is unchanged, so test/search.test.js still passes.",
+        "ariaSnapshot in Chromium now reads: search \"Find a book by title or author\". test/access.test.js asserts the aria-label on every page that has the form."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/973#1:4",
+      "disposition": "addressed",
+      "evidence": [
+        "The A2 test pins the ink :focus-visible outline and min-height 44px on .reserve, .back, .slip button and the text input. The A3 test rejects user-scalable on every page.",
+        "The header assertion /<header>[\\s\\S]*<h1>[\\s\\S]*<\\/header>\\s*<main>/ leaves room for the later window line.",
+        "A browser check was run and reported rather than inferred (report 992#1). I re-ran it across all pages."
+      ]
+    }
+  ],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "defect": "test-inadequate",
+      "path": "test/access.test.js",
+      "hunk": {
+        "path": "test/access.test.js",
+        "line": 38
+      },
+      "contractRef": "A3",
+      "text": "A3 requires test/access.test.js to prove the checkable markup on every page, and standing item 973#1:1 named the empty-shelf page. allPages() never renders it, although report 992#1 says the test covers every page the review notes named. No test in the suite reaches that branch (src/pages.js:68). A skipped heading level, an unlabelled input or a code word there passes all 83 tests. The page is correct today: in Chromium it has h1 then h2, a named search landmark and the empty message, with no overflow. So this is a gap in the proof, not a page defect.",
+      "evidence": [
+        "test/access.test.js:38",
+        "src/pages.js:68",
+        "grep -n empty test/*.js finds no empty-shelf test, only test/search.test.js:54 (empty search term) and test/store.test.js:232 (empty lock)"
+      ],
+      "experiments": [
+        {
+          "command": "sed -i on src/pages.js:68, replacing the empty-shelf <p> with '<h4>The shelf is empty right now.</h4><input name=\"x\"><div class=\"refusal\">error</div>'; npm test; then git checkout src/pages.js",
+          "output": "tests 83, pass 83, fail 0"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "defect": null,
+      "path": "test/access.test.js",
+      "hunk": null,
+      "contractRef": "A1, A2",
+      "text": "The builder's browser report is narrower than the clauses. A1 reported seven pages, leaving out M4, M6, M7, M8 and M1. A2 reported one Reserve link and said the form was not tabbed through. I closed this at the gate rather than blocking, because the behaviour holds. At 360x640, on desktop and mobile emulation, every page including a 300-character q and the b1 pages had scrollWidth 360, with no target under 44px and no gap under 8px. Keyboard alone operated search, all seven free Reserve links and the form through M4 with autofocus to the confirmation, and every focused control showed a solid 3px rgb(43,38,32) outline. These remain one-time checks, with no repeating browser witness.",
+      "evidence": [
+        "10-evidence/build/files/inv/1056-1/result.json",
+        "4-evidence/build/files/inv/992-1/result.json"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (playwright-core Chromium, 360x640, isMobile false and true; all pages and Tab walks)",
+          "output": "M4 400 {sw:360,iw:360,small:[],gaps:[],first:DIV.refusal,active:INPUT#name}; M8 413 {sw:360,small:[]}; M1 b1 200 {sw:360,small:[]}; A:Reserve The Salt Path | solid 3px rgb(43, 38, 32) off 2px; M4 via button: 'A first name is needed: The Left Hand of Darkness', focus on name; confirm /reserved/b1"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "defect": null,
+      "path": "test/access.test.js",
+      "hunk": {
+        "path": "test/access.test.js",
+        "line": 133
+      },
+      "contractRef": "W-1",
+      "text": "rule() returns only the first rule for a selector, so T-29 and the A2 checks do not see a later rule that overrides it. Appending 'h2 { font-family: sans-serif; } body { background: white; }' leaves them green. Direct removals and value changes are all caught, so this is a limit of the regression guard and does not fail A4.",
+      "evidence": [
+        "test/access.test.js:133"
+      ],
+      "experiments": [
+        {
+          "command": "printf '\\nh2 { font-family: sans-serif; }\\nbody { background: white; }\\n' >> public/style.css; node --test --test-name-pattern='T-29|A2|A1' test/access.test.js",
+          "output": "fail 0"
+        }
+      ],
+      "debt": {
+        "drag": "A later unit's stylesheet addition could override the look or the targets without any test going red; only the walk would see it."
+      },
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Add the empty-shelf page to the checks in test/access.test.js, through the running server, with its expected status 200 and title 'The Oak Street shelf'. Use a second server or a temporary SWAPSHELF_DATA file with an empty books list, without changing the data other pages use.",
+    "Run the same A3 structure assertions on it as on the other pages, and also assert that the empty message is present so a wrong branch cannot pass.",
+    "Confirm the new check goes red when src/pages.js:68 gains a skipped heading or an unlabelled input, then restore the line. No production change is needed."
+  ],
+  "reasons": [
+    "A1 met: verified in Chromium at 360x640 on every page, including b1's long URL and long typed values. The builder's report does not cover all of this (see note).",
+    "A2 met: keyboard paths, the ink focus ring and 44px targets all verified in the browser.",
+    "A3 not met in one narrow respect: the markup is right on every page I rendered, but test/access.test.js does not prove it on the empty-shelf page, which the clause and a standing item both cover. This is the only blocker.",
+    "A4 met: T-29 reddens on five direct mutations. The look holds in screenshots: no card grid, app-store chrome or template feel. Hand lettering could not be seen here because the fonts are absent, and the builder reports that honestly; the V-11 lettering judgement stays with the walk.",
+    "The mutation-smoke survivor on W-1 is acceptable: the look rules predate this unit, and the test does fail when those rules are broken.",
+    "No non-goal was breached: no new copy, palette, font, script or dependency. The full suite passes 83/83, and I-20 and I-21 remain future work for settings-file."
+  ],
+  "premises": [
+    {
+      "claim": "The empty-shelf branch is rendered only when the shelf has no books, and no access-test page reaches it.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 68
+        },
+        {
+          "path": "test/access.test.js",
+          "line": 38
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

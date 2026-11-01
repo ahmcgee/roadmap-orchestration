@@ -1,0 +1,17 @@
+{
+  "summary": "Fixed R-1 and R-2 in docs/design/page/README.md only. R-1: removed required and added novalidate to the step 2 form, with the reason. R-2: M5's no-match refusal is now first in main, then the search form holding the query, then the Show the whole shelf link. The shared refusal rule now says refusals sit above the form, the search form and any links, with no exceptions. Also covered the notes: M6 puts the typed name back as the input value, the wrapping rule covers echoed q and name, and the shelf page has a place for the collection window line (T-31) and takes name and address from settings (T-25).",
+  "blockers": [],
+  "experiments": [],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "docs/design/page/README.md"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Design text only; no lanes run, no browser used.",
+    "The M5 page shows no list: the Show the whole shelf link is the offer."
+  ],
+  "final": true
+}

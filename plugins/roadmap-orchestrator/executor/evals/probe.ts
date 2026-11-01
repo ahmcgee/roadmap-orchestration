@@ -85,6 +85,7 @@ import { createHash,randomBytes } from 'node:crypto';
 import { existsSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { realJudgeSteps } from './probe-steps.ts';
 import { freshClaudeImplementerSession,freshJudgmentSession } from '../src/backends/argv.ts';
 import { containmentFor,detectContainmentMode } from '../src/contain/detect.ts';
 import { scan } from '../src/contain/proc.ts';
@@ -126,7 +127,7 @@ import { moduleFiles,unitSteps } from '../test/fixtures/audit-common.ts';
 import { wire } from '../test/fixtures/publish-common.ts';
 import { followingContext } from '../test/fixtures/steer-common.ts';
 import { appendSteps,contextFor,setupArc } from '../test/fixtures/unit-common.ts';
-import { ACTING_ARGV,KEEP_FILES,milestoneJson,polishSteps,proposal,unitInForce,walkAnswer,walkArc,walkContext,walkStep } from '../test/fixtures/walk-common.ts';
+import { KEEP_FILES,milestoneJson,polishSteps,proposal,unitInForce,walkAnswer,walkArc,walkContext,walkStep } from '../test/fixtures/walk-common.ts';
 import { commitAll,makeRepo,writeFiles } from '../test/helpers/repo.ts';
 import { runGateTrial } from './roles/gate/arc.ts';
 import { DEV_CELLS,isExecCell } from './roles/gate/cells.ts';
@@ -747,7 +748,7 @@ async function main(): Promise<void> {
         ],
       }),
     });
-    appendSteps(d, [{ as: 'claude', unit: 'walk-1', expect: { argv: ACTING_ARGV, argvLacks: ['--mcp-config'] }, acts: [{ type: 'real' }] }]);
+    appendSteps(d, realJudgeSteps('walk-1'));
     const r = contextFor(d);
     try {
       const { ctx, w } = walkContext(r);
@@ -790,7 +791,7 @@ async function main(): Promise<void> {
     appendSteps(d, [
       walkStep('walk-1', walkAnswer({ polish: [proposal(d, 'tw-keep', 'Configure the greeting so the page greets, and say so in the design reference.')] })),
       ...polishSteps('tw-keep', KEEP_FILES),
-      { as: 'claude', unit: 'compare-1', expect: { argv: ACTING_ARGV, argvLacks: ['--mcp-config'] }, acts: [{ type: 'real' }] },
+      ...realJudgeSteps('compare-1'),
     ]);
     const r = contextFor(d);
     try {

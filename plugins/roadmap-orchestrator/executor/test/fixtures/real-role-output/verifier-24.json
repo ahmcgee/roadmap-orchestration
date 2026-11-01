@@ -1,0 +1,117 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "defect": "security",
+      "path": "packages/wheat/src/vessel-export.ts",
+      "hunk": {
+        "path": "packages/wheat/src/vessel-export.ts",
+        "line": 2
+      },
+      "contractRef": "T-2",
+      "text": "vesselExport writes the caller's access token to a log: `console.debug(input.token)` runs on every call. Corpus rule T-2 forbids this outright: 'never write a token to a log, including debug logs'. A1 requires following the corpus export contract, and I-1 requires vessel exports to satisfy it, so A1 is not delivered. The line also gives the function an I/O side effect, which breaks the 'every exported function is pure' clause of contracts/api.md. The token has already leaked in practice, because the test's token value appears in the lane's stdout. The function has no other use for the token, so removing the line fixes this without changing the return value.",
+      "evidence": [
+        "packages/wheat/src/vessel-export.ts:2",
+        "0010_Exports.md T-2 in the pinned corpus",
+        "contracts/api.md:3",
+        "/redacted/path prints `private`, the test's token, directly before `export record shape`"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path  # imports vesselExport from this checkout and calls it with { id: 'Oak-7', token: 'SECRET-TOKEN' }, then logs the result",
+          "output": "SECRET-TOKEN\nresult {\"vessel\":\"Oak-7\"}\nexit 0"
+        },
+        {
+          "command": "grep -n \"export record\\|SECRET\\|private\" /redacted/path",
+          "output": "43:private\n44:✔ export record shape (4.904014ms)"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "blocking",
+      "defect": "test-inadequate",
+      "path": "packages/wheat/test/vessel-export.test.ts",
+      "hunk": {
+        "path": "packages/wheat/test/vessel-export.test.ts",
+        "line": 4
+      },
+      "contractRef": "T-2",
+      "text": "The only test asserts the T-1 vessel field, so nothing witnesses T-2. It stays green while the function leaks its token, which is why the passing unit lane says nothing about the export contract as a whole. A1 delivers the function 'and its test' under that contract, so the test must fail on this exact leak.",
+      "evidence": [
+        "packages/wheat/test/vessel-export.test.ts:4",
+        "/redacted/path shows the test passing with the token printed immediately before it"
+      ],
+      "experiments": [],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "defect": null,
+      "path": null,
+      "hunk": null,
+      "contractRef": null,
+      "text": "Spec housekeeping for the root: the spec cites 'ruling C-1', but it appears nowhere in the checkout or the pinned corpus index, so I could not apply it and did not grade against it. Separately, I-1 is anchored only at T-1 and shows 'Observation: none', which never counts as passed. Its wording covers the whole export contract, but the anchor would not catch a T-2 regression, so consider anchoring it at T-2 as well.",
+      "evidence": [
+        "spec.json Cites: ruling C-1",
+        "grep -rn 'C-1' over the checkout, excluding goldens and .git, returned no files",
+        "grep for 'C-1' over /redacted/path returned no matches",
+        "obligations block: I-1 anchored at T-1, Observation: none"
+      ],
+      "experiments": [],
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Delete `console.debug(input.token);` from packages/wheat/src/vessel-export.ts and do not log the token any other way. Keep the return value `{ vessel: input.id }` unchanged.",
+    "Extend packages/wheat/test/vessel-export.test.ts with a test that fails if the token reaches a log. Capture at least console.debug, console.log, console.info, console.warn and console.error during the call (for example with node:test mock.method), and assert that no captured argument contains the token. Confirm it fails against the current code. Keep the existing T-1 assertion.",
+    "Re-run `node tools/gen-goldens.ts` and commit whatever it produces. Do not hand-edit goldens. The signature should not change, so goldens/wheat.json is expected to stay the same unless the signature does."
+  ],
+  "reasons": [
+    "A1 not met: T-1 holds (the id is returned verbatim in `vessel`), but line 2 logs the access token, violating T-2 and the purity clause of contracts/api.md. An experiment confirmed it, and the token also appears in the lane stdout.",
+    "A1's test does not cover T-2 and stays green with the leak in place.",
+    "A2 met: only goldens/wheat.json changed, and the only module changed or added is the vesselExport entry. The executor's regeneration came out byte-identical. No unrelated changes, so the non-goal holds.",
+    "I-1 not satisfied: its anchor T-1 holds, but its text requires the whole export contract, and T-2 is violated. The green unit lane does not change that."
+  ],
+  "premises": [
+    {
+      "claim": "The vessel field preserves the caller's id verbatim, so T-1 holds.",
+      "evidence": [
+        {
+          "path": "packages/wheat/src/vessel-export.ts",
+          "line": 3
+        },
+        {
+          "path": "packages/wheat/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "T-2 is in the same export contract section as T-1 and explicitly covers debug logs.",
+      "evidence": [
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "claim": "Exported functions must be pure under the API contract.",
+      "evidence": [
+        {
+          "path": "contracts/api.md",
+          "line": 3
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

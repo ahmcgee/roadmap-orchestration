@@ -1,0 +1,103 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "packages/wheat/test/vessel-export.test.ts",
+      "text": "The test pins only part of the export contract. It rejects a case-changing id, but a trimming implementation and one that debug-logs the token both still pass. T-1 'verbatim' is therefore witnessed for only one input shape, and T-2 is not witnessed at all. The shipped code satisfies both rules (no logging, id returned unchanged), so this does not block. A later change to this function could break either rule with the test staying green.",
+      "contractRef": "T-1, T-2",
+      "evidence": [
+        "packages/wheat/test/vessel-export.test.ts:4",
+        "packages/wheat/src/vessel-export.ts:2"
+      ],
+      "experiments": [
+        {
+          "command": "cp -r packages/wheat /redacted/path; sed -i 's/input.id/input.id.toLowerCase()/' /redacted/path; node --test /redacted/path",
+          "output": "pass 0, fail 1 (mutant killed)"
+        },
+        {
+          "command": "same copy with input.id.trim()",
+          "output": "pass 1, fail 0 (mutant survives)"
+        },
+        {
+          "command": "same copy with console.debug(input.token) added before the return",
+          "output": "pass 1, fail 0 (mutant survives)"
+        }
+      ],
+      "debt": {
+        "drag": "Future edits to vesselExport can break T-1 for whitespace ids, or T-2, without any test failing."
+      },
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": {
+        "path": "packages/wheat/test/vessel-export.test.ts",
+        "line": 4
+      }
+    },
+    {
+      "severity": "note",
+      "path": null,
+      "text": "The journey lane behind I-1's witness (test id 'export') does not run vesselExport. Its argv is jsonl-lane.sh, which runs a test fake that reports the outcome scripted in witness-control.json ('*' tree, export: pass). The 'missing: none / failing: none' witness check and the arc-journey pass therefore say nothing about this code, and would report the same on any tree. I did not count them as evidence for I-1. My I-1 grade rests on the unit lane's 'export record shape' test, reading the code and my direct run. The lane is plan-side and outside this diff, so the builder cannot fix it. If the root wants a real witness for I-1, the plan has to change.",
+      "contractRef": "I-1",
+      "evidence": [
+        "/redacted/path",
+        "/redacted/path",
+        "/redacted/path",
+        "/redacted/path"
+      ],
+      "experiments": [],
+      "debt": {
+        "drag": "The obligation ledger can show I-1 as witnessed by a lane that never executes the export."
+      },
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "A1 met: packages/wheat/src/vessel-export.ts adds vesselExport, which accepts { id, token } and returns { vessel: id }, and the test sits in packages/wheat/test/. T-1 holds: a direct run returned 'Oak-7', ' a b ', 'ÄÖ', '' and '0007' unchanged. T-2 holds: the function does not log and does not return the token. It is pure, so it does not conflict with contracts/api.md.",
+    "A2 met: regenerating with node tools/gen-goldens.ts in a clean export of HEAD gave goldens identical to the commit (diff -rq, 'goldens-same'), which matches the executor's check. A semantic comparison shows goldens/wheat.json changes only by the new vessel-export module entry; every other module is identical. No other golden or source file changed.",
+    "Non-goals respected: the diff is exactly the three expected files.",
+    "I-1 is met on the unit lane test and my direct run, not on the journey witness, which is scripted (see note). The unit lane passed 51/51 and includes 'export record shape'.",
+    "Ruling C-1 is cited in the spec but appears in no corpus rule, and I did not read the rulings ledger, as instructed. This verdict makes no claim about C-1 beyond the cited contract and T-1/T-2.",
+    "The two notes are non-blocking: the shipped behaviour is correct, and the gaps are in test strength and a plan-side lane."
+  ],
+  "premises": [
+    {
+      "claim": "vesselExport returns the caller's id unchanged in the vessel field, drops the token and does no logging.",
+      "evidence": [
+        {
+          "path": "packages/wheat/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "T-1 and T-2 are the export contract rules that apply; T-3 to T-42 concern the archived tariff screen.",
+      "evidence": [
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 6
+        },
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "claim": "Goldens are written only by the generator, which lists each module's exported signatures, so adding a module inserts one entry.",
+      "evidence": [
+        {
+          "path": "tools/gen-goldens.ts",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

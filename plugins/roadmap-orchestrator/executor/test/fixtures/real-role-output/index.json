@@ -1,0 +1,942 @@
+[
+  {
+    "file": "campaignAudit-01.json",
+    "role": "campaignAudit",
+    "source": "roadmap-probe-IgRb7u/inv/44-1",
+    "event": 43,
+    "sourceSha256": "ac2f030dfd28150a52d17742b902e7cf2eaaa156f10b4c90bb83584277eee649",
+    "expect": "accepted"
+  },
+  {
+    "file": "packReview-01.json",
+    "role": "packReview",
+    "source": "roadmap-probe-IgRb7u/inv/50-1",
+    "event": 29,
+    "sourceSha256": "331f8c1ad4fcf73ba922c6fc5530ca35f904bae13c8973c396173cfd69eedb96",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-01.json",
+    "role": "build",
+    "source": "roadmap-probe-IgRb7u/inv/53-1",
+    "event": 7,
+    "sourceSha256": "c64cbdb3fffe5c1ba49f8b5ff512eec27acfb5d9292987e8ede301b6de76bac2",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-02.json",
+    "role": "build",
+    "source": "roadmap-probe-IgRb7u/inv/56-1",
+    "event": 14,
+    "sourceSha256": "98a931d57a7242041fa1e108f2e1afc7e4a80ed0197a86f2565e67fe4bf5eaae",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "build.final: expected true",
+    "description": [
+      "properties",
+      "final"
+    ],
+    "descriptionIncludes": "final-report parser rejects false"
+  },
+  {
+    "file": "build-03.json",
+    "role": "build",
+    "source": "roadmap-probe-IgRb7u/inv/56-1",
+    "event": 23,
+    "sourceSha256": "e603233a7b23c6c3ef8f30b32381d6a0388678be285bd5bf7517a715abf4b444",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-02.json",
+    "role": "campaignAudit",
+    "source": "roadmap-probe-bXrxZR/inv/44-1",
+    "event": 40,
+    "sourceSha256": "b7fe982b184c5734444292880c55c749b38ec528317a2143fe99917cd30a95f9",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-01.json",
+    "role": "verifier",
+    "source": "roadmap-probe-bXrxZR/inv/47-1",
+    "event": 26,
+    "sourceSha256": "8100e2e934ab3080101ef88c79bd03f537a08b03ba55b0dcba615bbbf8078f62",
+    "expect": "accepted"
+  },
+  {
+    "file": "packReview-02.json",
+    "role": "packReview",
+    "source": "roadmap-probe-bXrxZR/inv/50-1",
+    "event": 30,
+    "sourceSha256": "ebab3a7ff709682b82f5dcfda60e6abadeaef243c078ad5048af5a1369a194d3",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-04.json",
+    "role": "build",
+    "source": "roadmap-probe-bXrxZR/inv/53-1",
+    "event": 7,
+    "sourceSha256": "7d561089b1fc3e0708c0da941bb17acdca64e2b5f8cae85a0751f3b6103b241b",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-05.json",
+    "role": "build",
+    "source": "roadmap-probe-bXrxZR/inv/56-1",
+    "event": 12,
+    "sourceSha256": "70f35bd718b41a12eac539dd525b8cbd3261ec005d02a1149aa5a315018271d2",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "build.final: expected true",
+    "description": [
+      "properties",
+      "final"
+    ],
+    "descriptionIncludes": "final-report parser rejects false"
+  },
+  {
+    "file": "build-06.json",
+    "role": "build",
+    "source": "roadmap-probe-bXrxZR/inv/56-1",
+    "event": 21,
+    "sourceSha256": "2c158c611a9c2a25101e5ac31043ac6913c99ba05050b09e6c8a32edee754f0d",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-03.json",
+    "role": "campaignAudit",
+    "source": "roadmap-probe-cHjvlk/inv/44-1",
+    "event": 36,
+    "sourceSha256": "b305e8d0be8804f4f051af31dec338da5683f6116a9a8d0c9a07998e20b0340f",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-02.json",
+    "role": "verifier",
+    "source": "roadmap-probe-cHjvlk/inv/47-1",
+    "event": 28,
+    "sourceSha256": "5481935ddfdcc4065d6445131a838b3174de86036f72987bb7fac07c4bba421f",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[1].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "packReview-03.json",
+    "role": "packReview",
+    "source": "roadmap-probe-cHjvlk/inv/50-1",
+    "event": 28,
+    "sourceSha256": "dce2985d0f970240effa3f9559d55b2cd7558507c90126fed33253a8a96e1621",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-07.json",
+    "role": "build",
+    "source": "roadmap-probe-cHjvlk/inv/53-1",
+    "event": 7,
+    "sourceSha256": "7b6d018b4e8b06538b6b19af3d9b9d583f4f71dca349034af532dd46fb0bc64e",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-08.json",
+    "role": "build",
+    "source": "roadmap-probe-cHjvlk/inv/56-1",
+    "event": 12,
+    "sourceSha256": "99792cb390c3c78e810076b533c62aaa8d24114dcd9dedcf24407de06fd6cdf6",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "build.final: expected true",
+    "description": [
+      "properties",
+      "final"
+    ],
+    "descriptionIncludes": "final-report parser rejects false"
+  },
+  {
+    "file": "build-09.json",
+    "role": "build",
+    "source": "roadmap-probe-cHjvlk/inv/56-1",
+    "event": 21,
+    "sourceSha256": "cdf11c7aaf0f53ce6117de79c4f00ff55981a00eb0a2a542247d8476bf684da2",
+    "expect": "accepted"
+  },
+  {
+    "file": "experienceVerdict-01.json",
+    "role": "experienceVerdict",
+    "source": "roadmap-unit-run-1tSbiy/inv/148-1",
+    "event": 24,
+    "sourceSha256": "1e22e14e41a44c989469a19db55aac8e511c61fd0e1022ff44056bbf1f80a1f6",
+    "expect": "expected-repair",
+    "check": "walkRefusals",
+    "description": [
+      "properties",
+      "verdict",
+      "anyOf",
+      0,
+      "properties",
+      "journeys",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "ONLY the exact path of an existing saved file",
+    "evidenceFiles": [
+      "j1-diagnosis.txt",
+      "j1.stderr",
+      "j1.stdout",
+      "j2.stderr",
+      "j2.stdout"
+    ]
+  },
+  {
+    "file": "experienceVerdict-02.json",
+    "role": "experienceVerdict",
+    "source": "roadmap-unit-run-njbbTG/inv/267-1",
+    "event": 15,
+    "sourceSha256": "3d53c4d2f421a8ad7180cced3ee528d851bfde191682bf7bcecba7d0f756d1fb",
+    "expect": "expected-repair",
+    "check": "judgeRefusals",
+    "description": [
+      "properties",
+      "verdict",
+      "anyOf",
+      1,
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "ONLY the exact path of an existing saved file",
+    "evidenceFiles": [
+      "j1-after-body-od.txt",
+      "j1-after-cli-and-health.txt",
+      "j1-after-exit.txt",
+      "j1-after-response.txt",
+      "j1-before-body-od.txt",
+      "j1-before-cli-and-health.txt",
+      "j1-before-exit.txt",
+      "j1-before-response.txt"
+    ]
+  },
+  {
+    "file": "build-10.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/window-rule/3-evidence/build/files/inv/294-1",
+    "event": 23,
+    "sourceSha256": "16a8a33870cc26ff67e04552da2b8d7d2d33e1b9f1082815c63da765d2132660",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-11.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/reserve-flow/4-evidence/build/files/inv/679-1",
+    "event": 259,
+    "sourceSha256": "efb0fcc47c9869e460eee176e2c371af00bc7a456d53545a42a8b19ddf0ffd1d",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-12.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/page-access/4-evidence/build/files/inv/992-1",
+    "event": 79,
+    "sourceSha256": "46324b57791236753a048fc9af3e4af96921ac4ad493d2c53d93dbad211edb05",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-13.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/page-access/10-evidence/build/files/inv/1056-1",
+    "event": 12,
+    "sourceSha256": "20a2aeeeb4889abb6e804f4a7334eefd4085227a8946b98484d64574f96cd0f4",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-14.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/page-access/17-evidence/build/files/inv/1103-1",
+    "event": 26,
+    "sourceSha256": "78f69628b3f525173240665730b974f34405448267007534279e12779e65ef9a",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-15.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/design-page/10-evidence/build/files/inv/197-1",
+    "event": 11,
+    "sourceSha256": "1c3f695085e5515d74e14e801942a67557ec2cd63971c6467207a44ddd364b4a",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-16.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/design-page/3-evidence/build/files/inv/149-1",
+    "event": 27,
+    "sourceSha256": "d5c502001b3eac18ce599cf877541b0c6e8ad3cef96b05fee782c17ed64ea2e3",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-17.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/search/4-evidence/build/files/inv/863-1",
+    "event": 40,
+    "sourceSha256": "78fe003a3a198de0a7589dcc09eb1372362a1cd0a78a9a8c4996300236e31e0b",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-18.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/store-update/4-evidence/build/files/inv/437-1",
+    "event": 199,
+    "sourceSha256": "7cdabf79ef42bbbee974b0bdc8ddeaa880195ed52f313d4cb36f77d7cbeede3a",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-19.json",
+    "role": "build",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/evidence/store-update/11-evidence/build/files/inv/524-1",
+    "event": 35,
+    "sourceSha256": "8298616a0eaceeacaca8480234187ebf1efe46870d7ed91bc79cc882b363ee59",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-03.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/361-1",
+    "event": 39,
+    "sourceSha256": "faf550338a16c297e4c64e54d19c6647ba5c855cff934a213b6e469935251bd2",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-04.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/750-1",
+    "event": 6,
+    "sourceSha256": "8e8fa3b2581a686a24ab2938cfaaad4c72802a5c2295128c3ed2ac1b9fa0354d",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[1].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-05.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/505-1",
+    "event": 96,
+    "sourceSha256": "4c4a57b6194b54369c81354aa608d51771cd904b3f27c0bf8c63ce55e65e68d0",
+    "expect": "accepted"
+  },
+  {
+    "file": "packReview-04.json",
+    "role": "packReview",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/106-1",
+    "event": 225,
+    "sourceSha256": "fc1feb642b267f91ae2fd9dcf7cbbec15bcc8f2cbf7982185817731528403815",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-06.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/1084-1",
+    "event": 92,
+    "sourceSha256": "6c3e29860d9d44d4b60991a35c1cf0f1efa7f6be73a2423394a997b71ae47d5a",
+    "expect": "accepted"
+  },
+  {
+    "file": "packReview-05.json",
+    "role": "packReview",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/16-1",
+    "event": 205,
+    "sourceSha256": "1b24c1fdc19436642786b9dfe4971a1a101f4650fccade6ba0fabc7658d11942",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-07.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/973-1",
+    "event": 161,
+    "sourceSha256": "c59832d5fc29bbeefe27363b618cfcdf39da6a8f9e05bd720486d4bf2c8765db",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-08.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/178-1",
+    "event": 83,
+    "sourceSha256": "b47e3df8a0e7383c3187d03de23cd0c9c0731b561fdab9f6b81e013507589e12",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-09.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/592-1",
+    "event": 96,
+    "sourceSha256": "79950572c9b56840e059284943c6f1207a82764b7bf9fb0c9f1f5d160e13cdba",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-10.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/226-1",
+    "event": 49,
+    "sourceSha256": "ebef5bb1e99019b2f860d5ede09d7dd9ccebdfa6dc827598f95efcec24f45471",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-04.json",
+    "role": "campaignAudit",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/1285-1",
+    "event": 362,
+    "sourceSha256": "95afd86a6e2e995707465ebd151d70668cc3e3cc17b5300c14a429239489f728",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-11.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/1173-1",
+    "event": 66,
+    "sourceSha256": "80186a80cc60d1a7d67ef9fe087132fa7d1db75597384343d90d165c8194746b",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-12.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/657-1",
+    "event": 123,
+    "sourceSha256": "758dcb839e7a4178c2e646e9237d4922d75f2b9f6aba2f3be9a7f2527f02c3ec",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.directives: expected an empty array (directives only with revise)",
+    "description": [
+      "properties",
+      "directives"
+    ],
+    "descriptionIncludes": "Must be empty for approve or escalate"
+  },
+  {
+    "file": "verifier-13.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/769-1",
+    "event": 84,
+    "sourceSha256": "963e074c57adef931106b02bff1fd6185053246a4a5422687cefae507b016605",
+    "expect": "schema-rejected",
+    "schemaError": "$.findings[0].reraises: matches no anyOf branch, got \"reserve-and-keep/660#1:7\""
+  },
+  {
+    "file": "verifier-14.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/910-1",
+    "event": 71,
+    "sourceSha256": "d8ba0f9ae9b2518998137125ea64545e2c41ac768136e17eef27667b9e6c4195",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-15.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/296-1",
+    "event": 81,
+    "sourceSha256": "5323aaa733f816c557b0775d21fbaba7cd2a52ccf9771a94d3db0067887e57dc",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[4].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "packReview-06.json",
+    "role": "packReview",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/130-1",
+    "event": 81,
+    "sourceSha256": "999d8b014dd425d514435964997541a60779c30c231c9da27acbe43e4c578955",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-05.json",
+    "role": "campaignAudit",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/1320-1",
+    "event": 358,
+    "sourceSha256": "de2e45a6354d40012a0c1e5eb82697ec7670868f8236a545171d218fe6bb322f",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-16.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/844-1",
+    "event": 85,
+    "sourceSha256": "899f1c84c487fd9334536b62136e6784206e5b15f0755ba5adaea89367ee8d4d",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-17.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/418-1",
+    "event": 10,
+    "sourceSha256": "2b7bc5fd0977522e3d95b71bf98176d716f36a8d4a48847afb6282b25a9876ad",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-18.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/747-1",
+    "event": 124,
+    "sourceSha256": "50cc049739e64783bd82320d0b48bc8e842a9fe9c6343e1182cd024b11d259a9",
+    "expect": "schema-rejected",
+    "schemaError": "$.findings[1].reraises: matches no anyOf branch, got \"reserve-and-keep/660#1:7\""
+  },
+  {
+    "file": "verifier-19.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/772-1",
+    "event": 5,
+    "sourceSha256": "907b6c8c027ad47d3ccfeaa0c2acfc9087031955c5e612d5f222a16c5308d35e",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-20.json",
+    "role": "verifier",
+    "source": "paid/m5/run/stage/product/.git/roadmap-runtime/reserve-and-keep/inv/660-1",
+    "event": 5,
+    "sourceSha256": "6de8a335c6c7d3ec8ac53268763507ae112bddf6f0b04985154ec8e295a3af06",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-06.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/clean-2",
+    "event": 38,
+    "sourceSha256": "3fc89c68f56fadd772b258fbd1dd947bb8b53f76eecbc6b64a5ec871e784e637",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-07.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/secret-1",
+    "event": 25,
+    "sourceSha256": "8cd311129b5e1e5131c339d540bcb2ee8df8d94077c98be1586392b4fad80c3e",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-08.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/sign-1",
+    "event": 25,
+    "sourceSha256": "88643753e34a54be673705aa6199acc0fd8a6579e89dff0490b10f42739e2fb0",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-09.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/clean-0",
+    "event": 48,
+    "sourceSha256": "ecd66ad538a7a41ca0457853a6e51172d7fc51f73c28e568bea9e9d38043c89e",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-10.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/secret-2",
+    "event": 32,
+    "sourceSha256": "5cd3a633aa11f1d6ab91a94d283b253e1a702954ebf9fa95cab1a73814b7ef25",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-11.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/sign-0",
+    "event": 23,
+    "sourceSha256": "dac6c08c1aa448c60c8df87229cf42861e65c037ac500d5fa9b972011b1b6458",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-12.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/clean-1",
+    "event": 50,
+    "sourceSha256": "3b1d798a59d51a3b178a10dd491bf896b54904dedee1c9df1e6a46fa2e4b0efd",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-13.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/sign-2",
+    "event": 25,
+    "sourceSha256": "66b7c0ea5dbaaa649d5c08d0e2118ca65d1db39441a662ac0aa845a7d02b7a1a",
+    "expect": "accepted"
+  },
+  {
+    "file": "campaignAudit-14.json",
+    "role": "campaignAudit",
+    "source": "paid/out-campaignAudit/secret-0",
+    "event": 29,
+    "sourceSha256": "e17e8b96eb4a19b3af8861e9cf223b7096a773fc621a6747ce6f084619bc834d",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-21.json",
+    "role": "verifier",
+    "source": "paid/out-pre-build/clean-0",
+    "event": 21,
+    "sourceSha256": "76636794c4a72376c6ab61006952f015a18db60b8830d1990360e11afcfdb8cf",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.directives: expected an empty array (directives only with revise)",
+    "description": [
+      "properties",
+      "directives"
+    ],
+    "descriptionIncludes": "Must be empty for approve or escalate"
+  },
+  {
+    "file": "verifier-22.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C3-1",
+    "event": 33,
+    "sourceSha256": "eed151a548df18ed7ac926c11adf75a830286a22f54cb9f00f028d0d9c915cd9",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[0].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-23.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C3-2",
+    "event": 42,
+    "sourceSha256": "70c5615f58e03efd8fc982c166c2279180e5c6aa4c30c451d000c00c24d0d81a",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[1].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-24.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C1-2",
+    "event": 20,
+    "sourceSha256": "83bbf955ecfbcf1a8b366f885e40b87dd73d31435390a3eeec78c415f6c00157",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[2].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-25.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C1-2",
+    "event": 31,
+    "sourceSha256": "f9f480989976d32dfd6721498a9d1809d65fe8f930c24be5df294911eeb91b3b",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-26.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C2-1",
+    "event": 16,
+    "sourceSha256": "5afe1f7cca1937f887b6bd31b96871ce354f0dfdb2f4c510ad0091778c6a4a4f",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-27.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G2a-0",
+    "event": 76,
+    "sourceSha256": "af31103293fd56d242901e5a6c91ed834667b751bf088b002259cff6d4b458b5",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-28.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G2a-1",
+    "event": 80,
+    "sourceSha256": "8b1c955b4ac7e5e5be2b1e1132b3cfa815c8a182dd6b2f904b47c6cad8852100",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[1].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-29.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C1-1",
+    "event": 20,
+    "sourceSha256": "9803e239813b86506ca9be3a5bef47ff2216736c1864403c0301feb76d2829e0",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[2].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-30.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C1-1",
+    "event": 46,
+    "sourceSha256": "816f6a298ab775aa06cd3a7c7692098f124cb035b1c4a5328e5549075277fd13",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-31.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C1-0",
+    "event": 23,
+    "sourceSha256": "5f13931cea37bfe30e9a0be99390c19728421aab9fad3cefd4b2661ef96ee11e",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[2].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-32.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C1-0",
+    "event": 49,
+    "sourceSha256": "78d532d81c2cd78b97105eaa1ce13e2b21d4eef7d3ccc6c9ae17bd345666cf47",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-33.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C3-0",
+    "event": 36,
+    "sourceSha256": "9cda1dc8d1050ce1f1648e2e54a79d091899920771091ebc59125d0e891fd3e4",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[1].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-34.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G2b-0",
+    "event": 88,
+    "sourceSha256": "91408e0861a98e2ae23c874afd56f5b547e2d7e9907fcf7e86133f5b903f991a",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-35.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G3a-2",
+    "event": 74,
+    "sourceSha256": "e6d6a72cf43cc8e293996995686882e8e3b643b7693c1532af571963214c919d",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-36.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/G0-1",
+    "event": 17,
+    "sourceSha256": "6f273ec897a9c9ab7740539a1986278684233d3ff98a1ee73b50780cc2e4a4e3",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-37.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C2-2",
+    "event": 18,
+    "sourceSha256": "2101611dccb9d161ac51295897bb73c8d4faaca8e09687ebac39846fd134a251",
+    "expect": "expected-repair",
+    "check": "parser",
+    "error": "gate.findings[3].evidence: expected an experiment or path:line evidence",
+    "description": [
+      "properties",
+      "findings",
+      "items",
+      "properties",
+      "evidence"
+    ],
+    "descriptionIncludes": "at least one experiment or an evidence entry containing path:line"
+  },
+  {
+    "file": "verifier-38.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C2-2",
+    "event": 28,
+    "sourceSha256": "cfdf924120c86b849146de129943efd877ce0dcbea36a7cc06cef961cfa8f93b",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-39.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G1-0",
+    "event": 102,
+    "sourceSha256": "723f564d5e841baad42d549b3aacaee9f82444cd9698b56005572a217997941a",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-40.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G1-1",
+    "event": 90,
+    "sourceSha256": "42e51bff7233c7b15d50cefc616641e14d9db685ccecb8d5165da5597fe90cde",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-41.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/C2-0",
+    "event": 20,
+    "sourceSha256": "6b79c42b1e58e9902907cc925184c066a8eef501e4fcb356b8c5dc0924d53342",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-42.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/G0-2",
+    "event": 16,
+    "sourceSha256": "93779923289f906e11f3d8f3bb1ddf87dcc318b6fb805e324e3ca93d65c88963",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-43.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G3a-1",
+    "event": 83,
+    "sourceSha256": "b026d6744f9464ffbabb4843e335f14e6777d945b2042bf6911aaa9937591c79",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-44.json",
+    "role": "verifier",
+    "source": "paid/out-verifier/G0-0",
+    "event": 17,
+    "sourceSha256": "770348c7fd7419c326e3f3832e09e48b5abc00ab161669ce58112a8bd165d78b",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-45.json.gz",
+    "role": "verifier",
+    "source": "paid/out-verifier/G2a-2",
+    "event": 86,
+    "sourceSha256": "147c18e6ebf5b2d08ea0cb76131b4e6e6a5b622689b6a9aa06fbeaf9e808681f",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-20.json",
+    "role": "build",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/evidence/page-id/4-evidence/build/files/inv/155-1",
+    "event": 9,
+    "sourceSha256": "8357d333d0d37a58b9a6348d81801631f68317c99c2e03ffcd7802b0b34df85c",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-21.json",
+    "role": "build",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/evidence/slug/4-evidence/build/files/inv/37-1",
+    "event": 9,
+    "sourceSha256": "ef9ed233102326d27a26704d92a4c22267eb459d0cc615867abae361cf80a436",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-46.json",
+    "role": "verifier",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/inv/18-1",
+    "event": 21,
+    "sourceSha256": "1f313726d953eb7ecc6e0ae692a4f44cdce7938206024142255f43648c66203a",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-47.json",
+    "role": "verifier",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/inv/197-1",
+    "event": 6,
+    "sourceSha256": "e3fc725f0b7b129a8f8d7f1b8712775f5fc9f1f279af95bc6d05954b86980657",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-48.json",
+    "role": "verifier",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/inv/194-1",
+    "event": 17,
+    "sourceSha256": "8925332af6c1a9cf83980b8c7e4981624470f7380686ba9f5fe6dba8834cc56f",
+    "expect": "schema-rejected",
+    "schemaError": "$.findings[0].reraises: matches no anyOf branch, got \"m1-fixture-15ded3125433/136#1:2\""
+  },
+  {
+    "file": "verifier-49.json",
+    "role": "verifier",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/inv/76-1",
+    "event": 19,
+    "sourceSha256": "d82d6c50cd4a99eccdd6628e175890af8080868ea4964d62bf5008bebc0a5296",
+    "expect": "accepted"
+  },
+  {
+    "file": "verifier-50.json",
+    "role": "verifier",
+    "source": "paid/m1/run/repo/.git/roadmap-runtime/m1-fixture-15ded3125433/inv/136-1",
+    "event": 21,
+    "sourceSha256": "98c6305262381283d728ae5b9e0f62864b84127d6b6a39507cd9d26284779627",
+    "expect": "accepted"
+  },
+  {
+    "file": "build-22.json",
+    "role": "build",
+    "source": "paid2/m1/run/repo/.git/roadmap-runtime/m1-fixture-3a20ccc378cd/evidence/slug/4-evidence/build/files/inv/37-1",
+    "event": 19,
+    "sourceSha256": "866fd114edb6679e6e1a1657f583b2688df07bb364c99ec47e8fda5ac7e61d35",
+    "expect": "accepted"
+  }
+]

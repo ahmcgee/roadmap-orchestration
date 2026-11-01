@@ -1,0 +1,37 @@
+{
+  "summary": "Added src/slug.js (slugify: lowercases only ASCII A-Z, collapses non-[a-z0-9] runs to one '-', trims edge hyphens) and test/slug.test.js covering A1/A2 including non-ASCII (café, İ) and empty-result boundaries. Slug lane passes; full node --test passes (4 tests).",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "slug lane",
+      "argv": [
+        "node",
+        "--test",
+        "test/slug.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "full suite",
+      "argv": [
+        "node",
+        "--test"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/slug.js",
+      "test/slug.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "String.prototype.toLowerCase would turn 'İ' into 'i'+combining dot, leaking an ASCII letter; lowercasing is restricted to A-Z to honor rule 1/2.",
+    "slugify('!!!') returns '' per D1; pageId is not part of this unit.",
+    "Changes are uncommitted in the worktree."
+  ],
+  "final": true
+}

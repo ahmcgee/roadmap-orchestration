@@ -1,0 +1,16 @@
+{
+  "summary": "Waiting for the slow dependency (ready.txt) via Monitor. hello.txt is not written yet.",
+  "blockers": [],
+  "experiments": [],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "app: hello.txt in repo root"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Monitor task bmfj01sda running sleep 20 then writing ready.txt."
+  ],
+  "final": false
+}

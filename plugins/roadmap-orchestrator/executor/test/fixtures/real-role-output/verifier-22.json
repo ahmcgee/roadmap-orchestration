@@ -1,0 +1,69 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "/redacted/path",
+      "text": "The journey lane's `export` pass for I-1 appears to come from a control file, not from running vesselExport. witness-control.json fixes outcome `export: pass`, and jsonl-lane.sh execs a runner under executor/test/fakes (runner not read). The witness record therefore adds little evidence about this code. The real witness for T-1 is packages/flint/test/vessel-export.test.ts, which ran and passed on the unit lane. This is plan-owned, not a defect in the diff, so it does not block.",
+      "evidence": [
+        "/redacted/path",
+        "/redacted/path",
+        "/redacted/path",
+        "/redacted/path"
+      ],
+      "contractRef": null,
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "A1 met: packages/flint/src/vessel-export.ts adds vesselExport({id, token}), which returns { vessel: id }. The test sits in packages/flint/test/, and the unit lane shows `export record shape` passing (51 of 51 tests).",
+    "T-1 met: the id is returned unchanged. The mixed-case 'Oak-7' fixture would catch a case-normalising implementation. An ad hoc test, since removed, also confirmed verbatim output for ' a b ', '', 'ÄB' and 'x/y'.",
+    "T-2 met: the function has no logging or I/O and the token never reaches the output, confirmed with a 'SECRET' token in the same ad hoc test. Lane stderr is empty. The obligations census classes T-2 as untestable, so no witness is required.",
+    "contracts/api.md met: the function is pure and total. Its inputs are strings, so the 'over integers' wording has no separate application here.",
+    "A2 met: the executor's regeneration in a clean checkout was byte-identical. Parsing the golden diff shows 57 modules become 58: only vessel-export.ts is added, none are removed and none change.",
+    "Non-goals respected: the diff touches only the two new flint files and goldens/flint.json.",
+    "Ruling C-1 is cited by the spec but was not read, because this role is told not to read the rulings ledger. No evidence in the diff suggests a conflict."
+  ],
+  "premises": [
+    {
+      "claim": "vesselExport returns the caller's id verbatim in the vessel field and neither logs nor returns the token.",
+      "evidence": [
+        {
+          "path": "packages/flint/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The test asserts the vessel field against a mixed-case id through the real entry point.",
+      "evidence": [
+        {
+          "path": "packages/flint/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "T-1 and T-2 are the only export rules that bear on this function; T-3 to T-42 concern the tariff screen.",
+      "evidence": [
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 6
+        },
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 7
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

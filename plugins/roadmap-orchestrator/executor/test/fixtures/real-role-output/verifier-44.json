@@ -1,0 +1,67 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "packages/acorn/src/level-panel.ts",
+      "hunk": {
+        "path": "packages/acorn/src/level-panel.ts",
+        "line": 13
+      },
+      "text": "The rename sweep also changed a loop bound in acornLevelPanelSpan, from `i < a % 7` to `i <= a % 7`. This adds one iteration, so the exported function returns different values. It breaks A1 ('behaviour is unchanged'), A2 ('Nothing else changes'), the contract ('Renames keep behaviour') and the direction that sweeps stay mechanical. The line does not contain acornBase, so the rename cannot explain it. The sibling package still uses `<` (packages/elm/src/level-panel.ts:25). The green unit lane does not witness this: packages/acorn has no test directory. The goldens do not witness it either, because tools/gen-goldens.ts records only names, params and imported calls, so regeneration passes with the altered loop.",
+      "evidence": [
+        "packages/acorn/src/level-panel.ts:13",
+        "packages/elm/src/level-panel.ts:25",
+        "contracts/api.md",
+        "tools/gen-goldens.ts:13-24"
+      ],
+      "contractRef": "contracts/api.md",
+      "experiments": [
+        {
+          "command": "git show 7ae47f0:packages/acorn/src/level-panel.ts (imports made absolute, acornBase→acornRoot) > /redacted/path; node /redacted/path  # compares every level-panel export, old vs head, for a,b in -20..20",
+          "output": "{ diffs: 523, total: 5043, ex: [ ['acornLevelPanelSpan', -14, 1, -20, -19], ['acornLevelPanelSpan', -14, 2, -20, -18], ['acornLevelPanelSpan', -14, 3, -20, -17], ['acornLevelPanelSpan', -14, 4, -20, -16], ['acornLevelPanelSpan', -14, 5, -20, -15] ] }"
+        },
+        {
+          "command": "git diff 7ae47f0 HEAD -- packages | grep -E '^[-+]' | grep -vE '^(\\+\\+\\+|---)' | sed 's/acornBase/acornRoot/g; s/^[-+]//' | sort | uniq -c | awk '$1%2==1'",
+          "output": "1   for (let i = 0; i < a % 7; i++) acornLevelPanelSpanAcc += fitReach(b + i);\n1   for (let i = 0; i <= a % 7; i++) acornLevelPanelSpanAcc += fitReach(b + i);"
+        }
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "In packages/acorn/src/level-panel.ts:13, restore the loop bound to `i < a % 7`, keeping the base commit's behaviour. The only change in this file should be acornBase → acornRoot.",
+    "Re-run `node tools/gen-goldens.ts` and commit whatever it produces. Do not edit goldens/ by hand. The output should not change, because goldens do not record loop bounds."
+  ],
+  "reasons": [
+    "A1 not met. The rename is complete: grep finds no acornBase anywhere in the checkout, and acornRoot appears outside packages/acorn/ only in goldens/acorn.json. However, 'behaviour is unchanged' is false, because acornLevelPanelSpan returned different results in 523 of the 5043 old-vs-head comparisons run across the level-panel exports.",
+    "A2 partly met. goldens/acorn.json is regenerated: the executor's regeneration was byte-identical, and its word diff shows only acornBase→acornRoot. 'Nothing else changes' is violated by the loop-bound edit.",
+    "The loop bound is the only change in packages/ that the substitution does not explain. The other 56 changed files are purely the rename. The unit lane passes (50 tests locally as well), but it does not exercise packages/acorn."
+  ],
+  "premises": [
+    {
+      "claim": "The only non-rename change in the diff is the loop bound in acornLevelPanelSpan.",
+      "evidence": [
+        {
+          "path": "packages/acorn/src/level-panel.ts",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "claim": "Goldens record export names, params and imported calls only, so they cannot detect a loop-bound change.",
+      "evidence": [
+        {
+          "path": "tools/gen-goldens.ts",
+          "line": 13
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}
