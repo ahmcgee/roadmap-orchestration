@@ -106,7 +106,8 @@ judges polish comparisons. A break holds downstream work that would need rework;
 
 One fresh campaign audit at milestones, on root request and at the final boundary judges invariants, vacuity,
 interactions and cheap document drift together. Bounded attachments/chunks preserve coverage across failures. It reports
-findings and root requests rather than silently changing the target. P1 requires repair or evidence-backed dismissal.
+findings and root requests rather than silently changing the target. P1 currently needs repair or code-owned not-reproduced dismissal. An explicit root finding-disposition channel is
+missing from the current CLI/apply inputs and remains a gap against the design delta.
 Only the root dispositions obligations. This keeps unattended work useful without allowing independent workers to move
 the goalposts.
 

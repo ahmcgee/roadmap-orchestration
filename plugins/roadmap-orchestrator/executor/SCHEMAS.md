@@ -75,6 +75,7 @@ Target arms:
   path in this arm; vision is product `.roadmap/vision.json`. Corpus arcs are holistic.
 
 Advances are active vision clauses and include a world clause. Optional obligations means no obligations when absent.
+Fresh holistic starts require corpus (`holistic-needs-corpus`); the architecture-doc holistic arm remains a parsed shape.
 Milestones and batch lanes require holistic. The parsed target discriminant is derived from fields; do not write it.
 
 ```ts
@@ -230,7 +231,7 @@ Limits override defaults at plan then unit, never below spent counters. Current 
 Arc limits additionally allow walkRounds (default 3) and verification `{laneMinutes?,lanes?}` for deflake budgets (default
 30 lane-minutes; batch default two runs). Separate fixed attempt thresholds are 8 builds/20 judged attempts for M4 and
 16/40 at a boundary for a hard cap. Attempt counts include build/lanes/gate, interrupted and uncharged work, with lineage.
-`review:never` disables review calls but not the hard cap. Steering leaves cap counts intact.
+`review:never` disables review/diagnosis calls and their M4 fallback marker, but not the hard cap. Steering leaves cap counts intact.
 
 KnownDefects `{id,match,fixUnit}` match lane or output substring; held units wait uncharged until the fix lineage merges.
 Derived entries `{sources,outputs,regenerate?:ToolCommand}` only add deterministic regeneration at lanes; no exclusions.
@@ -397,7 +398,8 @@ an experiment or path:line. Defect is nullable classification, not mandatory for
 findings. New evidence is required to re-raise settled findings. Gate disputes still use `rulings` in this schema; this is
 separate from the C-n root ledger. Clusters cover each changed path exactly once on a large diff.
 
-M1/M2/M3 reviews annotate standing items; M4 diagnosis stores a note. Markers and completed reviews are journal facts.
+M2 checks absent witness/ids/lane, later cadence or environment-backed proof for active delivered obligations; external
+class alone is not its trigger. M1/M2/M3 reviews annotate standing items; M4 diagnosis stores a note. Markers and completed reviews are journal facts.
 PackReview result carries target-specific findings/dispositions and report; whole-campaign outputs carry findings and
 root requests, never executable plan changes. ExperienceVerdict holds a tagged walk or compare output. See the source
 readers for their complete nested schema; those fields are validated against real ids and evidence rather than prose.
@@ -442,7 +444,8 @@ pipeline/transitions.ts and park/table.ts. Attempt counting includes build/lanes
 
 Finding/audit wire categories retain lens names as classifications. Scheduling has one campaign seat at milestone,
 requested and final triggers; no selector flag or rolling cadence. Bounded diff budgets/refusals and durable partial
-coverage remain. Close-out debt/releases remain; only the root edits obligation authority.
+coverage remain. Close-out debt/releases remain; only the root edits obligation authority. There is no root finding-disposition command
+or exported apply field; repair publication and code-owned reproduction/close-out paths change finding state.
 
 ## Runner, host, publication and recovery records
 

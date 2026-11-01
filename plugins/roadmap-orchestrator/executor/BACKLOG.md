@@ -6,6 +6,12 @@ contracts live in SCHEMAS.md. Work tied solely to removed producers is retired w
 
 ## Command-center follow-up
 
+- Root finding dismissal with counter-evidence was proposed but has no current command/apply field. Findings currently
+  resolve through repair publication or code-owned reproduction/close-out paths. Add an evaluated authoring channel
+  before claiming the root can dismiss a campaign false positive directly.
+- The M4a operator-log checker still accepts a retired action label and lacks note/witness; synchronize its closed
+  action list before grading those interventions. The documented pause example uses a supported action.
+
 - Calibrate diagnosis (8 builds/20 judged attempts) and hard-stop (16/40) thresholds from the first field arcs. They are
   fixed in code today, independent of limits. Add a verifier diagnosis role eval when real diagnoses provide cases.
 - Restore lane time estimates only when scheduling or summary consumes them; estMin is not a current field.

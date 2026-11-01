@@ -73,15 +73,15 @@ Conditional independent review uses:
 | Marker | Mechanical evidence |
 |---|---|
 | M1 | Declared persistent/redacts system traits; actual gate reach and builder touches provide a backstop |
-| M2 | A delivered obligation has absent or non-local witness proof |
+| M2 | An active delivered obligation has absent witness/ids/lane, later cadence or environment-backed proof |
 | M3 | Linked obligations edited/disposed/split, or cited pinned rule text changed/retired since review |
 | M4 | At least 8 builds or 20 judged build/lanes/gate attempts |
 
-`review:always|never` is the root override. Pre-build findings annotate; a failed annotation call does not hold a unit.
+`review:always|never` is the root override. External witness class alone does not trigger M2. Pre-build findings annotate; a failed annotation call does not hold a unit.
 The gate requires each standing item addressed or rebutted with evidence. Diagnosis produces a kept build note and
 moves subsequent mixed-profile builds to Claude. Attempt counts include interrupted and uncharged work and follow
 re-entry lineage. At a boundary, 16 builds or 40 judged attempts hard-park with attempt-cap. These thresholds are fixed
-code constants, separate from configurable chargeable/revise/candidate/retry/deadline limits. Steer does not reset them.
+code constants, separate from configurable chargeable/revise/candidate/retry/deadline limits. Steer does not reset them. `review:never` suppresses diagnosis and its fallback marker, but not attempt caps.
 
 The gate judges actual reach against intent/nonGoals and acceptance, requirement witnesses, failures and standing
 items. Its findings retain severity, evidence, premises, experiments and optional defect classification. It refuses
@@ -174,9 +174,11 @@ chunks, kept inputs, partial coverage and abandoned-job backoff make large-range
 and finding classifications retain lens names; these do not select multiple seats or configurable rolling audits.
 
 Findings have stable identity, severity P1/P2/P3, evidence and optional obligation/vision attribution. Vacuity evidence
-uses a reproduced mutant where required. P1 blocks relevant publication and must be repaired or dismissed with evidence;
+uses a reproduced mutant where required. P1 blocks relevant publication and needs repair or a code-owned not-reproduced dismissal;
 only the root may disposition obligations. Root repair units name the finding/obligation they repair. A repair publication
-resolves its owned finding. Dismissals require counter-evidence and remain tied to the relevant plan/evidence identity.
+resolves its owned finding. Dismissal suppression remains tied to cited evidence identity. There is currently no root finding-disposition command or
+apply input; the proposed evidence-backed root dismissal channel did not land. Root can admit repairs, while reproduction
+can dismiss a finding code proves not reproduced. A false-positive outside that path requires escalation.
 Close-out may bank substantive remaining P2 debt and release eligible lower findings, with durable facts and explicit
 provenance. Gate notes also bank debt. Neither debt nor a note substitutes for a required witness.
 
@@ -194,7 +196,7 @@ committed/re-pinned exported CAS revisions.
 ### 2.7 Plan, specs and certification lanes
 
 A plan selects exactly one target arm: corpus/pin + Phase-0 record + holistic slice, or architectureDoc with optional
-digest/holistic vision. Corpus is the standard operating path. Plan/spec literal schema names retain their original
+digest/holistic vision. Fresh holistic starts require corpus even though the parser retains an architecture-doc holistic shape. Plan/spec literal schema names retain their original
 identifiers; runtime records carry version 2. PlanPaths resolve beside the plan; RepoPaths in the product. Specs require
 intent, nonempty nonGoals, stable acceptance/check/decision/fact ids, resources and cites. Optional root-authored design
 records, requirement/contract pins and witness items retain executable design checks. Derived entries only declare

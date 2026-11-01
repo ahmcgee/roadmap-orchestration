@@ -51,6 +51,7 @@
 <text x="1160" y="486" class="small" text-anchor="middle"><tspan x="1160" dy="0">next arc</tspan></text>
 <path d="M93 1030H1885" stroke="#94a3b8"/>
 <text x="115" y="590" class="sub" text-anchor="start"><tspan x="115" dy="0">Unit pipeline (multi-instance subprocess over ready DAG units)</tspan></text>
+<rect x="105" y="610" width="1768" height="408" rx="10" fill="none" stroke="#94a3b8"/><path d="M950 1000v12 M960 1000v12 M970 1000v12" stroke="#476581" stroke-width="2"/>
 <circle cx="130" cy="680" r="18" fill="#fff" stroke="#334155" stroke-width="1.8"/>
 <rect x="180" y="630" width="240" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="300.0" y="661.0" class="label" text-anchor="middle"><tspan x="300.0" dy="0">Validate / claim / smoke</tspan><tspan x="300.0" dy="24">Pack review; admit</tspan><tspan x="300.0" dy="24">Reserve CPU/resources</tspan></text>
@@ -101,7 +102,7 @@
 <text x="460" y="964" class="small" text-anchor="middle"><tspan x="460" dy="0">approved spike: report only</tspan></text>
 <polyline points="1490,900 1405,900 1405,805 1200,805" class="edge"/>
 <text x="1415" y="837" class="small" text-anchor="middle"><tspan x="1415" dy="0">candidate red / moved tip</tspan></text>
-<text x="115" y="995" class="small" text-anchor="start"><tspan x="115" dy="0">Exception messages: specWrong / split proposal / attempt cap / failed evidence → root; successful subject action closes its items.</tspan></text>
+<text x="115" y="985" class="small" text-anchor="start"><tspan x="115" dy="0">Exception messages: specWrong / split proposal / attempt cap / failed evidence → root; successful subject action closes its items.</tspan></text>
 <polyline points="1140,652 1140,535 1140,420" class="edge msg"/>
 <text x="1250" y="548" class="small" text-anchor="middle"><tspan x="1250" dy="0">root intervention</tspan></text>
 <polyline points="990,390 950,390 950,535 960,535 960,630" class="edge msg"/>
