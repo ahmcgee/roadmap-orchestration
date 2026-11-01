@@ -20,33 +20,46 @@ import {routingRev, unitId} from '../src/core/ids.ts';
 import {absPath} from '../src/core/values.ts';
 import {writeLaunch} from './helpers/scenario.ts';
 import {runPool} from '../evals/roles/pool.ts';
+import {SchemaError} from '../src/core/validate.ts';
 
 // Role schemas (including both experience variants) and health checks are every production output schema.
-test('backend output schemas all have an explicit top-level object type', () => {
+test('backend output schemas all have plain object roots without composition or conditionals', () => {
   const built = {...Object.fromEntries(Object.entries(schemas).filter(([name]) => name.endsWith('_SCHEMA'))), SMOKE_SCHEMA};
-  for (const [name, schema] of Object.entries(built)) assert.equal((schema as {type?: unknown}).type, 'object', name);
+  for (const [name, schema] of Object.entries(built)) {
+    const root = schema as Record<string, unknown>;
+    assert.equal(root['type'], 'object', name);
+    assert.equal(root['additionalProperties'], false, name);
+    assert.ok(root['properties'] !== null && typeof root['properties'] === 'object' && !Array.isArray(root['properties']), name);
+    assert.deepEqual([...(root['required'] as string[])].sort(), Object.keys(root['properties'] as object).sort(), name);
+    for (const keyword of ['anyOf', 'oneOf', 'allOf', 'not', 'if', 'then', 'else']) {
+      assert.equal(Object.hasOwn(root, keyword), false, `${name}: root ${keyword} is unsupported by backend APIs`);
+    }
+  }
   for (const [role, schema] of Object.entries(schemas.ROLE_SCHEMAS)) assert.ok(Object.values(built).includes(schema), role);
 });
 
 test('gate schema and parser agree on decision/directives, approval blockers, ordering and finding ids', () => {
   const base = referenceAnswer('pre-build', false) as Record<string, unknown>;
-  for (const decision of ['approve', 'revise', 'escalate']) for (const directives of [[], ['Fix src/unit.js:1']]) {
-    const value = {...base, decision, directives};
-    const valid = decision === 'revise' ? directives.length > 0 : directives.length === 0;
-    assert.equal(schemaViolation(schemas.GATE_SCHEMA, value) === null, valid, JSON.stringify(value));
+  for (const decision of ['approve', 'revise', 'escalate']) for (const directives of [[], ['Fix src/unit.js:1']]) for (const ordering of [null, {blockers: ['u2']}]) {
+    const value = {...base, decision, directives, ordering};
+    const valid = (decision === 'revise' ? directives.length > 0 : directives.length === 0) && (ordering === null || decision === 'escalate');
+    // The backend checks field shapes; the parser must still reject every illegal cross-field combination.
+    assert.equal(schemaViolation(schemas.GATE_SCHEMA, value), null, JSON.stringify(value));
     if (valid) assert.doesNotThrow(() => schemas.validateGateOutput(value));
-    else assert.throws(() => schemas.validateGateOutput(value));
+    else assert.throws(() => schemas.validateGateOutput(value), SchemaError);
   }
   const {premises: _premises, ...missingPremises} = base;
   assert.match(schemaViolation(schemas.GATE_SCHEMA, missingPremises)!, /premises/);
   const note = (referenceAnswer('pre-build', true) as {findings: object[]}).findings[0]!;
-  for (const value of [
-    {...base, findings: [{...note, severity: 'blocking'}]},
-    {...base, ordering: {blockers: ['u2']}},
-    {...base, findings: [{...note, reraises: 'arc/136#1:2'}]},
-  ]) {
+  for (const decision of ['approve', 'revise', 'escalate']) {
+    const value = {...base, decision, directives: decision === 'revise' ? ['Fix src/unit.js:1'] : [], findings: [{...note, severity: 'blocking'}]};
+    assert.equal(schemaViolation(schemas.GATE_SCHEMA, value), null);
+    if (decision === 'approve') assert.throws(() => schemas.validateGateOutput(value), SchemaError);
+    else assert.doesNotThrow(() => schemas.validateGateOutput(value));
+  }
+  for (const value of [missingPremises, {...base, findings: [{...note, reraises: 'arc/136#1:2'}]}]) {
     assert.notEqual(schemaViolation(schemas.GATE_SCHEMA, value), null);
-    assert.throws(() => schemas.validateGateOutput(value));
+    assert.throws(() => schemas.validateGateOutput(value), SchemaError);
   }
 });
 
@@ -142,12 +155,17 @@ test('role eval cap stops new trials and accounts for already in-flight trials',
 });
 
 
-test('experience schema preserves the mode/verdict discriminant', () => {
+test('experience schema checks verdict shapes and parser preserves the mode/verdict discriminant', () => {
   const polish = {final: true, decision: 'drop', evidence: ['comparison.txt'], reasons: ['No improvement'], premises: []};
-  const value = {final: true, mode: 'polish', verdict: polish};
-  assert.equal(schemaViolation(schemas.EXPERIENCE_SCHEMA, value), null);
-  assert.doesNotThrow(() => schemas.validateExperienceOutput(value));
-  const wrongMode = {...value, mode: 'walkthrough'};
-  assert.notEqual(schemaViolation(schemas.EXPERIENCE_SCHEMA, wrongMode), null);
-  assert.throws(() => schemas.validateExperienceOutput(wrongMode));
+  const walkthrough = {final: true, journeys: [{journey: 'J-1', outcome: 'completed', evidence: ['walk.txt'], note: 'Completed'}], findings: [], polish: [], premises: [], reasons: []};
+  for (const mode of ['walkthrough', 'polish']) for (const verdict of [walkthrough, polish]) {
+    const value = {final: true, mode, verdict};
+    assert.equal(schemaViolation(schemas.EXPERIENCE_SCHEMA, value), null);
+    if ((mode === 'walkthrough') === (verdict === walkthrough)) assert.doesNotThrow(() => schemas.validateExperienceOutput(value));
+    else assert.throws(() => schemas.validateExperienceOutput(value), SchemaError);
+  }
+  for (const value of [{final: true, mode: 'unknown', verdict: polish}, {final: true, mode: 'polish', verdict: {}}]) {
+    assert.notEqual(schemaViolation(schemas.EXPERIENCE_SCHEMA, value), null);
+    assert.throws(() => schemas.validateExperienceOutput(value), SchemaError);
+  }
 });

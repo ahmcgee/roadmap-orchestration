@@ -1,6 +1,6 @@
 # Executor schemas and contracts — schema 2
 
-Current contracts for **1.0.0-dev.33**. This is a reference to the implemented readers, not an append-only release
+Current contracts for **1.0.0-dev.34**. This is a reference to the implemented readers, not an append-only release
 history. Paths below are relative to this executor directory. [DESIGN-1.0.md](../../../DESIGN-1.0.md) explains behavior;
 [reference.md](../skills/orchestrate/reference.md) lists every parser-checked CLI form.
 
@@ -895,8 +895,12 @@ diagnosis failures where applicable. No model identity is a role input.
 | experienceVerdict | `{final:true,mode:'walkthrough',verdict:{final,journeys,findings,polish,premises,reasons}}` or `{final:true,mode:'polish',verdict:{final,decision:keep|drop,evidence,reasons,premises}}` |
 | packReview | `{findings,dispositions,reasons,premises}`; findings bind severity/target/claim/evidence `{path,line}`; delta review dispositions name prior job/index |
 
-Every backend output schema has top-level `type: object`, including the discriminated experience verdict.
-Verifier directives are nonempty for revise and empty for approve/escalate; only escalate can carry ordering.
+Every backend output schema has a plain object root: `type: object`, `properties`, every property in `required`,
+and `additionalProperties: false`. No root `anyOf`, `oneOf`, `allOf`, `not`, `if`, `then` or `else` is allowed;
+nested `anyOf` describes nullable fields and variants such as the experience `verdict`.
+Property descriptions state cross-field rules; parsers enforce them and return discriminated TypeScript unions.
+Verifier directives are nonempty for revise and empty for approve/escalate; only escalate can carry ordering,
+and approve forbids blocking findings. Experience mode must match the verdict shape.
 `reraises` and dispute ruling finding ids name R-n ledger entries, never pre-build standing item ids.
 
 Every judgment role gets at most one repair turn in its own session/schema/cwd when the answer fails validation;

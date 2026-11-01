@@ -6,7 +6,7 @@ converges the codebase on the documented target state, unattended, for a week or
 
 ## Status
 
-**1.0 is in prerelease on `main`** (`1.0.0-dev.33`). The command-center release uses runtime schema 2.
+**1.0 is in prerelease on `main`** (`1.0.0-dev.34`). The command-center release uses runtime schema 2.
 Arcs started on dev.32 or earlier are refused, not adopted; finish them with their original executor.
 The last 0.x release is at tag `v0.20.0`.
 
@@ -76,7 +76,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
    revisions feed fix rounds with original evidence and base comparisons. Every judgment begins in a fresh named
    session; one invalid answer may be repaired in that same session, schema and checkout. Verifier directives
-   accompany only a revise decision, including in annotation modes.
+   accompany only a revise decision, including in annotation modes. Backend schemas use plain object roots;
+   property descriptions state cross-field rules, and parsers enforce them before accepting an answer.
 4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
    retain unit attribution; only a green exact head is fast-forwarded. Snapshots and retirement follow. A spike
    answers a declared question and retires its gated report without merging. Cheap local checks run early;
