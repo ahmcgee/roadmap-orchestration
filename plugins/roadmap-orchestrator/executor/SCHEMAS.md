@@ -752,7 +752,7 @@ Quiesce/evidence/salvage/teardown and ff/snapshot are mandatory chains despite p
 
 The arbiter serves docs/batch/job waiters first in arrival order, then units: high priority; promoted waiters by age;
 otherwise repair=deflake, polish, planned; wait-start sequence then plan index break ties. A unit promotes after **three
-other publications** in its waiting interval. Backfill may pass a blocked higher rank only with a disjoint request
+other unit publications** in its waiting interval. Backfill may pass a blocked higher rank only with a disjoint request
 (CPU and any shared pool count as overlap). Environment/pressure-blocked requests are set aside.
 Docs publications outrank unit publications and may request candidate preemption before green. Red/preempted or
 finding-blocked candidates abandon and release their reservations; green publication finishes ff/snapshot under its holder.
@@ -763,7 +763,9 @@ Parks are durable stage outcomes, not red-lane synonyms. Retryable parks record 
 operator parks require a subject action. Operator env resumes the same stage; operator design needs an appropriate
 revision/re-entry. Ordering parks record unit blockers and unpark automatically with `unparked` after all blockers merge.
 A held stage does not advance or consume a charge; backend/recovery holds retain their cause (`hold{backend}`,
-`hold{recovery}`) separately from operator pause.
+`hold{recovery}`) separately from operator pause. ParkRecord is `{class:"retryable",targets}` or
+`{class:"operator",kind:"env"|"design",ordering?}`; ordering belongs only to design parks. HoldCause is backend
+`{backend,parkSeq}`, recovery, or host-pressure `{inv}`, each tagged by type.
 
 | Retryable outcome | Probe targets |
 |---|---|
@@ -824,7 +826,8 @@ Shared-state faults go through supervisor recovery, bounded at three crashes/hou
 evidence[] `{path,blob:Sha|null}`, mutant `{patchSha256,lane}`|null, source (job/stage/demo), gateHadPassed,
 optional milestone/cause/lane. Key hashes canonical `{lens,obligation,cause}`. Lens categories are invariants, drift,
 vacuity, vision, witness, pre-build and walkthrough (the closed list is `FINDING_LENSES` in holistic/types.ts).
-Walkthrough findings bind a milestone; batch reds may name a lane. The fold adds owner/state/transition history.
+Walkthrough findings bind a milestone; batch reds may name a lane. FindingState keeps all opening fields except kind
+and adds `{state,owner:UnitId|null,openedSeq,last:FindingTo|null}`; last is null until the first move.
 
 | State | Allowed next state |
 |---|---|
