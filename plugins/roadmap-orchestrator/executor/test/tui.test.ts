@@ -1588,3 +1588,16 @@ test('supervision stays on one header line and is red only for an active run wit
     }
   }
 });
+
+test('progress counts only units that can still merge: cut and superseded units leave the denominator and are shown beside it', () => {
+  const d = observed(); const ui = new ViewState();
+  const units = d.status.units.map((u) => u.unit);
+  d.milestoneUnits = { 'MS-1': units };
+  d.status = { ...d.status, milestones: [{ id: 'MS-1', state: 'running', passed: false, round: 1, walks: [], findings: [] }] as never,
+    units: d.status.units.map((u, i) => ({ ...u, state: i === 0 ? 'cut' : i === 1 ? 'superseded' : 'merged', ...(i === 1 ? { supersededBy: d.status.units[2]!.unit } : {}) })) };
+  ui.accept(d);
+  const frame = ui.render(120, 35, false).join('\n');
+  const live = units.length - 2;
+  assert.match(frame, new RegExp(`${live}/${live} merged · 2 cut/superseded`));
+  assert.match(graph(d, true).find((n) => n.id === 'MS-1')!.label, new RegExp(`${units.length - 1}/${units.length - 1} units merged`), 'the cut member leaves the milestone count; the superseded one counts as its replacement');
+});

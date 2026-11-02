@@ -39,7 +39,8 @@ export function milestoneMembers(display: Display, id: string): Member[] {
   return index(display).members.get(id) ?? [];
 }
 export function milestoneProgress(display: Display, id: string): string {
-  const members = milestoneMembers(display, id);
+  // A superseded member counts as its replacement (`effective`); a cut one never merges, so it is not counted.
+  const members = milestoneMembers(display, id).filter((u) => u.state !== 'cut');
   return `${members.filter((u) => u.state === 'merged').length}/${members.length} units merged`;
 }
 
