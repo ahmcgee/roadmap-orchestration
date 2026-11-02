@@ -23,15 +23,15 @@ const verdict = (problems: readonly string[]): Criterion => ({ pass: problems.le
 const result = (criteria: Record<string, Criterion>, recall?: number): Grade => ({ pass: Object.values(criteria).every((c) => c.pass), criteria, ...(recall === undefined ? {} : { recall }) });
 const normal = (s: string): string => s.replace(/[*`_]/g, '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/[.!]$/, '');
 
-/** Common numbered Markdown forms; never count a numbered shell command as owner approval. */
+/** Numbered proposals and K-n record playbacks; never count a shell command as owner approval. */
 export function proposals(text: string): readonly Proposal[] {
-  const marks = [...text.matchAll(/^[ \t]*(?:#{1,6}\s+)?(?:\*\*)?(?:(?:Playback:\s*decision\s+(\d+)\b[^\n]*)|(?:(?:Decision\s+)?(\d+)[.):\-]\s+[^\n]+))/gmi)];
+  const marks = [...text.matchAll(/^[ \t]*(?:#{1,6}\s+)?(?:\*\*)?(?:(?:Playback:\s*decision\s+(\d+)\b[^\n]*)|(?:K-(\d+)\s+(?:retire|merge|tighten|fold|resolve)\b[^\n]*)|(?:(?:Decision\s+)?(\d+)[.):\-]\s+[^\n]+))/gmi)];
   return marks.map((m, i) => {
     const raw = text.slice(m.index!, marks[i + 1]?.index ?? text.length);
     const tail = raw.slice(m[0].length).search(/^\s*(?:#{1,6} [^\n]+|\*\*[^*\n:]+\*\*)[ \t]*$/m);
     const body = tail < 0 ? raw : raw.slice(0, m[0].length + tail);
     const a = /\b(retire|merge|tighten|fold|resolve)\b/i.exec(m[0]) ?? /\bAction:\s*(retire|merge|tighten|fold|resolve)\b/i.exec(body.replace(/[*`]/g, ''));
-    const proposal = { number: Number(m[1] ?? m[2]), action: a === null ? null : a[1]!.toLowerCase() as Action, ids: itemIds(body), text: body };
+    const proposal = { number: Number(m[1] ?? m[2] ?? m[3]), action: a === null ? null : a[1]!.toLowerCase() as Action, ids: itemIds(body), text: body };
     // References in an unnumbered closing survey are not proposed changes.
     return proposal;
   }).filter((p) => p.ids.length > 0 && (p.action !== null || /Playback:/i.test(p.text.split('\n')[0]!)));
@@ -88,8 +88,22 @@ function replacementApproved(d: Decision, p: Proposal, line: string): boolean {
     .map((m) => m[1]!).find((text) => replacement.startsWith(text));
   // Only the replacement wording, not quoted explanations in its following notes.
   // "none. Its wording drifted to ..." quotes the removed item, not new text.
-  const wording = ownerWording.length ? ownerWording : /^none\b/i.test(replacement) ? [] : ledgerLine ? [ledgerLine] : quoted(replacement);
-  return wording.every((q) => normal(d.replacement).includes(normal(q)));
+  const recordPlayback = /^[ \t]*(?:#{1,6}\s+)?K-[1-9]\d*\s/.test(p.text);
+  // A record playback already supplies the complete field, often without quotes.
+  const wording = ownerWording.length ? ownerWording : recordPlayback ? [replacement]
+    : /^none\b/i.test(replacement) ? [] : ledgerLine ? [ledgerLine] : quoted(replacement);
+  return wording.every((q) => {
+    // Resolve ledger ids and their compaction provenance are assigned when the
+    // approved subset is numbered. Compare the exact approved statement while
+    // binding its provenance to this decision; never rewrite referenced B/C ids.
+    const recordedLedger = /^(C-[1-9]\d*) — /.exec(d.replacement);
+    const expected = ownerWording.length === 0 && d.action === 'resolve' && d.ids.every((id) => id.startsWith('B-'))
+      && recordedLedger && /^C-[1-9]\d* — /.test(q)
+      ? q.replace(/^C-[1-9]\d*(?= — )/, recordedLedger[1]!)
+        .replace(/\bcompaction K-[1-9]\d*(?=:)/g, `compaction ${d.id}`)
+      : q;
+    return normal(d.replacement).includes(normal(expected));
+  });
 }
 export function gradeA(record: string, exchanges: readonly Exchange[], key: Key): Grade {
   let decisions: readonly Decision[];

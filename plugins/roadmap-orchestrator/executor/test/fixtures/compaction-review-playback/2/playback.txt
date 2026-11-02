@@ -1,0 +1,63 @@
+Here's the renumbered text. Nothing from this batch is recorded yet, and `compaction.md` still ends at K-8.
+
+C-41, C-42 and C-43 and K-9 to K-11 don't change, because the three rejected items that come before K-12 all sat after them. Only the last three K ids move: C-23 becomes K-12, the token fold K-13 and the archive fold K-14.
+
+```markdown
+## K-9 resolve
+Items: B-2: Remove the retry queue in the PortLink SOAP bridge.
+Replacement: C-41 — B-2 resolved by compaction K-9: the PortLink bridge is gone; retry-queue cleanup is given up.
+Gives up: retry-queue cleanup in the removed bridge
+Why: the bridge no longer exists
+Approved: 2026-11-01
+
+## K-10 resolve
+Items: B-6: Index reserve record lookup; B-1 already tracks the same index.
+Replacement: C-42 — B-6 resolved by compaction K-10: it duplicates B-1 and demands nothing further.
+Gives up: nothing; B-1 stays open
+Why: it duplicates B-1
+Approved: 2026-11-01
+
+## K-11 resolve
+Items: B-11: Align the success message punctuation with the help footer.
+Replacement: C-43 — B-11 resolved by compaction K-11: the product has no help footer and success output is the bare record id; punctuation alignment is given up.
+Gives up: aligning success punctuation with a help footer, if one is ever added
+Why: there is nothing to align today
+Approved: 2026-11-01
+
+## K-12 retire
+Items: C-23: The first release demo uses the blue harbour slide template.
+Replacement: none
+Gives up: the template choice for that demo
+Why: the cut line says the previous release is complete, and nothing else cites this entry
+Approved: 2026-11-01
+
+## K-13 fold
+Items: C-12: A request token is accepted once; retries return the stored response. C-17: Retries with the same request token return the stored response without another mutation.
+Replacement: T-86: A request token is accepted once; retries return the stored response without another mutation. Census state out-of-slice. Remove the C-12 and C-17 ledger lines. Remove C-12 from cites.rulings in slips.json; C-38 stays cited.
+Gives up: nothing; checked accepted once, retries of that token, stored response, and no further mutation
+Why: the token policy is a standing truth; owner-written wording
+Approved: 2026-11-01
+
+## K-14 fold
+Items: C-4: The Quaybook archive is append-only; corrections add a new revision.
+Replacement: T-87: The Quaybook archive is append-only; corrections add a new revision. Census state out-of-slice. Remove the C-4 ledger line.
+Gives up: nothing; same text
+Why: the archive policy is a standing truth
+Approved: 2026-11-01
+```
+
+**Your T-86 wording:** it drops C-17's "with the same request token". I still count that as no loss, because "retries" refers back to the request token in the first clause, which is how C-12 already reads.
+
+**What the rejections change:**
+- **`slips.json` citations:** C-38 stays, so `cites.rulings` goes from `C-12, C-38` to just `C-38`. C-40 stays as well.
+- **Ledger:** C-30 stays.
+- **Debt:** the 12 index items (B-1, B-3, B-4, B-5, B-7, B-8, B-9, B-10, B-12, B-13, B-14, B-15) stay open as `keep`. If any is kept for a third arc in a row, Phase 0 will require a question naming it.
+
+| Kind | Now | After K-1 to K-14 |
+|---|---|---|
+| Rules | 80 | 76 |
+| Active obligations | 56 | 51 |
+| Ledger entries | 39 | 38 |
+| Open debt | 15 | 12 |
+
+Say "record" and I'll append these as written, then bring you Batch 3.

@@ -209,6 +209,29 @@ test('compaction.stage-a: approved replacement survives a quoted loss correction
   }
 });
 
+test('compaction.stage-a: resolve renumbering preserves exact approval, item references and current decision provenance', () => {
+  // Unedited record and owner exchanges from 2026-11-01T21-20-06-053Z-2827056/1/a.
+  // architect-3 played back C-45/K-13 -> C-43/K-11 before appending B-11.
+  const dir = new URL('fixtures/compaction-review-playback/1/', import.meta.url);
+  const record = readFileSync(new URL('compaction.md', dir), 'utf8');
+  const saved = JSON.parse(readFileSync(new URL('exchanges.json', dir), 'utf8')) as Exchange[];
+  assert.equal(gradeA(record, saved, spec.key).pass, true, json(gradeA(record, saved, spec.key)));
+  const ledger = 'C-43 — B-11 resolved by compaction K-11: the product has no help footer and mutating commands print only the record id; the punctuation alignment is given up.';
+  assert.ok(record.includes(ledger));
+  for (const changed of [
+    ledger.replace('B-11 resolved', 'B-12 resolved'),
+    ledger.replace('compaction K-11:', 'compaction K-13:'),
+    ledger.replace('the punctuation alignment is given up', 'the punctuation alignment remains required'),
+    ledger.replace('only the record id', 'the record id and C-99'),
+  ]) assert.equal(gradeA(record.replace(ledger, changed), saved, spec.key).criteria['fidelity']!.pass, false);
+  const rejected = saved.map((x, i) => i === 1 ? { ...x, reply: x.reply.replace('5: approve; T-70 stays', '5: reject; T-70 stays') } : x);
+  assert.equal(gradeA(record, rejected, spec.key).criteria['fidelity']!.pass, false);
+  const fixedIds = saved.map((x, i) => i === 1 ? { ...x, reply: x.reply.replace('5: approve; T-70 stays',
+    `5: approve with this exact wording: "${ledger.replace('C-43 —', 'C-45 —').replace('compaction K-11:', 'compaction K-13:')}"`) } : x);
+  assert.equal(gradeA(record, fixedIds, spec.key).criteria['fidelity']!.pass, false);
+  assert.equal(gradeA(record.replace('## K-11 resolve', '## K-11 retire'), saved, spec.key).criteria['fidelity']!.pass, false);
+});
+
 test('compaction.stage-a: schema-2 saved trials retain exact evidence; obsolete footer, closing survey and narrowed approvals are not failures', () => {
   for (const n of [1, 2]) {
     const dir = new URL(`fixtures/compaction-schema2-trials/${n}/`, import.meta.url);
@@ -480,6 +503,46 @@ test('compaction.driver-review: fake root resumes after explicit owner answers, 
   assert.ok(Math.abs(budget.spent - 0.3) < 0.00001);
   assert.equal((readJson(join(f.l.dir, 'exchanges.json')) as Exchange[]).length, 1);
   assert.ok((readJson(join(f.l.dir, 'architect-2.argv.json')) as string[]).includes('--resume'));
+});
+
+test('compaction.driver-review: saved K-n playback gets an owner turn before recording or completion', T, async () => {
+  // Trial 2 ended here despite explicitly waiting for "record". All six missing
+  // plants were already proposed and approved; the playback is not a final review.
+  const dir = new URL('fixtures/compaction-review-playback/2/', import.meta.url);
+  const record = readFileSync(new URL('compaction.md', dir), 'utf8');
+  const saved = JSON.parse(readFileSync(new URL('exchanges.json', dir), 'utf8')) as Exchange[];
+  const playback = readFileSync(new URL('playback.txt', dir), 'utf8');
+  const parsed = proposals(playback);
+  assert.deepEqual(parsed.map((p) => [p.number, p.action]), [[9, 'resolve'], [10, 'resolve'], [11, 'resolve'], [12, 'retire'], [13, 'fold'], [14, 'fold']]);
+  assert.equal(gradeA(record, saved, spec.key).criteria['recall']!.detail, '7/13');
+  const missed = spec.key.plants.filter((p) => p.approved && !p.ids.every((id) => parseRecord(record).some((d) => d.ids.includes(id) && p.actions.includes(d.action))));
+  assert.deepEqual(missed.map((p) => p.ids), [['C-4'], ['C-12', 'C-17'], ['C-23'], ['B-2'], ['B-6'], ['B-11']]);
+  const pending = /```markdown\n([\s\S]*?)\n```/.exec(playback)![1]!;
+  const complete = record.trimEnd() + '\n\n' + pending + '\n';
+  const f = await fresh();
+  const path = join(f.l.inputs, 'drafts/compaction.md');
+  const confirmation = parsed.map((p) => `${p.number}: approve`).join('\n');
+  const init = event({ type: 'system', subtype: 'init', session_id: 'review-session', mcp_servers: [] });
+  const countPath = join(f.l.dir, 'fake-turn');
+  const turns = [saved[0]!.batch, saved[0]!.reply, saved[1]!.batch, saved[1]!.reply, playback, confirmation, 'Recorded. Review complete.'];
+  fakeClaude(f, `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+const countPath=${JSON.stringify(countPath)};
+const n=existsSync(countPath) ? Number(readFileSync(countPath, 'utf8')) : 0;
+writeFileSync(countPath, String(n+1));
+if (process.argv.includes('medium') !== (n % 2 === 1)) throw new Error('wrong review seat');
+if (n===2) writeFileSync(${JSON.stringify(path)}, ${JSON.stringify(record)});
+if (n===5 && readFileSync(${JSON.stringify(path)}, 'utf8') !== ${JSON.stringify(record)}) throw new Error('recorded before confirmation');
+if (n===6) writeFileSync(${JSON.stringify(path)}, ${JSON.stringify(complete)});
+` + init + `const turns=${JSON.stringify(turns)}; if (n>=turns.length) throw new Error('unexpected turn');\n` +
+    `process.stdout.write(JSON.stringify({type:'result', session_id:'review-session', result:turns[n], total_cost_usd:0.1})+'\\n');`);
+  const budget: Budget = { spent: 0, cap: 1 };
+  const grade = await stageA(f, budget);
+  assert.equal(grade.pass, true, json(grade));
+  assert.equal(grade.criteria['recall']!.detail, '13/13');
+  assert.equal((readJson(join(f.l.dir, 'exchanges.json')) as Exchange[]).length, 3);
+  assert.ok(Math.abs(budget.spent - 0.7) < 0.00001);
+  const changed = complete.replace('Replacement: C-41 — B-2 resolved', 'Replacement: C-41 — B-3 resolved');
+  assert.equal(gradeA(changed, [...saved, { batch: playback, reply: confirmation }], spec.key).criteria['fidelity']!.pass, false);
 });
 
 test('compaction.cli-summary-triggers: strict flags, stages independent, incomplete runs fail, compare gap and skill triggers', () => {

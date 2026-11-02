@@ -88,7 +88,7 @@ export async function stageA(f: Fixture, budget: Budget): Promise<Grade> {
     session = turn.session;
     if (proposals(turn.text).length === 0) { ended = true; break; }
     // Only plain owner terms and the batch enter the simulator; never the key's plants/traps structure.
-    const ownerPrompt = `You are the terse product owner. These are your decisions and preferences:\n${f.key.ownerAnswers.join('\n')}\n\nReply to this batch only. Use explicit numbered approve/reject answers.\n\n${turn.text}`;
+    const ownerPrompt = `You are the terse product owner. These are your decisions and preferences:\n${f.key.ownerAnswers.join('\n')}\n\nReply to this batch only. Use explicit numbered approve/reject answers. For a K-n record playback, answer n: approve/reject for each K-n heading.\n\n${turn.text}`;
     const owner = await invoke(f, `owner-${n}`, ownerPrompt, null, true, budget, deadline);
     exchanges.push({ batch: turn.text, reply: owner.text });
     write(join(f.l.dir, 'exchanges.json'), json(exchanges));
