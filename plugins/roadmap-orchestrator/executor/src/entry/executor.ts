@@ -3,5 +3,6 @@
 import { enableCompileCache } from 'node:module';
 
 enableCompileCache();
+Error.stackTraceLimit = 50;
 const { executorMain } = await import('../executor.ts');
 process.exitCode = await executorMain(process.argv.slice(2));

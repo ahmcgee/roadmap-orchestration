@@ -87,6 +87,17 @@ export function renderInvariants(o: Obligations, latched: readonly ObligationId[
  * The published obligations of an `invariants.md` (R2), or null when it has no block (a first arc, or a file from
  * before M3). More than one block, or a block that does not parse, is refused.
  */
+/**
+ * Whether the published obligations block is schema 1 (dev.32 or earlier: `mapping.paths`, which schema 2 never has).
+ * Temporary schema-cut scaffolding: delete once no baseline carries a dev.32 rendering.
+ */
+export function isSchema1InvariantsBlock(text: string): boolean {
+  const json = oneBlock(text, OBLIGATIONS_BLOCK_INFO);
+  if (json === null) return false;
+  const mapping = (JSON.parse(json) as { mapping?: Record<string, unknown> }).mapping;
+  return mapping !== undefined && 'paths' in mapping && !('systems' in mapping);
+}
+
 export function parseInvariantsBlock(text: string): Obligations | null {
   const json = oneBlock(text, OBLIGATIONS_BLOCK_INFO);
   return json === null ? null : parseObligations(JSON.parse(json));

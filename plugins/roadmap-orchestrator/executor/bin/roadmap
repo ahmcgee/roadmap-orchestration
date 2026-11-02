@@ -5,4 +5,5 @@
 import { enableCompileCache } from 'node:module';
 
 enableCompileCache();
+Error.stackTraceLimit = 50;
 import('../src/cli/main.ts').then((m) => m.main(process.argv.slice(2)));

@@ -86,6 +86,7 @@ resolveRouting,selectProfile,unsupportedSeats,
 import type { ArcRoleSet,ProfileName } from '../routing/types.ts';
 import { type Ruling,loadRulings,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
+import { isSchema1InvariantsBlock } from '../docs/invariants.ts';
 import { laneRows } from './lanerows.ts';
 import { type SmokePark,type SmokeReport,type SmokeRouting,backendEnv,smoke,smokeOutages,smokeRejections } from './smoke.ts';
 import type { StartupCheck,StartupContext,StartupRejection } from './startup.ts';
@@ -560,6 +561,11 @@ const committedCommand = (view: JournalView): boolean =>
 export function obligationDropped(context: StartupContext, files: InputFiles): readonly string[] {
   const shown = gitRun(context.repo, ['show', `${context.plan.baseline}:.roadmap/invariants.md`], { okCodes: [0, 128] });
   const baseline = shown.code === 0 ? shown.stdout : null;
+  // Schema-cut scaffolding: a dev.32 rendering is not adopted, so there is no schema-2 predecessor to diff against.
+  if (baseline !== null && isSchema1InvariantsBlock(baseline)) {
+    process.stderr.write(`obligation-dropped: ${context.plan.baseline}:.roadmap/invariants.md is a schema-1 rendering; not compared (previous schemas are not adopted)\n`);
+    return [];
+  }
   const next = files.obligations?.bytes === null || files.obligations === null ? null : parseObligations(JSON.parse(files.obligations.bytes.toString('utf8')));
   return rederive(baseline, next, {});
 }

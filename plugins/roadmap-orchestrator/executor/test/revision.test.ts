@@ -551,6 +551,22 @@ test('startup.obligation-dropped: a published obligation missing or weakened wit
   assert.deepEqual(dropped(), [], 'a split parent counts as present');
 });
 
+test('startup.obligation-dropped: a schema-1 (dev.32) rendering in the baseline is not compared, so dropping its ids is not refused', T, () => {
+  const schema1 = { obligations: [{ id: 'I-1', statement: 'old', proofJudgment: { witness: { lane: 'w-core', testIds: ['t'] } } }], mapping: { paths: [] } };
+  const invariants = `# Invariants\n\n\`\`\`json roadmap-obligations\n${JSON.stringify(schema1)}\n\`\`\`\n`;
+  const repo = absPath(makeRepo(tmpDir('rederive-schema1'), { files: { '.roadmap/invariants.md': invariants, 'README.md': 'x\n' } }));
+  const d = setupArc({ steps: [] });
+  writeJson(join(planDirOf(d), 'vision.json'), VISION);
+  editPlan(d, (p) => {
+    p['holistic'] = { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' };
+    p['baseline'] = revParse(repo, 'main');
+  });
+  const files = readInputFiles(absPath(d.planPath), absPath(d.repo));
+  const context: StartupContext = { repo, planFile: absPath(d.planPath), plan: files.plan, specOf: () => null, profile: 'default', arcRoles: 'm4b', runDir: absPath(d.runDir), hostDir: absPath(d.hostDir) };
+  writeJson(obligationsPath(d), { ...OBLIGATIONS, obligations: [OBLIGATIONS.obligations[0]] });
+  assert.deepEqual(obligationDropped(context, readInputFiles(absPath(d.planPath), absPath(d.repo))), []);
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Checkpoint revisions, divergences, reverse (H13, H14)
 

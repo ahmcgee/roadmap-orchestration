@@ -4,5 +4,6 @@
 import { enableCompileCache } from 'node:module';
 
 enableCompileCache();
+Error.stackTraceLimit = 50;
 const { supervisorMain } = await import('../supervisor.ts');
 process.exitCode = await supervisorMain(process.argv.slice(2));
