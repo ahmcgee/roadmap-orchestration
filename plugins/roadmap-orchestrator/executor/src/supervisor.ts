@@ -67,6 +67,7 @@ writeRejection,
 } from './executor.ts';
 import { compactResidues } from './host/compact.ts';
 import { hostPath,openHostDir } from './host/hostdir.ts';
+import { prepareLegacyHost } from './host/legacy.ts';
 import { selfIdentity } from './host/liveness.ts';
 import { claimHost,releaseHost,renewClaim } from './host/lock.ts';
 import { createHandshake,publishOwner } from './host/owner.ts';
@@ -403,6 +404,8 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
   // No arc, no run dir, no claim: the refusal the executor's own first check group would give.
   if ('kind' in plan) return refuse([...legacyRoadmapDir(args.repo), plan]);
   const runDir = runDirOf(gitCommonDir(args.repo), plan.arc);
+  const legacy = prepareLegacyHost(dir);
+  if (legacy !== null) return refuse([legacy]);
   const claimed = await claimHost(dir, { arc: plan.arc, runDir, repo: args.repo, supervisor: selfIdentity() }, reconcilePreviousArc);
   if (claimed.kind === 'refused') {
     const r = claimed.rejection;

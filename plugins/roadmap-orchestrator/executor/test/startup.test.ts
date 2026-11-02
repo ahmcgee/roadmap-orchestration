@@ -15,6 +15,7 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'unsupported-routing': { kind: 'unsupported-routing', role: 'verifier', tier: 'escalation', layer: 'plan', class: 'frontier', unit: null, why: 'codex-judgment' },
   'undispositioned-residue': { kind: 'undispositioned-residue', residues: [{ arc, unit, inv: invocationIdOf('arc-1/4#1'), resource: resourceName('db') }] },
   'host-busy': { kind: 'host-busy', holder: 'owner', arc, generation: 3, pid: 1234 },
+  'previous-schema-host-busy': { kind: 'previous-schema-host-busy', path: absPath('/var/tmp/roadmap/host.lock'), pid: 1234, detail: 'Stop the previous-schema executor with its own roadmap stop.' },
   'previous-arc-unreconciled': { kind: 'previous-arc-unreconciled', arc: arcId('arc-0'), invocations: [invocationIdOf('arc-0/9#1')] },
   'backend-smoke': { kind: 'backend-smoke', profile: 'default', backend: 'codex', problem: 'failed', detail: 'auth' },
   'plan-invalid': { kind: 'plan-invalid', problem: { type: 'unknown-spec-path', unit, path: planPath('specs/u1.json') } },
@@ -39,7 +40,7 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
 describe('startup rejection table', () => {
   for (const [kind, rejection] of Object.entries(SAMPLES) as [StartupRejectionKind, StartupRejection][]) {
     it(`${kind} has an exit code`, () => {
-      assert.equal(exitCodeFor(rejection), kind === 'host-busy' ? EXIT_HOST_BUSY : EXIT_REFUSED);
+      assert.equal(exitCodeFor(rejection), kind === 'host-busy' || kind === 'previous-schema-host-busy' ? EXIT_HOST_BUSY : EXIT_REFUSED);
     });
   }
 

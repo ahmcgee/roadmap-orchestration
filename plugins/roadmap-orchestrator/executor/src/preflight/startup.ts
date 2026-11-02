@@ -53,6 +53,8 @@ export type StartupRejection =
   | Readonly<{ kind: 'undispositioned-residue'; residues: readonly ResidueKey[] }>
   // Row: live host owner (or a live recovery-lock holder). Exit 75.
   | Readonly<{ kind: 'host-busy'; holder: 'owner' | 'recovery'; arc: ArcId; generation: number; pid: number }>
+  // Schema-cut scaffolding: a dev.32 holder must be stopped with its own executor (no adoption).
+  | Readonly<{ kind: 'previous-schema-host-busy'; path: AbsPath; pid: number; detail: string }>
   // Row: unreconciled previous-arc invocations (R18); a durable needs-user is raised.
   | Readonly<{ kind: 'previous-arc-unreconciled'; arc: ArcId; invocations: readonly InvocationId[] }>
   // Row: backend smoke missing or failed for the resolved profile.
@@ -125,6 +127,7 @@ export type StartupRejectionKind = StartupRejection['kind'];
 export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | typeof EXIT_HOST_BUSY {
   switch (rejection.kind) {
     case 'host-busy':
+    case 'previous-schema-host-busy':
       return EXIT_HOST_BUSY;
     case 'legacy-roadmap-dir':
     case 'worktree-root-unusable':
@@ -252,6 +255,9 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   'host-busy': object((f): StartupRejection => ({
     kind: f.get('kind', literal('host-busy')), holder: f.get('holder', oneOf(['owner', 'recovery'] as const)), arc: f.get('arc', arcId),
     generation: f.get('generation', positive), pid: f.get('pid', positive),
+  })),
+  'previous-schema-host-busy': object((f): StartupRejection => ({
+    kind: f.get('kind', literal('previous-schema-host-busy')), path: f.get('path', abs), pid: f.get('pid', positive), detail: f.get('detail', str),
   })),
   'previous-arc-unreconciled': object((f): StartupRejection => ({
     kind: f.get('kind', literal('previous-arc-unreconciled')), arc: f.get('arc', arcId), invocations: f.get('invocations', arrayOf(invocationIdOf)),
