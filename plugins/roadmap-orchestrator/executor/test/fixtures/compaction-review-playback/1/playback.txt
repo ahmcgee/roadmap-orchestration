@@ -1,0 +1,25 @@
+Here's the playback.
+
+| Proposal | Decision | Was | Now |
+|---|---|---|---|
+| 1 | resolve B-2 | K-9, C-41 | K-9, C-41 (same) |
+| 2 | resolve B-6 | K-10, C-42 | K-10, C-42 (same) |
+| 5 | resolve B-11 | K-13, C-45 | **K-11, C-43** |
+| 6 | retire C-23 | none assigned | **K-12**, no new C-n |
+| 8 | fold C-4 | none assigned | **K-13**, new rule T-? |
+| 9 | fold C-12, C-17 | none assigned | **K-14**, new rule T-? |
+
+The three new ledger lines are:
+- `C-41 — B-2 resolved by compaction K-9: the bridge is gone; retry-queue cleanup is given up.`
+- `C-42 — B-6 resolved by compaction K-10: B-1 tracks the same reserve record-lookup index; nothing is given up.`
+- `C-43 — B-11 resolved by compaction K-11: the product has no help footer and mutating commands print only the record id; the punctuation alignment is given up.`
+
+**Wording for 9:** "A request token is accepted once; retries return the stored response without another mutation."
+
+- **Still explicit:** accepted once, retries return the stored response, and no second mutation.
+- **Now implicit:** your wording drops C-17's "with the same request token". I read "retries" as retries of the token named in the first clause, which is also how C-12 reads, so I'm recording "Gives up: nothing" on that reading.
+
+**Knock-on effects:**
+- C-12 comes out of `slips.json` `cites.rulings`, and C-38 stays, so the list becomes `["C-38"]`.
+- B-1, B-3, B-4, B-5, B-7, B-8, B-9, B-10, B-12, B-13, B-14 and B-15 stay open and need a `keep` in the next Phase 0.
+- A third consecutive `keep` needs a question naming the item, so that applies in the arc after next if they're still open.
