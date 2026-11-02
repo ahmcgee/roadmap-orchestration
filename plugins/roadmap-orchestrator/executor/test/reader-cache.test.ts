@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -87,4 +88,27 @@ test('successor still refuses corruption in the prefix through the first applied
   const file = join(dir, 'events.jsonl');
   writeFileSync(file, readFileSync(file, 'utf8').replace(`"arc":"${d.arc}"`, '"arc":"wrong-arc"'));
   assert.throws(() => successorOf(absPath(d.repo), arcId('previous')), (error: unknown) => error instanceof LogCorruptError && error.offset === 0);
+});
+
+test('successor passes over a schema-1 (dev.32) run dir and snapshot ref, and still finds the schema-2 successor', () => {
+  const d = setupArc({ steps: [] });
+  const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+  plan.chain = { previousArc: 'previous', previousHead: plan.baseline };
+  writeFileSync(d.planPath, JSON.stringify(plan));
+  const runtime = join(d.repo, '.git', 'roadmap-runtime');
+  const old = join(runtime, 'm4-old');
+  mkdirSync(old, { recursive: true });
+  writeFileSync(join(old, 'events.jsonl'), `${JSON.stringify({ v: 1, seq: 1, type: 'fact', arc: 'm4-old' })}\n`);
+  const git = (args: readonly string[], input?: string): string => execFileSync('git', args, { cwd: d.repo, input, encoding: 'utf8' }).trim();
+  const blob = git(['hash-object', '-w', '--stdin'], JSON.stringify({ v: 1, arc: 'm5-old' }));
+  const tree = git(['mktree'], `100644 blob ${blob}\tmanifest.json\n`);
+  git(['update-ref', 'refs/roadmap/m5-old', git(['commit-tree', tree, '-m', 'schema-1 snapshot'])]);
+  const dir = absPath(join(runtime, d.arc));
+  mkdirSync(dir, { recursive: true });
+  const r = contextFor({ ...d, runDir: dir });
+  try {
+    recordPlan(r.journal, dir, readInputFiles(absPath(d.planPath), absPath(d.repo)), [], routing);
+    assert.equal(successorOf(absPath(d.repo), arcId('unrelated')), null);
+    assert.equal(successorOf(absPath(d.repo), arcId('previous')), d.arc);
+  } finally { r.journal.close(); }
 });
