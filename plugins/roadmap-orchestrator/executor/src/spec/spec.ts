@@ -11,7 +11,7 @@ import { type Sha256Hex, type UnitId, type SystemName, sha256 } from '../core/id
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import { sha256Hex } from '../core/json.ts';
 import { type SpecM1, specM1 } from '../core/records.ts';
-import { type AbsPath, type RepoPattern, matchesPattern, mayOverlap, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, mayOverlap, repoPath } from '../core/values.ts';
 
 export class SpecFileError extends Error {
   readonly path: AbsPath;
@@ -52,15 +52,19 @@ export function fileSha256(path: AbsPath): Sha256Hex {
 
 /** Authoring guard: lane outputs cannot hide tracked source/tests of the unit's systems or repository protection.
  * Called only for touched units (all units at first start), never while reading an unchanged spec in force.
+ * Only tracked paths an evidenceGlobs entry covers are classified: classifying every tracked path against a large
+ * systems map is millions of glob matches per unit, enough to stall a start past its readiness watchdog.
  */
 export function evidenceScopeConflicts(
   unit: UnitId, systems: readonly SystemName[], spec: SpecM1,
   context: Readonly<{ repo: AbsPath; at: string; map: SystemsMap | null; protectedPaths: readonly RepoPattern[] }>,
 ): readonly string[] {
+  if (spec.lanes.every((lane) => lane.evidenceGlobs.length === 0)) return [];
   const tracked = git(context.repo, ['ls-tree', '-r', '--name-only', '-z', context.at]).split('\0').filter((p) => p !== '').map((p) => repoPath(p));
-  const own = tracked.filter((p) => context.map !== null && inUnitSystems(context.map, systems, p));
+  const map = context.map;
+  const own = (p: RepoPath): boolean => map !== null && inUnitSystems(map, systems, p);
   return spec.lanes.flatMap((lane) => lane.evidenceGlobs.flatMap((glob) => [
-    ...own.filter((p) => matchesPattern(p, glob)).map((p) => `tracked path \`${p}\` of the unit's systems`),
+    ...tracked.filter((p) => matchesPattern(p, glob) && own(p)).map((p) => `tracked path \`${p}\` of the unit's systems`),
     ...context.protectedPaths.filter((p) => mayOverlap(glob, p)).map((p) => `protectedPaths entry \`${p}\``),
   ].map((covered) => `unit ${unit} lane ${lane.id}: evidenceGlobs entry \`${glob}\` covers ${covered}. evidenceGlobs declare `
     + `the files the lane's run writes (its outputs), which are never committed or merged: narrow the entry to lane outputs.`)));
