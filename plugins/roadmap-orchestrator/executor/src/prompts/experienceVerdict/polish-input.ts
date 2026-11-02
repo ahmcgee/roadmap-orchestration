@@ -4,18 +4,9 @@
 // proposal's own terms and the design reference. Keep lands the tweak; drop cuts it, and nothing lands.
 // Guides: "Prompting Claude Opus 5.5" (platform.claude.com, read 2026-10-18) and "Prompting best practices" as it applies to
 // current models; earlier-generation guides do not bind (owner ruling 2026-10-17).
-// Applied from "Prompting Claude Opus 5.5":
-// - Unattended agentic runs: <working_unattended> and <how_your_session_ends> name the early stops to avoid (a summary that
-//   announces the next step, an offer to continue, a report because the turn is long) and the one stop wanted (the final
-//   answer), adapted to a session whose answer is its last act: the runner ends it and the browser after `final: true`.
-// - Capabilities relevant to prompting (computer use from screenshots over many steps; meaning that depends on position,
-//   "what changed between two versions"): <driving> asks for a fresh capture after each action and for the two sides
-//   captured at the same step, viewport and state, and judged from the images.
-// - Tools for complex visual inputs: <seeing> asks for full-resolution captures and per-component crops, side by side.
-// - Frontend design defaults: a general "avoid a generic look" swaps one default for another; <judging> judges against
-//   what the reference names, and appeal only as fit to its stated direction, never as taste.
-// - Mark pasted text: what either product shows is under review, never instruction (<workspace>).
-// - Calibrate effort and thinking instructions: no "think carefully" lines; effort is the routing's.
+// Applied from "Prompting Claude Opus 5.5": state the judgment boundary directly, explain its consequence and contrast
+// easily confused cases (<judging>, polish mode only, so the shared system prompt's walkthrough block cannot crowd it out);
+// no "think carefully" lines, since effort is the routing's.
 // From "Prompting best practices": the role in the system prompt; XML sections; long inputs first (the references, the
 // diff), the ask last; the vision first, as in every arc role (A14).
 // Owner and plan requirements: keep iff the after is an improvement on the proposal's own terms and the reference; a worse
@@ -63,5 +54,10 @@ ${instanceText('before', i.before)}
 ${instanceText('after', i.after)}
 
 <evidence_dir>${i.evidenceDir}</evidence_dir>
+
+<judging>
+Keep only when the after is better for someone doing ${i.journey.id}, observed on both instances, and nothing on the journey got worse. A tweak that also edits the design reference does not prove itself by matching the rule it added: judge whether the experience improved. An after that is different but not better, such as reworded copy in another voice, a reordered section or a restyle of the same information, is neutral: drop it. A tradeoff counts against keeping: when any step of the journey becomes slower, longer or harder to find, drop it even though the proposal's complaint is fixed. A kept regression costs more than a dropped improvement, so drop on a tie or when unsure.
+For example, a primary action relabelled from "Save" to "Store" is different, not better. Moving that action below the fold to make room for a requested banner is worse, even though the banner arrived. A form error that now names the field to fix is better.
+</judging>
 
 Walk ${i.journey.id} on the before instance and on the after instance, keep your evidence in ${i.evidenceDir}, then return your decision on proposal ${i.proposal.id}.`;
