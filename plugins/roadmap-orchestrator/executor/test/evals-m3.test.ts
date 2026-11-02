@@ -10,33 +10,33 @@
 // evals-m3.rerun-refused, evals-m3.tamper-digest, evals-m3.tamper-stale, evals-m3.prevented, evals-m3.latent.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { after,before,describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, before, describe, test } from 'node:test';
-import type { Event, Fact } from '../src/core/events.ts';
+import { fileURLToPath } from 'node:url';
+import { BRANCHES,CANNOT_SHOW,type CheckResult } from '../evals/m3/check.ts';
+import type { Report } from '../evals/m3/driver.ts';
+import { INTEGRATION,MAIN,MONEY_LANE,UNITS,barrierFile,layout } from '../evals/m3/layout.ts';
+import { type StoryName,UNIT_STORY,storySteps } from '../evals/m3/scenario.ts';
+import { REPAIR_UNIT,forgePath,repairSpecText } from '../evals/m3/setup.ts';
+import { phase0Check } from '../src/commands/phase0.ts';
+import type { Event,Fact } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { parseCorpusPin } from '../src/corpus/types.ts';
 import { verdictOf } from '../src/holistic/observe.ts';
-import { type ObservationVerdict, parseObligations, parseVision } from '../src/holistic/types.ts';
+import { type ObservationVerdict,parseObligations,parseVision } from '../src/holistic/types.ts';
 import { advancesReasons } from '../src/holistic/vision.ts';
 import { witnessEnv } from '../src/holistic/witness.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { loadSpec, parseSpec } from '../src/spec/spec.ts';
-import { BRANCHES, CANNOT_SHOW, type CheckResult } from '../evals/m3/check.ts';
-import type { Report } from '../evals/m3/driver.ts';
-import { AUDIT_EVERY, CONVERGENCE_K, INTEGRATION, LENSES, MAIN, MONEY_LANE, UNITS, barrierFile, layout } from '../evals/m3/layout.ts';
-import { type StoryName, UNIT_STORY, storySteps } from '../evals/m3/scenario.ts';
-import { REPAIR_UNIT, forgePath, repairSpecText } from '../evals/m3/setup.ts';
-import { phase0Check } from '../src/commands/phase0.ts';
-import { parseCorpusPin } from '../src/corpus/types.ts';
-import { type Exit, fixture, runUntilExit } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type ScenarioFile, readCalls } from './helpers/scenario.ts';
+import { loadSpec,parseSpec } from '../src/spec/spec.ts';
+import { type Exit,fixture,runUntilExit } from './helpers/proc.ts';
+import { type RunScope,assertNoSurvivors,teardown,track } from './helpers/reap.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type ScenarioFile,readCalls } from './helpers/scenario.ts';
 import { readWitnessFile } from './helpers/witness.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
 
 after(assertNoSurvivors);
 
@@ -98,7 +98,7 @@ function runArcLane(o: ObligationsFile, lane: string, cwd: string) {
 function verdictIn(o: ObligationsFile, id: string, file: string): ObservationVerdict {
   const witness = o.obligations.find((x) => x.id === id)!.witness!;
   const records = [...readWitnessFile(file)].sort((a, b) => (a.testId < b.testId ? -1 : 1));
-  return verdictOf({ v: 1, lane: witness.lane, laneRev: '0000000000000000', envId: '0000000000000000', treeSha: '0'.repeat(40), inv: 'x', runner: 'node-test', purpose: 'witness', records, malformed: false } as never, witness);
+  return verdictOf({ v: 2, lane: witness.lane, laneRev: '0000000000000000', envId: '0000000000000000', treeSha: '0'.repeat(40), inv: 'x', runner: 'node-test', purpose: 'witness', records, malformed: false } as never, witness);
 }
 
 const LANE_OF: Readonly<Record<string, string>> = { 'I-1': 'reconcile', 'I-2': MONEY_LANE, 'I-3': 'cli' };
@@ -134,13 +134,13 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(plan.arc, l.arc);
   assert.deepEqual(plan.units.map((u) => u.id), [...UNITS]);
   assert.equal(plan.target, 'corpus', 'a fresh holistic arc targets a corpus (M4a R17)');
-  assert.deepEqual(plan.holistic, { advances: ['V-1', 'V-2', 'V-3', 'V-4'], obligations: 'obligations.json', audit: { every: AUDIT_EVERY, lenses: [...LENSES] } });
+  assert.deepEqual(plan.holistic, { advances: ['V-1', 'V-2', 'V-3', 'V-4'], obligations: 'obligations.json' });
   const p0 = await withPath(forgePath(l), () => phase0Check({ repo: absPath(l.repo), source: { type: 'plan', plan: l.plan } }));
   assert.deepEqual(p0.rows, [], 'phase0 check is green over the fixture (the one-file corpus, its pin, the capture, the record)');
   const pin = parseCorpusPin(JSON.parse(readFileSync(l.pin, 'utf8')));
   assert.deepEqual(pin.files.map((f) => f.path), ['ledger.md', 'vision.md'], 'one rules file and the vision document');
   assert.deepEqual(pin.rules.map((r) => [r.id, r.file]), [['T-1', 'ledger.md'], ['T-2', 'ledger.md'], ['T-3', 'ledger.md']]);
-  assert.deepEqual(plan.limits, { convergenceK: CONVERGENCE_K });
+  assert.deepEqual(plan.limits, { });
   const vision = parseVision(JSON.parse(readFileSync(l.vision, 'utf8')));
   assert.deepEqual(vision.clauses.map((c) => [c.id, c.kind, c.rank, c.state]), [['V-1', 'purpose', null, 'active'], ['V-2', 'non-negotiable', null, 'active'], ['V-3', 'tradeoff', 1, 'active'], ['V-4', 'world', null, 'active']]);
   assert.deepEqual(vision.questions, []);
@@ -150,14 +150,15 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.deepEqual(o.obligations.map((x) => [x.id, x.rule?.id, x.rule?.textSha256]), pin.rules.map((r, i) => [`I-${i + 1}`, r.id, r.textSha256]), 'I-n is anchored at T-n');
   assert.deepEqual(o.census, pin.rules.map((r, i) => ({ rule: r.id, state: { type: 'obligation', id: `I-${i + 1}` } })));
   assert.deepEqual(o.lanes.map((x) => x.reporter), ['node-test', 'node-test', 'node-test']);
-  const mapped = new Map(o.mapping.paths.map((m) => [m.pattern as string, m.obligations]));
+  const mapped = new Map(o.mapping.systems.map((m) => [m.system as string, m.obligations]));
   for (const u of plan.units) {
     const spec = loadSpec(absPath(join(l.input, u.spec)));
     assert.equal(spec.unit, u.id);
-    for (const p of spec.scope) assert.ok(mapped.has(p), `${u.id}'s scoped path ${p} is mapped`);
+    for (const system of u.systems) assert.ok(mapped.has(system), `${u.id}'s system ${system} is mapped`);
   }
-  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.scope, ['src/cli.js']);
-  assert.deepEqual(mapped.get('src/cli.js'), ['I-3'], 'tidy\'s one path maps to I-3 only');
+  assert.deepEqual(plan.units.find((u) => u.id === 'tidy')!.systems, ['src-cli-js']);
+  assert.deepEqual(JSON.parse(readFileSync(join(l.repo, '.roadmap/config.json'), 'utf8')).systemsMap.systems['src-cli-js'].paths, ['src/cli.js']);
+  assert.deepEqual(mapped.get('src-cli-js'), ['I-3'], 'tidy\'s one system maps to I-3 only');
   // tidy's spec, the contract it cites and ARCHITECTURE.md say nothing about rounding, and its story diff holds no
   // rounding code: the regression is formatDisplay's existing toFixed, reached by a routing change. (In the corpus arc
   // every judge also reads the rules index, whose T-2 states the rounding rule, as the M3 architecture-doc arc's judges
@@ -236,10 +237,9 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   const steps = storySteps('story', 'default');
   assert.equal(steps.filter((s) => s.unit === undefined).length, 2, 'the one start smokes Claude and Codex');
   assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt|review|flow)-/.test(s.unit)).length, 12, 'three calls for each of four units');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('flow-') === true).length, 1, 'one flow run (M4b: constraint-shift once three units merged, the repair held until it ended)');
   assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 5, 'five lens calls');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 5, 'five checkpoint calls (the paid run\'s three, the drift audit\'s skipped: nothing new; the partial bundle and its repair turn)');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 2, 'one requested campaign audit and final coverage');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 0, 'no checkpoint seat');
 });
 
 type Fixture = Readonly<{ dir: string; driver: Exit; report: Report; checked: Checked }>;
@@ -261,6 +261,7 @@ async function runStory(story: StoryName): Promise<Readonly<{ fx: Fixture; event
   };
   track(scope);
   const driver = await script('driver.ts', [dir, '--profile', 'default', '--fake', story]).finally(() => teardown(scope));
+  assert.equal(driver.code, 0, driver.stdout + driver.stderr);
   const report = JSON.parse(readFileSync(l.report, 'utf8')) as Report;
   return { fx: { dir, driver, report, checked: await check(dir) }, events: readJournal(absPath(l.runDir), arcId(l.arc)).events };
 }
@@ -277,8 +278,8 @@ function assertEveryStepPlayed(dir: string): void {
 describe('evals-m3: the fake-backed fixture run, branch R', () => {
   let fx: Fixture;
   let events: readonly Event[];
-  const factsOf = <K extends Fact['kind']>(kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-    events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+  const factsOf = <K extends Fact['kind']>(kind: K): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>>[] =>
+    events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>), seq: e.seq }] : []));
 
   before(async () => {
     ({ fx, events } = await runStory('story'));
@@ -296,31 +297,10 @@ describe('evals-m3: the fake-backed fixture run, branch R', () => {
     assert.deepEqual(report.exit, { kind: 'complete', units: [...UNITS, REPAIR_UNIT.id].map((unit) => ({ unit, result: 'merged' })) });
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.branch, 'R');
-    assert.equal(checked.result.criteria.length, 25);
+    assert.equal(checked.result.criteria.length, 20);
     assert.ok(['regression-unselected', 'audit-race', 'repair-resolved'].every((n) => checked.result.criteria.some((c) => c.name === n)), 'branch R\'s own criteria are graded');
-    assert.deepEqual(checked.result.notExercised, BRANCHES.filter((b) => b !== 'literal partial bundle'), 'the fake story takes the literal partial bundle, and nothing else the paid run leaves out');
+    assert.deepEqual(checked.result.notExercised, BRANCHES, 'the fake story takes the literal partial bundle, and nothing else the paid run leaves out');
     assertEveryStepPlayed(fx.dir);
-  });
-
-  test('evals-m3.partial-bundle (A18, G19): the two-op bundle whose second op is invalid applies neither; its one re-evaluation applies the admit alone', () => {
-    const decided = factsOf('bundle-decided');
-    const revisions = factsOf('plan-applied');
-    const bundleRevs = revisions.filter((f) => f.source?.type === 'bundle');
-    const outcome = (job: string) => {
-      const x = decided.find((f) => f.job === job);
-      return x === undefined ? (bundleRevs.some((f) => f.source?.type === 'bundle' && f.source.job === job) ? 'applied' : 'none') : x.outcome.kind === 'rejected' ? `rejected:${x.outcome.reason}` : x.outcome.kind;
-    };
-    assert.deepEqual(['ckpt-1', 'ckpt-2', 'ckpt-3', 'ckpt-4'].map(outcome), ['rejected:stale', 'rejected:invalid', 'applied', 'no-op']);
-    assert.deepEqual(factsOf('checkpoint-skipped').map((f) => f.audit), ['audit-2'], 'the drift audit after the settled ckpt-3 found nothing new: no checkpoint');
-    const invalid = decided.find((f) => f.job === 'ckpt-2')!;
-    assert.ok(invalid.outcome.kind === 'rejected');
-    assert.match(invalid.outcome.detail, /V-999/);
-    const captured = factsOf('checkpoint-inputs').find((f) => f.job === 'ckpt-2')!;
-    assert.deepEqual(revisions.filter((f) => f.seq > captured.seq && f.seq < invalid.seq), [], 'no revision between its capture and its rejection');
-    const [bundle] = bundleRevs;
-    assert.ok(bundle !== undefined && bundle.source?.type === 'bundle' && bundle.source.job === 'ckpt-3');
-    assert.deepEqual(bundle.changes, [{ type: 'unit-added', unit: REPAIR_UNIT.id }], 'the re-evaluation applied the admit, and only it');
-    assert.ok(bundle.seq > invalid.seq);
   });
 
   test('evals-m3.latch-during-audit: I-1 latches while audit-1 runs; the audit grades latches as of its capture, so it opens the I-2 witness P1 and nothing over I-1', () => {
@@ -357,49 +337,33 @@ describe('evals-m3: the fake-backed fixture run, branch R', () => {
     return tampered;
   }
 
-  test('evals-m3.tamper-digest: a digest the driver did not acknowledge fails divergence-digest-bound', async () => {
-    const tampered = await tamper((d) => ({ ...d, acks: d.acks.filter((a) => a.reason !== 'divergence-digest') }));
-    assert.deepEqual(failing(tampered), ['divergence-digest-bound']);
-    assert.match(criterion(tampered, 'divergence-digest-bound').detail, /the driver did not acknowledge the digest/);
+  test('evals-m3.tamper-product: product beyond unit systems passes; protected run state fails the product-and-docs criterion', async () => {
+    const repo = layout(fx.dir).repo;
+    const previous = git(repo, 'rev-parse', INTEGRATION);
+    const worktree = join(tmpDir('m3-tamper-product'), 'wt');
+    git(repo, 'worktree', 'add', '--quiet', worktree, INTEGRATION);
+    try {
+      writeFileSync(join(worktree, 'outside-systems.txt'), 'ordinary product\n');
+      git(worktree, 'add', 'outside-systems.txt');
+      git(worktree, 'commit', '--quiet', '-m', 'product beyond declared systems');
+      assert.equal(criterion(await check(fx.dir), 'diff-product-and-docs').pass, true);
+      writeFileSync(join(worktree, '.roadmap', 'state.json'), '{}\n');
+      git(worktree, 'add', '.roadmap/state.json');
+      git(worktree, 'commit', '--quiet', '-m', 'tamper with protected run state');
+      const tampered = await check(fx.dir);
+      assert.equal(criterion(tampered, 'diff-product-and-docs').pass, false);
+      assert.match(criterion(tampered, 'diff-product-and-docs').detail, /\.roadmap\/state\.json \(protected-path\)/);
+    } finally {
+      git(repo, 'worktree', 'remove', '--force', worktree);
+      git(repo, 'update-ref', `refs/heads/${INTEGRATION}`, previous);
+    }
+    assert.deepEqual(failing(await check(fx.dir)), [], 'restoring the integration branch restores every criterion');
   });
 
   test('evals-m3.tamper-stale: a stale apply that committed no revision fails stale-whole', async () => {
     const tampered = await tamper((d) => ({ ...d, staleApply: { ...d.staleApply!, command: 'cmd-000000000000ffff' } }));
     assert.deepEqual(failing(tampered), ['stale-whole']);
     assert.match(criterion(tampered, 'stale-whole').detail, /committed no revision/);
-  });
-});
-
-describe('evals-m3: the fake-backed fixture run, branch P', () => {
-  let fx: Fixture;
-  let events: readonly Event[];
-
-  before(async () => {
-    ({ fx, events } = await runStory('prevented'));
-  }, T);
-
-  test('evals-m3.prevented: branch P (as paid run 3); tidy is stopped upstream and cut, the repair merges, the arc completes, and every criterion passes', () => {
-    const { driver, report, checked } = fx;
-    assert.equal(driver.code, 0, `driver: ${driver.stdout} ${driver.stderr}`);
-    assert.equal(report.endedBy, 'exit', JSON.stringify(report.devices));
-    const d = report.devices;
-    assert.equal(d.failed, null);
-    assert.equal(d.branch?.branch, 'P');
-    assert.match(d.branch!.why, /unit-cut of tidy/);
-    assert.deepEqual([d.barrier, d.release], [null, null], 'no regression: the money barrier never held');
-    for (const name of ['runOnly', 'staleApply', 'staleApplied', 'admit', 'unlimited'] as const) assert.notEqual(d[name], null, `device ${name} fired`);
-    assert.deepEqual(d.added.map((a) => a.unit), [REPAIR_UNIT.id]);
-    assert.deepEqual(d.acks.map((a) => a.reason).sort(), ['convergence-bound', 'divergence-digest']);
-    assert.ok(report.exit?.kind === 'complete', JSON.stringify(report.exit));
-    assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
-    assert.equal(checked.result.branch, 'P');
-    assert.equal(checked.result.criteria.length, 23);
-    assert.ok(checked.result.criteria.some((c) => c.name === 'prevention'), 'branch P\'s own criterion is graded');
-    const outcomes = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === 'tidy' ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
-    assert.ok(outcomes.every((o) => o.startsWith('plan-check:')), `tidy never got past plan-check: ${outcomes.join(', ')}`);
-    const firstCheckpoint = events.find((e) => e.type === 'fact' && e.fact.kind === 'checkpoint-inputs');
-    assert.ok(firstCheckpoint?.type === 'fact' && firstCheckpoint.fact.kind === 'checkpoint-inputs' && firstCheckpoint.fact.trigger.type === 'park', 'the stale apply fired on the park\'s checkpoint');
-    assertEveryStepPlayed(fx.dir);
   });
 });
 
@@ -424,7 +388,7 @@ describe('evals-m3: the fake-backed fixture run, branch L', () => {
     assert.ok(report.exit?.kind === 'complete', JSON.stringify(report.exit));
     assert.deepEqual(failing(checked), [], JSON.stringify(checked.result.criteria));
     assert.equal(checked.result.branch, 'L');
-    assert.equal(checked.result.criteria.length, 23);
+    assert.equal(checked.result.criteria.length, 18);
     assert.match(criterion(checked, 'latent-repair').detail, /F-1 \(invariants, P1\)/);
     for (const name of ['regression-unselected', 'audit-race', 'repair-resolved', 'prevention']) {
       assert.ok(!checked.result.criteria.some((c) => c.name === name), `${name} is not applicable on L`);

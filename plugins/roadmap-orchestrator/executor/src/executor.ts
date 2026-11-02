@@ -42,49 +42,49 @@
 // parented by the stage attempt that decided it, so an item is raised once however often the arc is re-read
 // (`raisedFor`). Blocking items include the file-only ones outside the journal: the supervisor's
 // `sup-<gen>-<n>` and a refused claim's `host-<kind>-<n>` (`writeFileNeedsUser` here; read by needsuser.ts).
-import { existsSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync,readdirSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { CommandContext } from './commands/apply.ts';
 import { applyCommand } from './commands/apply.ts';
-import { POLL_MS, isControl, pollCommands } from './commands/queue.ts';
-import { containmentFor, detectContainmentMode } from './contain/detect.ts';
-import { atomicJson, durableMkdir, durableUnlink, exclusivePublish } from './core/fsx.ts';
+import { POLL_MS,isControl,pollCommands } from './commands/queue.ts';
+import { containmentFor,detectContainmentMode } from './contain/detect.ts';
+import { atomicJson,durableMkdir,durableUnlink,exclusivePublish } from './core/fsx.ts';
+import { type ArcId,type NeedsUserId,type UnitId,hostNeedsUserId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { type ArcId, type NeedsUserId, type UnitId, hostNeedsUserId } from './core/ids.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
-  type ExecutorExitReason, type Heartbeat, type HostLockClaim, type NeedsUserContent, type NeedsUserRecord, type RevisionManifest, type RunStart,
+type ExecutorExitReason,type Heartbeat,type HostLockClaim,type NeedsUserContent,type NeedsUserRecord,
+type RunStart
 } from './core/records.ts';
-import { exportBase } from './commands/inputs.ts';
-import { type Read, arrayOf, literal, object } from './core/validate.ts';
-import { type AbsPath, absPath, isoTimeOf, nonce } from './core/values.ts';
+import { type Read,arrayOf,literal,object } from './core/validate.ts';
+import { type AbsPath,absPath,isoTimeOf,nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
-import { hostPath, openHostDir } from './host/hostdir.ts';
-import { isAlive, selfIdentity } from './host/liveness.ts';
+import { hostPath,openHostDir } from './host/hostdir.ts';
+import { isAlive,selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
-import { HandshakeAbandonedError, HandshakeMismatchError, HandshakeTimeoutError, OwnerMismatchError, awaitHandshake } from './host/owner.ts';
-import { readHostFingerprint, readHostSample } from './host/sample.ts';
+import { HandshakeAbandonedError,HandshakeMismatchError,HandshakeTimeoutError,OwnerMismatchError,awaitHandshake } from './host/owner.ts';
 import { pressureAvailability } from './host/pressure.ts';
-import { arcRolesOf, requirePlanInForce } from './input/inforce.ts';
-import { type PlanM1, hasMilestones } from './input/plan.ts';
-import { NEEDS_USER_DIR, needsUserPath, openBlockingItems } from './needsuser.ts';
-import { type ProberHandle, createProber } from './park/probe.ts';
+import { readHostFingerprint,readHostSample } from './host/sample.ts';
+import { arcRolesOf,requirePlanInForce } from './input/inforce.ts';
+import { type PlanM1,hasMilestones } from './input/plan.ts';
+import { NEEDS_USER_DIR,needsUserPath,openBlockingItems } from './needsuser.ts';
+import { type ProberHandle,createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
 import { docsPublisher } from './pipeline/publish.ts';
 import { syncRepairs } from './pipeline/reproduce.ts';
-import { consume, holdAbandoned } from './pipeline/unit.ts';
-import { readRepoConfig, runChecks, smokeCheck } from './preflight/checks.ts';
+import { consume,holdAbandoned } from './pipeline/unit.ts';
+import { readRepoConfig,runChecks,smokeCheck } from './preflight/checks.ts';
 import { backendEnv } from './preflight/smoke.ts';
 import {
-  EXIT_HOST_BUSY, EXIT_REFUSED, type RejectionFile, type StartupContext, type StartupRejection, exitCodeFor, startupRejection,
+EXIT_HOST_BUSY,EXIT_REFUSED,type RejectionFile,type StartupContext,type StartupRejection,exitCodeFor,startupRejection,
 } from './preflight/startup.ts';
 import { recover } from './recover/recover.ts';
-import { type ResolvedRouting, arcScopeOf, provenanceStack, resolveRouting } from './routing/layers.ts';
-import { type ProfileName, profileName } from './routing/types.ts';
-import { type Arbiter, createArbiter } from './schedule/arbiter.ts';
+import { type ResolvedRouting,arcScopeOf,provenanceStack,resolveRouting } from './routing/layers.ts';
+import { type ProfileName,profileName } from './routing/types.ts';
+import { type Arbiter,createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
-import { type SchedulerEnd, designRoute, holisticContexts, raiseResult, schedule } from './schedule/scheduler.ts';
+import { type SchedulerEnd,holisticContexts,raiseResult,schedule } from './schedule/scheduler.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
 export const REJECTION_FILE = 'status.rejection.json';
@@ -112,8 +112,6 @@ export type ExecutorArgs = Readonly<{
   controlOnly: boolean;
   /** A supervisor's respawn after a crash, once one of its generations was ready: runs the plan in force, never the files (`runChecks`). */
   respawn: boolean;
-  /** `start --base`: the base the files are rebased from (an export's manifest); null: the owner's files of their latest apply. */
-  base: RevisionManifest | null;
 }>;
 
 /**
@@ -183,7 +181,7 @@ export function writeFileNeedsUser(runDir: AbsPath, arc: ArcId, id: NeedsUserId,
   exclusivePublish(needsUserPath(runDir, id), canonicalJson(record));
 }
 
-/** The claim refusals that carry a durable needs-user (SCHEMAS.md startup table); host-busy is only "try later". */
+/** The claim refusals that carry a durable needs-user (SCHEMAS.md "Startup rejection table"); host-busy is only "try later". */
 export type ClaimRefusal = Extract<StartupRejection, { kind: 'owner-mismatch' | 'recovery-holder-dead' | 'previous-arc-unreconciled' }>;
 
 /**
@@ -205,7 +203,7 @@ export function raiseClaimRefusal(runDir: AbsPath, arc: ArcId, rejection: ClaimR
     reason: rejection.kind,
     summary: `roadmap start was refused at the host claim: ${detail}`,
     recommendation: 'Resolve the host state the rejection names (see `roadmap status`), then acknowledge this item and start again.',
-    options: [],
+    options: [{ id: 'resolved', label: 'The host state has been resolved; retry the claim.' }],
     evidence: [],
   });
   return id;
@@ -273,11 +271,10 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
  * no dead attempt keeps it from being cut, re-entered or respecified meanwhile.
  */
 async function consumeRecovered(x: Exec): Promise<void> {
-  const route = designRoute(holisticContexts(x));
   for (const unit of x.stage.plan().units) {
     const s = await consume(x.stage, unit);
     if (s === null) holdAbandoned(x.stage, unit);
-    else if (s.kind !== 'continue') raiseResult(x.stage, unit.id, s, route);
+    else if (s.kind !== 'continue') raiseResult(x.stage, unit.id, s);
   }
 }
 
@@ -344,7 +341,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     routingBase,
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
-    routing: (unit) => ({ profile, resolved: routing(unit) }),
+    routing: (unit) => ({ profile: inForce().plan.routing?.profile ?? profile, resolved: routing(unit) }),
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };
@@ -381,8 +378,6 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
 
 export type ExecutorArgv = Readonly<{
   hostDir: AbsPath; generation: number; nonce: string; repo: AbsPath; planFile: AbsPath; profile: ProfileName | null; controlOnly: boolean; respawn: boolean;
-  /** `start --base`'s export.json. */
-  base: AbsPath | null;
 }>;
 
 /** The argv the supervisor builds (`executorArgv`) and this entry parses back. */
@@ -390,13 +385,12 @@ export function executorArgv(a: ExecutorArgv): readonly string[] {
   return [
     a.hostDir, '--generation', String(a.generation), '--nonce', a.nonce, '--repo', a.repo, '--plan', a.planFile,
     ...(a.profile === null ? [] : ['--profile', a.profile]), ...(a.controlOnly ? ['--control-only'] : []), ...(a.respawn ? ['--respawn'] : []),
-    ...(a.base === null ? [] : ['--base', a.base]),
   ];
 }
 
 function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
   const [hostDir, ...rest] = argv;
-  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only] [--respawn] [--base <abs>]');
+  if (hostDir === undefined) throw new Error('usage: executor <hostDir> --generation <n> --nonce <hex> --repo <abs> --plan <abs> [--profile <p>] [--control-only] [--respawn]');
   const values = new Map<string, string>();
   let controlOnly = false;
   let respawn = false;
@@ -408,7 +402,7 @@ function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
       continue;
     }
     const value = rest[i + 1];
-    if (!['--generation', '--nonce', '--repo', '--plan', '--profile', '--base'].includes(flag) || value === undefined || values.has(flag)) {
+    if (!['--generation', '--nonce', '--repo', '--plan', '--profile'].includes(flag) || value === undefined || values.has(flag)) {
       throw new Error(`executor: unexpected argument ${JSON.stringify(flag)} in ${JSON.stringify(argv)}`);
     }
     values.set(flag, value);
@@ -422,10 +416,9 @@ function parseExecutorArgv(argv: readonly string[]): ExecutorArgv {
   const generation = Number(need('--generation'));
   if (!Number.isSafeInteger(generation) || generation < 1) throw new Error(`executor: --generation must be a positive integer, got ${need('--generation')}`);
   const profile = values.get('--profile');
-  const base = values.get('--base');
   return {
     hostDir: absPath(hostDir), generation, nonce: need('--nonce'), repo: absPath(need('--repo')), planFile: absPath(need('--plan')),
-    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly, respawn, base: base === undefined ? null : absPath(base),
+    profile: profile === undefined ? null : profileName(profile, '--profile'), controlOnly, respawn,
   };
 }
 
@@ -463,9 +456,7 @@ export async function executorMain(argv: readonly string[]): Promise<number> {
   const reason = await runExecutor({
     repo: a.repo, planFile: a.planFile, profile: a.profile, hostDir: a.hostDir, env: process.env, claim, controlOnly: a.controlOnly, respawn: a.respawn,
     // `start` read the file already (src/cli/main.ts): one that no longer reads is a crash, not a refusal.
-    base: a.base === null ? null : exportBase(a.base, 'start'),
   });
   process.stdout.write(`${exitLine(reason)}\n`);
   return exitCodeOf(reason);
 }
-

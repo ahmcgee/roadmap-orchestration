@@ -1,12 +1,13 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.17 lane topology: the batch points (src/pipeline/batchlanes.ts `runBatchPoint`), where a holistic plan's `batch` suite
 // lanes run, over real arcs (real git, real processes, the fake claude answering walk and lens calls by job). Named tests:
 // batch.walk-red (code's walkthrough P1 naming the lane, in the walk's findings, the node held), batch.walk-green,
 // batch.walk-skips-green-input (round 2 on an unchanged input runs no batch lane), batch.audit-red (a witness P1 over no
 // obligation), batch.closeout-nothing-to-change (red refuses, green passes; the lane runs each time).
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import { commandId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
@@ -16,22 +17,22 @@ import { runUnit } from '../src/pipeline/unit.ts';
 import { holisticContexts } from '../src/schedule/scheduler.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { lensStep } from './helpers/holistic.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type Step, readCalls } from './helpers/scenario.ts';
-import { auditArc, auditContext, moduleFiles, unitSteps } from './fixtures/audit-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
+import { auditArc,auditContext,moduleFiles,unitSteps } from './fixtures/audit-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 import { intents } from './fixtures/invoke-specs.ts';
 import { wired } from './fixtures/sched-m3-common.ts';
-import { type LaneJson, SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcRun, SUITE_LANE, codexStep, contextFor, gateStep } from './fixtures/unit-common.ts';
-import { BROKEN_WALK, GREETING, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { type LaneJson,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun,SUITE_LANE,codexStep,contextFor,syncInputs,gateStep } from './fixtures/unit-common.ts';
+import { BROKEN_WALK,GREETING,milestoneJson,unitInForce,walkAnswer,walkArc,walkContext,walkStep } from './fixtures/walk-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 2 };
 type Json = Record<string, unknown>;
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 
 /** A batch lane: green while `marker` is absent, red (exit 1) while it exists. */
 const batchLane = (marker: string, extra: Partial<LaneJson> = {}): LaneJson => ({
@@ -75,6 +76,27 @@ async function walk(r: ArcRun) {
 }
 
 describe('the milestone batch point (dev.17)', () => {
+  test('batch.milestone-lane: selected shared lane runs at its node after its units retire, alongside plain batch suites', T, async () => {
+    const d = walkArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', walkAnswer())],
+      milestone: milestoneJson({ lanes: ['shared'] }),
+      suite: [SUITE_LANE, batchLane(GREEN()), batchLane(GREEN(), { id: 'shared', placement: 'shared-resource' })],
+    });
+    const r = contextFor(d);
+    try {
+      assert.equal((await walk(r)).kind, 'none', 'no milestone lanes before its units retire');
+      await merge(r, 'u1');
+      assert.equal(r.journal.view.unit(unitInForce(r, 'u1').id).status, 'retired');
+      assert.equal(intents(d.runDir, 'proc.spawn').some((i) => i.kind === 'proc.spawn' && 'lane' in i.expect.subject && i.expect.subject.lane === 'shared'), false);
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: true });
+      const start = factsOf(r, 'walk-started')[0]!;
+      const spawned = intents(d.runDir, 'proc.spawn').flatMap((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'journey' && ['batch', 'shared'].includes(i.expect.subject.lane) ? [i.expect.subject] : []);
+      assert.deepEqual(spawned.map((s) => [s.lane, s.at, s.owner]), [
+        ['batch', start.sha, { type: 'job', job: 'walk-1' }], ['shared', start.sha, { type: 'job', job: 'walk-1' }],
+      ]);
+    } finally { r.journal.close(); }
+  });
+
   test('batch.walk-red: a red batch lane opens code\'s walkthrough P1 naming it; the walk goes on, its findings include it, and the node is not passed', T, async () => {
     const d = walkArc({ steps: [...unitSteps('u1', moduleFiles('mul', '*')), walkStep('walk-1', walkAnswer())], suite: [SUITE_LANE, batchLane(RED())] });
     const r = contextFor(d);
@@ -131,11 +153,12 @@ describe('the milestone batch point (dev.17)', () => {
       assert.deepEqual(batchSpawns(r).map(([job]) => job), ['walk-1']);
       assert.deepEqual(factsOf(r, 'finding-opened').map((f) => [f.id, f.lane ?? null]), [['F-1', null]], 'only the walkthrough\'s P1');
       // The repair (the scripted checkpoint's admit) changes only product/**: the batch lane's input is unchanged.
+      syncInputs(r);
       const planDir = join(d.planPath, '..');
       const spec = JSON.parse(readFileSync(join(planDir, 'u1.json'), 'utf8')) as Json;
-      writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'], scope: ['product/**', 'src/**', 'test/**'] }));
+      writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, unit: 'r1', rev: 1, repairs: ['F-1'] }));
       await applyPlanEdit(r, walkContext(r).w as never, (plan) => {
-        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', scope: ['product/**', 'src/**', 'test/**'], resources: [], origin: 'repair' });
+        (plan['units'] as Json[]).push({ id: 'r1', spec: 'r1.json', risk: 'med', review: 'always', systems: [systemName('product')], resources: [], origin: 'repair' });
       });
       await merge(r, 'r1');
       assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: true });
@@ -153,14 +176,14 @@ describe('the audit batch point (dev.17)', () => {
   test('batch.audit-red: in an arc without milestones, a red batch lane opens a witness P1 over no obligation naming it, in the audit\'s findings', T, async () => {
     const { d } = auditArc({
       steps: [lensStep('audit-1', 'vision')], units: [{ id: 'u1' }],
-      obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [], audit: { lenses: ['vision'] },
+      obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [],
       suite: [SUITE_LANE, batchLane(RED())],
     });
     const r = contextFor(d);
     const { ctx, w } = auditContext(r);
     const tick = setInterval(() => w.arbiter.wake(), 50);
     try {
-      r.journal.fact({ kind: 'audit-requested', command: commandId(`cmd-${'1'.padStart(16, 'b')}`), lenses: ['vision'] });
+      r.journal.fact({ kind: 'audit-requested', command: commandId(`cmd-${'1'.padStart(16, 'b')}`) });
       const out = await runAudit(ctx);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       const [started] = factsOf(r, 'audit-started');

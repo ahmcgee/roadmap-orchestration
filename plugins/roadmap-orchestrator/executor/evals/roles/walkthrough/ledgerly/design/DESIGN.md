@@ -96,7 +96,7 @@ tables scroll inside themselves; the page never scrolls sideways.
 
 Pages: Overview `/`, Entries `/entries`, Record an entry `/entries/new`, an entry `/entries/<id>`, Budgets `/budgets`,
 a team's budget `/budgets/<team>`, Change a limit `/budgets/<team>/edit`, Statements `/statements`, a statement
-`/statements/<month>`, its print view `/statements/<month>/print`. Any other address shows "Page not found" with a way back.
+`/statements/<month>`, its print view `/statements/<month>/print`. Old action addresses may redirect to these pages without adding a user step; form redirects preserve the submitted method and values. Any other address shows "Page not found" with a way back.
 
 ### Print views
 

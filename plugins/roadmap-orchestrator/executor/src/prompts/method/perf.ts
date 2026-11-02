@@ -1,0 +1,1 @@
+export const METHOD = "Measure the workload the intent names, including scale and resource use. Compare against the same baseline and conditions. Separate host contention from product cost and identify what an expensive lane actually proves.";

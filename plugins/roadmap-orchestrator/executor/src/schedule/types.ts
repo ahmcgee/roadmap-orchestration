@@ -2,22 +2,20 @@
 // only: the arbiter (`acquire`), readiness and admission (`admit`), the prober and `commandScope` are
 // implemented by later steps against these signatures. The records they read and write (facts, holders,
 // `ProbeTarget`) live in src/core/events.ts.
-import type { BackendParkClass, Holder, OutcomeStage, ProbeTarget } from '../core/events.ts';
-import type { CommandId, FindingId, InvocationId, KnownDefectId, LaneId, NeedsUserId, ObligationId, ResourceName, ResourceUnit, UnitId } from '../core/ids.ts';
-import type { PropagationTarget } from '../core/stale.ts';
-import type { RepoPath } from '../core/values.ts';
-import type { JournalView } from '../core/interfaces.ts';
-import type { CommandBody, LaneCadence, NeedsUserReason } from '../core/records.ts';
-import type { PlanM1, PlanUnit, UnitOrigin, UnitPriority } from '../input/plan.ts';
-import type { PressureNow } from '../host/pressure.ts';
 import type { CpuBasis } from '../core/cpu.ts';
+import type { BackendParkClass,Holder,OutcomeStage,ProbeTarget } from '../core/events.ts';
+import type { CommandId,FindingId,InvocationId,KnownDefectId,LaneId,NeedsUserId,ObligationId,ResourceName,ResourceUnit,UnitId } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import type { CommandBody,LaneCadence,NeedsUserReason } from '../core/records.ts';
+import type { PressureNow } from '../host/pressure.ts';
+import type { PlanM1,PlanUnit,UnitOrigin,UnitPriority } from '../input/plan.ts';
 import type { Backend } from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Stages: admission boundaries and chains (F5)
 
-/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` since M3; `scaffold` and `poc` since dev.17. */
-export const ADMISSION_STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'] as const satisfies readonly OutcomeStage[];
+/** The stages a unit enters only through admission: pause, drain and A17 are re-checked before each. `reproduce` runs a vacuity repair's mutant first. */
+export const ADMISSION_STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'lanes', 'gate', 'candidate'] as const satisfies readonly OutcomeStage[];
 export type AdmissionStage = (typeof ADMISSION_STAGES)[number];
 /**
  * Mandatory chain stages: they run to completion whatever pause or drain says, so a build's retained
@@ -51,13 +49,6 @@ export type ResourceRequest = Readonly<{
   publication: boolean;
 }>;
 
-/**
- * Each stage's entry reservation (F6), taken before the stage's first journaled op: plan-check and gate
- * `@cpu`×1; build calibrated `@cpu` only (unit.cpu overrides); lanes the first lane's set; candidate the
- * publication (`integration-slot`); prepare none. A wait cancelled by pause or stop journals nothing.
- */
-export type EntryReservation = (plan: PlanM1, unit: PlanUnit, stage: AdmissionStage) => ResourceRequest | null;
-
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */
 export type Grant =
   | Readonly<{ kind: 'granted'; units: readonly ResourceUnit[] }>
@@ -76,8 +67,8 @@ export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Ran
 // ---------------------------------------------------------------------------------------------------
 // Priority and aging (F17)
 
-/** R6: repair units (and, dev.17, deflake and propagation units) first, then checkpoint-originated, then polish, then planned. */
-export const ORIGIN_RANK = { repair: 0, deflake: 0, propagation: 0, checkpoint: 1, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
+/** R6: repair units (and, dev.17, deflake and propagation units) first, then polish, then planned. */
+export const ORIGIN_RANK = { repair: 0, deflake: 0, polish: 2, planned: 3 } as const satisfies Readonly<Record<UnitOrigin, number>>;
 /** A waiter is promoted once this many other units published inside its current waiting interval. */
 export const PROMOTION_BYPASS = 3;
 
@@ -101,7 +92,7 @@ export type Rank = Readonly<{
 
 /**
  * M4a rev 3 (R42): `high` priority first; then promoted units, by age alone (`waitStartSeq`); then the rest by origin
- * (`checkpoint` before `planned`), then age. Plan index breaks ties, so the order is total. Negative: `a` is served first.
+ * (`polish` before `planned`), then age. Plan index breaks ties, so the order is total. Negative: `a` is served first.
  */
 export function compareRank(a: Rank, b: Rank): number {
   if (a.priority !== b.priority) return a.priority === 'high' ? -1 : 1;
@@ -160,7 +151,7 @@ export type AdmissionConstraint =
    * cut: its spec links the target, or its design record's breaks touch a file the propagation re-witnesses (`stale`, those
    * files). src/holistic/propagation.ts `propagationHolds`.
    */
-  | Readonly<{ type: 'propagation'; unit: UnitId; target: PropagationTarget; stale: readonly RepoPath[] }>;
+;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
 

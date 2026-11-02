@@ -7,25 +7,21 @@
 // Rules the table encodes (test/transitions.test.ts pins them row by row):
 // - `chargeableFailures` grows only on design-class rows (`charge`, the plan's C). Deadline, cancel and
 //   process faults never charge. The third chargeable failure parks the unit, whatever its row says.
-// - Bounded rounds: plan-check redirect ≤ 2, gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
+// - Bounded rounds: gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
 //   round runs (and a C row charges); beyond it the exhausted action runs uncharged, as no round happened.
-//   The redirect bound counts only the redirects since the architect's latest spec revision (a reopen,
-//   `redirectsSinceEdit`): plan-check patches bump the rev too, but only a reopen resets the count.
-// - One uncharged retry at plan-check, build (a resume), lanes and gate, then park. Retries are counted per
+// - One uncharged retry at pre-build, build (a resume), lanes and gate, then park. Retries are counted per
 //   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
 //   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
 //   that may have changed the tree is not retried: `lost-tree-effects` salvages and verifies its work.
 // - Route up: a refusal or escalation at a judgment stage re-dispatches that stage on its role's
 //   `escalation` seat, a fresh session even when that seat binds the same model (independence is a clean
 //   context); at the escalation seat it parks with a needs-user. A routed-up role stays there for the unit.
-// - A risk trigger (contract path touched at salvage, scope growth at salvage or the candidate) puts the next judgment
+// - A risk trigger (contract path touched at salvage, protected-path refusal at salvage or the candidate) puts the next judgment
 //   dispatch, and only that one, on the escalation seat. The implementer keeps the unit's risk seat throughout.
 // - A routing change the unit cannot absorb (its implementer's seat moved after a build started;
 //   dispatch.ts) parks it at the stage that found it: `routing-changed`, uncharged.
 // - An interruption (a pause or stop cancel, or the stage's backend parked arc-wide on a usage limit) holds
-//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling). So does a
-//   plan-check's verified scope-growth proposal, or a lanes attempt's after salvage reverted one path twice running, until
-//   the root agent's `scope accept|reject` (or a resume) releases it.
+//   the unit at its stage: no counter moves, and a resume re-runs the stage as a new attempt (lead ruling).
 //   A held build's new attempt continues the interrupted session (the `continue` round, rounds.ts).
 // - `attempts` counts stage starts, which only the fold sees; `transition` passes it through unchanged.
 // - Every park row names its class (A7): `retryable` (the executor probes its targets, which the stage names,
@@ -43,12 +39,12 @@
 //   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
 import type { OrderingWait } from '../core/ordering.ts';
 import {
-  type GateLargeDiff, type HoldCause, type JudgmentStage, type OperatorParkKind, type OutcomeClass, type OutcomeStage, type ParkRecord, type ProbeTarget,
-  type RetryStage, type StageOutcomeFact, type StageOutcomeKind, JUDGMENT_STAGES, probeTargetKey, certificationRed,
+type GateLargeDiff,type HoldCause,type JudgmentStage,type OperatorParkKind,type OutcomeClass,type OutcomeStage,type ParkRecord,type ProbeTarget,
+type RetryStage,type StageOutcomeFact,type StageOutcomeKind,JUDGMENT_STAGES,probeTargetKey,certificationRed,
 } from '../core/events.ts';
-import { type Bounds, DEFAULT_BOUNDS, type NeedsUserReason } from '../core/records.ts';
-import { type UnitCounters, type UnitState, afterStageOutcome, redirectsSinceEdit } from '../core/state.ts';
-import type { JudgmentSeat, RiskTier } from '../routing/types.ts';
+import { type Bounds,type NeedsUserReason } from '../core/records.ts';
+import { type UnitCounters,type UnitState,afterStageOutcome } from '../core/state.ts';
+import type { JudgmentSeat,RiskTier } from '../routing/types.ts';
 
 /** One per (stage, kind) of `STAGE_OUTCOME_KINDS`: a gate outcome for a build stage is unrepresentable. */
 export type StageOutcome = { [S in OutcomeStage]: Readonly<{ stage: S; kind: StageOutcomeKind<S> }> }[OutcomeStage];
@@ -78,18 +74,6 @@ export type Next =
   | Readonly<{ kind: 'hold' }>
   | Readonly<{ kind: 'retire' }>;
 
-// ---------------------------------------------------------------------------------------------------
-// The table
-
-/**
- * The built-in bounds (`DEFAULT_BOUNDS`); a unit's `limits` override them (M3). Two redirects, not one: arc 1's
- * high-risk adopted units each found real defects in a second round (arc-1 feedback item 2).
- */
-export const MAX_REDIRECTS = DEFAULT_BOUNDS.redirects;
-export const MAX_REVISE_ROUNDS = DEFAULT_BOUNDS.reviseRounds;
-export const MAX_CANDIDATE_REDS = DEFAULT_BOUNDS.candidateReds;
-export const MAX_RETRIES = DEFAULT_BOUNDS.retries;
-
 /**
  * Where a decision sends the unit: a build round, or another stage. `prepare` only after a lanes `known-defect` (M4a rev
  * 3, F4: the unit waits there for the defect's fixer, then merges the tip in); otherwise only a re-entry starts there.
@@ -109,7 +93,7 @@ type Hold = Readonly<{ do: 'hold' }>;
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason` and class `park`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
-type BoundedRound = 'redirect' | 'revise' | 'candidate-red' | 'smoke';
+type BoundedRound = 'revise' | 'candidate-red' | 'smoke';
 /**
  * A round the unit may take `bounds[bound]` times; the next one takes `then`, uncharged. M4a rev 3 (D2, R38): the smoke
  * round's `then` goes on to the gate, which decides with the survivors (`Go`, never a halt).
@@ -117,7 +101,7 @@ type BoundedRound = 'redirect' | 'revise' | 'candidate-red' | 'smoke';
 type Bounded<S extends OutcomeStage> = Readonly<{
   do: 'bounded';
   round: BoundedRound;
-  bound: keyof Pick<Bounds, 'redirects' | 'reviseRounds' | 'candidateReds' | 'smokeRounds'>;
+  bound: keyof Pick<Bounds, 'reviseRounds' | 'candidateReds' | 'smokeRounds'>;
   to: Target;
   chargeable: boolean;
   then: S extends JudgmentStage ? RouteUp : Park | Go;
@@ -147,7 +131,7 @@ const fault: Park = park('executor-fault', 'env');
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
   prepare: {
-    'clean-plan-check': go(at('plan-check')),
+    'clean-pre-build': go(at('pre-build')),
     'clean-build': go(build('fresh')),
     // Merged cleanly and the tree already verifies the unit's work: straight to its lanes.
     'clean-verify': go(at('lanes')),
@@ -159,7 +143,7 @@ export const TABLE: Table = {
   },
   // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
   reproduce: {
-    reproduced: go(at('plan-check')),
+    reproduced: go(at('pre-build')),
     // The finding is dismissed by code; the unit parks (the checkpoint respecs or cuts it, OR-Q1).
     'not-reproduced': park('not-reproduced', 'design'),
     // The mutant no longer applies: re-evaluated at the next audit; the unit parks meanwhile.
@@ -170,44 +154,9 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     'executor-fault': fault,
   },
-  'plan-check': {
-    approve: go(build('fresh')),
-    redirect: { do: 'bounded', round: 'redirect', bound: 'redirects', to: at('plan-check'), chargeable: false, then: routeUp('escalation') },
-    infeasible: routeUp('escalation'),
-    escalate: routeUp('escalation'),
-    // R2: a redirect cannot lower the risk floor or widen the unit's envelope; refused → escalate.
-    'risk-lowered': routeUp('escalation'),
-    'scope-widened': routeUp('escalation'),
-    refusal: routeUp('refusal'),
-    malformed: retry('malformed', 'design'),
-    'process-fault': park('process-fault', 'retryable'),
-    interrupted: hold,
-    'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55) to dev.16: a frontier or summit builder under `by-builder` made no plan-check call, and its fresh
-    // build assessed in session first. dev.17 has no in-session assessment, so a unit an older log left here runs its
-    // plan-check (uniform, one fresh call) before it builds. Scaffolding: deleted with `planCheckShapeDefault`.
-    'in-session': go(at('plan-check')),
-    // Paid M4b run 5: an approve from a session the CLI refused a read, as at the gate (scaffolding: a 1.0.0-dev.11 record).
-    'read-denied': retry('read-denied', 'env'),
-    // Scope growth (2026-10-15): a proposal code verified holds the unit, uncharged, for the root agent's `scope accept|reject`
-    // (src/commands/scope.ts); its `scope-decided` releases the hold and the plan-check runs again.
-    'scope-growth': hold,
-    // 2026-10-16: the call's prompt or context outgrew the model's window. Not a process fault (the backend is well, so no
-    // probe, no repeat rule, no backend park): uncharged, operator env, the needs-user naming the role, the call and the
-    // prompt's size; `resume` re-runs the stage once its inputs fit (a smaller unit, or a seat with a larger window).
-    'context-exceeded': park('context-exceeded', 'env'),
-    'executor-fault': fault,
-    // dev.17 (design pass). `split`: the stage records it, then commits the split revision, which cuts the unit (its children
-    // take its place); the hold is never resumed, the unit being cut. `scaffold` and `poc`: on to those stages, uncharged (a
-    // PoC is bounded per unit by code, src/pipeline/design.ts). `plan-defect`: refused through the repair turn and again for a
-    // plan defect (a lane that cannot reach a test, an oversize design, a split code refuses): uncharged; `resume` re-runs
-    // the plan-check once an `apply` fixes the plan, as at lanes.
-    split: hold,
-    scaffold: go(at('scaffold')),
-    poc: go(at('poc')),
-    'plan-defect': park('plan-defect', 'env'),
-  },
+  'pre-build': { approve: go(build('fresh')), interrupted: hold, 'executor-fault': fault },
   build: {
+    'spec-wrong': park('spec-wrong', 'design'),
     success: go(at('quiesce')),
     refusal: park('refusal', 'design'),
     malformed: retry('malformed', 'design'),
@@ -223,17 +172,9 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     interrupted: hold,
     'routing-changed': park('routing-changed', 'env'),
-    // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment found the spec infeasible. A build has
-    // no escalation seat to route up to (route-up is a judgment stage's), so the unit parks for a spec revision with the
-    // escalation's reason.
-    infeasible: park('escalation', 'design'),
-    // To dev.16, read from an older log: the assessment raised the risk floor onto another implementer seat: a fresh build
-    // there, uncharged.
-    'risk-raised': go(build('fresh')),
-    // 2026-10-15: a required witness item names no arc lane in force (an arc started on 1.0.0-dev.9; the classifier refuses
-    // it since). Uncharged; `resume` re-runs the stage once an `apply` adds the lane, or a re-entry fixes the spec.
+    // A required witness item names no arc lane in force. An apply or re-entry repairs the specification.
     'witness-lane-missing': park('witness-lane-missing', 'env'),
-    // 2026-10-16: as at plan-check.
+    // 2026-10-16: as at pre-build.
     'context-exceeded': park('context-exceeded', 'env'),
     'executor-fault': fault,
   },
@@ -256,6 +197,7 @@ export const TABLE: Table = {
     green: go(at('gate')),
     // `decide` applies the uncharged certification allowance before the chargeable bound.
     red: charge(build('fix')),
+    regression: charge(build('fix')),
     // A same-commit red then green still needs a fix, but does not consume the unit's design-failure bound.
     flaky: go(build('fix')),
     'not-certified': charge(build('fix')),
@@ -280,9 +222,6 @@ export const TABLE: Table = {
     // Plan defects (2026-10-16): a missing witness the lane never ran or no build of the unit could create. Uncharged; the
     // needs-user names the defects, and `resume` re-runs the lanes once an `apply` fixes the plan (or a re-entry, the spec).
     'plan-defect': park('plan-defect', 'env'),
-    // Plan defects (2026-10-16): salvage reverted the same out-of-scope path on two build rounds running: the scope-growth
-    // hold, uncharged, until the root agent's `scope accept|reject`.
-    'scope-growth': hold,
     'executor-fault': fault,
     // dev.17: a lane's environment did not come up or failed its probe: no verdict on the tree, uncharged; the executor
     // probes the environment (up, then its probe) and re-runs the lanes once it passes.
@@ -304,7 +243,7 @@ export const TABLE: Table = {
     // refused again, an env park. TEMPORARY SCAFFOLDING: no longer recorded since 2026-10-16 (the read surface is the
     // repository and the run dir, and a refused read voids nothing); a 1.0.0-dev.11 record still retries by this row.
     'read-denied': retry('read-denied', 'env'),
-    // 2026-10-16: as at plan-check (the dev.11 consumer arc's 2.37 MB unit diff).
+    // 2026-10-16: as at pre-build (the dev.11 consumer arc's 2.37 MB unit diff).
     'context-exceeded': park('context-exceeded', 'env'),
     'executor-fault': fault,
     // dev.17 (proportional review): nothing changed since the unit's approval and nothing it bound moved: code approved again
@@ -344,34 +283,6 @@ export const TABLE: Table = {
     'foreign-move': { do: 'stop', reason: 'foreign-ref-move' },
   },
   snapshot: { published: { do: 'retire' } },
-  // dev.17 (design pass, src/pipeline/scaffold.ts): the skeleton committed, on to the first build; refused once, the writer
-  // tries again told why (uncharged); refused again, or a load test that cannot run, an uncharged plan-defect park.
-  scaffold: {
-    scaffolded: go(build('fresh')),
-    refused: go(at('scaffold')),
-    'plan-defect': park('plan-defect', 'env'),
-    refusal: park('refusal', 'design'),
-    'process-fault': park('process-fault', 'retryable'),
-    lost: park('process-fault', 'retryable'),
-    interrupted: hold,
-    'routing-changed': park('routing-changed', 'env'),
-    'context-exceeded': park('context-exceeded', 'env'),
-    occupied: park('occupancy-unlabelled', 'env'),
-    'cleanup-failed': park('residue', 'retryable'),
-    'executor-fault': fault,
-  },
-  // dev.17 (design pass, src/pipeline/poc.ts): answered or not, back to a fresh plan-check with the report, uncharged.
-  poc: {
-    answered: go(at('plan-check')),
-    unanswered: go(at('plan-check')),
-    'process-fault': park('process-fault', 'retryable'),
-    interrupted: hold,
-    'routing-changed': park('routing-changed', 'env'),
-    'context-exceeded': park('context-exceeded', 'env'),
-    occupied: park('occupancy-unlabelled', 'env'),
-    'cleanup-failed': park('residue', 'retryable'),
-    'executor-fault': fault,
-  },
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -384,7 +295,7 @@ type Step =
   | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
-const ROUND_COUNTERS = { redirect: 'redirects', revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds' } as const satisfies {
+const ROUND_COUNTERS = { revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds' } as const satisfies {
   readonly [R in BoundedRound]: keyof UnitCounters;
 };
 
@@ -392,7 +303,7 @@ function ruleOf(o: StageOutcome): Rule<OutcomeStage> {
   switch (o.stage) {
     case 'prepare': return TABLE.prepare[o.kind];
     case 'reproduce': return TABLE.reproduce[o.kind];
-    case 'plan-check': return TABLE['plan-check'][o.kind];
+    case 'pre-build': return TABLE['pre-build'][o.kind];
     case 'build': return TABLE.build[o.kind];
     case 'quiesce': return TABLE.quiesce[o.kind];
     case 'evidence': return TABLE.evidence[o.kind];
@@ -403,8 +314,6 @@ function ruleOf(o: StageOutcome): Rule<OutcomeStage> {
     case 'candidate': return TABLE.candidate[o.kind];
     case 'ff': return TABLE.ff[o.kind];
     case 'snapshot': return TABLE.snapshot[o.kind];
-    case 'scaffold': return TABLE.scaffold[o.kind];
-    case 'poc': return TABLE.poc[o.kind];
     default: return unreachable(o);
   }
 }
@@ -450,7 +359,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
     case 'go':
       return { class: rule.trigger ? 'trigger' : 'advance', chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
     case 'bounded': {
-      const taken = rule.round === 'redirect' ? redirectsSinceEdit(u) : u.counters[ROUND_COUNTERS[rule.round]];
+      const taken = u.counters[ROUND_COUNTERS[rule.round]];
       const max = u.bounds[rule.bound];
       if (taken < max) return { class: rule.round, chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
       return apply(u, o, rule.then, `${why} beyond ${max} ${rule.round} round${max === 1 ? '' : 's'}`);
@@ -616,7 +525,6 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
       if (rule.do === 'bounded' && rule.then.do === 'go') return { kind: 'stage', target: rule.then.to };
       if (rule.do !== 'go') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
       return { kind: 'stage', target: rule.to };
-    case 'redirect':
     case 'revise':
     case 'candidate-red':
     case 'smoke':

@@ -1,33 +1,36 @@
+import { systemName } from '../src/core/ids.ts';
 // Integrated tests of snapshot.publish (src/git/snapshot.ts, src/recover/snapshot.ts): a real run dir
 // holding raw evidence, an evidence snapshot, a needs-user and a spec, published to refs/roadmap/<arc>.
 // The plan's snapshot.allowlist, snapshot.manifest-mismatch-detected, and the snapshot.* cells of the
 // candidate.merge / integration.ff / snapshot.publish matrix row.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,rmSync,statSync,utimesSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { before, describe, it } from 'node:test';
-import { type IntentOf, parseRevisionPayload } from '../src/core/events.ts';
+import { before,describe,it } from 'node:test';
+import { type IntentOf,parseRevisionPayload } from '../src/core/events.ts';
 import {
-  type NeedsUserId, type Sha, commandId, envId, invocationDirName, invocationId, jobId, laneId, laneRev, opKey, planRev, seatRev,
-  routingRev, sha, sha256, specRev, unitId,
+type NeedsUserId,type Sha,commandId,envId,invocationDirName,invocationId,jobId,laneId,laneRev,opKey,planRev,
+routingRev,
+seatRev,
+sha,sha256,specRev,unitId,
 } from '../src/core/ids.ts';
-import { needsUserPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { parsePlan } from '../src/input/plan.ts';
-import { provenanceStack, resolveRouting } from '../src/routing/layers.ts';
-import { canonicalJson, sha256Hex } from '../src/core/json.ts';
-import { PLAN_INPUT, RULINGS_INPUT, SPEC_INPUT, keepInput, keepPayload, routingProvenanceOf } from '../src/input/inforce.ts';
-import { type AbsPath, absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
+import { canonicalJson,sha256Hex } from '../src/core/json.ts';
+import { type AbsPath,absPath,isoTimeOf,repoPattern } from '../src/core/values.ts';
+import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { git as gitRaw } from '../src/git/git.ts';
 import { parentsOf } from '../src/git/mergein.ts';
 import {
-  SNAPSHOT_SCHEMA, type SnapshotPublishRequest, candidateLaneDir, collectSnapshot, jobLaneDir, snapshotPublishSteps, snapshotRef, verifySnapshot,
+SNAPSHOT_SCHEMA,type SnapshotPublishRequest,candidateLaneDir,collectSnapshot,jobLaneDir,snapshotPublishSteps,snapshotRef,verifySnapshot,
 } from '../src/git/snapshot.ts';
-import { ARC, IDENTITY, cloneRepo, openArc, runOp } from './fixtures/git-common.ts';
-import { UNIT, crashChild8b, recover8b, revOf, sharedBase } from './fixtures/git8b-common.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { CANDIDATE_FF_SNAPSHOT, crashCells } from './matrix.ts';
-import { evidenceSnapshotOp, snapshotPublishOp } from '../src/recover/ops.ts';
-import { SCHEMA_VERSION } from '../src/core/version.ts';
+import { PLAN_INPUT,RULINGS_INPUT,SPEC_INPUT,keepInput,keepPayload,routingProvenanceOf } from '../src/input/inforce.ts';
+import { parsePlan } from '../src/input/plan.ts';
+import { needsUserPath,raiseNeedsUser } from '../src/needsuser.ts';
+import { evidenceSnapshotOp,snapshotPublishOp } from '../src/recover/ops.ts';
+import { provenanceStack,resolveRouting } from '../src/routing/layers.ts';
+import { ARC,IDENTITY,cloneRepo,openArc,runOp } from './fixtures/git-common.ts';
+import { UNIT,crashChild8b,recover8b,revOf,sharedBase } from './fixtures/git8b-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { CANDIDATE_FF_SNAPSHOT,crashCells } from './matrix.ts';
 
 const REF = snapshotRef(ARC);
 
@@ -190,8 +193,8 @@ describe('snapshot.publish', () => {
 const PLAN = {
   schema: 'roadmap/plan-m1', arc: ARC, integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/roadmap-wt', contracts: [],
   rulings: 'rulings.md', architectureDoc: 'docs/architecture.md', direction: 'Converge on the documented target state.',
-  suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] }] },
-  resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', scope: ['src/**'], resources: [] }],
+  suite: { lanes: [{ id: 'suite', argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }] },
+  resources: [], units: [{ id: UNIT, spec: 'unit-a.spec.json', risk: 'med', systems: [systemName('app')], resources: [] }],
 };
 
 type Holistic = Run & Readonly<{ planSha: string; specSha: string; payloadSha: string; witnessInv: string; witnessFile: string }>;
@@ -208,11 +211,11 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
   const ledgerSha = keepInput(r.runDir, Buffer.from('C-1 — a rule\n'), RULINGS_INPUT);
   const provenance = routingProvenanceOf({ profile: 'default' as never, config: null, arcRoles: 'm4b' }, parsePlan(PLAN));
   const payloadSha = keepPayload(r.runDir, parseRevisionPayload({
-    v: 1, source: { type: 'start' }, base: 0, rev: 1,
-    manifest: { planSha256: planSha, specs: { [UNIT]: specSha }, rulings: { ledgerSha256: ledgerSha, sidecars: {} }, obligations: null, vision: null },
+    v: 2, source: { type: 'start' }, base: 0, rev: 1,
+    manifest: { planSha256: planSha, specs: { [UNIT]: specSha }, rulings: { ledgerSha256: ledgerSha,  }, obligations: null, vision: null },
     changes: [], dispositions: [], divergences: [], publication: null, routingProvenance: provenance,
   }));
-  writeFileSync(join(r.runDir, 'start.json'), `${JSON.stringify({ v: 1, generation: 1, at: '2026-09-30T00:00:00.000Z', repo: r.repo, planFile: '/plan/plan.json', profile: 'default' })}\n`);
+  writeFileSync(join(r.runDir, 'start.json'), `${JSON.stringify({ v: 2, generation: 1, at: '2026-09-30T00:00:00.000Z', repo: r.repo, planFile: '/plan/plan.json', profile: 'default' })}\n`);
   const journal = openArc(r.runDir);
   journal.fact({
     kind: 'plan-applied', rev: planRev(1), command: null, planSha256: planSha, specs: { [UNIT]: specSha }, changes: [], scheduling: 'dag',
@@ -221,11 +224,11 @@ async function holisticRun(witnessFor: 'job' | 'candidate' = 'job'): Promise<Hol
   journal.fact({
     kind: 'dispatch',
     record: {
-      unit: unitId(UNIT), specRev: specRev(1), specSha256: specSha, scope: [repoPattern('src/**')], riskFloor: 'med',
+      unit: unitId(UNIT), specRev: specRev(1), specSha256: specSha,  riskFloor: 'med',
       routingRev: resolveRouting(provenanceStack(provenance, 'none', null, false)).rev, implementerSeatRev: seatRev('fedcba9876543210'), at: isoTimeOf(new Date()), transientRules: 'm3',
     },
   });
-  journal.fact({ kind: 'executor-started', generation: 1 });
+  journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 1 });
   const job = jobId('docs', 1);
   const spawn = journal.begin({
     kind: 'proc.spawn', key: opKey(`lane:${job}`), parent: { type: 'arc' }, deadlineAt: null,
@@ -308,13 +311,13 @@ describe('incremental snapshots', () => {
     assert.ok(!treePaths(r.repo, first.post.new).some((p) => p.endsWith('/result.json')), 'an open spawn names no result');
 
     const next = openArc(r.runDir);
-    next.done(spawn.op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(result)), summary: { type: 'backend', outcome: 'success' } }, null);
+    next.done(spawn.op, 'proc.spawn', { kind: 'result', pressure: null, resultSha256: sha256(sha256Hex(result)), summary: { type: 'backend', outcome: 'success' } }, null);
     const spec = keepInput(r.runDir, Buffer.from('{"new":"spec"}\n'), SPEC_INPUT);
-    next.fact({ kind: 'judgment-inputs', unit: UNIT, stage: 'plan-check', attempt: 1, tip: sha('b'.repeat(40)), head: null, specRev: specRev(2), specSha256: spec, planRev: planRev(1), routingRev: routingRev('0123456789abcdef') });
+    next.fact({ kind: 'judgment-inputs', unit: UNIT, stage: 'pre-build', attempt: 1, tip: sha('b'.repeat(40)), head: null, specRev: specRev(2), specSha256: spec, planRev: planRev(1), routingRev: routingRev('0123456789abcdef') });
     const startPath = join(r.runDir, 'start.json');
     const start = JSON.parse(readFileSync(startPath, 'utf8'));
     writeFileSync(startPath, JSON.stringify({ ...start, generation: 2 }) + '\n');
-    next.fact({ kind: 'executor-started', generation: 2 });
+    next.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
     next.close();
     const nuPath = needsUserPath(r.runDir, r.needsUser as NeedsUserId);
     const nu = JSON.parse(readFileSync(nuPath, 'utf8'));

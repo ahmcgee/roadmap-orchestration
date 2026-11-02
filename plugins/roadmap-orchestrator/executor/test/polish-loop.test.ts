@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 agent D (plan §4, §7 "Integrated"): fix units and the polish loop over a real arc (real git, real processes, the
 // fake claude and codex answering by unit and job, the tiny fake product of test/fixtures/walk-common.ts). Named tests:
 // polish.loop (a walk proposes four tweaks → code applies three as one revision and refuses one → each builds and is
@@ -26,28 +27,26 @@ import { milestoneProgress } from '../src/walk/milestones.ts';
 import { applyPolish } from '../src/walk/polish.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { checkpointAnswer } from './helpers/holistic.ts';
-import { checkpointPending, runCheckpoint } from '../src/holistic/checkpoint.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps, contextFor } from './fixtures/unit-common.ts';
-import { ACTING_ARGV, KEEP_FILES, SCOPE, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
+import { ACTING_ARGV, KEEP_FILES, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 import { COMPARE_JOB, POLISH_REVISION, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 3 };
 
 type Json = Record<string, unknown>;
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Fact, { kind: K }> => f.kind === kind);
+const factsOf = <K extends Fact['kind']>(r: ArcRun, kind: K) => facts(r).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }> => f.kind === kind);
 const planOf = (r: ArcRun) => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
 
 /** The polish and compare context (the checkpoint's: a walk's plus the fenced commit's) over the run's one arbiter. */
 function polishContext(r: ArcRun) {
   const { w } = walkContext(r);
-  return { h: holisticContexts(w).checkpoint, w };
+  return { h: holisticContexts(w).revision, w };
 }
 
 async function ticking<T>(r: ArcRun, f: (h: ReturnType<typeof polishContext>['h']) => Promise<T>): Promise<T> {
@@ -91,6 +90,27 @@ function judgeStep(job: string, decision: 'keep' | 'drop'): Step {
 const DROP_FILES = { 'design/README.md': '# Greeter design\n\nShout.\n', 'product/greeting.txt': 'HELLO\n' };
 const NOREF_FILES = { 'product/greeting.txt': 'hi\n' };
 
+test('polish.system-coverage: admission rechecks every reference, refusing missing systems and unmapped references', T, async () => {
+  for (const unmapped of [false, true]) {
+    const d = walkArc({ steps: [], milestone: milestoneJson({ references: ['design', 'extra'] }), systemsMap: { systems: {
+      app: { paths: ['design/**', 'src/**', 'test/**', 'contracts/**'] }, ...(unmapped ? {} : { other: { paths: ['extra/**'] } }),
+    } } });
+    const r = contextFor(d);
+    try {
+      const proposed = proposal(d, 'tw-partial', 'polish only the first reference');
+      r.journal.fact({ kind: 'walk-started', job: 'walk-1' as never, milestone: 'MS-1' as never, round: 1, sha: r.ctx.plan().baseline, ports: {} });
+      r.journal.fact({ kind: 'polish-proposed', id: 'X-1' as never, job: 'walk-1' as never, milestone: 'MS-1' as never,
+        journey: 'J-1' as never, evidence: ['/kept/shot.png'], text: proposed.text,
+        unit: { id: 'tw-partial' as never, systems: [systemName('app')], spec: JSON.stringify(proposed.unit.spec) } });
+      r.journal.fact({ kind: 'walk-ended', job: 'walk-1' as never, outcome: 'reported', findings: [], proposals: ['X-1' as never], dropped: [] });
+      assert.deepEqual(await ticking(r, applyPolish), { kind: 'applied', admitted: [], refused: ['X-1'] });
+      const reason = factsOf(r, 'polish-refused')[0]!.reasons.join('; ');
+      assert.match(reason, unmapped ? /reference extra maps to no system/ : /reference extra requires systems other/);
+      assert.equal(r.journal.view.planApplied()!.rev, 1, 'no revision admitted a partial reference cover');
+    } finally { r.journal.close(); }
+  }
+});
+
 describe('fix units and the polish loop (dev.13 agent D)', () => {
   test('polish.loop: four proposals → three admitted by code, one refused → compare keeps one, drops one (cut), code drops the reference-untouched one → the kept tweak lands → settled at the bound', T, async () => {
     const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')), walkRounds: 2 });
@@ -118,7 +138,6 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       const w1 = await runWalk(ctx).finally(() => clearInterval(tick));
       assert.deepEqual(w1, { kind: 'ended', job: 'walk-1', outcome: 'reported', passed: true });
       assert.deepEqual(factsOf(r, 'walk-ended').map((f) => [f.proposals, f.dropped]), [[['X-1', 'X-2', 'X-3', 'X-4'], []]]);
-      assert.equal(checkpointPending(polishContext(r).h), false, 'walk-1 opened nothing: its trigger has nothing new, no checkpoint');
       const m = milestonesOf(planOf(r))[0]!;
       const pending = milestoneProgress(r.journal.view, planOf(r), m, repairUnits(ctx));
       assert.ok(pending.kind === 'round-open' && pending.round.pending === 'polish', JSON.stringify(pending));
@@ -133,7 +152,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.deepEqual(revisions.map((f) => f.source), [{ type: 'walk', job: 'walk-1' }]);
       for (const [id, x] of [['tw-keep', 'X-1'], ['tw-drop', 'X-2'], ['tw-noref', 'X-3']] as const) {
         const u = unitInForce(r, id);
-        assert.deepEqual([u.origin, u.polish, u.risk, u.after, [...u.scope]], ['polish', { milestone: 'MS-1', proposal: x }, 'high', [], SCOPE], id);
+        assert.deepEqual([u.origin, u.polish, u.risk, u.after, [...u.systems]], ['polish', { milestone: 'MS-1', proposal: x }, 'high', [], ['app']], id);
       }
       assert.deepEqual(await ticking(r, applyPolish), { kind: 'none' }, 'nothing left to settle');
 
@@ -145,6 +164,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
 
       // compare-1 keeps tw-keep: both instances up on their own ports, the judge walked both.
       assert.deepEqual(await ticking(r, runCompare), { kind: 'judged', unit: 'tw-keep', decision: 'keep', reason: 'judged' });
+      assert.equal(r.journal.view.stageJobOutcomes().find((f) => f.stage === 'experience-verdict' && f.job.startsWith('compare-'))?.verdict, 'keep');
       const [c1] = factsOf(r, 'compare-started');
       assert.deepEqual([c1!.job, c1!.unit, c1!.before, c1!.after], ['compare-1', 'tw-keep', git(d.repo, 'rev-parse', 'main'), r.journal.view.unit('tw-keep' as UnitId).approval!.fingerprint.unitCommit]);
       assert.notEqual(c1!.ports.before['web' as never], c1!.ports.after['web' as never]);
@@ -178,7 +198,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.deepEqual(r.journal.view.openIntents(), []);
       assert.equal(/compare-[0-9]+\./.test(git(d.repo, 'worktree', 'list', '--porcelain')), false, 'no compare checkout left');
       assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), [], 'every backend call matched its step');
-      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'tw-noref' && c.step !== null).length, 3, 'tw-noref: plan-check, build, gate; no judge');
+      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'tw-noref' && c.step !== null).length, 2, 'tw-noref: build and gate; no compare judge');
     } finally {
       r.journal.close();
     }
@@ -205,7 +225,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
         const plan = parsePlan(JSON.parse(planBytes.toString('utf8')));
         return { ...current, plan, planBytes, specs: new Map([...current.specs, ['tw-a' as UnitId, { path: specPath, bytes: Buffer.from(x1!.unit.spec) }]]) };
       };
-      const entry = (polish: Json): Json => ({ id: 'tw-a', spec: 'tw-a.json', risk: 'high', scope: SCOPE, resources: [], after: [], origin: 'polish', polish });
+      const entry = (polish: Json): Json => ({ id: 'tw-a', spec: 'tw-a.json', risk: 'high', systems: [systemName('app')], resources: [], after: [], origin: 'polish', polish });
       const rctx = { runDir: r.ctx.runDir, view, hostDir: r.ctx.hostDir, planFile: w.commands.planFile, routingBase: w.commands.routingBase, laneEnv: w.commands.laneEnv };
       const reasons = (files: ReturnType<typeof filesWith>, proposer: Parameters<typeof evaluateRevision>[2]): string => {
         const v = evaluateRevision(rctx, files, proposer);
@@ -215,7 +235,7 @@ describe('fix units and the polish loop (dev.13 agent D)', () => {
       assert.equal(reasons(good, { type: 'walk', job: 'walk-1' as never }), 'accepted');
       assert.match(reasons(good, { type: 'apply' }), /tw-a is a polish unit: only the executor admits one, from a walkthrough's proposal, not a apply/);
       assert.match(reasons(good, { type: 'walk', job: 'walk-2' as never }), /carries proposal X-1, which is no proposal of walk-2/);
-      assert.match(reasons(filesWith((p) => p.units.push({ ...entry({ milestone: 'MS-1', proposal: 'X-1' }), scope: ['design/**'] })), { type: 'walk', job: 'walk-1' as never }), /is not the unit proposal X-1 names/);
+      assert.match(reasons(filesWith((p) => p.units.push({ ...entry({ milestone: 'MS-1', proposal: 'X-1' }), systems: ['other'] })), { type: 'walk', job: 'walk-1' as never }), /is not the unit proposal X-1 names/);
       const more = filesWith((p) => {
         p.units.push(entry({ milestone: 'MS-1', proposal: 'X-1' }));
         (p.units.find((u) => u['id'] === 'u3') as Json)['priority'] = 'high';
@@ -278,53 +298,6 @@ describe('the compare brake (lead ruling 2026-10-18)', () => {
       r.journal.close();
     }
   });
-});
-
-// ---------------------------------------------------------------------------------------------------
-// The checkpoint's walk trigger (plan §4 "Class 1 and 2 go through the checkpoint")
-
-describe('the checkpoint\'s walk trigger (dev.13 agent D)', () => {
-  for (const severity of ['P1', 'P2'] as const) {
-    test(`checkpoint.walk-trigger: a walk ${severity} nobody weighed triggers the checkpoint, its evidence dir readable and named; once weighed, nothing is due`, T, async () => {
-      const broken = walkAnswer({
-        journeys: [{ journey: 'J-1', outcome: severity === 'P1' ? 'blocked' : 'completed' }, { journey: 'J-2', outcome: 'completed' }],
-        findings: [{ class: severity === 'P1' ? 'breaks' : 'deviates', journey: 'J-1', claim: severity === 'P1' ? 'GET / answers 500' : 'The error omits its remedy', cause: severity === 'P1' ? 'GET /: server error' : 'error text', against: severity === 'P1' ? { type: 'journey' } : { type: 'design', path: 'design/README.md', anchor: '#errors' }, paths: ['product/server.js'] }],
-      });
-      const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')) });
-      appendSteps(d, [
-        walkStep('walk-1', broken),
-        {
-          as: 'claude', unit: 'ckpt-1',
-          // The evidence dir lies under the run dir, which every judgment's read surface holds (judgmentReadDirs).
-          expect: { argv: ['--add-dir', d.runDir], stdinContains: ['the walkthrough walk-1 of milestone MS-1 (round 1)', 'F-1', `${d.runDir}/evidence/jobs/walk-1`] },
-          acts: [{ type: 'emit', value: checkpointAnswer({ decision: 'no-op' }) }],
-        },
-      ]);
-      const r = contextFor(d);
-      try {
-        await run(r, 'u1', () => Promise.resolve(true));
-        const { ctx, w } = walkContext(r);
-        const tick = setInterval(() => w.arbiter.wake(), 50);
-        try {
-          await runWalk(ctx);
-          const h = holisticContexts(w);
-          assert.equal(checkpointPending(h.checkpoint), true, `the walk's ${severity} is unweighed`);
-          const out = await runCheckpoint(h.checkpoint);
-          assert.equal(out.kind, 'decided', JSON.stringify(out));
-          const [captured] = factsOf(r, 'checkpoint-inputs');
-          assert.deepEqual(captured!.trigger, { type: 'walk', job: 'walk-1' });
-          assert.equal(checkpointPending(h.checkpoint), false, 'weighed: no checkpoint due');
-          const m = milestonesOf(planOf(r))[0]!;
-          assert.equal(milestoneProgress(r.journal.view, planOf(r), m, repairUnits(ctx)).kind, 'settled', 'the checkpoint decided nothing: the round admitted nothing');
-        } finally {
-          clearInterval(tick);
-        }
-        assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), [], 'every backend call matched its step');
-      } finally {
-        r.journal.close();
-      }
-    });
-  }
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -426,4 +399,3 @@ describe(`matrix row ${COMPARE_JOB}`, () => {
     });
   }
 });
-

@@ -1,3 +1,5 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
+import { systemName } from '../../src/core/ids.ts';
 // A corpus arc for tests (M4a step C1): a product repo whose baseline commit holds the sample corpus (test/helpers/
 // corpus.ts) under `docs/corpus`, its guide, `.roadmap/vision.json` (confirmed against the vision doc) and
 // `.roadmap/config.json`; and a plan dir beside it with plan.json (target corpus), a spec, the ledger, rule-anchored
@@ -6,29 +8,29 @@
 // files (`edit*`), commit between arcs (`betweenArc`), put the arc in force (`inForce`) or seal it with a terminal
 // snapshot (`seal`), and chain the next arc onto it (`nextArc`).
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { corpusPin } from '../../src/commands/corpus.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
-import { type ArcId, type Sha, arcId, sha } from '../../src/core/ids.ts';
+import { type ArcId,type Sha,arcId,sha } from '../../src/core/ids.ts';
 import { sha256Hex } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../../src/core/log.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { type OpenJournal,openJournal } from '../../src/core/log.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
 import type { CorpusPin } from '../../src/corpus/types.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
 import { snapshotRequestOf } from '../../src/git/snapshot.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
 import { runDir as runDirOf } from '../../src/input/cli.ts';
-import { type InputFiles, keepCorpusFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
+import { type InputFiles,keepCorpusFiles,readInputFiles,recordPlan } from '../../src/input/inforce.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../../src/phase0/rows.ts';
 import { executorIdentity } from '../../src/pipeline/stages.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../../src/phase0/rows.ts';
 import type { StartupRejection } from '../../src/preflight/startup.ts';
 import { snapshotPublishOp } from '../../src/recover/ops.ts';
 import { runOp } from '../fixtures/git-common.ts';
-import { type BuiltCorpus, DEFAULT_CORPUS_ROOT, sampleCorpus } from './corpus.ts';
-import { type Forge, makeForge } from './forge.ts';
-import { commitAll, git, makeRepo, tmpDir, writeFiles } from './repo.ts';
+import { type BuiltCorpus,DEFAULT_CORPUS_ROOT,sampleCorpus } from './corpus.ts';
+import { type Forge,makeForge } from './forge.ts';
+import { commitAll,git,makeRepo,tmpDir,writeFiles } from './repo.ts';
 
 type Json = Record<string, unknown>;
 
@@ -49,12 +51,12 @@ export function visionRecord(visionText: string | null): Json {
   };
 }
 
-const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string): Json => ({ id, argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const arcLane = { ...lane('journey'), reporter: 'jsonl', testPaths: ['test'] };
 /** The witness test file I-1 declares (in the baseline). */
 export const WITNESS_FILE = 'test/berths.test.ts';
 /** The journey lane's revision as the reader computes it (over the lane with its defaults filled in). */
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [arcLane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [arcLane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 
 /** The obligations file: I-1 anchored at T-1 (`activation`), and a census over T-1..T-3 (T-2 out of slice, T-3 untestable). */
 export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'must-hold' | 'future'; census?: readonly Json[] }> = {}): Json {
@@ -65,10 +67,10 @@ export function obligationsFile(pin: CorpusPin, opts: Readonly<{ activation?: 'm
     schema: 'roadmap/obligations-m3', cutLine: 'the berth booking ships', lanes: [arcLane],
     obligations: [{
       id: 'I-1', rev: 1, statement: 'A berth is never double-booked.', rule: { id: 'T-1', textSha256: t1.textSha256 }, serves: ['V-1'], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: opts.activation === 'future' ? ['u1'] : [],
       activation: opts.activation ?? 'must-hold', contracts: [], state: { type: 'active' },
     }],
-    mapping: { paths: [] },
+    mapping: { systems: [] },
     census: opts.census ?? [
       { rule: 'T-1', state: { type: 'obligation', id: 'I-1' } }, { rule: 'T-2', state: { type: 'out-of-slice' } }, { rule: 'T-3', state: { type: 'untestable' } },
     ],
@@ -89,9 +91,8 @@ export type CorpusArcOptions = Readonly<{
   /** An existing repo (a chained arc's): its HEAD is the baseline. */
   repo?: AbsPath;
   forge?: Forge;
-  /** Extra plan fields (e.g. `chain`), and a unit scope other than `src/**`. */
+  /** Extra plan fields (e.g. `chain`). */
   plan?: Json;
-  scope?: readonly string[];
   /** `.roadmap/config.json` (default `{chain: {k: 1}}`; null: none). */
   config?: Json | null;
   /** Extra baseline files for a fresh repo. */
@@ -116,7 +117,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   const visionText = corpus.files[`${DEFAULT_CORPUS_ROOT}/${VISION_DOC}`]!;
   const roadmap = {
     '.roadmap/vision.json': `${JSON.stringify(visionRecord(visionText), null, 2)}\n`,
-    ...(opts.config === null ? {} : { '.roadmap/config.json': `${JSON.stringify(opts.config ?? { chain: { k: 1 } })}\n` }),
+    ...(opts.config === null ? {} : { '.roadmap/config.json': `${JSON.stringify({ systemsMap: { systems: { app: { paths: ['src/**'] }, tests: { paths: ['test/**'] } } }, ...(opts.config ?? { chain: { k: 1 } }) })}\n` }),
   };
   let repo: AbsPath;
   if (opts.repo === undefined) {
@@ -130,10 +131,10 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   const pinned = await corpusPin({ repo, commit: baseline, baseline: sha(baseline), out });
   assert.equal(pinned.kind, 'pinned', JSON.stringify(pinned));
   if (pinned.kind !== 'pinned') throw new Error('unreachable');
-  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
+  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane('unit'), state: 'active' }],
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: opts.scope ?? ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, obligations: ['I-1'],
+     resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, obligations: ['I-1'],
   }));
   writeFileSync(join(planDir, 'rulings.md'), '# Rulings\n\nC-1 — Helpers live in src/.\n');
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(obligationsFile(pinned.pin, { activation: opts.activation ?? 'must-hold' })));
@@ -142,7 +143,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
   writeFileSync(planPath, JSON.stringify({
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline, worktreeRoot: tmpDir('c1-wt'), contracts: [], rulings: 'rulings.md',
     direction: 'berth booking', suite: { lanes: [lane('suite')] }, resources: [],
-    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: opts.scope ?? ['src/**'], resources: [] }],
+    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: Object.keys(readRepoConfig(repo)?.systemsMap?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: [] }],
     corpus: PIN_FILE, phase0: PHASE0_FILE, holistic: { advances: ['V-1'], obligations: 'obligations.json' },
     ...opts.plan,
   }));
@@ -152,7 +153,7 @@ export async function corpusArc(opts: CorpusArcOptions = {}): Promise<CorpusArc>
 /** Writes the Phase-0 record with `over` on a minimal one. */
 export function writePhase0(planDir: string, over: Json): void {
   writeFileSync(join(planDir, PHASE0_FILE), JSON.stringify({
-    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [], amendments: [],
+    schema: 'roadmap/phase0-m4', curation: [], corpusDivergences: [], questions: [], debt: [],
     slice: { advances: ['V-1'], why: 'the first slice' }, ...over,
   }));
 }
@@ -185,13 +186,13 @@ export const filesOf = (a: CorpusArc): InputFiles => readInputFiles(a.planPath, 
 /** Puts the arc's files in force as revision 1, as a fresh start does (the corpus files kept first). Returns the open journal. */
 export function inForce(a: CorpusArc): OpenJournal {
   const files = filesOf(a);
-  const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, readRepoConfig(a.repo), null), APPLY);
   assert.deepEqual(rows.rows, []);
   const runDir = runDirOfArc(a);
   mkdirSync(runDir, { recursive: true });
   keepCorpusFiles(runDir, rows.opened?.files ?? []);
   const j = openJournal(runDir, a.arc);
-  recordPlan(j, runDir, files, [], { profile: 'default', config: null, arcRoles: 'm4b' });
+  recordPlan(j, runDir, files, [], { profile: 'default', config: readRepoConfig(a.repo), arcRoles: 'm4b' });
   return j;
 }
 
@@ -221,7 +222,7 @@ export async function seal(a: CorpusArc, opts: Readonly<{ complete?: boolean; be
  */
 export function betweenArc(repo: AbsPath, head: Sha, files: Readonly<Record<string, string | null>> = {}): Sha {
   git(repo, 'checkout', '--quiet', '--detach', head);
-  writeFiles(repo, Object.keys(files).length === 0 ? { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 1 } }, null, 2)}\n` } : files);
+  writeFiles(repo, Object.keys(files).length === 0 ? { '.roadmap/config.json': `${JSON.stringify({ chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['src/**'] }, tests: { paths: ['test/**'] } } } }, null, 2)}\n` } : files);
   git(repo, 'add', '--all');
   git(repo, 'commit', '--quiet', '--allow-empty', '-m', 'between arcs');
   return sha(git(repo, 'rev-parse', 'HEAD'));

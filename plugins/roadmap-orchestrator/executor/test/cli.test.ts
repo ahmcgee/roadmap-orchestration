@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
 import { arcId } from '../src/core/ids.ts';
 import { commandFile } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { CliError, parseCommand, parseStartArgs, runDir } from '../src/input/cli.ts';
+import { CliError,parseCommand,parseStartArgs,runDir } from '../src/input/cli.ts';
 import { runUntilExit } from './helpers/proc.ts';
-import { makeRepo, tmpDir } from './helpers/repo.ts';
+import { makeRepo,tmpDir } from './helpers/repo.ts';
 
 const HOST = { type: 'host' } as const;
 const EXPLICIT = ['--repo', '/r', '--arc', 'arc-1'];
@@ -20,10 +20,10 @@ describe('cli', () => {
     assert.deepEqual(parseCommand(['--version']), { command: 'version' });
   });
 
-  it('start with and without --profile and --base', () => {
-    assert.deepEqual(parseCommand(['start', '--repo', '.', '--plan', 'plan.json']), { command: 'start', args: { repo: '.', plan: 'plan.json', profile: null, waitMs: null, base: null } });
-    assert.deepEqual(parseStartArgs(['--plan', 'p.json', '--profile', 'claude-only', '--repo', '/r']), { repo: '/r', plan: 'p.json', profile: 'claude-only', waitMs: null, base: null });
-    assert.equal(parseStartArgs(['--repo', '.', '--plan', 'p', '--base', 'x/export.json']).base, 'x/export.json');
+  it('start with and without --profile; --base is removed', () => {
+    assert.deepEqual(parseCommand(['start', '--repo', '.', '--plan', 'plan.json']), { command: 'start', args: { repo: '.', plan: 'plan.json', profile: null, waitMs: null } });
+    assert.deepEqual(parseStartArgs(['--plan', 'p.json', '--profile', 'claude-only', '--repo', '/r']), { repo: '/r', plan: 'p.json', profile: 'claude-only', waitMs: null });
+    assert.throws(() => parseStartArgs(['--repo', '.', '--plan', 'p', '--base', 'x/export.json']), /unknown option --base/);
   });
 
   it('start refuses a missing or unknown argument', () => {
@@ -126,6 +126,7 @@ describe('bin/roadmap', () => {
     mkdirSync(dir, { recursive: true });
     const cases: readonly [readonly string[], unknown][] = [
       [['pause', 'u1'], { type: 'pause', target: { type: 'unit', unit: 'u1' } }],
+      [['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8 disproves the claim'], {type: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8 disproves the claim'}],
       [['stop'], { type: 'stop' }],
       [['ack', 'nu-7', '--choice', 'retry'], { type: 'ack', needsUser: 'nu-7', choice: 'retry' }],
       [['resume', '--backend', 'codex'], { type: 'resume', target: { type: 'backend', backend: 'codex' } }],
@@ -164,7 +165,8 @@ describe('bin/roadmap', () => {
 
 describe('cli: M3 forms', () => {
   it('cli.m3-forms: rule, reverse, steer, merge-in, audit, close-admissions, gc', () => {
-    assert.deepEqual(parseCommand(['rule', 'rulings/C-7.json']), { command: 'rule', record: 'rulings/C-7.json', run: HOST });
+    assert.throws(() => parseCommand(['rule', 'rulings/C-7.json']), /unknown command/);
+    assert.deepEqual(parseCommand(['note', 'u1', '--brief', 'b.md']), {command: 'note', unit: 'u1', brief: 'b.md', run: HOST});
     assert.deepEqual(parseCommand(['reverse', 'D-3', ...EXPLICIT]), { command: 'reverse', divergence: 'D-3', run: EXPLICIT_RUN });
     assert.deepEqual(parseCommand(['steer', 'u1', '--brief', 'b.md', '--budget', '45']), {
       command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: null, resume: false, run: HOST,
@@ -173,8 +175,8 @@ describe('cli: M3 forms', () => {
       command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: 'summit', resume: true, run: HOST,
     });
     assert.deepEqual(parseCommand(['merge-in', 'u1']), { command: 'merge-in', unit: 'u1', run: HOST });
-    assert.deepEqual(parseCommand(['audit']), { command: 'audit', lenses: null, run: HOST });
-    assert.deepEqual(parseCommand(['audit', '--lens', 'vision,drift,vision']), { command: 'audit', lenses: ['drift', 'vision'], run: HOST });
+    assert.deepEqual(parseCommand(['audit']), { command: 'audit', run: HOST });
+    assert.throws(() => parseCommand(['audit', '--lens', 'vision,drift,vision']), /lens/);
     assert.deepEqual(parseCommand(['close-admissions', ...EXPLICIT]), { command: 'close-admissions', run: EXPLICIT_RUN });
     assert.deepEqual(parseCommand(['gc', '--repo', '/r']), { command: 'gc', repo: '/r', keep: null, dryRun: false });
     assert.deepEqual(parseCommand(['gc', '--repo', '/r', '--keep', '3', '--dry-run']), { command: 'gc', repo: '/r', keep: 3, dryRun: true });
@@ -182,8 +184,8 @@ describe('cli: M3 forms', () => {
 
   it('cli.m3-refusals: missing or malformed arguments name the command', () => {
     const refuses = (args: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(args), (err: unknown) => err instanceof CliError && message.test(err.message), args.join(' '));
-    refuses(['rule'], /rule: <record\.json> is required/);
-    refuses(['rule', 'a.json', 'b.json'], /unexpected argument "b\.json"/);
+    refuses(['rule'], /unknown command/);
+    refuses(['rule', 'a.json', 'b.json'], /unknown command/);
     refuses(['reverse', 'C-3'], /DivergenceId/);
     refuses(['steer', 'u1', '--budget', '5'], /steer: --brief <file> is required/);
     refuses(['steer', 'u1', '--brief', 'b.md'], /steer: --budget <minutes> is required/);
@@ -207,11 +209,11 @@ describe('cli: M3 forms', () => {
     writeFileSync(record, '{"id":"C-7"}\n');
     const sha = createHash('sha256').update('{"id":"C-7"}\n').digest('hex');
     const cases: readonly [readonly string[], unknown][] = [
-      [['rule', record], { type: 'rule', path: record, sha256: sha }],
+      [['note', 'u1', '--brief', record], {type: 'note', unit: 'u1', brief: {path: record, sha256: sha}}],
       [['reverse', 'D-2'], { type: 'reverse', divergence: 'D-2' }],
       [['steer', 'u1', '--brief', record, '--budget', '30', '--class', 'frontier'], { type: 'steer', unit: 'u1', brief: { path: record, sha256: sha }, budgetMin: 30, class: 'frontier', resume: false }],
       [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
-      [['audit', '--lens', 'invariants'], { type: 'audit', lenses: ['invariants'] }],
+      [['audit'], { type: 'audit' }],
       [['close-admissions'], { type: 'close-admissions' }],
     ];
     for (const [args, body] of cases) {
@@ -221,9 +223,9 @@ describe('cli: M3 forms', () => {
       const file = commandFile(JSON.parse(readFileSync(join(dir, 'commands', 'incoming', `${out.command}.json`), 'utf8')), 'command');
       assert.deepEqual(file.body, body, args.join(' '));
     }
-    const missing = await roadmap(['rule', join(repo, 'nope.json'), '--repo', repo, '--arc', 'arc-1']);
+    const missing = await roadmap(['note', 'u1', '--brief', join(repo, 'nope.json'), '--repo', repo, '--arc', 'arc-1']);
     assert.equal(missing.code, 64);
-    assert.match(missing.stderr, /rule: no file/);
+    assert.match(missing.stderr, /note: no file/);
     // gc runs for real (test/gc.test.ts, against a test host dir): here only on a repo with no arc, which it refuses
     // before it reads the host dir, so the machine's own host dir is never touched.
     const empty = makeRepo(tmpDir('cli-repo'), { files: { 'README.md': 'x\n' } });
@@ -231,4 +233,9 @@ describe('cli: M3 forms', () => {
     assert.equal(gc.code, 78, gc.stderr);
     assert.deepEqual(JSON.parse(gc.stdout), { refused: { kind: 'no-arcs', runtime: join(empty, '.git', 'roadmap-runtime') } });
   });
+});
+
+it('dismiss requires a named finding and non-empty counter-evidence', () => {
+  assert.deepEqual(parseCommand(['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8']), {command: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8', run: HOST});
+  for (const args of [['dismiss', 'F-1'], ['dismiss', 'F-1', '--counter-evidence', '  '], ['dismiss', 'unknown', '--counter-evidence', 'proof']]) assert.throws(() => parseCommand(args), CliError);
 });

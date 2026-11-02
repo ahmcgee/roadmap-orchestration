@@ -1,4 +1,4 @@
-// The flaky ledger (dev.17, lane topology; DESIGN-1.0.md §4 "Flaky ledger", SCHEMAS.md "dev.17: the flaky ledger"). Pure
+// The flaky ledger (dev.17, lane topology; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes", SCHEMAS.md "Experience and evidence fact payloads"). Pure
 // over the log's view and the plan in force; the minting revision and its items are src/pipeline/deflakemint.ts.
 //
 // A flake is a lane run red, then green on its diagnostic rerun (src/pipeline/redlane.ts): the same tree, the same
@@ -6,7 +6,7 @@
 // before the lane's record is read. The event's `tree` is the lane's input on the commit (its reuse key's `inputSha`), `env`
 // its environment id, `failing` the test ids the red run's reporter named (an arc lane's; a spec or suite lane names none).
 // `on` (dev.21, src/pipeline/lanes.ts `flakeOn`) is the tree it was seen on: `unit`, a unit's own run on a commit the
-// integration tip does not contain (the unit's unmerged work: its lanes stage, its scaffold dry run); `tip`, any other (a
+// integration tip does not contain (the unit's unmerged work: its lanes stage); `tip`, any other (a
 // job's, a candidate's, a unit's run on a commit the tip contains). A fact an earlier release wrote reads `on` from its red
 // run's stage (`flakeOnOf`). A stochastic lane (k-of-n) never takes the red-lane protocol, so it is never flaky and never
 // deflaked.
@@ -34,24 +34,23 @@
 // select) waits at its first admission until that deflake merges. A deflake unit is never held by an edge. A parked
 // deflake holds nothing (its item is `deflake-parked`), nor does a cut one.
 //
-// Verification (`verificationReasons`): a deflake unit's approving plan-check carries `verification` in its design record:
+// Verification (`verificationReasons`): a deflake unit's approving pre-build carries `verification` in its design record:
 // `reproduce-then-fix` (the induced condition fails the old tree and passes the new), or `repeat` with a rationale. Its
 // `runs` times the lane's measured median duration (the ledger's red and green runs of the key) must fit the verification
 // budget: `limits.verification.lanes[lane]` lane-minutes, else for a batch lane `BATCH_VERIFICATION_RUNS` runs, else
-// `limits.verification.laneMinutes` (default 30). Over it, the plan-check's repair turn names the cost. The lanes stage then
+// `limits.verification.laneMinutes` (default 30). Over it, the pre-build's repair turn names the cost. The lanes stage then
 // runs the deflake unit's lane `runs` times, every run passing (`verify` on its spawns, src/pipeline/lanes.ts).
-import { type FlakeOn, type LaneOwner, type FlakyFact, type FlakyLaneSet } from '../core/events.ts';
-import type { DesignRecord, Verification } from '../core/design.ts';
-import { type FlakyEvent, type FlakyKey, type FlakyLedgerEntry, flakyKeyOf } from '../core/flaky.ts';
-import { type InvocationId, type LaneId, type SystemName, type UnitId, parseInvocationId } from '../core/ids.ts';
-import type { FlakeAt, Journal, JournalView } from '../core/interfaces.ts';
-import { cadenceAtOrBefore, type LaneDef, type SpecM1, specForces } from '../core/records.ts';
-import { flakeOnDefault, flakyLedgerDefault } from '../core/upgrade.ts';
-import type { AbsPath, RepoPattern } from '../core/values.ts';
-import { lineageMembers } from '../input/envelope.ts';
-import { BATCH_VERIFICATION_RUNS, DEFAULT_VERIFICATION_LANE_MINUTES, type PlanM1, type PlanUnit } from '../input/plan.ts';
-import { type SystemDef, type SystemsMap, dependentsClosure } from '../input/systems.ts';
-import { mayOverlap } from '../input/classify.ts';
+import type { DesignRecord,Verification } from '../core/design.ts';
+import { type FlakeOn,type FlakyFact,type FlakyLaneSet,type LaneOwner } from '../core/events.ts';
+import { type FlakyEvent,type FlakyKey,type FlakyLedgerEntry,flakyKeyOf } from '../core/flaky.ts';
+import { type InvocationId,type LaneId,type UnitId } from '../core/ids.ts';
+import type { FlakeAt,Journal,JournalView } from '../core/interfaces.ts';
+import { type LaneDef,type SpecM1,cadenceAtOrBefore,specForces } from '../core/records.ts';
+
+import type { AbsPath } from '../core/values.ts';
+import { lineageMembers } from '../input/lineage.ts';
+import { BATCH_VERIFICATION_RUNS,DEFAULT_VERIFICATION_LANE_MINUTES,type PlanM1,type PlanUnit } from '../input/plan.ts';
+import { type SystemsMap,dependentsClosure } from '../input/systems.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir } from './invoke.ts';
 
@@ -133,18 +132,16 @@ function ownKeys(view: JournalView, plan: PlanM1, unit: UnitId): ReadonlySet<str
 /** One ledger entry with the seqs of its events (the flakes' facts), for the minting decision. */
 export type LedgerEntry = FlakyLedgerEntry & Readonly<{ at: readonly FlakeAt[]; set: FlakyLaneSet }>;
 
-/** The tree flake `fact` was seen on: its `on`, or (written before dev.21) as its red run's stage says (`flakeOnDefault`). */
+/** The tree the schema-2 flake record names. */
 export function flakeOnOf(view: JournalView, fact: FlakyFact): FlakeOn {
-  return fact.on ?? flakeOnDefault(fact, view.latestIntent(parseInvocationId(fact.event.red).op).parent);
+  return fact.on!;
 }
 
 /**
- * The arc's flaky ledger: one entry per key of the tip's flakes, in the order its first was observed. An arc whose
- * revision in force a release before 1.0.0-dev.17 applied ran without one: its ledger starts empty at the upgrade (warned
- * once).
+ * The arc's flaky ledger: one entry per key of the tip's flakes, in the order its first was observed.
  */
 export function flakyLedger(view: JournalView, plan: PlanM1): readonly LedgerEntry[] {
-  if (view.planApplied()?.systemsMap === undefined) flakyLedgerDefault();
+
   const entries = new Map<string, { key: FlakyKey; at: FlakeAt[]; set: FlakyLaneSet }>();
   for (const x of view.flakes()) {
     if (flakeOnOf(view, x.fact) !== 'tip') continue;
@@ -245,12 +242,6 @@ export function deflakeDue(view: JournalView, plan: PlanM1): DeflakeDue {
   return { mint: [...groups.values()], recurring };
 }
 
-/** Whether anything is due (the scheduler's question). */
-export const deflakePending = (view: JournalView, plan: PlanM1): boolean => {
-  const due = deflakeDue(view, plan);
-  return due.mint.length > 0 || due.recurring.length > 0;
-};
-
 // ---------------------------------------------------------------------------------------------------
 // Code edges
 
@@ -261,24 +252,6 @@ export function specLaneIds(spec: SpecM1): ReadonlySet<LaneId> {
     ...specForces(spec),
     ...(spec.witnesses ?? []).filter((w) => w.state === 'active').map((w) => w.lane),
   ]);
-}
-
-/**
- * Whether the plan's suite lane `lane` may run for a unit of `scope` (cadence up to `candidate`; a batch lane is off the
- * merge path): with no map or no systems, always; else when a scope pattern may overlap a path or test glob of a system the
- * lane names or depends on, or of no system at all (unmapped: every lane, fail-safe).
- */
-function suiteMaySelect(map: SystemsMap | null, lane: LaneDef, scope: readonly RepoPattern[]): boolean {
-  if (!cadenceAtOrBefore(lane.cadence, 'candidate')) return false;
-  if (map === null || lane.systems === undefined) return true;
-  const touched = new Set<SystemName>();
-  for (const s of scope) {
-    const hit = (Object.entries(map.systems) as [SystemName, SystemDef][]).filter(([, d]) => [...d.paths, ...d.tests].some((p) => mayOverlap(s, p))).map(([n]) => n);
-    if (hit.length === 0 && !map.docs.some((d) => mayOverlap(s, d))) return true;
-    for (const n of hit) touched.add(n);
-  }
-  const closure = dependentsClosure(map, touched);
-  return lane.systems.some((s) => closure.has(s));
 }
 
 /**
@@ -295,7 +268,7 @@ export function deflakeHold(
   for (const d of open) {
     const lane = d.deflake!.keys[0]!.lane;
     const suite = plan.suite.lanes.find((l) => l.id === lane);
-    if (lanes.has(lane) || (suite !== undefined && suiteMaySelect(map, suite, unit.scope))) return { type: 'deflake', deflake: d.id, lane };
+    if (lanes.has(lane) || (suite !== undefined && cadenceAtOrBefore(suite.cadence, 'candidate') && (map === null || suite.systems === undefined || suite.systems.some((s) => dependentsClosure(map, unit.systems).has(s))))) return { type: 'deflake', deflake: d.id, lane };
   }
   return null;
 }
@@ -346,7 +319,7 @@ export function verificationCap(plan: PlanM1, lane: LaneId, def: LaneDef | null)
 const fmt = (n: number): string => (Math.round(n * 100) / 100).toString();
 
 /**
- * Why an approving plan-check's design record of deflake unit `unit` is refused (see the header); empty for any other unit.
+ * Why an approving pre-build's design record of deflake unit `unit` is refused (see the header); empty for any other unit.
  * `design`: the record its answer carries (absent: none).
  */
 export function verificationReasons(

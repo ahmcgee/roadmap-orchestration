@@ -15,7 +15,7 @@ import { implementerDispatch, pinDispatch, unitBranch, workDir } from '../src/pi
 import { prepare } from '../src/pipeline/prepare.ts';
 import { type RoundInput, callRound, prepareRound } from '../src/pipeline/rounds.ts';
 import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
-import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, planCheck, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
+import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, preBuild, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { commitAll, git, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
@@ -48,7 +48,7 @@ test('rounds.fresh-resolve: after a re-entry\'s conflicted preparation, the reso
   const u1 = r.unit('u1');
   const { spec, sha256 } = loadUnitSpec(r.ctx, u1);
   seated(pinDispatch(r.ctx, u1, { rev: spec.rev, sha256 }));
-  record(r.ctx, at(start(r.ctx, U1, 'plan-check'), 'plan-check'), 'interrupted');
+  record(r.ctx, at(start(r.ctx, U1, 'pre-build'), 'pre-build'), 'interrupted');
   git(d.repo, 'checkout', '--quiet', '-b', unitBranch(r.ctx.plan().arc, U1).replace(/^refs\/heads\//, ''));
   writeFiles(d.repo, { 'src/add.js': 'export function add(a, b) {\n  return a + b; // u1\n}\n' });
   commitAll(d.repo, 'u1 work');
@@ -94,7 +94,7 @@ test('rounds.session-unrecoverable: a resumed fix session that dies before print
       }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const red = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
   assert.equal(red.outcome.kind, 'red');
   assert.ok(red.fix !== null && red.fix.kind === 'fix');
@@ -127,7 +127,7 @@ test('rounds.session-unrecoverable: a resumed fix session that dies before print
     return t.type === 'backend' && t.purpose === 'backend' && 'session' in t ? t.session.mode : null;
   });
   assert.deepEqual(sessions, ['resume', 'fresh']);
-  assert.deepEqual(outcomeFacts(run).filter((f) => f.kind === 'stage-outcome' && f.attempt === parent.attempt).map((f) => f.kind === 'stage-outcome' && f.outcome), ['success']);
+  assert.deepEqual(outcomeFacts(run).filter((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.attempt === parent.attempt).map((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.outcome), ['success']);
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, charged);
   const calls = readCalls(run.scenario.path);
   assert.equal(calls.length, 4);

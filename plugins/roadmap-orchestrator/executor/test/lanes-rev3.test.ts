@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M4a rev 3 step N1 (src/pipeline/lanes.ts, src/pipeline/redlane.ts, src/host/signatures.ts), integrated over real
 // processes and real git: series certificates, spec lane reuse (F1a), the repeat-signature rerun skip and the
 // persisted red class (F2), host-suspected failures (F3), the series' own checkout (Q3) and certified-only journey
@@ -7,40 +8,42 @@
 // rows LANE_REUSE, SERIES_CERTIFIED and RED_CLASS (labels lanes.after-reused, lanes.after-census-before-certified,
 // redlane.after-class).
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync,existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
+import { describe,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { type Sha,invocationId,jobId,opKey,resourceName,sha } from '../src/core/ids.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import { type Sha, invocationId, jobId, opKey, resourceName, sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { type LaneDef, RED_FILE, redFile } from '../src/core/records.ts';
-import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
-import type { HostSample } from '../src/host/sample.ts';
-import { holisticInForce, lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type StageContext, type StageParent, pinDispatch, verificationWorktree } from '../src/pipeline/dispatch.ts';
-import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
-import {
-  LANE_DEADLINE_MS, LANE_GRACE_MS, LANE_STALL_MS, type LaneRuntime, type Series, arcJourneyLane, latestSpecSeries, laneOrder, reserveNow, runJourneySeries, runLaneSeries,
-  seriesLedger, seriesOrder, seriesTree, specSeriesRoot,
-} from '../src/pipeline/lanes.ts';
-import { unitTip } from '../src/pipeline/gate.ts';
-import { runUnit } from '../src/pipeline/unit.ts';
-import { parsePlan } from '../src/input/plan.ts';
+import { type LaneDef,RED_FILE,redFile } from '../src/core/records.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { parseObligations } from '../src/holistic/types.ts';
-import { worktreeCreateOp } from '../src/recover/ops.ts';
-import { runOp } from '../src/pipeline/dispatch.ts';
+import type { HostSample } from '../src/host/sample.ts';
+import { parsePlan } from '../src/input/plan.ts';
+import { type StageContext,type StageParent,pinDispatch,runOp,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
+import { invocationDir,invoke } from '../src/pipeline/invoke.ts';
+import {
+LANE_DEADLINE_MS,LANE_GRACE_MS,LANE_STALL_MS,type LaneRuntime,type Series,arcJourneyLane,
+laneOrder,
+latestSpecSeries,
+reserveNow,runJourneySeries,runLaneSeries,
+seriesLedger,seriesOrder,seriesTree,specSeriesRoot,
+} from '../src/pipeline/lanes.ts';
 import { readRedClass } from '../src/pipeline/redlane.ts';
+import { holisticInForce,lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
+import { worktreeCreateOp } from '../src/recover/ops.ts';
 import type { Acquire } from '../src/schedule/types.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { LANE_PRIORITY, LANE_REUSE, RED_CLASS, SERIES_CERTIFIED, crashCells } from './matrix.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, admitAll, keptSpec, planCheckStep, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
-import { MUL, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,admitAll,keptSpec,planCheckStep,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
+import { MUL,codexStep,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { commitAll,git,tmpDir,writeFiles } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { LANE_PRIORITY,LANE_REUSE,RED_CLASS,SERIES_CERTIFIED,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -178,8 +181,8 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.deepEqual(reuses(run), []);
   });
 
-  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.no-systems-reruns-on-new-sha (dev.17: inputs folded into the reuse key): across SHAs only a lane whose systems the diff leaves alone is reused', T, async () => {
-    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'] }], {
+  test('lanes.systems-untouched-reused / lanes.systems-touched-reruns / lanes.explicit-whole-input-reruns-on-new-sha: systems reuse and explicit whole-tree input invalidation across SHAs', T, async () => {
+    const run = unitRunWith([{ id: 'add', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] }, { id: 'plain', argv: ['true'], inputs: ['**'] }], {
       systems: { add: { paths: ['src/add.js'], tests: ['test/add.test.js'] }, other: { paths: ['src/other.js'] } },
     });
     writeFiles(run.repo, { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
@@ -188,7 +191,7 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(first.end.kind, 'green');
     const other = commit(run, { 'src/other.js': 'export const other = 1;\n' });
     const second = await series(run, 2, specLanes(run), other);
-    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, listing no systems, reran');
+    assert.deepEqual(second.ledger.map((l) => [l.lane, l.reused?.at ?? null]), [['add', fixed], ['plain', null]], 'add reused from the earlier SHA; plain, declaring whole-tree inputs, reran');
     const touched = commit(run, { 'test/add.test.js': `${readFileSync(join(run.repo, 'test', 'add.test.js'), 'utf8')}\n// touched\n` });
     const third = await series(run, 3, specLanes(run), touched);
     assert.deepEqual(third.ledger.map((l) => l.reused), [null, null], 'its system changed: add reran');
@@ -221,14 +224,14 @@ describe('series certificates and lane reuse (F1a)', () => {
     assert.equal(laneSpawns(run, 'script').length, 2);
   });
 
-  test('lanes.inputs-refused-off-spec: a suite lane or an arc lane declaring inputs is refused (a spec lane\'s are dropped since dev.17)', () => {
-    const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
+  test('lanes.inputs-kept: suite and arc lanes retain declared reuse inputs', () => {
+    const lane = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], inputs: ['src/**'] };
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
-      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],
+      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [lane] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
     };
-    assert.throws(() => parsePlan(plan), /plan\.suite\.lanes\[0\]\.inputs/);
-    assert.throws(() => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane, reporter: 'jsonl' }], obligations: [], mapping: { paths: [] } }), /inputs/);
+    assert.deepEqual(parsePlan(plan).suite.lanes[0]!.inputs, ['src/**']);
+    assert.deepEqual(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane, reporter: 'jsonl' }], obligations: [], mapping: { systems: [] } }).lanes[0]!.inputs, ['src/**']);
   });
 
   test('lanes.full-reuse-creates-checkout / lanes.series-tree-own-path: a series reusing every lane still makes, censuses and certifies its checkout; seriesTree finds the series\' own checkout among others its attempt made', T, async () => {
@@ -263,7 +266,7 @@ describe('the gate after a full reuse (Q3)', () => {
       assert.deepEqual(again.ledger.map((l) => l.reused !== null), [true]);
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       assert.deepEqual(outcomes(r.d).slice(6), ['lanes:green', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
-      assert.equal(readCalls(r.d.scenarioPath).filter((c) => c.as === 'claude').length, 2, 'one plan-check, one gate');
+      assert.equal(readCalls(r.d.scenarioPath).filter((c) => c.as === 'claude').length, 2, 'one pre-build, one gate');
     } finally {
       r.journal.close();
     }
@@ -350,7 +353,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     assert.throws(() => readBack(run, 1, run.base), /red class \(red\.json\) was never written/);
   });
 
-  test('redlane.unstamped-frozen-table: an unstamped (1.0.0-dev.6) run classifies with the frozen table, so a signature added since never re-reads it', T, async () => {
+  test('redlane.unstamped-refused: a pre-break rerun without schema-2 evidence fails loudly', T, async () => {
     const run = unitRun([{ id: 'oom', argv: ['sh', '-c', 'echo "Out of memory: Killed process 42" >&2; exit 1'] }]);
     const [lane] = specLanes(run);
     const parent = parentOf(1);
@@ -364,10 +367,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     });
     await once(lane!.argv);
     await once(['true']);
-    const [record] = readBack(run, 1, run.base);
-    assert.deepEqual([record!.signatures, record!.flaky, record!.diagnostic?.verdict, record!.hostSuspected], [[], true, 'pass', null], 'no signature in the dev.6 table: a diagnostic rerun, flaky');
-    assert.equal(readRedClass(record!.evidenceDir), null);
-    assert.equal(existsSync(invocationDir(run.runDir, record!.inv)), true);
+    assert.throws(() => readBack(run, 1, run.base), /ENOENT:.*ignored\.json/, 'a pre-break rerun receives no historical classification');
   });
 
   test('lanes.host-suspected: a red run whose output carries a host signature records it with the host evidence', T, async () => {
@@ -414,7 +414,7 @@ describe('certified-only journey reuse (R51)', () => {
 const STABLE: LaneJson = { id: 'stable', argv: ['node', '--test', 'test/add.test.js'], systems: ['add'] };
 /** The fix commit touches only `mul`'s system, so the stable lane (system `add`) reads the same input across it. */
 const CRASH_MAP: JsonValue = { systems: { add: { paths: ['src/add.js', 'test/add.test.js'] }, mul: { paths: ['src/mul.js', 'test/mul.test.js'] } } };
-const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'] };
+const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mul.test.js'], systems: ['mul'] };
 const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  return a + b;\n}\n' };
 
 /** The one label a crash row's cell crashes (test/matrix.ts). */
@@ -443,7 +443,7 @@ const FIX_STEPS = [
   gateStep({ decision: 'approve' }),
 ];
 const FIX_OUTCOMES = [
-  'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
+  'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:red',
   'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
   'candidate:green', 'ff:published', 'snapshot:published',
 ];
@@ -504,7 +504,7 @@ describe('crash rows', () => {
   test('lanes.reuse-requires-certificate / crash SERIES_CERTIFIED (lanes.after-census-before-certified): killed before the certificate; the restart reruns every lane', T, async () => {
     const { d } = await crashThenResume([planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], labelOf(SERIES_CERTIFIED));
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released',
       'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published',
     ]);
     assert.equal(arcSpawns(d, 'stable').length, 2, 'uncertified: run again');

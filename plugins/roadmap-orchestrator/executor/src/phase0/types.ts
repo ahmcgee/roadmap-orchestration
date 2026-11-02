@@ -1,18 +1,13 @@
-// Phase 0, chain and brief records (M4a, frozen in step 0a; SCHEMAS.md "M4a"): the Phase-0 record, the problems the
+// Phase 0, chain and brief records (M4a, frozen in step 0a; SCHEMAS.md "Corpus, Phase 0, debt and chain"): the Phase-0 record, the problems the
 // shared startup rows report (`phase0Rows`, C1's src/phase0/rows.ts, run by `start`, `apply` and `phase0 check`), the
 // brief ack marker and the brief payload (C4). Types and readers only.
-import { OUTCOME_STAGES, type OutcomeStage } from '../core/events.ts';
-import { issuesIgnored, scopeOverlapFixDefault } from '../core/upgrade.ts';
-import {
-  type AmendmentRef, type ArcId, type ClauseId, type DebtId, type DivergenceId, type JobId, type NeedsUserId, type ObligationId, type PhaseQuestionId,
-  type RuleId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, amendmentRef, arcId, briefId, clauseId, debtId, divergenceId,
-  amendmentRefKey, compareIds, idList, jobIdOf, needsUserId, obligationId, phaseQuestionId, ruleId, sha, sha256, unitId, visionClauseId, type BriefId,
-  type FindingId, type OpportunityId, type WitnessItemId, findingId, opportunityId, witnessItemId, type MilestoneId, milestoneId,
-} from '../core/ids.ts';
-import { type Read, SchemaError, arrayOf, assertUnique, bool, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged } from '../core/validate.ts';
-import { type IsoTime, type PlanPath, type RepoPath, isoTime, planPath, repoPath } from '../core/values.ts';
-import { type DebtDisposition, debtDisposition } from '../debt/types.ts';
-import { CENSUS_STATES, CONVERSION_REASONS, DIVERGENCE_KINDS, type ConversionReason, type DivergenceKind } from '../holistic/types.ts';
+import { OUTCOME_STAGES,type OutcomeStage } from '../core/events.ts';
+
+import { type ArcId,type BriefId,type ClauseId,type DebtId,type DivergenceId,type FindingId,type JobId,type MilestoneId,type NeedsUserId,type ObligationId,type PhaseQuestionId,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,type WitnessItemId,arcId,briefId,clauseId,compareIds,debtId,divergenceId,findingId,idList,jobIdOf,milestoneId,needsUserId,obligationId,phaseQuestionId,ruleId,sha,sha256,unitId,visionClauseId,witnessItemId } from '../core/ids.ts';
+import { type Read,SchemaError,arrayOf,assertUnique,bool,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged } from '../core/validate.ts';
+import { type IsoTime,type RepoPath,isoTime,repoPath } from '../core/values.ts';
+import { type DebtDisposition,debtDisposition } from '../debt/types.ts';
+import { CENSUS_STATES,DIVERGENCE_KINDS,type DivergenceKind } from '../holistic/types.ts';
 
 /** A census state's name (`obligation`, `out-of-slice`, `untestable`, `prod-only`). */
 export type CensusStateName = (typeof CENSUS_STATES)[number];
@@ -21,7 +16,7 @@ const pathR: Read<RepoPath> = (v, p) => repoPath(v, p);
 const sha256R: Read<Sha256Hex> = (v, p) => sha256(v, p);
 const ruleR: Read<RuleId> = (v, p) => ruleId(v, p);
 const vidR: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
-const rules: Read<readonly RuleId[]> = idList(ruleR, { legacyStringOrder: true });
+const rules: Read<readonly RuleId[]> = idList(ruleR);
 const files: Read<readonly RepoPath[]> = sortedBy(pathR, (p) => p, { nonEmpty: true });
 
 // ---------------------------------------------------------------------------------------------------
@@ -45,10 +40,6 @@ export type QuestionState = Readonly<{ type: 'open' }> | Readonly<{ type: 'answe
 export type PhaseQuestion = Readonly<{
   id: PhaseQuestionId; rank: number; text: string; files: readonly RepoPath[]; bears: readonly (RuleId | VisionClauseId)[]; assumption: string; state: QuestionState;
 }>;
-export type AmendmentDisposition =
-  | Readonly<{ type: 'applied'; rules: readonly RuleId[] }>
-  | Readonly<{ type: 'rejected' | 'deferred'; reason: string }>;
-
 export type Phase0Record = Readonly<{
   schema: typeof PHASE0_SCHEMA;
   curation: readonly Curation[];
@@ -57,8 +48,7 @@ export type Phase0Record = Readonly<{
   questions: readonly PhaseQuestion[];
   /** One per `open` item of the baseline's debt block, ascending by id. */
   debt: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
-  /** One per amendment of the previous arc's verified ref, ascending. */
-  amendments: readonly Readonly<{ id: AmendmentRef; disposition: AmendmentDisposition }>[];
+  /** The root-selected slice and its rationale. */
   slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }>;
 }>;
 
@@ -72,7 +62,7 @@ const corpusDivergence: Read<CorpusDivergence> = object((f) => ({
     pinSha256: g.get('pinSha256', sha256R),
     files: g.get('files', sortedBy(object((h) => ({ path: h.get('path', pathR), sha256: h.get('sha256', sha256R) })), (x) => x.path, { nonEmpty: true })),
   }))),
-  cites: f.get('cites', idList(vidR, { nonEmpty: true, legacyStringOrder: true })),
+  cites: f.get('cites', idList(vidR, { nonEmpty: true })),
   rules: f.get('rules', rules),
 }));
 const questionState: Read<QuestionState> = tagged('type', {
@@ -87,16 +77,10 @@ const phaseQuestion: Read<PhaseQuestion> = object((f) => ({
   rank: f.get('rank', positive),
   text: f.get('text', str),
   files: f.get('files', files),
-  bears: f.get('bears', idList(bearsOn, { nonEmpty: true, legacyStringOrder: true })),
+  bears: f.get('bears', idList(bearsOn, { nonEmpty: true })),
   assumption: f.get('assumption', str),
   state: f.get('state', questionState),
 }));
-const amendmentDisposition: Read<AmendmentDisposition> = tagged('type', {
-  applied: object((f): AmendmentDisposition => ({ type: f.get('type', literal('applied')), rules: f.get('rules', rules) })),
-  rejected: object((f): AmendmentDisposition => ({ type: f.get('type', literal('rejected')), reason: f.get('reason', str) })),
-  deferred: object((f): AmendmentDisposition => ({ type: f.get('type', literal('deferred')), reason: f.get('reason', str) })),
-});
-
 export const phase0Record: Read<Phase0Record> = object((f) => {
   const out: Phase0Record = {
     schema: f.get('schema', literal(PHASE0_SCHEMA)),
@@ -104,8 +88,7 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
     corpusDivergences: f.get('corpusDivergences', arrayOf(corpusDivergence)),
     questions: f.get('questions', arrayOf(phaseQuestion)),
     debt: f.get('debt', arrayOf(object((g) => ({ id: g.get('id', (v, p) => debtId(v, p)), disposition: g.get('disposition', debtDisposition) })))),
-    amendments: f.get('amendments', sortedBy(object((g) => ({ id: g.get('id', (v, p) => amendmentRef(v, p)), disposition: g.get('disposition', amendmentDisposition) })), (a) => amendmentRefKey(a.id), { order: 'by arc, then id', legacyKey: (a) => a.id })),
-    slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) }))),
+    slice: f.get('slice', object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) }))),
   };
   out.questions.forEach((q, i) => {
     if (i > 0 && !(compareIds(out.questions[i - 1]!.id, q.id) < 0)) throw new SchemaError(`${f.path}.questions[${i}]`, 'questions strictly ascending by number', q.id);
@@ -114,11 +97,6 @@ export const phase0Record: Read<Phase0Record> = object((f) => {
   out.debt.forEach((d, i) => {
     if (i > 0 && !(compareIds(out.debt[i - 1]!.id, d.id) < 0)) throw new SchemaError(`${f.path}.debt[${i}]`, 'one disposition per item, ascending by number', d.id);
   });
-  // A record written for an earlier executor names its issue capture and intake (the issues integration was removed in
-  // 1.0.0-dev.21): read and ignored (`issuesIgnored`; scaffolding).
-  for (const legacy of ['issueCapture', 'intake'] as const) {
-    if (f.optional(legacy, (v) => v) !== undefined) issuesIgnored(`phase0.${legacy}`);
-  }
   return out;
 });
 
@@ -132,23 +110,17 @@ export function parsePhase0Record(value: unknown): Phase0Record {
 
 export type CorpusProblem =
   | Readonly<{ type: 'pin-drift' }>
+  | Readonly<{ type: 'corpus-drift'; paths: readonly RepoPath[] }>
   | Readonly<{ type: 'rule-reused'; id: RuleId }>
   | Readonly<{ type: 'rule-retired-reappears'; id: RuleId }>
   | Readonly<{ type: 'rules-in-vision' }>
   | Readonly<{ type: 'guide-missing' }>
   | Readonly<{ type: 'source-unreadable'; detail: string }>
   | Readonly<{ type: 'source-remote-mismatch' }>
-  /** `fix`: what the owner does about it (`scopeOverlapFix`); read as that, warned, when a dev.17 rejection lacks it (`scopeOverlapFixDefault`). */
-  | Readonly<{ type: 'scope-overlaps-corpus'; unit: UnitId; fix: string }>
   | Readonly<{ type: 'contract-overlaps-corpus'; path: RepoPath }>;
 
-/** The fix a `scope-overlaps-corpus` problem names: the unit's scope narrowed off the corpus (or the unit cut) in an apply or start. */
-export const scopeOverlapFix = (unit: UnitId): string =>
-  `narrow ${unit}'s scope off the corpus file set, or cut ${unit}, in this apply or start; when the arc changed ${unit} since your base (a unit the `
-  + 'executor minted, such as a deflake unit), `roadmap inputs export` the arc, sync the export over your inputs, edit it there and pass '
-  + '`--base <export>/export.json` to the apply or start';
-
 export const corpusProblem: Read<CorpusProblem> = tagged('type', {
+  'corpus-drift': object((f): CorpusProblem => ({ type: f.get('type', literal('corpus-drift')), paths: f.get('paths', arrayOf(pathR, { nonEmpty: true })) })),
   'pin-drift': object((f): CorpusProblem => ({ type: f.get('type', literal('pin-drift')) })),
   'rule-reused': object((f): CorpusProblem => ({ type: f.get('type', literal('rule-reused')), id: f.get('id', ruleR) })),
   'rule-retired-reappears': object((f): CorpusProblem => ({ type: f.get('type', literal('rule-retired-reappears')), id: f.get('id', ruleR) })),
@@ -156,12 +128,6 @@ export const corpusProblem: Read<CorpusProblem> = tagged('type', {
   'guide-missing': object((f): CorpusProblem => ({ type: f.get('type', literal('guide-missing')) })),
   'source-unreadable': object((f): CorpusProblem => ({ type: f.get('type', literal('source-unreadable')), detail: f.get('detail', str) })),
   'source-remote-mismatch': object((f): CorpusProblem => ({ type: f.get('type', literal('source-remote-mismatch')) })),
-  'scope-overlaps-corpus': object((f): CorpusProblem => {
-    const unit = f.get('unit', (v, p) => unitId(v, p));
-    const fix = f.optional('fix', str);
-    if (fix === undefined) scopeOverlapFixDefault(unit);
-    return { type: f.get('type', literal('scope-overlaps-corpus')), unit, fix: fix ?? scopeOverlapFix(unit) };
-  }),
   'contract-overlaps-corpus': object((f): CorpusProblem => ({ type: f.get('type', literal('contract-overlaps-corpus')), path: f.get('path', pathR) })),
 });
 
@@ -170,7 +136,6 @@ export type Phase0Problem =
   | Readonly<{ type: 'census-dangling'; rules: readonly RuleId[] }>
   | Readonly<{ type: 'obligation-rule-unresolved'; obligation: ObligationId }>
   | Readonly<{ type: 'debt-undispositioned' | 'debt-kept-twice-unasked'; id: DebtId }>
-  | Readonly<{ type: 'amendment-undispositioned'; id: AmendmentRef }>
   | Readonly<{ type: 'question-reused'; id: PhaseQuestionId }>
   /**
    * The owner-answer channel (src/answers.ts): a question whose latest recorded owner answer (`roadmap answer`) the new
@@ -194,7 +159,6 @@ export const phase0Problem: Read<Phase0Problem> = tagged('type', {
   'obligation-rule-unresolved': object((f): Phase0Problem => ({ type: f.get('type', literal('obligation-rule-unresolved')), obligation: f.get('obligation', (v, p) => obligationId(v, p)) })),
   'debt-undispositioned': debtProblem('debt-undispositioned'),
   'debt-kept-twice-unasked': debtProblem('debt-kept-twice-unasked'),
-  'amendment-undispositioned': object((f): Phase0Problem => ({ type: f.get('type', literal('amendment-undispositioned')), id: f.get('id', (v, p) => amendmentRef(v, p)) })),
   'question-reused': object((f): Phase0Problem => ({ type: f.get('type', literal('question-reused')), id: f.get('id', (v, p) => phaseQuestionId(v, p)) })),
   'answer-unapplied': object((f): Phase0Problem => ({ type: f.get('type', literal('answer-unapplied')), question: f.get('question', (v, p) => phaseQuestionId(v, p)) })),
   'spec-census-mismatch': object((f): Phase0Problem => ({
@@ -306,7 +270,6 @@ export type BriefArc = Readonly<{
   /** The arc's Phase-0 slice in force at its ref (not a delta; Q19: the root agent picks it, the owner sees it here); null without a Phase-0 record. */
   slice: Readonly<{ advances: readonly VisionClauseId[]; why: string }> | null;
   divergences: readonly Readonly<{ id: DivergenceId; type: DivergenceKind; what: string }>[];
-  digests: readonly Readonly<{ needsUser: NeedsUserId; ids: readonly DivergenceId[] }>[];
   decisions: readonly string[];
   curation: readonly Curation[];
   corpusDivergences: readonly CorpusDivergence[];
@@ -315,22 +278,12 @@ export type BriefArc = Readonly<{
     dispositioned: readonly Readonly<{ id: DebtId; disposition: DebtDisposition }>[];
   }>;
   questions: readonly Readonly<{ id: PhaseQuestionId; rank: number; text: string; assumption: string; state: QuestionState }>[];
-  /** M4a rev 3 (OR-A1): `admit` names the converted checkpoint admit an amendment came from (R35); null otherwise. */
-  amendments: readonly Readonly<{ id: AmendmentRef; rules: readonly RuleId[]; proposal: string; admit: BriefConversion | null }>[];
   /** The pack reviews' `note` findings (a blocking one is its review's needs-user item), each by `(job, index)` (K13). */
   packReviewNotes: readonly Readonly<{ job: JobId; index: number; claim: string }>[];
   /** `% held` = held / obligationRules (obligation-state rules held on the head); null outside a corpus arc. */
   census: Readonly<{ held: number; obligationRules: number; outOfSlice: number; untestable: number; prodOnly: number }> | null;
   timings: readonly StageTiming[];
   pr: BriefPr;
-  /** M4a rev 3 (OR-A1; corpus arcs, empty elsewhere): the checkpoint admits the delta classified, in log order. */
-  admits: readonly BriefAdmit[];
-  /** The arc's opportunities at its ref (not a delta). */
-  opportunities: readonly BriefOpportunity[];
-  /** The drift indicator at the ref: each merged non-opportunity admit with findings attributed to its merge outside the slice. */
-  drift: readonly BriefDrift[];
-  /** M4b: the arc's flow loop (src/brief.ts `briefFlow`); null for an arc with the loop off (one 1.0.0-dev.7 started). */
-  flow: BriefFlow | null;
   /**
    * dev.13: the arc's demo at its ref (not a delta; src/demo/promote.ts `demoView`): the promoted milestone and SHA, whether
    * promotion is held and the demo up, what changed since the promotion before it, and the rough edges (the open
@@ -348,35 +301,6 @@ export type BriefDemo = Readonly<{
   since: Readonly<{ milestones: readonly MilestoneId[]; tweaks: readonly UnitId[]; fixes: readonly UnitId[] }>;
   roughEdges: readonly FindingId[];
 }>;
-
-/**
- * M4b (plan "Surfaces"): an arc's flow, as rendered lines. At the ref: code's constraint (null before a merge) and the
- * accounting (diagnostic only). In the delta: the verdicts, the ruler changes and the host advice. Against the previous
- * arc of the chain: each lever it applied (and no verdict found worse) that this arc's plan no longer carries.
- */
-export type BriefFlow = Readonly<{
-  constraint: string | null;
-  accounting: string;
-  verdicts: readonly string[];
-  rulerChanges: readonly string[];
-  hostAdvice: readonly string[];
-  dropped: readonly string[];
-}>;
-const briefFlow: Read<BriefFlow> = object((f) => ({
-  constraint: f.get('constraint', nullable(str)), accounting: f.get('accounting', str), verdicts: f.get('verdicts', arrayOf(str)),
-  rulerChanges: f.get('rulerChanges', arrayOf(str)), hostAdvice: f.get('hostAdvice', arrayOf(str)), dropped: f.get('dropped', arrayOf(str)),
-}));
-
-export const ADMIT_CLASS_NAMES = ['repair', 'oversight', 'opportunity'] as const;
-export type BriefConversion = Readonly<{ job: JobId; index: number; reason: ConversionReason }>;
-export type BriefAdmit = Readonly<{
-  job: JobId; index: number; unit: UnitId; class: (typeof ADMIT_CLASS_NAMES)[number]; clauses: readonly VisionClauseId[]; followUp: OpportunityId | null;
-}>;
-export type BriefOpportunity = Readonly<{
-  id: OpportunityId; clauses: readonly VisionClauseId[]; units: readonly UnitId[]; followUps: number; spentUsd: number;
-  overrun: readonly Readonly<{ job: JobId; index: number }>[];
-}>;
-export type BriefDrift = Readonly<{ unit: UnitId; job: JobId; findings: readonly Readonly<{ id: FindingId; clauses: readonly VisionClauseId[] }>[] }>;
 
 export type BriefPayload = Readonly<{
   schema: typeof BRIEF_SCHEMA;
@@ -398,19 +322,10 @@ const briefPr: Read<BriefPr> = tagged('type', {
   unavailable: object((f): BriefPr => ({ type: f.get('type', literal('unavailable')), reason: f.get('reason', str) })),
 });
 const divR: Read<DivergenceId> = (v, p) => divergenceId(v, p);
-const briefConversion: Read<BriefConversion> = object((g) => ({
-  job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), reason: g.get('reason', oneOf(CONVERSION_REASONS)),
-}));
-/** A non-negative finite number (a spend in USD). */
-const nonNegative: Read<number> = (v, p) => {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'a non-negative number', v);
-  return v;
-};
 const briefArc: Read<BriefArc> = object((f) => ({
   arc: f.get('arc', (v, p) => arcId(v, p)),
-  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true, legacyStringOrder: true })), why: g.get('why', str) })))),
+  slice: f.get('slice', nullable(object((g) => ({ advances: g.get('advances', idList(vidR, { nonEmpty: true })), why: g.get('why', str) })))),
   divergences: f.get('divergences', arrayOf(object((g) => ({ id: g.get('id', divR), type: g.get('type', oneOf(DIVERGENCE_KINDS)), what: g.get('what', str) })))),
-  digests: f.get('digests', arrayOf(object((g) => ({ needsUser: g.get('needsUser', (v, p) => needsUserId(v, p)), ids: g.get('ids', arrayOf(divR, { nonEmpty: true })) })))),
   decisions: f.get('decisions', arrayOf(str)),
   curation: f.get('curation', arrayOf(curation)),
   corpusDivergences: f.get('corpusDivergences', arrayOf(corpusDivergence)),
@@ -421,9 +336,6 @@ const briefArc: Read<BriefArc> = object((f) => ({
   questions: f.get('questions', arrayOf(object((g) => ({
     id: g.get('id', (v, p) => phaseQuestionId(v, p)), rank: g.get('rank', positive), text: g.get('text', str), assumption: g.get('assumption', str), state: g.get('state', questionState),
   })))),
-  amendments: f.get('amendments', arrayOf(object((g) => ({
-    id: g.get('id', (v, p) => amendmentRef(v, p)), rules: g.get('rules', rules), proposal: g.get('proposal', str), admit: g.get('admit', nullable(briefConversion)),
-  })))),
   packReviewNotes: f.get('packReviewNotes', arrayOf(object((g) => ({ job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), claim: g.get('claim', str) })))),
   census: f.get('census', nullable(object((g) => ({
     held: g.get('held', nat), obligationRules: g.get('obligationRules', nat), outOfSlice: g.get('outOfSlice', nat), untestable: g.get('untestable', nat), prodOnly: g.get('prodOnly', nat),
@@ -433,19 +345,6 @@ const briefArc: Read<BriefArc> = object((f) => ({
     count: g.get('count', positive), p50Ms: g.get('p50Ms', nat), maxMs: g.get('maxMs', nat),
   })))),
   pr: f.get('pr', briefPr),
-  admits: f.get('admits', arrayOf(object((g): BriefAdmit => ({
-    job: g.get('job', (v, p) => jobIdOf(v, p)), index: g.get('index', nat), unit: g.get('unit', (v, p) => unitId(v, p)), class: g.get('class', oneOf(ADMIT_CLASS_NAMES)),
-    clauses: g.get('clauses', idList(vidR)), followUp: g.get('followUp', nullable((v, p) => opportunityId(v, p))),
-  })))),
-  opportunities: f.get('opportunities', arrayOf(object((g): BriefOpportunity => ({
-    id: g.get('id', (v, p) => opportunityId(v, p)), clauses: g.get('clauses', idList(vidR, { nonEmpty: true })), units: g.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
-    followUps: g.get('followUps', nat), spentUsd: g.get('spentUsd', nonNegative), overrun: g.get('overrun', arrayOf(object((h) => ({ job: h.get('job', (v, p) => jobIdOf(v, p)), index: h.get('index', nat) })))),
-  })))),
-  drift: f.get('drift', arrayOf(object((g): BriefDrift => ({
-    unit: g.get('unit', (v, p) => unitId(v, p)), job: g.get('job', (v, p) => jobIdOf(v, p)),
-    findings: g.get('findings', arrayOf(object((h) => ({ id: h.get('id', (v, p) => findingId(v, p)), clauses: h.get('clauses', idList(vidR, { nonEmpty: true })) })), { nonEmpty: true })),
-  })))),
-  flow: f.get('flow', nullable(briefFlow)),
   demo: f.get('demo', nullable(object((g): BriefDemo => ({
     milestone: g.get('milestone', (v, p) => milestoneId(v, p)), sha: g.get('sha', (v, p) => sha(v, p)), held: g.get('held', bool), up: g.get('up', bool),
     since: g.get('since', object((h) => ({

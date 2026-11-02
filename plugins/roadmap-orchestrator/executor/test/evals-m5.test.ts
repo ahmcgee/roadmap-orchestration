@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // The M5 fixture (evals/m5/), tested without paying: M5 has no scripted root agent (evals/README.md "The M5 fixture"),
 // so its free tier is the fixture's validity (setup lays out a product whose tests pass, whose plant is in play, whose
 // vision, corpus guide and walkthrough config parse, and which vendors the design skill), the plan shape, and each check
@@ -8,32 +9,35 @@
 // evals-m5.stop-rule-run5, evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Event, Fact } from '../src/core/events.ts';
-import { arcId, jobId } from '../src/core/ids.ts';
+import { describe,test } from 'node:test';
+import {
+PLANT_ANCHOR,PLANT_WORDS,check,demoServingVerdict,
+designFirstVerdict,isPng,milestonesPlannedVerdict,nodeHeldVerdict,
+plantCaughtVerdict,plantRepairedVerdict,polishBoundedVerdict,repairLoopVerdict,
+sessionStoppedVerdict,
+walkScreenshotsVerdict,
+} from '../evals/m5/check.ts';
+import { SKILL_SATISFIED,SLICE_ANSWER,codeAnswer,initialPrompt } from '../evals/m5/driver.ts';
+import { CORPUS_ROOT,DESIGN_SKILL,PLANT,VISION_DOC } from '../evals/m5/layout.ts';
+import { type EvidencePlan,type M5Log,type Repairs,evidenceComplete,logOf } from '../evals/m5/log.ts';
+import type { Reflow } from '../evals/m5/reflow.ts';
+import { CLAUSES,setup } from '../evals/m5/setup.ts';
+import { planShape } from '../evals/m5/shape.ts';
+import type { Event,Fact } from '../src/core/events.ts';
+import { arcId,jobId } from '../src/core/ids.ts';
+import { sha256Hex } from '../src/core/json.ts';
 import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { gitCommonDir } from '../src/git/git.ts';
-import { runDir } from '../src/input/cli.ts';
-import { PLAN_INPUT, keepInput } from '../src/input/inforce.ts';
 import { parseGuideText } from '../src/corpus/guide.ts';
+import { gitCommonDir } from '../src/git/git.ts';
 import { parseVision } from '../src/holistic/types.ts';
-import { type Milestone, type PlanM1, parsePlan } from '../src/input/plan.ts';
+import { runDir } from '../src/input/cli.ts';
+import { PLAN_INPUT,keepInput } from '../src/input/inforce.ts';
+import { type Milestone,type PlanM1,parsePlan } from '../src/input/plan.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import {
-  PLANT_ANCHOR, PLANT_WORDS, check, demoServingVerdict, sessionStoppedVerdict, designFirstVerdict, isPng, milestonesPlannedVerdict, nodeHeldVerdict,
-  plantCaughtVerdict, plantRepairedVerdict, polishBoundedVerdict, repairLoopVerdict, walkScreenshotsVerdict,
-} from '../evals/m5/check.ts';
-import { type EvidencePlan, type M5Log, type Repairs, evidenceComplete, logOf } from '../evals/m5/log.ts';
-import { SKILL_SATISFIED, SLICE_ANSWER, codeAnswer, initialPrompt } from '../evals/m5/driver.ts';
-import { CORPUS_ROOT, DESIGN_SKILL, PLANT, VISION_DOC, layout } from '../evals/m5/layout.ts';
-import type { Reflow } from '../evals/m5/reflow.ts';
-import { CLAUSES, setup } from '../evals/m5/setup.ts';
-import { planShape } from '../evals/m5/shape.ts';
-import { git, tmpDir } from './helpers/repo.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: 5 * 60_000 };
 
@@ -221,7 +225,7 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     // checkpoint folded into a spec is credited when the plant is gone at the walk (run 5's F-1).
     const other = goodLog({ findings: [{ ...f!, claim: 'J-2: a pasted link searched on a 320 px screen makes the no-match page scroll sideways', cause: 'the heading does not wrap' }] });
     assert.equal((await plantCaughtVerdict(SHAPE, other, wide)).pass, false);
-    const folded = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, lens: 'vision', transitions: [{ seq: 61, to: { state: 'ruled', disposition: 'accepted', by: { type: 'checkpoint', job: jobId('ckpt', 1) } } }] }] }), async () => measured(320));
+    const folded = await plantCaughtVerdict(SHAPE, goodLog({ findings: [{ ...f!, lens: 'vision', transitions: [{ seq: 61, to: { state: 'ruled', disposition: 'accepted', by: { type: 'code', reason: 'close-out' } } }] }] }), async () => measured(320));
     assert.ok(folded.pass, folded.detail);
     assert.match(folded.detail, /prevented upstream: .*named by F-1 \(vision, ruled\)/);
     const unknown = await plantCaughtVerdict(SHAPE, unnamed, async () => ({ kind: 'unknown', detail: 'the server did not come up' }));
@@ -388,7 +392,7 @@ describe('the stop rule (evals/m5/log.ts)', () => {
 
 describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
   test('evals-m5.log-of: dispatches, unit publications, walks, passes, findings, tweaks, refusals and promotions from events', () => {
-    const ev = (seq: number, rec: object): Event => ({ v: 1, seq, prev: null, at: '2026-10-18T00:00:00.000Z', arc: 'arc-1', ...rec }) as unknown as Event;
+    const ev = (seq: number, rec: object): Event => ({ v: 2, seq, prev: null, at: '2026-10-18T00:00:00.000Z', arc: 'arc-1', ...rec }) as unknown as Event;
     const fact = (seq: number, f: object): Event => ev(seq, { type: 'fact', fact: f });
     const events = [
       fact(1, { kind: 'dispatch', record: { unit: 'design' } }),
@@ -450,7 +454,7 @@ describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
       launch: { envKeys: [], gh: join(l.forgeBin, 'gh'), ghConfigDir: l.ghConfig, xdgConfigHome: l.xdgConfig, gitConfigGlobal: l.gitConfig },
       demo: { seen: [], final: null }, released: [], leftovers: [],
     }));
-    const unit = (id: string, after: readonly string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: [`src/${id}/**`], resources: [], after, contingent: [] });
+    const unit = (id: string, after: readonly string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], after, contingent: [] });
     const ms = (id: string, units: readonly string[], design: string, via: 'browser' | 'shell') => ({
       id, text: `${id} text`, units, design: { unit: design }, references: ['docs/design'], bringUp: { setup: [], serve: [], env: {}, seed: [] },
       journeys: [journey(`J-${id.slice(3)}`, via)], resources: [],

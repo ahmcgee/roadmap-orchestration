@@ -1,4 +1,5 @@
-// The plan in force (owner ruling 2026-09-29; SCHEMAS.md "Plan in force"): not the files, but a fold of the
+import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
+// The plan in force (owner ruling 2026-09-29; SCHEMAS.md "Plan in force and CAS"): not the files, but a fold of the
 // event log. The latest `plan-applied` fact names a revision, the hash of plan.json's bytes and of every unit's
 // spec.json; the bytes themselves are kept content-addressed in the run dir (`inputs/<sha256>.plan.json`,
 // `inputs/<sha256>.spec.json`). `roadmap apply` and a `start` whose files differ are the only ways a new
@@ -20,30 +21,30 @@
 // Phase-0 record beside the plan, and the corpus guide committed at the plan's baseline (LR-A1-1), kept as
 // `inputs/<sha>.corpus.json`, `.phase0.json` and `.corpus-guide.md`; its vision record is `<repo>/.roadmap/vision.json` (R1). The corpus files the pin names are kept as
 // `inputs/<sha>.corpus-file` from the source the pin re-derived from (`keepCorpusFiles`, src/phase0/rows.ts).
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync,readFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
-  type IntentOf, type Parent, type PlanAppliedFact, type PlanChange, REVISION_FENCE_KEY, type RevisionPayload, parseRevisionPayload,
+type IntentOf,type Parent,type PlanAppliedFact,type PlanChange,REVISION_FENCE_KEY,type RevisionPayload,parseRevisionPayload,
 } from '../core/events.ts';
-import { durableMkdir, durableWrite } from '../core/fsx.ts';
-import { type OpId, type PlanRev, type RulingId, type Sha256Hex, type UnitId, opKey, planRev, rulingId, compareIds } from '../core/ids.ts';
+import { durableMkdir,durableWrite } from '../core/fsx.ts';
+import { type OpId,type PlanRev,type Sha256Hex,type UnitId,opKey,planRev } from '../core/ids.ts';
+import type { Journal,JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
+import type { PlanManifest,RevisionManifest,SpecM1 } from '../core/records.ts';
+import { SchemaError } from '../core/validate.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
+import { SCHEMA_VERSION } from '../core/version.ts';
 import { CORPUS_GUIDE_PATH } from '../corpus/guide.ts';
 import type { SourceFile } from '../corpus/source.ts';
-import { type CorpusPin, parseCorpusPin } from '../corpus/types.ts';
+import { type CorpusPin,parseCorpusPin } from '../corpus/types.ts';
 import { gitRun } from '../git/git.ts';
-import { type Phase0Record, parsePhase0Record } from '../phase0/types.ts';
-import type { Journal, JournalView } from '../core/interfaces.ts';
-import { canonicalJson } from '../core/json.ts';
-import type { PlanManifest, RevisionManifest, SpecM1 } from '../core/records.ts';
-import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { SCHEMA_VERSION } from '../core/version.ts';
-import { type Obligations, type RulingSidecar, type Vision, parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { type RepoConfig, type ResolvedRouting, planStack, resolveRouting } from '../routing/layers.ts';
-import type { ArcRoleSet, ProfileName, RoutingLayer, RoutingProvenance } from '../routing/types.ts';
-import { bytesSha256, parseSpec } from '../spec/spec.ts';
-import { type PlanM1, type PlanUnit, parsePlan, visionFile } from './plan.ts';
+import { type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
+import { type Phase0Record,parsePhase0Record } from '../phase0/types.ts';
+import { type RepoConfig,type ResolvedRouting,planStack,resolveRouting } from '../routing/layers.ts';
+import type { ArcRoleSet,ProfileName,RoutingLayer,RoutingProvenance } from '../routing/types.ts';
+import { bytesSha256,parseSpec } from '../spec/spec.ts';
+import { type PlanM1,type PlanUnit,parsePlan,visionFile } from './plan.ts';
 
 export const PLAN_INPUT = 'plan.json';
 export const SPEC_INPUT = 'spec.json';
@@ -59,13 +60,6 @@ export const CORPUS_FILE_INPUT = 'corpus-file';
 export const PHASE0_INPUT = 'phase0.json';
 /** M4a (K8): a pack review's `PackReviewInputs`, kept before its spawn and named by its `pack-review-started`. */
 export const PACK_REVIEW_INPUT = 'pack-review.json';
-/**
- * M4b: a flow run's `FlowInputs` (named by its `flow-started`), the arc's compact flow series (named by `flow-series`),
- * and a suite-lane proof's witness records, one per side (named by `flow-proof`).
- */
-export const FLOW_INPUTS_INPUT = 'flow-inputs.json';
-export const FLOW_SERIES_INPUT = 'flow-series.json';
-export const FLOW_PROOF_INPUT = 'flow-proof.json';
 /**
  * A file a revision's docs publication commits (`RevisionPayload.publication.renders`): an executor-rendered `.roadmap/`
  * document, or (dev.16) a vision file the revision publishes (src/commands/apply.ts `visionRenders`).
@@ -124,7 +118,7 @@ export type InputFiles = Readonly<{
   /** M3: the ledger `plan.rulings` names. */
   ledger: InputFile;
   /** M3: the ruling sidecars beside it (`<ledger>.d/C-<n>.json`), ascending by id. */
-  sidecars: ReadonlyMap<RulingId, Readonly<{ path: AbsPath; bytes: Buffer }>>;
+
   /** M3 (A5): the obligations and vision files `plan.holistic` names; null when it names none. */
   obligations: InputFile | null;
   vision: InputFile | null;
@@ -134,25 +128,9 @@ export type InputFiles = Readonly<{
 
 export const specFilePath = (planFile: AbsPath, unit: PlanUnit): AbsPath => absPath(join(dirname(planFile), unit.spec));
 export const ledgerPath = (planFile: AbsPath, plan: PlanM1): AbsPath => absPath(join(dirname(planFile), plan.rulings));
-/** Where the ruling sidecars of a ledger live: `<ledger>.d/`, one `C-<n>.json` each. */
-export const sidecarDir = (ledger: AbsPath): AbsPath => absPath(`${ledger}.d`);
-export const sidecarPath = (ledger: AbsPath, id: RulingId): AbsPath => absPath(join(sidecarDir(ledger), `${id}.json`));
 const SIDECAR_NAME = /^(C-[0-9]+)\.json$/;
 
 const inputFile = (path: AbsPath): InputFile => ({ path, bytes: existsSync(path) ? readFileSync(path) : null });
-
-/** The sidecar files of `ledger` by id, ascending; a file there not named `C-<n>.json` is refused (SchemaError). */
-function readSidecars(ledger: AbsPath): ReadonlyMap<RulingId, Readonly<{ path: AbsPath; bytes: Buffer }>> {
-  const dir = sidecarDir(ledger);
-  if (!existsSync(dir)) return new Map();
-  const entries = readdirSync(dir).map((name) => {
-    const m = SIDECAR_NAME.exec(name);
-    if (m === null) throw new SchemaError(join(dir, name), 'a ruling sidecar named C-<n>.json', name);
-    const path = sidecarPath(ledger, rulingId(m[1], join(dir, name)));
-    return [rulingId(m[1]), { path, bytes: readFileSync(path) }] as const;
-  });
-  return new Map(entries.sort(([a], [b]) => compareIds(a, b)));
-}
 
 /**
  * The vision file (`visionFile`): beside the plan for an `architecture-doc` arc, `<repo>/.roadmap/vision.json` for a
@@ -182,7 +160,7 @@ export function phase0RecordOf(bytes: Buffer | null): Phase0Record | null {
 }
 
 /** Reads the plan (parsed: throws SchemaError or SyntaxError) and the bytes of every input it names. */
-export function readInputFiles(planFile: AbsPath, repo: AbsPath): InputFiles {
+export function readInputFiles(planFile: AbsPath, repo: AbsPath, exported = false): InputFiles {
   const planBytes = readFileSync(planFile);
   const plan = parsePlan(JSON.parse(planBytes.toString('utf8')));
   const specs = new Map(plan.units.map((u) => [u.id, inputFile(specFilePath(planFile, u))] as const));
@@ -191,9 +169,9 @@ export function readInputFiles(planFile: AbsPath, repo: AbsPath): InputFiles {
   let corpus: CorpusInputFiles | null = null;
   if (plan.target === 'corpus') corpus = { pin: beside(plan.corpus), guide: guideFileAt(repo, plan.baseline), phase0: beside(plan.phase0) };
   return {
-    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger), sidecars: readSidecars(ledger),
+    repo, planFile, plan, planBytes, specs, ledger: inputFile(ledger),
     obligations: plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations),
-    vision: visionInput(plan, repo, inputFile, planFile),
+    vision: visionInput(plan, exported ? absPath(join(dirname(planFile), 'repo')) : repo, inputFile, planFile),
     corpus,
   };
 }
@@ -230,7 +208,7 @@ export function revisionManifestOf(files: InputFiles): RevisionManifest | Readon
   if (missing.length > 0 || ledger === null) return { missing };
   return {
     planSha256: bytesSha256(files.planBytes), specs,
-    rulings: { ledgerSha256: bytesSha256(ledger), sidecars: Object.fromEntries([...files.sidecars].map(([id, x]) => [id, bytesSha256(x.bytes)])) },
+    rulings: { ledgerSha256: bytesSha256(ledger),  },
     obligations, vision, ...corpus,
   };
 }
@@ -269,7 +247,7 @@ export function keepRevisionFiles(runDir: AbsPath, files: InputFiles): RevisionM
     ...keepInputFiles(runDir, files),
     rulings: {
       ledgerSha256: keepInput(runDir, bytes(files.ledger), RULINGS_INPUT),
-      sidecars: Object.fromEntries([...files.sidecars].map(([id, x]) => [id, keepInput(runDir, x.bytes, RULING_INPUT)])),
+
     },
     obligations: files.obligations === null ? null : keepInput(runDir, bytes(files.obligations), OBLIGATIONS_INPUT),
     vision: files.vision === null ? null : keepInput(runDir, bytes(files.vision), VISION_INPUT),
@@ -323,7 +301,7 @@ export function routingProvenanceOf(base: RoutingBase, plan: PlanM1): RoutingPro
   const unitLayers: Record<UnitId, RoutingLayer> = {};
   for (const u of [...plan.units].sort((a, b) => (a.id < b.id ? -1 : 1))) if (u.routing !== undefined) unitLayers[u.id] = u.routing;
   return {
-    profile: base.profile,
+    profile: plan.routing?.profile ?? base.profile,
     repoConfig: { seats: base.config?.routing?.seats ?? null, classes: base.config?.routing?.classes ?? null },
     planLayer: plan.routing ?? null,
     unitLayers,
@@ -353,12 +331,6 @@ export function payloadAtRev(view: JournalView, runDir: AbsPath, rev: number): R
   const commit = view.opsOf('revision.commit').find((c) => c.expect.rev === rev && view.doneOf(c.op) !== null);
   if (commit === undefined) throw new Error(`plan rev ${rev} has no applied revision.commit`);
   return keptPayload(runDir, commit.expect.payloadSha256);
-}
-
-/** dev.17: the obligations in force at plan rev `rev` (its kept payload's), or null for a revision without them. */
-export function obligationsAtRev(view: JournalView, runDir: AbsPath, rev: number): Obligations | null {
-  const sha = payloadAtRev(view, runDir, rev).manifest.obligations;
-  return sha === null ? null : parseObligations(JSON.parse(kept(runDir, sha, OBLIGATIONS_INPUT).toString('utf8')));
 }
 
 /** The open `revision.commit` (A19: at most one, its key), or null: the revision fence's durable half. */
@@ -391,7 +363,7 @@ export function planAppliedOf(payload: RevisionPayload, payloadSha256: Sha256Hex
  * payload exactly, then its divergences in order, each once per `(job, index)`, then (dev.17) its stale set, once per rev.
  * The caller writes the done.
  */
-export function appendRevision(journal: Journal, commit: IntentOf<'revision.commit'>, payload: RevisionPayload, publication: Publication | null): PlanAppliedFact {
+export function appendRevision(journal: Journal, runDir: AbsPath, commit: IntentOf<'revision.commit'>, payload: RevisionPayload, publication: Publication | null): PlanAppliedFact {
   const inForce = journal.view.planApplied();
   let fact: PlanAppliedFact;
   if (inForce !== null && inForce.rev === commit.expect.rev) {
@@ -413,7 +385,10 @@ export function appendRevision(journal: Journal, commit: IntentOf<'revision.comm
   // dev.17 (propagation): the stale set, once per rev.
   if (payload.stale !== undefined && !journal.view.propagationFacts().some((x) => x.fact.kind === 'stale-set' && x.fact.rev === payload.rev)) {
     journal.fact({ kind: 'stale-set', rev: payload.rev, ...payload.stale });
-    crashPoint('propagation.after-stale-set');
+  }
+  if (!['start', 'command'].includes(payload.source.type) && raisedWithReason(journal.view, runDir, {type: 'op', op: commit.op}, 'revision-notice') === null) {
+    raiseNeedsUser(journal, runDir, {blocking: false, subject: {type: 'arc'}, reason: 'revision-notice',
+      summary: `Executor revision ${payload.rev} (${payload.source.type}) is in force.`, recommendation: 'Review the revision when convenient.', options: [], evidence: []}, {type: 'op', op: commit.op});
   }
   return fact;
 }
@@ -447,7 +422,7 @@ export function closeRevision(journal: Journal, op: OpId, recovered: boolean): v
 export function commitRevisionNow(journal: Journal, runDir: AbsPath, payload: RevisionPayload, parent: Parent): PlanAppliedFact {
   if (payload.publication !== null) throw new Error(`revision ${payload.rev} carries a docs publication; it commits through src/recover/revision.ts`);
   const commit = beginRevision(journal, runDir, payload, parent);
-  const fact = appendRevision(journal, commit, payload, null);
+  const fact = appendRevision(journal, runDir, commit, payload, null);
   closeRevision(journal, commit.op, false);
   return fact;
 }
@@ -497,7 +472,7 @@ export type RevisionInForce = Readonly<{
   /** The ledger's kept bytes. */
   ledger: Readonly<{ sha256: Sha256Hex; bytes: Buffer }>;
   /** Ascending by id. */
-  sidecars: ReadonlyMap<RulingId, Readonly<{ sha256: Sha256Hex; bytes: Buffer; sidecar: RulingSidecar }>>;
+
   obligations: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Obligations }> | null;
   vision: Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: Vision }> | null;
   /** M4a: a corpus arc's pin, guide bytes and Phase-0 record in force; null for an `architecture-doc` arc. */
@@ -523,10 +498,6 @@ const json = (bytes: Buffer): unknown => JSON.parse(bytes.toString('utf8'));
 /** The inputs in force beyond plan and specs: the latest `plan-applied`'s payload manifest's. */
 export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInForce {
   const { manifest } = keptPayload(runDir, inForce.fact.payloadSha256);
-  const sidecars = new Map(Object.entries(manifest.rulings.sidecars).map(([id, sha]) => {
-    const bytes = kept(runDir, sha, RULING_INPUT);
-    return [id as RulingId, { sha256: sha, bytes, sidecar: parseRulingSidecar(json(bytes)) }] as const;
-  }).sort(([a], [b]) => compareIds(a, b)));
   const parsed = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: T }> | null => {
     if (sha === null) return null;
     const bytes = kept(runDir, sha, ext);
@@ -535,7 +506,7 @@ export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInFo
   const { corpus: pinSha, corpusGuide, phase0 } = manifest;
   return {
     ledger: { sha256: manifest.rulings.ledgerSha256, bytes: kept(runDir, manifest.rulings.ledgerSha256, RULINGS_INPUT) },
-    sidecars,
+
     obligations: parsed(manifest.obligations, OBLIGATIONS_INPUT, parseObligations),
     vision: parsed(manifest.vision, VISION_INPUT, parseVision),
     corpus: pinSha === undefined || corpusGuide === undefined || phase0 === undefined ? null : {
@@ -569,7 +540,7 @@ export function inForceFiles(runDir: AbsPath, view: JournalView, inForce: InForc
   return {
     repo, planFile, plan, planBytes, specs,
     ledger: { path: ledger, bytes: revision.ledger.bytes },
-    sidecars: new Map([...revision.sidecars].map(([id, s]) => [id, { path: sidecarPath(ledger, id), bytes: s.bytes }] as const)),
+
     obligations: revision.obligations === null || plan.holistic?.obligations === undefined ? null : beside(plan.holistic.obligations, revision.obligations.bytes),
     vision: revision.vision === null ? null : visionInput(plan, repo, (path) => ({ path, bytes: revision.vision!.bytes }), planFile),
     corpus: c === null || plan.target !== 'corpus' ? null : {

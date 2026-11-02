@@ -12,7 +12,7 @@ import { judgmentSessionId } from '../../../src/core/ids.ts';
 import type { JudgmentSession } from '../../../src/core/records.ts';
 import { type AbsPath, absPath } from '../../../src/core/values.ts';
 import { judgmentSurface } from '../../../src/pipeline/dispatch.ts';
-import { GATE_CHECKOUT } from '../../../src/prompts/gate/claude-opus-5-5.ts';
+import { GATE_CHECKOUT } from '../../../src/prompts/verifier/gate-input.ts';
 import { CLAUDE_EFFORTS, CLAUDE_MODELS, type ClaudeEffort, type ClaudeModelId } from '../../../src/routing/types.ts';
 
 /**
@@ -55,7 +55,7 @@ export function readOnlyArgs(args: readonly string[], arm: ReadOnlyArm): readonl
   if (!same(surface.evidenceDirs, addDirs)) throw new Error(`read-only arm: the call's add-dirs ${addDirs.join(' ')} are not a judgment's read surface over ${arm.repo} and ${arm.runDir}`);
   // `role` is not in a judgment's argv; the call stays the gate's in every record (its launch.json is production's).
   return backendArgv({
-    kind: 'claude-judgment', role: 'planCheck', triple: { backend: 'claude', model: model as ClaudeModelId, effort: effort as ClaudeEffort }, session,
+    kind: 'claude-judgment', role: 'verifier', triple: { backend: 'claude', model: model as ClaudeModelId, effort: effort as ClaudeEffort }, session,
     schemaText: value(args, '--json-schema'), system: surface.system, evidenceDirs: surface.evidenceDirs,
   }).slice(1);
 }

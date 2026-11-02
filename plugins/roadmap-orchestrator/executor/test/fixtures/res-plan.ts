@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // Shared by the reservation tests and res-child.ts: a plan declaring three resources whose probe and
 // teardown are res-tool.ts over a state dir, a resource context over a fresh run, readers for the
 // resulting log and table, and the lane invocation a holder runs.
@@ -48,7 +49,7 @@ export function planFor(run: ResRun): PlanM1 {
     direction: 'test',
     suite: { lanes: [] },
     resources: [DB, QUEUE, CACHE].map((name) => ({ name, probe: tool('probe', run.stateDir, name), teardown: tool('teardown', run.stateDir, name) })),
-    units: [{ id: UNIT, spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [DB, QUEUE] }],
+    units: [{ id: UNIT, spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [DB, QUEUE] }],
   });
 }
 

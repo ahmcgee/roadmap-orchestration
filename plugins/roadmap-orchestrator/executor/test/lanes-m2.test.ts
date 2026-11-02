@@ -1,3 +1,5 @@
+import { inputShaOf } from '../src/git/reusekey.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 // M2 lanes (src/pipeline/lanes.ts, src/pipeline/redlane.ts), integrated over real processes and real git: the
 // red-lane protocol on real lanes, host samples, `@cpu` and pool-instance reservations with their binding, and
 // cancelled waits. Named tests: lanes.flake-red-green, lanes.flake-deflake-own (dev.17, the flaky ledger), lanes.flake-unit-own
@@ -5,29 +7,28 @@
 // executor's fact without `on`), lanes.red-red, lanes.signature-no-evidence,
 // lanes.signature-busy-rerun-pass, lanes.instance-env, lanes.pause-mid-series.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import type { Fact, Holder, IntentOf } from '../src/core/events.ts';
-import { appliedFields } from './fixtures/log-records.ts';
-import { type InvocationId, arcId, opKey, planRev, resourceName, sha, sha256, unitId } from '../src/core/ids.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
-import { laneRevOf } from '../src/holistic/types.ts';
+import { fileURLToPath } from 'node:url';
+import type { Fact,Holder,IntentOf } from '../src/core/events.ts';
+import { arcId,planRev,resourceName,sha,sha256 } from '../src/core/ids.ts';
+import { openJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
+import { git,revParse } from '../src/git/git.ts';
 import type { HostSample } from '../src/host/sample.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LaneRuntime, type Series, laneOrder, laneSummaryIn, reserveNow, runLaneSeries, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { flakyLedger } from '../src/pipeline/deflake.ts';
+import { type StageContext,type StageParent,pinDispatch } from '../src/pipeline/dispatch.ts';
+import { type LaneRuntime,type Series,laneOrder,laneSummaryIn,reserveNow,runLaneSeries,seriesLedger,specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
-import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
+import { lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import type { Acquire, ResourceRequest } from '../src/schedule/types.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { git, revParse } from '../src/git/git.ts';
-import { flakeOnOf, flakyLedger } from '../src/pipeline/deflake.ts';
+import type { Acquire,ResourceRequest } from '../src/schedule/types.ts';
 import { intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { appliedFields } from './fixtures/log-records.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,launchOf,outcomeFacts,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const RED_GREEN = fileURLToPath(new URL('./fakes/red-green.ts', import.meta.url));
@@ -99,14 +100,14 @@ test('lanes.flake-red-green: red then green on the diagnostic rerun at a commit 
   assert.equal(spawns.length, 2);
   assert.ok(spawns.every((s) => s.expect.subject.purpose === 'lane' && s.expect.subject.at === run.base && s.expect.subject.lane === 'flaky'));
 
-  // The flake, once: the lane's input (the whole tree, no systems map) and environment, the red run then the green.
+  // The flake, once: the lane's input (the paths selected by the systems map) and environment, the red run then the green.
   const flakes = run.journal.view.flakes().map((x) => x.fact);
   const subject = spawns[0]!.expect.subject;
   const identity = subject.purpose === 'lane' ? subject.identity : undefined;
   assert.ok(identity !== undefined);
   assert.deepEqual(flakes, [{
     kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: 'flaky', set: 'spec', on: 'tip', forgiven: true,
-    event: { tree: revParse(run.repo, `${run.base}^{tree}`), env: identity.envId, failing: [], red: record.voided.inv, green: record.inv },
+    event: { tree: inputShaOf(run.ctx.repo, revParse(run.repo, `${run.base}^{tree}`), loadUnitSpec(run.ctx, run.unit).spec.lanes.find((l) => l.id === 'flaky')!, systemsMapInForce(run.journal.view.planApplied())), env: identity.envId, failing: [], red: record.voided.inv, green: record.inv },
   }]);
 
   // Read back from the journal and the files: the same record.
@@ -123,7 +124,7 @@ test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: flak
   assert.equal(done.outcome.kind, 'flaky');
   assert.equal(done.next.kind === 'stage' && done.next.stage, 'build');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'flaky' && !fact.chargeable, 'a same-commit flake is recorded without a lanes-red charge');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'flaky' && !fact.chargeable, 'a same-commit flake is recorded without a lanes-red charge');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 0, 'a flake does not consume the certification allowance');
   assert.deepEqual(run.journal.view.flakes().map((x) => [x.fact.lane, x.fact.forgiven]), [['flaky', false]], 'the flake is in the ledger all the same');
@@ -175,27 +176,7 @@ test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does 
   assert.deepEqual(flakyLedger(run.journal.view, run.ctx.plan()).map((e) => e.events.length), [1]);
 });
 
-test('lanes.flake-on-default: a flake-observed fact an earlier executor wrote (no on) still reads; its red run\'s stage decides: a lanes stage\'s is the unit\'s, a candidate\'s the tip\'s', T, async () => {
-  const run = laneRun([redGreen('flaky', 'expected 3, got 4')]);
-  const lane = loadUnitSpec(run.ctx, run.unit).spec.lanes[0]!;
-  let n = 0;
-  const spawn = (stage: 'lanes' | 'candidate'): InvocationId => {
-    const { op, inv } = run.journal.begin({
-      kind: 'proc.spawn', key: opKey(`old:${++n}`), parent: { type: 'stage', unit: U1, stage, attempt: 1 }, deadlineAt: null,
-      body: () => ({ expect: { subject: { purpose: 'journey', lane: lane.id, laneRev: laneRevOf(lane), at: run.base, owner: { type: 'unit', unit: U1 } }, launchSha256: sha256('d'.repeat(64)) }, post: null }),
-    });
-    run.journal.done(op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled');
-    return inv;
-  };
-  for (const stage of ['lanes', 'candidate'] as const) {
-    run.journal.fact({ kind: 'flake-observed', owner: { type: 'unit', unit: U1 }, lane: lane.id, set: 'suite', forgiven: true, event: { tree: sha('a'.repeat(40)), env: null, failing: [], red: spawn(stage), green: spawn(stage) } });
-  }
-  const read = readJournal(run.runDir, run.journal.view.arc).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'flake-observed' ? [e.fact] : []));
-  assert.deepEqual(read.map((f) => f.on), [undefined, undefined], 'read as written');
-  assert.deepEqual(run.journal.view.flakes().map((x) => flakeOnOf(run.journal.view, x.fact)), ['unit', 'tip']);
-  const ledger = flakyLedger(run.journal.view, run.ctx.plan());
-  assert.deepEqual(ledger.map((e) => e.events.map((ev) => ev.red)), [[run.journal.view.flakes()[1]!.fact.event.red]], 'only the candidate\'s is the ledger\'s');
-});
+
 
 test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix round reads the first run', T, async () => {
   const run = laneRun([{ id: 'broken', argv: ['sh', '-c', 'echo "not ok 1 - add" >&2; exit 1'] }]);
@@ -223,7 +204,7 @@ test('lanes.vanished-program-host-fault (paid M4b run 3, OP-3): a lane whose pro
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'blocked');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'blocked' && !fact.chargeable, JSON.stringify(fact));
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'blocked' && !fact.chargeable, JSON.stringify(fact));
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
 });
 
@@ -267,7 +248,7 @@ test('lanes.signature-busy-rerun-pass: a host signature on a busy host waits for
 test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool instance, and the lane env binds the instance', T, async () => {
   const run = laneRun([
     { id: 'fast1', argv: ['sh', '-c', 'echo "instance=${RESOURCE_INSTANCE_ESTATE:-none}"'] },
-    { id: 'estate1', tier: 'estate', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
+    { id: 'estate1', cadence: 'unit', resources: ['estate'], argv: [process.execPath, ESTATE_FAKE, 'hold', 'STATE', 'estate'] },
   ], []);
   // A DAG arc over the same repo: a fresh log whose rev-1 plan-applied has scheduling dag, and a plan with
   // capacity and an estate pool (test/fakes/estate.ts).

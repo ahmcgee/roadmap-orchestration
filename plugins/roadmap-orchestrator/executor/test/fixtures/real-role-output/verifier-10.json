@@ -1,0 +1,75 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        "docs/design/page/README.md:188",
+        "docs/design/page/README.md:39",
+        "docs/design/page/README.md:104",
+        "docs/design/page/README.md:21"
+      ],
+      "severity": "note",
+      "path": "docs/design/page/README.md",
+      "text": "Two small wording slips remain in the placement text. Neither blocks, because the governing rule (refusal first in <main>, stated once with no exceptions) is unambiguous.\n\n1. Announcement item 4 says the back link 'follows it directly'. On M4 and M6 the form sits between the refusal and the 'Back to the shelf' link (step 2 puts the link beneath the button). On M5 the search form sits between the heading and 'Show the whole shelf'. It would read true as 'follows it, after any form'.\n\n2. Step 1 places the collection window line 'under the header', while M5 places it 'in the header area above <main>'. A later page unit should render it outside <main> so that refusals stay first.",
+      "contractRef": null,
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 188
+      }
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "R-1 resolved. The step 2 input has no `required` and the form carries `novalidate`, with the reason stated (README:37-41). In Chromium, clicking the button with an empty field on this markup fires the submit event (empty submit events=1), so the empty submit reaches the server and shows M4.",
+    "R-2 resolved. M5 now puts the heading and body first in <main>, then the search form holding {q}, then the link (README:104-105). Step 1 notes the changed order (README:23), and the refusal rule covers M2 to M6 with no exceptions.",
+    "Prior notes taken up. M6 puts the typed name back, escaped. The wrapping rule covers echoed {q} and {name}. T-25 and T-31 now have a place on the shelf page.",
+    "Wrapping check, with one limit: headless Chrome clamped the window to about 485-500px, so 360px itself was not measured. The rule's effect does not depend on the exact width. With it, a 203-character b1 condition, a 200-character {q} heading and a 200-character search value gave scrollWidth equal to clientWidth (485). Without it, scrollWidth was 2593 against clientWidth 500.",
+    "A1 met: the three steps with URLs and forms, the last saying where and by when (README:12-16, 45-49, M1).",
+    "A2 met: exact wording for the confirmation and all five refusals (M1 to M6), each saying what happened and what to do next.",
+    "A3 met: labels, ink focus style, 44px targets, contrast table, 360px rule and a no-JavaScript announcement via title, role=alert, aria-describedby and autofocus. The figures agree with F2.",
+    "A4 met: section 4 keeps the existing palette and lettering from public/style.css and draws the Reserve link, form, search, refusal and confirmation from them.",
+    "D1 and D2 honoured: the paper and rust stay, and the confirmation reads 'Sunday at six (8 November)'.",
+    "Non-goals kept: only docs/design/page/README.md changed, with no comps. No lanes were required for this docs-only unit, and none ran."
+  ],
+  "premises": [
+    {
+      "claim": "The palette in the reference matches public/style.css, and the contrast figures agree with spec F2 (table lines unchanged by the fix).",
+      "evidence": [
+        {
+          "path": "public/style.css",
+          "line": 3
+        },
+        {
+          "path": "docs/design/page/README.md",
+          "line": 153
+        }
+      ]
+    },
+    {
+      "claim": "The form markup does not block an empty submit, so the server can return M4.",
+      "evidence": [
+        {
+          "path": "docs/design/page/README.md",
+          "line": 40
+        }
+      ]
+    },
+    {
+      "claim": "M5 is first in <main>, consistent with the one refusal rule.",
+      "evidence": [
+        {
+          "path": "docs/design/page/README.md",
+          "line": 104
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

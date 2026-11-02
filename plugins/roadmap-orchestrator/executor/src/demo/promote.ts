@@ -1,4 +1,4 @@
-// The demo, executor side (DESIGN-1.0.md §2.12; plan §4a; SCHEMAS.md "dev.13" "The demo"): a stable build of what the arc is
+// The demo, executor side (DESIGN-1.0.md §2.12; plan §4a; SCHEMAS.md "The demo"): a stable build of what the arc is
 // building, for the owner to pick up when they choose. Walks and lanes never touch it. The supervisor's keeper runs it
 // (src/demo/keeper.ts); this module decides what it should run, from the log alone, and records the owner's acts.
 //

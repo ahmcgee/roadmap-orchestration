@@ -1,3 +1,4 @@
+import { bytesSha256 } from '../src/spec/spec.ts';
 // The scheduler (src/schedule/scheduler.ts), in the test process over fake-backed arcs (real processes, real
 // git): units run in parallel, one task per unit, pause and stop at admission boundaries while chains finish,
 // restarts continue pending chains first (G2), jobs never apply a command twice, a limited backend holds only
@@ -7,39 +8,38 @@
 // sched.stop-during-smoke, sched.stop-during-teardown, sched.no-double-apply, sched.backend-limit-others-run,
 // probe.capacity-recovers-held-unit, reenter.clean-verify-to-retire, arc.state-predicates.
 import assert from 'node:assert/strict';
-import { cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync,existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, it, test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
-import { type Event, type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { type UnitId, arcId, invocationId, opId, planRev, seatRev, specRev, unitId } from '../src/core/ids.ts';
+import { submitCommand,terminalReceipt } from '../src/commands/queue.ts';
+import { type Event,type Fact,type LogRecord,prevHash,serializeEvent } from '../src/core/events.ts';
+import { type UnitId,arcId,invocationId,opId,planRev,seatRev,specRev,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
-import { absPath, isoTime, repoPattern } from '../src/core/values.ts';
+import { absPath, isoTime } from '../src/core/values.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
-import { CONTINUE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { unitSettled } from '../src/schedule/scheduler.ts';
-import { reached, release } from './helpers/barrier.ts';
+import { ARC,H,REV,appliedFields,chain } from './fixtures/log-records.ts';
+import { recoveryContext } from './fixtures/rec-common.ts';
+import { haltItem,receiptOf,startScheduler,stopScheduler,submit } from './fixtures/sched-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import {
+type ArcDescriptor,type ArcRun,MUL,U1,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil,
+} from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
 import { fixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
-import { type Step, capturedClaudeResult, readCalls } from './helpers/scenario.ts';
-import { ARC, H, REV, appliedFields, chain } from './fixtures/log-records.ts';
-import { recoveryContext } from './fixtures/rec-common.ts';
-import { parseRepoConfig } from '../src/routing/layers.ts';
-import { haltItem, receiptOf, startScheduler, submit } from './fixtures/sched-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import {
-  type ArcDescriptor, type ArcRun, MUL, U1, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil,
-} from './fixtures/unit-common.ts';
+import { type Step,capturedClaudeResult,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 60_000;
 const U2 = unitId('u2');
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 const OK = { ok: true } as const;
 
 type Json = Record<string, unknown>;
@@ -84,7 +84,7 @@ const factSeq = (d: ArcDescriptor, match: (f: Fact) => boolean): number => {
   return e.seq;
 };
 const outcomeSeq = (d: ArcDescriptor, unit: string, stage: string): number =>
-  factSeq(d, (f) => f.kind === 'stage-outcome' && f.unit === unit && f.stage === stage);
+  factSeq(d, (f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === unit && f.stage === stage);
 const allFree = (r: ArcRun): boolean => [...resourceTable(r.journal.view).values()].every((e) => e.status.state === 'free');
 const heldBy = (r: ArcRun, unit: UnitId): readonly string[] =>
   [...resourceTable(r.journal.view)].flatMap(([name, e]) => (e.status.state !== 'free' && 'holder' in e.status && 'unit' in e.status.holder && e.status.holder.unit === unit ? [name] : []));
@@ -134,7 +134,7 @@ test('sched.parallel, sched.one-task-per-unit: two independent units build at on
         open.set(e.parent.unit, set);
         assert.ok(set.size <= 1, `unit ${e.parent.unit} has attempts ${[...set].join(', ')} open at seq ${e.seq}`);
       }
-      if (e.type === 'fact' && e.fact.kind === 'stage-outcome') {
+      if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) {
         open.get(e.fact.unit)?.delete(e.fact.attempt);
         closed.add(`${e.fact.unit}#${e.fact.attempt}`);
       }
@@ -158,14 +158,14 @@ test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission bo
       ...of('u2', [{ ...check, acts: [{ type: 'barrier', name: 'u2check', timeoutMs: 120_000 }, ...check.acts] } as Step]),
     ],
   });
-  // Five @cpu tokens: both plan-checks (1 each), then u1's build (4); u2's build (4) must wait for u1's.
+  // Five @cpu tokens: both pre-builds (1 each), then u1's build (4); u2's build (4) must wait for u1's.
   editPlan(d, (p) => void (p['capacity'] = { cpu: 5 }));
   const r = contextFor(d);
   try {
     const s = startScheduler(r);
     await reached(d.scenarioDir, 'b1', WAIT_MS);
     release(d.scenarioDir, 'u2check');
-    await until(() => r.journal.view.unit(U2).decided?.stage === 'plan-check', 'u2 to pass its plan-check');
+    await until(() => r.journal.view.unit(U2).decided?.stage === 'pre-build', 'u2 to pass its pre-build');
     await sleep(2_000);
     assert.equal(outcomes(d, 'u2').length, 1, 'u2 waits for its build\'s entry reservation');
     assert.deepEqual(heldBy(r, U2), [], 'waiting, u2 holds nothing');
@@ -176,7 +176,7 @@ test('sched.pause-holds-nothing: a pause ends a unit\'s task at its admission bo
     await until(() => allFree(r), 'every reservation released');
     await sleep(2_000);
     assert.ok(allFree(r), 'paused, neither unit holds anything');
-    assert.deepEqual(outcomes(d, 'u2'), ['plan-check:approve'], 'the cancelled wait journaled no build attempt, no hold');
+    assert.deepEqual(outcomes(d, 'u2'), ['pre-build:approve'], 'the cancelled wait journaled no build attempt, no hold');
     assert.equal(r.journal.view.unit(U2).counters.attempts, 1);
     assert.equal(r.journal.view.unit(U2).status, 'active', 'not held: its build never started');
     assert.equal(r.journal.view.unit(U1).status, 'held');
@@ -216,15 +216,16 @@ test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) n
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild()] });
   slowTeardown(d, dir, tmpDir('res-state'));
   const r = contextFor(d);
+  const item = raiseNeedsUser(r.journal, r.ctx.runDir, {
+    blocking: false, subject: { type: 'host' }, reason: 'env-blocked', summary: 'seeded', recommendation: 'ack it', options: [{ id: 'resolved', label: 'Issue resolved' }], evidence: [],
+  }, { type: 'arc' });
+  const s = startScheduler(r);
   try {
-    const item = raiseNeedsUser(r.journal, r.ctx.runDir, {
-      blocking: false, subject: { type: 'arc' }, reason: 'env-blocked', summary: 'seeded', recommendation: 'ack it', options: [], evidence: [],
-    }, { type: 'arc' });
-    const s = startScheduler(r);
     await reached(dir, 'teardown', WAIT_MS);
     assert.ok(heldBy(r, U1).includes('db'), 'the lane still holds db while teardown runs');
     const stop = submit(r, { type: 'stop' });
     assert.equal((await receiptOf(r, stop)).state, 'applied');
+    assert.equal(r.journal.view.ackOf(item), null, 'an arc stop does not close the host subject');
     // Stopping, the scheduler still applies control commands.
     assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }))).state, 'applied');
     assert.notEqual(r.journal.view.ackOf(item), null);
@@ -240,6 +241,8 @@ test('sched.stop-during-teardown: a stop while a teardown runs (a 10-min fake) n
     assert.deepEqual(r.journal.view.opsOf('proc.kill'), [], 'the teardown was not killed');
     assert.ok(allFree(r));
   } finally {
+    if (!existsSync(join(dir, 'teardown.release'))) release(dir, 'teardown');
+    await stopScheduler(r, s);
     r.journal.close();
   }
 });
@@ -346,7 +349,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
       ...of('u2', [
         planCheckStep({ decision: 'approve', risk: 'high' }),
-        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', changedPaths: [], lanesRun: [], blockers: [], experiments: [], docsOnlySince: null, final: true } }] },
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true } }] },
         gateStep({ decision: 'approve' }),
       ]),
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },
@@ -358,7 +361,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
     usageLimit(r, 'codex');
     const s = startScheduler(r);
     await until(() => r.journal.view.unit(U2).status === 'retired', 'u2 to merge');
-    assert.deepEqual(outcomes(d, 'u1'), ['plan-check:approve'], 'u1\'s plan-check (claude) ran; its build (codex) was not admitted');
+    assert.deepEqual(outcomes(d, 'u1'), ['pre-build:approve'], 'u1\'s pre-build (claude) ran; its build (codex) was not admitted');
     assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.unit === U1 && i.expect.subject.role === 'build').length, 0);
     assert.equal((await receiptOf(r, submit(r, { type: 'resume', target: { type: 'backend', backend: 'codex' } }))).state, 'applied');
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
@@ -368,9 +371,9 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
   }
 });
 
-test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-check parks claude with an epoch and holds the unit; the scheduler\'s probe job passes and releases the hold, and the unit runs to merge', T, async () => {
+test('probe.capacity-recovers-held-unit: end to end, a capacity error at gate parks claude with an epoch and holds the unit; the scheduler\'s probe job passes and releases the hold, and the unit runs to merge', T, async () => {
   const d = setupArc({
-    steps: [{ as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
+    steps: [mulBuild(), { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'emit', value: OK }] }, gateStep({ decision: 'approve' })],
   });
   // A `claude` whose first call answers with the CLI's capacity error (HTTP 529); every later call is the fake's.
   const bin = tmpDir('capacity-bin');
@@ -385,13 +388,13 @@ test('probe.capacity-recovers-held-unit: end to end, a capacity error at plan-ch
     const events = eventsOf(d);
     const park = events.find((e) => e.type === 'fact' && e.fact.kind === 'backend-park');
     assert.ok(park?.type === 'fact' && park.fact.kind === 'backend-park' && park.fact.class === 'capacity');
-    const hold = events.find((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.class === 'hold');
-    assert.ok(hold?.type === 'fact' && hold.fact.kind === 'stage-outcome');
+    const hold = events.find((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.class === 'hold');
+    assert.ok(hold?.type === 'fact' && (hold.fact.kind === 'stage-outcome' && 'unit' in hold.fact));
     assert.deepEqual(hold.fact.cause, { type: 'backend', backend: 'claude', parkSeq: park.seq }, 'the hold names the park epoch');
     const probe = events.find((e) => e.type === 'fact' && e.fact.kind === 'probe');
     assert.ok(probe?.type === 'fact' && probe.fact.kind === 'probe');
     assert.deepEqual([probe.fact.result, probe.fact.covers], ['pass', [park.seq]]);
-    assert.deepEqual(outcomes(d), ['plan-check:interrupted', ...STRAIGHT], 'the held plan-check ran again once the probe passed');
+    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(1,7),'gate:interrupted',...STRAIGHT.slice(7)], 'the held gate ran again once the probe passed');
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
   } finally {
     r.journal.close();
@@ -415,6 +418,8 @@ test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`
     assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 7), 'gate:escalate', 'gate:escalate']);
     // The architect re-enters u1 as u1b, at verify: its branch already holds the work. It names the gate's park it fixes
     // and records the decision the escalation asked for.
+    const { syncInputs } = await import('./fixtures/unit-common.ts');
+    syncInputs(r);
     cpSync(join(d.planPath, '..', 'u1.json'), join(d.planPath, '..', 'u1b.json'));
     const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1b.json'), 'utf8')) as Json & { decisions: Json[] };
     const decision = { id: 'D1', text: 'mul keeps its integer signature', state: 'active' };
@@ -427,7 +432,7 @@ test('reenter.clean-verify-to-retire: a unit parked at its gate is re-entered (`
     const { applyBody } = await import('./fixtures/unit-common.ts');
     const applied = await receiptOf(r, submit(r, applyBody(d)));
     assert.equal(applied.state, 'applied', JSON.stringify(applied));
-    await receiptOf(r, submit(r, { type: 'ack', needsUser: item, choice: null }));
+    assert.equal(r.journal.view.ackOf(item)?.command, applied.command, 'the re-entry apply closes its lineage subject');
     const end = await s.end;
     assert.deepEqual(end, { kind: 'complete', units: [{ unit: 'u1', result: 'superseded', by: 'u1b' }, { unit: 'u1b', result: 'merged' }] });
     assert.deepEqual(outcomes(d, 'u1b'), ['prepare:clean-verify', ...STRAIGHT.slice(6)]);
@@ -452,7 +457,7 @@ describe('arc.state-predicates', () => {
   const outcome = (unit: UnitId, stage: string, attempt: number, out: string, cls: string, extra: object = {}): LogRecord =>
     fact({ kind: 'stage-outcome', unit, stage, attempt, outcome: out, class: cls, chargeable: false, ...extra });
   const dispatch = (unit: UnitId): LogRecord => fact({
-    kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
+    kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: LATER, transientRules: 'm3' },
   });
   const planApplied = (rev: number, units: readonly UnitId[], changes: readonly object[] = []): LogRecord => fact({
     kind: 'plan-applied', rev: planRev(rev), command: rev === 1 ? null : `cmd-${String(rev).padStart(16, '0')}`, planSha256: H,
@@ -469,13 +474,13 @@ describe('arc.state-predicates', () => {
     assert.equal(unitSettled(folded(base), U1), false, 'active');
     assert.equal(unitSettled(folded([...base, outcome(U1, 'snapshot', 1, 'published', 'retire')]), U1), true, 'merged');
     assert.equal(unitSettled(folded([...base, outcome(U1, 'build', 1, 'interrupted', 'hold')]), U1), false, 'held');
-    assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })]), U1), true, 'an operator park');
-    assert.equal(unitSettled(folded([...base, outcome(U1, 'plan-check', 1, 'escalate', 'park')]), U1), true, 'a park without its class (the interim M2 shim), read as operator');
+    assert.equal(unitSettled(folded([...base, outcome(U1, 'pre-build', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })]), U1), true, 'an operator park');
+    assert.equal(unitSettled(folded([...base, outcome(U1, 'pre-build', 1, 'escalate', 'park')]), U1), true, 'a park without its class (the interim M2 shim), read as operator');
     const retry = outcome(U1, 'build', 1, 'process-fault', 'park', { park: { class: 'retryable', targets: [{ type: 'backend', backend: 'codex' }] } });
     assert.equal(unitSettled(folded([...base, retry]), U1), false, 'a retryable park is probed until it recovers');
     const cut = folded([planApplied(1, [U1, U2]), planApplied(2, [U1, U2], [{ type: 'unit-cut', unit: U2 }])]);
     assert.equal(unitSettled(cut, U2), true, 'cut');
-    const parked = [...base, outcome(U1, 'plan-check', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })];
+    const parked = [...base, outcome(U1, 'pre-build', 1, 'escalate', 'park', { park: { class: 'operator', kind: 'design' } })];
     const superseded = folded([...parked, planApplied(2, [U1, U2, U3], [{ type: 'unit-added', unit: U3 }, { type: 'unit-reentered', unit: U3, reenters: U1, reset: false }])]);
     assert.equal(unitSettled(superseded, U1), true, 'superseded');
     assert.equal(unitSettled(superseded, U3), false, 'its successor is active');
@@ -497,3 +502,27 @@ async function stopAfter(r: ArcRun, s: ReturnType<typeof startScheduler>) {
   submit(r, { type: 'stop' });
   return s.end;
 }
+
+test('steer running unit: cancels its workload, then starts one fresh steer round', T, async () => {
+  const brief = 'STEER-RUNNING-MARKER: finish the arithmetic unit';
+  const build = mulBuild();
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), codexStep([{type: 'commit', message: 'mul before steer', files: MUL}, {type: 'barrier', name: 'running-build', timeoutMs: 120000}], {argv: ['exec', '-C']}),
+    {...build, acts: [], expect: {argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [brief]}} as Step, gateStep({decision: 'approve'})]});
+  // The steered builder emits a valid report while retaining the first round's commit.
+  const scenario = JSON.parse(readFileSync(d.scenarioPath, 'utf8')) as {steps: {acts: unknown[]}[]};
+  scenario.steps[2]!.acts = [{type: 'emit', value: {summary: 'mul retained', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true}}];
+  writeFileSync(d.scenarioPath, JSON.stringify(scenario));
+  const r = contextFor(d); const s = startScheduler(r);
+  try {
+    await reached(d.scenarioDir, 'running-build', WAIT_MS);
+    const path = join(d.scenarioDir, 'steer.md'); writeFileSync(path, brief);
+    const receipt = await receiptOf(r, submit(r, {type: 'steer', unit: U1, brief: {path: absPath(path), sha256: bytesSha256(Buffer.from(brief))}, budgetMin: 5, class: null, resume: true}));
+    assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
+    assert.ok(outcomes(d).includes('build:interrupted'));
+    assert.equal((await s.end).kind, 'complete');
+    const calls = readCalls(d.scenarioPath);
+    assert.ok(calls.some((c) => c.stdin.includes(brief) && !c.argv.includes('resume')));
+    assert.ok(r.journal.view.opsOf('proc.kill').length > 0);
+    assert.equal(r.journal.view.holistic().steered.length, 1);
+  } finally {if (r.journal.view.unit(U1).status !== 'retired') {submit(r, {type: 'stop'}); await s.end;} r.journal.close();}
+});

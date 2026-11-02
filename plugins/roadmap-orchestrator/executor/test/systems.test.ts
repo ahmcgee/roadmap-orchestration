@@ -1,20 +1,20 @@
+import { lanePlacementReasons } from '../src/input/ci.ts';
+import { systemName } from '../src/core/ids.ts';
 // Lane topology (dev.17; src/input/systems.ts, src/git/reusekey.ts, the dev.17 lane reader in src/core/records.ts): the
 // systems map's reader, a path's class, candidate selection, a lane's input and its reuse key over real git trees, leaf
 // test files, cadence and its dev.16 defaults, the dev.16 lane rev, and Phase-0 row 16.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type LaneId, type SystemName, sha } from '../src/core/ids.ts';
-import { canonicalJson } from '../src/core/json.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { type LaneDef, cadenceAtOrBefore, laneDef, laneDefOf, specM1 } from '../src/core/records.ts';
+import { describe,it } from 'node:test';
+import { type LaneId,type SystemName,sha } from '../src/core/ids.ts';
+import { type LaneDef,cadenceAtOrBefore,laneDef,laneDefOf,specM1 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath } from '../src/core/values.ts';
-import { inputShaOf, reuseKeyText } from '../src/git/reusekey.ts';
-import { laneRevMatches, laneRevOf, parseObligations } from '../src/holistic/types.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
+import { inputShaOf,reuseKeyText } from '../src/git/reusekey.ts';
+import { laneRevMatches,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { parsePlan } from '../src/input/plan.ts';
-import { type SystemsMap, laneInput, laneSelected, laneTestFiles, pathClass, systemsMap, systemsMapInForce, unknownLaneSystems } from '../src/input/systems.ts';
+import { type SystemsMap,laneInput,laneSelected,laneTestFiles,pathClass,systemsMap,systemsMapInForce,unknownLaneSystems } from '../src/input/systems.ts';
 import { parseRepoConfig } from '../src/routing/layers.ts';
-import { commitAll, git, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
+import { commitAll,git,makeRepo,tmpDir,writeFiles } from './helpers/repo.ts';
 
 const MAP_JSON = {
   systems: {
@@ -147,18 +147,18 @@ describe('reusekey.input-sha', () => {
 
 describe('lanes.cadence', () => {
   const LANE = { id: 'l', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, resources: [], evidenceGlobs: [], evidenceExcludes: [] };
-  it('a dev.16 tier reads as its kind\'s cadence; tier beside cadence is refused; each kind takes its cadences', () => {
-    const cadence = (kind: 'spec' | 'suite' | 'arc', tier: string) => laneDefOf(kind)({ ...LANE, tier }, 'l').cadence;
-    assert.deepEqual([cadence('spec', 'fast'), cadence('spec', 'estate')], ['build', 'unit']);
-    assert.deepEqual([cadence('suite', 'fast'), cadence('suite', 'estate')], ['build', 'candidate']);
-    assert.deepEqual([cadence('arc', 'fast'), cadence('arc', 'estate')], ['build', 'candidate']);
-    assert.throws(() => laneDefOf('spec')({ ...LANE, tier: 'fast', cadence: 'build' }, 'l'), /tier/);
-    assert.throws(() => laneDefOf('spec')({ ...LANE, cadence: 'candidate' }, 'l'), /cadence/);
-    assert.throws(() => laneDefOf('arc')({ ...LANE, cadence: 'batch' }, 'l'), /cadence/);
-    assert.equal(laneDefOf('suite')({ ...LANE, cadence: 'batch' }, 'l').cadence, 'batch');
-    assert.throws(() => laneDef({ ...LANE, tier: 'fast' }, 'l'), SchemaError, 'the normalised form takes cadence only');
-    assert.throws(() => laneDefOf('spec')(LANE, 'l'), /cadence/, 'neither: required');
-    assert.ok(cadenceAtOrBefore('build', 'candidate') && cadenceAtOrBefore('candidate', 'candidate') && !cadenceAtOrBefore('batch', 'candidate'));
+  it('cadence is required, tier is refused, and each kind takes its cadences', () => {
+    assert.throws(() => laneDefOf('spec')({...LANE, tier: 'fast'}, 'l'), /cadence/);
+    const later = laneDefOf('spec')({...LANE, cadence: 'candidate'}, 'l');
+    assert.equal(later.cadence, 'candidate');
+    assert.deepEqual(lanePlacementReasons(later, { id: 'u1' } as never), [], 'local candidate lanes keep their delivering unit attribution');
+    assert.match(lanePlacementReasons({ ...later, placement: 'cross-system' }, { id: 'u1' } as never).join(), /except in a spike/);
+    assert.deepEqual(lanePlacementReasons(later, { id: 'u1', spike: { question: 'Does it work?' } } as never), []);
+    assert.throws(() => laneDefOf('arc')({...LANE, cadence: 'batch'}, 'l'), /cadence/);
+    assert.equal(laneDefOf('suite')({...LANE, cadence: 'batch'}, 'l').cadence, 'batch');
+    assert.equal(laneDef({...LANE, cadence: 'build'}, 'l').cadence, 'build');
+    assert.throws(() => laneDefOf('spec')(LANE, 'l'), /cadence/);
+    assert.ok(cadenceAtOrBefore('build', 'candidate') && !cadenceAtOrBefore('batch', 'candidate'));
   });
 
   it('systems, testArgv and stochastic: validated; never testArgv or stochastic on an arc lane', () => {
@@ -170,18 +170,18 @@ describe('lanes.cadence', () => {
     assert.throws(() => laneDefOf('suite')({ ...LANE, cadence: 'unit', stochastic: { runs: 2, minPasses: 3 } }, 'l'), /at most runs/);
     assert.throws(() => laneDefOf('suite')({ ...LANE, cadence: 'unit', systems: [] }, 'l'), SchemaError);
     assert.throws(() => parseObligations({
-      schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...LANE, cadence: 'candidate', reporter: 'jsonl', stochastic: { runs: 2, minPasses: 1 } }], obligations: [], mapping: { paths: [] },
+      schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...LANE, cadence: 'candidate', reporter: 'jsonl', stochastic: { runs: 2, minPasses: 1 } }], obligations: [], mapping: { systems: [] },
     }), /arc lane/);
   });
 
   it('a batch suite lane needs the holistic layer; a spec\'s forces are unique lane ids', () => {
     const plan = {
       schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
-      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [{ ...LANE, cadence: 'batch' }] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],
+      architectureDoc: 'A.md', direction: 'd', suite: { lanes: [{ ...LANE, cadence: 'batch' }] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
     };
     assert.throws(() => parsePlan(plan), /holistic/);
-    const spec = {
-      schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }], scope: ['src/**'],
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'c', failLoudIfUndelivered: false, state: 'active' }],
       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     };
     assert.deepEqual(specM1({ ...spec, forces: ['e2e'] }, 's').forces, ['e2e']);
@@ -189,15 +189,9 @@ describe('lanes.cadence', () => {
     assert.equal(specM1(spec, 's').forces, undefined);
   });
 
-  it('upgrade: a dev.16 lane rev (tier in place of cadence) matches the lane it read as; another does not', () => {
-    const legacy = { ...LANE, tier: 'fast', reporter: 'jsonl' };
-    const parsed = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [legacy], obligations: [], mapping: { paths: [] } }).lanes[0]!;
-    const { cadence: _c, ...rest } = parsed;
-    const dev16 = sha256Hex(canonicalJson({ ...rest, tier: 'fast' })).slice(0, 16) as never;
-    assert.notEqual(dev16, laneRevOf(parsed));
-    assert.equal(laneRevMatches(dev16, parsed), true);
-    const estate = sha256Hex(canonicalJson({ ...rest, tier: 'estate' })).slice(0, 16) as never;
-    assert.equal(laneRevMatches(estate, parsed), false, 'a build lane was fast');
-    assert.equal(laneRevMatches(dev16, { ...parsed, systems: ['api'] as SystemName[] }), false, 'a dev.17 field: no dev.16 form');
+  it('lane revisions compare exactly', () => {
+    const lane = laneDefOf('spec')({...LANE, cadence: 'build'}, 'l');
+    assert.equal(laneRevMatches(laneRevOf(lane), lane), true);
+    assert.equal(laneRevMatches('0000000000000000' as never, lane), false);
   });
 });

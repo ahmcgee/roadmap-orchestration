@@ -1,4 +1,4 @@
-// What a lens is shown of a range (DESIGN-1.0.md §2.5 "Run"; the lens-range fix, 2026-10-16): a lens's outstanding range
+// What a lens is shown of a range (DESIGN-1.0.md §2.5 "Campaign audit and findings"; the lens-range fix, 2026-10-16): a lens's outstanding range
 // is reviewed in chunks by publication, each attached within one byte budget, so no range is ever too large for a lens
 // call and every audit converges.
 //

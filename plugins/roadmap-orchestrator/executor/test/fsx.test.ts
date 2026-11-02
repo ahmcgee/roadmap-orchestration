@@ -1,19 +1,17 @@
 import assert from 'node:assert/strict';
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync,existsSync,openSync,readdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
-  AlreadyExistsError,
-  CounterRegressionError,
-  appendSync,
-  atomicJson,
-  canonicalJson,
-  durableMkdir,
-  durableRename,
-  durableWrite,
-  exclusiveCreate,
-  monotonic,
-  readJson,
+AlreadyExistsError,
+appendSync,
+atomicJson,
+canonicalJson,
+durableMkdir,
+durableRename,
+durableWrite,
+exclusiveCreate,
+readJson,
 } from '../src/core/fsx.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -78,12 +76,6 @@ test('fsx.exclusive-create-refuses-second', () => {
   exclusiveCreate(path, 'one');
   assert.throws(() => exclusiveCreate(path, 'two'), AlreadyExistsError);
   assert.equal(readFileSync(path, 'utf8'), 'one');
-});
-
-test('fsx.monotonic-never-decreases', () => {
-  monotonic({ attempts: 1, retries: 0 }, { attempts: 1, retries: 2, extra: 5 });
-  assert.throws(() => monotonic({ attempts: 2 }, { attempts: 1 }), CounterRegressionError);
-  assert.throws(() => monotonic({ attempts: 2 }, {}), /counter attempts regressed from 2 to absent/);
 });
 
 test('fsx.rename-and-mkdir', () => {

@@ -1,4 +1,4 @@
-// The flaky ledger (dev.17, lane topology; SCHEMAS.md "dev.17 records"): arc-wide, one entry per test (a lane and a test
+// The flaky ledger (dev.17, lane topology; SCHEMAS.md "Experience and evidence fact payloads"): arc-wide, one entry per test (a lane and a test
 // id) or per lane (a lane whose reporter names no failing test). Types and readers only; the lanes stage keeps it.
 import { type EnvId, type InvocationId, type LaneId, type Sha, type UnitId, envId, invocationIdOf, laneId, sha, unitId } from './ids.ts';
 import { type Read, SchemaError, arrayOf, literal, nullable, object, str, tagged } from './validate.ts';

@@ -18,8 +18,8 @@
 // drops answered items (`--actionable`) sees the answer first (paid M4a run 10, R-17).
 //
 // Every raised item is a `needs-user` line, blocking or not: the Monitor wakes the session on each (DESIGN §2), so the
-// holistic layer's items wake it as any other does: `owner-request`, the `divergence-digest`, the `convergence-bound`
-// and `convergence-identity` brakes, `audit-owed`, `finding-p1-escalated` and `new-finding-draining` (test
+// holistic layer's items wake it as any other does: `owner-request`, `finding-p1-escalated`
+// and `new-finding-draining` (test
 // watch.m3-kinds), and M4a's blocking `pack-review`. `run` may be `draining` (admissions
 // closed). A headless driver resumes its session on these lines and on `run` reaching `complete` (M4a R12).
 //
@@ -49,18 +49,18 @@
 // plan known defect until its fixer merges), `parked:retryable`, `merged`… The view is re-derived
 // only when the log, sched.json, the needs-user dir or the owner changed. Owner liveness is `status`'s
 // (`ownerState`).
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync,readdirSync,statSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { type ArcId, needsUserId, needsUserIdForOp } from './core/ids.ts';
+import { type ArcId,needsUserId,needsUserIdForOp } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { EVENTS_FILE, ObserverJournal, readJournal } from './core/log.ts';
+import { EVENTS_FILE,ObserverJournal,readJournal } from './core/log.ts';
 import type { AbsPath } from './core/values.ts';
-import { answerNames, commonDirOfRun, unappliedAnswers } from './answers.ts';
+import { answerNames,commonDirOfRun,unappliedAnswers } from './answers.ts';
 import { CliError } from './input/cli.ts';
-import { NEEDS_USER_DIR, readNeedsUser, readNeedsUserAck } from './needsuser.ts';
+import { NEEDS_USER_DIR,readNeedsUser,readNeedsUserAck } from './needsuser.ts';
 import { SCHED_FILE } from './schedule/scheduler.ts';
-import { ownerState, unitStates } from './status.ts';
+import { ownerState,unitStates } from './status.ts';
 
 export const WATCH_POLL_MS = 500;
 /** The default `--heartbeat-min`: the fixed slow cadence of `--actionable`'s heartbeat line. */

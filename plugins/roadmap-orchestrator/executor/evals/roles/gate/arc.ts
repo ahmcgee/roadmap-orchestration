@@ -1,3 +1,4 @@
+import { systemName } from '../../../src/core/ids.ts';
 // One gate trial end to end, through the production unit driver: the arc harness of the gate tests
 // (test/fixtures/unit-common.ts contextFor, stepUntil) over the fixture's repo. Plan-check and build are fake steps (the
 // build lays down the generated unit commit: the `checkoutTree` act), the lanes run for real and must be green (or red on
@@ -8,50 +9,48 @@
 // run.ts `--read-only`, readonly.ts) runs the real gate's call rewritten into the dev.12 gate's judgment profile.
 //
 // While the gate runs, a monitor reads its stream every 5 s: a trace line every 30 s (tools by name, subagents with model
-// and tokens, time to the first Read and Agent, coverage so far, token load, denials, calls of unavailable tools) and the
-// harness's brakes (no Read or Agent in 3 minutes while files are not inlined; coverage flat over 8 tool turns; token load
+// and tokens, time to the first inspection and Agent, coverage so far, token load, denials, calls of unavailable tools) and the
+// harness's brakes (no inspection or delegation in 3 minutes while files are not inlined; coverage flat over 8 tool turns; token load
 // over 3x the cell's median), which kill the session and void the trial as `runaway`; and the spend brake (`trialCap`,
 // run.ts `--trial-cap`): the session's live spend at list price (transcript.ts `liveUsd`, every gate call of the trial)
 // over the cap kills it and voids the trial as `cap`. Brakes are the harness's, never the gate's: method choices are
 // reported, not failed.
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { cpSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DiffShown, JudgmentInputs, StageOutcomeFact } from '../../../src/core/events.ts';
-import { gateLargeDiffOf } from '../../../src/core/upgrade.ts';
-import { diffBase } from '../../../src/git/transient.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
-import type { RiskTier } from '../../../src/routing/types.ts';
-import { modelInfo } from '../../../src/routing/models.ts';
-import { type InvocationId, invocationId, sha } from '../../../src/core/ids.ts';
+import type { DiffShown,JudgmentInputs,StageOutcomeFact } from '../../../src/core/events.ts';
+import { type InvocationId,invocationId,sha } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
+import { gateLargeDiffOf } from '../../../src/core/projections.ts';
 import { STDOUT_FILE } from '../../../src/core/records.ts';
-import { invocationDir } from '../../../src/pipeline/invoke.ts';
-import { judgmentOutput, judgmentSpawns } from '../../../src/pipeline/stages.ts';
-import { type GateOutput, validateGateOutput } from '../../../src/prompts/schemas.ts';
-import { promptFor } from '../../../src/prompts/index.ts';
-import { runnerFiles } from '../../../src/runner/files.ts';
-import { tmpDir } from '../../../test/helpers/repo.ts';
-import { type Step, readCalls, writeScenario } from '../../../test/helpers/scenario.ts';
-import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
-import { BUILD_REPORT, planCheckAnswer } from '../../../test/fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, U1, contextFor, isGateCall, laneJson, outcomes, stepUntil } from '../../../test/fixtures/unit-common.ts';
-import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
-import { TEST_ARGV } from '../gen/tsrepo.ts';
-import { type Transcript, type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
-import { isCorpusCell, type Cell } from './cells.ts';
-import { type AnswerKey, DERIVED, DERIVED_PATTERNS, type Fixture, buildFixture, materialise } from './fixture.ts';
-import { boundedDiff, diffPaths } from '../../../src/git/boundeddiff.ts';
-import { GATE_DIFF_BUDGET, largeDiffOf } from '../../../src/pipeline/gate.ts';
+import { absPath } from '../../../src/core/values.ts';
 import { guideAt } from '../../../src/corpus/guide.ts';
-import { derivePin, writePin } from '../../../src/corpus/pin.ts';
+import { derivePin,writePin } from '../../../src/corpus/pin.ts';
 import { EMPTY_REGISTRY } from '../../../src/corpus/registry.ts';
 import { openSource } from '../../../src/corpus/source.ts';
-import { PHASE0_FILE, PIN_FILE, writePhase0 } from '../../../test/helpers/corpusarc.ts';
-import { witnessLaneArgv, writeWitnessControl } from '../../../test/helpers/witness.ts';
-import { laneRevOf, parseObligations } from '../../../src/holistic/types.ts';
-import { absPath } from '../../../src/core/values.ts';
-import { type ClusterGrade, type Graded, grade, gradeClusters, touched } from './grade.ts';
+import { boundedDiff,diffPaths } from '../../../src/git/boundeddiff.ts';
+import { diffBase } from '../../../src/git/transient.ts';
+import { GATE_DIFF_BUDGET,largeDiffOf } from '../../../src/pipeline/gate.ts';
+import { invocationDir } from '../../../src/pipeline/invoke.ts';
+import { judgmentOutput,judgmentSpawns } from '../../../src/pipeline/stages.ts';
+import { promptFor } from '../../../src/prompts/index.ts';
+import { type GateOutput,validateGateOutput } from '../../../src/prompts/schemas.ts';
+import { type RepoConfig,parseRepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
+import { modelInfo } from '../../../src/routing/models.ts';
+import type { RiskTier } from '../../../src/routing/types.ts';
+import { runnerFiles } from '../../../src/runner/files.ts';
+import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
+import { BUILD_REPORT } from '../../../test/fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,U1,contextFor,isGateCall,laneJson,outcomes,stepUntil } from '../../../test/fixtures/unit-common.ts';
+import { PHASE0_FILE,PIN_FILE,writePhase0 } from '../../../test/helpers/corpusarc.ts';
+import { tmpDir } from '../../../test/helpers/repo.ts';
+import { type Step,readCalls,writeScenario } from '../../../test/helpers/scenario.ts';
+import { repositoryPaths,scanTranscript } from '../../m4a/transcript.ts';
+import { TEST_ARGV } from '../gen/tsrepo.ts';
+import { type Transcript,type Usage,hasInspection,parseEvents,readTranscript,sumUsage,toolCounts,unavailableCalls,usageOf } from '../transcript.ts';
+import { type Cell,isCorpusCell } from './cells.ts';
+import { type AnswerKey,DERIVED,DERIVED_PATTERNS,type Fixture,buildFixture,materialise } from './fixture.ts';
+import { type ClusterGrade,type Graded,grade,gradeClusters,touched } from './grade.ts';
 import type { ReadOnlyArm } from './readonly.ts';
 
 /**
@@ -70,7 +69,7 @@ const LANE = { id: 'unit', argv: TEST_ARGV } as const;
 // ---------------------------------------------------------------------------------------------------
 // The arc
 
-const finding = (path: string, text: string): JsonValue => ({ severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null });
+const finding = (path: string, text: string): JsonValue => ({evidence: ["fixture:1"],  severity: 'blocking', path, text, contractRef: null, experiments: [], debt: null, defect: 'incorrect-behaviour', reraises: null, hunk: null });
 
 /**
  * A degenerate gate's answer for the fixture (it knows the key: what a cheating gate would know). `large`: the diff is over
@@ -79,10 +78,10 @@ const finding = (path: string, text: string): JsonValue => ({ severity: 'blockin
 function fakeAnswer(kind: Exclude<FakeGate, 'overspend'>, key: AnswerKey, large: boolean): JsonValue {
   const decoy = key.changed.find((p) => p !== key.plant?.path) ?? 'ARCHITECTURE.md';
   const clusters: JsonValue = large ? [{ id: 'all', paths: ['**'], review: 'routine' }] : null;
-  const revise = (findings: JsonValue[]): JsonValue => ({ decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], unreviewed: [], clusters, rulings: [], ordering: null });
+  const revise = (findings: JsonValue[]): JsonValue => ({ rulings: [], decision: 'revise', findings, directives: ['Fix the findings.'], reasons: ['A1 is not met'], premises: [], standing: [], clusters,  ordering: null });
   switch (kind) {
     case 'approve-all':
-      return { decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters, rulings: [], ordering: null };
+      return {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], standing: [], clusters,  ordering: null };
     case 'revise-all':
       return revise([finding(decoy, 'This change is wrong.')]);
     case 'cite-every-path':
@@ -121,9 +120,9 @@ function overThreshold(repo: string, base: string, head: string, removes: readon
  */
 export function gateArm(risk: RiskTier, config: RepoConfig | null, readOnly = false): string {
   const r = resolveRouting(arcStack('default', config, null));
-  const t = r.table.gate[risk];
-  promptFor('gate', t.model); // a rebind onto a model with no gate prompt fails here, before any trial
-  return `gate.${risk} ${r.classes.gate[risk]}${r.bindings[r.classes.gate[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}${readOnly ? ' read-only' : ''}`;
+  const t = r.table.verifier[risk];
+  promptFor('verifier', t.model); // a rebind onto a model with no gate prompt fails here, before any trial
+  return `gate.${risk} ${r.classes.verifier[risk]}${r.bindings[r.classes.verifier[risk]] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}${readOnly ? ' read-only' : ''}`;
 }
 
 /** The scripted build call's backend and argv: the build seat the unit's risk picks under the run's routing. */
@@ -133,17 +132,18 @@ function buildCall(risk: RiskTier, config: RepoConfig | null): Pick<Step, 'as' |
 }
 
 /**
- * Lays out the fixture's repo, plan, spec and scenario (plan-check approves; the build commits the unit's tree). `readOnly`:
+ * Lays out the fixture's repo, plan, spec and scenario (pre-build approves; the build commits the unit's tree). `readOnly`:
  * a real gate runs as the read-only comparison arm.
  */
 export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config: RepoConfig | null = null, readOnly = false): ArcDescriptor {
+  config = { ...parseRepoConfig({ systemsMap: { systems: { app: { paths: [...SCOPE] } } } }), ...config, systemsMap: config?.systemsMap ?? parseRepoConfig({ systemsMap: { systems: { app: { paths: [...SCOPE] } } } }).systemsMap! };
   const repo = tmpDir('roles-repo');
   const { base, head } = materialise(f, repo);
   const planDir = tmpDir('roles-plan');
-  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
+  writeFileSync(join(planDir, 'u1.json'), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...laneJson(LANE), state: 'active' }],
     acceptance: f.acceptance.map((c) => ({ id: c.id, clause: c.clause, failLoudIfUndelivered: true, state: 'active' })),
-    scope: SCOPE, resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
+     resources: [], decisions: [], facts: [], cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     ...(isCorpusCell(f.cell) ? { obligations: ['I-1'] } : {}),
     ...(f.removes.length === 0 ? {} : { removes: f.removes }),
   }));
@@ -154,14 +154,13 @@ export function setupGateArc(f: Fixture, kind: GateKind, risk: RiskTier, config:
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base,
     worktreeRoot: tmpDir('roles-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', ...(isCorpusCell(f.cell) ? { corpus: PIN_FILE, phase0: PHASE0_FILE, holistic: { advances: ['V-1'], obligations: 'obligations.json' } } : { architectureDoc: 'ARCHITECTURE.md' }),
     direction: 'Keep every sweep mechanical: behaviour never changes unless the spec says so.', suite: { lanes: [laneJson({ ...LANE, id: 'suite' })] }, resources: [],
-    derived: DERIVED, units: [{ id: 'u1', spec: 'u1.json', risk, scope: SCOPE, resources: [] }],
+    derived: DERIVED, units: [{ id: 'u1', spec: 'u1.json', risk, systems: [systemName('app')], resources: [] }],
   }));
   if (isCorpusCell(f.cell)) writeCorpusInputs(repo, planDir, base);
   const scenarioDir = tmpDir('roles-scenario');
   const runDir = tmpDir('roles-run');
   const steps: Step[] = [
-    // The plan-check's risk is the dispatch's: it picks the gate's seat.
-    { as: 'claude', expect: { argv: ['-p'] }, acts: [{ type: 'planCheck', value: planCheckAnswer({ decision: 'approve', risk }) }] },
+    // The pre-build's risk is the dispatch's: it picks the gate's seat.
     // The build's backend is the one its risk routes to (built-in: codex low/med under the default profile, Claude Opus high).
     { ...buildCall(risk, config), acts: [{ type: 'checkoutTree', sha: head, message: f.message }, { type: 'emit', value: BUILD_REPORT }] },
     ...gateSteps(kind, f.key, kind !== 'real' && overThreshold(repo, base, head, f.removes), readOnly ? { repo, runDir } : null),
@@ -226,7 +225,7 @@ function startMonitor(
     }
   };
   const tick = (): void => {
-    const open = r.journal.view.openIntents().find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'gate');
+    const open = r.journal.view.openIntents().find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier');
     if (open === undefined || open.kind !== 'proc.spawn') return;
     const inv = invocationId(open.op, open.ordinal);
     if (braked !== null) return kill(inv);
@@ -237,7 +236,7 @@ function startMonitor(
     const t = readTranscript(parseEvents(readStdout(r, inv), true));
     const now = Date.now();
     const s = (ms: number | null): string => (ms === null ? '-' : `${Math.round(ms / 1000)}s`);
-    if (live.firstRead === null && t.calls.some((c) => c.name === 'Read' || c.name === 'Grep')) live.firstRead = now - live.startedAt;
+    if (live.firstRead === null && hasInspection(t)) live.firstRead = now - live.startedAt;
     if (live.firstAgent === null && t.calls.some((c) => c.name === 'Agent' || c.name === 'Task')) live.firstAgent = now - live.startedAt;
     firstRead ??= live.firstRead;
     firstAgent ??= live.firstAgent;
@@ -246,7 +245,7 @@ function startMonitor(
     while (live.coverage.length < t.toolTurns.length) live.coverage.push(covered);
     // Only when the prompt left something out: with every file inlined, answering without a tool is a method choice.
     if (omitted.length > 0 && live.firstRead === null && live.firstAgent === null && now - live.startedAt > NO_READ_MS) {
-      braked = { rule: 'no-read', detail: `no Read, Grep or Agent in ${NO_READ_MS / 60_000} minutes with ${omitted.length} files not inlined` };
+      braked = { rule: 'no-read', detail: `no inspection or delegation in ${NO_READ_MS / 60_000} minutes with ${omitted.length} files not inlined` };
     }
     const recent = live.coverage.slice(-FLAT_TURNS - 1);
     if (braked === null && omitted.length > 0 && covered < omitted.length && recent.length > FLAT_TURNS && recent[0] === recent.at(-1)) {
@@ -342,7 +341,7 @@ export type TrialOptions = Readonly<{
   seed: string;
   size: number;
   gate: GateKind;
-  /** The unit's risk tier (the plan's and the plan-check's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
+  /** The unit's risk tier (the plan's and the pre-build's), which picks the gate's seat (built-in since dev.17: frontier at every tier). */
   risk: RiskTier;
   /** The repo config whose `routing.classes` rebinds classes for the trial (run.ts `--rebind`), or null: the built-in bindings. */
   config: RepoConfig | null;
@@ -460,15 +459,15 @@ function writeCorpusInputs(repo: string, planDir: string, base: string): void {
   const pin = derived.pin;
   writePin(absPath(join(planDir, PIN_FILE)), pin);
   writePhase0(planDir, {});
-  const control = join(planDir, 'witness-control.json');
-  writeWitnessControl(control, { trees: { '*': { outcomes: { export: 'pass' } } } });
-  const lane = { ...laneJson({ id: 'journey', argv: witnessLaneArgv('jsonl', planDir, control) }), reporter: 'jsonl' };
-  const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'export', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
-  const witness = { lane: 'journey', testIds: ['export'] };
+  // Report the product's visible export test through the production reporter. A wrapper around a
+  // scripted witness leaked the executor source path to the judge and did not execute this test.
+  const testPath = 'packages/*/test/vessel-export.test.ts';
+  const lane = {...laneJson({id: 'journey', argv: ['node', '--test', testPath]}), reporter: 'node-test', testPaths: [testPath]};
+  const witness = { lane: 'journey', testIds: ['export record shape'] };
   writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
-    schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { paths: [] },
+    schema: 'roadmap/obligations-m3', cutLine: 'vessel export ships', lanes: [lane], mapping: { systems: [] },
     obligations: [{ id: 'I-1', rev: 1, statement: 'Vessel exports satisfy the export contract.', rule: { id: 'T-1', textSha256: pin.rules[0]!.textSha256 }, serves: ['V-1'], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } }],
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} }, deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' } }],
     census: pin.rules.map((r) => ({ rule: r.id, state: r.id === 'T-1' ? { type: 'obligation', id: 'I-1' } : { type: r.id === 'T-2' ? 'untestable' : 'out-of-slice' } })),
   }));
 }

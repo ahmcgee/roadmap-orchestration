@@ -34,8 +34,8 @@ function invoke(scenario: Scenario, backend: Backend, cwd: string, prompt = 'Rep
     terminal = { ...base, outputPath, role: 'build', session: { backend: 'codex', mode: 'fresh' } };
   } else {
     const session = freshJudgmentSession();
-    call = { kind: 'claude-judgment', role: 'planCheck', triple: CLAUDE, session, schemaText: SCHEMA_TEXT, system: 'Reply with the JSON the schema asks for.', evidenceDirs: [] };
-    terminal = { ...base, outputPath: absPath(join(invDir, 'stdout')), role: 'gate', session };
+    call = { kind: 'claude-judgment', role: 'verifier', triple: CLAUDE, session, schemaText: SCHEMA_TEXT, system: 'Reply with the JSON the schema asks for.', evidenceDirs: [] };
+    terminal = { ...base, outputPath: absPath(join(invDir, 'stdout')), role: 'verifier', session };
   }
   const launch = writeLaunch(invDir, { argv: backendArgv(call), cwd, terminal, stdinPath });
   runLaunch(invDir, launch, { PATH: `${scenario.binDir}:/usr/bin:/bin`, ROADMAP_INV: 'arc-1/7#1' }, TIMEOUT_MS);
@@ -160,8 +160,8 @@ describe('fakes', () => {
       const s = oneStep('claude', [{ type: 'barrier', name: 'mid', timeoutMs: TIMEOUT_MS }, { type: 'hang', ms: 50 }, { type: 'emit', value: OK }]);
       const invDir = tmpDir('inv');
       const session = freshJudgmentSession();
-      const terminal: LaunchTerminal = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath: absPath(OK_SCHEMA), outputPath: absPath(join(invDir, 'stdout')), role: 'gate', session };
-      const argv = backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple: CLAUDE, session, schemaText: SCHEMA_TEXT, system: 'Reply with the JSON the schema asks for.', evidenceDirs: [] });
+      const terminal: LaunchTerminal = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath: absPath(OK_SCHEMA), outputPath: absPath(join(invDir, 'stdout')), role: 'verifier', session };
+      const argv = backendArgv({ kind: 'claude-judgment', role: 'verifier', triple: CLAUDE, session, schemaText: SCHEMA_TEXT, system: 'Reply with the JSON the schema asks for.', evidenceDirs: [] });
       const launch = writeLaunch(invDir, { argv, cwd: invDir, terminal, stdinPath: null });
       const { spawn } = await import('node:child_process');
       const child = spawn('claude', argv.slice(1), { cwd: invDir, env: { PATH: `${s.binDir}:/usr/bin:/bin` }, stdio: ['ignore', 'pipe', 'inherit'] });

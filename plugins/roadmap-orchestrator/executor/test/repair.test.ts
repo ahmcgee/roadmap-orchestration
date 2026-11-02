@@ -1,47 +1,41 @@
 // M3 step B3: findings and repair over real arcs (real git, real processes, fake backends and witness lanes scripted per
 // tree). Named tests: reproduce.reproduced, reproduce.not-reproduced, reproduce.inapplicable, mutant.kill-in-candidate,
 // mutant.survivor-red, p1.blocks-selecting, p1.repair-exempt, p1.opened-mid-candidate-blocks-ff (G10), repair.batch
-// (R7 with B2's publishBatch), findings.plan-check-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
+// (R7 with B2's publishBatch), findings.pre-build-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
 // cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
-import { managedEnv, startedCalls } from './fixtures/env-common.ts';
-import { idleEnvironments } from '../src/resources/environments.ts';
-import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf } from '../src/core/events.ts';
-import { invocationId, findingId, jobId, resourceName, sha, unitId } from '../src/core/ids.ts';
+import { describe,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { findingId,invocationId,jobId,resourceName,sha,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { mutantSubjectDefault } from '../src/core/upgrade.ts';
+import { mutantOf } from '../src/core/projections.ts';
 import { absPath } from '../src/core/values.ts';
 import { verifySnapshot } from '../src/git/snapshot.ts';
-import { batchable, findingMetrics, openFinding, ruleFinding } from '../src/holistic/findings.ts';
-import { SPEC_INPUT, inputPath } from '../src/input/inforce.ts';
+import { batchable,findingMetrics,openFinding,ruleFinding } from '../src/holistic/findings.ts';
 import { publishBatch } from '../src/pipeline/integrate.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { runnerFiles } from '../src/runner/files.ts';
 import { observations } from '../src/pipeline/lanes.ts';
-import { repairUnits, specFacts } from '../src/pipeline/reproduce.ts';
-import { planCheck } from '../src/pipeline/stages.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
+import { repairUnits,specFacts } from '../src/pipeline/reproduce.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
+import { runnerFiles } from '../src/runner/files.ts';
 import { admitter } from '../src/schedule/ready.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { holisticArc } from './fixtures/brake-common.ts';
+import { managedEnv,startedCalls } from './fixtures/env-common.ts';
+import { wire } from './fixtures/publish-common.ts';
+import {
+MAPPED,MUTANT_PATCH,STALE_PATCH,STRICT_TEST,buildOf,openBefore,tipOf,treeWith,vacuityArc,vacuityDraft as vacuityDraftOf,witnessDraft,
+} from './fixtures/repair-common.ts';
+import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcRun, U1, codexStep, contextFor, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { FF_ELIGIBILITY, MUTANT_APPLY, crashCells } from './matrix.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
-import { holisticArc } from './fixtures/brake-common.ts';
-import { wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckRepairStep, planCheckStep, started } from './fixtures/stage-common.ts';
-import {
-  MAPPED, MUTANT_PATCH, STALE_PATCH, STRICT_TEST, buildOf, openBefore, tipOf, treeWith, vacuityArc, vacuityDraft as vacuityDraftOf, witnessDraft,
-} from './fixtures/repair-common.ts';
-import { type ArcRun, U1, applyBody, codexStep, commandContextFor, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { FF_ELIGIBILITY,MUTANT_APPLY,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const V1 = unitId('v1');
@@ -55,7 +49,7 @@ const finding = (r: ArcRun, id = F1) => r.journal.view.holistic().findings.find(
 const worktrees = (r: ArcRun): readonly string[] => git(r.d.repo, 'worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ') && l.includes('.mutant-'));
 
 describe('vacuity repairs: reproduce and acceptance', () => {
-  test('reproduce.reproduced + mutant.kill-in-candidate: the mutant survives the old witness at the tip (reproduced, on to plan-check); the candidate kills it; the repair publishes and resolves its finding', T, async () => {
+  test('reproduce.reproduced + mutant.kill-in-candidate: the mutant survives the old witness at the tip (reproduced, on to pre-build); the candidate kills it; the repair publishes and resolves its finding', T, async () => {
     const state = tmpDir('repair-powered-env');
     const cmd = { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
     const { d, control } = vacuityArc({
@@ -80,7 +74,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.deepEqual(spawn!.expect.subject, { purpose: 'mutant', of: { type: 'finding', finding: 'F-1' }, lane: 'journey', laneRev: w.laneRev, tree: patchedTip });
       assert.deepEqual(spawn!.parent, { type: 'stage', unit: 'v1', stage: 'reproduce', attempt: 1 });
       const apply = r.journal.view.opsOf('mutant.apply')[0]!;
-      assert.deepEqual([apply.expect.at, mutantSubjectDefault(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
+      assert.deepEqual([apply.expect.at, mutantOf(apply.expect), r.journal.view.doneOf(apply.op)?.kind === 'mutant.apply' && r.journal.view.doneOf(apply.op)?.outcome], [tip, { type: 'finding', finding: 'F-1' }, { kind: 'applied', tree: patchedTip }]);
       assert.deepEqual(worktrees(r), [], 'the mutant worktree is removed');
       assert.equal([...observations(r.ctx).values()].some((o) => o.key.treeSha === patchedTip), false, 'a mutant run never certifies (G13)');
       assert.equal(specFacts(r.ctx)(r.unit('v1')).reproduces, true);
@@ -88,7 +82,7 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       // The candidate: its mutant killed by the strict test (scripted: t1 fails on the patched candidate tree).
       scriptTree(control, treeWith(d.repo, tip, STRICT_TEST, MUTANT_PATCH), { outcomes: { t1: 'fail' } });
       assert.deepEqual(await runUnit(r.ctx, r.unit('v1'), admitAll), { kind: 'merged' }, outcomes(d, 'v1').join(' '));
-      assert.deepEqual(outcomes(d, 'v1'), ['reproduce:reproduced', 'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed',
+      assert.deepEqual(outcomes(d, 'v1'), ['reproduce:reproduced', 'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed',
         'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published']);
       const candidate = r.journal.view.opsOf('candidate.merge').at(-1)!.post.new;
       const kill = mutantWitnessed(r).at(-1)!;
@@ -163,8 +157,8 @@ describe('vacuity repairs: reproduce and acceptance', () => {
       assert.deepEqual(await runUnit(r.ctx, r.unit('v1'), admitAll), { kind: 'merged' }, outcomes(d, 'v1').join(' '));
       const o = outcomes(d, 'v1');
       assert.deepEqual(o.filter((x) => x.startsWith('candidate:')), ['candidate:red', 'candidate:green']);
-      const red = facts(r).find((f) => f.kind === 'stage-outcome' && f.stage === 'candidate' && f.outcome === 'red');
-      assert.equal(red?.kind === 'stage-outcome' && red.chargeable, true, 'a survivor is charged');
+      const red = facts(r).find((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.stage === 'candidate' && f.outcome === 'red');
+      assert.equal(red?.kind === 'stage-outcome' && 'unit' in red && red.chargeable, true, 'a survivor is charged');
       const kills = mutantWitnessed(r);
       assert.equal(kills.length, 3, 'reproduce, the red candidate, the green one');
       assert.deepEqual(moves(r), ['F-1:owned{v1}', 'F-1:fixed-on-branch{v1}', 'F-1:owned{v1}', 'F-1:fixed-on-branch{v1}', 'F-1:resolved'],
@@ -238,7 +232,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
       assert.deepEqual(r.journal.view.opsOf('integration.ff'), [], 'no ff was begun');
       await step(r.ctx, r.unit('u1'));
       assert.equal(outcomes(d, 'u1').at(-1), 'candidate:finding-blocked');
-      ruleFinding(r.journal, F1, 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+      ruleFinding(r.journal, F1, 'dismissed', { type: 'code', reason: 'close-out' });
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       assert.equal(r.journal.view.unit(unitId('u1')).counters.chargeableFailures, 0);
     } finally {
@@ -254,7 +248,7 @@ describe('P1 blocking and repair (G10, R6, R7)', () => {
         { id: 'u2', origin: 'repair', repairs: ['F-1'], obligations: ['I-1'], lanes: [DIV_LANE] },
       ],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
-      mapping: [...MAPPED, { pattern: 'lib/**', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      mapping: [...MAPPED, { system: 'lib', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
       beforeStart: openBefore(witnessDraft('I-2')),
     });
     const r = contextFor(d);
@@ -343,7 +337,7 @@ describe(`matrix row ${FF_ELIGIBILITY}`, () => {
           assert.equal(git(d.repo, 'rev-parse', 'main'), tip, 'still nothing published');
           assert.deepEqual(r.journal.view.publications(), []);
           assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0, 'uncharged');
-          ruleFinding(r.journal, F1, 'dismissed', { type: 'checkpoint', job: jobId('ckpt', 1) });
+          ruleFinding(r.journal, F1, 'dismissed', { type: 'code', reason: 'close-out' });
           assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d, 'u1').join(' '));
         } else {
           assert.deepEqual([done.outcome, done.recoveredBy], [{ kind: 'published' }, c.label === 'ff.act-start' ? 'redone' : 'reconciled']);
@@ -360,85 +354,6 @@ describe(`matrix row ${FF_ELIGIBILITY}`, () => {
       }
     });
   }
-});
-
-// ---------------------------------------------------------------------------------------------------
-// Plan-check (R17, AX carry-forward)
-
-describe('plan-check and the findings store', () => {
-  test('findings.plan-check-vision-conflict: each vision conflict opens a P3 plan-check finding from its attempt, never a redirect by itself; a re-check reporting it again merges; a conflict citing no active clause is malformed', T, async () => {
-    const note = 'A1 accepts any input, against V-1\'s trust.';
-    const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
-    const { d } = holisticArc({
-      steps: [
-        planCheckStep({ decision: 'redirect', patch, visionConflict: [{ clauses: ['V-1'], note }] }),
-        planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-1'], note }] }),
-      ],
-      units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {},
-    });
-    const r = contextFor(d);
-    try {
-      await step(r.ctx, r.unit('u1'));
-      await step(r.ctx, r.unit('u1'));
-      assert.deepEqual(outcomes(d, 'u1'), ['plan-check:redirect', 'plan-check:approve'], 'the conflict decided nothing');
-      const found = r.journal.view.holistic().findings;
-      assert.equal(found.length, 1, 'the second report merged into the first');
-      assert.deepEqual([found[0]!.lens, found[0]!.severity, found[0]!.visionClauses, found[0]!.claim, found[0]!.obligation, found[0]!.source, found[0]!.state],
-        ['plan-check', 'P3', ['V-1'], note, null, { type: 'stage', unit: 'u1', stage: 'plan-check', attempt: 1 }, 'open']);
-    } finally {
-      r.journal.close();
-    }
-    const bad = holisticArc({
-      steps: [
-        planCheckStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }),
-        planCheckRepairStep({ decision: 'approve', visionConflict: [{ clauses: ['V-9'], note }] }, ['visionConflict cites V-9, which is no active clause of the vision in force']),
-      ],
-      units: [{ id: 'u1', obligations: ['I-1'] }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {},
-    });
-    const b = contextFor(bad.d);
-    try {
-      await step(b.ctx, b.unit('u1'));
-      assert.deepEqual(outcomes(bad.d, 'u1'), ['plan-check:malformed']);
-      assert.deepEqual(b.journal.view.holistic().findings, []);
-    } finally {
-      b.journal.close();
-    }
-  });
-
-  test('plancheck.reads-captured-spec: an evidence-only edit landing between the capture and the @cpu grant keeps the captured rev; the redirect is read against it and patches the spec in force at that rev', T, async () => {
-    const patch = [{ op: 'add', section: 'decisions', item: { id: 'D1', text: 'mul multiplies.' } }];
-    const d = setupArc({ steps: [planCheckStep({ decision: 'redirect', patch })] });
-    const r = contextFor(d);
-    try {
-      let open = (): void => {};
-      const granted = new Promise<void>((resolve) => { open = resolve; });
-      const ctx = { ...r.ctx, acquire: async (...a: Parameters<typeof r.ctx.acquire>) => { await granted; return r.ctx.acquire(...a); } };
-      const checking = planCheck(ctx, r.unit('u1'));
-      for (let i = 0; i < 100 && r.journal.view.judgmentInputs(U1, 'plan-check', 1) === null; i++) await sleep(50);
-      const captured = r.journal.view.judgmentInputs(U1, 'plan-check', 1);
-      assert.ok(captured !== null && captured.specRev === 1);
-      assert.equal(r.journal.view.unit(U1).open, null, 'the attempt has not started: it waits for @cpu');
-
-      const specPath = join(d.planPath, '..', 'u1.json');
-      const spec = JSON.parse(readFileSync(specPath, 'utf8')) as { lanes: Record<string, unknown>[] };
-      writeFileSync(specPath, JSON.stringify({ ...spec, lanes: spec.lanes.map((l) => ({ ...l, evidenceGlobs: ['out/**'] })) }));
-      const applied = await applyCommand(commandContextFor(r), submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
-      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
-      const edited = r.journal.view.unit(U1).spec!;
-      assert.deepEqual([edited.rev, edited.sha256 === captured.specSha256], [1, false], 'an evidence-only edit: the same rev, new bytes');
-
-      open();
-      const done = started(await checking);
-      assert.equal(done.specRev, captured.specRev, 'read against the captured rev');
-      assert.equal(done.outcome.kind, 'redirect');
-      const patched = r.journal.view.opsOf('spec.patch').at(-1)!;
-      assert.deepEqual([patched.expect.expectRev, patched.expect.oldSha256], [1, edited.sha256], 'the patch applies to the spec in force at the captured rev');
-      const after = JSON.parse(readFileSync(inputPath(r.ctx.runDir, r.journal.view.unit(U1).spec!.sha256, SPEC_INPUT), 'utf8')) as { rev: number; lanes: { evidenceGlobs: string[] }[]; decisions: { id: string }[] };
-      assert.deepEqual([after.rev, after.lanes[0]!.evidenceGlobs, after.decisions.map((x) => x.id)], [2, ['out/**'], ['D1']], 'the evidence edit is kept under the redirect');
-    } finally {
-      r.journal.close();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------------------------------

@@ -1,9 +1,9 @@
 // One polish-judge trial end to end, through the production compare job, as the walkthrough eval runs the production
 // walk: the walkthrough eval's milestone arc (walkthrough/arc.ts `setupMilestoneArc`) over the cell's before product.
-// u1 merges through the arc harness (fake plan-check, build and gate; the product's own tests run for real), which makes
+// u1 merges through the arc harness (fake pre-build, build and gate; the product's own tests run for real), which makes
 // walk-1 due; walk-1 runs through the production walk job with a scripted walker whose one polish proposal is the cell's
 // (its text, its journey, its unit u2 over the reference and the product, citing the walk's note of what it saw); the
-// production polish revision (src/walk/polish.ts `applyPolish`) admits u2; u2 runs its pipeline (fake plan-check, a fake
+// production polish revision (src/walk/polish.ts `applyPolish`) admits u2; u2 runs its pipeline (fake pre-build, a fake
 // build committing the cell's after-state, real lanes, fake gate) and waits at its candidate admission for its compare;
 // then `runCompare` (src/walk/compare.ts) runs compare-1 exactly as an arc does: the capture under the fence, the
 // reservation, two detached checkouts brought up side by side (before: the integration tip; after: u2's approved
@@ -26,7 +26,7 @@ import { jobEvidenceRoot } from '../../../src/git/snapshot.ts';
 import { readClaude } from '../../../src/backends/claude.ts';
 import { runUnit, type Gate } from '../../../src/pipeline/unit.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type PolishJudgeOutput, validatePolishJudgeOutput, validateWalkthroughOutput } from '../../../src/prompts/schemas.ts';
+import { type PolishJudgeOutput, validateWalkthroughOutput, experiencePolish } from '../../../src/prompts/schemas.ts';
 import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
 import { holisticContexts } from '../../../src/schedule/scheduler.ts';
 import { type CompareOutcome, judgeRefusals, runCompare, tweakOf } from '../../../src/walk/compare.ts';
@@ -45,7 +45,7 @@ import { OVERSPEND, escapeRe, filesUnder, readStdout, roleSpawns, setupMilestone
 import { MILESTONE_UNIT, walkRepoConfig } from '../walkthrough/fixture.ts';
 import type { PolishCell } from './cells.ts';
 import { expectedDecision } from './families.ts';
-import { COMPARE_JOB, POLISH_SCOPE, POLISH_UNIT, type PolishFixture, WALK_JOB, WALK_NOTE, buildPolishFixture, keyOf } from './fixture.ts';
+import { COMPARE_JOB, POLISH_UNIT, type PolishFixture, WALK_JOB, WALK_NOTE, buildPolishFixture, keyOf } from './fixture.ts';
 
 /**
  * Degenerate judges, each knowing the key (what a cheating judge would know): `oracle` keeps exactly the better
@@ -111,10 +111,10 @@ export type PolishWorkerArgs = Readonly<{
 /** The polishJudge seat under the run's routing (the walk roles in force, `--rebind` applied), as the arm names it. */
 export function polishSeat(config: RepoConfig | null): Readonly<{ arm: string }> {
   const r = resolveRouting({ ...arcStack('default', config, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
-  const t = r.table.polishJudge.arc;
+  const t = r.table.experienceVerdict.arc;
   if (t.backend !== 'claude') throw new Error(`the polishJudge seat bound to ${t.model}: compares run on Claude only (codex-judgment)`);
-  promptFor('polishJudge', t.model); // a rebind onto a model with no polishJudge prompt fails here, before any trial
-  const cls = r.classes.polishJudge.arc;
+  promptFor('experienceVerdict', t.model); // a rebind onto a model with no polishJudge prompt fails here, before any trial
+  const cls = r.classes.experienceVerdict.arc;
   return { arm: `polishJudge.arc ${cls}${r.bindings[cls] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}` };
 }
 
@@ -124,12 +124,12 @@ export function polishSeat(config: RepoConfig | null): Readonly<{ arm: string }>
 /** walk-1's report: every journey completed, nothing found, the cell's one proposal (its unit u2 at rev 1). */
 function walkAnswer(f: PolishFixture, planDir: string): JsonValue {
   const u1 = JSON.parse(readFileSync(join(planDir, `${MILESTONE_UNIT}.json`), 'utf8')) as Record<string, unknown>;
-  const spec = admitSpecWire({ ...u1, unit: POLISH_UNIT, rev: 1, scope: [...POLISH_SCOPE] });
+  const spec = admitSpecWire({ ...u1, unit: POLISH_UNIT, rev: 1 });
   const value = {
     final: true,
     journeys: f.walk.milestone.journeys.map((j) => ({ journey: j.id, outcome: 'completed', evidence: [WALK_NOTE], note: 'walked' })),
     findings: [],
-    polish: [{ journey: f.family.journey, evidence: [WALK_NOTE], text: f.cell.proposal, unit: { id: POLISH_UNIT, scope: [...POLISH_SCOPE], spec } }],
+    polish: [{ journey: f.family.journey, evidence: [WALK_NOTE], text: f.cell.proposal, unit: { id: POLISH_UNIT, systems: ['app'], spec } }],
     premises: [],
     reasons: ['walked every journey'],
   } as unknown as JsonValue;
@@ -171,7 +171,7 @@ function judgeSteps(kind: JudgeKind, f: PolishFixture, evidenceDir: string): rea
 function refusals(value: unknown, dirs: readonly string[]): string {
   let output: PolishJudgeOutput;
   try {
-    output = validatePolishJudgeOutput(value);
+    output = experiencePolish(value);
   } catch (e) {
     if (e instanceof SchemaError) return `off its schema: ${e.message}`;
     throw e;
@@ -200,7 +200,7 @@ export async function runPolishTrial(o: Omit<PolishWorkerArgs, 'cell'> & Readonl
   writeFileSync(join(o.out, 'key.json'), `${JSON.stringify(keyOf(f, o.trial, revParse(d.repo, 'main')), null, 2)}\n`);
   const r = contextFor(d);
   const { ctx, w } = walkContext(r);
-  const h = holisticContexts(w).checkpoint;
+  const h = holisticContexts(w).revision;
   const tick = setInterval(() => w.arbiter.wake(), 50);
   const unit = POLISH_UNIT as UnitId;
   // Admission as the scheduler gives a polish unit: everything but a candidate its compare has not kept.
@@ -269,7 +269,7 @@ export async function runPolishTrial(o: Omit<PolishWorkerArgs, 'cell'> & Readonl
   const files = filesUnder(join(o.out, 'evidence'));
   const counts = toolCounts(t);
   const usage = sumUsage(perCall.flatMap((c) => (c.usage === null ? [] : [c.usage])));
-  const answer = decision !== null && value !== null ? validatePolishJudgeOutput(value) : null;
+  const answer = decision !== null && value !== null ? experiencePolish(value) : null;
   const row: PolishRow = {
     set: o.set, cell: o.cell.id, family: f.family.id, variant: o.cell.variant, trial: o.trial, judge: o.judge, void: voided,
     decision, correct: decision === null ? null : decision === expectedDecision(o.cell.variant), reasons: answer?.reasons ?? [],

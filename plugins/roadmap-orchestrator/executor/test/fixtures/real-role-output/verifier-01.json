@@ -1,0 +1,94 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "convert.ts",
+      "text": "A1 requires toFahrenheit to round to the nearest integer, which contradicts non-negotiable V-2: results are never rounded silently and the caller chooses the precision. A build that meets A1 breaks the vision, and a build that honours V-2 fails A1, so the builder cannot resolve this. The code at the checkout already has the A1 behaviour: it rounds unconditionally and has no precision input. The loss is material for V-3, where a traveller trusts the number without checking it: by hand calculation, toFahrenheit(36.6) gives 98 instead of 97.88, and converting back gives 36.67 instead of 36.6. Arithmetic is from reading the code; nothing was executed.",
+      "evidence": [
+        "spec A1: 'toFahrenheit rounds to the nearest integer'",
+        "vision V-2: 'Results are never rounded silently; the caller chooses the precision.'",
+        "vision V-3: 'trusts the number without checking it by hand'",
+        "convert.ts:1: Math.round(c * 9 / 5 + 32), with no precision parameter"
+      ],
+      "contractRef": "V-2",
+      "experiments": [],
+      "debt": null,
+      "defect": "requirement-unmet",
+      "reraises": null,
+      "hunk": {
+        "path": "convert.ts",
+        "line": 1
+      }
+    },
+    {
+      "severity": "note",
+      "path": "convert.ts",
+      "text": "A1 is silent on toCelsius precision, so the two directions behave differently. toCelsius returns the full floating-point result while toFahrenheit rounds, and neither lets the caller choose precision as V-2 requires. The A1 amendment should define one precision contract for both functions, including what happens when the caller gives no precision. An unrounded default would be consistent with V-2.",
+      "evidence": [
+        "spec A1 states a rounding rule for toFahrenheit only",
+        "convert.ts:1 rounds",
+        "convert.ts:2: (f - 32) * 5 / 9, unrounded and with no precision parameter"
+      ],
+      "contractRef": "V-2",
+      "experiments": [],
+      "debt": null,
+      "defect": "requirement-unmet",
+      "reraises": null,
+      "hunk": {
+        "path": "convert.ts",
+        "line": 2
+      }
+    },
+    {
+      "severity": "note",
+      "path": "convert.ts",
+      "text": "The spec names no proof, and the checkout has no tests. Both exports already exist, so A1 is already met as written, and a build could add nothing and still appear complete. The build should add tests that call the exports directly. They should cover known points (0C/32F, 100C/212F, -40C/-40F), a non-integer result that shows no silent rounding (36.6C gives about 97.88F), the default and caller-chosen precision paths, and swapped formulas.",
+      "evidence": [
+        "spec contains only A1 and no proof or witness",
+        "a glob of the checkout returned only convert.ts",
+        "convert.ts:1-2 already exports both functions"
+      ],
+      "contractRef": "A1",
+      "experiments": [],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [
+    "Root: amend A1 via apply --reason before the build relies on it. Replace 'rounds to the nearest integer' with a contract where the caller chooses the precision and nothing is rounded silently, or explicitly revise V-2 if integer rounding is really intended.",
+    "Builder: once A1 is settled, apply one precision contract to both toFahrenheit and toCelsius. If A1 is still unamended, do not treat the unconditional Math.round on convert.ts:1 as compliant; report the conflict at the gate.",
+    "Builder: add tests through the convert.ts exports for the known conversion points, a non-integer result, the default and caller-chosen precision paths, and swapped formulas."
+  ],
+  "reasons": [
+    "Spec A1 directly contradicts vision non-negotiable V-2, and only the root can amend the plan or the vision.",
+    "This pre-build review annotates the build and does not hold the unit. The blocking finding stands as an item the gate must see addressed or rebutted.",
+    "Findings rest on reading the spec, vision and convert.ts. No experiments were run."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit already rounds unconditionally to an integer and takes no precision input.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "toCelsius already exists, returns an unrounded result and takes no precision input.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

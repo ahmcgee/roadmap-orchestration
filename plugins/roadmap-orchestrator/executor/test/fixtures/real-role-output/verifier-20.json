@@ -1,0 +1,241 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        "src/window.js:35",
+        "src/store.js:37",
+        "data/shelf.json:4",
+        "spec D1, D2, F2"
+      ],
+      "severity": "note",
+      "path": "src/server.js",
+      "text": "D1 and D2 collide on holds with no readable end. D1 shows GET /reserved/<id> 'while the book is held', and D2 words the end with holdEndWords(reservedUntil). isHeld is true for b2 (no reservedUntil, F2) and for an unreadable end, but holdEndWords has no guard. Absent throws, so the page is a 500. null gives 'Thursday at midnight (1 January)'. '8 November' gives an invented date. A neighbour could be told a false deadline, or see a crash, on a page reachable by editing the URL. /reserved/<id> should show the confirmation only for a held book with a readable reservedUntil, and otherwise redirect to /. store.js keeps its end reader private (endOf), so the page needs a small exported helper; changing the store for this serves the intent. The witness should GET /reserved/b2 and check the redirect.",
+      "contractRef": "T-20",
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "isHeld(b2) true\nwords null => Thursday at midnight (1 January)\nwords undefined THROWS Cannot read properties of undefined (reading '0')\nwords 8 November => Thursday at midnight (8 November)"
+        }
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "src/store.js:214",
+        "src/store.js:82"
+      ],
+      "severity": "note",
+      "path": "test/reserve.test.js",
+      "text": "A byte comparison can pass on a wrong implementation. updateShelf always saves unless change throws, so a replay or refusal that simply returns from change rewrites the file. A4, A5 and A9 therefore have to refuse by throwing. Once a real POST has run, the file is already in saveShelf's canonical format, so a replay that re-saves leaves the bytes identical while still writing. The A9 'without a new write' witness must also compare inode (the atomic rename changes it) or mtime. T-6's witness should use a non-canonical seed or the same inode check, so a re-save cannot pass unseen.",
+      "contractRef": "T-6",
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "wrong impl (replay saves): bytes same true | inode same false"
+        },
+        {
+          "command": "node /redacted/path",
+          "output": "byte-identical after a returning change? false\nbyte-identical after a throwing change? true"
+        }
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "spec A9, D1",
+        "src/store.js:1",
+        "data/shelf.json:4",
+        "docs/design/page/README.md:172"
+      ],
+      "severity": "note",
+      "path": "src/server.js",
+      "text": "The spec leaves the form token's edge cases open, and a plain comparison breaks V-7. URLSearchParams.get returns null for a POST with no token, and that equals a seeded hold's claim:null (and == an absent claim). A tokenless POST on someone else's book would then get their confirmation instead of T-6. Required behaviour: (a) a missing or empty token never matches a claim; (b) a token match counts only while isHeld, so a lapsed claim is not replayed as a confirmation; (c) a form re-rendered by M4, M6 or the name-limit refusal keeps the posted token. With a fresh token, a double tap where one tap hits busy and retries would be told its own book was taken, breaking A9; (d) the token is length-limited and shape-checked before it is stored; (e) the spec does not say what a tokenless POST on a free book does, so choose one behaviour and test it, and never store claim:null on a new hold. The witness should also fire same-token POSTs at the same moment, since a double tap is concurrent, not only one after another.",
+      "contractRef": "T-32",
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "claim null === get(token) true | claim absent == get(token) true"
+        }
+      ],
+      "debt": null,
+      "defect": "contract-violation",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "docs/design/page/README.md:25",
+        "docs/design/page/README.md:48",
+        "docs/design/page/README.md:58",
+        "docs/design/page/README.md:74",
+        "spec A1, A2, A9, D1"
+      ],
+      "severity": "note",
+      "path": "docs/design/page/README.md",
+      "text": "A1 says 'Follow docs/design/page/', but the design record contradicts this spec in three places. It has the POST answer with the confirmation at status 200 (A9 says 303 to GET /reserved/<id>). M1's heading is `It's yours, {name}.` (D1 and A2 show no name). It says 'Nothing hidden but the book id in the URL' (D1 adds a hidden token). The spec is newer and should win. Following M1 literally on a public URL would break T-18, and passing the name in the redirect's Location to keep the heading would put it in URLs and history. Word the heading without the name, keep the rest of M1, and update the design record in this unit so page-access does not build to the stale text. A8's name-limit and oversized-body refusals have no M-number either: give them wording under 'Rules for every refusal' (first in main, role=alert, no 'invalid' or 'error', and an HTML page rather than plain text).",
+      "contractRef": "T-18",
+      "experiments": [],
+      "debt": null,
+      "defect": "contract-violation",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "spec Witnesses W-1 to W-7",
+        "spec A8, A9",
+        "spec F1",
+        "test/floor.test.js:43",
+        "test/floor.test.js:70"
+      ],
+      "severity": "note",
+      "path": "test/reserve.test.js",
+      "text": "Proof gap: W-1 to W-7 witness A1 to A7 only, yet A8 and A9 are also marked fail loud if undelivered. A9 is the most error-prone behaviour here. Add named tests for both: 404 on a removed book; 503 with Retry-After while a live lock exists (write the test's own pid to <data>.lock.tmp, which waits the full 5 seconds); the 60-character and control-character refusals; an oversized chunked body with no content-length; repeat POSTs and refresh. The root may want to declare these as witnesses. W-6 should pair each POST with its own GET-issued token, use redirect:'manual', assert exactly one 303 and nineteen 409 with no 503 or 500, and check the file holds the name of the POST that got the 303. A single shared token would make all twenty look confirmed. F1's page list extension should cover /reserve/<held>, a POST refusal and /reserved/<id>, asserting that neither the holder's name nor the claim token appears on any of them.",
+      "contractRef": "T-32",
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "fulfilled 1 refused 19 other 0 ms 56"
+        }
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "src/pages.js:29",
+        "src/pages.js:15",
+        "src/pages.js:16",
+        "src/store.js:38",
+        "src/settings.js:1",
+        "test/shelf.test.js:17"
+      ],
+      "severity": "note",
+      "path": "src/pages.js",
+      "text": "Existing page code will not carry the new rules on its own. bookItem tests `reservedBy === null`, so a lapsed book stays marked reserved and a book with no reservedBy field reads as reserved, although store.md calls it free; it must use isHeld with the injected time. `now` must be read per request and called: passing the function itself to isHeld makes it warn and frees nothing, and a Date fixed at startup never lapses in production. Tests always inject now, so also cover the default clock with an end moments away. createApp({ dataPath }) must keep working with both new options defaulted (test/shelf.test.js:17). The confirmation must use settings.name, settings.address and settings.window rather than the words hard-coded in layout; a witness with non-default settings proves that, and proves settings-file has a real seam.",
+      "contractRef": "T-34",
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "swapshelf: isHeld was given a time it cannot compare, so no dated reservation will lapse. Pass a Date, milliseconds or an ISO timestamp with offset.\ntrue"
+        }
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "spec A8",
+        "src/server.js:18",
+        "src/server.js:24",
+        "docs/design/page/README.md:102"
+      ],
+      "severity": "note",
+      "path": "src/server.js",
+      "text": "Boundary paths in A8 are easy to miss. decodeURIComponent throws URIError on a malformed id such as /reserve/%E0%A4%A, which would fall into the catch at server.js:24 and return a plain 500 instead of M2's 404. M4 and M6 need the book's title, so a blank name on a removed book must return M2 and not render 'undefined'. Decide and test the order for a blank name on a held book; M3 first seems best, as a refilled form could only be refused again. Refusal errors thrown from change must not carry the typed name, because server.js:24 logs caught errors with console.error (T-18, redaction); store.md's warning already names ids only.",
+      "contractRef": "T-18",
+      "experiments": [
+        {
+          "command": "node -e \"try{decodeURIComponent('%E0%A4%A')}catch(e){console.log(e.name)}\"",
+          "output": "URIError"
+        }
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "evidence": [
+        "spec D1",
+        "docs/design/page/README.md:64",
+        "docs/corpus/vision.md"
+      ],
+      "severity": "note",
+      "path": "src/server.js",
+      "text": "For the root to decide; this does not hold the build. D1's /reserved/<id> depends only on the book, not on who holds it. Suppose B reserved b3, the hold lapsed and A then reserved it. B's old tab or history entry reloads and reads 'waiting for you… collect by' with A's new deadline, so one book is effectively promised to two neighbours (V-7). The same happens to anyone given the URL. M1's 'waiting for you' wording makes it worse. Options: bind the confirmation to the claim, for example with the token in the redirect's query (carrying no name), or use wording that promises nothing to the reader. Binding changes D1, so it needs the root's amendment; without it, the builder follows D1 as written. This comes from reading the spec and code; there is no code to run it against yet.",
+      "contractRef": "T-32",
+      "experiments": [],
+      "debt": null,
+      "defect": "requirement-unmet",
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "Pre-build review only: nothing is built yet and a review never holds the unit, so every finding is a note for the build.",
+    "The store's lock holds up: 20 concurrent writers gave exactly one success and 19 clean refusals in 56ms. The main risks are at the edges of D1 and D2 (no-end holds, tokens, a byte comparison that misses a re-save) and in the design record's conflict with the spec.",
+    "One item needs the root's decision: the confirmation URL isn't tied to the claim, which conflicts with V-7. A8 and A9 also have no declared witnesses, and the root may want to declare them."
+  ],
+  "premises": [
+    {
+      "claim": "updateShelf saves whenever change does not throw, so a write-free refusal or replay must throw.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 214
+        }
+      ]
+    },
+    {
+      "claim": "isHeld treats a reservedBy with no reservedUntil as held, while holdEndWords has no guard against a missing or unreadable end.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 38
+        },
+        {
+          "path": "src/window.js",
+          "line": 35
+        }
+      ]
+    },
+    {
+      "claim": "The seed book b2 has reservedBy set and no reservedUntil or claim field.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "bookItem decides reserved state with `reservedBy === null`, not isHeld, so it does not yet handle lapsing.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "claim": "The layout hard-codes the shelf's name and address, which the settings must eventually supply.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 15
+        },
+        {
+          "path": "src/pages.js",
+          "line": 16
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

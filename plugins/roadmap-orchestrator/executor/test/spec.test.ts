@@ -1,43 +1,44 @@
+import { systemsMap } from '../src/input/systems.ts';
 // Spec loading, rendering and patching (src/spec/*), and the spec.patch reconciler (src/recover/spec.ts).
 // Integrated tier: real files, and a child process SIGKILLed at the op's crashPoints for the spec.patch
 // row of the crash matrix (test/matrix.ts).
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { opKey, sha256 } from '../src/core/ids.ts';
-import { type SpecM1, type SpecPatch, specM1, specPatch } from '../src/core/records.ts';
-import { SchemaError } from '../src/core/validate.ts';
-import { type AbsPath, absPath } from '../src/core/values.ts';
+import { opKey,sha256,systemName } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
-import { SPEC_INPUT, keepInput, keptInput } from '../src/input/inforce.ts';
+import { type SpecM1,type SpecPatch,specM1,specPatch } from '../src/core/records.ts';
+import { SchemaError } from '../src/core/validate.ts';
+import { type AbsPath,absPath,repoPattern } from '../src/core/values.ts';
+import { SPEC_INPUT,keepInput,keptInput } from '../src/input/inforce.ts';
 import { reconcileSpecPatch } from '../src/recover/spec.ts';
-import { SpecPatchOpError, SpecPatchStaleError, applySpecPatch, specPatchOp } from '../src/spec/patch.ts';
+import { SpecPatchOpError,SpecPatchStaleError,applySpecPatch,specPatchOp } from '../src/spec/patch.ts';
 import { renderSpec } from '../src/spec/render.ts';
 import { parseRulings } from '../src/spec/rulings.ts';
-import { bytesSha256, fileSha256, loadSpec, parseSpec, specBytes } from '../src/spec/spec.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { bytesSha256,evidenceScopeConflicts,fileSha256,loadSpec,parseSpec,specBytes } from '../src/spec/spec.ts';
 import { ARC } from './fixtures/log-records.ts';
-import { SPEC_PATCH, crashCells } from './matrix.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { makeRepo,tmpDir } from './helpers/repo.ts';
+import { SPEC_PATCH,crashCells } from './matrix.ts';
 
 const CHILD_TIMEOUT_MS = 20_000;
 const SPEC_KEY = opKey('spec:u1');
 
 const FAST_LANE = {
   id: 'unit-tests', argv: ['npm', 'test'], cwd: '.', env: { set: { ZED: '1', ALPHA: 'a b' }, pass: ['PATH', 'HOME'] },
-  expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: ['out/b.log', 'out/a.log'], state: 'active',
+  expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: ['out/b.log', 'out/a.log'], state: 'active',
 };
 // Every token of this lane is distinctive, so a leak into the implementer's view is detectable.
 const ESTATE_LANE = {
   id: 'estateJourney', argv: ['estate-runner', '--estate-flag'], cwd: 'estate-dir', env: { set: { ESTATE_SECRET: 'estate-value' }, pass: ['ESTATE_PASS'] },
-  expectedExit: 3, tier: 'estate', resources: ['estate-db'], evidenceGlobs: ['estate-evidence/**'], state: 'active',
+  expectedExit: 3, cadence: 'unit', resources: ['estate-db'], evidenceGlobs: ['estate-evidence/**'], state: 'active',
 };
 
 /** The authored form: a unit spec as Phase 0 writes it, keys in authoring order. */
-const RAW_SPEC = {
+const RAW_SPEC = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
   schema: 'roadmap/spec-m1',
   unit: 'u1',
   rev: 1,
@@ -46,7 +47,7 @@ const RAW_SPEC = {
     { id: 'A1', clause: 'The widget renders.\nIt renders twice.', failLoudIfUndelivered: true, state: 'active' },
     { id: 'A2', clause: 'The widget is blue.', failLoudIfUndelivered: false, state: 'active' },
   ],
-  scope: ['src/widget/**', 'docs/widget.md'],
+
   resources: ['shared-cache', 'estate-db'],
   decisions: [{ id: 'D1', text: 'Use the canvas API.', state: 'active' }],
   facts: [{ id: 'F1', text: 'The canvas is 800 wide.', state: 'active' }],
@@ -54,7 +55,7 @@ const RAW_SPEC = {
 };
 const SPEC: SpecM1 = specM1(RAW_SPEC, 'spec');
 
-const BY = { role: 'planCheck', routingRev: '0123456789abcdef', inv: 'arc-1/5#1' };
+const BY = { role: 'executor', inv: 'arc-1/5#1' };
 const patch = (ops: readonly unknown[], expectRev = 1): SpecPatch => specPatch({ expectRev, by: BY, ops }, 'patch');
 
 /** A redirect exercising every op kind. */
@@ -87,7 +88,7 @@ describe('spec load and write', () => {
     assert.equal(pretty.rev, 1);
     assert.ok(specBytes(pretty).equals(specBytes(compact)));
     // A semantic change is a different canonical form (and so a different content hash).
-    const changed = specM1({ ...RAW_SPEC, scope: ['src/widget/**'] }, 'spec');
+    const changed = specM1({ ...RAW_SPEC, intent: 'Implement the widget.' }, 'spec');
     assert.notEqual(bytesSha256(specBytes(changed)), bytesSha256(specBytes(pretty)));
     // The revision is the file's; a patch moves it by exactly one.
     assert.equal(applySpecPatch(pretty, REDIRECT).rev, 2);
@@ -113,19 +114,19 @@ describe('spec rendering', () => {
     // Sets render sorted, so a permutation of any of them renders identically.
     const permuted = specM1({
       ...RAW_SPEC,
-      scope: [...RAW_SPEC.scope].reverse(),
+      nonGoals: [...RAW_SPEC.nonGoals].reverse(),
       resources: [...RAW_SPEC.resources].reverse(),
       lanes: [{ ...FAST_LANE, env: { set: { ALPHA: 'a b', ZED: '1' }, pass: ['HOME', 'PATH'] }, evidenceGlobs: ['out/a.log', 'out/b.log'] }, ESTATE_LANE],
     }, 'spec');
     assert.equal(renderSpec(permuted), first);
     const at = (s: string): number => first.indexOf(s);
-    assert.ok(at('`docs/widget.md`') < at('`src/widget/**`'), 'scope sorted');
+    assert.match(first, /## Intent/);
     assert.ok(at('- `estate-db`') < at('- `shared-cache`'), 'resources sorted');
     assert.ok(at('ALPHA="a b"') < at('ZED="1"') && at('HOME (from the host)') < at('PATH (from the host)'), 'env sorted');
     assert.ok(at('`out/a.log`') < at('`out/b.log`'), 'evidence sorted');
     // Items keep their authored order; every section is present.
     assert.ok(at('`A1`') < at('`A2`'));
-    for (const heading of ['# Spec for unit `u1`, rev 1', '## Acceptance', '## Scope', '## Lanes', '## Resources', '## Decisions', '## Facts', '## Cites']) {
+    for (const heading of ['# Spec for unit `u1`, rev 1', '## Acceptance', '## Intent', '## Non-goals', '## Lanes', '## Resources', '## Decisions', '## Facts', '## Cites']) {
       assert.ok(first.includes(heading), heading);
     }
     assert.ok(first.includes('- `A1` [active] (fail loud if undelivered): The widget renders.\n  It renders twice.'), 'multi-line clause indented');
@@ -188,7 +189,7 @@ describe('spec patch', () => {
     assert.deepEqual(next.acceptance[0], { ...SPEC.acceptance[0], state: 'struck' }, 'strike keeps the item');
     assert.deepEqual(next.decisions[0], { ...SPEC.decisions[0], state: 'deferred' }, 'defer keeps the item');
     assert.equal(next.acceptance[1]!.clause, 'The widget is green.');
-    assert.deepEqual(next.scope, SPEC.scope);
+    assert.deepEqual(next.nonGoals, SPEC.nonGoals);
     assert.deepEqual(next.resources, SPEC.resources);
     // The result is a valid spec.
     assert.deepEqual(specM1(JSON.parse(specBytes(next).toString('utf8')), 'spec'), next);
@@ -250,14 +251,15 @@ describe('spec witnesses (M4a rev 3)', () => {
     assert.doesNotMatch(renderSpec(plain), /## Witnesses/);
   });
 
-  it('a spec lane\'s systems, test argv and stochastic render beside its evidence (dev.17); a dev.16 lane\'s inputs are dropped', () => {
+  it('a spec lane\'s systems, test argv and stochastic render beside its evidence (dev.17); declared inputs are retained', () => {
     const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, systems: ['widget', 'api'], testArgv: ['node', '--test', '{files}'], stochastic: { runs: 3, minPasses: 2 } }] }, 'spec');
     assert.match(renderSpec(spec), /  - systems: `api`, `widget`/);
     assert.match(renderSpec(spec), /  - test argv: `\["node","--test","\{files\}"\]`/);
     assert.match(renderSpec(spec), /  - stochastic: passes when 2 of up to 3 runs pass/);
     assert.doesNotMatch(renderSpec(SPEC), /systems:|test argv:|stochastic:/);
-    const legacy = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**'] }] }, 'spec');
-    assert.doesNotMatch(renderSpec(legacy), /inputs:/);
+    const inputs = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, inputs: ['src/widget/**'] }] }, 'spec');
+    assert.deepEqual(inputs.lanes[0]!.inputs, ['src/widget/**']);
+    assert.match(renderSpec(inputs), /inputs: `src\/widget\/\*\*`/);
   });
 });
 
@@ -361,7 +363,7 @@ describe('spec.patch op and reconciler', () => {
     await runChild(s, writeTrigger(tmpDir('spec-trigger'), { label: 'spec.patch.before-write', occurrence: 1 }));
     const intent = openSpecIntent(s.runDir);
     const j = openJournal(absPath(s.runDir), ARC);
-    writeFileSync(s.path, JSON.stringify({ ...RAW_SPEC, scope: ['elsewhere/**'] }));
+    writeFileSync(s.path, JSON.stringify({ ...RAW_SPEC, intent: 'A different valid intent.' }));
     const changed = await reconcileSpecPatch(absPath(s.runDir))(intent, j.view);
     assert.equal(changed.kind, 'park');
     rmSync(s.path);
@@ -416,5 +418,23 @@ describe('rulings ledger', () => {
     assert.throws(() => ledger(['C-1 — withdrawn by C-9']), SchemaError, 'the withdrawing ruling must be in the ledger');
     assert.throws(() => ledger(['C-1 — One.', 'C-1 — Two.']), SchemaError, 'an id listed twice');
     assert.throws(() => ledger(['C-1: no em dash']), SchemaError);
+  });
+});
+
+
+describe('lane evidence and systems', () => {
+  it('spec.evidence-covers-systems: tracks source, tests, shared and contract paths, protects corpus patterns, and permits other systems/output carve-outs', () => {
+    const repo = absPath(makeRepo(tmpDir('spec-evidence'), { files: {
+      'src/app.ts': 'source', 'test/app.test.ts': 'tests', 'shared.json': '{}', 'contract.md': 'contract', 'lib/other.ts': 'other', 'docs/pin.md': 'corpus',
+    } }));
+    const map = systemsMap({ systems: { app: { paths: ['src/**'], tests: ['test/**'] }, lib: { paths: ['lib/**'] } },
+      shared: [{ paths: ['shared.json'], dependents: ['app'] }], contracts: { 'contract.md': ['app'] } }, 'map');
+    const spec = specM1({ ...RAW_SPEC, lanes: [{ ...FAST_LANE, evidenceGlobs: ['src/**/*.ts', 'test/**', 'shared.json', 'contract.md', 'docs/pin.md', '.roadmap/reports/**', 'docs/corpus/new/**', 'out/**', 'lib/**'] }] }, 'spec');
+    const reasons = evidenceScopeConflicts(spec.unit, [systemName('app')], spec, { repo, at: 'HEAD', map,
+      protectedPaths: ['.roadmap', 'docs/pin.md', 'docs/corpus/**'].map((p) => repoPattern(p)) });
+    assert.equal(reasons.length, 7, reasons.join('\n'));
+    for (const path of ['src/app.ts', 'test/app.test.ts', 'shared.json', 'contract.md']) assert.ok(reasons.some((s) => s.includes(`tracked path \`${path}\``)), reasons.join('\n'));
+    for (const path of ['.roadmap', 'docs/pin.md', 'docs/corpus/**']) assert.ok(reasons.some((s) => s.includes(`protectedPaths entry \`${path}\``)), reasons.join('\n'));
+    assert.ok(reasons.every((s) => !s.includes('entry `lib/**`') && !s.includes('entry `out/**`')));
   });
 });

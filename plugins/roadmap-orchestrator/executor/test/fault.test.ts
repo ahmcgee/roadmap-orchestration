@@ -32,7 +32,7 @@ after(assertNoSurvivors);
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const WAIT_MS = 90_000;
 const U2 = unitId('u2');
-const UP_TO_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const UP_TO_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const FROM_GATE = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** Each step keyed to `unit`: its calls take only these, in order (independent units run at once). */
@@ -60,7 +60,7 @@ const heldBy = (r: ArcRun, unit: string): readonly string[] =>
   [...resourceTable(r.journal.view)].flatMap(([name, e]) => (e.status.state !== 'free' && 'unit' in e.status.holder && e.status.holder.unit === unit ? [name] : []));
 const allFree = (r: ArcRun): boolean => [...resourceTable(r.journal.view).values()].every((e) => e.status.state === 'free');
 const faultOf = (facts: readonly Fact[], unit: string): StageOutcomeFact | undefined =>
-  facts.find((f): f is StageOutcomeFact => f.kind === 'stage-outcome' && f.unit === unit && f.outcome === 'executor-fault');
+  facts.find((f): f is StageOutcomeFact => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === unit && f.outcome === 'executor-fault');
 function journalFacts(r: ArcRun): readonly Fact[] {
   return readFileSync(join(r.ctx.runDir, 'events.jsonl'), 'utf8').trim().split('\n').flatMap((l) => {
     const e = JSON.parse(l) as { type: string; fact?: Fact };
@@ -102,7 +102,7 @@ test('fault.unit-confined: a throw inside u1\'s lanes parks it executor-fault (u
 
     await receiptOf(r, submit(r, { type: 'resume', target: { type: 'unit', unit: U1 } }));
     await until(() => r.journal.view.unit(U1).status === 'retired', WAIT_MS, 'u1 to merge after its resume');
-    assert.deepEqual(outcomes(d, 'u1'), [...UP_TO_LANES, 'lanes:executor-fault', 'lanes:green', ...FROM_GATE], 'resume re-entered lanes, no new plan-check or build');
+    assert.deepEqual(outcomes(d, 'u1'), [...UP_TO_LANES, 'lanes:executor-fault', 'lanes:green', ...FROM_GATE], 'resume re-entered lanes, no new pre-build or build');
     release(d.scenarioDir, 'u2build');
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
   } finally {
@@ -150,7 +150,7 @@ test('fault.slot-crashes: a throw while the unit\'s publication holds the integr
   }
 });
 
-test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking item, its own state settled, the executor still running); it is due again only once the item is acknowledged', T, async () => {
+test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking item, its own state settled, the executor still running); it is due again only once a subject action closes the item', T, async () => {
   const marker = armedMarker();
   const { d } = holisticArc({
     steps: of('u1', [{ ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'barrier', name: 'u1check', timeoutMs: 120_000 }] } as Step]),
@@ -161,15 +161,15 @@ test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking
       const o = JSON.parse(readFileSync(path, 'utf8')) as { lanes: Record<string, unknown>[]; obligations: { proofJudgment: { laneRev: string } | null }[] };
       const lane = o.lanes[0]!;
       o.lanes[0] = { ...lane, argv: ['sh', '-c', `${lockOnce(marker)}; exec "$@"`, 'sh', ...(lane['argv'] as string[])], evidenceGlobs: ['out/**'] };
-      const rev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: o.lanes, obligations: [], mapping: { paths: [] } }).lanes[0]!);
-      for (const ob of o.obligations) if (ob.proofJudgment !== null) ob.proofJudgment.laneRev = rev;
+      const rev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: o.lanes, obligations: [], mapping: { systems: [] } }).lanes[0]!);
+      // A lane edit leaves the proof's test ids/files pin unchanged.
       writeFileSync(path, JSON.stringify(o));
     },
   });
   const r = contextFor(d);
   const journeys = (): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey').length;
+  const s = startHolistic(r);
   try {
-    const s = startHolistic(r);
     await until(() => jobFaultOpen(r.journal.view, r.ctx.runDir), WAIT_MS, 'the baseline job to fault');
     assert.equal(existsSync(marker), false, 'the journey lane fired');
     const raise = r.journal.view.opsOf('needsuser.raise').find((i) => i.parent.type === 'arc')!;
@@ -183,12 +183,16 @@ test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking
     assert.equal(journeys(), 1, 'the faulted job is not asked again while its item is open');
     assert.notEqual(baselineOwed(s.stage), null, 'the baseline is still owed');
 
-    await receiptOf(r, submit(r, { type: 'ack', needsUser: raise.expect.id, choice: null }));
+    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: raise.expect.id, choice: null }))).state, 'rejected');
+    assert.equal(jobFaultOpen(r.journal.view, r.ctx.runDir), true, 'a rejected ack releases nothing');
+    assert.equal((await receiptOf(r, submit(r, { type: 'resume', target: {type: 'all'} }))).state, 'applied');
+    assert.equal(r.journal.view.ackOf(raise.expect.id) !== null, true, 'the arc subject action closes the fault item');
     await until(() => baselineOwed(s.stage) === null, WAIT_MS, 'the baseline to run again and hold');
     assert.equal(journeys(), 2);
     await reached(d.scenarioDir, 'u1check', WAIT_MS);
     assert.equal((await stopScheduler(r, s)).kind, 'stop', 'the executor ran on through the fault');
   } finally {
+    await stopScheduler(r, s);
     r.journal.close();
   }
 });

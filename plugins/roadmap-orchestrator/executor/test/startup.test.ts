@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { arcId, invocationIdOf, milestoneId, laneId, phaseQuestionId, obligationId, resourceName, ruleId, sha, sha256, unitId } from '../src/core/ids.ts';
-import { absPath, planPath, repoPath } from '../src/core/values.ts';
-import { EXIT_HOST_BUSY, EXIT_REFUSED, type StartupRejection, type StartupRejectionKind, exitCodeFor } from '../src/preflight/startup.ts';
+import { describe,it } from 'node:test';
+import { arcId,invocationIdOf,laneId,milestoneId,obligationId,phaseQuestionId,resourceName,ruleId,sha,sha256,unitId } from '../src/core/ids.ts';
+import { absPath,planPath,repoPath } from '../src/core/values.ts';
+import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection,type StartupRejectionKind,exitCodeFor } from '../src/preflight/startup.ts';
 
 const arc = arcId('arc-1');
 const unit = unitId('u1');
@@ -12,7 +12,7 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'legacy-roadmap-dir': { kind: 'legacy-roadmap-dir', path: absPath('/r/.roadmap'), unexpected: ['state.json'] },
   'worktree-root-unusable': { kind: 'worktree-root-unusable', path: absPath('/tmp/wt'), problem: 'tmpfs', detail: 'tmpfs' },
   'spec-lane-unrunnable': { kind: 'spec-lane-unrunnable', unit, lane: laneId('L1'), problem: { type: 'env-missing', name: 'KUBECONFIG' } },
-  'unsupported-routing': { kind: 'unsupported-routing', role: 'gate', tier: 'escalation', layer: 'plan', class: 'frontier', unit: null, why: 'codex-judgment' },
+  'unsupported-routing': { kind: 'unsupported-routing', role: 'verifier', tier: 'escalation', layer: 'plan', class: 'frontier', unit: null, why: 'codex-judgment' },
   'undispositioned-residue': { kind: 'undispositioned-residue', residues: [{ arc, unit, inv: invocationIdOf('arc-1/4#1'), resource: resourceName('db') }] },
   'host-busy': { kind: 'host-busy', holder: 'owner', arc, generation: 3, pid: 1234 },
   'previous-arc-unreconciled': { kind: 'previous-arc-unreconciled', arc: arcId('arc-0'), invocations: [invocationIdOf('arc-0/9#1')] },
@@ -33,7 +33,7 @@ const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection,
   'arc-superseded': { kind: 'arc-superseded', by: arcId('arc-2') },
   'milestones-need-holistic': { kind: 'milestones-need-holistic' },
   'walk-tools-missing': { kind: 'walk-tools-missing', milestone: milestoneId('MS-1'), problem: { type: 'mcp-unconnected', server: 'playwright', detail: 'status failed' } },
-  'vision-leak': { kind: 'vision-leak', inForce: sha256('a'.repeat(64)), committed: sha256('b'.repeat(64)), draft: absPath('/w/roadmap-inputs/_next/vision.md') },
+  'schema-version': {kind: 'schema-version', path: absPath('/run/start.json'), recorded: 1, expected: 2, detail: 'previous schema refused'},
 };
 
 describe('startup rejection table', () => {

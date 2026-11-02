@@ -1,4 +1,4 @@
-// Anchor-exact document references and contract ops (DESIGN-1.0.md §2.3 `rule`, §2.6; M3 step A1). Pure: the
+// Anchor-exact document references and contract ops (DESIGN-1.0.md §2.3 "Root commands and revisions"; M3 step A1). Pure: the
 // caller hands in the documents' text at the tip.
 //
 // An anchor names exactly one place in a document:
@@ -12,7 +12,6 @@
 // is disjoint from every other (2026-10-15, arc feedback #3: two ops in one section are fine when their ranges are), so
 // their order cannot matter; they apply from the last range to the first. Every edited document's first line cites the
 // ruling: `<!-- revised by C-3, C-7 -->` (added, or extended).
-import type { RulingId } from '../core/ids.ts';
 import type { RepoPath } from '../core/values.ts';
 import type { ContractOp } from '../holistic/types.ts';
 
@@ -62,17 +61,10 @@ export function anchorSection(doc: string, anchor: string): Section | string {
   return { start: lines[at]!.start, end: next === -1 ? doc.length : lines[next]!.start };
 }
 
-/** Why `quotedText` is not under `anchor` in `doc`, or null when it is. */
-export function quotedTextReason(doc: string, anchor: string, quotedText: string): string | null {
-  const section = anchorSection(doc, anchor);
-  if (typeof section === 'string') return section;
-  return doc.slice(section.start, section.end).includes(quotedText) ? null : `quoted text ${JSON.stringify(quotedText)} is not under anchor ${JSON.stringify(anchor)}`;
-}
-
 const REVISED_BY = /^<!-- revised by (C-[0-9]+(?:, C-[0-9]+)*) -->\n/;
 
 /** The document with its first line citing `ruling` (the header added, or the ruling appended to it). */
-export function citeRuling(doc: string, ruling: RulingId): string {
+export function citeRuling(doc: string, ruling: string): string {
   const m = REVISED_BY.exec(doc);
   if (m === null) return `<!-- revised by ${ruling} -->\n${doc}`;
   const ids = m[1]!.split(', ');
@@ -87,7 +79,7 @@ export type ContractEdit = Readonly<{ path: RepoPath; text: string }>;
  * the edited documents ascending by path, or every reason the ops are refused (all or none).
  */
 export function applyContractOps(
-  ops: readonly ContractOp[], ruling: RulingId, docAt: (path: RepoPath) => string | null,
+  ops: readonly ContractOp[], ruling: string, docAt: (path: RepoPath) => string | null,
 ): Readonly<{ edits: readonly ContractEdit[] }> | Readonly<{ reasons: readonly string[] }> {
   const reasons: string[] = [];
   const edits: ContractEdit[] = [];

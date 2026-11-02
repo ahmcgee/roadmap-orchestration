@@ -1,6 +1,6 @@
 import { StringDecoder } from 'node:string_decoder';
 import { safe } from './transcript.ts';
-import { pretty, type Entry } from './types.ts';
+import { pretty,type Entry } from './types.ts';
 
 /** Worker output is technical context, not a run-state announcement. Retained only in viewer memory. */
 export class ViewerDiagnostics {
@@ -29,11 +29,8 @@ export class ViewerDiagnostics {
   entries(): Entry[] {
     const messages = [...this.#messages, ...Object.values(this.#tails).map((tail) => safe(tail).trim()).filter(Boolean)];
     if (!messages.length) return [];
-    const compatibility = messages.every((text) => text.startsWith('roadmap: upgrade default ('));
-    const summary = compatibility
-      ? 'This run contains records from an older executor. The viewer reads them using supported compatibility rules. No action is needed for these messages.'
-      : 'Technical messages from the viewer’s data reader. These are separate from the run’s recorded outcomes; observation failures are listed separately.';
-    return [{ id: 'viewer-diagnostics', label: compatibility ? 'Viewer note: older run format' : 'Viewer diagnostics', state: 'information',
+    const summary = 'Technical messages from the viewer’s data reader. Observation failures are listed separately.';
+    return [{ id: 'viewer-diagnostics', label: 'Viewer diagnostics', state: 'information',
       description: summary, body: pretty({ summary, technicalDetails: messages, ...(this.#truncated ? { retention: 'Only the latest 32 distinct messages are retained; long messages are shortened.' } : {}) }),
       links: [], provenance: 'Current viewer session · not written to the run' }];
   }

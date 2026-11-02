@@ -1,21 +1,22 @@
+import { systemName } from '../../src/core/ids.ts';
 // adopted-arc coverage (LR-D0b): migrate to corpus arcs when holistic architecture-doc scaffolding is deleted (BACKLOG)
 // Shared by the checkpoint tests (test/checkpoint.test.ts) and their crash child (checkpoint-child.ts): an audit-common
 // arc whose required lens set is the vision lens alone (one lens call per audit), the checkpoint context over the run's
 // one arbiter (the command context's docs publisher and routing base), and the readers the tests assert with.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { applyCommand } from '../../src/commands/apply.ts';
 import { submitCommand } from '../../src/commands/queue.ts';
-import { type CommandId, commandId } from '../../src/core/ids.ts';
+import { type CommandId,commandId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
 import { runAudit } from '../../src/holistic/audit.ts';
-import type { CheckpointContext } from '../../src/holistic/checkpoint.ts';
+import type { RevisionContext } from '../../src/holistic/admission.ts';
 import type { Clock } from '../../src/holistic/cadence.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { admitSpecWire, lensStep, noteLensStep } from '../helpers/holistic.ts';
-import { type AuditArcOptions, auditArc, auditContext, factsOf } from './audit-common.ts';
-import { type ArcDescriptor, type ArcRun, applyBody, visionApplyBody } from './unit-common.ts';
+import { admitSpecWire,lensStep,noteLensStep } from '../helpers/holistic.ts';
+import { type AuditArcOptions,auditArc,auditContext,factsOf } from './audit-common.ts';
+import { type ArcDescriptor,type ArcRun,applyBody,syncInputs,visionApplyBody } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -23,14 +24,14 @@ type Json = Record<string, unknown>;
 export function checkpointArc(steps: readonly Step[], extra: Partial<AuditArcOptions> = {}): ArcDescriptor {
   return auditArc({
     steps, units: [{ id: 'u1' }], obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } }, mapping: [],
-    audit: { lenses: ['vision'] }, ...extra,
+    ...extra,
   }).d;
 }
 
 export type Wired = ReturnType<typeof auditContext>['w'];
 
 /** The checkpoint context: the audit context plus the command context's plan file, routing base and docs publisher. */
-export function checkpointContext(r: ArcRun, clock: Clock = () => 0): Readonly<{ ctx: CheckpointContext; w: Wired }> {
+export function checkpointContext(r: ArcRun, clock: Clock = () => 0): Readonly<{ ctx: RevisionContext; w: Wired }> {
   const { ctx, w } = auditContext(r, clock);
   return { ctx: { ...ctx, planFile: w.commands.planFile, routingBase: w.commands.routingBase, docs: w.commands.docs, laneEnv: ctx.hostEnv }, w };
 }
@@ -39,12 +40,12 @@ let commands = 0;
 /** An `audit-requested` fact, as the `audit` command (B7) writes it. */
 export function requestAudit(r: ArcRun): CommandId {
   const command = commandId(`cmd-${(++commands).toString(16).padStart(16, 'c')}`);
-  r.journal.fact({ kind: 'audit-requested', command, lenses: null });
+  r.journal.fact({ kind: 'audit-requested', command });
   return command;
 }
 
 /** Requests an audit and runs it to a completed end (its vision lens answered by `lensStep(job, 'vision')`). */
-export async function completedAudit(r: ArcRun, ctx: CheckpointContext): Promise<void> {
+export async function completedAudit(r: ArcRun, ctx: RevisionContext): Promise<void> {
   requestAudit(r);
   const out = await runAudit(ctx);
   assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
@@ -57,6 +58,7 @@ export const noteLenses = (...jobs: readonly string[]): readonly Step[] => jobs.
 
 /** Edits plan.json in place and applies it (an architect's `roadmap apply`). */
 export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => void): Promise<void> {
+  syncInputs(r);
   const plan = JSON.parse(readFileSync(r.d.planPath, 'utf8')) as Json;
   edit(plan);
   writeFileSync(r.d.planPath, JSON.stringify(plan));
@@ -66,6 +68,7 @@ export async function applyPlanEdit(r: ArcRun, w: Wired, edit: (plan: Json) => v
 
 /** Rewrites the vision file with `clauses` added at the next rev and applies it (owner-only: an architect apply declaring the vision edit). */
 export async function applyVision(r: ArcRun, w: Wired, clauses: readonly Json[]): Promise<void> {
+  syncInputs(r);
   const file = join(r.d.planPath, '..', 'vision.json');
   const vision = JSON.parse(readFileSync(file, 'utf8')) as Json & { rev: number; clauses: Json[] };
   writeFileSync(file, JSON.stringify({ ...vision, rev: vision.rev + 1, clauses: [...vision.clauses, ...clauses] }));
@@ -94,7 +97,7 @@ export const witnessSplit = (unit: string, clause: string): JsonValue => ({
 export function admitOp(d: ArcDescriptor, id: string, lanes?: readonly Json[]): JsonValue {
   const spec = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
   return {
-    op: 'admit', unit: { id, risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
+    op: 'admit', unit: { id, risk: 'med', systems: [systemName('app')], after: [], origin: 'repair' },
     spec: admitSpecWire({ ...spec, unit: id, rev: 1, ...(lanes === undefined ? {} : { lanes }) }), targets: [],
     cites: ['V-1'], evidence: ['scripted evidence'],
   };

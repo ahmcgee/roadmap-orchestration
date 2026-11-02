@@ -1,6 +1,6 @@
 // `roadmap phase0 check --repo <path> (--plan <file> | --from-ref <arc>)` (M4a, OR-Q16, K20): read-only, no host lock,
 // deterministic. Exit 0 with no rows, else 78; JSON rows plus `sliceCandidates` (src/holistic/vision.ts, R15) and the
-// advisory `advisories` (row 10, `scope-references-outside`; row 13, `derived-unregenerated`; row 14, `milestone-unit-before-design`:
+// advisory `advisories` (row 10, `system-overlap`; row 13, `derived-unregenerated`; row 14, `milestone-unit-before-design`:
 // never a refusal, so never the exit code's).
 //
 //   --plan      the files as a fresh start reads them: `runChecks`' pure rows (the `.roadmap/` layout, plan-invalid, the
@@ -91,7 +91,7 @@ function fromRef(repo: AbsPath, source: Extract<Phase0Source, { type: 'ref' }>):
   const m = ref.manifest;
   const kept = (sha: string | null | undefined, ext: string): Buffer | null => (sha === null || sha === undefined ? null : ref.input(sha as never, ext));
   const input: Phase0Input = {
-    repo, plan: ref.plan, config: null, where: `refs/roadmap/${ref.arc} at ${ref.commit}`,
+    repo, plan: ref.plan, config: ref.view.planApplied()?.systemsMap == null ? null : { systemsMap: ref.view.planApplied()!.systemsMap! }, where: `refs/roadmap/${ref.arc} at ${ref.commit}`,
     pin: kept(m.corpus, CORPUS_INPUT), guide: kept(m.corpusGuide, CORPUS_GUIDE_INPUT), phase0: kept(m.phase0, PHASE0_INPUT),
     obligations: kept(m.obligations, OBLIGATIONS_INPUT), vision: kept(m.vision, VISION_INPUT),
     specs: new Map(ref.plan.units.map((u) => [u.id, kept(m.specs[u.id], SPEC_INPUT)])),

@@ -1,0 +1,112 @@
+{
+  "standing": [
+    {
+      "id": "reserve-and-keep/844#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "test/search.test.js: test 'A3 a search term holding HTML is shown back escaped at every echo site' uses `\"><img src=x onerror=alert(1)>'`, asserts no raw `<img`, and asserts the escaped form in the <title>, the M5 h2, the input value and the results count line",
+        "It does not use the /on[a-z]+=/ assertion, and the payload is not in flowPages (test/floor.test.js:39-41 adds only harmless terms)",
+        "src/pages.js: every echo goes through esc: layout's title, refusalBlock's heading, searchForm's value, esc(count)"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/844#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "test/search.test.js covers priya, bookplates, coffee ring, like new, b3, reservedBy, 'darkness ursula' and 2026-10 giving M5, q=( giving 200 with M5, q=. giving exactly the 3 literal-dot books, '++LE+GUIN++' giving 2, q= and q=%20%20 giving 8 with no count line, b2 marked reserved with no link, and b3 keeping its link",
+        "Claim tokens have no dedicated test. `matches` reads only title and author (src/pages.js), and an ad hoc run confirmed it: `node /redacted/path` over a book with claim 'secret-claim-xyz' and reservedBy 'Priya' gave M5 for q=secret-claim and q=priya. The only appearance of the term was the searcher's own echo",
+        "The same run showed a held book listed with no Reserve link, and a lapsed book keeping its link with no holder name shown"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/844#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "test/floor.test.js:40-41 adds page('/?q=title') and page('/?q=nothing-matches-this') to flowPages",
+        "The T-18 and T-16 witnesses walk flowPages, so they now see a results page and an M5 page; no existing assertion was removed",
+        "Fixture title 'Marked Free Title' matches q=title, so the first added path is a real results page"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/844#1:3",
+      "disposition": "addressed",
+      "evidence": [
+        "src/pages.js: `text = (value) => String(value ?? '').toLowerCase()`",
+        "test/search.test.js: 'T-3 books with a missing or non-text field are searched without failing' covers a numeric title and a missing author",
+        "node /redacted/path q=undefined and q=null gave M5, so a missing field does not match on the word"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/844#1:4",
+      "disposition": "addressed",
+      "evidence": [
+        "src/pages.js searchForm: role=search, method=get, action=/, the label wording, input q, button Search",
+        "Browser run over CDP (chromium headless shell, 360px; /redacted/path): M5 main order DIV.refusal, FORM.slip search, P; title 'No match for \"zzzz\"'; results title 'Books matching \"le guin\"'; results main order FORM, H2, P.match-count, P, UL.books",
+        "test/search.test.js asserts aria-describedby=refusal, no autofocus, '1 book matches', the box holding the trimmed term ('value=\"LE GUIN\"'), and no value on a blank search"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/844#1:5",
+      "disposition": "addressed",
+      "evidence": [
+        "public/style.css: `.search button` overrides to a paper background with rust text; `.search input[type=\"text\"]` shares the field rule",
+        "Computed styles at 360px from /redacted/path BUTTON 44px high, bg rgb(251,247,239), color rgb(156,61,31), 2px rust border, Bradley Hand font stack; INPUT 46px high, 2px ink border; link A 44px high",
+        "No sideways scroll at 360px, including a 300-character unbroken q: scrollWidth equals clientWidth on home, hit, miss and longmiss (345/345 with a scrollbar, 360/360 without)",
+        "Screenshots /redacted/path and miss.png show the outlined button and the dashed refusal block"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/844#1:6",
+      "disposition": "addressed",
+      "evidence": [
+        "src/pages.js: searchForm is called only from shelfPage, not layout, so the existing no-form tests on the confirmation and just-taken pages stay green",
+        "src/server.js:133 passes settings to shelfPage; every layout call in shelfPage passes settings",
+        "test/search.test.js: 'the search pages carry the shelf name and address from the settings' uses createApp({settings}) for both a hit and a miss",
+        "The form sits inside <main>, so the future window line can go in the header area; I-21 is correctly not built here"
+      ]
+    }
+  ],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [],
+  "directives": [],
+  "reasons": [
+    "A1 met: the labelled GET form submits q; matching is a case-insensitive substring on title or author, ignoring surrounding spaces; a blank search shows the whole shelf; results keep Reserve links and reserved marks. Witnessed by W-1 and the other T-3 tests.",
+    "A2 met: a search with no match gives the M5 page with status 200, its heading and body first in <main>, then the form with the term still in the box, then the 'Show the whole shelf' link, and no books listed. Witnessed by W-2.",
+    "A3 met: every echo site (title, heading, count line, input value) goes through esc, and a named test proves it with an attribute-breakout payload on both the hit and miss paths.",
+    "Non-goals respected: plain substring on two fields, server-side only, with no regex, ranking or other fields searched. No holder name or claim token reaches the search output or affects matching (T-18).",
+    "Design D1 checked in a real browser at 360px: the form sits above the list, targets are at least 44px, the button is outlined, and there is no sideways scroll even with a 300-character term.",
+    "The lane ledger is empty, but executable checks report 16 of 16 witnesses present and none failing. A local `node --test test/` also passed 77 of 77; that is supporting evidence only, not a lane verdict."
+  ],
+  "premises": [
+    {
+      "claim": "Search matching reads only book.title and book.author, as literal lowercase substrings",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "claim": "The server passes the q parameter and settings into shelfPage",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 133
+        }
+      ]
+    },
+    {
+      "claim": "The T-16 and T-18 witnesses now walk a search results page and a no-match page",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 40
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.17 plan environments (src/resources/environments.ts), integrated over real processes and real git: env-tool.ts
 // stands in for an environment's up, down and probe, logging every call. Named tests: env.lazy-up-reuse,
 // env.idle-teardown, env.start-waits-for-stop, env.probe-fails-parks, env.up-fails-parks, env.job-suite-lane, env.plain-no-lifecycle,
@@ -135,8 +136,8 @@ test('env.probe-fails-parks: a failed probe parks the lanes stage on the environ
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'env-unavailable');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'env-unavailable' && !fact.chargeable);
-  assert.deepEqual(fact.kind === 'stage-outcome' ? fact.park : null, { class: 'retryable', targets: [{ type: 'environment', environment: 'stack' }] });
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'env-unavailable' && !fact.chargeable);
+  assert.deepEqual((fact.kind === 'stage-outcome' && 'unit' in fact) ? fact.park : null, { class: 'retryable', targets: [{ type: 'environment', environment: 'stack' }] });
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(laneSpawns(run).length, 0, 'the lane never ran');
   assert.deepEqual(startedCalls(state), ['up stack', 'probe stack', 'down stack'], 'brought down after its failed probe');
@@ -302,7 +303,7 @@ test('env.pause-brings-down: under `pause --all` the scheduler brings an up envi
 describe('env.schema', () => {
   const base = (extra: Record<string, unknown>) => ({
     schema: 'roadmap/plan-m1', arc: 'a1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/tmp/wt', contracts: [], rulings: 'r.md',
-    architectureDoc: 'ARCHITECTURE.md', direction: 'd', suite: { lanes: [] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'med', scope: ['src/**'], resources: [] }],
+    architectureDoc: 'ARCHITECTURE.md', direction: 'd', suite: { lanes: [] }, resources: [], units: [{ id: 'u1', spec: 'u1.json', risk: 'med', systems: [systemName('app')], resources: [] }],
     ...extra,
   });
   const cmd = { argv: ['true'], cwd: '.', env: { set: {}, pass: [] } };

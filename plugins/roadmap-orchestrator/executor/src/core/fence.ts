@@ -1,4 +1,4 @@
-// The revision fence (A19, G2, H2; DESIGN-1.0.md §2.6 "Revision fence"; M3 step A2). One fence per arc serialises
+// The revision fence (A19, G2, H2; DESIGN-1.0.md §2.3 "Root commands and revisions"; M3 step A2). One fence per arc serialises
 // every revision (`apply`, `rule`, `reverse`, checkpoint bundles, the executor's machine spec patches) from its final
 // synchronous validation, through its docs `ff`, to its `plan-applied`, so two revisions validated against one base
 // cannot both commit. It has two halves:
@@ -7,7 +7,7 @@
 //   durable     the open `revision.commit` intent (key `revision`, at most one): what a crash leaves; recovery
 //               finishes or aborts it before anything else reads or revises (src/recover/revision.ts)
 //
-// Every capture of revision-sensitive inputs (`judgment-inputs`, `audit-started`, `checkpoint-inputs`, a bundle's
+// Every capture of revision-sensitive inputs (`judgment-inputs`, `audit-started`, a revision's
 // final staleness check) takes the fence briefly: `captureUnderFence` waits for it, runs the capture synchronously
 // (read, then write its fact, nothing awaited), and releases it. So no reader sees the window between a docs `ff`
 // and its `plan-applied`, where new contract blobs sit beside an old ledger or plan.
@@ -60,11 +60,6 @@ export async function holdFence(journal: Journal): Promise<FenceHold> {
       release();
     },
   };
-}
-
-/** Whether a revision holds the fence now (in process, or durably). */
-export function fenceHeld(journal: Journal): boolean {
-  return lockOf(journal).held || journal.view.openIntents().some((i) => i.kind === 'revision.commit');
 }
 
 /**

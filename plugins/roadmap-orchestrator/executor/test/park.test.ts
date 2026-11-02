@@ -2,24 +2,24 @@
 // journal: every retryable row has targets, the backoff, escalation (non-blocking, probing goes on), the
 // repeat rule, the breaker and a multi-target park that outlives a restart.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type Event, type Fact, type LogRecord, type OutcomeStage, type ProbeTarget, STAGE_OUTCOME_KINDS, prevHash, serializeEvent,
+type Event,type Fact,type LogRecord,type OutcomeStage,type ProbeTarget,STAGE_OUTCOME_KINDS,prevHash,serializeEvent,
 } from '../src/core/events.ts';
-import { type UnitId, arcId, commandId, poolInstance, resourceName, unitId } from '../src/core/ids.ts';
+import { type UnitId,arcId,commandId,poolInstance,resourceName,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { Fold } from '../src/core/state.ts';
-import { type AbsPath, type IsoTime, absPath, isoTime } from '../src/core/values.ts';
-import { openBlocking, readNeedsUser } from '../src/needsuser.ts';
-import { NO_PARK_FACTS, PARK_TARGETS, isRepeat, parkTargets, repeatNeedsUser, stageOutcomeFact, targetRule } from '../src/park/table.ts';
+import { type AbsPath,type IsoTime,absPath,isoTime } from '../src/core/values.ts';
+import { openBlocking,readNeedsUser } from '../src/needsuser.ts';
 import {
-  dueJobs, escalateAt, escalationsDue, nextProbeAt, raiseDue, retryableParks, trippedTargets, trips,
+dueJobs,escalateAt,escalationsDue,nextProbeAt,raiseDue,retryableParks,trippedTargets,trips,
 } from '../src/park/schedule.ts';
-import { type StageOutcome, TABLE } from '../src/pipeline/transitions.ts';
-import { PARK_ESCALATE_MS, PARK_REPEAT_MS } from '../src/schedule/types.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { BUILD_CLEANUP_FAILED, LANES_BLOCKED, parkUnit, seedArc } from './fixtures/probe-common.ts';
+import { NO_PARK_FACTS,PARK_TARGETS,isRepeat,parkTargets,repeatNeedsUser,stageOutcomeFact,targetRule } from '../src/park/table.ts';
+import { type StageOutcome,TABLE } from '../src/pipeline/transitions.ts';
+import { PARK_ESCALATE_MS,PARK_REPEAT_MS } from '../src/schedule/types.ts';
 import { appliedFields } from './fixtures/log-records.ts';
+import { BUILD_CLEANUP_FAILED,LANES_BLOCKED,parkUnit,seedArc } from './fixtures/probe-common.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const U1 = unitId('u1');
 const U2 = unitId('u2');
@@ -67,8 +67,8 @@ describe('park table', () => {
         assert.equal(new Set(keys).size, keys.length);
       }
     }
-    assert.equal(rows, 22, 'plan-check/build/gate/scaffold/poc process-fault, build and scaffold lost, eight cleanup-failed (salvage\'s since 2026-10-24), lanes, candidate and reproduce blocked, salvage commit-failed, reproduce, lanes and candidate env-unavailable');
-    assert.equal(Object.keys(PARK_TARGETS).length, 10);
+    assert.equal(rows, 16, 'build/gate process-fault, build lost, six cleanup-failed, lanes/candidate/reproduce blocked and env-unavailable, salvage commit-failed');
+    assert.equal(Object.keys(PARK_TARGETS).length, 7);
   });
 
   it('names each row\'s targets: backend, host, one resource per failed instance, and host plus the teardown\'s instances for a salvage (G6)', () => {
@@ -277,7 +277,7 @@ function foldAt(records: readonly (readonly [LogRecord, IsoTime])[]): Fold {
   const fold = new Fold(arc);
   let prev: Event | null = null;
   for (const [i, [record, at]] of records.entries()) {
-    const event = { v: 1, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at, arc, ...record } as Event;
+    const event = { v: 2, seq: i + 1, prev: prev === null ? null : prevHash(Buffer.from(serializeEvent(prev))), at, arc, ...record } as Event;
     fold.apply(event, prevHash(Buffer.from(serializeEvent(event))));
     prev = event;
   }

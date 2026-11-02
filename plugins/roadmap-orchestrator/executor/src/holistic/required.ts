@@ -58,7 +58,7 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
  *     future one latched by a publication whose merge is an ancestor of `at`) and is not already a target.
  * A latch whose publication `at` does not contain binds nothing here: the unit's tree was cut before the witness test
  * landed, so it cannot hold it (paid M4b run 3). The candidate, the unit merged onto the current tip, grades it as a
- * must-hold (DESIGN-1.0.md §2.8 Witnesses: unit-branch success never certifies an integrated claim).
+ * must-hold (DESIGN-1.0.md §2.8 "Vision, corpus and obligations": unit-branch success never certifies an integrated claim).
  */
 export function requiredWitnesses(view: JournalView, obligations: Obligations, unit: UnitId, spec: SpecM1, at: WitnessTree): readonly RequiredWitness[] {
   const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
@@ -95,7 +95,7 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
     if (targets.has(id) || !binding(o) || !isMustHold(o, latchedInTree)) continue;
     rows.push(...obligationRows(o, 'preservation'));
   }
-  return [...new Map(rows.map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));
+  return [...new Map(rows.filter((r) => !obligations.lanes.some((l) => l.id === r.lane && l.witnessClass === 'external')).map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));
 }
 
 function compareRows(a: RequiredWitness, b: RequiredWitness): number {

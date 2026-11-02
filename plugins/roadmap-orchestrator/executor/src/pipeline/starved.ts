@@ -6,16 +6,16 @@
 // round, no park; admission holds the re-run (src/schedule/ready.ts). Nothing here is journaled: the hold fact is the
 // stage's one outcome, so a crash before it re-runs the attempt as any crash does, and the fold derives the rest.
 import type { HoldCause } from '../core/events.ts';
-import { type InvocationId, parseInvocationId } from '../core/ids.ts';
+import { type InvocationId,parseInvocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { UnitState } from '../core/state.ts';
-import { spawnPressureOf } from '../core/upgrade.ts';
-import { type PressureHolds, type PressureRun, type PressureRuling, pressureRuling } from '../host/pressure.ts';
+import { spawnPressureOf } from '../core/projections.ts';
 import { isRed } from '../core/records.ts';
+import type { UnitState } from '../core/state.ts';
 import type { AbsPath } from '../core/values.ts';
+import { type PressureHolds,type PressureRuling,pressureRuling,type PressureRun } from '../host/pressure.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir } from './invoke.ts';
-import type { LaneRun, SeriesEnd } from './lanes.ts';
+import type { LaneRun,SeriesEnd } from './lanes.ts';
 
 /** The fold's pressure holds of `u`: its count, and whether its latest hold was host-pressure with no decision since. */
 export const pressureHoldsOf = (u: UnitState): PressureHolds => ({ count: u.pressureHolds, rerun: u.pressureHold !== null });

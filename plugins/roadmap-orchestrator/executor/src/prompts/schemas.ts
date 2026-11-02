@@ -1,60 +1,51 @@
-// Structured results of the roles (M3 adds the arc roles `lens` and `checkpoint`, M4a `packReview`, M4b `flow`), as strict JSON Schemas (every key required, no additional
-// properties: what `codex exec --output-schema` demands and `claude -p --json-schema` accepts) plus the
-// hand-written validators the adapter runs on the backend's terminal output. The schema is the model's
-// contract; the validator is the executor's, and also enforces the cross-field rules a schema cannot
-// state (a patch only with redirect, directives only with revise, no blocking finding on an approve).
-//
-// Derived from the M1 transition table (plan "Pipeline for one serial unit"):
-//   planCheck: approve → build · redirect → spec.patch, re-check · infeasible → escalate · escalate → route up
-// Both judgments also return their premises (claim + file:line evidence, possibly none): the next round's handoff.
-//   gate:      approve → integration slot · revise → fix round with directives · escalate → route up
-//   build:     success → quiesce (the executor then salvages, runs lanes and gates; the report is evidence)
-import {
-  type ClauseId, type FailureModeId, type FindingId, type JourneyId, type LaneId, type ObligationId, type PocQuestionId, type ReviewFindingId, type RuleId, type RulingId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, clauseId,
-  failureModeId, pocQuestionId, answerIds, findingId, journeyId, laneId, obligationId, reviewFindingId, ruleId, rulingId, sha, unitId, visionClauseId,
-} from '../core/ids.ts';
-import { type ReviewDispute, reviewDispute } from '../core/review.ts';
-import { FLOW_REPORTERS, type FlowOutput, flowOutput } from '../flow/types.ts';
-import { type JsonValue, canonicalJson } from '../core/json.ts';
-import { BOUND_FIELDS, type Bounds, type FailureRef, type NoteDef, SPEC_SCHEMA, SPEC_SECTIONS, type SpecM1, type SpecPatchOp, failureRef, specM1, specPatchOp } from '../core/records.ts';
-import {
-  Fields, type Read, SchemaError, answerSet, arrayOf, assertUnique, bool, envName, int, literal, nullable, object, oneOf, positive, str, tagged, text,
-} from '../core/validate.ts';
-import { type RepoPath, type RepoPattern, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
-import {
-  ACTIVATIONS, type Activation, DOC_RELATIONS, FINDING_DISPOSITIONS, FINDING_SEVERITIES as LENS_SEVERITIES, type FindingDisposition, type FindingSeverity, OBLIGATION_DISPOSITIONS,
-  OWNER_ONLY_CLASSES, PACK_DISPOSITIONS, PACK_SEVERITIES, type DocRef, type PackDisposition, type ObligationAnchor, type ObligationDisposition, type ObservationKey, type OwnerOnlyClass, type PackSeverity,
-  type PackTarget, RULE_RELATIONS, RULING_KINDS, RULING_LIFETIMES, RULING_SCHEMA, RULING_STATUSES, type WitnessRef, observationKey, packDisposition, packTarget,
-} from '../holistic/types.ts';
-import { REENTRY_POINTS, type ReentryPoint } from '../input/plan.ts';
-import {
-  admitSpecTextDefault, admitTargetsDefault, buildDocsOnlySinceDefault, buildExperimentsDefault, buildFinalDefault, checkpointRulingTextDefault, GATE_DEBT_UNRECORDED, gateClustersDefault,
-  gateFindingReviewDefault, gateNoteDebtDefault, gateRulingsDefault, gateUnreviewedDefault, issuesIgnored, lensPatchMutantDefault, planCheckScopeGrowthDefault, planCheckStaleLinksDefault,
-  FIXES_UNRECORDED,
-  reenterFixesDefault, planCheckDesignDefault,
-} from '../core/upgrade.ts';
-import { type OrderingWait, orderingWait } from '../core/ordering.ts';
-import { orderingDefault } from '../core/upgrade.ts';
+import { nonBlank } from '../core/validate.ts';
+import { type SystemName,systemName } from '../core/ids.ts';
+// Strict role-result schemas and validators. Verifier pre-build and diagnosis modes annotate;
+// gate mode approves, requests a fix or escalates. Builders report grounding and experiments;
+// campaign audits report findings and root requests. Cross-field checks supplement JSON Schema.
+import { type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type ReviewFindingId,type UnitId,type VisionClauseId,answerIds,clauseId,findingId,journeyId,laneId,obligationId,reviewFindingId,unitId,visionClauseId } from '../core/ids.ts';
+import { type JsonValue } from '../core/json.ts';
+import { type NoteDef,SPEC_SCHEMA,specM1 } from '../core/records.ts';
+import { type ReviewDispute,reviewDispute } from '../core/review.ts';
+import { Fields,type Read,SchemaError,arrayOf,assertUnique,envName,int,literal,nullable,object,oneOf,str,tagged,text } from '../core/validate.ts';
+import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
+import { type FindingSeverity,FINDING_SEVERITIES as LENS_SEVERITIES,PACK_DISPOSITIONS,PACK_SEVERITIES,type PackDisposition,type PackSeverity,type PackTarget,packDisposition,packTarget } from '../holistic/types.ts';
+
+import { type OrderingWait,orderingWait } from '../core/ordering.ts';
+
+import { type ClauseLanes,type DesignChange,type DesignExperiment,type FailureModeProof,type NewSystem,type UnitKind,type Verification } from '../core/design.ts';
 import type { MutantEdit } from '../git/mutant.ts';
-import {
-  type ClauseLanes, type DesignChange, type DesignExperiment, type FailureModeProof, type NewSystem, type UnitKind, type Verification, UNIT_KINDS, clauseLanes, designChange, designExperiment, failureModeProof,
-  newSystem, verification,
-} from '../core/design.ts';
-import { STALE_OUTCOMES, type StaleAnswer, staleAnswer } from '../core/stale.ts';
+import { type Role } from '../routing/types.ts';
 import { specBytes } from '../spec/spec.ts';
-import {
-  BUILD_CLASSES, JUDGMENT_SEATS, MODEL_CLASSES, type ModelClass, classAt, RISK_TIERS, ROLES, type RiskTier, type Role, SEATS, type Seat,
-} from '../routing/types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // JSON Schema builders (strict subset: object, array, string, integer, boolean, enum, anyOf, null)
 
 type Schema = JsonValue;
-const S_STR: Schema = { type: 'string' };
-const S_INT: Schema = { type: 'integer' };
+const S_TEXT: Schema = { type: 'string' };
+const S_STR: Schema = { type: 'string', pattern: '[\\s\\S]+' };
+const sInt = (minimum: number, maximum = Number.MAX_SAFE_INTEGER): Schema => ({ type: 'integer', description: `A safe integer in [${minimum}, ${maximum}], inclusive.` });
+const S_LINE = sInt(1);
+const S_EXIT: Schema = { type: 'integer', enum: Array.from({length: 256}, (_, i) => i) };
+const sPattern = (pattern: string): Schema => ({ type: 'string', pattern });
+const S_SLUG = sPattern('^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$');
+const S_ITEM_ID = sPattern('^[A-Za-z][A-Za-z0-9_.-]{0,63}$');
+const sNumbered = (prefix: string): Schema => sPattern(`^${prefix}-[1-9][0-9]{0,14}$`);
+const S_REVIEW_ID = sNumbered('R');
+// Positive regexes only: Claude's supported pattern subset has no lookaround assertions.
+const REPO_SEGMENT = '(?:[^/\\u0000.][^/\\u0000]*|\\.[^/\\u0000.][^/\\u0000]*|\\.\\.[^/\\u0000][^/\\u0000]*)';
+const S_REPO_PATH = sPattern(`^(?:\\.|${REPO_SEGMENT}(?:/${REPO_SEGMENT})*)$`);
+const S_REPO_PATTERN = sPattern(`^(?:\\.|${REPO_SEGMENT})(?:/(?:\\.|${REPO_SEGMENT})?)*$`);
+// A single segment beginning V- followed solely by digits is interpreted as a VisionClauseId.
+const NON_V_SEGMENT = REPO_SEGMENT.replace('[^/', '[^V/');
+const NON_VISION_SEGMENT = `(?:\\.|${NON_V_SEGMENT}|V(?:[^-/\\u0000][^/\\u0000]*|-(?:[0-9]*[^0-9/\\u0000][^/\\u0000]*)?)?)`;
+const S_FLOOR_SOURCE: Schema = { anyOf: [sNumbered('V'), sPattern(`^(?:${NON_VISION_SEGMENT}|${REPO_SEGMENT}/${REPO_SEGMENT}(?:/${REPO_SEGMENT})*)$`)] };
+const S_ENV_NAME = sPattern('^[A-Za-z_][A-Za-z0-9_]*$');
+const sDescribe = (schema: Schema, description: string): Schema => ({ ...schema as object, description });
+const sUnique = (schema: Schema, key = 'value'): Schema => sDescribe(schema, `Entries must have unique ${key}s.`);
 const S_BOOL: Schema = { type: 'boolean' };
 const sEnum = (values: readonly string[]): Schema => ({ type: 'string', enum: [...values] });
-const sArr = (items: Schema): Schema => ({ type: 'array', items });
+const sArr = (items: Schema, minItems = 0): Schema => ({ type: 'array', items, ...(minItems === 0 ? {} : { minItems }) });
 const sNullable = (s: Schema): Schema => ({ anyOf: [s, { type: 'null' }] });
 function sObj(properties: { readonly [key: string]: Schema }): Schema {
   return { type: 'object', additionalProperties: false, properties, required: Object.keys(properties) };
@@ -71,65 +62,63 @@ function sObj(properties: { readonly [key: string]: Schema }): Schema {
  */
 export type Premise = Readonly<{ claim: string; evidence: readonly Readonly<{ path: string; line: number }>[] }>;
 
-const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_INT })) }));
+const S_PREMISES = sArr(sObj({ claim: S_STR, evidence: sArr(sObj({ path: S_STR, line: S_LINE })) }));
 const premise: Read<Premise> = object((f) => ({
   claim: f.get('claim', str),
   evidence: f.get('evidence', arrayOf(object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) })))),
 }));
 
 // ---------------------------------------------------------------------------------------------------
-// planCheck
+const LANE_ITEM_FIELDS = {
+  id: S_ITEM_ID,
+  argv: sDescribe(sArr(S_TEXT, 1), 'argv[0] must be a non-empty program name; later arguments may be empty.'),
+  cwd: S_REPO_PATH,
+  env: sObj({ set: sUnique(sArr(sObj({ name: S_ENV_NAME, value: S_TEXT })), 'name'), pass: sDescribe(sArr(S_ENV_NAME), 'Entries must be unique and must not also appear in env.set names.') }),
+  expectedExit: S_EXIT,
+  cadence: sEnum(['build', 'unit']),
+  resources: sUnique(sArr(S_SLUG)),
+  evidenceGlobs: sArr(S_REPO_PATTERN),
+  evidenceExcludes: sArr(S_REPO_PATTERN),
+} as const;
+const ACCEPTANCE_ITEM_FIELDS = { id: S_ITEM_ID, clause: S_STR, failLoudIfUndelivered: S_BOOL } as const;
+const NOTE_ITEM_FIELDS = { id: S_ITEM_ID, text: S_STR } as const;
+const sStated = (fields: { readonly [key: string]: Schema }): Schema => sObj({ ...fields, state: sEnum(['active', 'struck', 'deferred']) });
+function laneFromWire(value: unknown, path: string): unknown {
+  const item = new Fields(value, path);
+  const env = new Fields(item.get('env', (v) => v), `${path}.env`);
+  const pairs = env.get('set', arrayOf(object((g) => ({ name: g.get('name', envName), value: g.get('value', text) }))));
+  assertUnique(pairs, (p) => p.name, `${path}.env.set`);
+  const v = value as { readonly env: object };
+  return { ...v, env: { ...v.env, set: Object.fromEntries(pairs.map((p) => [p.name, p.value])) } };
+}
+const S_FULL_SPEC = sObj({
+  schema: sEnum([SPEC_SCHEMA]),
+  unit: S_SLUG,
+  rev: S_LINE,
+  lanes: sDescribe(sArr(sStated(LANE_ITEM_FIELDS)), 'Item IDs must be unique across lanes, acceptance, decisions and facts.'),
+  acceptance: sArr(sStated(ACCEPTANCE_ITEM_FIELDS), 1),
+  intent: S_STR,
+  nonGoals: sArr(S_STR, 1),
+  resources: sUnique(sArr(S_SLUG)),
+  decisions: sArr(sStated(NOTE_ITEM_FIELDS)),
+  facts: sArr(sStated(NOTE_ITEM_FIELDS)),
+  cites: sObj({ contracts: sUnique(sArr(S_REPO_PATH)), rulings: sUnique(sArr(sPattern('^C-[0-9]+$'))) }),
+  obligations: sUnique(sArr(sNumbered('I'))),
+  repairs: sUnique(sArr(sPattern('^[FI]-[1-9][0-9]{0,14}$'))),
+});
+const fullSpec: Read<string> = (value, path) => {
+  const f = new Fields(value, path);
+  const lanes = f.get('lanes', arrayOf((v) => v));
+  const v = value as Record<string, unknown>;
+  const { obligations, repairs, ...rest } = v;
+  const listed = (key: string, list: unknown): Record<string, unknown> => (Array.isArray(list) && list.length === 0 ? {} : { [key]: list });
+  const spec = specM1({
+    ...rest, lanes: lanes.map((l, i) => laneFromWire(l, `${path}.lanes[${i}]`)), ...listed('obligations', obligations), ...listed('repairs', repairs),
+  }, path);
+  return specBytes(spec).toString('utf8');
+};
 
-/**
- * dev.17 (design pass, DESIGN-1.0.md "Design pass"): `split` (the unit is too big or mixes concerns: child specs code
- * applies as a revision), `scaffold` (a new system's skeleton the `scaffold` role writes first, then the build) and `poc`
- * (questions a throwaway build answers before the check decides) join the M1 decisions.
- */
-export const PLAN_CHECK_DECISIONS = ['approve', 'redirect', 'split', 'scaffold', 'poc', 'infeasible', 'escalate'] as const;
-export type PlanCheckDecision = (typeof PLAN_CHECK_DECISIONS)[number];
-
-type PlanCheckCommon = Readonly<{
-  /** The decision's justification, one point per entry (a reason need not cite; a cite given elsewhere must resolve). */
-  reasons: readonly string[];
-  /** The unit's risk after the check: the dispatch floor or higher. The executor refuses a lower tier. */
-  risk: RiskTier;
-  /**
-   * What the architect reads when the decision escalates or is infeasible; otherwise facts for the build and
-   * the gate (defects in existing code, observations the decision does not rest on), or empty.
-   */
-  notes: string;
-  premises: readonly Premise[];
-  /**
-   * R17: where the spec conflicts with the vision (read-only context), the clauses and a note. Each opens a P3
-   * `plan-check` finding for the next checkpoint and is never a redirect by itself. Empty outside a holistic arc.
-   */
-  visionConflict: readonly VisionConflict[];
-  /**
-   * Scope growth (2026-10-15): paths outside the pinned scope the unit needs (the reference sweep: tests and callers of what
-   * it removes or renames), each proposal its patterns and why. Code verifies each pattern (src/pipeline/stages.ts
-   * `verifiedGrowth`); a verified proposal holds the unit for the root agent's `scope accept | reject`. An answer recorded
-   * before it has none (`planCheckScopeGrowthDefault`).
-   */
-  scopeGrowth: readonly ScopeGrowthAnswer[];
-  /**
-   * dev.17 (propagation): one answer per stale link the input lists (by its key), `updated` (by this redirect's patch) or
-   * `confirmed`, with a reason; empty when it lists none. An approve or a redirect leaving one unanswered is refused
-   * (src/holistic/staleset.ts `staleAnswerReasons`). An answer recorded before dev.17 has none (`planCheckStaleLinksDefault`).
-   */
-  staleLinks: readonly StaleAnswer[];
-}>;
-export type VisionConflict = Readonly<{ clauses: readonly VisionClauseId[]; note: string }>;
-/** One proposed growth as the plan-check writes it: its patterns are text until code verifies them. */
-export type ScopeGrowthAnswer = Readonly<{ patterns: readonly string[]; reason: string }>;
-const S_SCOPE_GROWTH = sArr(sObj({ patterns: sArr(S_STR), reason: S_STR }));
-const S_STALE_LINKS = sArr(sObj({ link: S_STR, outcome: sEnum(STALE_OUTCOMES), reason: S_STR }));
-
-/**
- * The design record as the plan-check writes it (dev.17; src/core/design.ts `DesignRecord`): paths and ids, which code pins
- * at the tip the check read (interfaces and broken files at their blobs, requirements at their revs: src/pipeline/design.ts
- * `pinDesign`) before it lands on the spec's next revision. `newSystem` null: the unit creates none; `verification` null on
- * every unit but a deflake unit.
- */
+// Design records supplied by the root and pinned by code.
 export type DesignAnswer = Readonly<{
   kind: UnitKind;
   changes: readonly DesignChange[];
@@ -141,404 +130,32 @@ export type DesignAnswer = Readonly<{
   newSystem: NewSystem | null;
   verification: Verification | null;
 }>;
-/**
- * One child of a `split`: its unit id (new to the plan), its scope (within the parent's effective scope), the parent's
- * acceptance and witness item ids it takes (the children partition the parent's active items exactly), the obligations it
- * declares (a subset of the parent's) and its own sized design record. Code builds its spec from the parent's (src/pipeline/split.ts).
- */
-export type UnitSplitChild = Readonly<{ unit: UnitId; scope: readonly RepoPattern[]; items: readonly string[]; obligations: readonly ObligationId[]; design: DesignAnswer }>;
-/**
- * `split` (dev.17): two or more children, the edges among them (`from` before `to`), and for a mixed-concerns split the
- * skeleton: the child that lands the contracts, the wiring and the spanning test first, and the candidate or batch lane
- * holding that test (every other child runs after it; null for a thin vertical slice). D0 typed the children as finished
- * specs; code builds them from the parent's instead, so an item's text cannot drift in the split.
- */
-export type SplitDecision = Readonly<{ children: readonly UnitSplitChild[]; edges: readonly Readonly<{ from: UnitId; to: UnitId }>[]; skeleton: Readonly<{ unit: UnitId; lane: LaneId }> | null }>;
-/**
- * `scaffold`: what the `scaffold` role writes first in the unit worktree: the new system, its entry points and exports, the
- * load test an arc lane's reporter must show ran, and the manifest entries (a path and the entry it gains).
- */
-export type ScaffoldDecision = Readonly<{
-  newSystem: NewSystem;
-  entryPoints: readonly RepoPath[];
-  exports: readonly string[];
-  loadTest: Readonly<{ lane: LaneId; testId: string }>;
-  manifest: readonly Readonly<{ path: RepoPath; entry: string }>[];
-}>;
-/** One question a proof of concept answers. */
-export type PocQuestion = Readonly<{ id: PocQuestionId; question: string; whyItMatters: string }>;
-/** `poc`: the questions (one or more, unique ids) and the brief the throwaway build works from. */
-export type PocDecision = Readonly<{ questions: readonly PocQuestion[]; brief: string }>;
-
-/**
- * The plan-check's answer by decision. An approve and a scaffold carry the design record (null only on an approve recorded
- * before dev.17, `planCheckDesignDefault`: read back, never judged); every payload key is null on every other decision.
- */
-export type PlanCheckOutput = PlanCheckCommon & (
-  | Readonly<{ decision: 'approve'; patch: null; design: DesignAnswer | null }>
-  | Readonly<{ decision: 'scaffold'; patch: null; design: DesignAnswer; scaffold: ScaffoldDecision }>
-  | Readonly<{ decision: 'split'; patch: null; split: SplitDecision }>
-  | Readonly<{ decision: 'poc'; patch: null; poc: PocDecision }>
-  | Readonly<{ decision: 'infeasible' | 'escalate'; patch: null; ordering?: OrderingWait | null }>
-  | Readonly<{ decision: 'redirect'; patch: readonly SpecPatchOp[] }>
-);
-/** An answer's design record, or null when its decision carries none. */
-export const designOfAnswer = (out: PlanCheckOutput): DesignAnswer | null => (out.decision === 'approve' || out.decision === 'scaffold' ? out.design : null);
-
-// A lane's `env.set` is a map in spec.json, but a strict schema cannot describe open maps, so the model
-// writes it as [{name, value}] and the validator converts before handing the op to records.ts.
-const LANE_ITEM_FIELDS = {
-  id: S_STR,
-  argv: sArr(S_STR),
-  cwd: S_STR,
-  env: sObj({ set: sArr(sObj({ name: S_STR, value: S_STR })), pass: sArr(S_STR) }),
-  expectedExit: S_INT,
-  cadence: sEnum(['build', 'unit']),
-  resources: sArr(S_STR),
-  evidenceGlobs: sArr(S_STR),
-  evidenceExcludes: sArr(S_STR),
-} as const;
-const ACCEPTANCE_ITEM_FIELDS = { id: S_STR, clause: S_STR, failLoudIfUndelivered: S_BOOL } as const;
-const NOTE_ITEM_FIELDS = { id: S_STR, text: S_STR } as const;
-const S_LANE_ITEM = sObj(LANE_ITEM_FIELDS);
-const S_ACCEPTANCE_ITEM = sObj(ACCEPTANCE_ITEM_FIELDS);
-const S_NOTE_ITEM = sObj(NOTE_ITEM_FIELDS);
-/** A spec item as spec.json holds it: the patch item's fields and its state. */
-const sStated = (fields: { readonly [key: string]: Schema }): Schema => sObj({ ...fields, state: sEnum(['active', 'struck', 'deferred']) });
-const itemOps = (section: string, item: Schema): Schema[] =>
-  ['add', 'replace'].map((op) => sObj({ op: sEnum([op]), section: sEnum([section]), item }));
-const S_PATCH_OP: Schema = {
-  anyOf: [
-    ...itemOps('lanes', S_LANE_ITEM),
-    ...itemOps('acceptance', S_ACCEPTANCE_ITEM),
-    ...itemOps('decisions', S_NOTE_ITEM),
-    ...itemOps('facts', S_NOTE_ITEM),
-    sObj({ op: sEnum(['strike', 'defer']), id: S_STR }),
-    sObj({ op: sEnum(['cite']), contracts: sArr(S_STR), rulings: sArr(S_STR) }),
-  ],
-};
-
-const S_NEW_SYSTEM = sObj({ name: S_STR, paths: sArr(S_STR), tests: sArr(S_STR) });
-const S_DESIGN = sObj({
-  kind: sEnum(UNIT_KINDS),
-  changes: sArr(sObj({ system: sNullable(S_STR), paths: sArr(S_STR), lines: S_INT })),
-  interfaces: sArr(sObj({ type: sEnum(['contract', 'file']), path: S_STR })),
-  failureModes: sArr(sObj({
-    id: S_STR, mode: S_STR,
-    proof: {
-      anyOf: [
-        sObj({ type: sEnum(['test']), test: { anyOf: [sObj({ type: sEnum(['witness']), item: S_STR }), sObj({ type: sEnum(['test']), lane: S_STR, testId: S_STR })] } }),
-        sObj({ type: sEnum(['untested']), reason: S_STR }),
-      ],
-    },
-    requirements: sArr(S_STR),
-  })),
-  clauses: sArr(sObj({ clause: S_STR, lanes: sArr(S_STR) })),
-  breaks: sObj({ tests: sArr(S_STR), docs: sArr(S_STR) }),
-  experiments: sArr(sObj({ command: S_STR, output: S_STR })),
-  newSystem: sNullable(S_NEW_SYSTEM),
-  verification: sNullable({
-    anyOf: [
-      sObj({ type: sEnum(['reproduce-then-fix']), condition: S_STR, runs: S_INT }),
-      sObj({ type: sEnum(['repeat']), rationale: S_STR, runs: S_INT }),
-    ],
-  }),
-});
-const S_SPLIT = sObj({
-  children: sArr(sObj({ unit: S_STR, scope: sArr(S_STR), items: sArr(S_STR), obligations: sArr(S_STR), design: S_DESIGN })),
-  edges: sArr(sObj({ from: S_STR, to: S_STR })),
-  skeleton: sNullable(sObj({ unit: S_STR, lane: S_STR })),
-});
-const S_SCAFFOLD = sObj({
-  newSystem: S_NEW_SYSTEM, entryPoints: sArr(S_STR), exports: sArr(S_STR), loadTest: sObj({ lane: S_STR, testId: S_STR }),
-  manifest: sArr(sObj({ path: S_STR, entry: S_STR })),
-});
-const S_POC = sObj({ questions: sArr(sObj({ id: S_STR, question: S_STR, whyItMatters: S_STR })), brief: S_STR });
-
-export const PLAN_CHECK_SCHEMA: Schema = sObj({
-  decision: sEnum(PLAN_CHECK_DECISIONS),
-  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only infeasible or escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked check after all blockers merge.' },
-  reasons: sArr(S_STR),
-  patch: sNullable(sArr(S_PATCH_OP)),
-  risk: sEnum(RISK_TIERS),
-  notes: S_STR,
-  premises: S_PREMISES,
-  visionConflict: sArr(sObj({ clauses: sArr(S_STR), note: S_STR })),
-  scopeGrowth: S_SCOPE_GROWTH,
-  staleLinks: S_STALE_LINKS,
-  design: sNullable(S_DESIGN),
-  split: sNullable(S_SPLIT),
-  scaffold: sNullable(S_SCAFFOLD),
-  poc: sNullable(S_POC),
-});
-
-/** A lane item's wire form: its env.set arrives as [{name, value}] and becomes the map spec.json holds. */
-function laneFromWire(value: unknown, path: string): unknown {
-  const item = new Fields(value, path);
-  const env = new Fields(item.get('env', (v) => v), `${path}.env`);
-  const pairs = env.get('set', arrayOf(object((g) => ({ name: g.get('name', envName), value: g.get('value', text) }))));
-  assertUnique(pairs, (p) => p.name, `${path}.env.set`);
-  const v = value as { readonly env: object };
-  return { ...v, env: { ...v.env, set: Object.fromEntries(pairs.map((p) => [p.name, p.value])) } };
-}
-
-/** A witness item's wire form: `obligation: null` (the acceptance schema's "no obligation's witness") is spec.json's absent. */
-function witnessFromWire(value: unknown): unknown {
-  if (typeof value !== 'object' || value === null || !('obligation' in value) || value.obligation !== null) return value;
-  const { obligation: _, ...rest } = value;
-  return rest;
-}
-
-/** The wire form of one op: a lane item's env.set arrives as [{name, value}], a witness item's obligation may be null. */
-const wireOp: Read<SpecPatchOp> = (value, path) => {
-  const f = new Fields(value, path);
-  const op = f.get('op', oneOf(['add', 'replace', 'strike', 'defer', 'cite'] as const));
-  if (op === 'strike' || op === 'defer' || op === 'cite') return specPatchOp(value, path);
-  const section = f.get('section', oneOf(SPEC_SECTIONS));
-  const v = value as { readonly item: unknown };
-  if (section === 'witnesses') return specPatchOp({ ...v, item: witnessFromWire(v.item) }, path);
-  if (section !== 'lanes') return specPatchOp(value, path);
-  return specPatchOp({ ...v, item: laneFromWire(v.item, `${path}.item`) }, path);
-};
-
-// Reads at validation time, after the M3 helpers below are initialised.
-const visionConflict: Read<VisionConflict> = object((g) => ({ clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), note: g.get('note', str) }));
-const scopeGrowthAnswer: Read<ScopeGrowthAnswer> = object((g) => ({ patterns: g.get('patterns', arrayOf(str, { nonEmpty: true })), reason: g.get('reason', str) }));
-
-const repoPathR: Read<RepoPath> = (v, p) => repoPath(v, p);
-const designAnswer: Read<DesignAnswer> = object((f) => {
-  const out: DesignAnswer = {
-    kind: f.get('kind', oneOf(UNIT_KINDS)),
-    changes: f.get('changes', arrayOf(designChange, { nonEmpty: true })),
-    interfaces: f.get('interfaces', arrayOf(object((g) => ({ type: g.get('type', oneOf(['contract', 'file'] as const)), path: g.get('path', repoPathR) })))),
-    failureModes: f.get('failureModes', arrayOf(object((g) => ({
-      id: g.get('id', (v, p) => failureModeId(v, p)), mode: g.get('mode', str), proof: g.get('proof', failureModeProof), requirements: g.get('requirements', answerIds(oid)),
-    })))),
-    clauses: f.get('clauses', arrayOf(clauseLanes)),
-    breaks: f.get('breaks', object((g) => ({ tests: g.get('tests', arrayOf(repoPathR)), docs: g.get('docs', arrayOf(repoPathR)) }))),
-    experiments: f.get('experiments', arrayOf(designExperiment)),
-    newSystem: f.get('newSystem', nullable(newSystem)),
-    verification: f.get('verification', nullable(verification)),
-  };
-  assertUnique(out.interfaces, (i) => i.path, `${f.path}.interfaces`);
-  assertUnique(out.failureModes, (m) => m.id, `${f.path}.failureModes`);
-  assertUnique(out.clauses, (c) => c.clause, `${f.path}.clauses`);
-  assertUnique([...out.breaks.tests, ...out.breaks.docs], (b) => b, `${f.path}.breaks`);
-  return out;
-});
-export const splitDecision: Read<SplitDecision> = object((f) => {
-  const children = f.get('children', arrayOf(object((g): UnitSplitChild => {
-    const child = {
-      unit: g.get('unit', unitR), scope: g.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), items: g.get('items', arrayOf(str, { nonEmpty: true })),
-      obligations: g.get('obligations', answerIds(oid)), design: g.get('design', designAnswer),
-    };
-    assertUnique(child.scope, (s) => s, `${g.path}.scope`);
-    assertUnique(child.items, (i) => i, `${g.path}.items`);
-    return child;
-  }), { nonEmpty: true }));
-  if (children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more children', children.length);
-  assertUnique(children, (c) => c.unit, `${f.path}.children`);
-  const edges = f.get('edges', arrayOf(object((g) => ({ from: g.get('from', unitR), to: g.get('to', unitR) }))));
-  const ids = new Set(children.map((c) => c.unit));
-  const i = edges.findIndex((e) => !ids.has(e.from) || !ids.has(e.to) || e.from === e.to);
-  if (i >= 0) throw new SchemaError(`${f.path}.edges[${i}]`, 'an edge between two distinct children', edges[i]);
-  assertUnique(edges, (e) => `${e.from}>${e.to}`, `${f.path}.edges`);
-  const skeleton = f.get('skeleton', nullable(object((g) => ({ unit: g.get('unit', unitR), lane: g.get('lane', (v, p) => laneId(v, p)) }))));
-  if (skeleton !== null && !ids.has(skeleton.unit)) throw new SchemaError(`${f.path}.skeleton.unit`, 'one of the children', skeleton.unit);
-  return { children, edges, skeleton };
-});
-export const scaffoldDecision: Read<ScaffoldDecision> = object((f) => {
-  const out = {
-    newSystem: f.get('newSystem', newSystem),
-    entryPoints: f.get('entryPoints', arrayOf(repoPathR, { nonEmpty: true })),
-    exports: f.get('exports', arrayOf(str)),
-    loadTest: f.get('loadTest', object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), testId: g.get('testId', str) }))),
-    manifest: f.get('manifest', arrayOf(object((g) => ({ path: g.get('path', repoPathR), entry: g.get('entry', str) })))),
-  };
-  assertUnique(out.entryPoints, (e) => e, `${f.path}.entryPoints`);
-  return out;
-});
-export const pocDecision: Read<PocDecision> = object((f) => {
-  const questions = f.get('questions', arrayOf(object((g): PocQuestion => ({
-    id: g.get('id', (v, p) => pocQuestionId(v, p)), question: g.get('question', str), whyItMatters: g.get('whyItMatters', str),
-  })), { nonEmpty: true }));
-  assertUnique(questions, (q) => q.id, `${f.path}.questions`);
-  return { questions, brief: f.get('brief', str) };
-});
-
-/** A payload key that must be null (or, on an answer recorded before dev.17, absent) under every other decision. */
-const none = (f: Fields, key: string): void => void f.optional(key, literal(null));
-
-/** Read older answers without changing their shape; new answers may explicitly declare an ordering wait. */
-function answerOrdering(f: Fields, allowed: boolean): OrderingWait | null | undefined {
-  const ordering = f.optional('ordering', nullable(orderingWait));
-  if (ordering === undefined) orderingDefault();
-  if (ordering != null && !allowed) throw new SchemaError(`${f.path}.ordering`, 'null outside an ordering escalation or infeasible decision', ordering);
-  return ordering;
-}
-
-export const planCheckOutput: Read<PlanCheckOutput> = object((f): PlanCheckOutput => {
-  const decision = f.get('decision', oneOf(PLAN_CHECK_DECISIONS));
-  const ordering = answerOrdering(f, decision === 'infeasible' || decision === 'escalate');
-  const common = {
-    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
-    risk: f.get('risk', oneOf(RISK_TIERS)),
-    notes: f.get('notes', text),
-    premises: f.get('premises', arrayOf(premise)),
-    visionConflict: f.get('visionConflict', arrayOf(visionConflict)),
-    scopeGrowth: f.optional('scopeGrowth', arrayOf(scopeGrowthAnswer)) ?? planCheckScopeGrowthDefault(),
-    staleLinks: f.optional('staleLinks', arrayOf(staleAnswer)) ?? planCheckStaleLinksDefault(),
-  };
-  const payloads = ['design', 'split', 'scaffold', 'poc'] as const;
-  const nullExcept = (...keep: readonly (typeof payloads)[number][]): void => payloads.filter((k) => !keep.includes(k)).forEach((k) => none(f, k));
-  switch (decision) {
-    case 'redirect':
-      nullExcept();
-      return { ...common, decision, patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
-    case 'approve': {
-      nullExcept('design');
-      const design = f.optional('design', nullable(designAnswer));
-      return { ...common, decision, patch: f.get('patch', literal(null)), design: design === undefined ? planCheckDesignDefault() : design };
-    }
-    case 'scaffold':
-      nullExcept('design', 'scaffold');
-      return { ...common, decision, patch: f.get('patch', literal(null)), design: f.get('design', designAnswer), scaffold: f.get('scaffold', scaffoldDecision) };
-    case 'split':
-      nullExcept('split');
-      return { ...common, decision, patch: f.get('patch', literal(null)), split: f.get('split', splitDecision) };
-    case 'poc':
-      nullExcept('poc');
-      return { ...common, decision, patch: f.get('patch', literal(null)), poc: f.get('poc', pocDecision) };
-    case 'infeasible':
-    case 'escalate':
-      nullExcept();
-      return { ...common, decision, patch: f.get('patch', literal(null)), ...(ordering === undefined ? {} : { ordering }) };
-  }
-});
-
-export function validatePlanCheckOutput(value: unknown): PlanCheckOutput {
-  return planCheckOutput(value, 'planCheck');
-}
-
-// ---------------------------------------------------------------------------------------------------
-// The proof of concept (dev.17, design pass): a builder seat's throwaway build answering a `poc` decision's questions
-
-/** How sure a PoC is of one answer. */
-export const POC_CONFIDENCES = ['high', 'medium', 'low'] as const;
-export type PocConfidence = (typeof POC_CONFIDENCES)[number];
-/**
- * A PoC's closed answer (src/pipeline/poc.ts): exactly one answer per question (its evidence: what was run or read, and what
- * it showed), the lessons a builder of the real unit should know, and the surprises. Nothing of the PoC's code survives.
- */
-export type PocOutput = Readonly<{
-  answers: readonly Readonly<{ questionId: PocQuestionId; answer: string; evidence: string; confidence: PocConfidence }>[];
-  lessons: readonly string[];
-  surprises: readonly string[];
-}>;
-export const POC_SCHEMA: Schema = sObj({
-  answers: sArr(sObj({ questionId: S_STR, answer: S_STR, evidence: S_STR, confidence: sEnum(POC_CONFIDENCES) })),
-  lessons: sArr(S_STR),
-  surprises: sArr(S_STR),
-});
-/** The PoC answer for `questions`: one answer per question, none for another. */
-export const pocOutputFor = (questions: readonly PocQuestionId[]): Read<PocOutput> => object((f) => {
-  const answers = f.get('answers', arrayOf(object((g) => ({
-    questionId: g.get('questionId', (v, p) => pocQuestionId(v, p)), answer: g.get('answer', str), evidence: g.get('evidence', str), confidence: g.get('confidence', oneOf(POC_CONFIDENCES)),
-  }))));
-  assertUnique(answers, (a) => a.questionId, `${f.path}.answers`);
-  const asked = new Set<string>(questions);
-  const stray = answers.find((a) => !asked.has(a.questionId));
-  if (stray !== undefined) throw new SchemaError(`${f.path}.answers`, `answers to the questions asked (${questions.join(', ')})`, stray.questionId);
-  const missing = questions.filter((q) => !answers.some((a) => a.questionId === q));
-  if (missing.length > 0) throw new SchemaError(`${f.path}.answers`, `an answer to ${missing.join(', ')}`, answers.map((a) => a.questionId));
-  return { answers, lessons: f.get('lessons', arrayOf(str)), surprises: f.get('surprises', arrayOf(str)) };
-});
-
-// ---------------------------------------------------------------------------------------------------
-// scaffold (dev.17, design pass): the economy role that writes a new system's skeleton
-
-/** The scaffold writer's report: what it wrote (each path relative to the worktree) and a summary; code checks the tree itself. */
-export type ScaffoldOutput = Readonly<{ summary: string; paths: readonly string[] }>;
-export const SCAFFOLD_SCHEMA: Schema = sObj({ summary: S_STR, paths: sArr(S_STR) });
-export const scaffoldOutput: Read<ScaffoldOutput> = object((f) => ({ summary: f.get('summary', str), paths: f.get('paths', arrayOf(str)) }));
-export function validateScaffoldOutput(value: unknown): ScaffoldOutput {
-  return scaffoldOutput(value, 'scaffold');
-}
-
 // ---------------------------------------------------------------------------------------------------
 // build
 
 /** M4a rev 3 (I3, F25): a development check the implementer ran, named, with its argv and exit. */
 export type Experiment = Readonly<{ name: string; argv: readonly string[]; exit: number }>;
+export type Grounding = Readonly<{ specWrong: string | null; touches: readonly string[] }>;
+export type TooBig = Readonly<{ estimate: string; suggestedChildren: readonly string[] }>;
 export type BuildOutput = Readonly<{
-  /** Two or three sentences: what changed and why. */
-  summary: string;
-  /** The implementer's claim; the executor reads the truth from git at salvage. */
-  changedPaths: readonly string[];
-  /** What kept the unit from being complete; empty when it is. Decisions go to decisions.json, never here. */
-  blockers: readonly string[];
-  /** M4a rev 3 (I3): every command it ran to check its work; a 1.0.0-dev.6 answer has none (`buildExperimentsDefault`). */
-  experiments: readonly Experiment[];
-  /**
-   * dev.17 (proportional review): the tested SHA since which the build says it changed only comments and documentation, or
-   * null. Code verifies the claim against the diff from the unit's last certified tree (src/pipeline/docsonly.ts); the claim
-   * alone carries no lane pass over. Absent on an answer a dev.16 executor recorded (`buildDocsOnlySinceDefault`): null.
-   */
-  docsOnlySince: DocsOnlySince;
-  /**
-   * The report is the final one. A Claude session that ends a turn to wait (a wake-up, a monitor) must still answer the
-   * schema, and answers `final: false`; its runner ends the session a grace after the final report (src/runner/report.ts).
-   * The reader admits `true` only: a session that ended on an interim answer has not reported. Absent on an answer an
-   * earlier executor recorded (`buildFinalDefault`).
-   */
-  final: true;
+  summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
+  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[]; final: true;
 }>;
-
-/** The build answer's `final` (src/runner/report.ts): described in the schema, which the model reads at a forced turn end. */
-const S_FINAL: Schema = {
-  type: 'boolean',
-  description: 'true in your final report. false only when you end a turn to wait for something you started (a wake-up, a monitor, a background command) and will report again when it completes.',
-};
-
-/** The build answer's `docsOnlySince` (dev.17): described in the schema, beside the prompt's account of it. */
-const S_DOCS_ONLY_SINCE: Schema = {
-  anyOf: [{ type: 'string' }, { type: 'null' }],
-  description: 'The full SHA of the last tree the executor certified for this unit, when everything you changed since it is comments or documentation only; otherwise null.',
-};
-
-/** The final build report requests certification by the executor's lanes stage. */
+const S_FINAL: Schema = { type: 'boolean', description: 'true for the final report consumed by the role parser; false only for an interim turn while waiting for something you started. The final-report parser rejects false.' };
 export const BUILD_SCHEMA: Schema = sObj({
-  summary: S_STR,
-  changedPaths: sArr(S_STR),
-  blockers: sArr(S_STR),
-  experiments: sArr(sObj({ name: S_STR, argv: sArr(S_STR), exit: S_INT })),
-  docsOnlySince: S_DOCS_ONLY_SINCE,
-  final: S_FINAL,
+  summary: S_STR, blockers: sArr(S_STR), experiments: sArr(sObj({ name: S_STR, argv: sArr(S_TEXT, 1), exit: S_EXIT })),
+  grounding: sObj({ specWrong: sNullable(S_TEXT), touches: sArr(S_TEXT) }),
+  tooBig: sNullable(sObj({ estimate: S_TEXT, suggestedChildren: sArr(S_TEXT, 1) })), notes: sArr(S_STR), final: S_FINAL,
 });
-
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
-
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
-
-/** Old answers may carry lanesRun; it is accepted and ignored, never certification evidence. */
-export const buildOutput: Read<BuildOutput> = object((f) => {
-  f.optional('lanesRun', arrayOf(object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), exit: g.get('exit', int(0, 255)) }))));
-  const experiments = f.optional('experiments', arrayOf(experiment));
-  const final = f.optional('final', literal(true));
-  const docsOnlySince = f.optional('docsOnlySince', nullable((v, p): Sha => sha(v, p)));
-  return {
-    summary: f.get('summary', str),
-    changedPaths: f.get('changedPaths', arrayOf(str)),
-    blockers: f.get('blockers', arrayOf(str)),
-    experiments: experiments ?? buildExperimentsDefault(),
-    docsOnlySince: docsOnlySince === undefined ? buildDocsOnlySinceDefault() : docsOnlySince,
-    final: final ?? buildFinalDefault(),
-  };
-});
-
-export function validateBuildOutput(value: unknown): BuildOutput {
-  return buildOutput(value, 'build');
-}
+export const buildOutput: Read<BuildOutput> = object((f) => ({
+  summary: f.get('summary', str), blockers: f.get('blockers', arrayOf(str)), experiments: f.get('experiments', arrayOf(experiment)),
+  grounding: f.get('grounding', object((g) => ({ specWrong: g.get('specWrong', nullable(text)), touches: g.get('touches', arrayOf(text)) }))),
+  tooBig: f.get('tooBig', nullable(object((g) => ({ estimate: g.get('estimate', text), suggestedChildren: g.get('suggestedChildren', arrayOf(text, { nonEmpty: true })) })))),
+  notes: f.get('notes', arrayOf(str)), final: f.get('final', literal(true)),
+}));
+export function validateBuildOutput(value: unknown): BuildOutput { return buildOutput(value, 'build'); }
 
 /**
  * `decisions.json`, written by the implementer at the root of its evidence dir: every decision it took
@@ -574,7 +191,7 @@ export const GATE_DECISIONS = ['approve', 'revise', 'escalate'] as const;
  */
 export const FINDING_SEVERITIES = ['blocking', 'note', 'pre-existing'] as const;
 
-// dev.17 proportional review (SCHEMAS.md "dev.17 records"): types only; the gate schema and `gateOutput` take them when the
+// dev.17 proportional review (SCHEMAS.md "Role input and output contracts"): types only; the gate schema and `gateOutput` take them when the
 // review stages are wired.
 
 /**
@@ -586,11 +203,7 @@ export type DefectCategory = (typeof DEFECT_CATEGORIES)[number];
 /** dev.17's finding classes: `ride-along` (comments, docs) never causes a revise; drag makes it debt, else it is released. */
 export const FINDING_SEVERITIES_DEV17 = [...FINDING_SEVERITIES, 'ride-along'] as const;
 export type FindingSeverityDev17 = (typeof FINDING_SEVERITIES_DEV17)[number];
-/**
- * The build answer's `docsOnlySince` (dev.17): the tested sha since which the builder says it changed only docs and
- * comments, or null. Code verifies the claim; the model's word alone carries no lane pass over.
- */
-export type DocsOnlySince = Sha | null;
+
 
 /**
  * dev.17: the gate's ruling on a builder's dispute of an open ledger finding (decisions.json `disputes`): `upheld` (the finding
@@ -611,6 +224,7 @@ export type GateDebt = Readonly<{ drag: string }>;
 export type GateFinding = Readonly<{
   /** dev.17 adds `ride-along` (comments, docs): never a revise; debt when it names its drag, else released. */
   severity: FindingSeverityDev17;
+  evidence: readonly string[];
   path: string | null;
   text: string;
   /** A C-nn id, a contract path (with an optional #anchor) or a corpus rule T-n the finding rests on. */
@@ -625,7 +239,7 @@ export type GateFinding = Readonly<{
    * blocking finding never). Required of a live answer; absent on a dev.12 answer, read as `unrecorded`
    * (`gateNoteDebtDefault`): banked as the dev.12 executor banked every note, so a re-read never changes what was banked.
    */
-  debt: GateDebt | null | typeof GATE_DEBT_UNRECORDED;
+  debt: GateDebt | null;
   /**
    * dev.17 (proportional review): what a blocking finding must name (`DEFECT_CATEGORIES`); null on any other class. A dev.17
    * gate's blocking finding without one is refused through the repair turn (src/pipeline/review.ts).
@@ -636,8 +250,6 @@ export type GateFinding = Readonly<{
   /** dev.17: on a delta re-gate, the changed hunk a blocking finding on an unchanged file rests on; null otherwise. */
   hunk: HunkRef | null;
 }>;
-/** A part of the change the gate says it did not review (dev.12 round 2): recorded and reported, never enforced. */
-export type GateUnreviewed = Readonly<{ path: string; reason: string }>;
 /**
  * How deeply a cluster of a large diff was reviewed (1.0.0-dev.12, the large-diff gate): `description` (a subagent's
  * description of the cluster sufficed: a purely mechanical cluster its substitutions fully explain, with no deviation),
@@ -648,13 +260,14 @@ export type ClusterReview = (typeof CLUSTER_REVIEWS)[number];
 /** One cluster of a large diff's cluster map: its id, the paths it covers (exact paths, directories or globs) and its review depth. */
 export type GateCluster = Readonly<{ id: string; paths: readonly RepoPattern[]; review: ClusterReview }>;
 type GateCommon = Readonly<{
+  standing: readonly Readonly<{id: string; disposition: 'addressed' | 'rebutted'; evidence: readonly string[]}>[];
   findings: readonly GateFinding[]; reasons: readonly string[]; premises: readonly Premise[];
   /**
    * What the gate did not review, by repository path or path pattern; null on a dev.11 answer (`gateUnreviewedDefault`):
    * unknown. Above the large-diff threshold a file in a cluster counts as reviewed at the cluster's depth, and `unreviewed`
    * names only the gaps the gate admits beyond that.
    */
-  unreviewed: readonly GateUnreviewed[] | null;
+
   /**
    * 1.0.0-dev.12: the cluster map, above the large-diff threshold only (null below it, and on a dev.11 answer:
    * `gateClustersDefault`). Code holds it to the diff: every changed path in exactly one cluster (src/pipeline/gate.ts
@@ -669,38 +282,43 @@ export type GateOutput =
   | (GateCommon & Readonly<{ decision: 'escalate'; directives: readonly []; ordering?: OrderingWait | null }>)
   | (GateCommon & Readonly<{ decision: 'revise'; directives: readonly string[] }>);
 
-export const GATE_SCHEMA: Schema = sObj({
+const GATE_FINDING_FIELDS = {
+  evidence: sDescribe(sArr(S_TEXT), 'Each finding requires at least one experiment or an evidence entry containing path:line (a colon followed by digits).'), severity: { ...sEnum(FINDING_SEVERITIES_DEV17) as object, description: 'An approve decision forbids blocking severity; use revise or escalate for blocking findings.' }, path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
+  debt: sDescribe(sNullable(sObj({ drag: S_STR })), 'Substantive drag on future work only, never test nitpicks or status remarks.'), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sDescribe(sNullable(S_REVIEW_ID), 'Must name a finding in this unit ledger. A settled finding may be raised as blocking again only if its anchor file blob changed.'), hunk: sNullable(sObj({ path: S_STR, line: S_LINE })),
+} as const;
+const GATE_FIELDS = {
+  standing: sDescribe(sArr(sObj({id: S_TEXT, disposition: sEnum(['addressed', 'rebutted']), evidence: sArr(S_TEXT, 1)})), 'Only supplied standing-item IDs, each at most once; approval requires an evidence-backed response to every standing item.'),
   decision: sEnum(GATE_DECISIONS),
-  ordering: { anyOf: [sObj({ blockers: sArr(S_STR) }), { type: 'null' }], description: 'Only escalate solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
-  findings: sArr(sObj({
-    severity: sEnum(FINDING_SEVERITIES_DEV17), path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
-    debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sNullable(S_STR), hunk: sNullable(sObj({ path: S_STR, line: S_INT })),
-  })),
-  directives: sArr(S_STR),
-  reasons: sArr(S_STR),
+  ordering: { anyOf: [sObj({ blockers: sUnique(sArr(S_SLUG, 1)) }), { type: 'null' }], description: 'Non-null only with decision escalate, solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
+  findings: sDescribe(sArr(sObj(GATE_FINDING_FIELDS)), 'In pre-build mode, each finding becomes a standing item enforced by the gate until addressed or rebutted with evidence. Raise only a concrete defect in a plausible implementation, a spec/contract conflict, or a witness gap admitting a plausible wrong build; contrived adversarial mutants and optional extra assertions are not findings. Return an empty list for sound work.'),
+  directives: { type: 'array', items: S_STR, description: 'Nonempty only with decision revise, which requires at least one directive. Must be empty for approve or escalate.' },
+  reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
-  unreviewed: sArr(sObj({ path: S_STR, reason: S_STR })),
-  clusters: sNullable(sArr(sObj({ id: S_STR, paths: sArr(S_STR), review: sEnum(CLUSTER_REVIEWS) }))),
-  rulings: sArr(sObj({ finding: S_STR, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })),
-});
 
-/** Absent (a dev.12 answer): `unrecorded`, with the upgrade warning; null: not debt. */
-const readDebt = (read: GateDebt | null | undefined): GateDebt | null | typeof GATE_DEBT_UNRECORDED => (read === undefined ? gateNoteDebtDefault() : read);
+  clusters: sDescribe(sNullable(sUnique(sArr(sObj({ id: S_STR, paths: sArr(S_REPO_PATTERN, 1), review: sEnum(CLUSTER_REVIEWS) }), 1), 'id')), 'Null below the supplied large-diff threshold. Above it supply a nonempty cluster map with unique IDs covering each changed path exactly once.'),
+  rulings: sDescribe(sArr(sObj({ finding: S_REVIEW_ID, ruling: sEnum(DISPUTE_RULINGS), reason: S_STR })), 'Exactly one ruling per supplied dispute, with unique finding IDs; no extra rulings.'),
+} as const;
+// Backend APIs require a plain object root. The reader enforces cross-field rules described above.
+export const GATE_SCHEMA: Schema = sObj(GATE_FIELDS);
+
 const gateExperiment: Read<GateExperiment> = object((f) => ({ command: f.get('command', str), output: f.get('output', str) }));
 const hunkRef: Read<HunkRef> = object((g) => ({ path: g.get('path', str), line: g.get('line', int(1, Number.MAX_SAFE_INTEGER)) }));
-/** Absent (a dev.16 answer): null, with the upgrade warning. */
-const dev17 = <T>(read: T | null | undefined): T | null => (read === undefined ? gateFindingReviewDefault() : read);
-const finding: Read<GateFinding> = object((f) => ({
+const finding: Read<GateFinding> = object((f) => {
+ const out: GateFinding = {
+  evidence: f.get('evidence', arrayOf(text)),
   severity: f.get('severity', oneOf(FINDING_SEVERITIES_DEV17)),
   path: f.get('path', nullable(str)),
   text: f.get('text', str),
   contractRef: f.get('contractRef', nullable(str)),
-  experiments: f.optional('experiments', arrayOf(gateExperiment)) ?? [],
-  debt: readDebt(f.optional('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) }))))),
-  defect: dev17(f.optional('defect', nullable(oneOf(DEFECT_CATEGORIES)))),
-  reraises: dev17(f.optional('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p)))),
-  hunk: dev17(f.optional('hunk', nullable(hunkRef))),
-}));
+  experiments: f.get('experiments', arrayOf(gateExperiment)),
+  debt: f.get('debt', nullable(object((g): GateDebt => ({ drag: g.get('drag', str) })))),
+  defect: f.get('defect', nullable(oneOf(DEFECT_CATEGORIES))),
+  reraises: f.get('reraises', nullable((v, p): ReviewFindingId => reviewFindingId(v, p))),
+  hunk: f.get('hunk', nullable(hunkRef)),
+ };
+ if (out.experiments.length === 0 && !out.evidence.some((e) => /:\d+/.test(e))) throw new SchemaError(`${f.path}.evidence`, 'an experiment or path:line evidence', out.evidence);
+ return out;
+});
 const disputeRuling: Read<DisputeRuling> = object((f) => ({
   finding: f.get('finding', (v, p): ReviewFindingId => reviewFindingId(v, p)), ruling: f.get('ruling', oneOf(DISPUTE_RULINGS)), reason: f.get('reason', str),
 }));
@@ -709,7 +327,7 @@ const rulingList: Read<readonly DisputeRuling[]> = (value, path) => {
   assertUnique(rulings, (r) => r.finding, path);
   return rulings;
 };
-const unreviewedEntry: Read<GateUnreviewed> = object((f) => ({ path: f.get('path', str), reason: f.get('reason', str) }));
+
 const clusterEntry: Read<GateCluster> = object((f) => ({
   id: f.get('id', str), paths: f.get('paths', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })), review: f.get('review', oneOf(CLUSTER_REVIEWS)),
 }));
@@ -718,8 +336,6 @@ const clusterMap: Read<readonly GateCluster[]> = (value, path) => {
   assertUnique(clusters, (c) => c.id, path);
   return clusters;
 };
-/** Absent (a dev.11 answer): no map, with the upgrade warning; null: no map. */
-const readClusters = (read: readonly GateCluster[] | null | undefined): readonly GateCluster[] | null => (read === undefined ? gateClustersDefault() : read);
 const emptyList: Read<readonly []> = (value, path) => {
   if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty array (directives only with revise)', value);
   return [];
@@ -729,10 +345,11 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
   const decision = f.get('decision', oneOf(GATE_DECISIONS));
   const ordering = answerOrdering(f, decision === 'escalate');
   const common = {
+    standing: f.get('standing', arrayOf(object((g) => ({id: g.get('id', text), disposition: g.get('disposition', oneOf(['addressed', 'rebutted'] as const)), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true}))})))),
     findings: f.get('findings', arrayOf(finding)), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), premises: f.get('premises', arrayOf(premise)),
-    unreviewed: f.optional('unreviewed', arrayOf(unreviewedEntry)) ?? gateUnreviewedDefault(),
-    clusters: readClusters(f.optional('clusters', nullable(clusterMap))),
-    rulings: f.optional('rulings', rulingList) ?? gateRulingsDefault(),
+
+    clusters: f.get('clusters', nullable(clusterMap)),
+    rulings: f.get('rulings', rulingList),
   };
   if (decision === 'revise') return { ...common, decision, directives: f.get('directives', arrayOf(str, { nonEmpty: true })) };
   if (decision === 'approve') {
@@ -764,8 +381,7 @@ export function clusterCoverage(clusters: readonly GateCluster[], paths: readonl
 // ---------------------------------------------------------------------------------------------------
 // M3 shared pieces
 
-const S_IDS = sArr(S_STR);
-const S_EVIDENCE_LINES = sArr(sObj({ path: S_STR, line: S_INT }));
+const S_EVIDENCE_LINES = sArr(sObj({ path: S_STR, line: S_LINE }));
 const vid: Read<VisionClauseId> = (v, p) => visionClauseId(v, p);
 const oid: Read<ObligationId> = (v, p) => obligationId(v, p);
 const unitR: Read<UnitId> = (v, p) => unitId(v, p);
@@ -803,14 +419,14 @@ export type LensOutput = Readonly<{ findings: readonly LensFinding[]; reasons: r
 export const LENS_SCHEMA: Schema = sObj({
   findings: sArr(sObj({
     severity: sEnum(LENS_SEVERITIES),
-    obligation: sNullable(S_STR),
-    visionClauses: S_IDS,
+    obligation: sNullable(sNumbered('I')),
+    visionClauses: sUnique(sArr(sNumbered('V'))),
     claim: S_STR,
     cause: S_STR,
     evidence: S_EVIDENCE_LINES,
-    mutant: sNullable(sObj({ lane: S_STR, edits: sArr(sObj({ path: S_STR, old: S_STR, new: S_STR })) })),
+    mutant: sNullable(sObj({ lane: sDescribe(S_ITEM_ID, 'Must name a supplied arc lane. Mutant edits must apply to the checkout and be admissible as a confined patch.'), edits: sArr(sObj({ path: sDescribe({anyOf: [S_REPO_PATH, sPattern('^/[^\\u0000]*$')]}, 'A regular file inside the audited checkout, relative to it or absolute under it. Absolute paths are made relative before admission.'), old: sDescribe(S_STR, 'Must occur exactly once in the file after earlier edits to that file.'), new: sDescribe(S_TEXT, 'Must differ from old; an empty replacement deletes old.') }), 1) })),
   })),
-  reasons: sArr(S_STR),
+  reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
 });
 
@@ -818,7 +434,7 @@ const lensMutant: Read<LensMutant> = object((h) => {
   const lane = h.get('lane', (v, p): LaneId => laneId(v, p));
   const edits = h.optional('edits', arrayOf(object((e): MutantEdit => ({ path: e.get('path', text), old: e.get('old', text), new: e.get('new', text) })), { nonEmpty: true }));
   if (edits !== undefined) return { kind: 'edits', lane, edits };
-  return { kind: 'patch', lane, patch: lensPatchMutantDefault(h.get('patch', str)) };
+  throw new SchemaError(`${h.path}.edits`, 'mutant edits', edits);
 });
 
 export const lensOutput: Read<LensOutput> = object((f) => ({
@@ -840,349 +456,6 @@ export function validateLensOutput(value: unknown): LensOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// checkpoint (M3, §2.8, OR-V): the one actor that amends; every op cites active vision clauses and evidence.
-
-export const CHECKPOINT_DECISIONS = ['no-op', 'bundle'] as const;
-export const BUNDLE_OP_KINDS = [
-  'admit', 'patch-spec', 'reenter', 'cut', 'route', 'limits', 'obligation-split', 'obligation-dispose', 'invalidate-approval', 'rule', 'request',
-] as const;
-export type BundleOpKind = (typeof BUNDLE_OP_KINDS)[number];
-
-/**
- * A split child as the checkpoint writes it; its parent's text may be dropped only citing active clauses (a `split-dropped`
- * divergence). M4a: anchored at exactly one of a doc ref (an `architecture-doc` arc) or a corpus rule (`rule`, a corpus
- * arc's; its text hash is resolved in the pin when the bundle applies).
- */
-export type SplitChild = Readonly<{
-  id: ObligationId; statement: string; docRef: DocRef | null; rule: RuleId | null; witness: WitnessRef; activation: Activation; deliveredBy: readonly UnitId[];
-}>;
-
-/**
- * One op of a bundle (closed; A16: nothing here touches the vision, resource declarations, `.roadmap/config.json`,
- * `gc` or ref deletion, which are owner-only and reachable only as `request`). `admit.spec` is the new unit's
- * spec.json as canonical text (the model writes it as an object, `S_ADMIT_SPEC`, validated by the spec reader when the
- * answer is read; run 10, D); `rule.ruling` names one of the output's `rulings`.
- */
-export type BundleOpBody =
-  /**
-   * `targets` (M4a rev 3, LR-m): the corpus rules the unit adds or changes behaviour for (empty only for pure test,
-   * witness or doc work); an answer recorded before it reads as none (`admitTargetsDefault`).
-   */
-  | Readonly<{
-    op: 'admit'; unit: Readonly<{ id: UnitId; risk: RiskTier; scope: readonly RepoPattern[]; after: readonly UnitId[]; origin: 'checkpoint' | 'repair' }>; spec: string;
-    targets: readonly RuleId[];
-  }>
-  | Readonly<{ op: 'patch-spec'; unit: UnitId; patch: readonly SpecPatchOp[] }>
-  /**
-   * `fixes` (arc feedback 2026-10-16): the failure it fixes; null when the lineage recorded none; `unrecorded` (the key absent)
-   * on an answer recorded before it (`reenterFixesDefault`), adopted as recorded.
-   */
-  | Readonly<{ op: 'reenter'; unit: UnitId; reenters: UnitId; enterAt: ReentryPoint | null; reset: RulingId | null; fixes: FailureRef | null | typeof FIXES_UNRECORDED }>
-  | Readonly<{ op: 'cut'; unit: UnitId; reason: string }>
-  | Readonly<{ op: 'route'; unit: UnitId; seats: readonly Readonly<{ role: Role; tier: Seat; class: ModelClass }>[] }>
-  | Readonly<{ op: 'limits'; unit: UnitId | null; limits: readonly Readonly<{ field: keyof Bounds | 'convergenceK'; value: number }>[] }>
-  | Readonly<{ op: 'obligation-split'; obligation: ObligationId; children: readonly SplitChild[] }>
-  | Readonly<{ op: 'obligation-dispose'; obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>
-  | Readonly<{ op: 'invalidate-approval'; unit: UnitId }>
-  | Readonly<{ op: 'rule'; ruling: RulingId }>
-  | Readonly<{ op: 'request'; class: OwnerOnlyClass; summary: string }>;
-/** Every op cites active vision clauses (H16: never a withdrawn one) and its evidence, both non-empty. */
-export type BundleOp = BundleOpBody & Readonly<{ cites: readonly VisionClauseId[]; evidence: readonly string[] }>;
-
-export type CheckpointOutput = Readonly<{
-  decision: (typeof CHECKPOINT_DECISIONS)[number];
-  reasons: readonly string[];
-  /** Empty exactly on a `no-op`. */
-  ops: readonly BundleOp[];
-  /**
-   * Ruling sidecars (`roadmap/ruling-m3`) as canonical JSON text (the model writes objects, `S_RULING`); empty on a
-   * `no-op`.
-   */
-  rulings: readonly string[];
-  findingDispositions: readonly Readonly<{ finding: FindingId; disposition: FindingDisposition; reason: string }>[];
-  /**
-   * H12: readings of the vision where it does not anticipate a situation; each records a divergence, even on a `no-op`.
-   * Method, not invariant (W4, 2026-10-16): the key is present (strict schema), the list may be empty; one given cites
-   * at least one active clause (its divergence's cites), resolved as every cite is.
-   */
-  interpretations: readonly Readonly<{ clauses: readonly VisionClauseId[]; situation: string; reading: string }>[];
-  cites: Readonly<{ vision: readonly VisionClauseId[]; observations: readonly ObservationKey[]; findings: readonly FindingId[] }>;
-  premises: readonly Premise[];
-  /** M4a: corpus amendments the checkpoint proposes (`corpus-amendment{source: checkpoint{job, index}}`). */
-  corpusAmendments: readonly CorpusAmendmentProposal[];
-}>;
-
-/** A corpus amendment a checkpoint proposes (M4a). */
-export type CorpusAmendmentProposal = Readonly<{ rules: readonly RuleId[]; proposal: string; why: string }>;
-
-const LIMIT_FIELDS = [...BOUND_FIELDS, 'convergenceK'] as const;
-const opSchema = (op: BundleOpKind, fields: { readonly [key: string]: Schema }): Schema =>
-  sObj({ op: sEnum([op]), ...fields, cites: S_IDS, evidence: sArr(S_STR) });
-const S_DOC_REF = sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR });
-/**
- * A split child (M4a): exactly one of `docRef` and `rule` is non-null; its witness lane one of `arcLanes`; its witness
- * `files` (plan defects, 2026-10-16) the test files holding its test ids, [] for none declared.
- */
-const sSplitChild = (arcLanes: Schema): Schema => sObj({
-  id: S_STR, statement: S_STR, docRef: sNullable(S_DOC_REF), rule: sNullable(S_STR), witness: sObj({ lane: arcLanes, testIds: S_IDS, files: S_IDS }), activation: sEnum(ACTIVATIONS),
-  deliveredBy: S_IDS,
-});
-
-/**
- * An admit's spec (run 10, D): the new unit's spec.json as an object, structurally (the spec-m1 fields, each item with
- * its state; a lane's env.set as [{name, value}], as a patch writes it; `obligations` and `repairs` [] for none), so a
- * malformed one is a schema violation the adapter catches before the bundle is decided. No witness items: they enter a
- * spec only through a patch (R59). A lane's optional `cpu`, `systems`, `testArgv` and `stochastic` are not offered: an
- * admitted lane takes its cadence's `@cpu` and reads the whole tree.
- */
-const S_ADMIT_SPEC = sObj({
-  schema: sEnum([SPEC_SCHEMA]),
-  unit: S_STR,
-  rev: S_INT,
-  lanes: sArr(sStated(LANE_ITEM_FIELDS)),
-  acceptance: sArr(sStated(ACCEPTANCE_ITEM_FIELDS)),
-  scope: S_IDS,
-  resources: S_IDS,
-  decisions: sArr(sStated(NOTE_ITEM_FIELDS)),
-  facts: sArr(sStated(NOTE_ITEM_FIELDS)),
-  cites: sObj({ contracts: S_IDS, rulings: S_IDS }),
-  obligations: S_IDS,
-  repairs: S_IDS,
-});
-
-/**
- * A ruling sidecar as the checkpoint writes it (2026-10-15, arc feedback #3): the `roadmap/ruling-m3` fields the model
- * owns, structurally, so a missing field or a wrong format is a schema violation the adapter catches (and the repair turn
- * names), never a refused bundle. `ruledBy` and `consistency` are not offered: the executor stamps both (lead ruling).
- * A doc ref is `{path, anchor, quotedText, relation}`, a rule ref `{rule, textSha256, relation}` (M4a).
- */
-const S_RULING = sObj({
-  schema: sEnum([RULING_SCHEMA]),
-  id: S_STR,
-  statement: S_STR,
-  kind: sEnum(RULING_KINDS),
-  trigger: S_STR,
-  supersedes: sArr(sObj({ id: S_STR, part: sNullable(S_STR) })),
-  condition: sNullable(S_STR),
-  docRefs: sArr({
-    anyOf: [
-      sObj({ path: S_STR, anchor: S_STR, quotedText: S_STR, relation: sEnum(DOC_RELATIONS) }),
-      sObj({ rule: S_STR, textSha256: S_STR, relation: sEnum(RULE_RELATIONS) }),
-    ],
-  }),
-  contractRefs: S_IDS,
-  contractOps: sArr(sObj({ path: S_STR, anchor: S_STR, oldText: S_STR, newText: S_STR })),
-  obligations: S_IDS,
-  obligationDispositions: sArr(sObj({ id: S_STR, disposition: sEnum(OBLIGATION_DISPOSITIONS) })),
-  cites: S_IDS,
-  evidence: sArr(S_STR),
-  appliesTo: { anyOf: [sObj({ type: sEnum(['arc']) }), sObj({ type: sEnum(['units']), units: S_IDS })] },
-  lifetime: sEnum(RULING_LIFETIMES),
-  status: sEnum(RULING_STATUSES),
-});
-
-/**
- * The closed id sets a checkpoint call knows when it is made (paid M4b run 5, ckpt-4: a split child named a witness lane
- * that is no arc lane, and the decision was refused only after the whole call): the arc lanes, the active obligations a
- * split may name as its parent, and every obligation in force a dispose may name, all from the captured obligations.
- * Unit ids are not closed: a later op may name a unit an earlier admit of the same bundle adds.
- */
-export type CheckpointIds = Readonly<{ arcLanes: readonly LaneId[]; splittable: readonly ObligationId[]; obligations: readonly ObligationId[] }>;
-/** An id field: an enum of `ids`, or any string when the set is unknown or empty (the bundle's validation then refuses it). */
-const sIdOf = (ids: readonly string[] | undefined): Schema => (ids === undefined || ids.length === 0 ? S_STR : sEnum(ids));
-
-/**
- * The checkpoint answer's schema; `ids` the call's closed id sets (null: any id). Each checkpoint call writes its own
- * (src/holistic/checkpoint.ts `checkpointIdsOf`), so the structured output cannot name an unknown arc lane or obligation;
- * the bundle's validation (src/holistic/bundle.ts) stays the backstop.
- */
-export function checkpointSchemaFor(ids: CheckpointIds | null): Schema {
-  return sObj({
-    decision: sEnum(CHECKPOINT_DECISIONS),
-    reasons: sArr(S_STR),
-    ops: sArr({
-      anyOf: [
-        opSchema('admit', { unit: sObj({ id: S_STR, risk: sEnum(RISK_TIERS), scope: S_IDS, after: S_IDS, origin: sEnum(['checkpoint', 'repair']) }), spec: S_ADMIT_SPEC, targets: S_IDS }),
-        opSchema('patch-spec', { unit: S_STR, patch: sArr(S_PATCH_OP) }),
-        opSchema('reenter', { unit: S_STR, reenters: S_STR, enterAt: sNullable(sEnum(REENTRY_POINTS)), reset: sNullable(S_STR), fixes: sNullable(S_STR) }),
-        opSchema('cut', { unit: S_STR, reason: S_STR }),
-        opSchema('route', { unit: S_STR, seats: sArr(sObj({ role: sEnum(ROLES), tier: sEnum([...JUDGMENT_SEATS, 'arc']), class: sEnum(MODEL_CLASSES) })) }),
-        opSchema('limits', { unit: sNullable(S_STR), limits: sArr(sObj({ field: sEnum(LIMIT_FIELDS), value: S_INT })) }),
-        opSchema('obligation-split', { obligation: sIdOf(ids?.splittable), children: sArr(sSplitChild(sIdOf(ids?.arcLanes))) }),
-        opSchema('obligation-dispose', { obligation: sIdOf(ids?.obligations), disposition: sEnum(OBLIGATION_DISPOSITIONS), ruling: S_STR }),
-        opSchema('invalidate-approval', { unit: S_STR }),
-        opSchema('rule', { ruling: S_STR }),
-        opSchema('request', { class: sEnum(OWNER_ONLY_CLASSES), summary: S_STR }),
-      ],
-    }),
-    rulings: sArr(S_RULING),
-    findingDispositions: sArr(sObj({ finding: S_STR, disposition: sEnum(FINDING_DISPOSITIONS), reason: S_STR })),
-    interpretations: sArr(sObj({ clauses: S_IDS, situation: S_STR, reading: S_STR })),
-    cites: sObj({ vision: S_IDS, observations: sArr(sObj({ treeSha: S_STR, lane: S_STR, laneRev: S_STR, envId: S_STR })), findings: S_IDS }),
-    premises: S_PREMISES,
-    corpusAmendments: sArr(sObj({ rules: S_IDS, proposal: S_STR, why: S_STR })),
-  });
-}
-/** The checkpoint schema its prompt module carries: any id. Each call writes its own, `checkpointSchemaFor(<its ids>)`. */
-export const CHECKPOINT_SCHEMA: Schema = checkpointSchemaFor(null);
-
-const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
-const splitChild: Read<SplitChild> = object((g) => {
-  const docRef = g.get('docRef', nullable(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), anchor: h.get('anchor', str), quotedText: h.get('quotedText', str) }))));
-  const out: SplitChild = {
-    id: g.get('id', oid),
-    statement: g.get('statement', str),
-    docRef,
-    rule: g.get('rule', nullable((v, p) => ruleId(v, p))),
-    witness: g.get('witness', object((h): WitnessRef => {
-      // Plan defects (2026-10-16): absent on an answer recorded before; [] declares none.
-      const files = [...(h.optional('files', uniqueIds((v, p): RepoPath => repoPath(v, p))) ?? [])].sort();
-      return { lane: h.get('lane', (v, p): LaneId => laneId(v, p)), testIds: h.get('testIds', uniqueIds(str, { nonEmpty: true })), ...(files.length === 0 ? {} : { files }) };
-    })),
-    activation: g.get('activation', oneOf(ACTIVATIONS)),
-    deliveredBy: g.get('deliveredBy', answerSet(unitR, (u) => u, (a, b) => (a < b ? -1 : a > b ? 1 : 0))),
-  };
-  if ((out.docRef === null) === (out.rule === null)) throw new SchemaError(`${g.path}.docRef`, 'exactly one of docRef and rule', { docRef: out.docRef, rule: out.rule });
-  return out;
-});
-
-/**
- * The anchor a split child's obligation takes (H10): its doc ref, or its rule as `{T-n, textSha256}` with the hash the
- * pin in force gives it (`pinned`); null when the pin holds no such active rule (the bundle is then invalid).
- */
-export function splitChildAnchor(c: SplitChild, pinned: (id: RuleId) => Sha256Hex | null): ObligationAnchor | null {
-  if (c.rule === null) return { docRef: c.docRef as DocRef };
-  const textSha256 = pinned(c.rule);
-  return textSha256 === null ? null : { rule: { id: c.rule, textSha256 } };
-}
-
-const ruleList: Read<readonly RuleId[]> = answerIds((v, p) => ruleId(v, p));
-const corpusAmendmentProposal: Read<CorpusAmendmentProposal> = object((g) => ({
-  rules: g.get('rules', ruleList), proposal: g.get('proposal', str), why: g.get('why', str),
-}));
-
-/**
- * An admit's spec (run 10, D): the wire object read into spec.json's canonical text, validated by the spec reader here, so
- * a malformed spec fails the answer, never the bundle. A recorded answer from before has the text itself
- * (`admitSpecTextDefault`).
- */
-const admitSpec: Read<string> = (value, path) => {
-  if (typeof value === 'string') return admitSpecTextDefault(value);
-  const f = new Fields(value, path);
-  const lanes = f.get('lanes', arrayOf((v) => v));
-  const v = value as Record<string, unknown>;
-  const { obligations, repairs, ...rest } = v;
-  const listed = (key: string, list: unknown): Record<string, unknown> => (Array.isArray(list) && list.length === 0 ? {} : { [key]: list });
-  const spec = specM1({
-    ...rest, lanes: lanes.map((l, i) => laneFromWire(l, `${path}.lanes[${i}]`)), ...listed('obligations', obligations), ...listed('repairs', repairs),
-  }, path);
-  return specBytes(spec).toString('utf8');
-};
-
-function opBody(f: Fields, op: BundleOpKind): BundleOpBody {
-  switch (op) {
-    case 'admit':
-      return {
-        op,
-        unit: f.get('unit', object((g) => ({
-          id: g.get('id', unitR), risk: g.get('risk', oneOf(RISK_TIERS)), scope: g.get('scope', uniqueIds((v, p) => repoPattern(v, p), { nonEmpty: true })),
-          after: g.get('after', uniqueIds(unitR)), origin: g.get('origin', oneOf(['checkpoint', 'repair'] as const)),
-        }))),
-        spec: f.get('spec', admitSpec),
-        targets: f.optional('targets', ruleList) ?? admitTargetsDefault(),
-      };
-    case 'patch-spec':
-      return { op, unit: f.get('unit', unitR), patch: f.get('patch', arrayOf(wireOp, { nonEmpty: true })) };
-    case 'reenter': {
-      const fixes = f.optional('fixes', nullable(failureRef));
-      return {
-        op, unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), enterAt: f.get('enterAt', nullable(oneOf(REENTRY_POINTS))), reset: f.get('reset', nullable(rulingR)),
-        fixes: fixes === undefined ? reenterFixesDefault() : fixes,
-      };
-    }
-    case 'cut':
-      return { op, unit: f.get('unit', unitR), reason: f.get('reason', str) };
-    case 'route':
-      return {
-        op,
-        unit: f.get('unit', unitR),
-        seats: f.get('seats', arrayOf((v, p) => {
-          const g = new Fields(v, p);
-          const role = g.get('role', oneOf(ROLES));
-          const tier = g.get('tier', oneOf(SEATS[role] as readonly Seat[]));
-          const out = { role, tier, class: g.get('class', classAt(role)) };
-          g.end();
-          return out;
-        }, { nonEmpty: true })),
-      };
-    case 'limits':
-      return {
-        op,
-        unit: f.get('unit', nullable(unitR)),
-        limits: f.get('limits', arrayOf(object((g) => ({ field: g.get('field', oneOf(LIMIT_FIELDS)), value: g.get('value', positive) })), { nonEmpty: true })),
-      };
-    case 'obligation-split':
-      return { op, obligation: f.get('obligation', oid), children: f.get('children', arrayOf(splitChild, { nonEmpty: true })) };
-    case 'obligation-dispose':
-      return { op, obligation: f.get('obligation', oid), disposition: f.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), ruling: f.get('ruling', rulingR) };
-    case 'invalidate-approval':
-      return { op, unit: f.get('unit', unitR) };
-    case 'rule':
-      return { op, ruling: f.get('ruling', rulingR) };
-    case 'request':
-      return { op, class: f.get('class', oneOf(OWNER_ONLY_CLASSES)), summary: f.get('summary', str) };
-  }
-}
-
-export const bundleOp: Read<BundleOp> = (value, path) => {
-  const f = new Fields(value, path);
-  const op = f.get('op', oneOf(BUNDLE_OP_KINDS));
-  const out = { ...opBody(f, op), cites: f.get('cites', answerIds(vid, { nonEmpty: true })), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })) };
-  f.end();
-  return out;
-};
-
-/**
- * One ruling of the answer as the JSON text the bundle parses (`stampedRulings`): the object `S_RULING` constrains, as
- * canonical JSON. A recorded answer from before 2026-10-15 holds the text itself (`checkpointRulingTextDefault`).
- */
-const rulingText: Read<string> = (value, path) => {
-  if (typeof value === 'string') return checkpointRulingTextDefault(value);
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new SchemaError(path, 'a ruling sidecar object', value);
-  return canonicalJson(value as JsonValue);
-};
-
-export const checkpointOutput: Read<CheckpointOutput> = object((f) => {
-  const out: CheckpointOutput = {
-    decision: f.get('decision', oneOf(CHECKPOINT_DECISIONS)),
-    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
-    ops: f.get('ops', arrayOf(bundleOp)),
-    rulings: f.get('rulings', arrayOf(rulingText)),
-    findingDispositions: f.get('findingDispositions', arrayOf(object((g) => ({
-      finding: g.get('finding', (v, p): FindingId => findingId(v, p)), disposition: g.get('disposition', oneOf(FINDING_DISPOSITIONS)), reason: g.get('reason', str),
-    })))),
-    interpretations: f.get('interpretations', arrayOf(object((g) => ({
-      clauses: g.get('clauses', answerIds(vid, { nonEmpty: true })), situation: g.get('situation', str), reading: g.get('reading', str),
-    })))),
-    cites: f.get('cites', object((g) => ({
-      vision: g.get('vision', answerIds(vid)),
-      observations: g.get('observations', arrayOf(observationKey)),
-      findings: g.get('findings', answerIds((v, p): FindingId => findingId(v, p))),
-    }))),
-    premises: f.get('premises', arrayOf(premise)),
-    corpusAmendments: f.get('corpusAmendments', arrayOf(corpusAmendmentProposal)),
-  };
-  // An answer to an earlier executor's prompt carries `issueIntake`: read and ignored (`issuesIgnored`; scaffolding).
-  if (f.optional('issueIntake', (v) => v) !== undefined) issuesIgnored('checkpoint.issueIntake');
-  if ((out.decision === 'no-op') !== (out.ops.length === 0)) throw new SchemaError(`${f.path}.ops`, out.decision === 'no-op' ? 'no ops on a no-op' : 'at least one op in a bundle', out.ops);
-  if (out.decision === 'no-op' && out.rulings.length > 0) throw new SchemaError(`${f.path}.rulings`, 'no rulings on a no-op', out.rulings);
-  return out;
-});
-
-export function validateCheckpointOutput(value: unknown): CheckpointOutput {
-  return checkpointOutput(value, 'checkpoint');
-}
-
 // ---------------------------------------------------------------------------------------------------
 // packReview (M4a, OR-Q16): the pack's blocking findings hold admission until acked or superseded; notes go to the brief.
 
@@ -1199,18 +472,18 @@ export const PACK_REVIEW_SCHEMA: Schema = sObj({
     severity: sEnum(PACK_SEVERITIES),
     target: {
       anyOf: [
-        sObj({ type: sEnum(['unit']), id: S_STR }),
-        sObj({ type: sEnum(['obligation']), id: S_STR }),
-        sObj({ type: sEnum(['census']), rule: S_STR }),
-        sObj({ type: sEnum(['rule']), id: S_STR }),
+        sObj({ type: sEnum(['unit']), id: S_SLUG }),
+        sObj({ type: sEnum(['obligation']), id: sNumbered('I') }),
+        sObj({ type: sEnum(['census']), rule: sNumbered('T') }),
+        sObj({ type: sEnum(['rule']), id: sNumbered('T') }),
         sObj({ type: sEnum(['plan']) }),
       ],
     },
     claim: S_STR,
     evidence: S_EVIDENCE_LINES,
   })),
-  dispositions: sArr(sObj({ job: S_STR, index: S_INT, disposition: sEnum(PACK_DISPOSITIONS) })),
-  reasons: sArr(S_STR),
+  dispositions: sDescribe(sArr(sObj({ job: sNumbered('review'), index: sInt(0), disposition: sEnum(PACK_DISPOSITIONS) })), 'Exactly one disposition per unresolved earlier finding supplied in the delta, identified by (job, index); no duplicates or extras. Empty on a full review.'),
+  reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
 });
 
@@ -1225,36 +498,6 @@ export const packReviewOutput: Read<PackReviewOutput> = object((f) => ({
 
 export function validatePackReviewOutput(value: unknown): PackReviewOutput {
   return packReviewOutput(value, 'packReview');
-}
-
-// ---------------------------------------------------------------------------------------------------
-// flow (M4b): the constraint as the role reads it (it may dispute code's), a diagnosis, and exactly one of a proposal and
-// why no action. The model writes no proposal id (code assigns `<job>.0`); a suite lane's unused `argv`, `reporter` or
-// `cpu` is null. The reader is src/flow/types.ts `flowOutput`; code's checks after it are src/flow/levers.ts's.
-
-export const FLOW_SCHEMA: Schema = sObj({
-  constraint: sObj({ station: S_STR, agree: S_BOOL, reason: S_STR }),
-  diagnosis: S_STR,
-  proposal: sNullable(sObj({
-    target: S_STR,
-    action: {
-      anyOf: [
-        sObj({ lever: sEnum(['concurrency']), cpu: S_INT }),
-        sObj({ lever: sEnum(['resource-pool']), resource: S_STR, size: S_INT }),
-        sObj({ lever: sEnum(['suite-lane']), lane: S_STR, argv: sNullable(sArr(S_STR)), reporter: sNullable(sEnum(FLOW_REPORTERS)), cpu: sNullable(S_INT) }),
-        sObj({ lever: sEnum(['sequence']), unit: S_STR, priority: sEnum(['high']) }),
-        sObj({ lever: sEnum(['build-class']), tier: sEnum(RISK_TIERS), class: sEnum(BUILD_CLASSES) }),
-        sObj({ lever: sEnum(['host']), note: S_STR }),
-      ],
-    },
-    rationale: S_STR,
-    risks: S_STR,
-  })),
-  noAction: sNullable(S_STR),
-});
-
-export function validateFlowOutput(value: unknown): FlowOutput {
-  return flowOutput(value, 'flow');
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1284,7 +527,7 @@ export type WalkAgainst =
   | Readonly<{ type: 'floor'; text: string; source: RepoPath | VisionClauseId }>
   | Readonly<{ type: 'design'; path: RepoPath; anchor: string }>
   | Readonly<{ type: 'vision'; clause: VisionClauseId }>;
-/** `breaks` cites the journey, a contract or a floor; `deviates` the design, the vision or a floor. */
+/** `breaks` cites the journey, a contract or a floor; `deviates` the design or the vision. */
 export const WALK_AGAINST: { readonly [C in WalkFindingClass]: readonly WalkAgainst['type'][] } = {
   breaks: ['journey', 'contract', 'floor'],
   deviates: ['design', 'vision'],
@@ -1295,10 +538,10 @@ export type WalkFinding = Readonly<{
 }>;
 /**
  * A polish proposal, authored as a full unit (R3): its id, scope (covering one of the milestone's references) and spec,
- * the spec as an admit's (`S_ADMIT_SPEC`), read into spec.json's canonical text. Code admits it with origin `polish`.
+ * the strict full-spec wire object (`S_FULL_SPEC`), read into spec.json's canonical text. Code admits it with origin `polish`.
  */
 export type WalkPolish = Readonly<{
-  journey: JourneyId; evidence: readonly string[]; text: string; unit: Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+  journey: JourneyId; evidence: readonly string[]; text: string; unit: Readonly<{ id: UnitId; systems: readonly SystemName[]; spec: string }>;
 }>;
 export type WalkthroughOutput = Readonly<{
   final: true;
@@ -1309,24 +552,27 @@ export type WalkthroughOutput = Readonly<{
   reasons: readonly string[];
 }>;
 
-const S_EVIDENCE = sArr(S_STR);
+const S_EVIDENCE = sDescribe(sArr(S_STR), 'Each entry must be ONLY the exact path of an existing saved file inside the supplied evidence directory (polish may also cite the original walk evidence directory). Relative paths resolve from that directory. No path:line suffix, colon plus commentary, quotes or explanatory prose: put explanations in note, claim or reasons. File existence and containment are checked against the supplied directories.');
+const WALK_AGAINST_SCHEMAS = {
+  journey: sObj({ type: sEnum(['journey']) }),
+  contract: sObj({ type: sEnum(['contract']), path: S_REPO_PATH, anchor: S_STR, dependents: sDescribe(S_STR, 'Clients, scripts, consumers or later units whose implementation would need rework when the interface is fixed. Merely reading a message or using a page is not such a dependency.') }),
+  floor: sObj({ type: sEnum(['floor']), text: S_STR, source: sDescribe(S_FLOOR_SOURCE, 'A non-negotiable active V-n vision clause, or a repository reference quality-floor section.') }),
+  design: sObj({ type: sEnum(['design']), path: S_REPO_PATH, anchor: S_STR }),
+  vision: sObj({ type: sEnum(['vision']), clause: sNumbered('V') }),
+} as const;
+const walkFindingSchema = (kind: WalkFindingClass): Schema => sObj({
+  class: sDescribe(sEnum([kind]), kind === 'breaks'
+    ? 'A defect whose later fix forces rework of dependents: an observed failure of the product action that prevents completing the journey, a wrong interface contract consumers build on, or a measured violation of an explicitly declared quality floor or active non-negotiable clause. Copy, visuals, diagnostics and stale docs against a correct interface do not block.'
+    : 'An observed gap against a design reference or active vision clause whose repair changes nothing dependents build on: copy, visuals, layout, help/error wording, CI/log diagnostics, stale docs against a correct interface, or a console error with working actions. Sanctioned variants and choices left open are not findings.'), journey: sDescribe(sNumbered('J'), 'Must be a reported declared journey. Scope includes behavior specified by its steps or supplied references and documented entry points for the surface it uses, including specified error/refusal paths even when not listed as individual steps. Judge against those references or active vision clauses. Unrelated tasks or setups the journey and its references do not call for are outside scope.'),
+  evidence: {...S_EVIDENCE as object, minItems: 1}, claim: S_STR, cause: S_STR,
+  against: {anyOf: WALK_AGAINST[kind].map((type) => WALK_AGAINST_SCHEMAS[type]), description: 'Contract/design paths must lie inside a supplied milestone reference. Vision clauses must be active; a vision floor must be non-negotiable.'},
+  paths: sUnique(sArr(S_REPO_PATH)),
+});
 export const WALKTHROUGH_SCHEMA: Schema = sObj({
   final: S_FINAL,
-  journeys: sArr(sObj({ journey: S_STR, outcome: sEnum(WALK_JOURNEY_OUTCOMES), evidence: S_EVIDENCE, note: S_STR })),
-  findings: sArr(sObj({
-    class: sEnum(WALK_FINDING_CLASSES), journey: S_STR, evidence: S_EVIDENCE, claim: S_STR, cause: S_STR,
-    against: {
-      anyOf: [
-        sObj({ type: sEnum(['journey']) }),
-        sObj({ type: sEnum(['contract']), path: S_STR, anchor: S_STR, dependents: S_STR }),
-        sObj({ type: sEnum(['floor']), text: S_STR, source: S_STR }),
-        sObj({ type: sEnum(['design']), path: S_STR, anchor: S_STR }),
-        sObj({ type: sEnum(['vision']), clause: S_STR }),
-      ],
-    },
-    paths: S_IDS,
-  })),
-  polish: sArr(sObj({ journey: S_STR, evidence: S_EVIDENCE, text: S_STR, unit: sObj({ id: S_STR, scope: S_IDS, spec: S_ADMIT_SPEC }) })),
+  journeys: sDescribe(sArr(sObj({ journey: sNumbered('J'), outcome: sDescribe(sEnum(WALK_JOURNEY_OUTCOMES), 'A blocked journey requires at least one breaks finding for the same journey.'), evidence: S_EVIDENCE, note: S_STR }), 1), 'Report every supplied milestone journey exactly once, and no other journey.'),
+  findings: sDescribe(sArr({anyOf: WALK_FINDING_CLASSES.map(walkFindingSchema)}), 'Observed defects within declared journeys, including behavior their steps or references specify and documented entry points for the surfaces they use, with specified error/refusal paths. A successful main path does not excuse a broken referenced interface. Sanctioned behavior, unspecified choices and unrelated tasks or setups not called for by the journey or its references are not findings; an empty list is valid.'),
+  polish: sDescribe(sArr(sObj({ journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'), evidence: {...S_EVIDENCE as object, minItems: 1}, text: S_STR, unit: sObj({ id: sDescribe(S_SLUG, 'A new unit ID, absent from the plan and unique among proposals.'), systems: sDescribe(sUnique(sArr(S_SLUG, 1)), 'Entries must be unique and cover every milestone reference through the supplied systems map.'), spec: sDescribe(S_FULL_SPEC, 'Must name this proposal unit ID and revision 1.') }) })), 'Each proposal must name a different new unit.'),
   premises: S_PREMISES,
   reasons: sArr(S_STR),
 });
@@ -1358,7 +604,7 @@ export const walkthroughOutput: Read<WalkthroughOutput> = object((f) => {
     })))),
     polish: f.get('polish', arrayOf(object((g): WalkPolish => ({
       journey: g.get('journey', journeyR), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })), text: g.get('text', str),
-      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), scope: h.get('scope', uniqueIds((v, p) => repoPattern(v, p), { nonEmpty: true })), spec: h.get('spec', admitSpec) }))),
+      unit: g.get('unit', object((h) => ({ id: h.get('id', unitR), systems: h.get('systems', uniqueIds((v, p) => systemName(v, p), { nonEmpty: true })), spec: h.get('spec', fullSpec) }))),
     })))),
     premises: f.get('premises', arrayOf(premise)),
     reasons: f.get('reasons', arrayOf(str)),
@@ -1389,7 +635,7 @@ export const POLISH_DECISIONS = ['keep', 'drop'] as const;
 export type PolishDecision = (typeof POLISH_DECISIONS)[number];
 /** The polish judge's answer: keep or drop the tweak, from walking the journey on both instances; `evidence` its captures. */
 export type PolishJudgeOutput = Readonly<{ final: true; decision: PolishDecision; evidence: readonly string[]; reasons: readonly string[]; premises: readonly Premise[] }>;
-export const POLISH_JUDGE_SCHEMA: Schema = sObj({ final: S_FINAL, decision: sEnum(POLISH_DECISIONS), evidence: S_EVIDENCE, reasons: sArr(S_STR), premises: S_PREMISES });
+export const POLISH_JUDGE_SCHEMA: Schema = sObj({ final: S_FINAL, decision: sEnum(POLISH_DECISIONS), evidence: {...S_EVIDENCE as object, minItems: 1}, reasons: sArr(S_STR, 1), premises: S_PREMISES });
 export const polishJudgeOutput: Read<PolishJudgeOutput> = object((f) => ({
   final: f.get('final', literal(true)),
   decision: f.get('decision', oneOf(POLISH_DECISIONS)),
@@ -1402,72 +648,68 @@ export function validatePolishJudgeOutput(value: unknown): PolishJudgeOutput {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// verifier (dev.17, proportional review: src/pipeline/docsonly.ts)
-
-/**
- * What a hunk of a docs-only claim is: a `comment`, a `docstring`, `documentation` (prose in a docs file), `code`, or `mixed`.
- * Code carries lane passes over only when every hunk is one of the first three and none is executable, a tool directive or a
- * behaviour change (`hunkClear`).
- */
-export const HUNK_KINDS = ['comment', 'docstring', 'documentation', 'code', 'mixed'] as const;
-export type HunkKind = (typeof HUNK_KINDS)[number];
-export type HunkVerdict = Readonly<{ id: string; kind: HunkKind; executable: boolean; toolDirective: boolean; behaviourChange: boolean }>;
-export type VerifierOutput = Readonly<{ hunks: readonly HunkVerdict[] }>;
-
-/** The verifier's schema; `ids` the hunk ids it was given, which `hunks[].id` then enumerates (null: any id). */
-export function verifierSchemaFor(ids: readonly string[] | null): Schema {
-  return sObj({
-    hunks: sArr(sObj({ id: ids === null || ids.length === 0 ? S_STR : sEnum(ids), kind: sEnum(HUNK_KINDS), executable: S_BOOL, toolDirective: S_BOOL, behaviourChange: S_BOOL })),
-  });
-}
-export const VERIFIER_SCHEMA: Schema = verifierSchemaFor(null);
-
-export const verifierOutput: Read<VerifierOutput> = object((f) => {
-  const hunks = f.get('hunks', arrayOf(object((g): HunkVerdict => ({
-    id: g.get('id', str), kind: g.get('kind', oneOf(HUNK_KINDS)), executable: g.get('executable', bool), toolDirective: g.get('toolDirective', bool),
-    behaviourChange: g.get('behaviourChange', bool),
-  }))));
-  assertUnique(hunks, (h) => h.id, `${f.path}.hunks`);
-  return { hunks };
+// One milestone experience verdict, with a mode-specific payload.
+export type ExperienceOutput = Readonly<{final: true; mode: 'walkthrough'; verdict: WalkthroughOutput}> | Readonly<{final: true; mode: 'polish'; verdict: PolishJudgeOutput}>;
+export const EXPERIENCE_SCHEMA: Schema = sObj({
+  final: S_FINAL,
+  mode: {type: 'string', enum: ['walkthrough', 'polish'], description: 'Selects the verdict shape: walkthrough requires a walkthrough report; polish requires a polish judgment.'},
+  verdict: {anyOf: [WALKTHROUGH_SCHEMA, POLISH_JUDGE_SCHEMA], description: 'Must match mode: walkthrough has final, journeys, findings, polish, premises and reasons; polish has final, decision, evidence, reasons and premises.'},
 });
-
-export function validateVerifierOutput(value: unknown): VerifierOutput {
-  return verifierOutput(value, 'verifier');
-}
-
-/** A hunk the verifier cleared: comment, docstring or documentation, neither executable nor a tool directive, no behaviour change. */
-export const hunkClear = (h: HunkVerdict): boolean =>
-  (h.kind === 'comment' || h.kind === 'docstring' || h.kind === 'documentation') && !h.executable && !h.toolDirective && !h.behaviourChange;
-
-// ---------------------------------------------------------------------------------------------------
+export const experienceOutput: Read<ExperienceOutput> = tagged<'walkthrough' | 'polish', ExperienceOutput>('mode', {
+  walkthrough: object((f) => ({final: f.get('final', literal(true)), mode: f.get('mode', literal('walkthrough')), verdict: f.get('verdict', walkthroughOutput)})),
+  polish: object((f) => ({final: f.get('final', literal(true)), mode: f.get('mode', literal('polish')), verdict: f.get('verdict', polishJudgeOutput)})),
+});
+export function validateExperienceOutput(v: unknown): ExperienceOutput { return experienceOutput(v, 'experienceVerdict'); }
+export function experienceWalk(v: unknown): WalkthroughOutput { const out = validateExperienceOutput(v); if (out.mode !== 'walkthrough') throw new SchemaError('experience.mode', 'walkthrough', out.mode); return out.verdict; }
+export function experiencePolish(v: unknown): PolishJudgeOutput { const out = validateExperienceOutput(v); if (out.mode !== 'polish') throw new SchemaError('experience.mode', 'polish', out.mode); return out.verdict; }
+export type CampaignAuditOutput = LensOutput & Readonly<{requests: readonly Readonly<{op: 'request'; summary: string; evidence: readonly string[]; dismisses: FindingId | null; counterEvidence: string | null}>[]}>;
+const S_REQUEST_FIELDS = {op: sEnum(['request']), summary: S_TEXT, evidence: sArr(S_TEXT, 1)};
+const S_COUNTER_EVIDENCE = sDescribe(sPattern('\\S'), 'Required non-null when dismisses names a finding; otherwise may be null.');
+export const CAMPAIGN_AUDIT_SCHEMA: Schema = {
+  ...LENS_SCHEMA as object,
+  properties: {
+    ...(LENS_SCHEMA as {properties: object}).properties,
+    requests: sArr({anyOf: [
+      sObj({...S_REQUEST_FIELDS, dismisses: {type: 'null'}, counterEvidence: sNullable(S_COUNTER_EVIDENCE)}),
+      sObj({...S_REQUEST_FIELDS, dismisses: sNumbered('F'), counterEvidence: S_COUNTER_EVIDENCE}),
+    ]}),
+  },
+  required: [...(LENS_SCHEMA as {required: string[]}).required, 'requests'],
+} as Schema;
+export const campaignAuditOutput: Read<CampaignAuditOutput> = (value, path) => {
+  const f = new Fields(value, path);
+  const requests = f.get('requests', arrayOf(object((g) => {
+    const out = {op: g.get('op', literal('request')), summary: g.get('summary', text), evidence: g.get('evidence', arrayOf(text, {nonEmpty: true})), dismisses: g.get('dismisses', nullable((v, p) => findingId(v, p))), counterEvidence: g.get('counterEvidence', nullable(nonBlank))};
+    if (out.dismisses !== null && out.counterEvidence === null) throw new SchemaError(`${g.path}.counterEvidence`, 'counter-evidence for a requested finding dismissal', null);
+    return out;
+  })));
+  const {requests: _r, ...rest} = value as Record<string, unknown>;
+  return {...lensOutput(rest, path), requests};
+};
+export function validateCampaignAuditOutput(v: unknown): CampaignAuditOutput { return campaignAuditOutput(v, 'campaignAudit'); }
 
 export type RoleOutputs = {
-  readonly planCheck: PlanCheckOutput;
+  readonly experienceVerdict: ExperienceOutput;
+  readonly campaignAudit: CampaignAuditOutput;
   readonly build: BuildOutput;
-  readonly gate: GateOutput;
-  readonly lens: LensOutput;
-  readonly checkpoint: CheckpointOutput;
   readonly packReview: PackReviewOutput;
-  readonly flow: FlowOutput;
-  readonly walkthrough: WalkthroughOutput;
-  readonly polishJudge: PolishJudgeOutput;
-  readonly verifier: VerifierOutput;
-  readonly scaffold: ScaffoldOutput;
+  readonly verifier: GateOutput;
 };
 export const ROLE_SCHEMAS: { readonly [R in Role]: Schema } = {
-  planCheck: PLAN_CHECK_SCHEMA, build: BUILD_SCHEMA, gate: GATE_SCHEMA, lens: LENS_SCHEMA, checkpoint: CHECKPOINT_SCHEMA, packReview: PACK_REVIEW_SCHEMA, flow: FLOW_SCHEMA,
-  walkthrough: WALKTHROUGH_SCHEMA, polishJudge: POLISH_JUDGE_SCHEMA, verifier: VERIFIER_SCHEMA, scaffold: SCAFFOLD_SCHEMA,
+  experienceVerdict: EXPERIENCE_SCHEMA, campaignAudit: CAMPAIGN_AUDIT_SCHEMA,
+  build: BUILD_SCHEMA, packReview: PACK_REVIEW_SCHEMA, 
+  verifier: GATE_SCHEMA,
 };
 export const ROLE_VALIDATORS: { readonly [R in Role]: (value: unknown) => RoleOutputs[R] } = {
-  planCheck: validatePlanCheckOutput,
+  experienceVerdict: validateExperienceOutput, campaignAudit: validateCampaignAuditOutput,
   build: validateBuildOutput,
-  gate: validateGateOutput,
-  lens: validateLensOutput,
-  checkpoint: validateCheckpointOutput,
   packReview: validatePackReviewOutput,
-  flow: validateFlowOutput,
-  walkthrough: validateWalkthroughOutput,
-  polishJudge: validatePolishJudgeOutput,
-  verifier: validateVerifierOutput,
-  scaffold: validateScaffoldOutput,
+  verifier: validateGateOutput,
 };
+
+function answerOrdering(f: Fields, allowed: boolean): OrderingWait | null | undefined {
+  const ordering = f.optional('ordering', nullable(orderingWait));
+
+  if (ordering != null && !allowed) throw new SchemaError(`${f.path}.ordering`, 'null outside an ordering escalation or infeasible decision', ordering);
+  return ordering;
+}

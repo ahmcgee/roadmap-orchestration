@@ -1,0 +1,91 @@
+{
+  "findings": [
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Vacuous witness, not a product defect. The only test for mul cannot show that mul ran as written. test/unit.test.js is one line that uses `assert` and `mul` with no import or require, and the checkout has no package.json, runner config or setup file that would define them. Run directly, its first statement would throw ReferenceError before calling mul. It only works if an executor outside the repository injects both names as globals. This comes from reading the files and JavaScript semantics; I had no way to execute the test.",
+      "cause": "mul unit test execution: assert and mul are referenced without any import or repository harness defining them",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Vacuous witness, not a product defect. The test does not exercise the full 'signed' claim in CONTRACT.md. Its assertions cover only (-2,3) and (2,3), never a negative b or two negative operands. A wrong implementation that takes the sign from a alone, `a<0 ? -Math.abs(a*b) : Math.abs(a*b)`, satisfies both assertions, yet returns 6 for mul(2,-3) where the contract requires -6, and -6 for mul(-2,-3) where it requires 6. The current `a*b` handles these cases correctly by inspection, so the gap is in the test only. Checked by hand-tracing; mutant is null because the repository names no lane to run one in.",
+      "cause": "mul sign witness: negative second operand and both-negative cases are never asserted",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "The vision has no advanced clauses, no horizon clauses and no open questions, and there are no obligations, so visionClauses and obligation are empty on every finding. The audit was judged against CONTRACT.md and the testing method.",
+    "No product defect found: `return a*b` gives the correct sign for all sign combinations and has no side effects, so it matches CONTRACT.md for ordinary operands. There is only one unit, so there are no cross-unit seams to check, and the document matches the code.",
+    "Not reported as a finding: `a*b` uses IEEE-754 doubles, so mul(1e308,10) gives Infinity, products beyond 2^53 can round, and mul(-2,0) gives -0. CONTRACT.md says 'mathematical product' but defines no numeric domain, and nothing in the repository requires exactness at those ranges.",
+    "Limits of the evidence: no tests or code were executed because no execution tool was available. The checkout is not a git repository, so the range could not be recomputed; the supplied diff was compared with the checkout files instead, and they match."
+  ],
+  "premises": [
+    {
+      "claim": "mul is implemented as the single expression `a*b`, with no state, I/O or argument mutation.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The contract requires mul to return the signed mathematical product with no side effects.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The whole test is two assertions, on (-2,3) and (2,3), with no import statements.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Missing environment evidence: confirm which certification lane runs test/unit.test.js and how it supplies `assert` and `mul`, and provide a run record showing the assertions executed. If no lane injects them, the test's green status cannot be relied on as evidence for the contract.",
+      "evidence": [
+        "test/unit.test.js:1 uses assert and mul with no import",
+        "The checkout contains only CONTRACT.md, schema.json, prompt.txt, src/unit.js and test/unit.test.js, with no package.json, runner config or setup file"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

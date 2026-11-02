@@ -3,29 +3,29 @@
 // `roadmap start`, real runners parked at fake-backend barriers. Named tests: host.handshake-verifies-self,
 // host.takeover-cross-arc-live-runner, host.takeover-cross-arc-unreconcilable.
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn } from 'node:child_process';
-import { constants, existsSync, readFileSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from 'node:fs';
+import { type ChildProcess,spawn } from 'node:child_process';
+import { constants,existsSync,readFileSync,readdirSync,readlinkSync,realpathSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { after, test } from 'node:test';
+import { after,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { isAlive,statOf } from '../src/contain/proc.ts';
 import type { IntentOf } from '../src/core/events.ts';
-import { arcId, invocationId } from '../src/core/ids.ts';
+import { arcId,invocationId } from '../src/core/ids.ts';
 import { needsUserRecord } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { EXIT_REASON_FILE, REJECTION_FILE, executorArgv } from '../src/executor.ts';
-import { isAlive, statOf } from '../src/contain/proc.ts';
+import { EXIT_REASON_FILE,REJECTION_FILE,executorArgv } from '../src/executor.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { claimHost, readClaim, readRecoveryClaim, releaseHost } from '../src/host/lock.ts';
-import { createHandshake, publishOwner } from '../src/host/owner.ts';
+import { claimHost,readClaim,readRecoveryClaim,releaseHost } from '../src/host/lock.ts';
+import { createHandshake,publishOwner } from '../src/host/owner.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { type Exit } from './helpers/proc.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { type Owner, assertNoSurvivors } from './helpers/reap.ts';
-import { EXEC_TIMEOUT_MS, type ExecRun, execEnv, hostFile, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
+import { EXEC_TIMEOUT_MS,type ExecRun,execEnv,hostFile,journalOf,reasonOf,setupExec,startExec,until } from './fixtures/exec-common.ts';
 import {
-  CLAUDE_ONLY, UNIT_CLAUDE_ONLY, WAIT_MS, blockedCheck, claimOf, executorOf, kill, smokes, startCli, startLine, supervisorOf,
+CLAUDE_ONLY,UNIT_CLAUDE_ONLY,WAIT_MS,blockedCheck,claimOf,executorOf,kill,smokes,startCli,startLine,supervisorOf,
 } from './fixtures/sup-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { type Exit } from './helpers/proc.ts';
+import { type Owner,assertNoSurvivors } from './helpers/reap.ts';
+import { readCalls } from './helpers/scenario.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
@@ -54,7 +54,7 @@ test('host.handshake-verifies-self: an owner record naming another pid → the e
   // A live stranger as the published executor: this process, the test (its pid is not the executor's).
   publishOwner(hostDir, claim, selfIdentity());
   createHandshake(hostDir, claim);
-  const argv = executorArgv({ hostDir, generation: claim.generation, nonce: claim.nonce, repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', controlOnly: false, respawn: false, base: null });
+  const argv = executorArgv({ hostDir, generation: claim.generation, nonce: claim.nonce, repo: absPath(r.repo), planFile: absPath(r.planPath), profile: 'claude-only', controlOnly: false, respawn: false });
   const exit = await run([EXECUTOR, ...argv], execEnv(r));
   assert.equal(exit.code, 78, exit.stderr);
   assert.match(exit.stderr, /refused before any effect: handshake .* arrived but host\.owner\.json names/);
@@ -66,7 +66,7 @@ test('host.handshake-verifies-self: an owner record naming another pid → the e
   releaseHost(hostDir, claim);
 });
 
-/** Arc A parked in a plan-check at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
+/** Arc A parked in a pre-build at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
 async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: IntentOf<'proc.spawn'> }>> {
   const a = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(a));
@@ -76,7 +76,7 @@ async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: Inte
   await kill(supervisorOf(a));
   await kill(executor);
   const open = journalOf(a).view.openIntents().filter((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'backend');
-  assert.equal(open.length, 1, 'the plan-check spawn is open');
+  assert.equal(open.length, 1, 'the pre-build spawn is open');
   return { a, spawn: open[0] as IntentOf<'proc.spawn'> };
 }
 

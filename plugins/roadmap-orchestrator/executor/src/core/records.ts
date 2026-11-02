@@ -1,34 +1,48 @@
+import { nonBlank } from './validate.ts';
 // File-backed records other than the event log: the five runner files, the approval fingerprint and
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
-  type ArcId, type ClauseId, type CommandId, type DivergenceId, type FindingId, type ImplementerSessionId, type InvocationId, type JobId,
-  type JudgmentSessionId, type EdgeId, type LaneId, type NeedsUserId, type ObligationId, type OpId, type ProposalId, type ResourceInstance,
-  type ResourceName, type RoutingRev, type RulingId, type SeatRev, type Sha, type Sha256Hex, type SpecRev, type SystemName, type UnitId, type WitnessItemId, arcId, clauseId,
-  commandId, divergenceId, edgeId, findingId, implementerSessionId, invocationIdOf, jobIdOf, judgmentSessionId, laneId, needsUserId,
-  obligationId, opIdOf, parseInvocationId, planRev, resourceInstance, resourceName, routingRev, rulingId, seatRev, sha, sha256, specRev, unitId, idsAscending,
-  witnessItemId, proposalId, systemName,
+type ArcId,type ClauseId,type CommandId,type DivergenceId,
+type EdgeId,
+type FindingId,type ImplementerSessionId,type InvocationId,type JobId,
+type JudgmentSessionId,
+type LaneId,type NeedsUserId,type ObligationId,type OpId,
+type PlanRev,
+type ResourceInstance,
+type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
+commandId,divergenceId,edgeId,findingId,
+idsAscending,
+implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
+obligationId,opIdOf,parseInvocationId,planRev,
+
+resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
+systemName,
+unitId,
+witnessItemId,
 } from './ids.ts';
 import type { JsonValue } from './json.ts';
 import {
-  type AbsPath, type BootId, type IsoTime, type Nonce, type RepoPath, type RepoPattern, absPath, bootId, isoTime, nonce,
-  repoPath, repoPattern, matchesPattern,
-} from './values.ts';
-import {
-  type Brand, type Read, Fields, SchemaError, arrayOf, assertUnique, bool, envName, int, literal, nat, nullable, object, oneOf,
-  positive, sortedBy, str, stringMap, tagged, text, version,
+type Brand,type Read,Fields,SchemaError,arrayOf,assertUnique,bool,envName,int,literal,nat,nullable,object,oneOf,
+positive,sortedBy,str,stringMap,tagged,text,version,
 } from './validate.ts';
+import { type AbsPath,type BootId,type IsoTime,type Nonce,type RepoPath,type RepoPattern,absPath,bootId,isoTime,nonce,repoPath,repoPattern } from './values.ts';
 import type { SchemaVersion } from './version.ts';
+
+import { type HostSignatureId,HOST_SIGNATURES } from '../host/signatures.ts';
 import {
-  type LaneKind, applyExpectRevDefault, applyVisionEditDefault, designKindDefault, dev6SmokeBounds, dev31CertificationsDefault, issuesIgnored, laneCadenceDefault, laneInputsDropped,
-} from './upgrade.ts';
-import { type DesignRecord, type UnitKind, designRecord } from './design.ts';
-import { type ContractPin, type Pinned, type RequirementPin, type SpecPin, UNPINNED, pinTarget, specPin } from './pins.ts';
-import { type HostSignatureId, HOST_SIGNATURES } from '../host/signatures.ts';
-import {
-  type Backend, type ImplementerRole, JUDGMENT_SESSION_ROLES, type JudgmentSessionRole, type ModelClass, type ProfileName, type RiskTier, type Role, ROLES, backend,
-  buildClass, type BuildClass, modelClass, profileName, riskTier, MODEL_CLASSES,
+type Backend,
+type BuildClass,
+type ImplementerRole,
+type JudgmentSessionRole,type ModelClass,type ProfileName,type RiskTier,type Role,
+JUDGMENT_SESSION_ROLES,
+MODEL_CLASSES,
+ROLES,backend,
+buildClass,
+modelClass,profileName,riskTier,
 } from '../routing/types.ts';
+import { type DesignRecord,type UnitKind,designRecord } from './design.ts';
+import { type ContractPin,type Pinned,type RequirementPin,type SpecPin,UNPINNED,pinTarget,specPin } from './pins.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Shared vocabulary
@@ -52,19 +66,14 @@ export const CANCEL_REASONS = ['pause', 'stop', 'recovery', 'preempt', 'supersed
 export type CancelReason = (typeof CANCEL_REASONS)[number];
 /** The cancel reasons that end a workload with exit cause `cancel` (the runner turns `recovery` into `recovery-kill`). */
 export const INTERRUPT_REASONS = ['pause', 'stop'] as const;
-export type InterruptReason = (typeof INTERRUPT_REASONS)[number];
 /** A command (a lane) may also be cancelled by a preempting docs publication (M3, A7); a backend call never is. */
 export const LANE_INTERRUPT_REASONS = [...INTERRUPT_REASONS, 'preempt'] as const;
-export type LaneInterruptReason = (typeof LANE_INTERRUPT_REASONS)[number];
 /** dev.13: a command's cancel reasons: a lane's, and `teardown` (only a bring-up's `serve` process, which its owner stops). */
 export const COMMAND_CANCEL_REASONS = [...LANE_INTERRUPT_REASONS, 'teardown'] as const;
 export type CommandCancelReason = (typeof COMMAND_CANCEL_REASONS)[number];
 /** A backend call may also be cancelled because a revision superseded the checkpoint inputs it runs on; a lane never is. */
 export const BACKEND_CANCEL_REASONS = [...INTERRUPT_REASONS, 'supersede'] as const;
 export type BackendCancelReason = (typeof BACKEND_CANCEL_REASONS)[number];
-
-export const SPAWN_PURPOSES = ['backend', 'lane', 'teardown', 'probe', 'smoke'] as const;
-export type SpawnPurpose = (typeof SPAWN_PURPOSES)[number];
 /**
  * dev.13: `bring-up`, a milestone product's setup, serve or seed command (src/walk/bringup.ts). dev.17: `environment`, a plan
  * environment's up, down or probe (src/resources/environments.ts).
@@ -80,10 +89,9 @@ export const containmentMode: Read<ContainmentMode> = oneOf(CONTAINMENT_MODES);
  * Pipeline stages of one unit (the transition table is step 11). Fix rounds are `build` attempts. `prepare`
  * (M2) is a re-entered unit's first stage: its worktree, pin, merge-in of the integration tip and snapshot.
  * `reproduce` (M3) is a vacuity repair's first stage: the finding's mutant applied in a detached worktree and
- * its lane run under `purpose: mutant`. dev.17 (design pass, appended): `scaffold` writes a new system's skeleton a plan-check's
- * `scaffold` decision specifies before the first build; `poc` builds a plan-check's proof of concept in a throwaway worktree.
+ * its lane run under `purpose: mutant`. Pre-build is a conditional verifier annotation before the first build.
  */
-export const STAGES = ['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire', 'scaffold', 'poc'] as const;
+export const STAGES = ['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'ff', 'snapshot', 'retire'] as const;
 export type Stage = (typeof STAGES)[number];
 export const stage: Read<Stage> = oneOf(STAGES);
 
@@ -116,9 +124,6 @@ export const failureRef: Read<FailureRef> = (value, path) => {
 /** The reference naming `parts`. */
 export const failureRefOf = (p: FailureRefParts): FailureRef =>
   (p.type === 'outcome' ? `${p.unit}/${p.stage}#${p.attempt}` : `${p.unit}/lanes#${p.attempt}/${p.lane}`) as FailureRef;
-
-export const RESOURCE_STATES = ['free', 'reserved', 'running', 'cleaning', 'cleanup-failed'] as const;
-export type ResourceState = (typeof RESOURCE_STATES)[number];
 
 const role: Read<Role> = oneOf(ROLES);
 const opId: Read<OpId> = (v, p) => opIdOf(v, p);
@@ -161,7 +166,7 @@ function binding(f: Fields): InvocationBinding {
 }
 
 /**
- * A judgment session: fresh, or (dev.12, every judgment role; 2026-10-15 plan-check and the checkpoint only) the same session
+ * A judgment session: fresh, or (dev.12, every judgment role; 2026-10-15 pre-build and the checkpoint only) the same session
  * resumed once with the reasons its answer was refused: the repair turn.
  */
 export type JudgmentSession = Readonly<{ backend: 'claude'; mode: 'fresh' | 'resume'; id: JudgmentSessionId }>;
@@ -247,15 +252,18 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
 });
 
 /**
- * The one ROADMAP_* variable the executor sets in a launch: a witness run's reporter file (M3; src/holistic/witness.ts
- * `WITNESS_FILE_ENV`, named here literally so the core imports nothing of the holistic layer).
+ * Executor-to-workload variables carried in launch.env, beyond the runner-owned identity variables.
+ * Witness reporting and capture setup are generated by the executor before spawning, so their names must
+ * survive the persisted launch reader. Keep this closed: accepting arbitrary ROADMAP_* would let a lane
+ * forge runner identity/control variables. These are protocol names, not product environment prerequisites.
+ * Named here so core imports neither the holistic nor pipeline layers.
  */
-const WITNESS_FILE_ENV = 'ROADMAP_WITNESS_FILE';
+const WORKLOAD_PROTOCOL_ENV = new Set(['ROADMAP_WITNESS_FILE', 'ROADMAP_CAPTURE_CONFIG', 'ROADMAP_CAPTURE_DIR', 'ROADMAP_CAPTURE_STATES', 'ROADMAP_CAPTURE_SLOT', 'ROADMAP_CAPTURE_PORT']);
 
 const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
   const env = stringMap(value, path);
   for (const k of Object.keys(env)) {
-    if (k.startsWith('ROADMAP_') && k !== WITNESS_FILE_ENV) throw new SchemaError(`${path}.${k}`, 'a declared variable (ROADMAP_* are set by the runner)', env[k]);
+    if (k.startsWith('ROADMAP_') && !WORKLOAD_PROTOCOL_ENV.has(k)) throw new SchemaError(`${path}.${k}`, 'a declared variable (ROADMAP_* are set by the runner)', env[k]);
   }
   return env;
 };
@@ -368,6 +376,8 @@ export type TokenUsage = Readonly<{
   turns: number | null;
   /** The CLI's own list-price cost estimate in USD (Claude `total_cost_usd`); null when not reported (Codex). */
   costUsd: number | null;
+  /** Derived from the pinned price table when the CLI supplies no cost. */
+  costEstimated?: true;
 }>;
 /** One usage class's tokens and list-price cost (Claude `modelUsage`, per model, summed per class). */
 export type ClassUsage = Readonly<{
@@ -412,6 +422,7 @@ export const tokenUsage: Read<TokenUsage> = object((f) => ({
   cacheWriteTokens: f.get('cacheWriteTokens', nullable(nat)),
   turns: f.get('turns', nullable(nat)),
   costUsd: f.get('costUsd', nullable(usd)),
+  ...(() => { const estimated = f.optional('costEstimated', literal(true)); return estimated === undefined ? {} : { costEstimated: estimated }; })(),
 }));
 export const classUsage: Read<ClassUsage> = object((f) => ({
   class: f.get('class', modelClass),
@@ -744,13 +755,13 @@ export type ObligationRev = Readonly<{ id: ObligationId; rev: number }>;
 const obligationRev: Read<ObligationRev> = object((g) => ({ id: g.get('id', (v, p) => obligationId(v, p)), rev: g.get('rev', positive) }));
 
 export const approvalFingerprint: Read<ApprovalFingerprint> = object((f) => {
-  const obligationRevs = f.optional('obligationRevs', idsAscending(obligationRev, (e) => e.id, { nonEmpty: true, legacyStringOrder: true }));
+  const obligationRevs = f.optional('obligationRevs', idsAscending(obligationRev, (e) => e.id, { nonEmpty: true }));
   const corpus = f.optional('corpus', (v, p) => sha256(v, p));
   return {
     unitCommit: f.get('unitCommit', commitSha),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     contractRevs: f.get('contractRevs', sortedBy(object((g) => ({ path: g.get('path', (v, p) => repoPath(v, p)), blob: g.get('blob', commitSha) })), (e) => e.path)),
-    rulingRevs: f.get('rulingRevs', idsAscending(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id, { legacyStringOrder: true })),
+    rulingRevs: f.get('rulingRevs', idsAscending(object((g) => ({ id: g.get('id', (v, p) => rulingId(v, p)), rev: g.get('rev', positive) })), (e) => e.id)),
     ...(obligationRevs === undefined ? {} : { obligationRevs }),
     ...(corpus === undefined ? {} : { corpus }),
   };
@@ -769,8 +780,6 @@ export type Bounds = Readonly<{
   chargeable: number;
   /** Every nth certification red is charged; the preceding reds are uncharged. */
   certifications: number;
-  /** Plan-check redirects since the architect's latest spec revision. */
-  redirects: number;
   reviseRounds: number;
   candidateReds: number;
   /** Uncharged retries per retry stage. */
@@ -785,37 +794,23 @@ export type Bounds = Readonly<{
   smokeRuns: number;
 }>;
 export const BOUND_FIELDS = [
-  'chargeable', 'redirects', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
+  'chargeable', 'reviseRounds', 'candidateReds', 'retries', 'judgmentDeadlineMin', 'freshBuildMin', 'editAllowanceMin', 'smokeRounds', 'smokeRuns', 'certifications',
 ] as const satisfies readonly (keyof Bounds)[];
 /** The bound fields a 1.0.0-dev.6 dispatch record carries; later fields read as the defaults. */
-export const DEV6_BOUND_FIELDS = BOUND_FIELDS.slice(0, 8) as readonly (keyof Bounds)[];
-/** The built-in bounds: M2's constants and M4a rev 3's smoke bounds (unmeasured defaults). */
 export const DEFAULT_BOUNDS: Bounds = {
-  chargeable: 3, redirects: 2, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
+  chargeable: 3, reviseRounds: 2, candidateReds: 1, retries: 1, judgmentDeadlineMin: 45, freshBuildMin: 180, editAllowanceMin: 60,
   smokeRounds: 1, smokeRuns: 2, certifications: 4,
 };
-/**
- * Bounds as recorded, byte-preserving (G14): dev.6 lacks the smoke bounds, dev.31 lacks certifications.
- * `boundsOfRecord` fills those defaults with a logged upgrade warning (src/core/upgrade.ts).
- */
-export type BoundsRecord = Omit<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'> & Partial<Pick<Bounds, 'smokeRounds' | 'smokeRuns' | 'certifications'>>;
-export const bounds: Read<BoundsRecord> = object((f) => {
-  const out: Record<string, number> = Object.fromEntries(DEV6_BOUND_FIELDS.map((k) => [k, f.get(k, positive)]));
-  const certifications = f.optional('certifications', positive);
-  if (certifications !== undefined) out['certifications'] = certifications;
-  const rounds = f.optional('smokeRounds', positive);
-  const runs = f.optional('smokeRuns', positive);
-  if ((rounds === undefined) !== (runs === undefined)) throw new SchemaError(`${f.path}.smokeRounds`, 'both smoke bounds or neither (a 1.0.0-dev.6 record)', { rounds, runs });
-  return (rounds === undefined ? out : { ...out, smokeRounds: rounds, smokeRuns: runs }) as BoundsRecord;
-});
+export type BoundsRecord = Bounds;
+export const bounds: Read<BoundsRecord> = object((f) => Object.fromEntries(BOUND_FIELDS.map((k) => [k, f.get(k, positive)])) as Bounds);
 
 /** H15: the transient-check rules a unit's lineage attempt runs under. */
 export const TRANSIENT_RULES = ['m3'] as const;
 export type TransientRules = (typeof TRANSIENT_RULES)[number];
 
 /**
- * Pinned once when a unit is dispatched; a redirect can neither widen `scope` nor lower `riskFloor`.
- * `specRev` and `specSha256` are the spec revision the dispatching plan-check read and its file's hash.
+ * Pinned once when a unit is dispatched; a redirect cannot lower `riskFloor`.
+ * `specRev` and `specSha256` are the spec revision the dispatching pre-build read and its file's hash.
  * `implementerSeatRev` hashes the triple of the implementer's seat (`build.<riskFloor>`) under `routingRev`,
  * so a routing change can be judged by whether it moves the implementer without naming a model.
  */
@@ -823,53 +818,32 @@ export type DispatchRecord = Readonly<{
   unit: UnitId;
   specRev: SpecRev;
   specSha256: Sha256Hex;
-  scope: readonly RepoPattern[];
   riskFloor: RiskTier;
   routingRev: RoutingRev;
   implementerSeatRev: SeatRev;
   at: IsoTime;
   /**
-   * M3 (H15): `m3` on every dispatch: the unit's candidate may touch only its pinned scope and ruling-added paths,
-   * and no in-tree `.roadmap/` path. A re-pin copies it.
+   * M3 (H15): `m3` on every dispatch: candidate validation refuses protected paths and transient artifacts.
    */
   transientRules: TransientRules;
   /** M3 (`limits`): the unit's bounds in force since this pin; absent: `DEFAULT_BOUNDS` (`boundsOfRecord`). */
   bounds?: BoundsRecord;
-  /**
-   * Plan defects (2026-10-16): the derived outputs the plan's `derived` entries add to `scope` (src/input/derived.ts
-   * `derivedWidening`), ascending, non-empty when present; absent: none (a plan without `derived`, lasting). Read only
-   * through `effectiveScope`.
-   */
-  derived?: readonly RepoPattern[];
+
   /** Derived exclusion (2026-10-27; 1.0.0-dev.26): ascending, non-empty; absent: none (lasting, old pins keep their write set). */
-  excluded?: readonly RepoPattern[];
 }>;
-
-/** What a unit may change: its pinned scope and derived outputs, minus its excluded outputs. Salvage, the gate, the candidate and recovery read it. */
-export type EffectiveScope = Readonly<{ include: readonly RepoPattern[]; exclude: readonly RepoPattern[] }>;
-export const effectiveScope = (record: DispatchRecord): EffectiveScope => ({ include: [...record.scope, ...(record.derived ?? [])], exclude: record.excluded ?? [] });
-
-/** The one path judgement of an effective scope (derived exclusion, 2026-10-27; 1.0.0-dev.26). */
-export const inScope = (scope: EffectiveScope, path: RepoPath): boolean =>
-  scope.include.some((p) => matchesPattern(path, p)) && !scope.exclude.some((p) => matchesPattern(path, p));
 
 export const dispatchRecord: Read<DispatchRecord> = object((f) => {
   const b = f.optional('bounds', bounds);
-  const excluded = f.optional('excluded', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
-  const derived = f.optional('derived', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true }));
   return {
     unit: f.get('unit', unit),
     specRev: f.get('specRev', (v, p) => specRev(v, p)),
     specSha256: f.get('specSha256', (v, p) => sha256(v, p)),
-    scope: f.get('scope', sortedBy((v, p) => repoPattern(v, p), (s) => s, { nonEmpty: true })),
     riskFloor: f.get('riskFloor', riskTier),
     routingRev: f.get('routingRev', rev),
     implementerSeatRev: f.get('implementerSeatRev', (v, p) => seatRev(v, p)),
     at: f.get('at', time),
     transientRules: f.get('transientRules', oneOf(TRANSIENT_RULES)),
     ...(b === undefined ? {} : { bounds: b }),
-    ...(derived === undefined ? {} : { derived }),
-    ...(excluded === undefined ? {} : { excluded }),
   };
 });
 
@@ -877,8 +851,7 @@ export const dispatchRecord: Read<DispatchRecord> = object((f) => {
 export function boundsOfRecord(record: DispatchRecord | null): Bounds {
   const b = record?.bounds;
   if (b === undefined) return DEFAULT_BOUNDS;
-  return { ...b, ...(b.smokeRounds === undefined || b.smokeRuns === undefined ? dev6SmokeBounds() : {}),
-    certifications: b.certifications ?? dev31CertificationsDefault() } as Bounds;
+  return b;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -887,18 +860,18 @@ export function boundsOfRecord(record: DispatchRecord | null): Bounds {
 /** `set`: literal values. `pass`: names copied from the executor's environment; absent → spec-lane-unrunnable. */
 export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: readonly string[] }>;
 /**
- * Where a lane runs (dev.17, DESIGN-1.0.md §4 "Lane topology"), a ladder: `build` in the builder's own loop and at the
+ * Where a lane runs (dev.17, DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"), a ladder: `build` in the builder's own loop and at the
  * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
  * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
- * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build` or
- * `unit`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
+ * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build`,
+ * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
  * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
  */
-export type { LaneKind } from './upgrade.ts';
+export type LaneKind = 'spec' | 'suite' | 'arc';
 export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
 export type LaneCadence = (typeof LANE_CADENCES)[number];
 /** The cadences each kind of lane may declare. */
-export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
+export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit', 'candidate'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
 /** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
 export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
 
@@ -917,6 +890,12 @@ export type LaneDef = Readonly<{
   env: LaneEnv;
   expectedExit: number;
   cadence: LaneCadence;
+  inputs?: readonly RepoPattern[];
+  cost?: 'cheap' | 'expensive';
+  placement?: 'local' | 'shared-resource' | 'cross-system';
+  kind?: 'capture';
+  capture?: Readonly<{ up: readonly string[]; script: readonly string[]; states: readonly string[]; port: ResourceName; portBase?: number }>;
+
   resources: readonly ResourceName[];
   evidenceGlobs: readonly RepoPattern[];
   /**
@@ -977,10 +956,7 @@ export const stochastic: Read<Stochastic> = object((f) => {
  */
 function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const id = f.get('id', (v, p) => laneId(v, p));
-  const tier = kind === null ? undefined : f.optional('tier', oneOf(['fast', 'estate'] as const));
-  const declared = f.optional('cadence', oneOf(LANE_CADENCES));
-  if (tier !== undefined && declared !== undefined) throw new SchemaError(`${f.path}.tier`, 'absent beside cadence (tier is the dev.16 form)', tier);
-  const cadence = declared ?? (tier === undefined || kind === null ? f.get('cadence', oneOf(LANE_CADENCES)) : laneCadenceDefault(kind, tier));
+  const cadence = f.get('cadence', oneOf(LANE_CADENCES));
   if (kind !== null && !KIND_CADENCES[kind].includes(cadence)) throw new SchemaError(`${f.path}.cadence`, `${KIND_CADENCES[kind].join(' or ')} on ${kind === 'arc' ? 'an' : 'a'} ${kind} lane`, cadence);
   const out = {
     id,
@@ -993,9 +969,18 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     evidenceGlobs: f.get('evidenceGlobs', arrayOf((v, p) => repoPattern(v, p))),
     evidenceExcludes: f.optional('evidenceExcludes', arrayOf((v, p) => repoPattern(v, p))) ?? [],
   };
+  const inputs = f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true }));
+  if (inputs !== undefined) assertUnique(inputs, (x) => x, `${f.path}.inputs`);
+  const cost = f.optional('cost', oneOf(['cheap', 'expensive'] as const));
+  const placement = f.optional('placement', oneOf(['local', 'shared-resource', 'cross-system'] as const));
+  const laneKind = f.optional('kind', literal('capture'));
+  const capture = f.optional('capture', object((g) => ({ up: g.get('up', argv), script: g.get('script', argv), states: g.get('states', arrayOf(str, { nonEmpty: true })), port: g.get('port', resource), ...(g.optional('portBase', positive) === undefined ? {} : { portBase: g.get('portBase', positive) }) })));
+  if ((laneKind === 'capture') !== (capture !== undefined)) throw new SchemaError(`${f.path}.capture`, 'present exactly for a capture lane', capture);
+  if (capture !== undefined && capture.states.some((s) => !/^[a-zA-Z0-9_-]+$/.test(s))) throw new SchemaError(`${f.path}.capture.states`, 'safe file names', capture.states);
+  if (capture !== undefined && !out.resources.includes(capture.port)) throw new SchemaError(`${f.path}.capture.port`, 'a leased resource of this lane', capture.port);
   const cpu = f.optional('cpu', positive);
   const timeout = f.optional('timeoutMin', timeoutMin);
-  if (kind === 'spec' && f.optional('inputs', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })) !== undefined) laneInputsDropped(id);
+
   const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   const testArgv = f.optional('testArgv', argv);
   const stoch = f.optional('stochastic', stochastic);
@@ -1014,7 +999,10 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     throw new SchemaError(`${f.path}.environment`, 'absent on an arc lane (environments are a spec or suite lane\'s)', environment);
   }
   return {
-    ...out, ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
+    ...out,
+    ...(inputs === undefined ? {} : { inputs }), ...(cost === undefined ? {} : { cost }),
+    ...(placement === undefined ? {} : { placement }), ...(laneKind === undefined ? {} : { kind: laneKind }), ...(capture === undefined ? {} : { capture }),
+    ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
   };
@@ -1033,7 +1021,7 @@ export type Stated<T> = T & Readonly<{ state: ItemState }>;
 /**
  * What a unit's judgment and build prompts embed in full: plan contracts and C-nn rulings (arc-1 feedback
  * item 12). Every other contract and ruling reaches a prompt as a one-line index entry, readable on demand.
- * Filled at spec authoring; a plan-check redirect may add to it (the `cite` op), nothing removes from it.
+ * Filled at spec authoring; a pre-build redirect may add to it (the `cite` op), nothing removes from it.
  */
 export type SpecCites = Readonly<{ contracts: readonly RepoPath[]; rulings: readonly RulingId[] }>;
 
@@ -1052,14 +1040,15 @@ export type SpecM1 = Readonly<{
   rev: SpecRev;
   lanes: readonly Stated<LaneDef>[];
   acceptance: readonly Stated<AcceptanceDef>[];
-  scope: readonly RepoPattern[];
   resources: readonly ResourceName[];
   decisions: readonly Stated<NoteDef>[];
   facts: readonly Stated<NoteDef>[];
   cites: SpecCites;
+  intent: string;
+  nonGoals: readonly string[];
   /**
    * M3 (A13): the obligations the unit declares it serves (non-empty when present; absent: none). The
-   * classifier checks them against the impact mapping (prefix-conservative over its scope).
+   * classifier checks them against the impact mapping for its unit systems.
    */
   obligations?: readonly ObligationId[];
   /** M3 (A13): what a repair unit repairs, findings or obligations (non-empty when present; required with `origin: repair`). */
@@ -1070,9 +1059,8 @@ export type SpecM1 = Readonly<{
    */
   witnesses?: readonly Stated<WitnessItemDef>[];
   /**
-   * Scope growth (2026-10-15): what the unit removes or renames (repository paths, route strings, symbols: each a literal
-   * `git grep -F` searches for). The Phase-0 row `scope-references-outside` and the plan-check list every file outside the
-   * unit's scope that still names one (non-empty when present, unique; absent: none, lasting, `specRemoves`).
+   * What the unit removes or renames (paths, route strings, symbols: literals searched with `git grep -F`).
+   * Non-empty when present, unique (`specRemoves`). Plan §9 retired scope-references-outside; reach is verifier input.
    */
   removes?: readonly string[];
   /**
@@ -1082,16 +1070,16 @@ export type SpecM1 = Readonly<{
    */
   forces?: readonly LaneId[];
   /**
-   * dev.17 (design pass): the design record the unit's plan-check settled (src/core/design.ts). Absent: none yet (a dev.16
-   * spec, or one no plan-check has designed), whose unit reads as kind `module` (`specKindOf`, warned).
+   * dev.17 (design pass): the design record the unit's pre-build settled (src/core/design.ts). Absent: none yet (a dev.16
+   * spec, or one no pre-build has designed), whose unit reads as kind `module` (`specKindOf`, warned).
    */
   design?: DesignRecord;
   /**
    * dev.17 (propagation): the revision each of the spec's links was written against, one pin per target (unique): a
    * requirement pin per obligation it declares, repairs or a witness item names, a contract pin per cited contract. Its
-   * writers: a plan-check redirect's patch (`SpecPatch.pins`: every link at the revisions the check read) and a propagation
+   * writers: a pre-build redirect's patch (`SpecPatch.pins`: every link at the revisions the check read) and a propagation
    * unit's minted spec (src/holistic/propagation.ts). A pin whose link a later edit removed names nothing and is never read.
-   * Absent (a dev.16 spec, or an owner's spec no plan-check has revised; lasting): every link reads `unpinned`,
+   * Absent (a dev.16 spec, or an owner's spec no pre-build has revised; lasting): every link reads `unpinned`,
    * stale-unknown (`specPinOf`). A link with no pin in a present list (one a later edit added) reads `unpinned` too.
    */
   pins?: readonly SpecPin[];
@@ -1101,7 +1089,7 @@ export type SpecM1 = Readonly<{
  * A witness item (M4a rev 3): test `testId` of arc lane `lane` witnesses acceptance clause `clause`; `skeleton` is the
  * test's shape as the spec states it. D1 requires its active items (`requiredWitnesses`, src/holistic/required.ts).
  * `obligation` (paid M4b run 6): the obligation the unit delivers whose witness already proves the clause; the item then
- * names that witness's lane and one of its test ids exactly (a plan-check redirect is refused otherwise), so the build
+ * names that witness's lane and one of its test ids exactly (a pre-build redirect is refused otherwise), so the build
  * never holds two required names for one test. Absent: no obligation's witness proves it (lasting).
  */
 export type WitnessItemDef = Readonly<{ id: WitnessItemId; lane: LaneId; testId: string; clause: ClauseId; skeleton: string; obligation?: ObligationId }>;
@@ -1119,8 +1107,8 @@ export const specWitnesses = (spec: SpecM1): readonly Stated<WitnessItemDef>[] =
 export const specRemoves = (spec: SpecM1): readonly string[] => spec.removes ?? [];
 /** The suite lanes a spec forces at its lanes stage (dev.17); none when absent. */
 export const specForces = (spec: SpecM1): readonly LaneId[] => spec.forces ?? [];
-/** A spec's unit kind (dev.17): its design record's, or `module` with the upgrade warning when it has none. */
-export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? designKindDefault();
+/** A spec's unit kind: its design record's, or `module` when it has none. */
+export const specKindOf = (spec: SpecM1): UnitKind => spec.design?.kind ?? 'module';
 
 /** The requirements a spec links to: the obligations it declares, the obligations it repairs, those its witness items name. */
 export function specRequirementLinks(spec: SpecM1): readonly ObligationId[] {
@@ -1184,11 +1172,12 @@ export const specM1: Read<SpecM1> = object((f) => {
   const pins = f.optional('pins', arrayOf(specPin));
   const out: SpecM1 = {
     schema: f.get('schema', literal(SPEC_SCHEMA)),
+    intent: f.get('intent', str),
+    nonGoals: f.get('nonGoals', arrayOf(str, { nonEmpty: true })),
     unit: f.get('unit', unit),
     rev: f.get('rev', (v, p) => specRev(v, p)),
     lanes: f.get('lanes', arrayOf(stated((g) => laneFields(g, 'spec')))),
     acceptance: f.get('acceptance', arrayOf(stated(acceptanceFields), { nonEmpty: true })),
-    scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
     resources: f.get('resources', arrayOf(resource)),
     decisions: f.get('decisions', arrayOf(stated(noteFields))),
     facts: f.get('facts', arrayOf(stated(noteFields))),
@@ -1212,7 +1201,6 @@ export const specM1: Read<SpecM1> = object((f) => {
   assertUnique([...out.lanes, ...out.acceptance, ...out.decisions, ...out.facts, ...specWitnesses(out)], (i) => i.id, `${f.path}.<item ids>`);
   assertUnique(specObligations(out), (o) => o, `${f.path}.obligations`);
   assertUnique(specRepairs(out), (r) => r, `${f.path}.repairs`);
-  assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   return out;
 });
@@ -1223,7 +1211,7 @@ export type SpecSection = (typeof SPEC_SECTIONS)[number];
 type SectionItem = { lanes: LaneDef; acceptance: AcceptanceDef; decisions: NoteDef; facts: NoteDef; witnesses: WitnessItemDef };
 
 /**
- * Scope and resources are pinned at dispatch and are not patchable in M1. `cite` adds contracts and rulings
+ * Resources are fixed at dispatch and are not patchable. `cite` adds contracts and rulings
  * to the spec's cites (at least one); there is no op that removes one.
  */
 export type SpecPatchOp =
@@ -1232,17 +1220,17 @@ export type SpecPatchOp =
   | Readonly<{ op: 'strike' | 'defer'; id: LaneId | ClauseId }>
   | Readonly<{ op: 'cite' } & SpecCites>
   /**
-   * dev.17 (design pass): the design record a plan-check's approve or scaffold settled, pinned by code at the tip it read,
+   * dev.17 (design pass): the root-authored design record, pinned by code at the tip it read,
    * replacing any the spec held. Executor-written only: no model's patch schema offers it (`wireOp`, S_PATCH_OP).
    */
   | Readonly<{ op: 'design'; record: DesignRecord }>;
 
 /**
- * Who patched: a plan-check redirect (the judgment invocation), or the executor appending the implementer's
+ * Who patched: a pre-build redirect (the judgment invocation), or the executor appending the implementer's
  * `decisions.json` after a build round's evidence snapshot (`inv` is the build invocation that wrote it).
  */
 export type SpecPatchBy =
-  | Readonly<{ role: 'planCheck'; routingRev: RoutingRev; inv: InvocationId }>
+  | Readonly<{ role: 'verifier'; routingRev: RoutingRev; inv: InvocationId }>
   | Readonly<{ role: 'executor'; inv: InvocationId }>;
 
 export type SpecPatch = Readonly<{
@@ -1250,7 +1238,7 @@ export type SpecPatch = Readonly<{
   by: SpecPatchBy;
   ops: readonly SpecPatchOp[];
   /**
-   * dev.17 (propagation): the pins of every link the patched spec carries, at the revisions its writer read (a plan-check
+   * dev.17 (propagation): the pins of every link the patched spec carries, at the revisions its writer read (a pre-build
    * redirect: src/holistic/staleset.ts `pinsOf`), which replace the spec's pins. Absent: the spec's pins carry over unchanged
    * (lasting: the executor's decisions patch, and every patch written before dev.17).
    */
@@ -1300,8 +1288,8 @@ export const specPatchOp: Read<SpecPatchOp> = tagged('op', {
 export const specPatch: Read<SpecPatch> = object((f) => {
   const out = {
     expectRev: f.get('expectRev', (v, p) => specRev(v, p)),
-    by: f.get('by', tagged<'planCheck' | 'executor', SpecPatchBy>('role', {
-      planCheck: object((g): SpecPatchBy => ({ role: g.get('role', literal('planCheck')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
+    by: f.get('by', tagged<'verifier' | 'executor', SpecPatchBy>('role', {
+      verifier: object((g): SpecPatchBy => ({ role: g.get('role', literal('verifier')), routingRev: g.get('routingRev', rev), inv: g.get('inv', inv) })),
       executor: object((g): SpecPatchBy => ({ role: g.get('role', literal('executor')), inv: g.get('inv', inv) })),
     })),
     ops: f.get('ops', arrayOf(specPatchOp, { nonEmpty: true })),
@@ -1354,14 +1342,6 @@ export const recoveryLockClaim: Read<RecoveryLockClaim> = object((f) => ({
   bootId: f.get('bootId', bootR),
   holder: f.get('holder', procIdentity),
   at: f.get('at', time),
-}));
-
-/** `<runDir>/status.lock`: the run's one running `roadmap status` (src/status.ts `statusSingleFlight`). */
-export type StatusLock = Readonly<{ v: SchemaVersion; bootId: BootId; holder: ProcIdentity }>;
-export const statusLock: Read<StatusLock> = object((f) => ({
-  v: f.get('v', version),
-  bootId: f.get('bootId', bootR),
-  holder: f.get('holder', procIdentity),
 }));
 
 /** `handshake.<generation>`: the executor performs no effect until this exists and matches host.owner.json. */
@@ -1495,10 +1475,6 @@ export const manifestSpecs: Read<Readonly<Record<UnitId, Sha256Hex>>> = (value, 
   if (Object.keys(out).length === 0) throw new SchemaError(path, 'at least one unit', value);
   return out;
 };
-export const planManifest: Read<PlanManifest> = object((f) => ({
-  planSha256: f.get('planSha256', (v, p) => sha256(v, p)),
-  specs: f.get('specs', manifestSpecs),
-}));
 
 /**
  * M3 (G1, A3, A14): the revisioned set beyond plan and specs. `rulings`: the ledger's bytes and each ruling
@@ -1508,45 +1484,29 @@ export const planManifest: Read<PlanManifest> = object((f) => ({
  *
  * M4a (a corpus arc's; absent: none, lasting): `corpus` the pin (`inputs/<sha>.corpus.json`), `corpusGuide` the guide's
  * bytes (`inputs/<sha>.corpus-guide.md`, H5) and `phase0` the Phase-0 record (`inputs/<sha>.phase0.json`). The three are
- * present together or not at all. `phase0Issues`: the issue capture an earlier executor kept beside them, read as written
- * and ignored (`issuesIgnored`, src/core/upgrade.ts; scaffolding); never written.
+ * present together or not at all.
  */
 export type RevisionInputs = Readonly<{
-  rulings: Readonly<{ ledgerSha256: Sha256Hex; sidecars: Readonly<Record<RulingId, Sha256Hex>> }>;
+  rulings: Readonly<{ ledgerSha256: Sha256Hex;  }>;
   obligations: Sha256Hex | null;
   vision: Sha256Hex | null;
   corpus?: Sha256Hex;
   corpusGuide?: Sha256Hex;
   phase0?: Sha256Hex;
-  phase0Issues?: Sha256Hex;
 }>;
 /** What an `apply` hashes (A2), its body's manifest: the plan manifest and the revision inputs. */
 export type RevisionManifest = PlanManifest & RevisionInputs;
-
-const sidecarShas: Read<Readonly<Record<RulingId, Sha256Hex>>> = (value, path) => {
-  const f = new Fields(value, path);
-  const out: Record<RulingId, Sha256Hex> = {};
-  for (const key of Object.keys(value as object)) out[rulingId(key, `${path}.${key}`)] = f.get(key, (v, p) => sha256(v, p));
-  f.end();
-  return out;
-};
 const CORPUS_INPUTS = ['corpus', 'corpusGuide', 'phase0'] as const;
 export const revisionInputs = (f: Fields): RevisionInputs => {
-  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number] | 'phase0Issues', Sha256Hex>> = {};
+  const corpus: Partial<Record<(typeof CORPUS_INPUTS)[number], Sha256Hex>> = {};
   for (const k of CORPUS_INPUTS) {
     const v = f.optional(k, (x, p) => sha256(x, p));
     if (v !== undefined) corpus[k] = v;
   }
   const n = Object.keys(corpus).length;
   if (n !== 0 && n !== CORPUS_INPUTS.length) throw new SchemaError(`${f.path}.corpus`, `all of ${CORPUS_INPUTS.join(', ')} or none (a corpus arc's inputs)`, corpus);
-  const issues = f.optional('phase0Issues', (x, p) => sha256(x, p));
-  if (issues !== undefined) {
-    if (n === 0) throw new SchemaError(`${f.path}.phase0Issues`, 'absent outside a corpus arc', issues);
-    issuesIgnored('manifest.phase0Issues');
-    corpus.phase0Issues = issues;
-  }
   return {
-    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)), sidecars: g.get('sidecars', sidecarShas) }))),
+    rulings: f.get('rulings', object((g) => ({ ledgerSha256: g.get('ledgerSha256', (v, p) => sha256(v, p)),  }))),
     obligations: f.get('obligations', nullable((v, p) => sha256(v, p))),
     vision: f.get('vision', nullable((v, p) => sha256(v, p))),
     ...corpus,
@@ -1564,27 +1524,11 @@ export type CommandBody =
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
-  /**
-   * `roadmap apply`: the owner's files the manifest hashes (the executor re-reads them and requires these hashes), rebased
-   * onto the files in force and put in force (src/input/rebase.ts). `base`: the files the edit started from, an export's
-   * (`--base <export.json>`), or null for the owner's files of the latest revision applied from them. A mutation. M4a rev 3
-   * (I2): `rulings`, the ruling sidecar files of `--ruling` (each hashed like a `rule` record, in the order given; absent:
-   * none, lasting), landed with the edits as one revision. A command queued before 2026-10-16 carries `expectRev` instead
-   * of `base`: read as base null (`applyExpectRevDefault`). `visionEdit` (`--vision-edit`, owner ruling 2026-10-16): whether
-   * the apply declares a vision edit, the one way a running arc's vision changes (false: a rebased vision that differs
-   * from the vision in force is refused as `vision-leak`). The CLI always writes it; a body without it was queued by an
-   * earlier CLI, which had no such flag, and reads as declared (`applyVisionEditDefault`).
-   */
-  | Readonly<{ type: 'apply'; base: RevisionManifest | null; manifest: RevisionManifest; rulings?: readonly HashedFile[]; visionEdit: boolean }>
+  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
   | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>
-  /**
-   * `roadmap rule <record.json>` (M3): a ruling sidecar, hashed by the CLI (`sha256` over the file's bytes at
-   * `path`), validated and published through the revision fence. Scope ∅.
-   */
-  | Readonly<{ type: 'rule'; path: AbsPath; sha256: Sha256Hex }>
   /** `roadmap reverse <D-n>` (M3, H13): the compensating revision built from the divergence's preimage. Scope: the arc. */
   | Readonly<{ type: 'reverse'; divergence: DivergenceId }>
   /**
@@ -1594,20 +1538,14 @@ export type CommandBody =
    */
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
   /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
+  | Readonly<{ type: 'witness'; obligation: ObligationId; expectedHead: Sha; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
+  | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
+  | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
-  /** `roadmap audit [--lens <k,…>]` (M3): an audit of those lenses (ascending), or of the arc's lens set L (null). Scope ∅. */
-  | Readonly<{ type: 'audit'; lenses: readonly LensKindName[] | null }>
+  /** Request a fresh whole-campaign audit. */
+  | Readonly<{ type: 'audit' }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
   | Readonly<{ type: 'close-admissions' }>
-  /** `roadmap flow accept|reject <proposal> --reason <text>` (M4b): the root agent's decision, idempotent by proposal. Scope ∅. */
-  | Readonly<{ type: 'flow-decide'; proposal: ProposalId; decision: 'accept' | 'reject'; reason: string }>
-  /** `roadmap flow request --reason <text>` (M4b, RC-5): a flow run past the cooldown, once per cooldown window. Scope ∅. */
-  | Readonly<{ type: 'flow-request'; reason: string }>
-  /**
-   * `roadmap scope accept|reject <u> --reason <text>` (scope growth, 2026-10-15): the root agent's decision on the unit's held
-   * scope-growth proposals; an accept lands them as one ruled-growth revision (src/commands/scope.ts). Scope {u}.
-   */
-  | Readonly<{ type: 'scope-decide'; unit: UnitId; decision: 'accept' | 'reject'; reason: string }>
   /**
    * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
    * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
@@ -1623,7 +1561,7 @@ export type DemoAct = (typeof DEMO_ACTS)[number];
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
 export type LensKindName = (typeof LENS_KIND_NAMES)[number];
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
-export const CONTROL_COMMANDS = ['pause', 'stop', 'ack'] as const;
+export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss'] as const;
 
 export type CommandFile = Readonly<{ v: SchemaVersion; id: CommandId; arc: ArcId; at: IsoTime; body: CommandBody }>;
 
@@ -1651,25 +1589,20 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   resume: object((f): CommandBody => ({ type: f.get('type', literal('resume')), target: f.get('target', resumeTarget) })),
   sweep: object((f): CommandBody => ({ type: f.get('type', literal('sweep')), resource: f.get('resource', nullable(resource)) })),
-  apply: object((f): CommandBody => {
-    const legacy = f.optional('expectRev', nullable((v, p) => planRev(v, p)));
-    const out = {
-      type: f.get('type', literal('apply')),
-      base: legacy !== undefined ? applyExpectRevDefault() : f.get('base', nullable(applyManifest)),
-      manifest: f.get('manifest', applyManifest),
-    };
-    const rulings = f.optional('rulings', arrayOf(hashedFile, { nonEmpty: true }));
-    const visionEdit = f.optional('visionEdit', bool) ?? applyVisionEditDefault();
-    return { ...out, ...(rulings === undefined ? {} : { rulings }), visionEdit };
-  }),
+  apply: object((f): CommandBody => ({
+    type: f.get('type', literal('apply')), planFile: f.get('planFile', abs), rev: f.get('rev', (v, p) => planRev(v, p)), reason: f.get('reason', str),
+    base: f.get('base', applyManifest), manifest: f.get('manifest', applyManifest),
+  })),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
   })),
   'run-only': object((f): CommandBody => ({
     type: f.get('type', literal('run-only')), units: f.get('units', nullable(sortedBy(unit, (u) => u, { nonEmpty: true }))),
   })),
-  rule: object((f): CommandBody => ({ type: f.get('type', literal('rule')), path: f.get('path', abs), sha256: f.get('sha256', (v, p) => sha256(v, p)) })),
   reverse: object((f): CommandBody => ({ type: f.get('type', literal('reverse')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
+  witness: object((f): CommandBody => ({ type: f.get('type', literal('witness')), obligation: f.get('obligation', (v, p) => obligationId(v, p)), expectedHead: f.get('expectedHead', (v, p) => sha(v, p)), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceFile: f.get('evidenceFile', nullable(hashedFile)) })),
+  dismiss: object((f): CommandBody => ({ type: f.get('type', literal('dismiss')), finding: f.get('finding', (v, p) => findingId(v, p)), counterEvidence: f.get('counterEvidence', nonBlank) })),
+  note: object((f): CommandBody => ({ type: f.get('type', literal('note')), unit: f.get('unit', unit), brief: f.get('brief', hashedFile) })),
   steer: object((f): CommandBody => ({
     type: f.get('type', literal('steer')),
     unit: f.get('unit', unit),
@@ -1680,17 +1613,9 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),
   audit: object((f): CommandBody => ({
-    type: f.get('type', literal('audit')), lenses: f.get('lenses', nullable(sortedBy(oneOf(LENS_KIND_NAMES), (l) => l, { nonEmpty: true }))),
+    type: f.get('type', literal('audit')),
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
-  'flow-decide': object((f): CommandBody => ({
-    type: f.get('type', literal('flow-decide')), proposal: f.get('proposal', (v, p) => proposalId(v, p)), decision: f.get('decision', oneOf(['accept', 'reject'] as const)),
-    reason: f.get('reason', str),
-  })),
-  'flow-request': object((f): CommandBody => ({ type: f.get('type', literal('flow-request')), reason: f.get('reason', str) })),
-  'scope-decide': object((f): CommandBody => ({
-    type: f.get('type', literal('scope-decide')), unit: f.get('unit', unit), decision: f.get('decision', oneOf(['accept', 'reject'] as const)), reason: f.get('reason', str),
-  })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
 });
 
@@ -1732,6 +1657,7 @@ export const receipt: Read<Receipt> = tagged('state', {
 // needs-user: `needs-user/<id>.json` (write-once) and `needs-user/<id>.ack.json`
 
 export const NEEDS_USER_REASONS = [
+  'attempt-cap', 'spec-wrong', 'split-proposal',
   'chargeable-bound', 'escalation', 'refusal', 'process-fault', 'malformed', 'salvage-failed', 'empty-diff',
   'occupancy-unlabelled', 'lane-blocked', 'base-red', 'candidate-red', 'foreign-ref-move', 'recovery-required',
   'reconcile-park', 'residue', 'usage-limit', 'supervisor-crash-limit', 'log-corrupt', 'owner-mismatch',
@@ -1740,32 +1666,19 @@ export const NEEDS_USER_REASONS = [
   // repeat park on one target.
   'park-escalated', 'env-blocked',
   // M3, blocking: a must-hold obligation not held at the baseline (A6); a parked owner's P1 at the park deadline;
-  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act the checkpoint
+  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
-  // M3, non-blocking: a bundle held for the architect (A9: `apply | reject`); the convergence brakes; an owed audit;
-  // the divergence digest (H11).
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
-  // the first (K14, H9). `issue-policy-untrusted`: a checkpoint capture found the issue policy untrusted; only an earlier
-  // executor raised it (the issues integration was removed in 1.0.0-dev.21), kept so its item still reads and can be
-  // acknowledged; it holds no admission (scaffolding).
-  'pack-review', 'issue-policy-untrusted',
-  // M4b, non-blocking: a flow proposal for the root agent (`flow accept | reject`); host advice for the owner; an applied
-  // proposal's `worse` verdict (with its preimage, RC-6); a flow run without a valid answer after its retry; a ruler path
-  // changed by the root agent's `apply` after the first admission (G11).
-  'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid', 'ruler-changed',
-  // Paid M4b run 5, blocking: a gate's or plan-check's approve after the CLI refused one of its reads, again after its retry.
+  // the first (K14, H9).
+  'pack-review',
+  // Paid M4b run 5, blocking: a gate's or pre-build's approve after the CLI refused one of its reads, again after its retry.
   // No longer raised since 2026-10-16 (a refused read voids nothing); kept so a 1.0.0-dev.11 item still reads (scaffolding).
   'read-denied',
-  // Scope growth (2026-10-15), blocking: a plan-check proposed scope growth code verified; the unit is held until the root
-  // agent's `scope accept | reject <unit>`.
-  'scope-growth',
-  // 2026-10-15 (arc feedback #3), blocking: a unit's required witness item names no arc lane in force (build or lanes).
   'witness-lane-missing',
   // Plan defects (2026-10-16), blocking: a unit's missing witness is a plan defect code diagnosed (lanes `plan-defect`).
   'plan-defect',
-  // 2026-10-16, blocking: a plan-check, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
+  // 2026-10-16, blocking: a pre-build, build or gate call's prompt or context outgrew the model's window (`context-exceeded`).
   'context-exceeded',
   // 1.0.0-dev.17, non-blocking: the executor threw inside a unit's task or an arc job while it held only that unit's or job's
   // own state (src/schedule/fault.ts): the unit parked `executor-fault`, or the job ended faulted; the item cites the stack.
@@ -1781,16 +1694,15 @@ export const NEEDS_USER_REASONS = [
   'apply-dropped',
   // Deflake scope (2026-10-23), non-blocking: a deflake unit was not minted, its scope reaching a same-repo corpus (no lane systems
   // and no system holding the flaky tests' files); the item names the lane, the keys and what to declare.
-  'deflake-unscoped',
+  'revision-notice', 'waste-finding',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'bundle-request', 'convergence-bound', 'convergence-identity', 'audit-owed', 'divergence-digest', 'flow-proposal', 'flow-host', 'flow-worse', 'flow-invalid',
-  'ruler-changed', 'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped', 'deflake-unscoped',
+  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 
-export type NeedsUserSubject = Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;
+export type NeedsUserSubject = Readonly<{ type: 'findings'; findings: readonly FindingId[] }> | Readonly<{ type: 'unit'; unit: UnitId }> | Readonly<{ type: 'arc' }> | Readonly<{ type: 'host' }>;
 
 export type NeedsUserRecord = Readonly<{
   v: SchemaVersion;
@@ -1817,7 +1729,8 @@ export const needsUserRecord: Read<NeedsUserRecord> = object((f) => {
     arc: f.get('arc', arc),
     raisedAt: f.get('raisedAt', time),
     blocking: f.get('blocking', bool),
-    subject: f.get('subject', tagged<'unit' | 'arc' | 'host', NeedsUserSubject>('type', {
+    subject: f.get('subject', tagged<'unit' | 'arc' | 'host' | 'findings', NeedsUserSubject>('type', {
+      findings: object((g) => ({ type: g.get('type', literal('findings')), findings: g.get('findings', arrayOf((v, p) => findingId(v, p), {nonEmpty: true})) })),
       unit: unitTarget,
       arc: object((g) => ({ type: g.get('type', literal('arc')) })),
       host: object((g) => ({ type: g.get('type', literal('host')) })),

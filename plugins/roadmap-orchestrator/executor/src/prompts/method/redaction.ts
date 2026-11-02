@@ -1,0 +1,1 @@
+export const METHOD = "Trace sensitive values from input to every output, including errors, logs, diagnostics and stored records. Check default and failure paths and nested values. Show both that secrets are absent and that useful non-secret context survives.";

@@ -1,646 +1,243 @@
-# Roadmap Orchestrator 1.0: reference
+# Roadmap Orchestrator: operating reference
 
-The CLI, the files, `status`, the brief and every refusal, for the agent running the `orchestrate` skill.
-`SKILL.md` says what to do and when; this file says what each command takes and what each answer means. Paths
-starting `executor/` are under the plugin root.
+Lookup companion to [SKILL.md](SKILL.md). Commands and contracts describe the schema-2 command center (1.0.0-dev.33). The parser is `executor/src/input/cli.ts`; exact data readers are indexed in `executor/SCHEMAS.md`.
 
 ## Conventions
 
-- `roadmap` is `<plugin root>/executor/bin/roadmap`; the managed PATH launcher (container setup below) runs the same CLI for the developer. Output is one line of canonical JSON unless noted.
-- Exit codes: 0 done; 64 bad arguments or a CLI error (message on stderr); 70 `start`'s supervisor died or did not
-  report ready; 75 another live process holds this host; 78 refused (the rows are in the output, or in `status`).
-- Notation in this file and SCHEMAS.md: `kind{a, b}` is the object `{"type": "kind", "a": …, "b": …}` (rows use
-  `kind` instead of `type`); `a | b` is a closed choice; `x?` is optional.
-- Ids: arc and unit ids are lowercase slugs (`[a-z0-9]` with inner `-`, at most 64); `T-n` rule, `V-n` vision
-  clause, `I-n` obligation, `C-n` ruling, `D-n` divergence, `F-n` finding, `B-n` debt, `M-n` amendment (cited
-  `<arc>/M-n` across arcs), `P-n` Phase-0 question; needs-user ids are `nu-<seq>`, `sup-<g>-<n>`
-  or `host-<slug>`.
+Use the currently loaded plugin's `executor/bin/roadmap`, not an arbitrary cached installation. Node 24 runs the TypeScript directly. `node <plugin-root>/executor/bin/install-roadmap` installs the owner's managed launcher; `--bin-dir` chooses a writable PATH directory. It refuses unrelated files. Check its reported version and PATH shadowing. The TUI belongs in the owner's separate interactive terminal.
 
-## Container launcher
+Commands below use `<path>` for a product repo, `<dir>` for an export, and quoted text as **one argv value**. Run commands default to the host's current arc. Their optional `--repo <path> --arc <arc>` locator is a pair; never give just one. Host acts have their own required locator. There is no `--run-dir` flag.
 
-At session bootstrap, run `node "<plugin root>/executor/bin/install-roadmap"` from the installed plugin.
-It creates `/usr/local/bin/roadmap`. Use container administrator rights if required; alternatively pass
-`--bin-dir <directory>` for a writable PATH directory. This standalone installer is separate from arc commands.
-It pins the current Node executable and plugin entry point, forwards arguments and signals with `exec`,
-and preserves the caller's working directory and environment. It installs no runtime dependencies and
-creates no arc records. It refuses unrelated files, directories and symlinks. Re-running is idempotent;
-re-running from an updated plugin refreshes only a managed launcher.
-
-The installer reports whether the launcher is reachable through PATH or shadowed. Verify the executable
-location and `roadmap --version` before handing the developer a short command. The plugin and Node
-installation must remain available; refresh the launcher after plugin updates or container rebuilds.
-A user-local directory not already on PATH must also be added to the container environment for future terminals.
-
-After startup, give the developer the actual pinned `roadmap tui --repo <path> --arc <arc>` command; at
-completion, include it again for review. An unpinned `roadmap tui` follows the current host arc. These are
-optional human viewers in another terminal; the architect keeps its actionable watch.
+Exit codes: 0 success, 2 CLI/argument error, 75 live host contention, 78 refused operation or failed validation. An accepted or queued command is not proof that its requested change applied: inspect the receipt. Startup rows and command refusals include the concrete reason and evidence.
 
 ## CLI
 
 ### Run commands
 
-Each finds the run through the host lock (the one live arc on this host). Add `--repo <path> --arc <arc>` to any
-of them to reach a run with no live owner, e.g. `roadmap status --repo <path> --arc <arc>`. Except `start`,
-`status`, `watch`, `tui` and `apply --dry-run`, they only queue a file and print `{command, arc, type}`. Queued is not
-done: the executor writes `commands/receipts/<id>.accepted.json`, then exactly one of `.applied.json` or
-`.rejected.json` (with every reason). An `apply` waiting for a unit's stage boundary first gets `.queued.json`
-(`waitsFor`, `reason`; 1.0.0-dev.17).
-
-- `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>] [--base <file>]`:
-  launch, or recover from disk. Without `--profile`, `.roadmap/config.json` chooses, else `default`. On an arc with a
-  plan in force the plan file is your edit: its files are rebased onto the files in force and the startup rows check
-  the result, the ledger in force included (2026-10-21; 1.0.0-dev.16). The rebase starts from the files you last
-  applied, or with `--base` from an `inputs export`'s `export.json`, as `apply --base` does: the way to edit what the
-  executor changed while no executor runs (an arc with no plan in force refuses `--base`). Prints `{"kind":"ready",…}` (exit 0)
-  once the executor passed every startup row; the run goes on. The backend smoke runs after `ready`: a smoke refusal
-  shows in `status.rejection` and the run ends `refused`. Exit 78 with the rows, 75 host busy, 70 `failed` or
-  `timeout` (read `status` and the supervisor logs in the host dir before starting again). Waits 240 s by default.
-- `roadmap tui`: an interactive, read-only terminal viewer in the executor environment. Follows the host's arc
-  from the map/activity split; `--repo <path> --arc <arc>` pins a retained run. A single tab row contains
-  `1` Dependency map, `2` Activity, `3` Estate and `4` Exceptions. Estate shows retained revisioned inputs and
-  documents at the captured integration commit; `w` reveals inactive entries. Collections start collapsed,
-  with counts; Space expands/collapses a parent and Enter opens its document or a child. Vision clauses,
-  constraints/rulings, obligations, corpus rules and debt share this treatment. Context documents lead,
-  remaining documents sort alphabetically, and numbered entries sort naturally. Search includes collapsed
-  entries and reveals matched children. Expansion survives refresh and detail/back navigation.
-  Estate leads with Vision, Arc scope (selected vision clauses) and Arc execution plan. The scope lists the applied plan’s vision clauses
-  and links to their definitions and planning decisions. Absent vision/slice records explicitly say “Not recorded
-  for this run”; recorded intent is separate and never substituted for a structured vision.
-  Debt has a current ledger, individual items and the published `.roadmap/debt.md` at the captured commit.
-  The current ledger includes inherited debt, Phase-0 dispositions and newly banked items; `w` reveals
-  promoted/resolved items. Missing debt and an empty recorded ledger are distinct.
-  Activity is one browser: `x` expands/restores its pane while preserving selection and search; `g` toggles
-  map context/all activity; `a` toggles latest 20 completions/all retained history. Running invocations always lead (linked first), then linked history, other history
-  and queued commands. `r` / `R` jumps to the next / previous running item on the map or Activity, wrapping;
-  the map includes preparing units and milestones with open walks. A notice explains when none are running. Agent, Command and Queued labels distinguish model invocations, command executions and pending
-  commands; Run means the execution type is unavailable. Walkthroughs and bring-up commands name their
-  recorded milestone; Arc-wide labels cover arc-scoped work without a specific milestone.
-  Agent rows show the model from recorded launch/init metadata, with explicit adapter provenance when present.
-  The header counts active agents/commands, including arc jobs, and states why nothing is active when waiting.
-  Baseline checks of future obligations say `pre-delivery` once recorded witness evidence confirms them;
-  other job checks of still-future requirements say `pre-delivery` (historical, even after arc completion);
-  mutation probes show the recorded smoke verdict. Result preserves the underlying process outcome.
-  Witness activity links to delivering units through the obligation revision and lane hash.
-  Units show milestone memberships; `m` selects the next milestone. The map shows open work by default:
-  merged, cut and superseded units, resolved conditions and settled milestones are hidden. Open milestones
-  stay visible after their gate passes. `c` toggles the full map; the panel counts hidden settled nodes.
-  Hidden settled prerequisites draw no rails or offscreen notes; the preview marks them done with `✓`.
-  Visible replacements retain Replaces / Replaced by notes; the full map reveals settled versions.
-  Connectors use neutral colour; only status symbols carry state colour. Merged units and passed settled
-  milestones retain green checks on the full map; cuts and other settled history remain grey.
-  Esc restores the split after clearing any search.
-  Left/Right or Tab/Shift-Tab switches the visible sections, detail tabs or log sources; arrows or h/j/k/l navigate;
-  Enter opens the named selection; Esc restores the previous location, including its tab, search and position.
-  Unit details distinguish execution status from the specification, settled implementation plan, applied arc
-  plan and recorded intent. Related documents previews each destination and links the latest plan-check input,
-  result and build transcript when recorded. Input is the exact retained agent prompt; the original owner
-  planning conversation is not retained. Missing designs and inputs are explicit. `/` finds without hiding rows or text
-  (`unit:`, `role:`, `status:` work in Activity); Enter jumps, `n` finds the next match and `N` the previous,
-  wrapping at either end. Activity searches all retained invocations; logs search the loaded page. Esc cancels
-  editing or clears the search without moving your position. `?` opens help without
-  changing the underlying location. Logs start at the bottom; Input and Result start at the beginning.
-  Page Up/Down and Home/End navigate; scrolling pauses following with a new-byte count, `f` resumes.
-  Visible source tabs are Messages, Output (readable stdout), Stderr, Runner, Result and Input; `s` cycles them,
-  and `e` expands previews. Structured transcripts, results and estate details use labelled summaries; `r`
-  explicitly toggles readable/raw transcripts, output, results, input or details. Input renders XML prompt
-  envelopes as labelled sections and formats their Markdown/JSON content. Repair turns are labelled; `b`
-  opens the original input when the retained session establishes that relationship. A unit’s planning-input
-  link opens the original prompt, with a separate link to its repair request. Unknown markup remains visible. Estate Markdown renders headings, emphasis, links,
-  lists, quotes, code and tables; wide tables become labelled rows. `c` toggles open work / full map. The dependency map follows connected tracks downward
-  from prerequisites to dependents, with visible branches and joins. Unit labels align; arrows select named
-  nodes. `╳` marks a crossing, not a join; `⇣` is a condition edge and `⇓` a milestone edge. The selection preview
-  names prerequisites, including offscreen endpoints. Activity follows the highlighted map node: linked
-  invocations carry `*` and cyan labels within the running-first order; unrelated labels are muted, with status colours preserved.
-  Tab enters Activity and Enter opens logs. Selecting a different map node resets Activity to its first row;
-  ordinary refreshes preserve the cursor. Dense graphs label tracks clipped from the viewport. `q` or Ctrl-C exits only the viewer.
-  Refreshes once per second with one observation in flight, backing off so observing takes at most a fifth of the time; keys observe at once. The persistent header shows the current Claude
-  account’s five-hour and weekly percentage used and reset countdowns, even when viewing a historical arc.
-  Usage refreshes in the background every five minutes using existing Claude OAuth credentials (no model
-  calls or credential refresh). Claude’s account-matched local cache is a fallback; stale, expired and absent
-  windows are labelled explicitly. Without readable OAuth credentials, it uses available cached data or
-  shows unavailable. No runtime writes, locks, controls, model calls or
-  saved settings. Keeps the last valid snapshot on errors, and keeps details pinned across host handovers until
-  returning to the map/activity split. Mouse capture stays off. Supports 120×35 and 80×24; `NO_COLOR=1` disables colours and
-  `ROADMAP_TUI_ASCII=1` uses ASCII symbols. Piped terminals are refused; use status/watch for machine output.
-- `roadmap status`: the run as one JSON object ("status" below). One at a time per arc: a second call while one runs
-  fails at once.
-- `roadmap watch [--actionable [--heartbeat-min <n>] [--from <seq>]]`: one JSON line per event until killed, each with
-  its `seq`; `--actionable` prints only the wakes, and `--from` replays the wakes since that seq. Wait on one
-  `roadmap watch --actionable` per arc, started in the background into a file that a Monitor tails, and started again
-  with `--from` the last line's seq (SKILL.md "Running an arc"; "watch" below).
-- `roadmap stop`: park everything, tear down, release the host lock.
-- `roadmap pause (<unit> | --all)`: kill and tear down; commits and worktree stay as left; the unit holds at its stage.
-- `roadmap resume [<unit> | --backend claude|codex]`: no argument clears pauses and holds (a held build continues
-  its session). `<unit>` re-opens a unit parked at plan-check or gate after a spec revision was applied (its next build
-  resumes the implementer session; one that cannot, on a moved seat, starts fresh with the executor's handover of the
-  unit's history), or one parked `routing-changed` once its seat is restored. `--backend` clears a usage-limit park after a passing smoke.
-- `roadmap ack <needs-user-id> [--choice <option-id>]`: answer an item; `--choice` names one of its `options`.
-- `roadmap sweep [--resource <name>]`: run the recorded teardown of undispositioned residues.
-- `roadmap apply [--base <file>] [--dry-run] [--ruling <file>] [--vision-edit]`: put the edited plan, specs and other
-  revisioned inputs in force at the next stage boundary, rebased onto the plan in force (merged per file from the
-  edit's base: the files you last applied, or with `--base` an `inputs export`'s `export.json`; a value you and the
-  executor both changed is a `conflict` naming the file and JSON path). Each `--ruling` (repeatable) is a ruling sidecar
-  validated as `rule` validates it and landed with the edits as one revision; an id `"C-?"` takes the ledger's next C-n.
-  `--vision-edit` declares a vision edit: without it an apply whose rebased vision differs from the vision in force
-  (you changed the vision file) is refused `vision-leak` (a next-arc draft belongs in `_next/`). In a corpus arc a vision
-  edit is published onto the integration branch by the apply's docs publication: `.roadmap/vision.json`, and with a
-  `same-repo` re-pin the changed vision document, as committed on the owner's checkout (commit them there, never on the
-  integration branch, and never move the integration branch by hand). `--dry-run` always
-  exits 0 and prints `kind`: `rejected{reasons}`, `unchanged{rev}` or `accepted{rev, nextRev, changes, smoke,
-  advisories, numbered}`; it queues nothing.
-  `advisories` (also `advisory:` lines in the applied receipt) are `scope-references-outside{unit, removed, referrers}`:
-  files outside a unit's scope that still name what its spec `removes`; `derived-unregenerated{outputs, units}`: a
-  `derived` entry with no `regenerate` whose outputs those units take in; and `milestone-unit-before-design{milestone,
-  unit, design}`: a milestone unit that does not run after its milestone's design unit. They never refuse. A revision
-  that changes the plan or the vision cancels a checkpoint deciding on the earlier one (rejected `stale`); its trigger
-  is decided again on your revision.
-- `roadmap resolve-edge <edge> --evidence <text>`: a contingent edge's condition is met, on your evidence.
-- `roadmap run-only (<unit>... | --clear)`: limit admission to these units, or lift the limit.
-- `roadmap rule <record.json>`: land a ruling (a `roadmap/ruling-m3` sidecar; id `"C-?"` takes the ledger's next C-n,
-  named in the receipt) through a docs publication. Your ledger file is never written: `inputs export` shows the ledger
-  in force.
-- `roadmap reverse <D-n>`: a compensating revision restoring what divergence D-n's act changed; rejected when a later
-  revision changed it again (use `apply`).
-- `roadmap steer <unit> --brief <file> --budget <min> [--class efficient|frontier|summit] [--resume]`: one uncharged
-  implementer round for a parked or `preparing` unit, then salvage, lanes and gate. It parks again unless green and
-  `--resume`. `--class` seats that class at the unit's build tier.
-- `roadmap merge-in <unit>`: merge the integration tip into a unit's branch (clean merges only); it re-enters at lanes.
-- `roadmap scope accept|reject <unit> --reason <text> [--repo <path> --arc <arc>]`: queued (scope the unit). Your decision on
-  the scope growth a unit's plan-check proposed, or the path salvage reverted on its last two rounds (its `scope-growth`
-  item). `accept` lands it as one ruled revision (a new
-  ruling naming the patterns, the unit's plan and spec scope widened, in force only) and the unit re-opens at
-  plan-check on it; a revision the classifier refuses is rejected with every reason, and the unit stays held. `reject`
-  keeps the scope: the plan-check runs again, told what you rejected, and decides within the scope. Acknowledges the
-  item. Rejected for a unit not held for a proposal.
-- `roadmap audit [--lens <lenses>]`: request an audit (holistic arcs; lenses comma-separated, within the arc's set:
-  `invariants`, `drift`, `vacuity`, `vision`). An audit reviews each lens's whole outstanding range: one too large
-  for a single lens call is reviewed in chunks by publication within that audit, so no range needs a smaller audit.
-- `roadmap close-admissions`: latch `draining`; checkpoint admissions become requests to you; an `apply` adding a
-  unit reopens.
-- `roadmap demo up|down|hold|release`: the owner's act on the demo (milestone arcs; queued, no scope). `hold` freezes
-  promotion, so the demo keeps its version and data; `release` resumes it and promotes the latest settled milestone at
-  once when it is newer; `down` stops the instance (its checkout and ports are kept); `up` starts it again, and retries a
-  version whose bring-up failed. Rejected: `hold` while held, `release` while not held, `down` while down. Acts apply
-  through the arc's executor: with no live executor they wait in the queue for its next start.
-- `roadmap gc --repo <path> [--keep <K>] [--dry-run]`: not queued. Under the host lock, prunes sealed arcs (raw
-  evidence; run dirs beyond K, which the ref restores). Prints its report, or `{refused}` with exit 75 or 78.
-- `roadmap --version`
+| Form | Contract |
+|---|---|
+| `roadmap --version` | Installed executor release. |
+| `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]` | Validate inputs and backend smoke, claim host, launch detached supervisor/executor, or recover the existing schema-2 run. The input plan supplies baseline/previousHead/chain. |
+| `roadmap status [--summary] [--repo <path> --arc <arc>]` | Full JSON or compact owner JSON; read-only, no status lock. |
+| `roadmap tui [--repo <path> --arc <arc>]` | Read-only terminal observer. Use an interactive terminal. |
+| `roadmap watch [--repo <path> --arc <arc>]` | Stream events. |
+| `roadmap watch --actionable [--heartbeat-min <min>] [--from <seq>] [--repo <path> --arc <arc>]` | Wait for a new actionable event or timed check-in, return once. Continue from the returned sequence. |
+| `roadmap stop [--repo <path> --arc <arc>]` | Quiesce work and stop. |
+| `roadmap pause (<unit> | --all) [--repo <path> --arc <arc>]` | Pause one unit or the arc. |
+| `roadmap resume [<unit> | --backend claude|codex] [--repo <path> --arc <arc>]` | Resume a unit, explicitly unpark a backend, or resume all ordinary resumable work. |
+| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Only items offering options may be acknowledged. Use the offered option id. An omitted choice is recorded as null; optionless items still refuse. |
+| `roadmap sweep [--resource <name>] [--repo <path> --arc <arc>]` | Re-probe/clean residual resources using declared protocol. |
+| `roadmap apply --from <dir> --rev <n> --reason <text> [--dry-run] [--repo <path> --arc <arc>]` | File-level CAS from a genuine export. Reason is a nonempty single line; N equals export.planRev. |
+| `roadmap resolve-edge <edge> --evidence <text> [--repo <path> --arc <arc>]` | Record a contingent condition met, with evidence. |
+| `roadmap run-only <unit>... [--repo <path> --arc <arc>]` | Admit only these units temporarily. |
+| `roadmap run-only --clear [--repo <path> --arc <arc>]` | Remove that restriction and close its applicable subject notices. |
+| `roadmap reverse <D-n> [--repo <path> --arc <arc>]` | Construct a compensating revision from a recorded departure's preimage; normal change validation still applies. |
+| `roadmap steer <unit> --brief <file> --budget <min> [--class efficient|frontier|summit] [--resume] [--repo <path> --arc <arc>]` | Steer any unfinished unit, cancelling/quiescing active work first. Save pre-steer state, keep the brief and run one editing round, lanes and gate. Without resume it parks for root review even if green; with resume a green pass proceeds. Class changes its build seat through a routing revision. |
+| `roadmap dismiss <finding> --counter-evidence <line> [--repo <path> --arc <arc>]` | Root dismissal of an active F-n finding, including P1, with required non-empty counter-evidence. Unknown or settled findings refuse. |
+| `roadmap note <unit> --brief <file> [--repo <path> --arc <arc>]` | Keep the brief as a note for the next build round; no cancellation. |
+| `roadmap witness <obligation> --result pass|fail --evidence <file> [--repo <path> --arc <arc>]` | Root attestation for an active external-class witness. Evidence is a regular file or an HTTP(S) URL. File bytes are hashed at submission and kept. |
+| `roadmap merge-in <unit> [--repo <path> --arc <arc>]` | Bring the integration tip into this unit through the executor. |
+| `roadmap audit [--repo <path> --arc <arc>]` | Request one whole-campaign audit. |
+| `roadmap close-admissions [--repo <path> --arc <arc>]` | Drain toward completion without new admissions. |
+| `roadmap demo up|down|hold|release [--repo <path> --arc <arc>]` | Start/stop demo or hold/release automatic promotion. |
 
 ### Host acts
 
-Not queued, no host lock, no run needed. Run them any time, a running arc included.
+| Form | Contract |
+|---|---|
+| `roadmap inputs export --repo <path> --arc <arc> --out <dir>` | Write the exact kept inputs in force to a **new** directory; works with executor down. |
+| `roadmap phase0 check --repo <path> (--plan <plan.json> | --from-ref <arc>)` | Validate authored inputs or recorded inputs from a verified snapshot ref without starting an arc. |
+| `roadmap corpus pin --repo <path> --commit <ref> --baseline <sha> --out <file>` | Derive a reproducible corpus pin from the guide and rule registry. |
+| `roadmap brief --repo <path> [--json] [--ack <briefId>]` | Canonical chain delta, or commit the owner's acknowledgement of that exact payload. |
+| `roadmap answer <P-n> --repo <path> --text <text> [--arc <arc>]` | Append an owner answer to the question log. Without arc choose the newest arc holding it open. Apply it to inputs separately. |
+| `roadmap pr --repo <path> --arc <arc> [--supersede-previous]` | Open/update a stacked PR; supersede the previous open PR only when intended. |
+| `roadmap chain status --repo <path>` | Derive chain state, unanswered/applied answers and next-start eligibility from refs and acknowledgements. |
+| `roadmap resume-arc --repo <path>` | Restart a dead owner's supervisor, no-op otherwise; suitable for an authorized devcontainer boot hook. |
+| `roadmap witness-check --lane-file <file>` | Run a supplied witness lane in cwd and verify every required test id; 0 pass, 78 fail/refusal. Builder development check, not an external attestation. |
+| `roadmap gc --repo <path> [--keep <n>] [--dry-run]` | Compact eligible old runtime/evidence while preserving authoritative snapshots. |
 
-- `roadmap phase0 check --repo <path> --plan <plan.json>`: read-only, the rows a fresh `start` runs on its inputs:
-  the `.roadmap/` layout, `plan-invalid`, routing, lanes, `holistic-needs-corpus`, `milestones-need-holistic`,
-  `walk-tools-missing`, and every corpus, Phase-0,
-  vision, chain and `tree-uncommitted` row (not the host, residue or smoke rows). Prints `{rows, sliceCandidates, advisories}`; exit 0 with no rows, else 78.
-  `advisories` never refuse: `scope-references-outside{unit, removed, referrers}`, the files outside a unit's scope that
-  still name something its spec `removes` (searched at the integration tip, or the baseline before it exists), and
-  `derived-unregenerated{outputs, units}`, a `derived` entry declaring no `regenerate` that a live unit takes in, and
-  `milestone-unit-before-design{milestone, unit, design}`, a live milestone unit that does not run after (transitively)
-  its milestone's design unit.
-  `sliceCandidates`: the active world clauses whose census rules are not all held on the baseline.
-- `roadmap phase0 check --repo <path> --from-ref <arc>`: the same over every input the arc's `refs/roadmap/<arc>`
-  recorded, never the live files; only the corpus, census, obligation, debt, question, amendment and vision
-  rows (no chain or tree rows).
-- `roadmap corpus pin --repo <path> --commit <ref> --baseline <sha> --out <file>`: reads the guide and the rules
-  registry committed at `--baseline` (the plan's baseline) and the corpus source at `--commit`, writes the pin to
-  `--out` and prints `{pin, sha256}`; refused `corpus-invalid` (78). A pin made against any other baseline is drift
-  at `start`.
-- `roadmap brief --repo <path> [--json]`: the brief since the last committed ack (Markdown, or `{briefId, payload}`
-  with `--json`). Exits 64 while no arc of the repo has published a snapshot.
-- `roadmap brief --repo <path> --ack <briefId>`: acknowledge that brief: prints `{acked, commands}` (one queued `ack`
-  per item it covers), or `{stale: {expected, actual}}` (78, nothing written) when the brief changed.
-- `roadmap pr --repo <path> --arc <arc> [--supersede-previous]`: push the completed arc's branch (a leased fast-forward,
-  never `main`) and open or update its PR. Prints `{number, url, base, created, retargeted, needsRebase, supersedes}`.
-  Idempotent; a reopened arc's new completion fast-forwards the same PR. `--supersede-previous`: this arc carries
-  fixes the previous arc's still-open PR needed, so its PR supersedes that one: it targets the previous PR's base, its
-  body opens with `Supersedes <url>`, and the previous PR is closed with a comment naming it (`supersedes` is that
-  URL; later runs keep it, with or without the flag). Exits 64 for an arc whose ref holds no completion, whose PR was
-  closed unmerged, or for `--supersede-previous` with no previous arc, a merged previous PR or none open.
-- `roadmap chain status --repo <path>`: `{arcs: [{arc, previousArc, acked, pr}], k, unackedStarts, nextStart}`, oldest
-  first. Exits 64 before any snapshot. `nextStart` answers whether a start chained on the head would pass `start`'s own
-  chain rows that need no plan: `{allowed: true, reason: within-k, k, unacked}` or `{allowed: false, reason}` with reason
-  `limit{k, unacked}`, `k-unset` or `previous-incomplete{arc}` (`unacked` counts that start). Read it; never compute K
-  yourself. `k` is `chain.k` committed at the head arc's baseline, never the live file. `answers` lists the owner's
-  recorded answers not yet applied, as `status.answers`.
-- `roadmap answer <P-n> --repo <path> --text <text> [--arc <arc>]`: record the owner's answer to `P-n` at once, live
-  arc or not. `P-n` must be open in the Phase-0 record in force of the newest arc that has one (or of `--arc`).
-  Prints `{recorded: {schema, question, k, answer, at, arc}}`; the same text as the answer in force prints
-  `{unchanged}` and writes nothing; another text supersedes it as the next `k`. Refused (78): `no-phase0-record{arc}`,
-  `question-unknown{question, arc}`, `question-not-open{question, arc}`. The answer log is
-  `$(git rev-parse --git-common-dir)/roadmap/answers/<P-n>.<k>.json`, write-once.
-- `roadmap witness-check --lane-file <file>`: the implementer's command, named in its build prompt. Runs one
-  required witness lane in the current worktree with fresh reporter output and checks every required test id: prints
-  `{passed: true}` (exit 0) or `{missing, failed, malformed}` (78).
-- `roadmap resume-arc --repo <path>`: when this repo's arc holds the host and its owner is dead, relaunches the
-  supervisor as `start` would (prints its line and exit code). Otherwise `{resumed: false, reason}` (exit 0), reason
-  `no-claim`, `other-repo`, `alive`, `refused` or `already-resumed`. A claim on a `complete` arc is a reopening start
-  that died, and is relaunched. "Recovery" has the boot hook.
-- `roadmap inputs export --repo <path> --arc <arc> --out <dir>`: read-only; writes the arc's current inputs into a
-  new directory and prints `export.json` `{planRev, specRevs, base}` ("Recovery").
-- `roadmap flow accept|reject <proposal> --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). Your
-  decision on flow proposal `flow-<n>.0` with a one-line reason; acknowledges its `flow-proposal` or `flow-host` item.
-  Idempotent by proposal; refused (78) for a proposal no run made, one code's checks dropped (the reason is printed), or
-  one already decided the other way. A reject remembers its `(station, lever, target)`: no run proposes it again.
-- `roadmap flow request --reason <text> [--repo <path> --arc <arc>]`: queued (scope none). A flow run once the judgment track
-  is free; it bypasses the 120-minute cooldown once per cooldown window (`status.flow.next.bypass`).
-- `roadmap flow given --repo <path> --lever <lever> --note <text>`: a host act, not queued. Declares that `<lever>`
-  (`concurrency`, `resource-pool`, `suite-lane`, `sequence`, `build-class`, `host`) cannot be tuned on this host;
-  write-once in `$(git rev-parse --git-common-dir)/roadmap/givens.json` under this host's fingerprint (`stale`, and not
-  enforced, on another host). Prints `{given: {id: G-n, lever, note, fingerprint, at}}`; the same lever and note print
-  the entry already there.
+## CAS edits and command lifecycle
 
-## Files
+Export is the only starting point for changing a running arc. It writes plan, current specs, ledger, obligations, vision and (for corpus arcs) pin/Phase-0 record. Beside-plan paths keep their relative names; repo files go under `repo/`. The corpus guide is read from the committed product, not exported. `export.json` contains `{planRev, specRevs, base}`; base is the full revision manifest. Do not edit that metadata.
 
-**Arc inputs** (yours, a directory per arc outside the product tree; every `PlanPath` is relative to the plan):
-`plan.json`, `specs/<unit>.json`, the rulings ledger, `obligations.json` (with its census), and for a corpus arc
-the pin (`corpus pin --out`) and the Phase-0 record. The executor keeps each by
-hash at `start` and `apply`; editing them later changes nothing until `apply`. Beside the arcs' directories, the
-operator log `skill-feedback.md` ("The operator log") and the next-arc staging dir `_next/`: `vision.md` (the owner's
-working draft of the next vision), `notes.md` (work for later, deferred rulings, ideas) and `compaction.md` (approved
-estate compaction decisions, `K-n`, from the `estate-compaction` skill; Phase 0 applies them). The executor never reads
-`_next/`; the Chaining step reads it and hands it to the next arc's directory.
+Edit intended files, dry-run if useful, then apply with `--from`, exported revision and reason. For every edited file, current in-force bytes must equal its base bytes. Untouched files take current bytes. Independent file edits can land after another revision; two changes to the same file conflict even if different fields changed. Refusal lists every stale file. Export again and reapply the intended change. Code auto-bumps each edited existing spec to current rev + 1, including evidence-only changes.
 
-**In-tree `.roadmap/`** holds exactly: `contracts/`, `constraints.md`, `invariants.md` (with the `json roadmap-rules`
-registry), `debt.md` (with the `json roadmap-debt` block), all rendered by the executor; and `config.json`,
-`vision.json`, `corpus.md`, yours, committed. Anything else is a 0.x layout (`legacy-roadmap-dir`).
+Root changes can add units, split, cut, re-enter, edit specs/obligations/vision/Phase 0, change routing/bounds and revise the target pin. Change classification still enforces immutable identities, dependency/milestone conservation, frozen contracts, obligation proof and intentional weakening authorization. A reason is required; it is not a way to bypass mechanical safety checks. Executor-authored revisions use CAS with retry and non-blocking revision notices. A root command does not automatically generate that executor revision notice.
 
-**`.roadmap/config.json`**: `{routing?: {profile?, seats?, classes?}, chain?: {k}, flow?: {givens: [{lever, note}]},
-walkthrough?: {mcp: {<name>: {command, args?, env?}}}, systemsMap?: {systems: {<name>: {paths, tests?, dependsOn?}},
-shared?: [{paths, dependents}], contracts?: {<path>: [<system>]}, docs?: [<glob>]}}`; unknown keys refused; read at
-`start`. `systemsMap` names every system a lane lists (`docs` is the docs class, never a system name); every revision
-records the map the executor read, so an edit reaches the arc at the next `apply` after a restart. `walkthrough.mcp` names
-the MCP servers a walkthrough session gets (and only those), with `{evidence}` and `{viewport}` substituted in `args` and
-`env`; absent, no browser drive, so a `browser` journey is refused `walk-tools-missing`. `flow.givens` are the owner's repo givens, never yours to add. `routing.seats` overrides the class of a seat; `routing.classes` rebinds a class to `{backend, model,
-effort}` and is the only place a model is named (ids in `executor/src/routing/models.ts`). A rebind applies at every seat
-that names the class, judgment seats included: a Codex triple there is refused `unsupported-routing{codex-judgment}`, so
-move those judgment seats to another class in `routing.seats` first. Built-in seats, both profiles: `efficient`
-builds at every risk and runs the lenses and flow; `frontier` plan-checks and gates at every risk and runs the pack review;
-`summit` holds both escalation seats and the checkpoint. A Claude build consults the frontier model as its advisor (`--advisor`) at its
-own decision points; that spend shows under `frontier` in `spend.byClass`. A class binds a build
-model and a judgment model (always Claude): `efficient` judges on Claude under both profiles, even where it builds on Codex.
-`economy` is judgment-only: no build seat may name it, in `routing.seats`, a plan, `route` or `steer --class`. The one
-built-in seat on it is the `scaffold` role's (1.0.0-dev.17, `scaffold.low|med|high`: the writer of a new system's skeleton a
-plan-check decides; in force only in arcs started on dev.17 or later); reach economy elsewhere through
-`routing.seats`, a plan or `route`. Plan-check acts (a shell and web search in its own checkouts) at every seat.
+Commands are write-once queued files with accepted/queued/applied/rejected receipts. A queued apply waits for the relevant stage boundary. Read its final receipt before relying on a revision. Restart replays from durable command/revision provenance rather than resubmitting the action. Steer/note hash their brief at submission, so preserve its bytes until accepted and kept. Steer cannot revive a finished unit and does not reset attempt caps.
 
-**`walkthrough.mcp`** names the stdio MCP servers a walk session gets, exactly these (`--strict-mcp-config`); the
-environment provides them, the executor ships no browser. Code substitutes `{evidence}` (the session's evidence dir) and
-`{viewport}` (`1280x800`) in `args` and `env` values. Without it a milestone with a `browser` journey is refused
-`walk-tools-missing{mcp-unconfigured}`; `phase0 check` and `start` start each server and do the MCP handshake
-(`mcp-unconnected{server, detail}` when it fails). The expected server is Playwright MCP:
+Subjects close after the successful action that resolves them (unit/arc/host). Optionless items cannot be silenced by ack. Items with options require an offered choice; inspect their recommendation and evidence before deciding. Revision and waste notices do not hold execution. Owner-request items require the actual owner decision within the session's authorization.
 
-```json
-{"walkthrough": {"mcp": {"playwright": {"command": "playwright-mcp", "args": ["--headless", "--isolated",
-  "--browser", "chromium", "--output-dir", "{evidence}", "--viewport-size", "{viewport}"]}}}}
-```
+## Authoring inputs
 
-It defaults to the Chrome channel, so pass `--browser chromium` where only Playwright's Chromium is installed (`npx
-playwright install chromium`). It refuses `file:` URLs, so the bring-up serves pages over HTTP. A screenshot without a
-`filename` lands in `--output-dir`; a relative `filename` resolves against the session's cwd (the checkout), so a named
-one is absolute (checked on 0.0.83). Install it in the project's devcontainer, pinned (`@playwright/mcp`).
+Exact types/readers are in `SCHEMAS.md` under the sections named here. The literal schema labels are stable identifiers, separate from runtime `v: 2`.
 
-**Run dir** `$(git rev-parse --path-format=absolute --git-common-dir)/roadmap-runtime/<arc>/`. Read, never write:
+| File | Contents / label |
+|---|---|
+| `plan.json` | `roadmap/plan-m1`: target, baseline, integrationBranch, absolute worktreeRoot, contracts, rulings ledger path, direction, suite, resources, units; optional holistic, milestones, environments, routing, limits, capacity, expectations, chain/previousHead, knownDefects, derived. |
+| Unit spec | `roadmap/spec-m1`: unit, rev, intent, nonGoals, acceptance, lanes, resources, decisions, facts, cites; optional obligations, repairs, witnesses, design, pins, removes, forces. |
+| Obligations | `roadmap/obligations-m3`: cutLine, lanes, obligations, mapping, plus corpus census. |
+| Phase-0 record | `roadmap/phase0-m4`: curation, corpusDivergences, questions, debt, slice. |
+| Vision | `roadmap/vision-m3`: rev, confirmation, clauses, questions. Corpus arcs use `.roadmap/vision.json`. |
+| Corpus pin | `roadmap/corpus-pin-m4`: source identity, included file hashes, rules and history; generated by corpus pin. |
+| Ledger | Plain C-n text named by plan.rulings, root-facing. Cites and debt resolution retain C-n references in their wire shapes. |
 
-- `needs-user/<id>.json`: `summary, reason, subject, recommendation, options[{id, label}], evidence[]`;
-  `<id>.ack.json` once acknowledged.
-- `commands/incoming/<id>.json`, `commands/receipts/<id>.{accepted,queued,applied,rejected}.json`.
-- `heartbeat.json`: every 10 s; older than 5 minutes means the executor is dead or wedged.
-- `inv/<seq>-<ordinal>/`: one invocation: `stdout`, `stderr`, `exit.json`, `result.json`.
-- `status.rejection.json`: the last refused start's rows.
-- `corpus/<pinSha8>/`: the pinned corpus, read-only, as judges read it.
+A plan has exactly one target arm: `corpus` + `phase0` + `holistic` (vision in repo), or `architectureDoc` with optional architectureDigest and holistic vision file. A fresh holistic start requires corpus (`holistic-needs-corpus`), even though the parser retains the architecture-doc holistic shape. PlanPath values resolve relative to the plan directory; RepoPath values resolve in the product. WorktreeRoot is absolute. Use lower-case safe ids, SHA-1 commit ids and SHA-256 content hashes of the required length.
 
-**Repo-wide** under the git common dir: `roadmap/acks/` (the brief ack log, write-once) and `roadmap/corpus/`
-(the CLI's clone of a `checkout` corpus). **Host dir** `/var/tmp/roadmap/`: the host lock, supervisor logs,
-residues.
+Every unit requires a nonempty unique systems list, known in systemsMap. Origins are planned, repair, polish, deflake. A spike is a unit with `spike:{question}`; it keeps the normal build/gate safety checks but retires its report without a merge. Specs require nonempty intent and at least one nonGoal. Item states are active, struck or deferred; ids never disappear just because an item is no longer active. Cites retains `{contracts:[],rulings:[]}` even though seats receive no C-n ledger. Put the rule text relevant to the unit in its authored acceptance/facts rather than relying on discovery of a giant reference file.
 
-## The corpus guide
+A repair names finding/obligation ids in `repairs`; a re-entry names its predecessor and the failure reference it fixes. Re-entry reset and cut carry reasons. Root splits conserve text and systems and preserve the parent's obligations, dependencies and milestone assignment; they cannot split deflake units. Contract documents change through ordinary units. The ledger is not a product-document patch channel.
 
-`.roadmap/corpus.md`: prose for the agent that curates the corpus (where it lives, how to reach it, the
-standards), plus exactly one fenced block with the info string `json roadmap-corpus`:
+### Lanes and evidence
+
+A lane requires id, argv, cwd, env `{set,pass}`, expectedExit, cadence, resources and evidenceGlobs; evidenceExcludes is optional. argv has no shell. Pass only required inherited variables. Supply timeoutMin for a real wall timeout; without it the runner backstop is six hours, not a red timeout verdict.
+
+| Kind | Cadences |
+|---|---|
+| Spec | build, unit, candidate |
+| Suite | build, unit, candidate, batch (batch requires holistic) |
+| Arc witness | build, candidate |
+
+`cost: cheap|expensive`, `inputs`, `systems`, `placement: local|shared-resource|cross-system`, cpu, testArgv, stochastic and environment refine the lane where allowed. Expensive or explicitly whole-repo lanes at build/unit cadence are refused by contextual validation. Candidate spec lanes run on the current tip's candidate with delivering-unit attribution. Integration/resource-bearing spec checks require a spike where the placement rules demand it. Batch is the only batch/milestone cadence; selected milestone lanes run after member retirement, while plain batch suites still run at batch points and all batch lanes run at close-out.
+
+Reuse binds execution identity and filtered tree bytes. Explicit inputs win; implicit spec input uses the unit systems, otherwise lane systems. Unmapped paths fail safe; shared/contract consumers and dependencies participate. `testArgv` has one exact `{files}` element and enables targeted leaf-test execution. Arc lanes disallow testArgv, stochastic and environment. Stochastic lanes declare runs/minPasses and never enter the flaky protocol. `readsComments` is still accepted but has no special pass-carryover behavior.
+
+Witness lanes add reporter (`node-test`, `go-test-json`, `jsonl`) and testPaths. Witness refs declare lane, exact testIds and test files. Proof pins bind `{obligationRev,witness:{testIds,files},verdict}`, independently of lane revision. Moving unchanged tests to another lane is a re-witness, not a weakened statement. Required tests must all run and pass under their ids; skipped/missing tests are not passes. Mutation smoke retains test files while reverting production changes, then reports killed/survived/inconclusive to the gate.
+
+On repeated reds the executor compares the lane at diffBase, retaining original failure/base evidence even on reuse. Green at base is charged regression evidence; red at base is base-red. A full fix round carries findings and experiments, failing lane directories, base comparisons, notes and remaining allowance/cap state. Ordinary certification charges every fourth red by default; total attempt counting includes uncharged work too.
+
+An external witness is an arc lane with `witnessClass: external`. Submission attests to the integration head at command creation; stale head or changed file bytes refuse. A pass can latch a delivered future obligation; fail reopens its latest delivering lineage and supplies a kept note. URLs are recorded evidence references, not a claim that code has fetched or validated their contents.
+
+Capture lanes have `kind: capture` and `capture:{up,script,states,port,portBase?}`. The port must be a declared lane resource, normally a pool. Executor leases a slot, binds the workload port, contains stack and script together, and requires every declared PNG state. Only related milestone design/member gates receive those captures. The summary's capture list currently projects suite capture spawns, not every spec capture artifact.
+
+### Systems, memory and protected paths
+
+Config `systemsMap` declares `{systems:{name:{paths,tests?,dependsOn?,traits?}},shared?,contracts?,docs?}`. Traits are `persistent|redacts`. Shared entries map paths to dependents; contracts map path to consuming systems; docs declares a docs class. Every revision records the map it read. Unit systems describe responsibility and lane/witness impact, not an exclusive file write envelope. Actual reach beyond them goes to the gate together with actual/builder-reported traits. Overlap is advisory. Central protectedPaths guards `.roadmap/` and same-repo pinned corpus files at salvage/transient/recovery boundaries.
+
+`systemNotesDir` defaults to `docs/systems`; existing `<system>.md` paths from the checkout commit are supplied as `systemNotes` to build/gate. Notes carry gotchas, seams and rigs. They are non-normative; claims live in the corpus. Note edits merge through a normal unit diff. Salvage/candidate commit bodies contain summaries and decisions from verified captured evidence, including clean builds whose changes were already committed.
+
+### Obligations, vision, census and Phase 0
+
+An obligation carries id/rev/statement/serves, anchor (`rule:{id,textSha256}` or docRef), witness/proof, deliveredBy, activation, contracts and state. Active future obligations name deliverers; must-hold ones protect existing behavior. Mapping is `{systems:[{system,obligations}]}`. States are active; split with children and null witness/proof; or waived/deferred/retired with `{reason,rev}`. Only the root authorizes dispositions. Statement/anchor/activation changes still pass weakening and frozen-contract checks. Keep no-drop split text and vision citations. Observation is code-derived: eligibility, latching, actual test records, environment evidence and external attestation determine held state.
+
+Census gives each active rule one state: obligation with id, out-of-slice, untestable or prod-only. A split family is represented by its parent. The Phase-0 record contains structural/fact-currency curation, reversible semantic corpus divergences, ranked P-n questions with exact answers, dispositions for every open baseline debt item, and slice advances/why. No runtime fact should be hand-authored to simulate a review or witness.
+
+Phase 0 refuses schema/plan-invalid, uncommitted inputs, invalid chains (with corpus drift checked against the supplied baseline), dropped obligations, missing lane cwd and missing spec intent/nonGoals. Advisory rows include system-overlap, milestone-unit-before-design, vacuous-future-witness and spanning-proof. Existing future witness files indicate possible vacuity; the baseline run still determines whether the witness already passes. Multi-unit delivery advises unless its candidate/batch lane covers every delivering system (an undeclared lane systems list spans the whole tree). These rows never change the exit code.
+
+### Resources, environments and derived output
+
+Tool commands are `{argv,cwd,env}`. Resource declarations have name, probe, teardown and optional pool size. Probe exits: 0 free, 10 owned label, 11 foreign/unlabelled; others are faults. Pool slots bind `RESOURCE_INSTANCE_<NAME>`. Code reserves atomically with CPU before work and tears down before release; leftovers block their resource. Environments have probe and optional up/down/idleMinutes as a group, plus resources they power. Declare identity, lifecycle and labeling correctly before start. New spike resources in a later apply produce a refusal and owner request.
+
+Derived entries hold sources, outputs and optional regenerate command. The lanes stage regenerates a touched entry in a clean checkout and compares output bytes. They grant no file exclusion. Evidence globs name disposable outputs; they cannot cover tracked unit-system files or protected paths. Ignored-output capture excludes secrets unless explicitly declared evidence.
+
+## Roles and review
+
+The routed backend roles are `build`, `verifier`, `packReview`, `experienceVerdict`, `campaignAudit`. Verifier modes are pre-build, gate, diagnosis; experience modes walk and compare share a role. Routing layers name classes per role seat. Build seats: low/med/high; verifier adds escalation; arc roles have arc. Classes are efficient/frontier/summit and judgment-only economy. Model ids belong only in config bindings, never the skill or plan's seat values.
+
+Profiles are default and claude-only. Default uses Codex for eligible low/med builds, except M2 and design units; M1 and capture-only units remain eligible. M4 diagnosis falls back to Claude for the remaining builds. Claude builds have a frontier advisor. Judgments stay on Claude. High-risk builds use frontier. A mid-arc profile change is an ordinary routing apply with effective routing revisions retained in historical records.
+
+M1 detects persistent/redacts traits at dispatch and actual reach/touches at gate. M2 detects an active delivered obligation with missing witness/ids/lane, later cadence, or environment-backed proof. External class alone is not an M2 trigger. M3 detects edited/disposed/split linked obligations and changed/retired cited corpus text. `review: always|never` is a root override. Pre-build calls annotate; their standing items require evidence-backed addressed/rebutted answers at gate. Diagnosis begins at 8 builds or 20 judged attempts and supplies a note. Hard park is 16 builds or 40 judged attempts at a boundary, fixed in code; limits do not tune it. `review:never` suppresses the diagnosis call and its M4 fallback marker; attempt caps remain active.
+
+Build output includes summary, blockers, experiments, grounding `{specWrong,touches}`, top-level `tooBig`, notes and final. Structured decisions are captured from `decisions.json`, not a build-output field. Verifier output uses the gate schema (decision/reasons/directives/findings/standing and certification details); diagnosis translates findings/reasons into a note. Settled findings cannot be re-raised without new evidence. Blocking findings need evidence. The defect enum classifies; it is not a mandatory reason for refusal. Gates review reach against intent/nonGoals; out-of-system paths alone are not a refusal.
+
+Milestone experience verdict runs bring-up and journeys, classifies breaks vs deviations, and proposes polish units. Its comparison judges before/after changes. Breaks hold downstream work; bounded rounds eventually need the root. Campaign audit is one fresh whole-range judgment of invariants/vacuity/interactions/doc drift at milestone/request/final boundaries. Large diffs use bounded attachments and durable partial coverage. Requests go to the root; findings do not mutate obligations or inputs. A dismissal request carries dismisses:F-n and non-empty counterEvidence; it creates a finding-subject owner-request, never a dismissal fact. The root assesses it and invokes dismiss. If the finding settled while the audit ran, the request is informational and cannot re-block completion. Wire finding categories and coverage still carry `lens` names for classification, not independent scheduled seats.
+
+## Files and authority
+
+Authoring directory (outside product): plan, specs, ledger, obligations, corpus pin and Phase-0 record. Changes after start do nothing until exported CAS apply. Keep future work, approved compaction records and operator notes outside product too.
+
+`.roadmap/` contains owner-managed config.json, corpus.md and vision.json; executor-rendered contracts/, constraints.md, invariants.md and debt.md. Other top-level entries are refused as a legacy layout. The rules registry is a `json roadmap-rules` block; debt is `json roadmap-debt`. Do not edit executor-rendered files.
+
+Config accepts routing `{profile?,seats?,classes?}`, chain `{k}`, walkthrough `{mcp}`, systemsMap, systemNotesDir. Routing seat overrides name classes; class bindings alone contain backend/model/effort triples. Unknown fields refuse. Config edits must be committed and reach the arc through its revision checks.
+
+Corpus guide `.roadmap/corpus.md` contains prose and exactly one block:
 
 ```json roadmap-corpus
-{ "schema": "roadmap/corpus-guide-m4",
-  "source": { "kind": "same-repo", "root": "docs/corpus" },
-  "include": ["**/*.md"],
-  "vision": "vision.md" }
+{"schema":"roadmap/corpus-guide-m4","source":{"kind":"same-repo","root":"docs/corpus"},"include":["**/*.md"],"vision":"vision.md"}
 ```
 
-`source` is one of `same-repo{root}`, `other-repo{path (absolute), root}` or `checkout{remote, root}`; `include`
-patterns and `vision` are relative to `root`. A rules block, in any included `.md` file but the vision document:
+Sources are same-repo `{root}`, other-repo `{path,root}` (absolute checkout path), or checkout `{remote,root}`. Include/vision paths are under root. Example normative block:
 
 ````markdown
 ```rules
-T-12: A berth booking never overlaps another booking of the same berth.
-T-13: A cancelled booking frees its berth at once.
+T-12: A booking never overlaps another booking of the same berth.
+T-13: Cancelling a booking frees its berth immediately.
 ```
 ````
 
-## Recovery
+Walkthrough MCP config supplies installed stdio servers, with `{evidence}` and `{viewport}` substitutions. Example:
 
-- **Inputs.** `roadmap inputs export --repo <path> --arc <arc> --out <dir>` writes the inputs in force from the run
-  dir's kept copies: the plan, every spec at its current rev (machine and plan-check patches included), the rulings
-  ledger and sidecars, the obligations, and for a corpus arc the pin and the Phase-0 record. A file
-  beside the plan keeps its path relative to the plan's directory; a file in the product repo (the vision record)
-  goes under `repo/` at its repo path. The corpus guide is not exported (it is the baseline's). `export.json`'s `base`
-  is the manifest of the exported files. The executor never writes your input files, so this is the one way to get the
-  files in force: sync the export over your inputs, edit, then `roadmap apply --base <dir>/export.json`; the apply
-  rebases your edit onto whatever the executor did since the export. It reads the run dir only, so it works with the
-  executor down; then `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` rebases the edit the same way.
-- **A unit in force that every apply and start refuses** (`corpus-invalid` `scope-overlaps-corpus`, its `fix` naming the
-  unit; an executor-minted unit from before the deflake scope fix): export, sync, narrow the unit's scope off the
-  corpus (or cut it, if it never started a task), then `roadmap apply --base <dir>/export.json` (executor running) or
-  `roadmap start --repo <path> --plan <plan.json> --base <dir>/export.json` (executor down).
-  A dispatched unit's scope may not shrink: cut it instead, or tell the owner. Once the unit merges, the refusal lifts
-  on its own (a merged unit builds nothing more).
-- **Boot hook.** A devcontainer restarts with no executor. `roadmap resume-arc --repo <path>` relaunches a dead
-  owner's supervisor and does nothing otherwise, so it is safe at every boot:
-  `"postStartCommand": "<plugin root>/executor/bin/roadmap resume-arc --repo <product repo>"` in
-  `.devcontainer/devcontainer.json` (the owner's file: ask before adding it).
+```json
+{"walkthrough":{"mcp":{"playwright":{"command":"playwright-mcp","args":["--headless","--isolated","--browser","chromium","--output-dir","{evidence}","--viewport-size","{viewport}"]}}}}
+```
+
+Use HTTP pages. Install tools and browser in the project's devcontainer; Phase 0 checks actual executable presence and MCP handshake.
+
+The run dir is `<git-common-dir>/roadmap-runtime/<arc>/`. It holds start.json, events.jsonl, kept inputs, command incoming/receipt files, needs-user records/acks, evidence, invocations and heartbeat. Invocation dirs contain launch/exit/result records and stdout/stderr; evidence includes lane records and completed host metadata. Host state at `/var/tmp/roadmap/` holds locks, owner handshake, residual resources and supervisor logs. Repo-wide `<git-common-dir>/roadmap/` holds ack/answer logs and cloned corpus sources.
+
+Only the executor writes runtime. The journal's intents/done/facts and immutable kept bytes are authoritative; refs/snapshots are verified projections. `refs/roadmap/<arc>` holds allowlisted records plus a hash manifest, not raw evidence. Product branches and candidate refs belong to the executor. Use your own work branch for corpus changes.
+
+## Status, brief and watch
+
+Full status includes run/owner/heartbeat, revision and routing provenance, units with active invocations and lane progress, waits/resources, backend parks, spend by role/class/model, findings, obligation observations, census, timings, milestones, demo and completion. Read evidence named by an item before choosing an intervention. TUI observations do not acquire authority or alter the journal.
+
+Summary JSON fields are arc/state/planRev, progress, spend, milestones, caught, verdicts, captures, needsUser, waste, demo, completion. Spend separates estimated/unavailable calls, compares optional expectations and never stops work on USD. Milestone cost includes member/re-entry/polish units and walk/compare jobs; it is not an allocation of every arc-level cost. `caught.total = laneReds + gateRevisions + uniqueFindings`, with findings deduped by key and classified in byLens. It is not unique-catch attribution across seats. Captures currently lists suite capture spawn ids, not all retained screenshots.
+
+Waste detectors report grinding, red-on-unit/green-on-base, low unique-catch lanes and repeated expensive suites from observed evidence. They raise replay-safe non-blocking items keyed by waste cause. They advise the root; no optimizer rewrites the plan.
+
+The brief hashes the whole canonical payload into briefId and renders Markdown from it. Delta coverage is the last committed acknowledgement's `{arc,snapshotCommit,highWater}` vector. It includes slice, decisions/departures, curation, corpus divergences, debt, ranked questions/assumptions, pack notes, census, timings, PR and demo. Brief acknowledgement records coverage, advances the chain bound, and does not clear optionless runtime items. It never acknowledges blocking items.
+
+Actionable watch wakes for durable needs-user changes, relevant unit/arc transitions, executor death and heartbeat check-ins. After waking, consume the cause, act, then watch again from its sequence. End the turn at an owner check-in. An observation terminal is optional, not the monitor.
+
+Keep actionable watch outstanding with the default 30-minute heartbeat. On every wake post at most 3 lines (progress,
+next step, oddities), read status and the affected item/cited evidence, act if needed and continue from the returned seq.
+The root never patches the plugin or run directory. On supervisor crash-limit, report the cited stderr error/stack to
+the owner and stop with reason owner; do not ack or restart around the defect.
+
+## Refusals and recovery
+
+Read the complete row/receipt. Fix the source, then retry the same canonical action.
+
+| Evidence | Resolution |
+|---|---|
+| schema-version | Dev.32-and-earlier runtime is refused before claim/recovery. Use its original executor; start a fresh schema-2 arc. Never delete state to force adoption. |
+| schema / plan-invalid / plan-defect | Correct actual typed input, references, witness reachability, intent/nonGoals or lane placement. Start checks all defects; later revisions refuse newly introduced defects and expose remaining ones as advisories. |
+| tree-uncommitted | Commit the owner-managed corpus/config/vision bytes that validation compares to HEAD. |
+| corpus-invalid / pin drift | Reconcile through the guide, commit, re-pin and refresh rule hashes/census. |
+| chain-invalid | Inspect chain status, previous completion/head, baseline ancestry/allowed between-arc paths and acknowledgement bound. Foreign predecessor uses plan.previousHead without chain. |
+| obligation-dropped / weakening / proof stale | Preserve the property or make an explicit root disposition/reason and re-derive its proof. A lane move alone does not weaken unchanged ids/files. |
+| stale apply files | Export current inputs and reapply intended edits; do not edit export metadata. |
+| owner/resource request | Obtain the actual decision and use its offered option/action; do not fabricate readiness. |
+| parked backend | Fix auth/outage or wait for subscription availability, then explicitly resume that backend. No USD cap. |
+| attempt-cap / spec wrong / too big | Read history/base comparisons; root revises spec/decomposition/lineage. Steering does not erase cap counts. |
+| base-red / known defect / ordering | Repair the actual baseline/fix-unit dependency; ordering parks wake on the declared blockers' merges. |
+| residue / ambiguous owner / log-corrupt | Inspect kept evidence and ownership. Use declared cleanup/recovery; never hand-edit runtime or claim another process dead without identity checks. |
+
+Supervisor recovery takes exclusive ownership and verifies pid/start/boot identity. It restarts boundedly; repeated crashes require the owner. Runner reattachment waits for workload quiescence; adapters read terminal files afterward. Session containment excludes deliberate escape, while experimental cgroup containment needs a writable delegated subtree. Missing cgroup support is reported, not silently upgraded into a guarantee.
+
+A boot hook can call resume-arc in the product repo. An input export works with executor down; queue the CAS edit with explicit repo/arc and restart to process it. For a completed arc's PR fix use a new validated lineage/arc as appropriate, never move integration by hand. GC preserves snapshots needed by briefs/chains while reclaiming eligible evidence.
 
 ## The operator log
 
-`<repo>/../roadmap-inputs/skill-feedback.md`, outside the product repo, append-only: one entry per intervention
-(SKILL.md "Supervising the executor"). The heading names the entry's number (consecutive from 1), the time, the arc
-and the one lever from the closed list; four bullets follow, each on one line and none empty.
+Keep `<repo>/../roadmap-inputs/skill-feedback.md` outside product, one append-only entry per self-initiated intervention.
+Routine Phase 0/start/PR/check-ins and following an item recommendation are not interventions. Always log arc-wide pause,
+resume-all, backend resume, stop and close-admissions whoever requested it; include when the control ended. Entry ids count up; each heading
+names UTC time, arc and action, followed by exactly one nonempty bullet for symptom, evidence, outcome and executor change.
+Prefer measured failure patterns over habitual polling.
 
 ```operator-log
-## OP-1 2026-10-06T14:05:00Z arc=cancel-texts lever=pause
-- symptom: unit notice sat in lane notice-unit for 41 minutes against a lanes median of 3, printing the same retry line.
-- evidence: status units[notice].running.lane {id: notice-unit, set: spec, inv: cancel-texts/412#1}; no event after seq 1530.
-- outcome: paused and resumed notice; the next attempt reused the passed lanes and notice-unit passed in 2 minutes.
-- executor change: a lane repeating one output line far past its median could be killed and rerun by the executor.
+## OP-1 2026-11-01T06:00:00Z arc=cancel-texts lever=pause
+- symptom: notice remained in its lane beyond the observed completion time with no new output.
+- evidence: status shows notice running notice-unit; its evidence stdout has not changed since the last wake.
+- outcome: paused notice and retained its evidence for inspection before choosing recovery.
+- executor change: report stalled progress with the lane evidence and last activity time.
 ```
 
-## status
+The checker recognizes note, witness, dismiss, sweep, resolve-edge, run-only and the four demo actions alongside the
+other current controls. Keep actual intervention evidence for grading.
 
-One object. `run{state, owner{state, generation, pid}, heartbeatAt}`; `state` is `running`, `draining`
-(admissions closed), `held` (a pause, an interrupted stage or a parked backend), `parked` (a blocking needs-user
-waits on you), `blocked` (work remains and nothing can move), `complete`, `refused` or `no-owner`.
+## Chaining
 
-- `needsUser[{id, reason, blocking}]`: unacknowledged items, host-level `sup-*` and `host-*` included.
-- `plan{rev, planSha256}`; `routing{profile, rev, seats, sources, bindings}` (classes, never models).
-- `units[]`: `unit, stage, status, attempts, chargeableFailures, risk, seat{role, tier}, state, waitingFor, holds,
-  priority{priority, origin, waitStartSeq, bypassMerges, promoted}, park, lineage, supersededBy, buildTier, running,
-  failures, gate`. `gate{attempt, decision, findings[{severity: blocking|note|pre-existing, path, text, contractRef}],
-  unreviewed[{path, reason}]}` is the unit's latest gate answer, or null before one: a `pre-existing` finding is a real
-  defect already at the base (never blocking); `unreviewed` is what the gate says it did not review (null on an answer
-  from dev.11: unknown), recorded and never enforced. A gate whose diff is too large for its attachment (files left out for
-  size) sits at least at the high seat whatever the unit's risk (`seat` shows it once the gate has started), and its answer
-  carries a cluster map that code checks covers every changed path exactly once; a file in a cluster counts as reviewed. `state` is `running`, `preparing`, `ready`, `waiting`, `awaiting-admission`, `held`, `blocked`,
-  `parked`, `merged`, `cut` or `superseded`. `waitingFor{deps, edges, resources, envBlocked, admission, drainFor}`;
-  `admission` holds `known-defect{id, fixUnit}` while a known defect holds the unit at prepare, and (1.0.0-dev.17)
-  `deflake{deflake, lane}` while an open deflake unit holds a unit not yet started that runs its flaky lane.
-  `propagation{unit, target, stale}` while a propagation unit still to land holds its gate (`stale`: the re-witnessed
-  files its design breaks; empty when it links the target). `running{stage,
-  attempt, elapsed (ms), deadline, resources, lane}`, `lane{id, set: spec|suite|journey|mutant, inv, startedAt}` the
-  lane run open now. `failures[{ref, stage, attempt, lane, class: red|flaky|repeat, hostSuspected}]`: `hostSuspected`
-  `{signatures, busy}` names the host failure signatures the output matched and whether the host was busy, or null;
-  `ref` (`<unit>/lanes#<attempt>/<lane>`) is how a re-entry's `fixes` cites it (a park or another failure outcome is
-  cited as `<unit>/<stage>#<attempt>`).
-  `park{class: retryable|operator, kind, targets, outstanding, nextProbeAt, escalateAt}`: a retryable park recovers
-  by itself once its probes pass.
-- `edges[]` (`after{unit, on, effective, met}`, `contingent{unit, edge, condition, resolved}`), `runOnly`.
-- `commands{pending[{id, type, queuedFor?}], receipts}` (the last 10 terminal receipts); `queuedFor` names the units a
-  queued `apply` waits on.
-- `spend{byRole, byModel{models, unresolvedRevs}, byClass{classes, unresolvedRevs}, byJob, bySmoke}`: token totals and
-  list-price cost. A Claude call's totals include its subagents'; `byClass` splits spend by class (`efficient`, `frontier`,
-  `summit`, `economy`): each seat's own share on its class, subagent spend on the subagent model's class. `byModel` counts each seat's own share and is the only place `status` names a model.
-- `host{containment, resources, pools, queue, probes, backends, log{bytes, events, foldMs, compactionDue}}`,
-  `parkedBackends`, `rejection`.
-- `timings[{stage, count, p50Ms, maxMs}]`: completed attempts per stage.
-- `answers[{question, k, answer, at, arc, line}]`: the owner's recorded answers no Phase-0 record applies yet (the
-  newest arc carrying the question does not mark it `answered` with that text; a live arc's revision in force counts
-  at once). Apply each now.
-- Holistic arcs (`holistic: true`): `target` (cut line, next milestone, critical path, obligation counts),
-  `nowTrue`, `notYetTrue` (with `blockingUnits`, `reason`: `supervision`, `host`, `waiting-dep`, `code`,
-  `witness` (its lane has not run on the head yet; an audit, checkpoint or close-out runs every lane), `spec`; and
-  `lastObserved{treeSha, verdict, evidence}|null` for a `not-covered` one: its newest observation on an earlier tree
-  of the head's history, context only), `waived`, `deferred`, `vision` (clauses, questions, `advances`, `coverage`), `divergences`,
-  `decisionsSince` (rulings, bundles, patches, re-entries, cuts, steers, divergences, reversals, and `checkpoint-skipped`:
-  an audit that found nothing new, so no checkpoint ran), `convergence{k, counter, since, open}`, `findings{active, metrics}`, `audit`, `owed`,
-  `completion{planRev, head, active, sealed, notSealed, unmet}`, `holds` (arc-wide admission holds: `baseline`,
-  `pack-review`), `amendments[{id, source, rules, proposal, why}]`.
-- Corpus arcs also (null otherwise): `packReview{state: none|running|due|held|clear, reviews[{job, planRev, key,
-  outcome, blocking, notes, needsUser, superseded}]}`, `corpus{pinSha256, source{kind, commit, root}, files,
-  rules{active, retired, highWater}, phase0Sha256}`, `census{rules[{rule, state, held}], counts, heldPct, lastHeld}` (`held`/`heldPct` on the head alone,
-  so they drop after a merge until the next all-lanes run; `lastHeld` also counts rules held at their last observation),
-  `debt{banked, ledger}`, `chain{arcs, k, unackedStarts, nextStart, position}` (the
-  next start after this arc). `status` reads the repo config the arc's revision recorded (routing) and the one committed
-  at its baseline (K), never the live `.roadmap/config.json`.
-- Every arc: `flow` (null before a start): `{state: off-dev7}` for an arc an older release started, else `{state: on,
-  constraint, chart, accounting, window, verdicts, pending, givens, rulerChanged, pressure, next}`:
-  - `constraint{station, internal, component}`: code's constraint over the last 10 merges, null before the first.
-    `station` is `stage:<s>`, `slot:integration` (then `component` is its largest service part: `suite:<lane>`,
-    `arc-lanes`, `candidate-rest`, `ff`, `snapshot`), `wait:finding` (`internal`, no lever targets it) or `host:cpu`
-    (`internal`: those merges' mean cpu pressure, their launches' own cpu wait, is at or above the threshold; only load
-    decreases or `host` advice there).
-  - `chart{centre, ucl, mrBar, seed, recent[{unit, leadMin, zone}], inFlight[{unit, ageMin, zone}]}`: the XmR chart on
-    log lead minutes, frozen for the arc; zones `green | yellow | red`; null until seeded (5 merges, or 5 points of
-    earlier arcs on an equal host).
-  - `accounting{tAdvances, tOther, tUnits, wip, oeUsdPerHour}`: diagnostic only, never a goal.
-  - `window{proposal, lever, target, metric, openedAt, samples}`: the one change being judged, or null. `verdicts[{proposal,
-    lever, target, verdict: improved | worse | no-effect | inconclusive}]`.
-  - `pending[{proposal, line, phase: undecided | pending-proof | pending-apply}]`; `givens[]` (`host{id, lever, note,
-    state: enforced | stale}` or `repo{lever, note}`); `rulerChanged[{command, rev, seq, at, paths, needsUser}]`.
-  - `pressure{threshold, available}`: the saturation of cpu wait (0.5: a launch, a merge window or the host that waited
-    for a cpu half its time or more) and whether the host reports it (Linux schedstat).
-  - `next{running, due, cooldownUntil, bypass}`: the flow run in progress, the triggers due now (`host-pressure`: a unit
-    held for host pressure since the last run), the cooldown's end and whether a request may still bypass it.
-- Milestone arcs: `demo` (null before the first promotion): `{milestone, sha, held, up, since{milestones, tweaks, fixes},
-  roughEdges, where, serving, failed}`. `where` is `{type: url, url, ports}` (the first serve entry's address and every
-  stable port) or `{type: path, path}` (`<worktreeRoot>/demo/current/bin` for a product with nothing long-lived), null until
-  the host's instance runs this arc's version. `serving` is the SHA running now (null while down or starting); `failed`
-  `{sha, log}` the latest version that did not come up since the promotion (the old one kept serving; its walkthrough P1
-  is in `findings`). `since` is against the promotion before; `roughEdges` the open walkthrough P2s.
-- Every arc: `knownDefects[{id, match, fixUnit, fixMerged, holds}]` (the units each holds at prepare now);
-  `checkpointWaits[{job, waitingFor, line}]`, a checkpoint rejected `busy` waiting for "<unit> <stage> boundary".
-- Corpus arcs (empty otherwise): `admits[{seq, job, index, unit, class: repair|oversight|opportunity, clauses,
-  followUp}]`; `opportunities[{id, clauses, units, followUps, spentUsd, overrun[{job, index}]}]`; `drift[{unit, job,
-  class, merged, findings[{id, severity, clauses, claim}]}]`, per merged unit admitted as repair or oversight, the
-  findings on its merge whose clauses lie wholly outside the slice and the opportunities' clauses.
+Before chaining, read chain status. A normal next plan names `chain:{previousArc,previousHead}`; the previous arc must be complete and its verified ref/head must match. The baseline is the previous head or permitted single-parent between-arc commit. Foreign-baseline first arcs instead name previousHead at the plan top level; no preceding schema-2 ref is required. Never combine the two forms. Keep future planning detail out of the always-loaded skill.
 
-## The brief
-
-`roadmap brief --repo <path> --json` prints `{briefId, payload}`. The payload (`roadmap/brief-m4`) holds no clock; `briefId` is
-the first 16 hex of its sha256, so any change (forge state included) is a new id.
-
-- `coverage[{arc, snapshotCommit, highWater}]`: how far each chained arc's ref is covered; the next brief starts
-  there.
-- `items[{arc, id}]`: the open non-blocking `divergence-digest` and `convergence-bound` items an ack acknowledges.
-- `chain{position, k, unackedStarts, nextStart}`, as `chain status` has them; the Markdown's `next start:` line.
-- `answers[{schema, question, k, answer, at, arc}]`: the recorded answers not yet applied, as `status.answers`; the
-  Markdown opens with them ("Owner answers to apply now").
-- `arcs[]`, per chained arc: `slice{advances, why}` (the arc's Phase-0 slice in force, null without a record; you pick it,
-  the owner sees it here afterwards), `divergences`, `digests`, `decisions`, `curation`, `corpusDivergences`,
-  `debt{banked, dispositioned}`, `questions`, `amendments`, `packReviewNotes`,
-  `census{held, obligationRules, outOfSlice, untestable, prodOnly}` (`% held` = held / obligationRules), `timings`
-  (the attempts completed since the last ack), `pr` (`pr{number, url, state, base, needsRebase}`, `none` or
-  `unavailable{reason}`); corpus arcs also `admits` (classified since the last ack), `opportunities` and the
-  non-zero `drift` lines, and an amendment a converted admit made names that admit.
-- `arcs[].flow` (null with the loop off), rendered lines: `constraint` (at the ref, null before a merge; `host:cpu`
-  names the window's mean cpu pressure and the threshold), `accounting`
-  (T/I/OE, diagnostic), and in the delta `verdicts`, `rulerChanges` (command revisions after the first admission that
-  touched a ruler path), `hostAdvice` (`flow-host` proposals), and `dropped` (a lever the previous arc applied, with no
-  worse verdict, that this arc's plan no longer carries). The Markdown's Flow section.
-
-- `arcs[].demo` (null before the arc's first promotion): `{milestone, sha, held, up, since, roughEdges}` at the ref, the
-  Markdown's Demo section. Where it runs is in `status.demo.where` only.
-
-The brief reads only the verified snapshot refs: an arc joins it with its first snapshot (its first fast-forward
-or docs publication), and anything not yet published to the ref is not in it.
-
-## watch
-
-`{"event":"needs-user", id, blocking, reason, subject, summary}` for every raised item, blocking or not;
-`{"event":"ack", id, command, choice}`; `{"event":"superseded", id}` for an item a later pack review superseded;
-`{"event":"answer", question, k, answer, at}` for each recorded owner answer no Phase-0 record applies yet (once per
-`question` and `k`); `{"event":"owner", state, generation, pid}`; `{"event":"units", run,
-units: {<unit>: <state>}}` with compact states (`running:build#3`, `waiting:deps=u1`, `parked:retryable`,
-`awaiting-admission:known-defect`, `merged`). Plain `watch` streams every change. `watch --actionable` prints only
-the wakes, the key transitions: a `needs-user` line for an item not seen before and not already acknowledged or
-superseded; an `answer` line not seen before; the `units` line in which a unit is newly `merged` or newly parked (`parked:*`), in which `run` is newly
-`held`, `blocked` or `draining`, or in which `run` reaches `complete`, `refused` or `no-owner` (once each). Plus a fixed
-heartbeat, `{"event":"heartbeat","everyMin":<n>,"seq":<s>}`, every n minutes from the watch's start whatever happened
-(`--heartbeat-min <n>`, a positive integer, default 30; only with `--actionable`). Owner, ack, superseded and every
-other `units` line are dropped. `status.needsUser` lists open items only: a superseded one shows under `packReview`
-alone. Every line carries `seq`, the event log's high-water when it was seen. A fresh `--actionable` process starts
-with nothing seen: it prints the open items and a terminal or constrained run again, and takes its first view of the
-units as the baseline (no unit wake for what already merged or parked). With `--from <seq>` (only with
-`--actionable`) it starts from the log as it stood at that seq instead: a unit merged or parked since then wakes at
-once, and an item raised by then counts as seen; a standing terminal or constrained run, an open `sup-*` or `host-*`
-item and an unapplied answer are printed again. A seq past the log's end is refused.
-
-## Refusals
-
-`start` (exit 78; rows in its output and `status.rejection`) and `phase0 check` share the rows below; exit 75 is
-`host-busy`.
-
-| Row | Means | Fix |
-|---|---|---|
-| `legacy-roadmap-dir` | `.roadmap/` holds files outside the 1.0 set | move them out; 1.0 never converts |
-| `worktree-root-unusable` | `worktreeRoot` on tmpfs or not writable | another `worktreeRoot` |
-| `plan-invalid{problem}` | schema, unknown spec path, integration branch missing or in `roadmap/<arc>/`, baseline not an ancestor, unknown resource or cite, a Phase-0 entry naming something absent | fix the input the problem names |
-| `spec-lane-unrunnable` | a lane, probe or teardown command cannot run here | fix the spec or the host |
-| `unsupported-routing` | a seat's class binds an unsupported triple | fix the routing layer it names |
-| `plan-change-refused{reasons}` | the files differ from the plan in force in a way `apply` refuses, or in a way that needs a docs publication (rulings, obligations, a corpus arc's vision record), which only an `apply` runs; also (a fresh start, or any revision touching the unit) a lane's `evidenceGlobs` entry covering its unit's scope (named with lane and entry) | undo that edit; start on the plan in force, then `apply` it (`--vision-edit` for the vision); narrow the entry to the lane's outputs |
-| `backend-smoke` | a backend's smoke failed | fix that backend's auth or sandbox |
-| `undispositioned-residue` | a residue from earlier work | `roadmap sweep`, or answer its needs-user |
-| `previous-arc-unreconciled`, `recovery-holder-dead`, `owner-mismatch`, `log-corrupt`, `containment-mode-changed` | host-level | read `status` and the needs-user; never clear host files by hand |
-| `holistic-needs-corpus` | a fresh holistic plan names `architectureDoc` | make it a corpus arc |
-| `milestones-need-holistic` | the plan has `milestones` but no `holistic` (also an `apply` adding them) | milestones need the holistic layer: make it a holistic (corpus) arc, or drop the milestones |
-| `walk-tools-missing{milestone, problem}` | `program{step, argv0}`: a bring-up command's program is not installed (`step` `setup[i]`, `serve.<name>`, `seed[i]`); `mcp-unconfigured`: a `browser` journey and no `walkthrough.mcp`; `mcp-unconnected{server, detail}`: the server did not start or connect | install it in the project's devcontainer; configure and commit `walkthrough.mcp` (SKILL.md "Bootstrap", walk tools) |
-| `vision-unconfirmed{ref, expected, actual}` | `.roadmap/vision.json` unconfirmed, or its `corpus:` hash differs from the pinned vision document (`actual` null: no such pinned file) | run the `vision` skill; commit; re-pin |
-| `corpus-invalid{problems}` | `pin-drift`, `rule-reused{id}`, `rule-retired-reappears{id}`, `rules-in-vision`, `guide-missing`, `source-unreadable{detail}`, `source-remote-mismatch`, `scope-overlaps-corpus{unit}`, `contract-overlaps-corpus{path}` | re-pin after any corpus change; a new meaning takes a new id; no rules block in the vision document; scopes and contracts stay off corpus files |
-| `phase0-invalid{problems}` | `census-incomplete{rules}`, `census-dangling{rules}`, `obligation-rule-unresolved{obligation}`, `debt-undispositioned{id}`, `debt-kept-twice-unasked{id}`, `amendment-undispositioned{id}`, `question-reused{id}`, `answer-unapplied{question}` (a fresh start: a recorded owner answer the record does not mark
-`answered` with its text), `spec-census-mismatch{unit, item, rule, state}` (a spec declares an obligation whose rule's census is not that obligation, or an acceptance clause or witness item names an `out-of-slice` rule; checked on every revision, so `apply` refuses it too) | complete the Phase-0 record or obligations (an answer: `answered{answer, at}` with its text, rules to match); align the spec with the census |
-| `chain-invalid{problem}` | `limit{k, unacked}`, `baseline{previous-head-mismatch \| merge-commit \| parent-mismatch \| paths{paths}}`, `previous-incomplete{arc}`, `k-unset` | `limit`: stop (`k-limit`); `baseline`: one non-merge commit on the previous completed head, touching only `.roadmap/` inputs and corpus paths; `k-unset`: bootstrap K. `chain status` `nextStart` answers `limit`, `k-unset` and `previous-incomplete` before you compose the plan |
-| `tree-uncommitted{paths}` | `.roadmap/{vision.json, corpus.md, config.json}` differ from `HEAD` | commit them |
-| `arc-superseded{by}` | a start of an arc with a plan in force (a reopen) after arc `by` started on its head | put the fixes in arc `by` as priority units; at its completion, `pr --supersede-previous` for arc `by` |
-| `vision-leak{inForce, committed, draft}` (`apply` only) | the vision file differs from the vision in force and the apply declares no vision edit | move the draft to `draft` (`<inputs>/_next/vision.md`) and restore `.roadmap/vision.json` and the vision document to the vision in force (commit, re-pin); `--vision-edit` only for a vision change the owner ordered for this arc |
-
-**`apply` rejections** (in the receipt or `--dry-run`): every row above that applies to the edit, plus
-`target-kind-changed` (an `architecture-doc` arc never becomes a corpus arc, nor the reverse), `chain-immutable`
-(`chain` is fixed at the first revision), and for known defects `known-defect-fix-unit` (the fixer is absent, its
-lineage merged or cut, or the apply cuts a fixer an entry still names), `known-defect-lane` (no spec in force declares
-the lane) and `known-defect-cycle` (the `after` edges plus the holds form a cycle, named). A re-entry whose scope
-leaves its lineage's envelope is refused unless its spec cites an active ruling for it naming exactly the added
-patterns. Milestones change only by `apply` (`milestones`, draining nothing), refused when the apply removes a
-milestone a walk started on, edits one whose walk is running, changes a walked milestone's `units` or `design`, adds a
-milestone (or changes its units) whose units have all merged, or leaves a cut unit in a milestone's `units` (this last
-on every revision, a checkpoint's cut included). A re-entry the apply adds is refused without `fixes` (once its lineage recorded a failure) or with one that names no failure of its lineage (the
-refusal lists the lineage's failures); a re-entry that changes nothing the cited failure ran under is accepted. Priority, known-defect, plan-check-shape and milestones edits drain nothing.
-
-## Needs-user reasons
-
-Blocking unless noted. Read the item file before acting.
-
-- Unit parks (`escalation`, `refusal`, `chargeable-bound`, `malformed`, `process-fault`, `salvage-failed`,
-  `empty-diff`, `build-lost`, `candidate-red`, `base-red`, `lane-blocked`, `occupancy-unlabelled`, `residue`,
-  `routing-changed`, `respec-second`, `steered`, `reconcile-park`, `foreign-ref-move`, `recovery-required`): SKILL.md
-  "Handling parks".
-- `usage-limit`: `resume --backend <name>` once the limit resets.
-- Host-level (`supervisor-crash-limit`, `log-corrupt`, `owner-mismatch`, `recovery-holder-dead`,
-  `previous-arc-unreconciled`): SKILL.md "Handling parks"; never edit host files. `supervisor-crash-limit` is an
-  executor defect: report it and stop the session, never patch the plugin.
-- Non-blocking: `park-escalated`, `env-blocked` (a retryable park probing for long), `bundle-request` (`--choice
-  apply|reject`; one the executor cannot apply: `--choice acknowledge|decline`; still unanswered when only the
-  close-out is left, the executor declines it, a corpus arc's with an amendment `source: request`, and a later ack is
-  rejected), `convergence-bound`, `convergence-identity`, `audit-owed`, `divergence-digest` (the brief ack
-  acknowledges the digest and convergence-bound items).
-- `scope-growth` (the unit is held at plan-check, or at lanes): its plan-check proposes scope growth code verified
-  (each pattern matches a file, lies outside the scope, and could land), or salvage reverted the same path on its last
-  two build rounds. `scope accept` or `scope reject` (SKILL.md "Scope growth").
-- `context-exceeded` (the unit is parked at plan-check, build or gate, uncharged): the call's prompt or context outgrew
-  its model's window; the item names the role, the call and the prompt's size. Shrink the stage's inputs or route the
-  seat to a larger window, then `resume`, which makes a new call (SKILL.md "Handling parks"). Not a backend problem: nothing is parked arc-wide.
-- `deflake-parked`, non-blocking (1.0.0-dev.17): a deflake unit parked; the units its code edges held run again. Handle
-  the park's own item; a named cpu or resource need is declared on the lane by `apply`, then the deflake unit is cut
-  (SKILL.md "Flaky lanes").
-- `flake-recurring`, non-blocking (1.0.0-dev.17): a test (or lane) flaked again after two deflake units merged or were
-  cut; no third is minted. The evidence is the flake's red and green runs (SKILL.md "Flaky lanes").
-- `deflake-unscoped`, non-blocking (deflake scope, 2026-10-23): a deflake unit was due, but its scope would reach a
-  same-repo corpus (the lane declares no `systems` and no system of the map holds the flaky test's file, so it fell
-  back to `**` or a corpus-reaching unit scope); none is minted. The item names the keys, the scope and the patterns
-  that reach the corpus. Declare the lane's `systems` (or a systems map whose systems hold its test files) by `apply`;
-  the next deflake run mints the unit with those systems' paths and tests (SKILL.md "Flaky lanes").
-- `executor-fault`, non-blocking (1.0.0-dev.17): the executor threw inside a unit's task (the unit is parked at the stage
-  it was in, uncharged) or an arc job (audit, walk, checkpoint, baseline: the job ended faulted) while it held only that
-  unit's or job's own state; the arc went on. The item carries the stack (SKILL.md "Handling parks").
-- `apply-dropped`, non-blocking (1.0.0-dev.17): an `apply` queued behind a unit's stage boundary was refused when it
-  landed there; none of its edits is in force. The summary names the command and every reason, the evidence its
-  rejected receipt. Redo the edit from where the arc is now, then `ack` (SKILL.md "Changing the plan").
-- `plan-defect` (the unit is parked at lanes, uncharged): its missing witness is a plan defect code diagnosed (the
-  witness file outside its lane, or absent and outside the unit's scope). Fix the plan by `apply`, then `resume`
-  (SKILL.md "Handling parks"). At plan-check (1.0.0-dev.17): its design was refused twice for a plan defect (a test no lane
-  runs before the unit merges, an acceptance clause no lane runnable in this arc exercises, an integration unit without a spanning test, a design too big for one unit, a split code
-  refused); at scaffold: its skeleton was refused twice (paths outside the new system, a missing entry point, a load
-  test that does not run). The item names every reason; fix by `apply`, then `resume` (SKILL.md "The design pass").
-- Flow, non-blocking (SKILL.md "The flow loop"): `flow-proposal` and `flow-host` (`flow accept` or `flow reject`; the
-  item's evidence is the run's inputs file), `flow-worse` (revert by `apply` to the `preimage` of the proposal's
-  `flow-verdict` fact in the run dir's `events.jsonl`, then `ack`), `ruler-changed` (confirm or revert, then `ack`),
-  `flow-invalid` (`ack`).
-- At the close-out of a corpus arc, every open P2 or P3 finding that names no obligation is banked as
-  `finding-deferred` debt and ruled deferred (`by: code{close-out}`): the next Phase 0 dispositions it. A finding over
-  an obligation never banks.
-- Holistic, blocking: `obligation-baseline` (a must-hold obligation not held at the baseline: fix the obligation
-  or the plan), `finding-p1-escalated`, `new-finding-draining`, `not-reproduced`, `owner-request` (an owner-only act:
-  ask the owner).
-- Corpus arcs, blocking: `pack-review` (fix the pack with `apply`, or ack). An open `issue-policy-untrusted` item an
-  executor before 1.0.0-dev.21 raised holds nothing: ack it.
-
-## Schemas
-
-`executor/SCHEMAS.md`, by section:
-
-- "Input contract": `plan.json`, `ToolCommand`, the rulings ledger.
-- "`spec.json` M1 subset and `SpecPatch`": unit specs.
-- "Plan in force": what `apply` accepts per edit.
-- "Routing types": seats, classes, routing layers.
-- "M2: scheduling, resources, parks": `after`, contingent edges, pools.
-- "M3: the holistic layer": `holistic`, obligations, witnesses, the vision record, ruling sidecars, lenses, the
-  checkpoint.
-- "M4a: corpus, debt, forge, brief, chaining": the corpus guide, the pin, rules registry, obligations with census,
-  the Phase-0 record, debt, the brief and the ack log.
-- "M4a rev 3: the run-10 batch": `knownDefects`, `priority`, `planCheck` (removed in dev.17), spec `witnesses` and lane `inputs`, arc
-  lane `testPaths`, admit classes and conversions, the witness lane file.
-- "Plan defects (2026-10-16)": witness `files`, required `testPaths`, the `plan-defect` row (2026-10-21: milestone references over the budget) and park, plan `derived`
-  and the dispatch record's `derived`, the lanes `scope-growth` hold; a derived entry's `regenerate` and its check
-  ("Regenerate checks").
-- "M4b: the flow loop": stations, the series and chart, levers and their plan paths, the ruler paths, proposals,
-  proofs, verdicts, givens and the flow facts.
-- "Proportional review" (dev.17): the gate's defect classes and ride-along findings, the findings ledger and disputes,
-  the delta re-gate and `delta-empty`, the build's `docsOnlySince` and the verifier, lane `readsComments`.
-- "dev.13: milestone walkthroughs and design units": `milestones` (design, references, bring-up, journeys),
-  `limits.walkRounds`, polish units, the `experience` vision clause, the walk facts and findings, the walkthrough MCP
-  config, the Phase-0 rows and advisories, the demo.
-- "dev.17: the flaky ledger": `flake-observed`, deflake units (`origin: deflake`, `deflake.keys`), their code edges,
-  `limits.verification {laneMinutes?, lanes?: {<lane>: minutes}}` (a deflake unit's verification budget in lane-minutes;
-  default 30, a batch lane 2 runs), `deflake-parked` and `flake-recurring`; deflake scope (2026-10-23): the scope rule,
-  `deflake-unscoped`, the corpus overlap on every revision and `start --base`.
-- "dev.17: propagation": revision pins on a spec and a plan-check patch, a revision's stale set (`stale-set`), the
-  plan-check's `staleLinks` and `stale-answered`, `stale-reopened`, propagation units (`origin: propagation`,
-  `propagation{rev, target}`), `propagation-refused`, and the gate's `propagation` admission hold.
-
-Derived exclusion (2026-10-27; 1.0.0-dev.26): dispatch `excluded` bounds generated writes alongside `derived`; absent means none. Every revision refuses only added plan defects; apply dry runs and receipts also show remaining `plan-defect{defects}` as advisories. Startup and `phase0 check` still report all defects.
+At completion let final witnesses/audit, batch lanes, close-out documents and snapshots settle. Completion can be active or sealed. P1 needs repair, code-owned not-reproduced dismissal, or root `dismiss F-n --counter-evidence "<line>"`. Dismissal is a durable `finding-dismissed` fact with root role/routingRev, folded as ruled/dismissed. It stops finding gates and status blockers and suppresses the same key on unchanged cited blobs. A fresh command against a closed finding refuses; replay of the same command is idempotent. Finding-subject requests close when all their named findings settle; unrelated arc items remain open. A root apply that supplies repairs for every finding named by a finding-subject request closes that request without dismissing the findings; repair publication still settles them. Successful root actions can also close already-settled finding requests. Close-out can bank substantive remaining P2 debt and release eligible lower findings. Prepare the stacked PR, present the canonical brief/demo/rough edges, and stop or choose another slice within the owner's bound.

@@ -1,4 +1,4 @@
-// The baseline witness (M3 step B2; DESIGN-1.0.md §2.8 "Baseline witness", A6): before the first admission under
+// The baseline witness (M3 step B2; DESIGN-1.0.md §2.8 "Vision, corpus and obligations", A6): before the first admission under
 // `holistic`, a durable job `baseline-<n>` witnesses every obligation on the integration tip by running every arc lane
 // there (never reusing an observation: the baseline is its own evidence). Then, over its records:
 //   - a `must-hold` obligation (a latched future one included) not held → a blocking `obligation-baseline`;

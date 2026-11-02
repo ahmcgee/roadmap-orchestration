@@ -2,21 +2,21 @@
 // RunnerFiles (3a), Adapter (4), GitOp (8a/8b), Reconciler per op kind (3c, 7, 8a, 8b, 9, 10, 13). The
 // reservation cycle's typed handles live beside their one implementation, src/resources/reserve.ts (10).
 // Interfaces only; no behaviour here.
+import type { Backend,UnitRole } from '../routing/types.ts';
 import type {
-  AbortCode, DoneRecord, Fact, FlowFact, GitOpKind, IntentOf, IntentRecord, JudgmentInputs, JudgmentStage, OpExpect, OpKind, OpOutcome, OpPost, Parent,
-  PlanAppliedFact, PropagationFact, RecoveredBy, WalkFact, FlakyFact,
+AbortCode,CiFact,DoneRecord,Fact,StageOutcomeFact,
+FlakyFact,
+GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
+PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
 } from './events.ts';
+import type { ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId } from './ids.ts';
 import type {
-  AmendmentId, ArcId, ClaudeSessionId, CommandId, DivergenceId, EdgeId, FindingId, InvocationId, JobId, JobKind, MilestoneId, NeedsUserId, OpId, OpKey, PolishId, ResourceUnit, Sha, UnitId,
-} from './ids.ts';
-import type { SessionCharge } from './usage.ts';
-import type {
-  CancelFile, ChildEnd, ContainmentMode, DispatchRecord, ExitFile, KillReason, LaunchFile, ProcIdentity, ResultFile, RunnerFileMap,
-  RunnerFileName,
+CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,RunnerFileMap,
+RunnerFileName
 } from './records.ts';
-import type { ApplyQueued, BackendParkState, EdgeResolvedState, FindingState, HolisticFold, ProbeState, ResidueState, ResourceEntry, ReviewFold, UnitState } from './state.ts';
-import type { Backend, UnitRole } from '../routing/types.ts';
-import type { AbsPath, IsoTime } from './values.ts';
+import type { ApplyQueued,BackendParkState,EdgeResolvedState,FindingState,HolisticFold,ProbeState,ResidueState,ResourceEntry,ReviewFold,UnitState } from './state.ts';
+import type { SessionCharge } from './usage.ts';
+import type { AbsPath,IsoTime } from './values.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Journal: the one serialised writer of events.jsonl. Every append returns only after the full line is
@@ -39,6 +39,9 @@ export interface JournalView {
   readonly arc: ArcId;
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
+  ciFacts(): readonly CiFact[];
+  attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }>;
+
   /** Intents with no matching done or abort, in log order. At most one per key. */
   openIntents(): readonly IntentRecord[];
   /** The latest intent (highest ordinal) of an op. Throws for an unknown op. */
@@ -69,10 +72,10 @@ export interface JournalView {
   sessionCharge(session: ClaudeSessionId): SessionCharge | null;
   /**
    * A unit's state as the fold derives it from its stage-outcome facts, stage-parented intents and dispatch
-   * facts; a unit the log has not named yet is fresh at plan-check. The only source of a unit's counters.
+   * facts; a unit the log has not named yet is fresh at pre-build. The only source of a unit's counters.
    */
   unit(unit: UnitId): UnitState;
-  /** The unit's latest `dispatch` fact (its pinned scope envelope and risk floor), or null before one. */
+  /** The unit's latest `dispatch` fact (its routing, spec and risk floor), or null before one. */
   dispatchOf(unit: UnitId): DispatchRecord | null;
   /** Every `dispatch` fact of the unit, in log order (the first pin, then each re-pin); empty before one. */
   dispatchesOf(unit: UnitId): readonly DispatchRecord[];
@@ -116,6 +119,7 @@ export interface JournalView {
   decidedSeq(unit: UnitId): number | null;
   /** Latest lanes attempt with a non-hold outcome; crash-abandoned attempts never supply red-first priority. */
   completedLanes(unit: UnitId): number | null;
+  completedLanesOutcome(unit: UnitId): StageOutcomeFact | null;
   /** M2 (rank, F17): every published `integration.ff` of a unit's ff stage, the unit and its done record's seq, in log order. */
   publications(): readonly Readonly<{ unit: UnitId; seq: number }>[];
   /** M2 (rank, F17): the seq of the first `plan-applied` fact that named the unit, or null if none did. */
@@ -126,8 +130,6 @@ export interface JournalView {
   nextFindingId(): FindingId;
   /** M3: the id the next `divergence` must carry. */
   nextDivergenceId(): DivergenceId;
-  /** M4a: the id the next `corpus-amendment` must carry (arc-scoped `M-n`). */
-  nextAmendmentId(): AmendmentId;
   /** M3: the next job id of `kind`: one more than the highest the log named (audits and checkpoints must open in order). */
   nextJobId(kind: JobKind): JobId;
   /** M3: the latest published `integration.ff`'s new head (any subject), or null before one. */
@@ -142,8 +144,8 @@ export interface JournalView {
   findingsAt(seq: number): readonly FindingState[];
   /** dev.17 proportional review: the findings ledger, approvals with their blobs, docs-only checks. */
   review(): ReviewFold;
-  /** M4b: every flow fact, in log order, with its seq and time (src/flow/apply.ts derives the decisions' phases from them). */
-  flowFacts(): readonly FlowFactAt[];
+  /** Milestone experience and campaign audit outcomes for the efficacy feed. */
+  stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[];
   /** dev.13: every walk fact (walks, polish, tweaks, milestone passes, the demo), in log order, with its seq and time. */
   walkFacts(): readonly WalkFactAt[];
   /** dev.13: the id the next `polish-proposed` must carry (`X-<proposals + 1>`, arc-scoped). */
@@ -156,16 +158,18 @@ export interface JournalView {
   /** dev.17: every `flake-observed` fact, in log order, with its seq (the flaky ledger, src/pipeline/deflake.ts). */
   flakes(): readonly FlakeAt[];
   /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
+  notes(unit: UnitId): readonly Readonly<{ command: CommandId; brief: Sha256Hex; seq: number }>[];
+  surfaceFacts(): readonly import('./events.ts').SurfaceFact[];
+  buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[];
   propagationFacts(): readonly PropagationFactAt[];
 }
 
 export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
-export type FlowFactAt = Readonly<{ seq: number; at: IsoTime; fact: FlowFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
 export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 
-/** How an item was closed: by `command` (`needs-user-acked`), or by the executor at the close-out (`command` null: `needs-user-declined`, run 10 E). */
-export type NeedsUserAckState = Readonly<{ command: CommandId | null; choice: string | null }>;
+/** The command that closed an item and its selected option. */
+export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
 export type NeedsUserState = Readonly<{ id: NeedsUserId; blocking: boolean; ack: NeedsUserAckState | null }>;
 /** `stop`: the stop command recorded, if any. A pause of every unit and pauses of single units are kept apart. */
 export type ControlState = Readonly<{ stop: CommandId | null; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;
@@ -228,7 +232,6 @@ export interface RunnerFiles {
 
 /** `cancel`: cancel.json when the executor wrote one (it does before cancelling the workload), else null. */
 export type AdapterInput = Readonly<{ launch: LaunchFile; exit: ExitFile; cancel: CancelFile | null; stdoutPath: AbsPath; stderrPath: AbsPath }>;
-export type Adapter = (input: AdapterInput) => ResultFile;
 
 // ---------------------------------------------------------------------------------------------------
 // Reconcilers: one per op kind, run by recovery on each open intent. Each re-reads postconditions first
@@ -272,8 +275,6 @@ export type Reconciler<K extends OpKind> = (
   intent: IntentOf<K>,
   view: JournalView,
 ) => Promise<Extract<Disposition<K>, { kind: AllowedDisposition[K] }>>;
-
-export type Reconcilers = { readonly [K in OpKind]: Reconciler<K> };
 
 // ---------------------------------------------------------------------------------------------------
 // Git operations: prepare computes every recorded input and the expected new id without moving a ref;

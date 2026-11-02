@@ -1,4 +1,4 @@
-// Obligation edits (DESIGN-1.0.md §2.8 "Obligation edits"; plan "Obligations as a revisioned input"; M3 step A1).
+// Obligation edits (DESIGN-1.0.md §2.3 "Root commands and revisions"; plan "Obligations as a revisioned input"; M3 step A1).
 // Pure: the classifier (A2) and a bundle's activation (B6) run `classifyObligations` over the obligations in force
 // and the proposed file; re-derivation (rederive.ts) shares `weakeningsOf`.
 //
@@ -7,7 +7,7 @@
 //              in the revision's docs candidate, G12: the publication's to check, so the change carries activation.)
 //   split      (H14) active → split{children}: every child new, naming the parent, rev 1, active, with its own
 //              witness and a fresh proof. Every sentence of the parent's statement must occur verbatim in a child;
-//              the architect's children may drop none, a checkpoint split drops text only citing active clauses,
+//              the root's children retain every parent sentence,
 //              and the dropped sentences are returned for its `split-dropped` divergence. A split parent stays
 //              split with the same children. A split may not weaken: under a must-hold parent (latched included), a
 //              future child must name a delivering unit not yet published, else it could never latch and its
@@ -25,22 +25,23 @@
 // refresh alone is not normative); a parent is never
 // changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
-import type { LaneId, ObligationId, RulingId, UnitId, VisionClauseId } from '../core/ids.ts';
+import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type CorpusPin, activeRules } from '../corpus/types.ts';
+import { type CorpusPin,activeRules } from '../corpus/types.ts';
 import {
-  type Activation, type ObligationDef, type ObligationDisposition, type Obligations, type RulingSidecar, type Vision, isExempt, isMustHold, laneRevMatches, laneRevOf, obligationSource,
+type Activation,type ObligationDef,type ObligationDisposition,type Obligations,type Vision,isExempt,isMustHold,
+obligationSource
 } from './types.ts';
 import { citeReasons } from './vision.ts';
 
-/** Who proposes the revision: the architect's `apply`, or a checkpoint bundle op citing clauses. */
-export type ObligationAuthor = Readonly<{ type: 'architect' }> | Readonly<{ type: 'checkpoint'; cites: readonly VisionClauseId[] }>;
+/** The root's apply command is the sole obligation author. */
+export type ObligationAuthor = Readonly<{ type: 'architect'; reason?: string | undefined; rev?: number }>;
 
 export type ObligationChange =
   | Readonly<{ type: 'added'; id: ObligationId; activation: Activation }>
   | Readonly<{ type: 'split'; id: ObligationId; children: readonly ObligationId[]; dropped: readonly string[] }>
   | Readonly<{ type: 'witness'; id: ObligationId }>
-  | Readonly<{ type: 'disposed'; id: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>
+  | Readonly<{ type: 'disposed'; id: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>
   | Readonly<{ type: 'restored'; id: ObligationId }>
   | Readonly<{ type: 'edited'; id: ObligationId; fields: readonly string[] }>;
 
@@ -54,23 +55,23 @@ export type ObligationsVerdict = Readonly<{
 }>;
 
 /** A weakening from `prev` to `next` (undefined: removed) and the disposition a ruling must name for it. */
-export type Weakening = Readonly<{ disposition: ObligationDisposition; what: string; ruling: RulingId | null }>;
+export type Weakening = Readonly<{ disposition: ObligationDisposition; what: string }>;
 
 /** The weakenings between two versions of one obligation; `ruling` is a state change's own ruling. */
 export function weakeningsOf(prev: ObligationDef, next: ObligationDef | undefined): readonly Weakening[] {
-  if (next === undefined) return prev.state.type === 'retired' ? [] : [{ disposition: 'retired', what: 'removed', ruling: null }];
+  if (next === undefined) return prev.state.type === 'retired' ? [] : [{ disposition: 'retired', what: 'removed' }];
   const out: Weakening[] = [];
   const s = next.state;
   if ((s.type === 'waived' || s.type === 'deferred' || s.type === 'retired') && canonicalJson(s) !== canonicalJson(prev.state)) {
-    out.push({ disposition: s.type, what: `${s.type} by ${s.ruling}`, ruling: s.ruling });
+    out.push({ disposition: s.type, what: `${s.type}: ${s.reason}` });
   }
-  if (next.statement !== prev.statement) out.push({ disposition: 'amended', what: 'statement changed', ruling: null });
-  if (reAnchored(prev, next)) out.push({ disposition: 'amended', what: obligationSource(next).kind === 'rule' ? 'rule changed' : 'docRef changed', ruling: null });
-  if (prev.activation === 'must-hold' && next.activation === 'future') out.push({ disposition: 'amended', what: 'must-hold → future', ruling: null });
+  if (next.statement !== prev.statement) out.push({ disposition: 'amended', what: 'statement changed' });
+  if (reAnchored(prev, next)) out.push({ disposition: 'amended', what: obligationSource(next).kind === 'rule' ? 'rule changed' : 'docRef changed' });
+  if (prev.activation === 'must-hold' && next.activation === 'future') out.push({ disposition: 'amended', what: 'must-hold → future' });
   if (prev.witness !== null && next.witness !== null) {
-    const kept = new Set(next.witness.testIds.map((t) => `${next.witness!.lane}\u0000${t}`));
-    const lost = prev.witness.testIds.filter((t) => !kept.has(`${prev.witness!.lane}\u0000${t}`));
-    if (lost.length > 0) out.push({ disposition: 'amended', what: `witness no longer names ${lost.map((t) => JSON.stringify(t)).join(', ')}`, ruling: null });
+    const kept = new Set(next.witness.testIds);
+    const lost = prev.witness.testIds.filter((t) => !kept.has(t));
+    if (lost.length > 0) out.push({ disposition: 'amended', what: `witness no longer names ${lost.map((t) => JSON.stringify(t)).join(', ')}` });
   }
   return out;
 }
@@ -110,20 +111,14 @@ export function ruleAnchorResolves(o: ObligationDef, pin: CorpusPin): boolean {
   return isExempt(o) && pin.retired.some((r) => r.id === src.rule.id && r.textSha256 === src.rule.textSha256);
 }
 
-/** The active ruling in force that names `id` with `disposition` (the given one when `ruling` is set), or null. */
-export function dispositionRuling(rulings: readonly RulingSidecar[], id: ObligationId, w: Weakening): RulingId | null {
-  const r = rulings.find((x) => x.status === 'active' && (w.ruling === null || x.id === w.ruling)
-    && x.obligationDispositions.some((d) => d.id === id && d.disposition === w.disposition));
-  return r?.id ?? null;
-}
-
 /** The sentences of a statement (split after `.`, `;`, `!` or `?` and white space). */
 const sentences = (text: string): readonly string[] => text.split(/(?<=[.;!?])\s+/).map((t) => t.trim()).filter((t) => t !== '');
 
 export type ClassifyContext = Readonly<{
   vision: Vision | null;
   /** The ruling sidecars in force, this revision's own included. */
-  rulings: readonly RulingSidecar[];
+  reason?: string | undefined;
+  rev?: number;
   author: ObligationAuthor;
   /** Future obligations latched by a publication: must-hold from then on. */
   latched: ReadonlySet<ObligationId>;
@@ -141,15 +136,10 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
 
   const stale = (o: ObligationDef): void => {
     if (o.witness === null || o.proofJudgment === null) return;
-    const lane = lanes.get(o.witness.lane)!;
-    const rev = laneRevOf(lane);
     const p = o.proofJudgment;
-    // F7 (R64): a judgment bound to the lane's minimal form (a generator hashing raw input) still names this lane.
-    if (p.obligationRev !== o.rev || !laneRevMatches(p.laneRev, lane)) {
-      reasons.push(`${o.id}'s proof judgment is stale (judged obligation rev ${p.obligationRev}, lane ${p.laneRev}; now rev ${o.rev}, lane ${rev})`);
-    }
-    if (canonicalJson(p.witness) !== canonicalJson(o.witness)) {
-      reasons.push(`${o.id}'s proof judgment is stale (judged witness ${canonicalJson(p.witness)}; now ${canonicalJson(o.witness)})`);
+    if (p.obligationRev !== o.rev) reasons.push(`${o.id}'s proof judgment is stale (judged obligation rev ${p.obligationRev}; now ${o.rev})`);
+    if (canonicalJson(p.witness) !== canonicalJson({ testIds: o.witness.testIds, ...(o.witness.files === undefined ? {} : { files: o.witness.files }) })) {
+      reasons.push(`${o.id}'s proof judgment is stale (judged test ids or files differ)`);
     }
   };
   const proves = (o: ObligationDef): void => {
@@ -222,9 +212,9 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
   };
 
   function disposed(id: ObligationId, w: Weakening): void {
-    const ruling = dispositionRuling(ctx.rulings, id, w);
-    if (ruling === null) reasons.push(`${id} is weakened (${w.what}) without a ruling in force naming it ${w.disposition}${w.ruling === null ? '' : ` (${w.ruling})`}`);
-    else changes.push({ type: 'disposed', id, disposition: w.disposition, ruling });
+    const reason = ctx.author.reason ?? ctx.reason;
+    if (!reason?.trim()) reasons.push(`${id} is weakened (${w.what}) without an apply --reason`);
+    else changes.push({ type: 'disposed', id, disposition: w.disposition, reason, rev: ctx.author.rev ?? ctx.rev ?? 1 });
   }
 
   function split(p: ObligationDef, o: ObligationDef, children: readonly ObligationId[]): void {
@@ -247,9 +237,7 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
     }
     const dropped = sentences(p.statement).filter((t) => !kids.some((k) => k.statement.includes(t)));
     if (dropped.length > 0) {
-      if (ctx.author.type === 'architect') reasons.push(`${o.id}'s children drop parent text: ${dropped.map((t) => JSON.stringify(t)).join(', ')}`);
-      else if (ctx.author.cites.length === 0) reasons.push(`${o.id}'s split drops parent text without citing a vision clause`);
-      else reasons.push(...citeReasons(ctx.vision, ctx.author.cites, `${o.id}'s split`));
+      reasons.push(`${o.id}'s children drop parent text: ${dropped.map((t) => JSON.stringify(t)).join(', ')}`);
     }
     changes.push({ type: 'split', id: o.id, children, dropped });
   }

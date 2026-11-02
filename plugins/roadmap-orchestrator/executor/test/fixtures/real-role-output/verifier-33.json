@@ -1,0 +1,83 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        "packages/xenon/test/vessel-export.test.ts:4",
+        "packages/xenon/src/vessel-export.ts:2"
+      ],
+      "severity": "note",
+      "path": "packages/xenon/test/vessel-export.test.ts",
+      "text": "The test checks a single well-formed id and never observes logging. A mutant that trims the id and logs the token still passes, so the test does not guard T-1 verbatim preservation against normalising changes, or T-2 at all. The shipped code does not have either defect: it returns input.id untouched and has no logging. The plan census marks T-2 untestable, so this does not block. A case with surrounding whitespace would strengthen T-1.",
+      "contractRef": "T-1",
+      "experiments": [
+        {
+          "command": "sed -i 's/input.id }/input.id.trim() }/' packages/xenon/src/vessel-export.ts; sed -i '1a\\  console.log(input.token);' packages/xenon/src/vessel-export.ts; node --test packages/xenon/test/vessel-export.test.ts (source restored afterwards)",
+          "output": "✔ export record shape; ℹ pass 1; ℹ fail 0"
+        }
+      ],
+      "debt": {
+        "drag": "A later edit could normalise ids or log tokens without the unit test failing."
+      },
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": {
+        "path": "packages/xenon/test/vessel-export.test.ts",
+        "line": 4
+      }
+    },
+    {
+      "evidence": [
+        "/redacted/path",
+        "/redacted/path",
+        "/redacted/path"
+      ],
+      "severity": "note",
+      "path": null,
+      "text": "The I-1 witness record shows journey/export passing at this head's tree (79580525). However, the lane runs a fake witness script whose control file reports export as pass for every tree ('*'), so the record says nothing about vesselExport. My confidence in T-1 comes from the source, the unit lane test and my direct run, not from this witness. The root may want to bind I-1 to a test that actually runs the export.",
+      "contractRef": "T-1",
+      "experiments": [],
+      "debt": {
+        "drag": "I-1 would stay green even if vesselExport regressed, and only the unit test would catch it."
+      },
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "A1 met: packages/xenon/src/vessel-export.ts and its test are added. vesselExport accepts an id and a token and returns { vessel: id }. A direct run preserved ids verbatim, including whitespace, an empty string, a newline and non-ASCII (T-1). The function is pure, does no logging, and the token did not appear in the output (T-2). The unit lane passes, including 'export record shape'.",
+    "A2 met: the executor regenerated goldens byte-identically. A semantic comparison of goldens/xenon.json shows one added module entry for vessel-export.ts, with none removed or changed. The commit touches only the two xenon files and that golden, so the no-unrelated-changes non-goal holds.",
+    "I-1 witness 'export' is recorded as pass on tree 79580525, which matches HEAD^{tree}. Its limited value is reported as a note. The behaviour itself was checked directly.",
+    "contracts/api.md says 'total over integers', which does not constrain this string-typed function because A1 specifies an id and a token. It is pure and total over its declared input. Ruling C-1 was not consulted, because the gate instructions forbid reading the rulings ledger; the decision rests on the corpus rules and the contract."
+  ],
+  "premises": [
+    {
+      "claim": "vesselExport returns the caller's id unchanged and does not read or log the token.",
+      "evidence": [
+        {
+          "path": "packages/xenon/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "T-1 and T-2 are the only export contract rules that apply; T-3 to T-42 concern the archived tariff screen.",
+      "evidence": [
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 6
+        },
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 7
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

@@ -1,0 +1,81 @@
+{
+  "standing": [
+    {
+      "id": "m1-fixture-15ded3125433/18#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "src/slug.js:3-6 classifies with /[^A-Za-z0-9]+/g, no i flag, and lowercases last.",
+        "node /redacted/path U+212A in 'aKb' -> 'a-b', U+0130 -> 'a-b', U+017F -> 'a-b', and every probed output matched the contract alphabet."
+      ]
+    },
+    {
+      "id": "m1-fixture-15ded3125433/18#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "test/slug.test.js:6-8 pins Route 66, 'a -_- b' and 'a_b'; lines 12-15 pin U+212A, U+0130, U+017F and Café (code points confirmed by a scan of the file); lines 20-21 test leading and trailing separators separately; lines 25-26 pin D1.",
+        "Mutants lowerFirst, iuFlag, noTrimStart, noTrimEnd, noLower, noCollapse and pageFallback each exit 1 against this test file; the correct implementation exits 0."
+      ]
+    },
+    {
+      "id": "m1-fixture-15ded3125433/18#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "git diff --name-status b819cd9 HEAD shows only A src/slug.js and A test/slug.test.js: no src/page-id.js and no package.json change.",
+        "src/slug.js:2-7 has no fallback, coercion, type checks or module state; its only regexes are inline literals used with .replace()."
+      ]
+    }
+  ],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [],
+  "directives": [],
+  "reasons": [
+    "A1 met: src/slug.js:4 turns each maximal run of non-ASCII-alphanumerics into one '-' before lowercasing, so non-ASCII characters that case-fold to ASCII cannot reach the output (probed with U+212A, U+0130, U+017F).",
+    "A2 met: collapsing leaves at most one hyphen at each edge, so the single-hyphen trim at src/slug.js:5 is sufficient. slugify('  Hello, World!  ') returns 'hello-world', and '---' and '-' return ''.",
+    "A3 met: test/slug.test.js covers A1 and A2, the slug lane passes (rerun locally: 4 tests pass, 0 fail), and all seven plausible wrong implementations tried fail the test file.",
+    "D1 honoured: slugify('!!!') and slugify('') return '', and a 'page' fallback mutant fails the tests. The change is limited to the two unit files, respecting the non-goal, C-1 and the no-dependencies invariant."
+  ],
+  "premises": [
+    {
+      "claim": "Classification happens before lowercasing and uses an explicit case-sensitive ASCII class, so only ASCII letters and digits survive.",
+      "evidence": [
+        {
+          "path": "src/slug.js",
+          "line": 4
+        },
+        {
+          "path": "src/slug.js",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "claim": "The test file contains the actual non-ASCII code points U+212A, U+0130 and U+017F, not ASCII lookalikes.",
+      "evidence": [
+        {
+          "path": "test/slug.test.js",
+          "line": 12
+        },
+        {
+          "path": "test/slug.test.js",
+          "line": 13
+        },
+        {
+          "path": "test/slug.test.js",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "claim": "package.json declares type module and no dependencies, and this unit does not change it.",
+      "evidence": [
+        {
+          "path": "package.json",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

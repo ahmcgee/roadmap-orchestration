@@ -1,0 +1,120 @@
+{
+  "findings": [
+    {
+      "severity": "P1",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Product defect: mul discards the sign of the product, which violates CONTRACT.md. It returns Math.abs(a*b), so any operand pair with exactly one negative input gets the wrong result. For example, mul(-2,3) returns 6 where the contract requires -6. The contract explicitly says negative inputs are supported, so this is the supported path and not an edge case.",
+      "cause": "mul product computation: math.abs strips the sign when exactly one operand is negative",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P2",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Vacuous witness: the only assertion is mul(2,3)==6, which uses two positive operands. On those inputs abs(a*b) and a*b are identical, so the test cannot tell the contract's signed product from the shipped wrong implementation. It says nothing about the negative-input behaviour the contract promises. No mutant is proposed because the shipped code is already the wrong implementation that this assertion accepts.",
+      "cause": "unit test sign coverage: only positive operands are asserted so the signed product is never exercised",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Vacuous witness, conditional on the environment: the test file is one line that uses assert and mul but imports neither, and it never references src/unit.js. The checkout has no package.json or runner configuration that would inject them as globals. As written, the test would be expected to fail with a ReferenceError, or to exercise a mul other than the one in src/unit.js. This comes from reading the files; the test was not executed, and a runner outside the checkout could supply these globals.",
+      "cause": "unit test entry point: test references assert and mul without importing them or the module under test",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "The range fails its contract: src/unit.js returns the absolute value of the product, while CONTRACT.md requires the signed product and supports negative inputs.",
+    "The existing test does not catch this because it uses only positive operands, and it also lacks the imports it needs to reach the module under test.",
+    "Nothing was executed because no execution tool was available in this audit. All findings come from reading the files; the mul(-2,3) result follows from the defined behaviour of Math.abs.",
+    "The vision lists no clauses, advanced clauses or open questions, and there are no obligations, so findings cite no V-n or obligation IDs. They are judged against CONTRACT.md only.",
+    "Document drift check: CONTRACT.md states the intended behaviour and the code departs from it, so this is reported as a product defect rather than a stale document."
+  ],
+  "premises": [
+    {
+      "claim": "The contract requires mul(a,b) to return the signed mathematical product and states that negative inputs are supported.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The implementation of mul wraps the product in Math.abs.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The test file contains a single assertion, on positive operands, and has no import statements.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Make mul return the signed product required by CONTRACT.md, removing the Math.abs behaviour.",
+      "evidence": [
+        "src/unit.js:1 returns Math.abs(a*b)",
+        "CONTRACT.md:1 requires the signed mathematical product and supports negative inputs"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Strengthen the unit test so it imports assert and mul from src/unit.js and asserts mixed-sign and both-negative cases, such as mul(-2,3)==-6, mul(2,-3)==-6 and mul(-2,-3)==6, while keeping the existing mul(2,3)==6 assertion.",
+      "evidence": [
+        "test/unit.test.js:1 asserts only mul(2,3)==6 and has no imports",
+        "src/unit.js:1 passes that assertion despite violating the contract"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

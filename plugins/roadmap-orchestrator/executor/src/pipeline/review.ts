@@ -1,4 +1,5 @@
-// Proportional review at the gate (dev.17; DESIGN-1.0.md §4 "Proportional review", SCHEMAS.md "Proportional review").
+import { protectedPathsInForce } from '../input/protected.ts';
+// Proportional review at the gate (dev.17; DESIGN-1.0.md §2.1 "Unit pipeline and review", SCHEMAS.md "Role input and output contracts").
 //
 // Code owns the invariants that keep review proportional; the gate seat owns its method.
 //
@@ -19,34 +20,34 @@
 //    target changed since the approval); the rest are listed, readable and not under review. A blocking
 //    finding on one of those is demoted to a note unless it cites a changed hunk (`hunk`) or a moved target (`contractRef`);
 //    a revise left with no blocking finding is read as an approval. An empty delta skips the gate (`delta-empty`).
-//    A scope-only re-entry (field report 2026-10-24) carries the re-entered unit's approval to a unit with none of its own,
+//    A systems-only re-entry (field report 2026-10-24) carries the re-entered unit's approval to a unit with none of its own,
 //    for an empty delta only (`carriedApproval`).
 //
 // What a gate attempt was given is recorded on its `judgment-inputs` (`GateReview`), so the rules its answer is held to
 // follow from the log on replay and recovery; an attempt a dev.16 executor captured has none and is read without them.
 import { join } from 'node:path';
-import { type ReviewFindingId, type Sha, type SpecRev, type UnitId, reviewFindingIdOf } from '../core/ids.ts';
-import { type ReviewFact, parentUnit } from '../core/events.ts';
-import type { ApprovalFingerprint, SpecM1 } from '../core/records.ts';
+import { type ReviewFact,parentUnit } from '../core/events.ts';
+import { type ReviewFindingId,type Sha,type SpecRev,type UnitId,reviewFindingIdOf } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import type { ReviewApproval } from '../core/state.ts';
-import { isUnitLink } from '../core/stale.ts';
-import { specLinksOf } from '../holistic/staleset.ts';
-import {
-  type ApprovalBlobs, type FindingsLedgerEntry, type GateDelta, type GateReview, type LedgerOutcome, type ReviewDispute, isSettled, movedTargets,
-} from '../core/review.ts';
-import { approvalBlobsOf } from '../core/upgrade.ts';
-import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, type RepoPath, absPath, repoPath } from '../core/values.ts';
-import { git, gitRun } from '../git/git.ts';
-import { transientCheck, unitDiffPaths, unitTransientRules } from '../git/transient.ts';
 import { canonicalJson } from '../core/json.ts';
+import { approvalBlobsOf } from '../core/projections.ts';
+import type { ApprovalFingerprint,SpecM1 } from '../core/records.ts';
+import {
+type ApprovalBlobs,type FindingsLedgerEntry,type GateDelta,type GateReview,type LedgerOutcome,type ReviewDispute,isSettled,movedTargets,
+} from '../core/review.ts';
+import { isUnitLink } from '../core/stale.ts';
+import type { ReviewApproval } from '../core/state.ts';
+import { SchemaError } from '../core/validate.ts';
+import { type AbsPath,type RepoPath,absPath,repoPath } from '../core/values.ts';
+import { git,gitRun } from '../git/git.ts';
+import { transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
+import { specLinksOf } from '../holistic/staleset.ts';
+import type { PlanUnit } from '../input/plan.ts';
 import { reviewDisputeDirective } from '../prompts/directives.ts';
 import type { GateReviewInput } from '../prompts/inputs.ts';
-import { DECISIONS_FILE, DEFECT_CATEGORIES, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
-import type { PlanUnit } from '../input/plan.ts';
-import { type StageContext, type StageParent, dispatchOf, workDir } from './dispatch.ts';
-import { type JudgmentReader, judgmentOutput, judgmentSpawns, loadUnitSpec, readDecisions } from './stages.ts';
+import { DECISIONS_FILE, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
+import { type StageContext, type StageParent, workDir } from './dispatch.ts';
+import { type JudgmentReader,judgmentOutput,judgmentSpawns,loadUnitSpec,readDecisions } from './stages.ts';
 
 /** The blob of `path` at `commit`, or null when the commit has no such file. */
 export function blobAt(repo: AbsPath, commit: Sha, path: string): Sha | null {
@@ -97,7 +98,7 @@ export function openDisputes(ctx: StageContext, unit: PlanUnit, ledger: readonly
  * A gate's delta from the unit's latest approval, given its spec in force, its fingerprint `now` at the tip it reads and
  * the head it judges: null for a full review (no approval, a dev.16 approval without blobs, or a spec revision since that
  * is not the design pass's alone: `designRevisionsOnly`), `empty` when no file changed and nothing the approval bound moved,
- * else the delta. A re-entered unit with no approval of its own measures from the one a scope-only re-entry carries
+ * else the delta. A re-entered unit with no approval of its own measures from the one a systems-only re-entry carries
  * (`carriedApproval`), and only to `empty`: anything else is a full review.
  */
 export function gateDelta(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head: Sha, now: ApprovalFingerprint): GateDelta | 'empty' | null {
@@ -140,14 +141,13 @@ function deltaFrom(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head
 }
 
 /**
- * The approval a scope-only re-entry carries forward (field report 2026-10-24: a re-entry at verify that only widened the
- * scope by a test file was gated again). The re-entered unit's latest approval, when all of these hold:
+ * The approval a systems-only re-entry carries forward (field report 2026-10-24: a re-entry at verify that only changed the
+ * declared systems was gated again). The re-entered unit's latest approval, when all of these hold:
  * - the approval judged exactly `head` (`unitCommit`): no commit since, so neither a build nor a merge-in moved the unit;
  * - no gate attempt of the re-entered unit failed after it (a revise, or a park after escalations, overrides it);
  * - the re-entered unit's spec in force is the one it approved, or later by design records alone (`designRevisionsOnly`),
- *   and `spec` equals it in everything but `unit`, `rev` and `scope`;
- * - the unit diff passes the transient check (src/git/transient.ts) under this unit's own pinned rules, so a narrowed
- *   scope that leaves a path of the approved diff outside it carries nothing.
+ *   and `spec` equals it in everything but `unit` and `rev`;
+ * - the unit diff passes the transient check (src/git/transient.ts) under this unit's protected-path and evidence rules.
  * Derived from the log and git alone; null otherwise, and for a unit that re-enters nothing.
  */
 function carriedApproval(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha, head: Sha): Measured | null {
@@ -163,20 +163,20 @@ function carriedApproval(ctx: StageContext, unit: UnitId, spec: SpecM1, tip: Sha
   const planned = ctx.plan().units.find((u) => u.id === from);
   if (planned === undefined) throw new Error(`unit ${unit} re-enters ${from}, which is not in the plan in force`);
   const approved = loadUnitSpec(ctx, planned).spec;
-  if (!designRevisionsOnly(view, from, blobs.specRev, approved.rev) || !sameButScope(approved, spec)) return null;
-  if (transientCheck(ctx.repo, unitTransientRules(dispatchOf(view, unit), spec), tip, head).length > 0) return null;
+  if (!designRevisionsOnly(view, from, blobs.specRev, approved.rev) || !sameSpecRequirements(approved, spec)) return null;
+  if (transientCheck(ctx.repo, unitTransientRules(protectedPathsInForce(ctx.runDir, ctx.journal.view), spec), tip, head).length > 0) return null;
   return { approval, blobs };
 }
 
-/** Whether two specs differ in nothing but their unit, revision and scope. */
-function sameButScope(a: SpecM1, b: SpecM1): boolean {
-  const rest = ({ unit: _unit, rev: _rev, scope: _scope, ...other }: SpecM1): unknown => other;
+/** Whether two specs differ in nothing but their unit and revision. */
+function sameSpecRequirements(a: SpecM1, b: SpecM1): boolean {
+  const rest = ({ unit: _unit, rev: _rev, ...other }: SpecM1): unknown => other;
   return canonicalJson(rest(a)) === canonicalJson(rest(b));
 }
 
 /**
  * Whether the unit's spec went from rev `from` to rev `to` by design records alone (dev.17, the design pass): every revision
- * between is an executor patch whose every op is `design`, the record a plan-check's approve or scaffold lands on the
+ * between is an executor patch whose every op is `design`, the record a pre-build's approve or scaffold lands on the
  * spec's next revision. That revises the unit's own plan, not a requirement or contract the approval bound (those are
  * `movedTargets`, `staleSinceApproval` and `movedInterfaces`), so it keeps the delta.
  */
@@ -192,7 +192,7 @@ function designRevisionsOnly(view: JournalView, unit: UnitId, from: SpecRev, to:
  * The targets the unit's spec links (its requirements, failure modes' requirements, cited and interface contracts:
  * `specLinksOf`) that a stale set recorded after the approval (seq `since`) changed, and the targets of the unit's own stale
  * links in those sets (src/core/stale.ts): requirement ids and contract or interface paths, `movedTargets`' keys. This
- * reads the change, not the spec's pins: a link with no pin (`UNPINNED`, a dev.16 spec or one no plan-check revised) is
+ * reads the change, not the spec's pins: a link with no pin (`UNPINNED`, a dev.16 spec or one no pre-build revised) is
  * moved exactly when its target changed since the approval, never assumed unchanged for want of a pin.
  */
 function staleSinceApproval(view: JournalView, unit: UnitId, spec: SpecM1, since: number): readonly string[] {
@@ -230,7 +230,7 @@ const refKey = (ref: string): string => ref.split('#')[0]!.trim();
 
 /**
  * The answer validator's dev.17 half for a gate attempt given `review` at `head` (gate.ts `gateAnswerFor`): refuses (a
- * `SchemaError`, so the repair turn names why) a blocking finding without a defect, a blocking re-raise of a settled finding
+ * `SchemaError`, so the repair turn names why) a blocking re-raise of a settled finding
  * whose file has not changed, a re-raise of no finding of the unit's ledger, and rulings that are not exactly one per
  * dispute; then demotes, on a delta, each blocking finding on an unchanged file that cites neither a changed hunk nor a moved
  * target (a revise left with no blocking finding reads as an approval). Deterministic in the log and the repository.
@@ -240,7 +240,6 @@ export function reviewRules(repo: AbsPath, head: Sha, review: GateReview): (out:
     const faults: string[] = [];
     const ledger = new Map(review.ledger.map((e) => [e.id as string, e]));
     out.findings.forEach((f, i) => {
-      if (f.severity === 'blocking' && f.defect === null) faults.push(`findings[${i}] is blocking and names no defect (one of ${DEFECT_CATEGORIES.join(', ')})`);
       if (f.reraises === null) return;
       const e = ledger.get(f.reraises);
       if (e === undefined) faults.push(`findings[${i}].reraises names ${f.reraises}, which is no finding of this unit's ledger`);

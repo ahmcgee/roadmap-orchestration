@@ -218,7 +218,7 @@ export function unitStates(run: OracleRun, expected: Readonly<Record<string, Uni
 
 /** Every stage-outcome of each unit, as `stage:outcome`, in log order. */
 export function outcomesOf(run: OracleRun, unit: string): readonly string[] {
-  return facts(run).flatMap((f) => (f.kind === 'stage-outcome' && f.unit === unit ? [`${f.stage}:${f.outcome}`] : []));
+  return facts(run).flatMap((f) => ((f.kind === 'stage-outcome' && 'unit' in f) && f.unit === unit ? [`${f.stage}:${f.outcome}`] : []));
 }
 
 /** The units' stage-outcome sequences are exactly `expected`: no stage decided twice, none missing. */
@@ -232,7 +232,7 @@ export function stageOutcomes(run: OracleRun, expected: Readonly<Record<string, 
 
 /** The run's recovery holds (src/pipeline/unit.ts `holdAbandoned`), as `<unit> <stage>#<attempt>` in log order. */
 export function recoveryHoldsOf(run: OracleRun): readonly string[] {
-  return facts(run).flatMap((f) => (f.kind === 'stage-outcome' && f.cause?.type === 'recovery' ? [`${f.unit} ${f.stage}#${f.attempt}`] : []));
+  return facts(run).flatMap((f) => ((f.kind === 'stage-outcome' && 'unit' in f) && f.cause?.type === 'recovery' ? [`${f.unit} ${f.stage}#${f.attempt}`] : []));
 }
 
 /**
@@ -255,7 +255,7 @@ export function withRecoveryHolds(
   /** Each unit's stage outcomes at the crash. */
   const decided = new Map<string, number>();
   for (const [i, e] of events.slice(0, starts.at(-1)).entries()) {
-    if (e.type === 'fact' && e.fact.kind === 'stage-outcome') decided.set(e.fact.unit, (decided.get(e.fact.unit) ?? 0) + 1);
+    if (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact)) decided.set(e.fact.unit, (decided.get(e.fact.unit) ?? 0) + 1);
     fold.apply(e, prevHash(Buffer.from(`${lines[i]!}\n`, 'utf8')));
   }
   const out: Record<string, readonly string[]> = { ...outcomes };
@@ -272,7 +272,7 @@ export function withRecoveryHolds(
 
 /** Whether the restart consumes `unit`'s open attempt from its backend call (src/pipeline/unit.ts `consumeRecorded`). */
 function consumable(run: OracleRun, unit: string, stage: string, attempt: number): boolean {
-  if (!['plan-check', 'build', 'gate'].includes(stage)) return false;
+  if (!['pre-build', 'build', 'gate'].includes(stage)) return false;
   const key = canonicalJson({ type: 'stage', unit, stage, attempt });
   const spawn = run.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && canonicalJson(i.parent) === key).at(-1);
   if (spawn === undefined) return false;
@@ -347,26 +347,6 @@ export function noModelIds(run: OracleRun): Verdict {
   return { pass: hits.length === 0, detail: hits.length > 0 ? hits.join('; ') : `${checked} files scanned` };
 }
 
-/**
- * M4b (src/flow/track.ts `beforeCompletion`): with the flow loop on, each `arc-completed` is preceded by exactly one
- * `flow-series` since the completion before it (a crash between the two keeps no second series); with it off, none.
- */
-export function flowSeriesPerCompletion(run: OracleRun): Verdict {
-  const on = arcRolesOf(run.view.planApplied()) !== null;
-  const problems: string[] = [];
-  let series = 0;
-  let completions = 0;
-  for (const f of facts(run)) {
-    if (f.kind === 'flow-series') series += 1;
-    if (f.kind !== 'arc-completed') continue;
-    completions += 1;
-    if (series !== (on ? 1 : 0)) problems.push(`arc-completed #${completions} follows ${series} flow-series, expected ${on ? 1 : 0}`);
-    series = 0;
-  }
-  if (series > 0) problems.push(`${series} flow-series after the last arc-completed`);
-  return verdict(problems, `${completions} completions, one flow-series each${on ? '' : ' (none: the loop is off)'}`);
-}
-
 // ---------------------------------------------------------------------------------------------------
 // The recovery trace
 
@@ -428,7 +408,6 @@ export function oracle(run: OracleRun, expected: Expected): readonly Criterion[]
     ['needs-user', () => needsUserExactly(run, expected.needsUser)],
     ['usage-per-invocation', () => usagePerInvocation(run)],
     ['no-model-ids', () => noModelIds(run)],
-    ['flow-series-per-completion', () => flowSeriesPerCompletion(run)],
     ['recovery-trace', () => recoveryTrace(run, expected.trace)],
   ];
   return criteria.map(([name, grade]) => ({ name, ...grade() }));

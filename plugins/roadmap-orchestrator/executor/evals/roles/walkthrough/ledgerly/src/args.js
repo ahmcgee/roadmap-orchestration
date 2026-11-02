@@ -17,6 +17,7 @@ export function parseOptions(argv, spec, command) {
     if (!Object.hasOwn(spec, name)) {
       throw new UsageError(`unknown option ${a} for "${command}"; its options are ${Object.keys(spec).map((k) => `--${k}`).join(', ')}`);
     }
+    if (Object.hasOwn(options, name)) throw new UsageError(`${a} is given twice; keep one ${a} option`);
     if (spec[name] === 'flag') {
       options[name] = true;
       continue;

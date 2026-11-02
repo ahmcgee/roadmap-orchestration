@@ -1,0 +1,115 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "packages/xenon/src/vessel-export.ts",
+      "hunk": {
+        "path": "packages/xenon/src/vessel-export.ts",
+        "line": 2
+      },
+      "text": "vesselExport writes the caller's access token to a log: `console.debug(input.token)`. Corpus rule T-2 forbids this and names debug logs explicitly, and A1 requires following the corpus export contract, so A1 is not delivered. The same line is a side effect in an exported function, which also breaks the 'every exported function is pure' clause of contracts/api.md. Nothing in the spec calls for logging here.",
+      "contractRef": "contracts/api.md; corpus 0010_Exports.md T-2",
+      "defect": "security",
+      "evidence": [
+        "packages/xenon/src/vessel-export.ts:2",
+        "corpus 0010_Exports.md T-2: 'never write a token to a log, including debug logs'",
+        "contracts/api.md: 'Every exported function is pure'"
+      ],
+      "experiments": [
+        {
+          "command": "node --input-type=module -e \"import('./packages/xenon/src/vessel-export.ts').then(m=>{const r=m.vesselExport({id:'Oak-7',token:'SECRET-TOKEN'});console.log('RESULT',JSON.stringify(r))})\"",
+          "output": "SECRET-TOKEN\nRESULT {\"vessel\":\"Oak-7\"}"
+        },
+        {
+          "command": "node --test packages/xenon/test/vessel-export.test.ts",
+          "output": "private\n✔ export record shape (0.892548ms)\nℹ tests 1\nℹ pass 1"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "blocking",
+      "path": "packages/xenon/test/vessel-export.test.ts",
+      "hunk": {
+        "path": "packages/xenon/test/vessel-export.test.ts",
+        "line": 4
+      },
+      "text": "The only test asserts the vessel field and nothing about token confidentiality, so it passes while the token is printed to its own output. The green unit lane is therefore no evidence for T-2. It needs an assertion that fails against the current implementation.",
+      "contractRef": "corpus 0010_Exports.md T-2",
+      "defect": "test-inadequate",
+      "evidence": [
+        "packages/xenon/test/vessel-export.test.ts:4",
+        "The test run prints the fixture token 'private' and still reports pass 1, fail 0"
+      ],
+      "experiments": [
+        {
+          "command": "node --test packages/xenon/test/vessel-export.test.ts",
+          "output": "private\n✔ export record shape (0.892548ms)\nℹ tests 1\nℹ pass 1\nℹ fail 0"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "path": null,
+      "hunk": null,
+      "text": "I-1 cannot be credited at this head. It shows 'Observation: none (not covered, which never counts as passed)' and names a witness on lane `journey`, but the spec declares only lane `unit`. The executable checks report no missing witness tests, and T-1 behaviour does hold in the unit test, but the supplied observation is still none. Separately, I-1 requires the export contract as a whole while it is anchored only at T-1, so the T-2 breach also leaves it unmet. The root should confirm that the witness lane is correct for this unit.",
+      "contractRef": "I-1",
+      "defect": null,
+      "evidence": [
+        "Obligation I-1 in the gate message: Witness 'lane journey, tests export'; Observation none",
+        "spec.json Lanes section: only `unit` is declared"
+      ],
+      "experiments": [],
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Remove `console.debug(input.token)` from packages/xenon/src/vessel-export.ts, and do not log the token anywhere else. Keep `return { vessel: input.id }` unchanged.",
+    "Extend packages/xenon/test/vessel-export.test.ts through the real vesselExport entry point so that it fails if the token reaches a log. For example, capture console.debug, log, info, warn and error (or the stdout and stderr writes) during the call and assert that the token never appears. Confirm the new assertion fails against the current implementation before removing the log line. Keep the existing vessel assertion.",
+    "Regenerate goldens with `node tools/gen-goldens.ts` after the fix, and do not hand-edit them. The signature should not change, so goldens/xenon.json should stay as it is at this head."
+  ],
+  "reasons": [
+    "A1 not met: T-1 holds (id 'Oak-7' is returned verbatim in the vessel field), but the implementation logs the access token, which violates T-2 and the purity clause of contracts/api.md. The unit lane is green only because no test checks for this.",
+    "A2 met: the executor's regeneration was byte-identical. Comparing goldens/xenon.json with the baseline by module shows one added module, packages/xenon/src/vessel-export.ts, and no others changed or removed. The diff touches only the three expected paths.",
+    "I-1 not credited: its observation is none, and the T-2 breach leaves the export contract unmet.",
+    "Spec cite ruling C-1 was not inspected: it does not appear in the pinned corpus, and gate review does not read a rulings ledger."
+  ],
+  "premises": [
+    {
+      "claim": "The new export logs the access token on every call.",
+      "evidence": [
+        {
+          "path": "packages/xenon/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The new export returns the supplied id unchanged in the vessel field.",
+      "evidence": [
+        {
+          "path": "packages/xenon/src/vessel-export.ts",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "claim": "The only new test asserts just the vessel field.",
+      "evidence": [
+        {
+          "path": "packages/xenon/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

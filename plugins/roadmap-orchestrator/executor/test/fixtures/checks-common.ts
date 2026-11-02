@@ -1,21 +1,21 @@
-// The executable checks before the gate (M4a rev 3, D1 witness presence, D2 mutation smoke, E plan-check shape) over
+// The executable checks before the gate (M4a rev 3, D1 witness presence, D2 mutation smoke, E pre-build shape) over
 // corpus-unit's arc: u1 adds `mul` in a corpus arc whose one obligation I-1 (at T-1) is witnessed on the fake `journey`
 // lane, scripted per tree through the arc's control file (`scriptTree`). Options shape I-1 (activation, deliverers, test
 // ids), what u1's spec declares (I-1, witness items), the journey lane (testPaths, a wrapper argv), u1's risk and the
-// plan (more units, known defects, the plan-check shape).
-import { readFileSync, writeFileSync } from 'node:fs';
+// plan (more units, known defects, the pre-build shape).
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import type { RiskTier } from '../../src/routing/types.ts';
-import { commitAll, writeFiles } from '../helpers/repo.ts';
+import { commitAll,writeFiles } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import type { TreePlan } from '../helpers/witness.ts';
-import { type CorpusUnitArc, setupCorpusArc } from './corpus-unit.ts';
-import { editJson, editPlan, specPathOf } from './route-common.ts';
+import { type CorpusUnitArc,setupCorpusArc } from './corpus-unit.ts';
+import { editJson,editPlan,specPathOf } from './route-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -51,7 +51,7 @@ export type ChecksOptions = Readonly<{
   trees?: Readonly<Record<string, TreePlan>>;
   /** More units, each a copy of u1's spec with its own id (the plan gains them after u1). */
   more?: readonly string[];
-  /** Edits of the plan JSON (known defects, the plan-check shape), after everything else. */
+  /** Edits of the plan JSON (known defects, the pre-build shape), after everything else. */
   plan?: (p: Json & { units: Json[] }) => void;
 }>;
 
@@ -70,12 +70,12 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
     const lanes = o['lanes'] as Json[];
     const lane: Json = { ...lanes[0]!, ...(opts.resources === undefined ? {} : { resources: opts.resources }), argv: opts.argv?.(wrapper) ?? lanes[0]!['argv'], ...(opts.testPaths === undefined ? {} : { testPaths: opts.testPaths }) };
     o['lanes'] = [lane];
-    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [lane], obligations: [], mapping: { systems: [] } }).lanes[0]!);
     const [i1] = o['obligations'] as Json[];
     const witness = { lane: 'journey', testIds: [...testIds].sort(), ...(opts.files === undefined ? {} : { files: [...opts.files].sort() }) };
     o['obligations'] = [{
       ...i1, activation: opts.activation ?? 'must-hold', deliveredBy: [...(opts.deliveredBy ?? [])], witness,
-      proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness },
+      proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} },
     }];
   });
   editJson(specPathOf(d, 'u1'), (s) => {
@@ -105,5 +105,5 @@ export async function checksArc(opts: ChecksOptions): Promise<ChecksArc> {
 
 /** The stage-outcome facts of `unit`, in log order. */
 export function outcomeFacts(d: CorpusUnitArc['d'], unit = 'u1'): readonly StageOutcomeFact[] {
-  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [e.fact] : []));
+  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit ? [e.fact] : []));
 }

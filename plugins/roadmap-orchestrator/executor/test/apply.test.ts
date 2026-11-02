@@ -3,45 +3,45 @@
 // the log, with and without a fact; an apply's rejections (files changed since they were hashed, a startup row) and its smoke of a backend the new routing needs; and the crash cells of the apply
 // matrix row. Named tests: apply.classifier-table, apply.fold, apply.rejections, apply.smoke-new-backend,
 // apply.crash-cells, apply.recovered-after-start; M4a rev 3 (N3): classify.priority-edit-no-drain,
-// classify.plan-check-shape-dropped, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
-// classify.knowndefect-cut-fixer-refused, classify.reentry-widen-with-ruling, classify.reentry-widen-without-ruling-refused; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
-// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke, cmd.scope,
+// classify.pre-build-shape-dropped, classify.knowndefect-refusals, classify.knowndefect-cycle-refused,
+// classify.knowndefect-cut-fixer-refused, classify.evidence-covers-scope; M2: apply.cut-*, apply.reenter-*, apply.pool-*,
+// apply.capacity-*, apply.after-non-prefix-* (G3), apply.revalidate-after-smoke,
 // apply.stale-after-evidence-revision, classify.evidence-covers-scope (M4b run 3).
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import { type CommandOutcome, applyCommand } from '../src/commands/apply.ts';
-import { pollCommands, readReceipt, submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, PlanChange } from '../src/core/events.ts';
-import { type UnitId, arcId, clauseId, commandId, edgeId, invocationIdOf, opKey, planRev, poolInstance, resourceName, sha, specRev, unitId } from '../src/core/ids.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
-import type { CommandBody, ResidueKey } from '../src/core/records.ts';
+import { describe,test } from 'node:test';
+import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
+import { pollCommands,readReceipt,submitCommand } from '../src/commands/queue.ts';
+import type { Fact,IntentOf,PlanChange } from '../src/core/events.ts';
+import { arcId,clauseId,commandId,edgeId,invocationIdOf,opKey,planRev,poolInstance,resourceName,sha,specRev,unitId } from '../src/core/ids.ts';
+import { openJournal,readJournal } from '../src/core/log.ts';
+import type { CommandBody,ResidueKey } from '../src/core/records.ts';
 import { FoldInvariantError } from '../src/core/state.ts';
 import { absPath } from '../src/core/values.ts';
-import { type Classified, changesScope, classify, commandScope } from '../src/input/classify.ts';
+import { type Classified,changesScope,classify,commandScope,splitCutReason } from '../src/input/classify.ts';
 import {
-  PLAN_INPUT, SPEC_INPUT, keptInput, planInForce, readInputFiles, recordPlan, requirePlanInForce, revisionInForce, specShaInForce,
+PLAN_INPUT,SPEC_INPUT,keptInput,planInForce,readInputFiles,recordPlan,requirePlanInForce,revisionInForce,specShaInForce,
 } from '../src/input/inforce.ts';
-import { pinDispatch, repin, runOp } from '../src/pipeline/dispatch.ts';
+import { pinDispatch,repin,runOp } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { outcomeFact } from '../src/pipeline/transitions.ts';
 import { reentryAllowed } from '../src/pipeline/unit.ts';
-import { type StageHolder, reserve } from '../src/resources/reserve.ts';
-import { requestOf } from '../src/resources/pool.ts';
 import { recover } from '../src/recover/recover.ts';
+import { requestOf } from '../src/resources/pool.ts';
+import { type StageHolder,reserve } from '../src/resources/reserve.ts';
 import { resolveRouting } from '../src/routing/layers.ts';
 import { specPatchOp } from '../src/spec/patch.ts';
 import { fileSha256 } from '../src/spec/spec.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { followingContext } from './fixtures/steer-common.ts';
+import { type ArcDescriptor,type ArcRun,type UnitSpecJson,applyBody,commandContextFor,contextFor,setupArc } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { PLAN_APPLY, crashCells } from './matrix.ts';
-import { events } from './fixtures/invoke-specs.ts';
-import { followingContext } from './fixtures/steer-common.ts';
-import { type ArcDescriptor, type ArcRun, type UnitSpecJson, applyBody, commandContextFor, contextFor, setupArc } from './fixtures/unit-common.ts';
+import { PLAN_APPLY,crashCells } from './matrix.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;
@@ -84,7 +84,7 @@ const evidenceGlobs = (s: Json): void => {
 const tool = { argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] } };
 const DB = { name: 'db', probe: tool, teardown: tool };
 
-/** Pins `unit`'s dispatch on its spec in force, as its first plan-check does. */
+/** Pins `unit`'s dispatch on its spec in force, as its first pre-build does. */
 function pin(r: ArcRun, unit: string): void {
   const u = r.unit(unit);
   const { spec, sha256 } = loadUnitSpec(r.ctx, u);
@@ -100,12 +100,12 @@ function decide(r: ArcRun, unit: string, stage: string, outcome: string, cls: st
 
 const routingBase = { profile: 'default', config: null, arcRoles: 'm4b' } as const;
 
-function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = []): Classified {
+function classifyNow(r: ArcRun, residues: readonly ResidueKey[] = [], reason = 'Reviewed revision'): Classified {
   const { runDir } = r.ctx;
   const inForce = requirePlanInForce(runDir, r.journal.view);
   return classify({
     runDir, view: r.journal.view, inForce, revision: revisionInForce(runDir, inForce), next: readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), residues,
-    routing: routingBase, proposer: { type: 'apply' },
+    routing: { ...routingBase, config: r.d.config ?? null }, proposer: { type: 'apply', reason },
   });
 }
 
@@ -122,6 +122,7 @@ function accept(r: ArcRun): void {
 type Row = Readonly<{
   name: string;
   units?: readonly UnitSpecJson[];
+  reason?: string;
   /** Before the arc's first context (the baseline records the files as they are then). */
   before?: (d: ArcDescriptor) => void;
   setup?: (r: ArcRun) => void;
@@ -136,7 +137,7 @@ const specChange = (d: ArcDescriptor, unit: string, edit: Extract<PlanChange, { 
   ({ type: 'spec', unit: unitId(unit), edit, specRev: specRev(rev), specSha256: fileSha256(absPath(specPath(d, unit))) });
 const inFlight = (r: ArcRun): void => {
   pin(r, 'u1');
-  decide(r, 'u1', 'plan-check', 'approve', 'advance');
+  decide(r, 'u1', 'pre-build', 'approve', 'advance');
 };
 const revise = (d: ArcDescriptor): void => editSpec(d, 'u1', (s) => {
   addClause(s);
@@ -144,6 +145,12 @@ const revise = (d: ArcDescriptor): void => editSpec(d, 'u1', (s) => {
 });
 
 const ROWS: readonly Row[] = [
+  {
+    name: 'a dispatched unit has a risk floor; its systems can change',
+    setup: (r) => pin(r, 'u1'),
+    edit: (d) => editPlan(d, (p) => { p.units[0]!['risk'] = 'low'; p.units[0]!['systems'] = ['lib']; }),
+    expect: [/unit u1 is dispatched: its risk may not change/],
+  },
   { name: 'add a unit: now', edit: (d) => addUnit(d, 'u4'), expect: () => [{ type: 'unit-added', unit: unitId('u4') }] },
   {
     name: 'a removed unit id is never planned again',
@@ -179,15 +186,6 @@ const ROWS: readonly Row[] = [
   { name: 'an undispatched unit\'s plan entry: now', edit: (d) => editPlan(d, (p) => void (p.units[1]!['risk'] = 'high')), expect: () => [{ type: 'unit-changed', unit: unitId('u2') }] },
   { name: 'an undispatched unit\'s spec: now', edit: (d) => editSpec(d, 'u2', addClause), expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)] },
   {
-    name: 'a dispatched unit\'s lower risk and its scope: refused (M3: its risk may rise)',
-    setup: (r) => pin(r, 'u1'),
-    edit: (d) => editPlan(d, (p) => {
-      p.units[0]!['risk'] = 'low';
-      p.units[0]!['scope'] = ['src/**'];
-    }),
-    expect: [/unit u1 is dispatched: its risk may not change/, /unit u1 is dispatched: its scope may not change/],
-  },
-  {
     name: 'a new `after` on a dispatched unit: refused',
     setup: (r) => {
       pin(r, 'u1');
@@ -208,37 +206,33 @@ const ROWS: readonly Row[] = [
   },
   { name: 'an evidence-only edit of an in-flight unit: in force at once', setup: inFlight, edit: (d) => editSpec(d, 'u1', evidenceGlobs), expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)] },
   {
-    name: 'classify.evidence-covers-scope: evidenceGlobs naming the unit\'s own paths are refused, the lane, entry and scope pattern named',
+    name: "classify.evidence-covers-scope: evidenceGlobs naming tracked paths of the unit's systems or protection are refused, naming lane, entry and path",
     edit: (d) => {
-      editPlan(d, (p) => void (p.units[1]!['scope'] = ['src/cli.js', 'test/unit/u2.test.js']));
-      editSpec(d, 'u2', (s) => {
-        s['scope'] = ['src/cli.js', 'test/unit/u2.test.js'];
-        s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**/*.js', 'test/unit/u2.test.js', 'coverage/**'] }));
-      });
-      editSpec(d, 'u3', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['test/**'] }))));
+      editSpec(d, 'u2', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js', 'test/add.test.js', 'coverage/**'] }))));
+      editSpec(d, 'u3', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['.roadmap/**'] }))));
     },
     expect: [
-      /^unit u2 lane mul: evidenceGlobs entry `src\/\*\*\/\*\.js` covers `src\/cli\.js` of the unit's scope\. evidenceGlobs declare the files the lane's run writes \(its outputs\)/,
-      /^unit u2 lane mul: evidenceGlobs entry `test\/unit\/u2\.test\.js` covers `test\/unit\/u2\.test\.js` of the unit's scope/,
-      /^unit u3 lane mul: evidenceGlobs entry `test\/\*\*` covers `test\/\*\*` of the unit's scope/,
+      /^unit u2 lane mul: evidenceGlobs entry `src\/add.js` covers tracked path `src\/add.js` of the unit's systems/,
+      /^unit u2 lane mul: evidenceGlobs entry `test\/add.test.js` covers tracked path `test\/add.test.js` of the unit's systems/,
+      /^unit u3 lane mul: evidenceGlobs entry `\.roadmap\/\*\*` covers protectedPaths entry `\.roadmap`/,
     ],
   },
   {
-    name: 'classify.evidence-covers-scope: a spec in force that breaks the rule (an older release\'s arc) stays readable; an edit not touching its unit applies',
-    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
+    name: 'classify.evidence-covers-scope: a spec in force that breaks the rule stays readable; an edit not touching its unit applies',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js'] })))),
     setup: inFlight,
     edit: (d) => editSpec(d, 'u2', addClause),
     expect: (r) => [specChange(r.d, 'u2', 'undispatched', 1)],
   },
   {
-    name: 'classify.evidence-covers-scope: that in-flight unit\'s evidence edit applies once it fixes the entry, and is refused while it keeps it',
-    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**'] })))),
+    name: 'classify.evidence-covers-scope: an in-flight evidence edit applies once fixed, and is refused while it keeps the conflict',
+    before: (d) => editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js'] })))),
     setup: inFlight,
     edit: (d, r) => {
-      editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/**', 'out/**'] }))));
+      editSpec(d, 'u1', (s) => void (s['lanes'] = (s['lanes'] as Json[]).map((l) => ({ ...l, evidenceGlobs: ['src/add.js', 'out/**'] }))));
       const kept = classifyNow(r);
       assert.equal(kept.kind, 'rejected', JSON.stringify(kept));
-      if (kept.kind === 'rejected') assert.deepEqual(kept.reasons.map((x) => x.split('.')[0]), ['unit u1 lane mul: evidenceGlobs entry `src/**` covers `src/**` of the unit\'s scope']);
+      if (kept.kind === 'rejected') assert.deepEqual(kept.reasons.map((x) => x.split('. evidenceGlobs')[0]), ["unit u1 lane mul: evidenceGlobs entry `src/add.js` covers tracked path `src/add.js` of the unit's systems"]);
       editSpec(d, 'u1', evidenceGlobs);
     },
     expect: (r) => [specChange(r.d, 'u1', 'evidence', 1)],
@@ -246,15 +240,6 @@ const ROWS: readonly Row[] = [
   { name: 'any other edit at the same rev: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', addClause), expect: [/changed but is still at rev 1; a revision sets rev 2/] },
   { name: 'rev + 1 of an in-flight unit: pending', setup: inFlight, edit: revise, expect: (r) => [specChange(r.d, 'u1', 'revision', 2)] },
   { name: 'rev + 2: refused', setup: inFlight, edit: (d) => editSpec(d, 'u1', (s) => void (s['rev'] = 3)), expect: [/is at rev 3, but the unit's recorded rev is 1; a revision sets rev 2/] },
-  {
-    name: 'rev + 1 changing the spec\'s scope: refused',
-    setup: inFlight,
-    edit: (d) => editSpec(d, 'u1', (s) => {
-      s['rev'] = 2;
-      s['scope'] = ['src/**'];
-    }),
-    expect: [/its spec's scope and resources may not change/],
-  },
   {
     name: 'rev + 1 of an approved unit: refused',
     setup: (r) => {
@@ -310,7 +295,7 @@ const ROWS: readonly Row[] = [
         expect: { path: absPath(tmpDir('apply-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
       }) });
       // The executor restarted with the attempt open: crash-abandoned (M4a rev 3, `openAttempt`).
-      r.journal.fact({ kind: 'executor-started', generation: 2 });
+      r.journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
     },
     edit: revise,
     expect: (r) => [specChange(r.d, 'u1', 'revision', 2)],
@@ -493,7 +478,7 @@ const M2_ROWS: readonly Row[] = [
   // cut
   { name: 'apply.cut-unstarted: a unit that never started: now', edit: cutUnits('u3'), expect: () => [cutChange('u3')] },
   { name: 'apply.cut-parked: a parked unit: now', setup: parkAtGate, edit: cutUnits('u1'), expect: () => [cutChange('u1')] },
-  { name: 'apply.cut-in-task: a unit active past its dispatch: refused', setup: inFlight, edit: cutUnits('u1'), expect: [/^unit u1 is in a task \(past plan-check\); pause it, or let it park, before cutting it$/] },
+  { name: 'apply.cut-in-task: a unit active past its dispatch: refused', setup: inFlight, edit: cutUnits('u1'), expect: [/^unit u1 is in a task \(past pre-build\); pause it, or let it park, before cutting it$/] },
   {
     name: 'apply.cut-paused: a paused unit is in no task: now',
     setup: (r) => {
@@ -538,9 +523,10 @@ const M2_ROWS: readonly Row[] = [
   },
   { name: 'apply.cut-added: a unit added cut: refused', edit: (d) => { addUnit(d, 'u4'); cutUnits('u4')(d); }, expect: [/^unit u4 is added cut/] },
   {
-    name: 'apply.cut-ruling: a cut citing a ruling the ledger does not hold: refused',
-    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u3')['cut'] = { reason: 'superseded by the v2 API', ruling: 'C-99' })),
-    expect: [/^unit u3's cut cites ruling C-99, which the ledger .*rulings\.md does not hold$/],
+    name: 'apply.cut-reason: a cut without apply authorization is refused',
+    reason: ' ',
+    edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u3')['cut'] = { reason: 'superseded by the v2 API' })),
+    expect: [/^cut needs apply --reason$/],
   },
   // re-entry
   { name: 'apply.reenter-parked: a parked unit re-entered under a new id: now', setup: parkAtGate, edit: reenter('u4', 'u1'), expect: () => reentered('u4', 'u1') },
@@ -551,7 +537,7 @@ const M2_ROWS: readonly Row[] = [
       decide(r, 'u1', 'build', 'interrupted', 'hold');
     },
     // A pause records no failure: the held lineage has none to name.
-    edit: reenter('u4', 'u1', { scope: ['src/**'] }, { fixes: undefined }),
+    edit: reenter('u4', 'u1', { systems: ['app'] }, { fixes: undefined }),
     expect: () => reentered('u4', 'u1'),
   },
   { name: 'apply.reenter-active: a unit neither parked nor held: refused', setup: inFlight, edit: reenter('u4', 'u1'), expect: [/^unit u4 re-enters u1, which is active; only a parked or held unit is re-entered$/] },
@@ -583,23 +569,18 @@ const M2_ROWS: readonly Row[] = [
     },
     expect: [/^unit u4 re-enters u1, which this apply cuts$/],
   },
+  { name: 'apply.reenter-risk-floor: lowering inherited risk without a reason is refused', reason: ' ', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
   {
-    name: 'apply.reenter-envelope: a scope beyond the lineage\'s envelope, no ruling cited: refused',
+    name: 'apply.reenter-reset: a reset needs apply authorization',
+    reason: ' ',
     setup: parkAtGate,
-    edit: reenter('u4', 'u1', { scope: ['src/lib/**', 'docs/**'] }),
-    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope contracts\/\*\*, src\/\*\*, test\/\*\* \(every scope u1's lineage was dispatched with\), and its spec cites no active ruling for u4 that names exactly those patterns$/],
-  },
-  { name: 'apply.reenter-risk-floor: a risk below the lineage\'s floor: refused', setup: parkAtGate, edit: reenter('u4', 'u1', { risk: 'low' }), expect: [/^unit u4: risk low is below its lineage's floor med$/] },
-  {
-    name: 'apply.reenter-reset: a reset needs an active ruling of the ledger',
-    setup: parkAtGate,
-    edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-7' } }),
-    expect: [/^unit u4's reset cites ruling C-7, which the ledger .* does not hold$/],
+    edit: reenter('u4', 'u1', {}, { reset: { reason: 'Reset the counters' } }),
+    expect: [/^unit u4: resetting counters needs apply --reason$/],
   },
   {
     name: 'apply.reenter-reset-ruled: a reset backed by C-1, the spec unchanged: now',
     setup: parkAtGate,
-    edit: reenter('u4', 'u1', {}, { reset: { ruling: 'C-1' } }, unchanged),
+    edit: reenter('u4', 'u1', {}, { reset: { reason: 'Reset the counters' } }, unchanged),
     expect: () => reentered('u4', 'u1', true),
   },
   // fixes (arc feedback 2026-10-16)
@@ -726,7 +707,7 @@ function runRow(row: Row): void {
     try {
       row.setup?.(r);
       row.edit(d, r);
-      const v = classifyNow(r, row.residues);
+      const v = classifyNow(r, row.residues, row.reason);
       if (row.expect === 'unchanged') assert.deepEqual(v, { kind: 'unchanged' });
       else if (typeof row.expect === 'function') {
         assert.equal(v.kind, 'accepted', JSON.stringify(v));
@@ -756,7 +737,7 @@ describe('apply.classifier-table M2: cut, re-entry, the effective graph, pools, 
 });
 
 // ---------------------------------------------------------------------------------------------------
-// M4a rev 3 rows (N3): priority (F1b), known defects (F4), the plan-check shape (E), re-entry widening (F5)
+// M4a rev 3 rows (N3): priority (F1b), known defects (F4), the pre-build shape (E), re-entry widening (F5)
 
 const KD = (id: string, fixUnit: string, lane = 'mul'): Json => ({ id, match: { type: 'lane', lane }, fixUnit });
 const withKnownDefects = (...defects: Json[]) => (d: ArcDescriptor): void => editPlan(d, (p) => void (p['knownDefects'] = defects));
@@ -835,32 +816,9 @@ const M4A_ROWS: readonly Row[] = [
     edit: (d) => editPlan(d, (p) => void (unitJson(p, 'u1')['priority'] = 'high')),
     expect: [/^unit u1 is merged; its priority is fixed$/],
   },
-  {
-    name: 'classify.reentry-widen-with-ruling: a scope beyond the envelope on a cited ruling naming exactly the added patterns',
-    before: withRuling('C-2', 'u4 may also edit `docs/**`.', ['u4']),
-    setup: parkAtGate,
-    edit: (d) => {
-      reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
-      citing('u4', 'C-1', 'C-2')(d);
-    },
-    expect: () => [
-      { type: 'unit-added', unit: unitId('u4') },
-      { type: 'unit-reentered', unit: unitId('u4'), reenters: U1, reset: false, widened: { patterns: ['docs/**'], ruling: 'C-2' } },
-    ] as unknown as readonly PlanChange[],
-  },
-  {
-    name: 'classify.reentry-widen-without-ruling-refused: a cited ruling naming other patterns does not widen',
-    before: withRuling('C-2', 'u4 may also edit `docs/**` and `lib/**`.', ['u4']),
-    setup: parkAtGate,
-    edit: (d) => {
-      reenter('u4', 'u1', { scope: ['src/**', 'docs/**'] })(d);
-      citing('u4', 'C-1', 'C-2')(d);
-    },
-    expect: [/^unit u4: scope docs\/\*\* lies outside its lineage's envelope .*and its spec cites no active ruling for u4 that names exactly those patterns$/],
-  },
 ];
 
-describe('apply.classifier-table M4a rev 3: priority, known defects, plan-check shape, re-entry widening', () => {
+describe('apply.classifier-table M4a rev 3: priority, known defects, pre-build shape, re-entry widening', () => {
   for (const row of M4A_ROWS) runRow(row);
 });
 
@@ -888,12 +846,6 @@ describe('M4a rev 3 edits that drain nothing', () => {
     });
   });
 
-  test('classify.plan-check-shape-dropped (dev.17): the removed `planCheck.shape` is read and dropped, so adding it changes nothing', T, () => {
-    for (const shape of ['by-builder', 'uniform']) {
-      assert.deepEqual(scopeOf((d) => editPlan(d, (p) => void (p['planCheck'] = { shape }))), { changes: [], scope: { type: 'none' } }, shape);
-    }
-  });
-
   test('classify.knowndefect-refusals: a valid known-defects edit drains nothing', T, () => {
     assert.deepEqual(scopeOf(withKnownDefects(KD('K-1', 'u3')), inFlight), { changes: [{ type: 'known-defects' }], scope: { type: 'none' } });
   });
@@ -903,7 +855,7 @@ describe('M4a rev 3 edits that drain nothing', () => {
 // The fold
 
 const factsOf = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const applied = (d: ArcDescriptor) => factsOf(d).filter((f): f is Extract<Fact, { kind: 'plan-applied' }> => f.kind === 'plan-applied');
+const applied = (d: ArcDescriptor) => factsOf(d).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'plan-applied' }> => f.kind === 'plan-applied');
 
 test('apply.fold: the plan in force is the latest plan-applied fact (none before one); its spec edits move the unit\'s spec in force, and the fold refuses what the rules refuse', T, () => {
   const d = setupArc({ steps: [], units: [{ id: 'u1' }, { id: 'u2' }] });
@@ -954,12 +906,12 @@ test('apply.fold: the plan in force is the latest plan-applied fact (none before
     const evidenceSha = fileSha256(absPath(specPath(d, 'u1')));
     assert.deepEqual(view.unit(U1).spec, { rev: 1, sha256: evidenceSha });
     assert.equal(loadUnitSpec(r.ctx, r.unit('u1')).spec.lanes[0]!.evidenceGlobs[0], 'out/**');
-    const moved = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { gate: { med: 'summit' } } as never, unit: null });
+    const moved = resolveRouting({ profile: 'default', classes: null, repoConfig: null, plan: { verifier: { med: 'summit' } } as never, unit: null });
     assert.ok(repin(r.journal, moved, view.dispatchOf(U1)!) !== null);
     assert.deepEqual(view.unit(U1).spec, { rev: 1, sha256: evidenceSha }, 'a re-pin keeps the spec in force');
 
     // A revision is pending until the unit re-opens on it; the driver re-opens only at a boundary that allows it.
-    decide(r, 'u1', 'plan-check', 'approve', 'advance');
+    decide(r, 'u1', 'pre-build', 'approve', 'advance');
     decide(r, 'u1', 'build', 'success', 'advance');
     revise(d);
     accept(r);
@@ -973,7 +925,7 @@ test('apply.fold: the plan in force is the latest plan-applied fact (none before
     assert.equal(reentryAllowed(view.unit(U1)), true, 'before lanes the worktree is clean');
     r.journal.fact({ kind: 'reopened', unit: U1, command: null, specRev: specRev(2), specSha256: revision as never });
     const u = view.unit(U1);
-    assert.deepEqual([u.status, u.stage, u.decided, u.spec, u.pendingRevision, u.reopened], ['active', 'plan-check', null, { rev: 2, sha256: revision }, null, { command: null, specRev: 2 }]);
+    assert.deepEqual([u.status, u.stage, u.decided, u.spec, u.pendingRevision, u.reopened], ['active', 'pre-build', null, { rev: 2, sha256: revision }, null, { command: null, specRev: 2 }]);
     assert.equal(applied(d).length, 3);
   } finally {
     r.journal.close();
@@ -1004,7 +956,7 @@ for (const c of BOUND_CASES) {
       for (let i = 1; i <= c.failures; i++) r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'gate', attempt: i, outcome: 'revise', class: 'revise', chargeable: true } as Fact);
       decide(r, 'u1', 'gate', 'escalate', 'park');
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, c.failures);
-      reenter('u4', 'u1', {}, { fixes: `u1/gate#${c.failures + 1}`, ...(c.reset ? { reset: { ruling: 'C-1' } } : {}) })(d);
+      reenter('u4', 'u1', {}, { fixes: `u1/gate#${c.failures + 1}`, ...(c.reset ? { reset: { reason: 'Reset the counters' } } : {}) })(d);
       const { id, outcome } = await command(r, applyBody(d));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
       const receipt = readReceipt(r.ctx.runDir, commandId(id), 'applied');
@@ -1089,7 +1041,7 @@ test('apply.rejections: files changed since they were hashed, and a startup row 
     assert.equal(ok.outcome.kind, 'applied');
     const receipt = readReceipt(r.ctx.runDir, ok.id as never, 'applied');
     assert.ok(receipt?.state === 'applied');
-    assert.deepEqual(receipt.verified, ['plan rev 2 in force', '{"type":"unit-added","unit":"u2"}']);
+    assert.deepEqual(receipt.verified, ['plan rev 2 in force', '{"type":"unit-added","unit":"u2"}', 'advisory: {"kind":"system-overlap","systems":["app"],"units":["u1","u2"]}']);
     const facts = applied(d);
     assert.deepEqual(facts.map((f) => [f.rev, f.command]), [[1, null], [2, ok.id]]);
     assert.equal(requirePlanInForce(r.ctx.runDir, r.journal.view).plan.units.length, 2);
@@ -1125,7 +1077,7 @@ test('apply.lane-row-live-units (paid M4b run 3, OP-3): the lane row checks what
     // A successor carrying the same lane is refused for its own lane.
     parkAtGate(r, 'u3');
     reenter('u5', 'u3')(d);
-    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' }]));
+    editSpec(d, 'u5', (s) => void (s['lanes'] = [{ ...unrunnable, cwd: '.', expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' }]));
     assert.match(reason((await command(r, applyBody(d))).outcome), row('u5'));
     editPlan(d, (p) => void (p.units = p.units.filter((u) => u.id !== 'u5')));
     // A cut of the parked u3: the row never runs on what the revision retires.
@@ -1167,7 +1119,7 @@ test('apply.smoke-new-backend: a routing apply that seats a backend the plan in 
   }
 });
 
-test('apply.revalidate-after-smoke: the log moving while the smoke runs is caught by the classification run again just before the commit; nothing is applied', T, async () => {
+test('apply.revalidate-after-smoke: a unit approved during smoke is caught by classification again before commit; its spec stays in force', T, async () => {
   const d = setupArc({
     steps: [{ as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'barrier', name: 'smoke', timeoutMs: 30_000 }, { type: 'emit', value: { ok: true } }] }],
     units: [{ id: 'u1' }, { id: 'u2' }],
@@ -1181,13 +1133,16 @@ test('apply.revalidate-after-smoke: the log moving while the smoke runs is caugh
     editSpec(d, 'u2', addClause);
     const pending = command(r, applyBody(d));
     await reached(d.scenarioDir, 'smoke', 30_000);
-    // Meanwhile u2 is dispatched on its spec in force: the same edit is now a same-rev edit of a dispatched spec.
+    // Meanwhile u2 is dispatched and approved on its spec in force: that spec is now fixed.
     pin(r, 'u2');
+    decide(r, 'u2', 'gate', 'approve', 'advance');
     release(d.scenarioDir, 'smoke');
     const { outcome } = await pending;
-    assert.equal(outcome.kind, 'rejected');
-    assert.match(outcome.kind === 'rejected' ? outcome.reason : '', /^apply rejected \(1 reason\): \(1\) unit u2: its spec .*u2\.json changed but is still at rev 1; a revision sets rev 2/);
-    assert.equal(applied(d).length, 1, 'nothing applied');
+    assert.equal(outcome.kind, 'rejected', JSON.stringify(outcome));
+    assert.ok(outcome.kind === 'rejected');
+    assert.match(outcome.reason, /unit u2 is approved and publishing; its spec is fixed/);
+    assert.equal(applied(d).length, 1, 'the refused edit never committed a revision');
+    assert.equal(r.journal.view.unit(unitId('u2')).spec?.rev, 1, 'the approved spec stayed in force');
     assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'smoke').length, 1, 'the smoke ran, and passed');
   } finally {
     r.journal.close();
@@ -1288,31 +1243,24 @@ describe(`matrix row ${PLAN_APPLY}`, () => {
     });
   }
 
-  test('apply.recovered-after-start: an apply cut short before its fact, whose files a start then put in force, is receipted applied (already in force), not stale', T, async () => {
-    const d = setupArc({ steps: [] });
-    const setup = contextFor(d);
-    addUnit(d, 'u2');
-    const file = submitCommand(setup.ctx.runDir, setup.ctx.plan().arc, applyBody(d));
-    setup.journal.close();
-    const trigger = writeTrigger(tmpDir('apply-crash'), { label: 'plan.apply.after-inputs', occurrence: 1 });
-    const exit = await runFixture('apply-child.ts', [JSON.stringify(d), file.id], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: 30_000 });
-    assert.equal(exit.signal, 'SIGKILL', exit.stderr);
-    assertFired(trigger);
 
-    const r = contextFor(d);
-    try {
-      // A manual start reads the same files: its classification puts them in force as rev 2 (no command).
-      accept(r);
-      const intent = r.journal.view.openIntents().find((i) => i.kind === 'command.apply') as IntentOf<'command.apply'>;
-      const f = followingContext(r);
-      const ctx = commandContextFor(r, f);
-      await recover({ stage: f, commands: ctx });
-      assert.equal(r.journal.view.doneOf(intent.op)?.recoveredBy, 'reconciled');
-      const receipt = readReceipt(ctx.runDir, file.id, 'applied');
-      assert.deepEqual(receipt?.state === 'applied' ? receipt.verified : receipt, ['the files are the plan in force already (rev 2): nothing to apply']);
-      assert.deepEqual(applied(d).map((f) => [f.rev, f.command]), [[1, null], [2, null]], 'no second fact');
-    } finally {
-      r.journal.close();
-    }
-  });
+});
+
+
+test('classify.split-systems: the revision classifier also refuses a child outside its parent systems', T, () => {
+  const d = setupArc({ steps: [], units: [{ id: 'u1', systems: ['app'] }] });
+  const r = contextFor(d);
+  try {
+    addUnit(d, 'u1a');
+    editPlan(d, (p) => {
+      p.units[0]!['cut'] = { reason: splitCutReason([unitId('u1a')]) };
+      p.units[1]!['systems'] = ['lib'];
+    });
+    const inForce = requirePlanInForce(r.ctx.runDir, r.journal.view);
+    const v = classify({ runDir: r.ctx.runDir, view: r.journal.view, inForce, revision: revisionInForce(r.ctx.runDir, inForce),
+      next: readInputFiles(absPath(d.planPath), absPath(d.repo)), residues: [], routing: r.ctx.routingBase,
+      proposer: { type: 'apply', reason: 'Split the parent into focused children' } });
+    assert.equal(v.kind, 'rejected', JSON.stringify(v));
+    if (v.kind === 'rejected') assert.ok(v.reasons.includes('child u1a names systems outside parent u1: lib'), JSON.stringify(v));
+  } finally { r.journal.close(); }
 });

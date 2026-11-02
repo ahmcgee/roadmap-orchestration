@@ -1,0 +1,135 @@
+{
+  "findings": [
+    {
+      "severity": "P1",
+      "obligation": null,
+      "visionClauses": [
+        "V-2",
+        "V-3"
+      ],
+      "claim": "Product defect: toFahrenheit silently rounds every result to a whole degree, and the caller has no way to choose the precision or recover the exact value. By reading the code (not executed), toFahrenheit(37.5) computes exactly 99.5 and returns 100. toCelsius on line 2 does not round, so the two directions disagree: toCelsius(toFahrenheit(37.5)) gives about 37.78, not 37.5. A traveller converting a fractional forecast gets a number that differs from the true conversion, with nothing to show it was rounded. This directly contradicts V-2 and undermines the trust V-3 requires. No active obligation covers this; I-1 only uses an input whose exact result is already an integer.",
+      "cause": "tofahrenheit result conversion: math.round is applied unconditionally so fractional results are silently rounded with no caller-chosen precision",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P2",
+      "obligation": "I-1",
+      "visionClauses": [
+        "V-1"
+      ],
+      "claim": "Vacuous witness: nothing available shows that I-1's recorded 'held' observation exercised toFahrenheit. The observation is pinned to treeSha aaaaaaaa..., the same hash as the base of the audited range, and the diff adds convert.ts as a new file, so toFahrenheit does not appear to exist at that point. No observation is recorded for the audited revision bbbbbbbb.... The checkout contains only convert.ts, and the diff adds no test, so the named witness 'lane unit, tests convert' cannot be found. This concerns the evidence and not the behaviour: by reading the code, toFahrenheit(100) evaluates to 212, so I-1 appears true but is not witnessed. The anchor file docs/target.md is also absent from the checkout. The checkout could be partial, and the match between a tree hash and a range endpoint is an inference, so the suggested mutant is the deciding check. It has not been run: a real I-1 witness must fail on it, because it makes toFahrenheit(100) return 211.",
+      "cause": "i-1 witness observation: held status is recorded at the range base before tofahrenheit exists and no test exercising it is present at the audited revision",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ],
+      "mutant": {
+        "lane": "unit",
+        "edits": [
+          {
+            "path": "convert.ts",
+            "old": "Math.round(c * 9 / 5 + 32)",
+            "new": "Math.round(c * 9 / 5 + 31)"
+          }
+        ]
+      }
+    }
+  ],
+  "reasons": [
+    "The range adds one file, convert.ts, with two one-line functions. I read it in full and searched the checkout for all uses of both functions; convert.ts is the only file that mentions them.",
+    "No code was executed because this audit had no execution tool. All numeric results come from reading the code and doing the arithmetic by hand, and the mutant has not been run.",
+    "Silent rounding in toFahrenheit is a product defect. I-1's weak evidence is a separate witness problem, and the absent test lane and anchor file may partly reflect missing environment evidence.",
+    "Document drift check: the supplied docs/arch.md matches convert.ts, which is a single module exporting toFahrenheit and toCelsius. docs/arch.md is not in the checkout, so this check used the supplied text.",
+    "Q-1 was not resolved. The Celsius and Fahrenheit scope matches its working assumption and is cheap to extend."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit wraps its whole computation in Math.round, while toCelsius returns the unrounded computation.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "Neither exported function accepts a precision argument; each takes a single number.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "By reading the code, toFahrenheit(100) evaluates to 212, because 100 * 9 / 5 + 32 is exactly 212 and rounding leaves it unchanged.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The architecture document describes one module, convert.ts, exporting toFahrenheit and toCelsius, which matches the code.",
+      "evidence": [
+        {
+          "path": "docs/arch.md",
+          "line": 3
+        },
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Add must-hold obligations serving V-2 and V-3, with a witness using an input whose exact result is fractional, such as toFahrenheit(37.5) = 99.5, and decide the contract for how the caller chooses precision. V-2 and V-3 are advanced by this arc, but the only active obligation, I-1, serves V-1 and uses an input whose exact result is an integer, so it cannot detect silent rounding.",
+      "evidence": [
+        "convert.ts:1 applies Math.round to every result",
+        "I-1 is the only listed obligation; it serves V-1 and its input is toFahrenheit(100)",
+        "The vision lists V-1, V-2 and V-3 as advanced by this arc"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Re-run I-1's witness at the audited revision bbbbbbbb... and confirm that the 'tests convert' witness exists and exercises convert.ts, including that it fails on the supplied +31 mutant.",
+      "evidence": [
+        "I-1's observation is pinned to treeSha aaaaaaaa..., matching the range base",
+        "The diff shows convert.ts as a new file in this range",
+        "A search of the checkout finds only convert.ts and no test file"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

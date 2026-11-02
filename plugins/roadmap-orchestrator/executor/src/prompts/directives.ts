@@ -14,9 +14,7 @@
 //   witnessFixDirectives  D1: required witness test ids missing or failing after a green certified series, then every required id
 //   smokeFixDirectives    D2: target witness tests that still pass with the unit's production change reverted
 //   repeatRedDirective    F2: a red lane that repeated its previous red exactly, so the executor did not rerun it
-//   SCOPE_GROWTH_BLOCKER, revertedPathsDirective   scope growth (2026-10-15): how a builder reports an out-of-scope path it
-//                         needs (the build report's `blockers`), and the fix round after salvage reverted its out-of-scope edits
-//   restoredPathsDirective  plan defects (2026-10-16): the round after a scope accept took reverted paths in
+//   revertedPathsDirective  the fix round after salvage reverted edits to protected paths
 import type { TestRef } from '../core/events.ts';
 import type { LaneId } from '../core/ids.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
@@ -41,25 +39,14 @@ export function resolveUnmetDirective(unmet: readonly Readonly<{ clause: string;
   return `The merge is committed, but the resolve round changed nothing beyond it while these acceptance clauses of the spec are still unmet: ${unmet.map((u) => `${u.clause} (${u.text})`).join('; ')}. Carry them out now, run targeted checks and return your report for executor certification.`;
 }
 /** A steer round's directive (R11): the architect's brief follows it verbatim. */
-export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief within the unit\'s scope, run targeted checks and return your report for executor certification. The brief:';
+export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief against the unit\'s intent and non-goals, run targeted checks and return your report for executor certification. The brief:';
 
 /**
- * Scope growth (2026-10-15): what a builder does with an out-of-scope path the work needs. It never keeps one: it names it in
- * the report's `blockers`, which the gate reads; a unit's scope grows only through the root agent.
- */
-export const SCOPE_GROWTH_BLOCKER = 'list each such path in your report\'s blockers as "scope growth: <path>: <why the spec needs it>" and change nothing for it: only the root agent grows a unit\'s scope (its plan-check proposes the growth, `roadmap scope accept` lands it)';
-
-/**
- * The fix round after salvage reverted the build's edits outside the pinned scope (`paths`, still outside it), their content
+ * The fix round after salvage reverted the build's edits to protected `paths`, their content
  * kept under `kept` (the salvage's rejected dir, `files/<path>`).
  */
 export function revertedPathsDirective(paths: readonly string[], kept: string): string {
-  return `The executor reverted your edits to these paths after your last round, because they are outside the unit's pinned scope: ${paths.join(', ')} (your versions are kept under ${kept}/files). Do not edit them again: the executor keeps only in-scope changes. If the spec cannot be met without them, ${SCOPE_GROWTH_BLOCKER}.`;
-}
-
-/** Plan defects (2026-10-16): reverted paths a scope accept has since taken into the unit's scope. */
-export function restoredPathsDirective(paths: readonly string[], kept: string): string {
-  return `The unit's scope now includes these paths, whose edits the executor reverted after your last round: ${paths.join(', ')}. Your versions are kept under ${kept}/files: restore them (or redo the edits) as part of this round.`;
+  return `The executor reverted edits to protected paths: ${paths.join(', ')} (kept under ${kept}/files). Keep these paths unchanged; report a blocker if the spec requires a protected edit.`;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 // dev.17, the flaky ledger (DESIGN-1.0.md §4 "Flaky ledger"; src/pipeline/deflake.ts, src/pipeline/deflakemint.ts), integrated
 // over real processes, real git and the fake backends: the plan's candidate lane `flaky` (system `flaky`, run when a diff
 // touches `flaky/**`) is red on its first run and green after (a marker file outside the repo; removing it makes the lane
@@ -9,11 +10,11 @@
 // nothing), deflake.reflake (a flake after the deflake merged mints a second, told of the first; one after the second raises
 // `flake-recurring` and mints nothing), deflake.park (a parked deflake drops its edges and raises `deflake-parked`),
 // deflake.verification-budget (runs × the lane's measured median against the verification budget),
-// deflake.verification-budget-repair (an approve over it repaired through the plan-check's repair turn), deflake.verify-runs (a
+// deflake.verification-budget-repair (an approve over it repaired through the pre-build's repair turn), deflake.verify-runs (a
 // deflake unit's verification runs its lane that many times, every run passing), deflake.stochastic (a k-of-n lane never
 // flakes), and the deflake revision's crash cells (deflake.crash.<label>).
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { DesignRecord } from '../src/core/design.ts';
@@ -41,13 +42,13 @@ import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { deflakeContext, flakyLane, freshMarker, reflake, unitInForce } from './fixtures/deflake-common.ts';
-import { SCENARIO_TIMEOUT_MS, U1 as STAGE_U1, keptSpec, planCheckAnswer, planCheckRepairStep, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
+import { SCENARIO_TIMEOUT_MS, U1 as STAGE_U1, keptSpec, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
 import { type ArcDescriptor, type ArcRun, MUL_LANE, SUITE_LANE, UNIT_SCOPE, appendSteps, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { DEFLAKE_REVISION, crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 4 };
 
-const PRE_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const PRE_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const STRAIGHT = [...PRE_LANES, 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** Each step keyed to `unit`. */
@@ -60,22 +61,22 @@ const FLAKY_SCOPE = [...UNIT_SCOPE, 'flaky/**'];
 const deflakeBuild = (files: Readonly<Record<string, string>>): Step => codexStep([{ type: 'commit', message: 'deflake', files }], { argv: ['exec', '-C'] });
 /** A deflake unit's approving design record (dev.17 design pass): its verification, two runs of the flaky lane. */
 const DEFLAKE_DESIGN: JsonValue = {
-  kind: 'module', changes: [{ system: null, paths: ['flaky/**'], lines: 5 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [],
-  newSystem: null, verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
+  kind: 'module', changes: [{system:'flaky',paths:['flaky/**'],lines:5}], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [],
+  verification: { type: 'reproduce-then-fix', condition: 'the marker absent: the lane red', runs: 2 },
 };
 /**
- * A unit straight through: approved plan-check (a deflake unit's with its verification), a build committing `files` (a
+ * A unit straight through: approved pre-build (a deflake unit's with its verification), a build committing `files` (a
  * planned unit's beside mul and `flaky/<unit>.txt`, so its candidate runs the flaky lane), an approving gate.
  */
 const straight = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => unit.startsWith('deflake-')
-  ? of(unit, [planCheckStep({ decision: 'approve', design: DEFLAKE_DESIGN }), deflakeBuild(files), gateStep({ decision: 'approve' })])
+  ? of(unit, [deflakeBuild(files), gateStep({ decision: 'approve' })])
   : of(unit, [planCheckStep({ decision: 'approve' }), mulBuild({ [`flaky/${unit}.txt`]: `${unit}\n`, ...files }), gateStep({ decision: 'approve' })]);
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 const planOf = (r: ArcRun): PlanM1 => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
 
 /** The admission the scheduler would give unit `id`'s `stage` now: the real admitter over the plan in force. */
-function admission(r: ArcRun, id: string, stage: 'plan-check' | 'build'): Admission {
+function admission(r: ArcRun, id: string, stage: 'pre-build' | 'build'): Admission {
   const { w } = deflakeContext(r);
   return admitter((u) => r.ctx.routing(u).table, specFacts(w.stage))({
     view: r.journal.view, plan: planOf(r), unit: unitInForce(r, id), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
@@ -83,7 +84,7 @@ function admission(r: ArcRun, id: string, stage: 'plan-check' | 'build'): Admiss
 }
 
 /** A unit driver gate asking the real admitter at every admission boundary; chains always run. */
-const admitted = (r: ArcRun, id: string): Gate => (next) => Promise.resolve(next.kind === 'chain' || admission(r, id, next.stage as 'plan-check').kind === 'admit');
+const admitted = (r: ArcRun, id: string): Gate => (next) => Promise.resolve(next.kind === 'chain' || admission(r, id, next.stage as 'pre-build').kind === 'admit');
 
 /** Runs unit `id` of the plan in force through the driver, over the run's wiring (its arbiter woken meanwhile). */
 async function run(r: ArcRun, id: string, gate: Gate = admitted(r, id)) {
@@ -116,7 +117,7 @@ const HELD_BY_DEFLAKE_1 = { kind: 'wait', constraints: [{ type: 'deflake', defla
  */
 function flakyArc(marker: string, flaky: readonly string[], others: readonly string[], steps: readonly Step[]): ArcDescriptor {
   return setupArc({
-    units: [...flaky.map((id) => ({ id, scope: FLAKY_SCOPE })), ...others.map((id) => ({ id }))],
+    units: [...flaky.map((id) => ({ id, systems: ['core', 'flaky'] })), ...others.map((id) => ({ id }))],
     suite: [SUITE_LANE, { ...flakyLane(marker), cadence: 'candidate', systems: ['flaky'] }], systemsMap: SYSTEMS, steps,
   });
 }
@@ -138,8 +139,8 @@ describe('the flaky ledger', () => {
       assert.equal(first.length, 1);
       assert.deepEqual([first[0]!.owner, first[0]!.lane, first[0]!.set, first[0]!.on, first[0]!.forgiven, first[0]!.event.failing], [{ type: 'unit', unit: 'u1' }, 'flaky', 'suite', 'tip', true, []]);
 
-      // u4 starts (dispatched at plan-check) before the deflake exists: in flight.
-      await stepUntil(r, 'u4', (f) => f.stage === 'plan-check');
+      // u4 starts (dispatched at pre-build) before the deflake exists: in flight.
+      await stepUntil(r, 'u4', (f) => f.stage === 'pre-build');
 
       // The ledger mints one deflake unit for the lane key.
       assert.equal(pending(r), true);
@@ -151,7 +152,7 @@ describe('the flaky ledger', () => {
       assert.deepEqual(deflake.deflake, { keys: [{ type: 'lane', lane: 'flaky' }] });
       assert.deepEqual(deflake.after, []);
       assert.deepEqual(milestonesOfUnit(plan, deflake.id), [], 'milestone-exempt');
-      assert.deepEqual(deflake.scope, ['flaky/**'], 'a suite lane\'s deflake takes its systems\' paths');
+      assert.deepEqual(deflake.systems, ['flaky'], 'a suite lane\'s deflake takes its systems');
       const applied = facts(r).filter((f) => f.kind === 'plan-applied').at(-1);
       assert.ok(applied?.kind === 'plan-applied' && applied.source.type === 'deflake');
       const { w } = deflakeContext(r);
@@ -163,9 +164,9 @@ describe('the flaky ledger', () => {
       // Prioritised: it ranks with the repair units, before every planned waiter.
       assert.ok(compareRank(rankOf(r.journal.view, plan, deflake.id), rankOf(r.journal.view, plan, unitInForce(r, 'u2').id)) < 0);
       // Code edges: u2 (not started, runs flaky) waits; u3 (mul only) does not; the deflake and the unit in flight do not.
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), HELD_BY_DEFLAKE_1);
-      assert.deepEqual(admission(r, 'u3', 'plan-check'), { kind: 'admit' });
-      assert.deepEqual(admission(r, 'deflake-1', 'plan-check'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), HELD_BY_DEFLAKE_1);
+      assert.deepEqual(admission(r, 'u3', 'pre-build'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'deflake-1', 'pre-build'), { kind: 'admit' });
       assert.deepEqual(admission(r, 'u4', 'build'), { kind: 'admit' });
       assert.deepEqual(await run(r, 'u2'), { kind: 'held', needsUser: null });
       assert.deepEqual(outcomes(d, 'u2'), [], 'held before anything ran');
@@ -178,13 +179,14 @@ describe('the flaky ledger', () => {
 
       // The deflake merges (its lane green now); the edge is released and u2 runs.
       assert.deepEqual(await run(r, 'deflake-1'), { kind: 'merged' });
-      assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT);
+      assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT.slice(1));
       assert.equal(deflakeState(r.journal.view, deflake.id), 'merged');
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), { kind: 'admit' });
       assert.deepEqual(await run(r, 'u2'), { kind: 'merged' });
       assert.equal(pending(r), false, 'no flake since the deflake merged');
       raiseDeflakeParked(w.stage);
-      assert.equal(r.journal.view.opsOf('needsuser.raise').length, 0, 'no item');
+      const items = r.journal.view.opsOf('needsuser.raise').map((i) => readNeedsUser(r.ctx.runDir, i.expect.id)!);
+      assert.deepEqual(items.map((i) => [i.reason, i.blocking]), [['revision-notice', false]], 'only the deflake revision notice');
     } finally {
       r.journal.close();
     }
@@ -235,9 +237,10 @@ describe('the flaky ledger', () => {
       assert.deepEqual(await mint(r), { kind: 'applied', admitted: [], recurring: 1 });
       assert.equal(planOf(r).units.filter((u) => u.origin === 'deflake').length, 2, 'no third deflake unit');
       const raises = r.journal.view.opsOf('needsuser.raise');
-      assert.equal(raises.length, 1);
-      const item = readNeedsUser(r.ctx.runDir, raises[0]!.expect.id);
-      assert.ok(item !== null);
+      const items = raises.map((i) => readNeedsUser(r.ctx.runDir, i.expect.id)!);
+      assert.deepEqual(items.map((i) => [i.reason, i.blocking]), [['revision-notice', false], ['revision-notice', false], ['flake-recurring', false]]);
+      const item = items[2];
+      assert.ok(item !== undefined && item !== null);
       assert.deepEqual([item.reason, item.blocking, item.subject], ['flake-recurring', false, { type: 'arc' }]);
       assert.ok(item.evidence.includes(invocationDir(r.ctx.runDir, third.event.red)));
       assert.match(item.summary, /deflake-1 and deflake-2/);
@@ -259,12 +262,12 @@ describe('the flaky ledger', () => {
     try {
       assert.deepEqual(await run(r, 'u1'), { kind: 'merged' });
       assert.deepEqual(await mint(r), { kind: 'applied', admitted: ['deflake-1'], recurring: 0 });
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), HELD_BY_DEFLAKE_1);
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), HELD_BY_DEFLAKE_1);
       const parked = await run(r, 'deflake-1');
       assert.equal(parked.kind, 'parked');
       assert.equal(deflakeState(r.journal.view, unitInForce(r, 'deflake-1').id), 'parked');
       // The edge dropped.
-      assert.deepEqual(admission(r, 'u2', 'plan-check'), { kind: 'admit' });
+      assert.deepEqual(admission(r, 'u2', 'pre-build'), { kind: 'admit' });
       const { w } = deflakeContext(r);
       raiseDeflakeParked(w.stage);
       raiseDeflakeParked(w.stage);
@@ -323,41 +326,18 @@ describe('the flaky ledger', () => {
   });
 });
 
-describe('the verification budget through the plan-check', () => {
-  test('deflake.verification-budget-repair: a deflake unit\'s approve over the budget is refused through the repair turn naming the cost; the repaired runs verify the lane', T, async () => {
-    const marker = freshMarker();
-    const d = flakyArc(marker, ['u1'], [], straight('u1', {}));
-    const r = contextFor(d);
-    try {
-      assert.deepEqual(await run(r, 'u1'), { kind: 'merged' });
-      assert.deepEqual(await mint(r), { kind: 'applied', admitted: ['deflake-1'], recurring: 0 });
-      const unit = unitInForce(r, 'deflake-1');
-      const median = medianLaneMinutes(r.ctx.runDir, r.journal.view, planOf(r), unit.deflake!.keys, LANE_DEADLINE_MS);
-      assert.ok(median !== null && median > 0, `the lane's runs were measured: ${median}`);
-      const over = Math.ceil(31 / median);
-      const design = (runs: number): JsonValue => ({
-        kind: 'module', changes: [{ system: null, paths: ['flaky/**'], lines: 3 }], interfaces: [], failureModes: [], clauses: [{ clause: 'A-1', lanes: ['flaky'] }], breaks: { tests: [], docs: [] }, experiments: [], newSystem: null,
-        verification: { type: 'repeat', rationale: 'the race needs real timing', runs },
-      });
-      const approve = (runs: number): JsonValue => ({ ...(planCheckAnswer({ decision: 'approve' }) as Record<string, JsonValue>), design: design(runs) });
-      const first = planCheckStep({ decision: 'approve' });
-      const repair = planCheckRepairStep({ decision: 'approve' }, [`verification of ${over} runs of lane flaky costs `, 'over the verification budget of 30 lane-minutes']);
-      appendSteps(d, of('deflake-1', [
-        { ...first, acts: [{ type: 'emit', value: approve(over) }] },
-        { ...repair, acts: [{ type: 'emit', value: approve(2) }] },
-        deflakeBuild({ 'flaky/note.txt': 'deterministic now\n' }), gateStep({ decision: 'approve' }),
-      ]));
-      assert.deepEqual(await run(r, 'deflake-1'), { kind: 'merged' });
-      assert.deepEqual(outcomes(d, 'deflake-1'), STRAIGHT, 'the refused answer was repaired within the attempt');
-      const verify = r.journal.view.opsOf('proc.spawn').flatMap((i) => {
-        const sub = i.expect.subject;
-        return sub.purpose === 'lane' && sub.unit === 'deflake-1' && sub.lane === 'flaky' && i.parent.type === 'stage' && i.parent.stage === 'lanes' ? [sub.verify] : [];
-      });
-      assert.deepEqual(verify, [2, 2], 'the repaired answer\'s two runs, each a verification run');
-    } finally {
-      r.journal.close();
-    }
-  });
+describe('root-authored verification', () => {
+  test('deflake.verification-budget-repair: a root-authored design supplies the verification runs exercised by the lane', T, async () => {
+ const marker=freshMarker();const d=flakyArc(marker,['u1'],[],straight('u1',{}));const r=contextFor(d);
+ try {
+ assert.deepEqual(await run(r,'u1'),{kind:'merged'});assert.deepEqual(await mint(r),{kind:'applied',admitted:['deflake-1'],recurring:0});
+ const unit=unitInForce(r,'deflake-1');const median=medianLaneMinutes(r.ctx.runDir,r.journal.view,planOf(r),unit.deflake!.keys,LANE_DEADLINE_MS);assert.ok(median!==null&&median>0);
+ const {w}=deflakeContext(r);await applyPlanEdit(r,w,()=>{const path=join(d.planPath,'..','deflake-1.json');const spec=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...spec,design:DEFLAKE_DESIGN}));});
+ appendSteps(d,of('deflake-1',[deflakeBuild({'flaky/note.txt':'deterministic now\n'}),gateStep({decision:'approve'})]));
+ assert.deepEqual(await run(r,'deflake-1'),{kind:'merged'});assert.deepEqual(outcomes(d,'deflake-1'),STRAIGHT.slice(1));
+ const verify=r.journal.view.opsOf('proc.spawn').flatMap(i=>{const sub=i.expect.subject;return sub.purpose==='lane'&&sub.unit==='deflake-1'&&sub.lane==='flaky'&&i.parent.type==='stage'&&i.parent.stage==='lanes'?[sub.verify]:[]});assert.deepEqual(verify,[2,2],'the root-authored verification runs twice');
+ }finally{r.journal.close();}
+});
 });
 
 describe('verification runs and stochastic lanes', () => {
@@ -456,4 +436,31 @@ describe(`matrix row ${DEFLAKE_REVISION}`, () => {
       }
     });
   }
+});
+
+test('split.deflake-refused: root apply cannot split an executor-minted deflake unit', T, async () => {
+  const d = flakyArc(freshMarker(), ['u1', 'u2'], [], straight('u1', {})), r = contextFor(d);
+  try {
+    assert.deepEqual(await run(r, 'u1'), {kind: 'merged'});
+    assert.equal((await mint(r)).kind, 'applied');
+    const parent = unitInForce(r, 'deflake-1');
+    const {w} = deflakeContext(r);
+    let rejection: unknown;
+    try {
+      await applyPlanEdit(r, w, (plan) => {
+        const units = plan['units'] as Record<string, unknown>[];
+        const entry = units.find((u) => u['id'] === parent.id)!;
+        entry['cut'] = {reason: 'split into deflake-child-1, deflake-child-2'};
+        const spec = JSON.parse(readFileSync(join(d.planPath, '..', `${parent.id}.json`), 'utf8'));
+        for (const id of ['deflake-child-1', 'deflake-child-2']) {
+          writeFileSync(join(d.planPath, '..', `${id}.json`), JSON.stringify({...spec, unit: id, rev: 1}));
+          units.push({...entry, id, spec: `${id}.json`, cut: undefined});
+        }
+      });
+    } catch (error) {rejection = error;}
+    assert.ok(rejection, 'the root split must be rejected');
+    assert.match(String(rejection), /deflake.*(?:cannot split|only the executor)|cannot split.*deflake/);
+    assert.equal(unitInForce(r, 'deflake-1').cut, undefined);
+    assert.ok(!planOf(r).units.some((u) => u.id === 'deflake-child-1'));
+  } finally {r.journal.close();}
 });

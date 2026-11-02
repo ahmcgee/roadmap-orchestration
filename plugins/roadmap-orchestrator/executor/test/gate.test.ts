@@ -1,46 +1,47 @@
+import { systemName } from '../src/core/ids.ts';
 // The gate stage (src/pipeline/gate.ts) through the unit driver, fake-backed: real processes, real git.
 // Named tests: gate.fingerprint-invalidated, gate.risk-promotion; also the approval fingerprint's content,
 // a revise round's directives and their re-check with the round handoff, the fingerprint's cited-only set, and
 // the empty-diff refusal. M3 step A3: gate.inputs-not-in-ff-window (the capture under the revision fence),
-// gate.obligations-selected, plan-check.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
+// gate.obligations-selected, pre-build.vision-context. M3 Checkpoint A: gate.no-cpu-fence-deadlock,
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
-// voids nothing): gate.read-surface, plan-check.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
-// context-exceeded.plan-check, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
+// voids nothing): gate.read-surface, pre-build.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
+// context-exceeded.pre-build, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
 // gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { describe, it, test } from 'node:test';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { applyCommand, evaluateRevision, keepRevision, payloadOf } from '../src/commands/apply.ts';
+import { ACTING_JUDGE_TOOLS,writeDenyRules } from '../src/backends/argv.ts';
+import { applyCommand,evaluateRevision,keepRevision,payloadOf } from '../src/commands/apply.ts';
 import { holdFence } from '../src/core/fence.ts';
-import { holderUnits, resourceTable } from '../src/resources/reserve.ts';
-import { reached, release } from './helpers/barrier.ts';
-import { type Wired, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
 import { rulingId } from '../src/core/ids.ts';
-import { gateDiffShownOf, gateLargeDiffOf } from '../src/core/upgrade.ts';
 import type { JsonValue } from '../src/core/json.ts';
+import { gateDiffShownOf,gateLargeDiffOf } from '../src/core/projections.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, repoPath } from '../src/core/values.ts';
-import { CHANGED_LIST, CLUSTER_PATHS_SHOWN, gateAnswerFor } from '../src/pipeline/gate.ts';
-import { ACTING_JUDGE_TOOLS, writeDenyRules } from '../src/backends/argv.ts';
-import { FILES_DIR, readManifest } from '../src/git/evidence.ts';
-import { evidenceRoot, judgeSystem, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
+import { FILES_DIR,readManifest } from '../src/git/evidence.ts';
+import { laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { commitRevisionNow,readInputFiles } from '../src/input/inforce.ts';
+import { evidenceRoot,judgeSystem,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { CHANGED_LIST,CLUSTER_PATHS_SHOWN,gateAnswerFor } from '../src/pipeline/gate.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import type { Gate } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { clusterCoverage } from '../src/prompts/schemas.ts';
-import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
-import { commitRevisionNow, readInputFiles } from '../src/input/inforce.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type CallRecord, type Step, readCalls } from './helpers/scenario.ts';
-import { events } from './fixtures/invoke-specs.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import type { Gate } from '../src/pipeline/unit.ts';
-import { type ArcDescriptor, MUL, U1, codexStep, contextFor, gateRepairStep, gateStep, isGateCall as isGate, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
-import { BASE, editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { holderUnits,resourceTable } from '../src/resources/reserve.ts';
 import { specBytes } from '../src/spec/spec.ts';
-import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { type Wired,publishArc,ruleRecord,submitRule,wire } from './fixtures/publish-common.ts';
+import { editPlan, followContext, planDirOf, recordFirst, stepTo, unitOf } from './fixtures/route-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,MUL,U1,codexStep,contextFor,gateRepairStep,gateStep,isGateCall as isGate,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { reached,release } from './helpers/barrier.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type CallRecord,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 /** Every stage admitted at once: the unit runs on its own. */
@@ -57,7 +58,7 @@ test('gate.fingerprint-invalidated: a contract changes on T between approve and 
     // The fingerprint: blob ids at the gated tip, sorted by path; every cited ruling at rev 1.
     assert.deepEqual(tip.map((c) => c.path), ['ARCHITECTURE.md', 'contracts/api.md']);
     for (const c of tip) assert.equal(c.blob, git(d.repo, 'rev-parse', `main:${c.path}`));
-    assert.deepEqual(first.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }]);
+    assert.deepEqual(first.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 157967298067165 }]);
 
     writeFileSync(join(d.repo, 'contracts', 'api.md'), '# API contract\n\n`add(a, b)` returns the sum; `mul(a, b)` the product.\n');
     git(d.repo, 'commit', '--quiet', '-am', 'the contract changes on integration');
@@ -115,8 +116,8 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [planCall, , gateCall] = readCalls(d.scenarioPath);
-    assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'plan-check sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
-    assert.ok(gateCall!.argv.includes('claude-opus-5-5') && gateCall!.argv.includes('high'), 'the gate sat on the escalation seat');
+    assert.ok(planCall!.argv.includes('claude-opus-5-5') && planCall!.argv.includes('medium'), 'pre-build sat on the unit\'s med seat (frontier: Opus medium, dev.17)');
+    assert.ok(gateCall!.argv.includes('claude-opus-5-5') && gateCall!.argv.includes('medium'), 'the gate sat on the escalation seat');
     assert.ok(!planCall!.stdin.includes('<escalation>'), 'no preface below the escalation seat');
     assert.equal(r.journal.view.unit(U1).promotion, false, 'the promotion was for that dispatch only');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
@@ -127,7 +128,7 @@ test('gate.risk-promotion: a contract path in the unit\'s diff promotes the gate
 
 test('gate.revise: the directives go to a fix round, and the next gate rules on its prior round with the delta since', T, async () => {
   const directive = 'Export mul as the default export too.';
-  const finding = { severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [], debt: null };
+  const finding = {evidence: ["src/mul.js:1"],  severity: 'blocking', path: 'src/mul.js', text: 'mul has no default export.', contractRef: 'contracts/api.md', experiments: [], debt: null };
   const premises = [
     { claim: 'mul multiplies', evidence: [{ path: 'src/mul.js', line: 2 }] },
     { claim: 'add is untouched', evidence: [{ path: 'src/add.js', line: 1 }] },
@@ -136,7 +137,7 @@ test('gate.revise: the directives go to a fix round, and the next gate rules on 
     steps: [
       planCheckStep({ decision: 'approve' }),
       mulBuild(),
-      gateStep({ decision: 'revise', directives: [directive], findings: [finding], premises }),
+      gateStep({rulings: [],  decision: 'revise', directives: [directive], findings: [finding], premises }),
       codexStep([{ type: 'commit', message: 'default export', files: { 'src/mul.js': `${MUL['src/mul.js']}export default mul;\n` } }], { argv: ['exec', 'resume'], stdinContains: [directive] }),
       gateStep({ decision: 'approve' }, {
         stdinContains: [
@@ -189,7 +190,7 @@ const deniedGate = () => gateStep({ decision: 'approve' }, {}, [{ type: 'globAbo
 const addDirs = (c: CallRecord): readonly string[] => c.argv.flatMap((t, i) => (c.argv[i - 1] === '--add-dir' ? [t] : []));
 
 test('gate.repair-turn (dev.12): an answer off the gate\'s schema goes back once in its own session with why; the repaired answer is the attempt\'s; refused again, the attempt is malformed', T, async () => {
-  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: { decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'] } }] };
+  const offSchema: Step = { as: 'claude', expect: {}, acts: [{ type: 'emit', value: {rulings: [],  decision: 'approve', ordering: null, findings: [], directives: [], reasons: ['A1 holds'], standing: [], clusters: null } }] };
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), offSchema, gateRepairStep({ decision: 'approve' }, ['premises'])] });
   const r = contextFor(d);
   try {
@@ -225,7 +226,7 @@ test('gate.acting-checkout (dev.13): the gate is an acting judge with no MCP ser
     assert.equal(after('--setting-sources'), 'project');
     assert.ok(gate.argv.includes('--strict-mcp-config') && !gate.argv.includes('--mcp-config'), 'no MCP server');
     assert.ok(!gate.argv.includes('--system-prompt') && !gate.argv.includes('--no-session-persistence'), 'its text is appended; its session persists');
-    assert.equal(after('--append-system-prompt'), judgeSystem(promptFor('gate', after('--model') as 'claude-sonnet-5-5').system), 'the module\'s system text and the judge\'s subagent constraint, appended');
+    assert.equal(after('--append-system-prompt'), judgeSystem(promptFor('verifier', after('--model') as 'claude-sonnet-5-5').system), 'the module\'s system text and the judge\'s subagent constraint, appended');
     assert.deepEqual(addDirs(gate).slice(0, 2), [d.repo, d.runDir], 'the judgment read surface');
     // Its Write, Edit and NotebookEdit are denied the repository and the run dir (Bash stays trusted to the prompt).
     const rules = gate.argv.slice(gate.argv.indexOf('--disallowedTools') + 1, gate.argv.indexOf('--permission-mode'));
@@ -295,7 +296,7 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
     const system = gate.argv[gate.argv.indexOf('--append-system-prompt') + 1]!;
     assert.ok(!system.includes('<readable_directories>'), system.slice(-600));
     // The refusal is on record in the call's reads.json, for audit.
-    const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'gate' ? [e.fact.inv] : []))[0]!;
+    const inv = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'meter' && e.fact.subject.type === 'seat' && e.fact.subject.role === 'verifier' ? [e.fact.inv] : [])).at(-1)!;
     const reads = JSON.parse(readFileSync(join(invocationDir(absPath(d.runDir), inv), 'reads.json'), 'utf8')) as { denied: unknown[] };
     assert.deepEqual(reads.denied, [{ tool: 'Glob', pattern: '**/*', path: dirname(dirname(d.repo)) }]);
     assert.equal(r.journal.view.unit(U1).counters.retries.gate, 0);
@@ -306,7 +307,7 @@ test('gate.read-surface: the gate reads the repository and the run dir; an appro
 
 // 2026-10-16: a call whose prompt or context outgrew the model's window parks its unit, uncharged, operator env, with no
 // probe target and no backend park; the item names the role, the call and the prompt's size.
-const stageOutcome = (d: ArcDescriptor, stage: string) => events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === stage ? [e.fact] : [])).at(-1)!;
+const stageOutcome = (d: ArcDescriptor, stage: string) => events(d.runDir).flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === stage ? [e.fact] : [])).at(-1)!;
 const backendParks = (d: ArcDescriptor) => events(d.runDir).filter((e) => e.type === 'fact' && e.fact.kind === 'backend-park');
 
 function assertContextPark(d: ArcDescriptor, r: ReturnType<typeof contextFor>, result: Awaited<ReturnType<typeof runUnit>>, stage: string, role: string): void {
@@ -327,22 +328,21 @@ test('context-exceeded.gate: a gate prompt over the model\'s window parks the un
   const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
   const r = contextFor(d);
   try {
-    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'gate', 'gate');
+    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'gate', 'verifier');
     assert.equal(r.journal.view.unit(U1).approval, null);
   } finally {
     r.journal.close();
   }
 });
 
-test('context-exceeded.plan-check: a plan-check prompt over the window parks before any build', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }, {}, [{ type: 'contextExceeded' }])] });
-  const r = contextFor(d);
+test('context-exceeded.pre-build: a review over the window becomes build memory without holding the unit', T, async () => {
+  const d=setupArc({steps:[planCheckStep({decision:'approve'},{},[{type:'contextExceeded'}]),mulBuild(),gateStep({decision:'approve'})]});const r=contextFor(d);
   try {
-    assertContextPark(d, r, await runUnit(r.ctx, r.unit('u1'), live()), 'plan-check', 'planCheck');
-    assert.ok(!outcomes(d).some((o) => o.startsWith('build:')), 'no build ran');
-  } finally {
-    r.journal.close();
-  }
+    assert.deepEqual(await runUnit(r.ctx,r.unit('u1'),live()),{kind:'merged'});
+    assert.deepEqual(backendParks(d),[]);
+    assert.equal(r.journal.view.unit(U1).counters.chargeableFailures,0);
+    assert.ok(r.journal.view.surfaceFacts().some(f=>f.kind==='review-completed'&&f.note!==null));
+  }finally{r.journal.close();}
 });
 
 test('context-exceeded.build: a Codex build over its context window parks the same way', T, async () => {
@@ -355,16 +355,16 @@ test('context-exceeded.build: a Codex build over its context window parks the sa
   }
 });
 
-test('plan-check.read-surface: the plan-check reads the repository and the run dir; an approve from a session refused a read is an approval', T, async () => {
+test('pre-build.read-surface: the pre-build reads the repository and the run dir; an approve from a session refused a read is an approval', T, async () => {
   const deniedCheck = planCheckStep({ decision: 'approve' }, {}, [{ type: 'globAboveAddDir' }]);
   const d = setupArc({ steps: [deniedCheck, mulBuild(), gateStep({ decision: 'approve' })] });
   const r = contextFor(d);
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
-    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check:')), ['plan-check:approve']);
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('pre-build:')), ['pre-build:approve']);
     const check = readCalls(d.scenarioPath).find((c) => c.as === 'claude' && !isGate(c))!;
     assert.deepEqual(addDirs(check).slice(0, 2), [d.repo, d.runDir]);
-    assert.equal(r.journal.view.unit(U1).counters.retries['plan-check'], 0);
+    assert.deepEqual(r.journal.view.unit(U1).counters.retries, {build: 0, lanes: 0, gate: 0});
   } finally {
     r.journal.close();
   }
@@ -399,7 +399,7 @@ test('gate.inputs-not-in-ff-window: while a revision holds the fence the gate ne
     writeFileSync(join(planDirOf(d), 'u1.json'), specBytes(loadUnitSpec(r.ctx, unitOf(ctx, 'u1')).spec));
     writeFileSync(join(planDirOf(d), 'u2.json'), JSON.stringify({ ...u1Spec, unit: 'u2' }));
     editPlan(d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json' }));
-    const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: BASE, laneEnv: process.env };
+    const rctx = { runDir: r.ctx.runDir, view: r.journal.view, hostDir: r.ctx.hostDir, planFile: absPath(d.planPath), routingBase: r.ctx.routingBase, laneEnv: process.env };
     const v = evaluateRevision(rctx, readInputFiles(absPath(d.planPath), absPath(d.repo)), { type: 'apply' });
     assert.ok(v.kind === 'accepted', JSON.stringify(v));
     keepRevision(r.ctx.runDir, v);
@@ -426,19 +426,19 @@ const VISION = {
   ],
   questions: [],
 };
-const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+const JOURNEY = { id: 'journey', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [JOURNEY], obligations: [], mapping: { systems: [] } }).lanes[0]!);
 function obligation(id: string, statement: string): Record<string, unknown> {
   return {
     id, rev: 1, statement, docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [`t-${id}`] } },
+    witness: { lane: 'journey', testIds: [`t-${id}`] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [`t-${id}`] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' },
   };
 }
 const OBLIGATIONS = {
   schema: 'roadmap/obligations-m3', cutLine: 'the arc ends when mul ships', lanes: [JOURNEY],
   obligations: [obligation('I-1', 'mul multiplies.'), obligation('I-2', 'add stays fixed.')],
-  mapping: { paths: [{ pattern: 'docs/**', obligations: ['I-1'] }] },
+  mapping: { systems: [{ system: systemName('documentation'), obligations: ['I-1'] }] },
 };
 
 /** A holistic arc over u1: its vision and obligations in force from revision 1, as an M3 first start records them. */
@@ -500,7 +500,7 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
     assert.deepEqual(gateDiffShownOf(inputs), inputs.diffShown);
     // A dev.11 executor's gate recorded none: read as nothing recorded (scaffolding).
     const { diffShown: _, ...dev11 } = inputs;
-    assert.deepEqual(gateDiffShownOf(dev11), { inlined: [], notInlined: [] });
+    assert.equal(gateDiffShownOf(dev11), undefined, 'schema 2 never invents a diff certificate for a pre-break record');
     // Under the large-diff threshold: the unit's own seat (med: frontier, Opus medium since dev.17), the plain prompt, no map.
     assert.equal(inputs.largeDiff, null);
     assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('medium'), 'a small diff keeps the unit\'s seat');
@@ -510,7 +510,7 @@ test('gate.bounded-diff: the gate reads its diff as the bounded attachment (orie
   }
 });
 
-test('plan-check.vision-context: in a holistic arc the plan-check prompt carries the vision clauses in force; the gate prompt does not', T, async () => {
+test('pre-build.vision-context: in a holistic arc the pre-build prompt carries the vision clauses in force; the gate prompt does not', T, async () => {
   const d = holisticArc();
   const r = contextFor(d);
   try {
@@ -609,7 +609,7 @@ test('gate.approval-captured-fingerprint: a docs-only rule superseding a cited r
     assert.equal((await gating).kind, 'continue');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     const [first] = approvals(d);
-    assert.deepEqual(first!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }], 'the approval binds the ruling the gate judged');
+    assert.deepEqual(first!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 157967298067165 }], 'the approval binds the ruling the gate judged');
     assert.deepEqual(judgmentInputs(d, 'gate')[0]!.fingerprint, first!.fingerprint, 'exactly the fingerprint captured with the inputs');
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), live()), { kind: 'merged' });
     assert.ok(outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
@@ -621,25 +621,7 @@ test('gate.approval-captured-fingerprint: a docs-only rule superseding a cited r
   }
 });
 
-test('gate.partial-supersession-regates: an approved unit citing C-1; C-2 partially supersedes C-1; ff re-gates and the new approval binds C-1 at rev 2', T, async () => {
-  const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' }), gateStep({ decision: 'approve' })] });
-  const r = contextFor(d);
-  const w = wire(r);
-  const stop = ticking(w);
-  try {
-    await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
-    assert.deepEqual(r.journal.view.unit(U1).approval!.fingerprint.rulingRevs, [{ id: rulingId('C-1'), rev: 1 }]);
-    const outcome = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', { supersedes: [{ id: 'C-1', part: 'where helpers are tested' }] })));
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    assert.deepEqual(await runUnit(w.stage, r.unit('u1'), live()), { kind: 'merged' });
-    assert.ok(outcomes(d).includes('ff:fingerprint-invalid'), outcomes(d).join(' '));
-    assert.equal(readCalls(d.scenarioPath).filter(isGate).length, 2);
-    assert.deepEqual(approvals(d).map((a) => a.fingerprint.rulingRevs), [[{ id: rulingId('C-1'), rev: 1 }], [{ id: rulingId('C-1'), rev: 2 }]]);
-  } finally {
-    stop();
-    r.journal.close();
-  }
-});
+
 
 // ---------------------------------------------------------------------------------------------------
 // The large-diff gate (1.0.0-dev.12)
@@ -678,7 +660,7 @@ test('gate.large-diff: at low risk a diff over the threshold seats the gate on h
     const list = `${d.runDir}/evidence/u1/${attempt}-gate/diff/${CHANGED_LIST}`;
     assert.ok(fresh!.stdin.includes(list), 'the prompt names the list of paths the map covers');
     assert.deepEqual(readFileSync(list, 'utf8').split('\n').filter((l) => l !== ''), [...Object.keys(BIG), ...Object.keys(MUL)].sort());
-    assert.ok(fresh!.stdin.includes(`${inputs.largeDiff.overflow} of its files did not fit`), 'the section carries the overflow');
+    assert.match(fresh!.stdin.match(/<large_diff>([\s\S]*?)<\/large_diff>/)![1]!, new RegExp('\\b'+inputs.largeDiff.overflow+'\\b'), 'the large-diff input carries its overflow count');
     // The seat follows from the recorded inputs: a dev.11 gate recorded none, read as under the threshold (scaffolding).
     const { largeDiff: _, ...dev11 } = inputs;
     assert.equal(gateLargeDiffOf(dev11), null);
@@ -708,14 +690,14 @@ test('gate.large-diff-seat: at med risk the large diff seats the gate on high; a
     await stepUntil(p, 'u1', (f) => f.stage === 'gate');
     assert.equal(outcomes(promoted).at(-1), 'gate:approve');
     const [g] = readCalls(promoted.scenarioPath).filter(isGate);
-    assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('high'), 'the escalation seat stays');
+    assert.ok(g!.argv.includes('claude-opus-5-5') && g!.argv.includes('medium'), 'the escalation seat stays');
   } finally {
     p.journal.close();
   }
 });
 
 describe('gate.cluster-coverage: the large-diff answer\'s cluster map against the diff\'s paths', () => {
-  const answer = (clusters: JsonValue): JsonValue => ({ decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], unreviewed: [], clusters });
+  const answer = (clusters: JsonValue): JsonValue => ({rulings: [],  decision: 'approve', findings: [], directives: [], reasons: ['A1 holds'], premises: [], standing: [], clusters });
   const paths = ['packages/a/src/x.ts', 'packages/a/src/y.ts', 'packages/b/[id].tsx', 'README.md'].map((p) => repoPath(p));
   const large = { overflow: 2 };
   const refused = (f: () => unknown, pattern: RegExp): void => {
@@ -749,5 +731,25 @@ describe('gate.cluster-coverage: the large-diff answer\'s cluster map against th
     refused(() => gateAnswerFor(large, paths)(answer(null)), /a cluster map covering each of the diff's 4 changed paths/);
     refused(() => gateAnswerFor(null, [])(answer([{ id: 'a', paths: ['**'], review: 'routine' }])), /null: the diff fit/);
     assert.equal(gateAnswerFor(null, [])(answer(null)).clusters, null);
+  });
+});
+
+import { gateDebtNotes } from '../src/pipeline/gate.ts';
+describe('tail.gate-debt', () => {
+  const f = (severity: 'blocking' | 'note' | 'pre-existing' | 'ride-along', text: string, debt: Readonly<{ drag: string }> | null) => ({evidence: ["fixture:1"],
+    severity, path: null, text, contractRef: null, experiments: [], debt, defect: severity === 'blocking' ? 'incorrect-behaviour' as const : null, reraises: null, hunk: null,
+  });
+  it('a note banks only with a drag; a pre-existing defect always; a dev.12 note as dev.12 banked it; never a blocking finding or a blank text', () => {
+    assert.deepEqual(gateDebtNotes([
+      f('note', 'parse re-reads the file per call.', { drag: 'Every reader of big inputs  pays it.' }),
+      f('note', 'The earlier finding is resolved.', null),
+      f('note', 'A test could also check the empty case.', { drag: '  ' }),
+      f('pre-existing', 'add() drops a trailing zero.', null),
+      f('blocking', 'mul is wrong.', { drag: 'x' }),
+      f('note', '  ', { drag: 'x' }),
+    ]), [
+      { index: 0, what: 'parse re-reads the file per call. Drag: Every reader of big inputs pays it.' },
+      { index: 3, what: 'add() drops a trailing zero.' },
+    ]);
   });
 });

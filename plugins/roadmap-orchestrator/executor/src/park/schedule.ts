@@ -128,7 +128,7 @@ export function isDue(job: ProbeJob, prev: ProbeState | null, now: Date): boolea
   return Date.parse(prev.nextProbeAt as IsoTime) <= now.getTime();
 }
 
-/** The probe jobs due at `now` (SCHEMAS.md `Prober.due`), except those of targets in `running`. */
+/** The probe jobs due at `now` (SCHEMAS.md "Park schedule"), except those of targets in `running`. */
 export function dueJobs(view: JournalView, now: Date, running: ReadonlySet<string> = new Set()): readonly ProbeJob[] {
   return probeTargets(view).filter((job) => !running.has(probeTargetKey(job.target)) && isDue(job, latestProbe(view, job.target), now));
 }

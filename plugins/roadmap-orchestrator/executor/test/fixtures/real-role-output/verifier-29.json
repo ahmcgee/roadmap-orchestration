@@ -1,0 +1,123 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "packages/flint/src/vessel-export.ts",
+      "text": "vesselExport writes the caller's access token to the debug log with console.debug(input.token). Corpus rule T-2 forbids writing a token to any log, and names debug logs explicitly. A1 requires following the export contract, so A1 is unmet. The call is also a side effect, which breaks the cited contracts/api.md rule that every exported function is pure. The token has already reached the lane's captured stdout.",
+      "contractRef": "corpus 0010_Exports.md T-2; contracts/api.md",
+      "experiments": [
+        {
+          "command": "node /redacted/path  # imports vesselExport and logs the result of vesselExport({ id: 'Oak-7', token: 'SECRET-TOKEN' })",
+          "output": "SECRET-TOKEN\nRESULT {\"vessel\":\"Oak-7\"}"
+        },
+        {
+          "command": "grep -rn -B1 -A1 '^private' /redacted/path",
+          "output": "output/files/stdout:10:private\noutput/files/stdout-11-✔ export record shape (16.94454ms)"
+        }
+      ],
+      "evidence": [
+        "packages/flint/src/vessel-export.ts:2",
+        "/redacted/path",
+        "contracts/api.md"
+      ],
+      "debt": null,
+      "defect": "security",
+      "reraises": null,
+      "hunk": {
+        "path": "packages/flint/src/vessel-export.ts",
+        "line": 2
+      }
+    },
+    {
+      "severity": "blocking",
+      "path": "packages/flint/test/vessel-export.test.ts",
+      "text": "The only witness asserts the vessel field and nothing about token confidentiality. It passes while the token is being logged, so the green unit lane says nothing about the export contract's T-2 clause. A1 requires a test for a function that follows the contract, so the test must fail against the current implementation.",
+      "contractRef": "corpus 0010_Exports.md T-2",
+      "experiments": [
+        {
+          "command": "node --test 'packages/*/test/*.test.ts'",
+          "output": "tests 51, pass 51, fail 0, with console.debug(input.token) present at this head"
+        }
+      ],
+      "evidence": [
+        "packages/flint/test/vessel-export.test.ts:4",
+        "packages/flint/src/vessel-export.ts:2"
+      ],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": {
+        "path": "packages/flint/test/vessel-export.test.ts",
+        "line": 4
+      }
+    },
+    {
+      "severity": "note",
+      "path": null,
+      "text": "Obligation I-1 names 'lane journey' as its witness and its observation is none, but the spec defines only the 'unit' lane. I-1 is anchored at T-1, and the behaviour holds: the unit test and the experiment both return the id verbatim. The obligation is still not observed through its named witness, so the root may want to reconcile it in the plan. This does not change the build directive.",
+      "contractRef": null,
+      "experiments": [],
+      "evidence": [
+        "spec.json for unit u1 rev 1: Lanes lists only `unit`",
+        "obligations: I-1 witness 'lane journey, tests export', Observation none"
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [
+    "Remove console.debug(input.token) from packages/flint/src/vessel-export.ts:2. Do not log the token in any other form, and keep the function free of side effects.",
+    "Extend packages/flint/test/vessel-export.test.ts so it fails if the token reaches any console log method (debug, log, info, warn, error). Capture those methods during the real vesselExport call and assert the token is absent from their output. Keep the existing vessel assertion, and confirm the new test fails against the current implementation.",
+    "Rerun node tools/gen-goldens.ts after the fix and commit any resulting output. Do not edit goldens by hand or make unrelated changes."
+  ],
+  "reasons": [
+    "A1 not met: the id is preserved verbatim (T-1 holds), but the function logs the access token, which violates corpus rule T-2 and the purity rule in contracts/api.md. The witness test does not detect this.",
+    "A2 met: the executor's regeneration came out byte-identical, the diff touches only goldens/flint.json plus the two unit files, and the golden's visible change adds the vessel-export module entry. The fix must regenerate again.",
+    "The green unit lane is not sufficient evidence, because the leak occurs during that passing lane and its log captured the token."
+  ],
+  "premises": [
+    {
+      "claim": "The new export logs its token input.",
+      "evidence": [
+        {
+          "path": "packages/flint/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The export returns the supplied id in its vessel field.",
+      "evidence": [
+        {
+          "path": "packages/flint/src/vessel-export.ts",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "claim": "The witness test asserts only the vessel field.",
+      "evidence": [
+        {
+          "path": "packages/flint/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "Corpus rule T-2 forbids logging tokens, including in debug logs.",
+      "evidence": [
+        {
+          "path": "/redacted/path",
+          "line": 7
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

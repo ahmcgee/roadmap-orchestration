@@ -1,0 +1,526 @@
+{
+  "findings": [
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "unit",
+        "id": "window-rule"
+      },
+      "claim": "window-rule A3 says the wording for the end (\"Sunday at six (8 November)\") is \"built from the window\", but window-rule F1 and settings-file A4 say a recorded hold \"keeps its end when the settings later change\", so after an hours change a confirmation at GET /reserved/<id> worded from the current window would misstate the stored reservedUntil; the wording has to be built from the stored end, and keeper-cli, which reads no settings file (D2 names only SWAPSHELF_DATA) but must show \"until when\" in list (design-keeper A3), has no window to pass at all.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 33
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 42
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 41
+        }
+      ]
+    },
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "census",
+        "rule": "T-29"
+      },
+      "claim": "The census marks T-29 untestable although a lane could check its concrete parts (the --paper, --ink and --rust values and the --letter family on headings in public/style.css, which design-page A4 and page-access A4 both say stay), and this state leaves V-11, a clause the slice advances, served by no obligation: no obligation's serves list names V-11.",
+      "evidence": [
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 23
+        },
+        {
+          "path": "public/style.css",
+          "line": 3
+        },
+        {
+          "path": "public/style.css",
+          "line": 4
+        },
+        {
+          "path": "public/style.css",
+          "line": 7
+        },
+        {
+          "path": "public/style.css",
+          "line": 8
+        },
+        {
+          "path": "public/style.css",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "store-update"
+      },
+      "claim": "store-update A4 and D1 say a stale lock \"is broken and the update proceeds\" but leave the breaking protocol open: two waiters that both judge the lock stale can each remove it, one removing the other's fresh lock, and a lock read between exclusive create and the pid write looks ownerless, either of which gives two holders and breaks T-32 and V-7, while A3's test does not exercise stale-lock breaking under contention.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 13
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 48
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "store-update"
+      },
+      "claim": "store-update A4's \"waiting longer than a few seconds on a live lock\" names no value and updateShelf(path, change) has no injectable timeout, so the witness of the busy failure must really wait those seconds in the fast lane, and nothing checks the production default separately; the same undefined limit can also make A3's hammering and reserve-flow A6's twenty POSTs fail as busy under load.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 13
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "store-update"
+      },
+      "claim": "store-update D2 says reservedUntil and claim are \"null while free\", but A5 and reserve-flow A7 make a lapse a computed reading with no write at the moment of lapse, so a lapsed book is free (T-34) while its reservedBy, reservedUntil and claim stay non-null in the file, and no spec says whether anything clears them.",
+      "evidence": [
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 45
+        },
+        {
+          "path": "src/pages.js",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "store-update"
+      },
+      "claim": "store-update A5 holds a book while reservedUntil \"has not passed\", so at exactly the end instant the book is still held, whereas window-rule A2 treats exactly six on Sunday as a window already ended; the spec does not settle the exact-instant reading that a clock-pinned T-34 boundary test would assert.",
+      "evidence": [
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 44
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "store-update"
+      },
+      "claim": "store-update A5 logs the b2-style warning \"once per load\" while F1 keeps loadShelf per request, so with the seed data the server logs one warning on every request and every keeper command prints it too, which is noise in the plain output design-keeper A3 specifies; the spec does not say where the warning goes for a command.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        },
+        {
+          "path": "src/server.js",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "keeper-cli"
+      },
+      "claim": "keeper-cli defines no clock seam for bin/swapshelf.js, so the T-8 witness (A2, driving the real command under two time zones) must read the real clock to compute today and can fail at a local midnight, and the A3 and A6 lapsed-hold cases can only use real-clock-relative or fixed-date fixtures, where a fixed future date will eventually expire.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 18
+        },
+        {
+          "path": "src/server.js",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "settings-file"
+      },
+      "claim": "settings-file F2 has the witnesses spawn the real src/server.js, but reserve-flow A7's now option exists only on createApp and the entry point exposes no clock, so the T-26 witness (W-4) cannot pin the time and must compare against the real clock, near a window boundary it can flake, and it needs an explicit decision on whether the clock is injected or how the expected end is derived.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 29
+        },
+        {
+          "path": "src/server.js",
+          "line": 31
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 42
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "settings-file"
+      },
+      "claim": "settings-file leaves open whether SWAPSHELF_CONFIG naming a file that does not exist means the defaults of T-13 or a start-up stop; reasonable engineers would differ, and silently using defaults on a mistyped path cuts against the corpus's \"must never take the page down silently\" intent and V-12, and design-keeper A4 lists messages only for T-14 and T-33.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 35
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "reserve-flow"
+      },
+      "claim": "reserve-flow leaves several flow decisions open that its tests and later units depend on: GET /reserved/b2 \"while the book is held\" has no reservedUntil to word for a hold with no end (T-20), a POST with no token has no defined outcome although keeper-cli A10's real POSTs rely on it, GET /reserve/<id> on an already-held book is not said to show the form or the refusal, and a repeated POST with the same token after that hold has lapsed could either show a confirmation that GET /reserved then redirects away or make a new reservation.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 41
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 46
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "design-page"
+      },
+      "claim": "design-page A2 lists the refusals as book just taken, first name missing, book no longer on the shelf, shelf busy and no search match, but reserve-flow A8 adds a name over 60 characters, control characters and a very large body while A1 says to follow the design, so three refusals have no design wording and their engineer will invent copy against V-12.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "design-keeper"
+      },
+      "claim": "design-keeper A2 and keeper-cli A8 cover only wrong or missing arguments, so the shelf-busy failure of store-update A4 and an unreadable or mistyped data file (the monthly failure the corpus describes) have no message or exit code in the keeper's tools, although V-12 covers every error in them.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 3
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 4
+        },
+        {
+          "path": "src/store.js",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "keeper-cli"
+      },
+      "claim": "keeper-cli D1's nextId defaults to one above the highest existing id when absent, and the seed file has no nextId, so if the first write on the file is a remove or collected of b8 that does not also store nextId, the next add reissues b8, the reuse D1 exists to prevent; D1 does not say every command must write the field and no acceptance clause tests this order.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 2
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 10
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "page-access"
+      },
+      "claim": "page-access has no witness or obligation for V-10: I-5 is the only obligation serving V-10 and it covers only server rendering, A1 and the 44-pixel tap targets of A2 can be checked only by a browser the lane does not run, and journeys J-2 and J-4 do not mention tap-target height, so that clause rests on the unit's own report.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 67
+        },
+        {
+          "path": ".roadmap/config.json",
+          "line": 37
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-6"
+      },
+      "claim": "I-6 restates T-17 including \"default data/shelf.json\", but its witness always sets SWAPSHELF_DATA and never runs the default path, so the test would still pass with the default wrong or removed, even though keeper-cli D2 relies on \"the same default as the server\".",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 21
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 75
+        },
+        {
+          "path": "docs/corpus/architecture.md",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The bringUp of MS-1 and MS-2 has empty setup and seed and does not set SWAPSHELF_DATA, so the browser and shell journeys write to the tracked data/shelf.json in the checkout, and a repeat of J-1 finds The Salt Path already reserved with a hold from the real clock unless the file is reset, which the plan does not do.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 31
+        },
+        {
+          "path": "src/store.js",
+          "line": 5
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "settings-file A8 and keeper-cli A11 both edit README.md, and both are unblocked together after design-keeper with no edge between them, so running them in parallel gives a small merge conflict in that file.",
+      "evidence": [
+        {
+          "path": "README.md",
+          "line": 5
+        },
+        {
+          "path": ".roadmap/config.json",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The Phase-0 questions are stale against the sources: P-1 and P-3 ask what the pinned keeper corpus already states (the checkout on the box over ssh, and a change reaching the page when the server next starts), P-2 says the corpus gives no way to release a reservation although T-34 lapses it, P-4's value is already chain.k 1 in config, and T-34 and T-36 appear in no curation or divergence entry although they are the working assumptions of P-2 and P-1, so the record does not show how they entered the corpus, while the vision says \"Open questions: none\".",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 13
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 33
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 32
+        },
+        {
+          "path": "docs/corpus/shelf.md",
+          "line": 45
+        },
+        {
+          "path": ".roadmap/config.json",
+          "line": 2
+        }
+      ]
+    }
+  ],
+  "dispositions": [],
+  "reasons": [
+    "This is a first review, so dispositions is empty.",
+    "I read the server, store, pages, stylesheet, seed data, both existing test files, the corpus files, package.json, README and the roadmap config, and judged every spec against them.",
+    "The census covers T-1 to T-36 once each, and every obligation's statement matches the text of its rule in the corpus files; I did not recompute the textSha256 values.",
+    "Each spec's obligation list matches the systems mapping for that unit's systems, including obligations another unit delivers; I treated this as the mapping working as designed and not as a defect.",
+    "The T-8 time-zone pair does catch a UTC slip at any hour: Pacific/Kiritimati differs from the UTC date from 10:00 UTC and Etc/GMT+12 differs before 12:00 UTC.",
+    "The palette contrast facts match my own calculation from the hex values in public/style.css, and the dates in the specs check out: 25 October and 8 November 2026 are Sundays.",
+    "Two findings are blocking because they are a contradiction between binding clauses and a census state a lane could disprove; the others are open decisions, flake risks or small costs that leave the pack runnable, so they are notes.",
+    "The missing clock seams are notes and not blocking: the units can be built and the witnesses can run, but with real-clock exposure.",
+    "I did not run any code or tests, as this review is read-only, and the claim about what happens when a journey is repeated assumes no reset outside the plan, since the plan's setup and seed are empty."
+  ],
+  "premises": [
+    {
+      "claim": "createApp takes only dataPath today, and the entry point passes no clock or settings.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 15
+        },
+        {
+          "path": "src/server.js",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "claim": "The server reads the shelf with loadShelf on each request to the shelf page, with no cache.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 19
+        },
+        {
+          "path": "src/store.js",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "claim": "saveShelf uses a temporary name built only from the pid, as store-update A2 says.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "claim": "The default data path is the cwd-relative data/shelf.json, a tracked file.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 5
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "Book b2 in the seed data has reservedBy set and no reservedUntil, and the seed file has no nextId field.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 2
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "The floor witness always sets SWAPSHELF_DATA when it spawns the server, and passes TZ through.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 21
+        }
+      ]
+    },
+    {
+      "claim": "The stylesheet defines concrete paper, ink, rust and lettering values and applies the lettering to h1 and h2.",
+      "evidence": [
+        {
+          "path": "public/style.css",
+          "line": 3
+        },
+        {
+          "path": "public/style.css",
+          "line": 4
+        },
+        {
+          "path": "public/style.css",
+          "line": 7
+        },
+        {
+          "path": "public/style.css",
+          "line": 8
+        },
+        {
+          "path": "public/style.css",
+          "line": 27
+        },
+        {
+          "path": "public/style.css",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "claim": "The corpus says the commands act on the file in the checkout on the box over ssh, and that a settings change reaches the page when the server next starts.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 13
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "claim": "The roadmap config sets chain.k to 1 and provides a Playwright browser tool for walkthroughs.",
+      "evidence": [
+        {
+          "path": ".roadmap/config.json",
+          "line": 2
+        },
+        {
+          "path": ".roadmap/config.json",
+          "line": 37
+        }
+      ]
+    }
+  ]
+}

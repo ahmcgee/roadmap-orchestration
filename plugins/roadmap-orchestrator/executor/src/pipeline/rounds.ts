@@ -1,4 +1,4 @@
-// Build rounds (plan "Pipeline", R3; DESIGN-1.0.md §4 Fix rounds). The implementer is dispatched in one of
+// Build rounds (plan "Pipeline", R3; DESIGN-1.0.md §2.1 "Unit pipeline and review"). The implementer is dispatched in one of
 // five rounds: the four a decision asks for (`BuildRound`, transitions.ts) and `continue`:
 //
 //   fresh     a new session in the unit worktree (created on the unit branch at the integration tip the
@@ -29,7 +29,7 @@
 // of the unit that has a session (`lastImplementerSession`); a continue resumes the interrupted one. When
 // there is none (the unit's builds were lost with tree effects, a fresh build was malformed without
 // reporting one, or a fresh Codex exec was interrupted before its thread started), or that session ran on
-// another implementer seat (a plan-check raised the risk after a build, and the raised seat binds another
+// another implementer seat (a pre-build raised the risk after a build, and the raised seat binds another
 // model or backend: a session cannot move across them), the round starts a fresh session instead, on the
 // kept branch and worktree, with the same inputs plus NO_SESSION_NOTE (a continue: its decided round's
 // inputs, then NO_SESSION_NOTE and CONTINUE_FRESH_DIRECTIVE; a reopen's fresh round: RESPEC_FRESH_DIRECTIVE, then
@@ -61,10 +61,7 @@
 // same attempt, fresh on the kept worktree with the round's inputs and NO_SESSION_NOTE (`PreparedRound.fresh`,
 // `callRound`).
 //
-// No escalation (dev.17): a stalled build stays on its seat and runs out its chargeable bound, then parks. The D4 escalation
-// (a cold fix round on `build.high` after a stalled round, `implementer-escalated`) is retired: every build seat binds the
-// efficient class, whose builds consult an Opus advisor at their own decision points (backends/argv.ts). A dev.16 log's
-// `implementer-escalated` facts still fold (core/state.ts `buildTier`).
+// A stalled build keeps its seat until its chargeable bound, then parks. M4 diagnosis can reroute eligible builds.
 //
 // Deadlines (M3: the unit's pinned bounds, `limits`). A fix round's window is the measured lane series plus the
 // unit's edit allowance (`editAllowanceMin`), a fresh build's its `freshBuildMin`; the built-in values are
@@ -75,33 +72,33 @@
 //
 // Every directive's text is src/prompts/directives.ts's (one canonical place).
 //
-// Codex resume collision (DESIGN-1.0.md §3 "Codex facts"): a `codex exec resume` that dies at once because
+// Codex resume collision (DESIGN-1.0.md "Git truth and backend invariants"): a `codex exec resume` that dies at once because
 // the thread is still held by a live session is a transient, not a verdict on the unit. `callImplementer`
 // retries such a call once, as a new invocation with the same deadline.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { freshClaudeImplementerSession } from '../backends/argv.ts';
-import type { IntentOf, TestRef } from '../core/events.ts';
+import type { CiFact,IntentOf,TestRef } from '../core/events.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
-import { type ImplementerSessionId, type InvocationId, type SeatRev, type Sha, type Sha256Hex, type UnitId, invocationId, parseInvocationId } from '../core/ids.ts';
+import { type ImplementerSessionId,type InvocationId,type SeatRev,type Sha,type Sha256Hex,type UnitId,invocationId,parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { UnitState } from '../core/state.ts';
-import { isRed, type Bounds, type ImplementerSession, STDERR_FILE } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RefName, type RepoPath, branchRef, isoTimeOf } from '../core/values.ts';
-import { refTarget, revParse } from '../git/git.ts';
-import { type FixRound, ignoredText } from '../prompts/inputs.ts';
+import { isRed,type Bounds,type ImplementerSession,STDERR_FILE } from '../core/records.ts';
+import { type AbsPath,type IsoTime,type RefName,type RepoPath,branchRef,isoTimeOf } from '../core/values.ts';
+import { refTarget,revParse } from '../git/git.ts';
+import { type FixRound,ignoredText } from '../prompts/inputs.ts';
 import {
-  CONTINUE_DIRECTIVE, CONTINUE_FRESH_DIRECTIVE, NO_SESSION_NOTE, RESOLVE_DIRECTIVE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, STEER_DIRECTIVE, dirtyLanesDirective,
-  flakyLaneDirective, movedHeadDirective, repeatRedDirective, resolveUnmetDirective, resumeDirectives, smokeFixDirectives, stalledLaneDirective, witnessFixDirectives,
+CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,dirtyLanesDirective,
+flakyLaneDirective,movedHeadDirective,repeatRedDirective,resolveUnmetDirective,resumeDirectives,smokeFixDirectives,stalledLaneDirective,witnessFixDirectives,
 } from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
-  type BackendCallOutcome, type BackendCallSpec, type ImplementerDispatch, type StageContext, type StageParent, callBackend, implementerSeatRev, minutesMs, runOp, sameSession, seatTripleOf, sessionNeverPersisted, unitBranch,
-  unitWorktree,
+type BackendCallOutcome,type BackendCallSpec,type ImplementerDispatch,type StageContext,type StageParent,callBackend,implementerSeatRev,minutesMs,runOp,sameSession,seatTripleOf,sessionNeverPersisted,unitBranch,
+unitWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
-import { LANE_STALL_MS, type LaneRecord, type VerificationTree, dirtyPaths, removeVerificationTree, seriesDurationMs } from './lanes.ts';
+import { LANE_STALL_MS,type LaneRecord,type VerificationTree,dirtyPaths,removeVerificationTree,seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
 
@@ -118,7 +115,7 @@ export function steerBrief(runDir: AbsPath, sha: Sha256Hex): string {
 
 /** What a decision asks for: one of the table's rounds, with the inputs its kind needs. */
 export type DecidedRound =
-  /** `directives`: added to a reopen's resumed session after the respec directive (a reverted path a scope accept took in). */
+  /** `directives`: added to a reopen's resumed session after the respec directive (additional round guidance). */
   | Readonly<{ kind: 'fresh'; directives?: readonly string[] }>
   | Readonly<{
     kind: 'fix';
@@ -198,9 +195,10 @@ export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly 
 export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.flaky && l.diagnostic !== null ? [...l.fixDirs, ...l.diagnostic.fixDirs] : l.fixDirs);
 
 /** The fix round after a red or not-certified series: the failing evidence, and for a dirty checkout, why. */
-export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha): DecidedRound {
+export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha, comparisons: readonly CiFact[] = []): DecidedRound {
+  const compared = comparisons.filter((c) => c.kind === 'lane-base-compared');
   const red = ledger.filter((l) => isRed(l.verdict));
-  if (red.length > 0) return { kind: 'fix', fix: { failingEvidenceDirs: red.flatMap(failingEvidenceDirs), directives: failingLaneDirectives(red) }, ledger, verification: null, salvage };
+  if (red.length > 0) return { kind: 'fix', fix: { baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {
     kind: 'fix',
@@ -310,7 +308,7 @@ export function lastImplementerSession(ctx: StageContext, unit: UnitId): SeatedS
 /**
  * The session a round on `dispatch` may resume: `earlier` when its seat has the same session key (R4: backend and
  * model; an effort-only change resumes it with the new `--effort`, OR-L3), else null. A session cannot move across
- * models or backends, so a build whose seat moved to another model (a plan-check risk raise after a build) starts a
+ * models or backends, so a build whose seat moved to another model (a pre-build risk raise after a build) starts a
  * fresh session on the kept branch and worktree, its round's inputs given with NO_SESSION_NOTE.
  */
 function onSeat(dispatch: ImplementerDispatch, earlier: SeatedSession | null): ImplementerSessionId | null {
@@ -418,7 +416,7 @@ export function resolveContinuation(
   return { worktree: round.worktree, branch: round.branch, ...resumed(dispatch, invocationSession(ctx, called.inv), fix, []), deadlineAt };
 }
 
-/** The unit worktree on the unit branch; created at the integration tip for the unit's first build (or, dev.17, its scaffold). */
+/** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */
 export async function ensureWorktree(ctx: StageContext, unit: UnitId, parent: StageParent): Promise<Readonly<{ worktree: AbsPath; branch: RefName }>> {
   const worktree = unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit);
   const branch = unitBranch(ctx.plan().arc, unit);

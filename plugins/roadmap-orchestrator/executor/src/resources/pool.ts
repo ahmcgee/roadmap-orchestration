@@ -1,4 +1,4 @@
-// Capacity as pools of instances (M2, A3; SCHEMAS.md "M2: Resources"): what a request asks for, which units
+// Capacity as pools of instances (M2, A3; SCHEMAS.md "Residues and reservation states"): what a request asks for, which units
 // grant it, and whether it can ever be granted.
 //
 //   named resource       `{name, probe, teardown}`        its own single instance, the name

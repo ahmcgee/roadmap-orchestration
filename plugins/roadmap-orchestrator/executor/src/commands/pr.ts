@@ -1,14 +1,13 @@
 // `roadmap pr --repo <path> --arc <arc>` (M4a, OR-Q19, OR-L5, OR-L7): a host act, idempotent, the forge its only record.
 //
 // It reads the arc from its verified `refs/roadmap/<arc>` alone, through the chain's one derivation (src/chain.ts, H20):
-// the plan in force (integration branch, `chain`), the latest `arc-completed` head (no plan revision after it), and the
-// `corpus-amendment` facts. Then:
+// the plan in force (integration branch, `chain`) and latest `arc-completed` head (no plan revision after it). Then:
 // 1. pushes the completed head to `origin`'s integration branch by a leased fast-forward, never `main` (src/forge/push.ts);
 // 2. derives the base: `main` for the chain's first arc, else the previous arc's branch. A previous arc whose PR merged
 //    with a merge commit (its head in the merge's history) hands its own base down, walking the chain; one merged by
 //    squash or rebase stops the walk at its branch and flags `needsRebase`;
 // 3. finds the arc's PR by head: an open one is re-targeted when its base differs; a merged one is reported as is; none
-//    is created with a code-rendered body that lists the arc's amendments and says to merge with merge commits.
+//    is created with a code-rendered body that says to merge with merge commits.
 // A closed, unmerged PR is the owner's decision and is refused, as is any forge or git failure (a CLI error).
 //
 // Supersession (owner ruling 2026-10-16): when arc N+1 started on arc N's head before N's PR merged, fixes N's PR needs
@@ -17,7 +16,7 @@
 // base, and N's PR is closed with a comment naming it. Every later run, with or without the flag, keeps that: the base
 // walk passes a superseded PR as it passes one merged with a merge commit, and a run finishes a close a crash cut short.
 // Refused: no previous arc, the previous arc's PR merged already, or no open PR of it to supersede.
-import { type ArcRef, ArcRefError, amendmentsOf, completedHeadOf, readArcRef } from '../chain.ts';
+import { type ArcRef, ArcRefError, completedHeadOf, readArcRef } from '../chain.ts';
 import type { ArcId, Sha } from '../core/ids.ts';
 import { type AbsPath, type BranchName, branchName } from '../core/values.ts';
 import { GhError, resolveRepo } from '../forge/gh.ts';
@@ -39,7 +38,6 @@ type CompletedArc = Readonly<{
   branch: BranchName;
   head: Sha;
   previousArc: ArcId | null;
-  amendments: ReturnType<typeof amendmentsOf>;
 }>;
 
 function completedArc(repo: AbsPath, arc: ArcId): CompletedArc {
@@ -58,7 +56,6 @@ function completedArc(repo: AbsPath, arc: ArcId): CompletedArc {
     branch: ref.plan.integrationBranch,
     head: completed.head,
     previousArc: ref.plan.chain?.previousArc ?? null,
-    amendments: amendmentsOf(ref),
   };
 }
 
@@ -130,7 +127,6 @@ export async function openPr(args: PrArgs): Promise<PrOutcome> {
     const base = baseOf(args.repo, forge, arc, supersedes);
     const body = (): string => pullBody({
       arc: arc.arc, branch: arc.branch, head: arc.head, previousArc: arc.previousArc,
-      amendments: arc.amendments.map((a) => ({ ref: a.id, rules: a.fact.rules, proposal: a.fact.proposal, why: a.fact.why })),
       supersedes: supersedes === null || arc.previousArc === null ? null : { url: supersedes, arc: arc.previousArc },
     });
     let result: PrOutcome;

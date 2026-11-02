@@ -1,7 +1,7 @@
 // Where a declared command's argv[0] resolves, as the runner's spawn would: a bare name on the command's
 // own PATH (its declared `set.PATH`, or the host's when it passes PATH, else Node's default search path),
 // followed to its real path, since a PATH entry is often a symlink into another tree. One reading for the
-// startup row (`spec-lane-unrunnable`) and the plan-check's `<lane_programs>` block (arc-1 feedback item 3:
+// startup row (`spec-lane-unrunnable`) and the pre-build's `<lane_programs>` block (arc-1 feedback item 3:
 // a judge that cannot run `command -v`, and whose Glob does not follow symlinks, asserted a tool missing
 // that was on the lane's PATH).
 import { accessSync, constants, realpathSync, statSync } from 'node:fs';

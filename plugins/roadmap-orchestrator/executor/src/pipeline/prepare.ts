@@ -1,4 +1,4 @@
-// The stage `prepare` (M2; DESIGN-1.0.md §4 Re-entry, SCHEMAS.md "M2", amendments A6 and F14): a re-entered unit's
+// The stage `prepare` (M2; DESIGN-1.0.md §2.3 "Root commands and revisions", SCHEMAS.md "Scheduling", amendments A6 and F14): a re-entered unit's
 // first stage, which readies its worktree before the pipeline takes it on; and (M4a rev 3, F4) a unit's way back from a
 // known defect (its decided outcome is lanes `known-defect`), once admission lets it in (the defect's fixer merged, or
 // the entry was removed or retargeted).
@@ -8,18 +8,15 @@
 //   1. worktree.create   the unit worktree on a new branch `roadmap/<arc>/<unit>` at the tip of the unit it
 //                        re-enters (the integration tip when that unit never had a branch: it parked before
 //                        its first build);
-//   2. dispatch          the unit's first `dispatch` fact: its scope must lie within the lineage's envelope (every
-//                        scope a member was dispatched with, src/input/envelope.ts) or the patterns its
-//                        `unit-reentered` change widened it by on a ruling (F5); apply refuses anything else, so a
-//                        violation here is a bug; its risk floor is the higher of the plan's and the lineage's inherited one; its
-//                        routing, bounds and transient rules are its own, as any first pin's (M3, `firstPin`);
+//   2. dispatch          its first dispatch pins at least the lineage's inherited risk floor, with its own routing,
+//                        bounds and spec identity (M3, `firstPin`); systems are plan inputs, never a file envelope;
 //   3. mergein.prepare   of the integration tip T into the branch, unless the branch already contains T;
 //   4. evidence.snapshot of the prepared worktree: what it holds beyond its commit (a conflicted merge's
 //                        files; a clean preparation's manifest has zero files). `retire` cites it (F14).
 //
 // Outcomes (all `advance`, transitions.ts): `conflicted` when the merge-in conflicted (MERGE_HEAD = T is kept,
 // A6: a resolve round in a fresh session, since no session inherits), else the plan's `enterAt`:
-// `clean-plan-check` (also when absent: approvals do not inherit, so the spec is checked again),
+// `clean-pre-build` (also when absent: approvals do not inherit, so the spec is checked again),
 // `clean-build` (a fresh round) or `clean-verify` (lanes at the prepared head).
 //
 // Cause `known-defect` (F4): steps 3 and 4 only, in the unit's own worktree (it built), scoped to the prepare attempts
@@ -33,21 +30,19 @@
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, OpKind, ReentryWidening } from '../core/events.ts';
-import type { OpId, Sha, UnitId } from '../core/ids.ts';
-import { readJournal } from '../core/log.ts';
+import type { IntentOf,OpKind } from '../core/events.ts';
+import type { OpId,Sha,UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { DispatchRecord } from '../core/records.ts';
-import { type Lineage, maxTier } from '../core/state.ts';
-import { type AbsPath, type RefName, type RepoPattern, absPath, branchRef } from '../core/values.ts';
+import { type Lineage,maxTier } from '../core/state.ts';
+import { type AbsPath,type RefName,absPath,branchRef } from '../core/values.ts';
 import { isAncestor } from '../git/ff.ts';
-import { refTarget, revParse } from '../git/git.ts';
-import { lineageEnvelope, withinEnvelope } from '../input/envelope.ts';
-import type { PlanUnit, ReentryPoint } from '../input/plan.ts';
-import { evidenceSnapshotOp, mergeinOp, worktreeCreateOp } from '../recover/ops.ts';
-import { type StageContext, evidenceRoot, firstPin, runOp, unitBranch, unitWorktree } from './dispatch.ts';
+import { refTarget,revParse } from '../git/git.ts';
+import type { PlanUnit,ReentryPoint } from '../input/plan.ts';
+import { evidenceSnapshotOp,mergeinOp,worktreeCreateOp } from '../recover/ops.ts';
+import { type StageContext,evidenceRoot,firstPin,runOp,unitBranch,unitWorktree } from './dispatch.ts';
 import { dirtySnapshot } from './lanes.ts';
-import { type StageDone, at, executorIdentity, integrationTip, loadUnitSpec, record, start } from './stages.ts';
+import { type StageDone,at,executorIdentity,integrationTip,loadUnitSpec,record,start } from './stages.ts';
 
 /** A preparation, recorded: where the prepared worktree is and what `retire` cites. */
 export type PrepareDone = StageDone<'prepare'> & Readonly<{
@@ -59,8 +54,8 @@ export type PrepareDone = StageDone<'prepare'> & Readonly<{
   evidence: OpId;
 }>;
 
-const CLEAN: Readonly<Record<ReentryPoint, 'clean-plan-check' | 'clean-build' | 'clean-verify'>> = {
-  'plan-check': 'clean-plan-check',
+const CLEAN: Readonly<Record<ReentryPoint, 'clean-pre-build' | 'clean-build' | 'clean-verify'>> = {
+  'pre-build': 'clean-pre-build',
   build: 'clean-build',
   verify: 'clean-verify',
 };
@@ -71,32 +66,14 @@ function preparedOps<K extends OpKind>(view: JournalView, unit: UnitId, kind: K,
     && view.doneOf(i.op) !== null);
 }
 
-/** The widening the `unit-reentered` change that added `unit` recorded (F5), or null; fails loud when no such change is in the log. */
-function reentryWidening(ctx: StageContext, unit: UnitId): ReentryWidening | null {
-  for (const e of readJournal(ctx.runDir, ctx.journal.view.arc).events) {
-    if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
-    const c = e.fact.changes.find((x) => x.type === 'unit-reentered' && x.unit === unit);
-    if (c !== undefined && c.type === 'unit-reentered') return c.widened ?? null;
-  }
-  throw new Error(`re-entry ${unit}: no plan-applied fact records its unit-reentered change`);
-}
-
 /**
  * The re-entered unit's dispatch record: the one already pinned (an earlier attempt's), or its first pin,
- * recorded now within the lineage's envelope (or the patterns its re-entry widened it by) at no less than the
- * inherited floor.
+ * recorded at no less than the inherited risk floor.
  */
 function pinReentry(ctx: StageContext, unit: PlanUnit, lineage: Lineage): DispatchRecord {
   const view = ctx.journal.view;
   const current = view.dispatchOf(unit.id);
   if (current !== null) return current;
-  const envelope = lineageEnvelope(view, lineage.root);
-  if (envelope.length === 0) throw new Error(`re-entry ${unit.id}: its lineage (root ${lineage.root}) was never dispatched, so it has no envelope`);
-  const allowed: readonly RepoPattern[] = [...envelope, ...(reentryWidening(ctx, unit.id)?.patterns ?? [])];
-  const outside = unit.scope.filter((p) => !withinEnvelope(p, allowed));
-  if (outside.length > 0) {
-    throw new Error(`re-entry ${unit.id}: scope ${outside.join(', ')} lies outside its lineage's envelope ${allowed.join(', ')} (${lineage.root}'s lineage, and its widening)`);
-  }
   const { spec, sha256 } = loadUnitSpec(ctx, unit);
   const pinned = firstPin(ctx, unit, { rev: spec.rev, sha256 }, maxTier(unit.risk, view.unit(unit.id).risk));
   ctx.journal.fact({ kind: 'dispatch', record: pinned });
@@ -146,7 +123,7 @@ export async function prepare(ctx: StageContext, unit: PlanUnit): Promise<Prepar
       source: worktree, ...dirtySnapshot(worktree), dest: absPath(join(evidenceRoot(ctx.runDir, parent), 'prepared')),
     });
 
-  const kind = conflicted ? 'conflicted' : CLEAN[unit.reenters.enterAt ?? 'plan-check'];
+  const kind = conflicted ? 'conflicted' : CLEAN[unit.reenters.enterAt ?? 'pre-build'];
   return { ...record(ctx, parent, kind), worktree, branch, head: revParse(worktree, 'HEAD'), evidence: snapped.op };
 }
 

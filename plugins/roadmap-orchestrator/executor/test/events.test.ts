@@ -1,17 +1,22 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type CommitInputs, type Envelope, type Event, type Fact, type IntentOf, type LogRecord, type OpKind, type OpOutcome,
-  OP_KINDS, parseChainLine, parseEventLine, prevHash, serializeChainLine, serializeEvent,
+type CommitInputs,type Envelope,type Event,type Fact,type IntentOf,type LogRecord,type OpKind,type OpOutcome,
+OP_KINDS,parseChainLine,parseEventLine,prevHash,serializeChainLine,serializeEvent,
 } from '../src/core/events.ts';
 import {
-  arcId, commandId, findingId, invocationId, jobId, laneId, needsUserId, opId, opKey, planRev, resourceName, routingRev, seatRev, sha, sha256, specRev,
-  unitId, INTEGRATION_SLOT, clauseId, rulingId,
+INTEGRATION_SLOT,
+arcId,
+clauseId,
+commandId,findingId,invocationId,jobId,laneId,needsUserId,opId,opKey,planRev,resourceName,routingRev,
+rulingId,
+seatRev,sha,sha256,specRev,
+unitId,
 } from '../src/core/ids.ts';
-import { type ResidueRecord, residueRecord } from '../src/core/records.ts';
+import { type ResidueRecord,residueRecord } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, gitDate, isoTime, refName, repoPath, repoPattern } from '../src/core/values.ts';
+import { absPath,gitDate,isoTime,refName,repoPath,repoPattern } from '../src/core/values.ts';
 
 const arc = arcId('arc-1');
 const op = opId(arc, 7);
@@ -57,7 +62,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
   }, { type: 'clean-merged', new: C }),
   'spec.patch': intent('spec.patch', {
     path: absPath('/run/specs/u1.json'), oldSha256: H, expectRev: specRev(1),
-    patch: { expectRev: specRev(1), by: { role: 'planCheck', routingRev: rev, inv }, ops: [
+    patch: { expectRev: specRev(1), by: { role: 'verifier', routingRev: rev, inv }, ops: [
       { op: 'add', section: 'acceptance', item: { id: clauseId('A2'), clause: 'x', failLoudIfUndelivered: true } },
       { op: 'replace', section: 'lanes', item: { id: laneId('L1'), argv: ['npm', 'test'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } },
       { op: 'strike', id: clauseId('F1') },
@@ -78,7 +83,7 @@ const INTENTS: { readonly [K in OpKind]: IntentOf<K> } = {
     ref: refName('refs/roadmap-run/arc-1/docs/docs-1'), old: null, pub: jobId('docs', 1), integrationTip: A, worktree: wt, commit: commit([A] as const),
   }, { new: B }),
   'mutant.apply': intent('mutant.apply', { worktree: wt, at: A, finding: findingId('F-1'), patchSha256: H }, null),
-  'revision.commit': intent('revision.commit', { source: { type: 'bundle', job: jobId('ckpt', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
+  'revision.commit': intent('revision.commit', { source: { type: 'walk', job: jobId('walk', 2) }, base: planRev(3), rev: planRev(4), payloadSha256: H, docs: true }, null),
 };
 
 // Every outcome variant of every kind.
@@ -87,8 +92,8 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
   'worktree.remove': [{ kind: 'removed' }],
   'resource.transition': [{ kind: 'transitioned' }],
   'proc.spawn': [
-    { kind: 'result', resultSha256: H, summary: { type: 'backend', outcome: 'success' } },
-    { kind: 'result', resultSha256: H, summary: { type: 'command', verdict: 'fail' } },
+    { kind: 'result', pressure: null, resultSha256: H, summary: { type: 'backend', outcome: 'success' } },
+    { kind: 'result', pressure: null, resultSha256: H, summary: { type: 'command', verdict: 'fail' } },
     { kind: 'lost', treeEffects: true },
   ],
   'proc.kill': [{ kind: 'quiesced' }],
@@ -109,9 +114,9 @@ const OUTCOMES: { readonly [K in OpKind]: readonly OpOutcome[K][] } = {
 const FACTS: readonly Fact[] = [
   { kind: 'tail-discarded', offset: 1024, length: 17, sha256: H },
   { kind: 'containment-mode', mode: 'session' },
-  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'gate', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
+  { kind: 'meter', prompt: { bytes: 431, inputs: { target: 211, spec: 45 } }, inv, routingRev: rev, subject: { type: 'seat', role: 'verifier', tier: 'escalation', unit, attempt: 1 }, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: null, turns: 7, costUsd: 0.25 } },
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
-  { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
+  { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
   { kind: 'needs-user-acked', id: needsUserId('nu-7'), command: commandId('cmd-0123456789abcdef'), choice: 'retry' },
@@ -119,11 +124,11 @@ const FACTS: readonly Fact[] = [
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'all' } },
   { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
   { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
-  { kind: 'executor-started', generation: 3 },
+  { kind: 'executor-started', pressure: 'unavailable', generation: 3 },
 ];
 
 function envelope(seq: number): Envelope {
-  return { v: 1, seq, prev: seq === 1 ? null : H, at, arc };
+  return { v: 2, seq, prev: seq === 1 ? null : H, at, arc };
 }
 
 function event(record: LogRecord, seq = 2): Event {
@@ -160,7 +165,7 @@ describe('events', () => {
       { ...INTENTS['worktree.create'], parent: { type: 'arc' }, deadlineAt: null, expect: { path: wt, checkout: { type: 'detached', at: B } } },
       { ...INTENTS['proc.spawn'], ordinal: 2, parent: { type: 'command', command: commandId('cmd-0123456789abcdef') }, expect: { subject: { purpose: 'lane', unit, lane: laneId('L1'), set: 'suite', at: A }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], parent: { type: 'op', op: opId(arc, 3) }, expect: { subject: { purpose: 'teardown', unit: null, resource: resourceName('db') }, launchSha256: H } },
-      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'gate', tier: 'low', routingRev: rev } }, launchSha256: H } },
+      { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'judgment', target: { type: 'backend', backend: 'claude', role: 'verifier', tier: 'low', routingRev: rev } }, launchSha256: H } },
       { ...INTENTS['proc.spawn'], expect: { subject: { purpose: 'smoke', check: 'shell', target: { type: 'command' } }, launchSha256: H } },
       { ...INTENTS['mergein.prepare'], expect: { ...INTENTS['mergein.prepare'].expect, merge: { type: 'conflicted', conflicts: [repoPath('src/a.ts')] } }, post: { type: 'conflicted' } },
       { ...INTENTS['snapshot.publish'], expect: { ...INTENTS['snapshot.publish'].expect, old: null, commit: commit([] as const) } },
@@ -184,7 +189,7 @@ describe('events', () => {
 
   it('serialises canonically: sorted keys, no whitespace', () => {
     const line = serializeEvent(event({ type: 'abort', op, reason: { detail: 'd', code: 'precondition' } }));
-    assert.equal(line, `{"arc":"arc-1","at":"${at}","op":"arc-1/7","prev":"${H}","reason":{"code":"precondition","detail":"d"},"seq":2,"type":"abort","v":1}\n`);
+    assert.equal(line, `{"arc":"arc-1","at":"${at}","op":"arc-1/7","prev":"${H}","reason":{"code":"precondition","detail":"d"},"seq":2,"type":"abort","v":2}\n`);
   });
 
   it('prevHash is sha256 over the exact line bytes including the trailing newline', () => {
@@ -205,11 +210,11 @@ describe('events', () => {
       ['empty line', '', /^event: expected JSON/],
       ['embedded newline', `${good}\n`, /without its terminating newline/],
       ['non-canonical whitespace', JSON.stringify(obj(), null, 1).replace(/\n/g, ' '), /canonical JSON/],
-      ['non-canonical key order', JSON.stringify({ v: 1, ...obj() }), /canonical JSON/],
+      ['non-canonical key order', JSON.stringify({ v: 2, ...obj() }), /canonical JSON/],
       ['unknown field', canonical(JSON.stringify({ ...obj(), extra: 1 })), /^event\.extra: expected no such field/],
       ['missing envelope field', canonical(JSON.stringify({ ...obj(), prev: undefined })), /^event\.prev: .*field missing/],
       ['seq 1 with a prev', canonical(JSON.stringify({ ...obj(), seq: 1 })), /^event\.prev: expected null on seq 1/],
-      ['wrong version', canonical(JSON.stringify({ ...obj(), v: 2 })), /^event\.v: expected 1/],
+      ['wrong version', canonical(JSON.stringify({ ...obj(), v: 1 })), /^event\.v: expected 2/],
       ['unknown record type', canonical(JSON.stringify({ ...obj(), type: 'note' })), /^event\.type:/],
       ['unknown op kind', canonical(JSON.stringify({ ...obj(), kind: 'git.reset' })), /^event\.kind:/],
       ['op of another arc', canonical(JSON.stringify({ ...obj(), op: 'arc-2/7' })), /^event\.op: expected an op of arc arc-1/],
@@ -248,10 +253,10 @@ describe('events', () => {
 
   it('residue lines follow the same chain rules without an arc', () => {
     const key = { arc, unit, inv, resource: resourceName('db') };
-    const line = serializeChainLine<ResidueRecord>({ v: 1, seq: 1, prev: null, at, type: 'residue', key, teardown: { argv: ['make', 'down'], cwd: absPath('/repo'), env: {} }, label: 'roadmap.owner=arc-1/u1/arc-1/7#1' });
+    const line = serializeChainLine<ResidueRecord>({ v: 2, seq: 1, prev: null, at, type: 'residue', key, teardown: { argv: ['make', 'down'], cwd: absPath('/repo'), env: {} }, label: 'roadmap.owner=arc-1/u1/arc-1/7#1' });
     const parsed = parseChainLine(line.slice(0, -1), residueRecord, 'residues');
     assert.equal(serializeChainLine(parsed), line);
-    const disp = serializeChainLine<ResidueRecord>({ v: 1, seq: 2, prev: H, at, type: 'disposition', key, disposition: 'isolated', by: { arc, needsUser: needsUserId('nu-9') } });
+    const disp = serializeChainLine<ResidueRecord>({ v: 2, seq: 2, prev: H, at, type: 'disposition', key, disposition: 'isolated', by: { arc, needsUser: needsUserId('nu-9') } });
     assert.equal(serializeChainLine(parseChainLine(disp.slice(0, -1), residueRecord, 'residues')), disp);
     const cleanedByAck = disp.replace('"isolated"', '"cleaned"');
     assert.throws(() => parseChainLine(cleanedByAck.slice(0, -1), residueRecord, 'residues'), SchemaError);

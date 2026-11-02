@@ -2,35 +2,26 @@
 // Inputs are snapshotted by revision at dispatch (DESIGN-1.0.md §2.3), so a prompt is a pure function of
 // them: no dates, no random ids, no reads of the filesystem or the environment.
 //
-// The required input set per role (ROLE_INPUTS) comes from DESIGN-1.0.md §2.1 and §4 "Gate inputs"
+// The required input set per role (ROLE_INPUTS) comes from DESIGN-1.0.md §2.1 "Unit pipeline and review"
 // and the M1 plan's gate inputs (R2). Every prompt module must interpolate exactly these fields; the
 // test `prompts.fields==required` holds each module to it.
-import type { EffectiveScope } from '../core/records.ts';
 import { createHash } from 'node:crypto';
-import type { OutcomeStage, TestRef } from '../core/events.ts';
-import type {
-  ClauseId, DivergenceId, FindingId, InvocationId, JobId, LaneId, MilestoneId, ObligationId, PolishId, ReviewFindingId, RulingId, ServeName, Sha, Sha256Hex, SpecRev, UnitId, VisionClauseId,
-  ResourceName, SystemName, WitnessItemId,
-} from '../core/ids.ts';
-import type { GateDelta, LedgerOutcome } from '../core/review.ts';
-import type { BringUp, Journey } from '../input/plan.ts';
-import type { RequiredWitness } from '../holistic/required.ts';
+import type { TestRef } from '../core/events.ts';
+import type { ClauseId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,ReviewFindingId,RulingId,ServeName,Sha,SpecRev,SystemName,UnitId,VisionClauseId,WitnessItemId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict, FailureRef, IgnoredCensus, LaneCadence, LaneDef, NeedsUserReason, SpecPatchOp } from '../core/records.ts';
-import type { AbsPath, RepoPath, RepoPattern } from '../core/values.ts';
-import type { Argv0 } from '../preflight/argv0.ts';
-import type { RiskTier, Role } from '../routing/types.ts';
-import type {
-  BundleRejection, DivergenceKind, FindingSeverity, FindingStateName, FindingLens, LensKind, ObligationDef, Obligations, ObservationKey, ObservationVerdict, PackFinding,
-  Vision, VisionClause, VisionCoverage, VisionQuestion,
-} from '../holistic/types.ts';
-import { obligationSource } from '../holistic/types.ts';
+import type { CommandVerdict,FailureRef,IgnoredCensus,LaneDef } from '../core/records.ts';
+import type { GateDelta,LedgerOutcome } from '../core/review.ts';
+import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
-import type { FlowPromptInputs } from '../flow/types.ts';
+import { type BoundedDiff,EXAMPLES } from '../git/boundeddiff.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
+import type { FindingLens,FindingSeverity,FindingStateName,LensKind,ObligationDef,Obligations,ObservationKey,ObservationVerdict,PackFinding,Vision,VisionClause,VisionQuestion } from '../holistic/types.ts';
+import { obligationSource } from '../holistic/types.ts';
+import type { BringUp,Journey } from '../input/plan.ts';
+
 import type { Phase0Record } from '../phase0/types.ts';
-import { type BoundedDiff, EXAMPLES } from '../git/boundeddiff.ts';
-import type { GateFinding, PocOutput, PocQuestion, Premise, ScaffoldDecision } from './schemas.ts';
-import type { SystemsMap } from '../input/systems.ts';
+import type { Role } from '../routing/types.ts';
+import type { GateFinding,Premise } from './schemas.ts';
 
 /** The spec as the one text every role reads: the executor's Markdown rendering of spec.json at `rev`. */
 export type RenderedSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string }>;
@@ -77,9 +68,10 @@ export type UnitTargetInput = ArchitectureInput | UnitCorpusInput;
 /** The gate's target: never the vision doc (M3 R17), so a corpus target carries none. */
 export type GateTargetInput = ArchitectureInput | (UnitCorpusInput & Readonly<{ visionDoc: null }>);
 
-/** A fix round resumes the build session with what failed. `directives` are the gate's (or, for a
- * conflict or scope-growth round, the executor's) instructions; either list may be empty, not both. */
-export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[] }>;
+export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[];
+  baseComparison?: readonly Readonly<{lane: LaneId; base: Sha; result: 'pass' | 'fail'; evidence: AbsPath}>[] | null;
+  capState?: Readonly<{builds: number; judgedStages: number; chargeableFailures: number; chargeableBound: number; certificationAllowance: number}>;
+}>;
 
 /** One executor-run lane at the diff head: the ledger the gate reads. */
 export type LaneLedgerEntry = Readonly<{
@@ -93,32 +85,6 @@ export type LaneLedgerEntry = Readonly<{
   ignored: IgnoredCensus | null;
   /** M4a rev 3 (F1a): the earlier execution this lane's pass was reused from (its SHA and invocation); null when it ran. */
   reused: Readonly<{ at: Sha; inv: InvocationId }> | null;
-}>;
-
-/** A checkout a plan-check reads: a detached tree at `at`. */
-export type Checkout = Readonly<{ path: AbsPath; at: Sha }>;
-
-/**
- * The plan-check's trees (arc-1 feedback item 21): its working directory, a detached checkout of the
- * integration tip; and, when the unit has a branch that differs from the tip, a checkout of that branch.
- */
-export type PlanCheckCheckouts = Readonly<{ tip: Checkout; branch: Checkout | null }>;
-
-/** A lane's argv[0] resolved under the lane's declared environment on this host (arc-1 feedback item 3). */
-export type LaneProgram = Readonly<{ lane: LaneId; argv0: string; resolved: Argv0 }>;
-
-/**
- * The round handoff (arc-1 feedback items 25 and 29): what a plan-check after its own redirect inherits
- * from that round, as conclusions and never as a session. `changedPremiseFiles`: the prior premises' files
- * whose blobs differ between the trees the prior round read and the ones this round reads.
- */
-export type PlanCheckPriorRound = Readonly<{
-  patch: readonly SpecPatchOp[];
-  reasons: readonly string[];
-  premises: readonly Premise[];
-  /** The spec revision the patch produced. */
-  patchedRev: SpecRev;
-  changedPremiseFiles: readonly string[];
 }>;
 
 /** A gate after its own revise inherits that round's directives, findings and premises, and the delta since. */
@@ -164,102 +130,18 @@ export type MilestonesInput = Readonly<{ of: readonly UnitMilestone[]; reference
  */
 export type BuildBrowser = Readonly<{ servers: readonly string[]; bringUps: readonly Readonly<{ milestone: MilestoneId; bringUp: BringUp }>[] }>;
 
-export type PlanCheckInputs = Readonly<{
-  spec: RenderedSpec;
-  /** The cited contracts and active rulings, in full; the rest in `index`. */
-  contracts: readonly DocText[];
-  rulings: readonly RulingText[];
-  index: ReferenceIndex;
-  target: UnitTargetInput;
-  direction: string;
-  /** The scope envelope pinned for the unit. */
-  scope: EffectiveScope;
-  /** The Phase-0 risk floor. */
-  risk: RiskTier;
-  checkouts: PlanCheckCheckouts;
-  /** Every active spec lane's argv[0], resolved. */
-  lanePrograms: readonly LaneProgram[];
-  /** Null on the unit's first plan-check, and after any round whose patch was not applied. */
-  priorRound: PlanCheckPriorRound | null;
-  /** R17: the vision as read-only context, marked non-directive; null outside a holistic arc. */
-  vision: VisionInput | null;
-  /**
-   * Run 10 (C): why the executor refused the unit's previous answer's redirect patch (it cited an out-of-slice rule), for
-   * this retry to correct; null otherwise.
-   */
-  priorInvalid: string | null;
-  /**
-   * Scope growth (2026-10-15): the reference sweep's start (Phase-0 row 10 over the spec's `removes` at the tip the check
-   * reads) and the unit's earlier proposals the root agent rejected (never proposed again).
-   */
-  scopeGrowth: PlanCheckScopeGrowth;
-  /** W3: why this check runs at the escalation seat; null below it. */
-  escalation: EscalationInput | null;
-  /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
-  milestones: MilestonesInput | null;
-  /**
-   * dev.17 (propagation): the unit's stale links its plan-check answers (src/holistic/staleset.ts `unitStaleLinks`), one line
-   * each, its key first (`staleLinkText`); empty when it has none.
-   */
-  staleLinks: readonly string[];
-  /** dev.17 (design pass): what the design record and the design decisions rest on (`PlanCheckDesignInput`). */
-  design: PlanCheckDesignInput;
-  /** dev.17 (design pass): the unit's proofs of concept so far, in order (their reports; none before the first). */
-  pocs: readonly PocReport[];
-}>;
-
-/**
- * dev.17 (design pass): the facts a design rests on. `systems`: the systems map in force (null: none, so a change names no
- * system). `lanes`: every lane a test item may sit in (the spec's active lanes, the plan's suite lanes, the arc lanes), with
- * its cadence and systems (null: the whole tree). `forces`: the lanes the spec forces. The limits code checks the design
- * against: a system's substantial change, the gate's inline reading, the proofs of concept left; and whether a `scaffold`
- * decision can run in this arc.
- */
-export type PlanCheckDesignInput = Readonly<{
-  systems: SystemsMap | null;
-  /**
-   * The lanes a test item may name. `environment`: the plan environment the lane runs against and, when it is unavailable to
-   * the arc (its last up or probe failed: src/resources/environments.ts `environmentUnavailable`), why; null: none.
-   */
-  lanes: readonly Readonly<{
-    id: LaneId; kind: 'spec' | 'suite' | 'arc'; cadence: LaneCadence; systems: readonly SystemName[] | null;
-    environment: Readonly<{ name: ResourceName; unavailable: string | null }> | null;
-  }>[];
-  forces: readonly LaneId[];
-  substantialLines: number;
-  gateInlineLines: number;
-  pocsLeft: number;
-  scaffold: boolean;
-}>;
-
-/**
- * dev.17 (design pass): one proof of concept's report (src/pipeline/poc.ts): the questions it was asked, its closed answer
- * or why it has none, and its diff (evidence; its code is gone).
- */
-export type PocReport = Readonly<{
-  attempt: number;
-  questions: readonly PocQuestion[];
-  brief: string;
-  answer: PocOutput | null;
-  why: string | null;
-  diff: AbsPath;
-}>;
-
-/** What a plan-check reads for its scope-growth proposals. */
-export type PlanCheckScopeGrowth = Readonly<{
-  /** Per `removes` entry with referrers: the files outside the scope envelope that still name it. */
-  references: readonly Readonly<{ removed: string; referrers: readonly RepoPath[] }>[];
-  /** Each rejected proposal: its patterns and reason, and the root agent's reason for rejecting it. */
-  rejected: readonly Readonly<{ patterns: readonly RepoPattern[]; reason: string; rejection: string }>[];
-}>;
-
 export type BuildInputs = Readonly<{
+  /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
+  systemNotes: readonly RepoPath[];
+  notes: readonly string[];
+  target: GateTargetInput;
+  method: import('./method/index.ts').MethodContext;
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   contracts: readonly DocText[];
-  rulings: readonly RulingText[];
   index: ReferenceIndex;
-  /** The approving plan-check's notes: facts it found about existing code (item 26); empty when none. */
-  planCheckNotes: string;
+  /** The approving pre-build's notes: facts it found about existing code (item 26); empty when none. */
   fastLanes: readonly BuildLane[];
   /**
    * The 2026-10-15 batch: the plan's fast suite lanes the lanes stage runs after the spec's (`fastSuiteLanes`,
@@ -269,7 +151,7 @@ export type BuildInputs = Readonly<{
   /** Where the implementer writes decisions.json; outside the worktree, snapshotted by the executor. */
   evidenceDir: AbsPath;
   worktree: AbsPath;
-  scope: EffectiveScope;
+  systems: readonly SystemName[];
   fixRound: FixRound | null;
   /**
    * M4a rev 3 (D1, R56): per fast required witness lane, the exact `roadmap witness-check --lane-file <file>` command the
@@ -284,7 +166,6 @@ export type BuildInputs = Readonly<{
    * dev.17 (proportional review): the salvage SHA of the unit's last lanes attempt that ended green, the tree a build's
    * `docsOnlySince` names; null before one.
    */
-  certifiedAt: Sha | null;
   /**
    * dev.17 (field feedback 2026-10-23 item 1): what the executor's records show of the unit's work before this round, for a
    * session that does not continue its own (src/pipeline/handover.ts); null on a resumed session and on the lineage's first build.
@@ -323,7 +204,7 @@ export function handoverText(h: Handover): string {
     const lines = [
       ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
       ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
-      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
+      ...(u.reverted.length === 0 ? [] : [`- Edits to protected paths that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
     ];
     return lines.length === 0 ? [] : [`Unit ${u.unit}:`, ...lines];
   });
@@ -379,13 +260,18 @@ export type RegeneratedCheck =
   | Readonly<{ state: 'no-generator'; outputs: readonly RepoPattern[] }>;
 
 export type GateInputs = Readonly<{
+  /** Existing per-system notes at the gated commit, relative to the product repo. */
+  systemNotes: readonly RepoPath[];
+  touches: readonly string[];
+  standing: readonly import('../core/events.ts').ReviewItem[];
+  method: import('./method/index.ts').MethodContext;
   spec: RenderedSpec;
+  intent: string;
+  nonGoals: readonly string[];
   contracts: readonly DocText[];
-  rulings: readonly RulingText[];
   index: ReferenceIndex;
   target: GateTargetInput;
   direction: string;
-  planCheckNotes: string;
   /** Directly selected obligations, with their observations (never their vision clauses: R17). */
   obligations: readonly ObligationView[];
   /** Selected only by the unmapped-path fallback, exempt ones left out: rendered as id and statement, without observations. */
@@ -399,10 +285,12 @@ export type GateInputs = Readonly<{
   /** Evidence directories the gate may read (lane output, the build's decisions.json). */
   evidence: readonly AbsPath[];
   /**
-   * The pinned envelope, the diff's paths outside it, and (scope growth, 2026-10-15) the out-of-scope paths the build edited
-   * that salvage reverted (in no diff), still outside the envelope.
+   * The unit's declared systems, diff paths outside them, and the systems' repository-defined traits.
    */
-  scope: Readonly<{ patterns: readonly RepoPattern[]; excluded: readonly RepoPattern[]; growth: readonly RepoPath[]; rejected: readonly RepoPath[] }>;
+  systems: readonly SystemName[];
+  reach: readonly RepoPath[];
+  traits: readonly import('../input/systems.ts').SystemTrait[];
+  reachTraits: readonly import('../input/systems.ts').SystemTrait[];
   /** Later gate rounds rule on their own prior round (§3, sf16); null on the first round. */
   priorRound: GatePriorRound | null;
   /** M4a rev 3: the executable checks' results (`GateChecks`). */
@@ -442,7 +330,7 @@ export type GateLargeDiffInput = Readonly<{ overflow: number; changed: number; l
 
 // ---------------------------------------------------------------------------------------------------
 // M3: the arc roles' inputs (frozen in step 0a). The vision comes first and in full in both (A14); on a
-// conflict the vision wins. Plan-check reads it as non-directive context; the gate never does (R17).
+// conflict the vision wins. Builders and verifiers receive the relevant target and acceptance context.
 
 /**
  * The vision as a prompt gets it: every clause, withdrawn ones marked (H16); the open questions; and `advances`, the
@@ -494,11 +382,7 @@ export type LensInputs = Readonly<{
   target: TargetInput;
   /** The audit's detached worktree at the audited SHA, the lens's cwd. */
   checkout: AbsPath;
-  /**
-   * M4a rev 3 (H2, R61): a specs-only drift's changed specs, each rendered in full at the audited plan rev (the lens
-   * judges these against the vision; the code range is not its subject); null: a full audit.
-   */
-  specsOnly: readonly RenderedSpec[] | null;
+
 }>;
 
 /**
@@ -508,29 +392,9 @@ export type LensInputs = Readonly<{
 export type DiffClaims = Readonly<{ acceptance: readonly ClauseId[]; witnesses: readonly WitnessItemId[]; obligations: readonly ObligationId[] }>;
 
 /**
- * Why a unit parked, as the checkpoint reads it. `design`: a judgment's escalation or a refusal, a design question;
- * else the executor parked it, and `detail` says why (a spent bound, the obligations its candidate left red).
- */
-export type ParkCause = Readonly<{
-  stage: OutcomeStage; attempt: number; outcome: string; reason: NeedsUserReason; design: boolean; detail: readonly string[];
-}>;
-
-/**
- * A checkpoint's trigger: a milestone boundary, a completed audit, a park with its cause (null: the unit has moved on since the capture), or
- * (dev.13) a milestone walk: its milestone and round, the findings it opened or re-reported, and its evidence dir (the
- * screenshots, transcripts and server logs the findings cite, readable by the session).
- */
-export type WalkTriggerView = Readonly<{ type: 'walk'; job: JobId; milestone: MilestoneId; round: number; findings: readonly FindingId[]; evidenceDir: AbsPath }>;
-export type TriggerView =
-  | Readonly<{ type: 'milestone'; milestones: readonly MilestoneId[]; walks: readonly WalkTriggerView[] }>
-  | Readonly<{ type: 'audit'; job: JobId }>
-  | Readonly<{ type: 'park'; unit: UnitId; seq: number; cause: ParkCause | null }>
-  | WalkTriggerView;
-
-/**
  * Arc feedback 2026-10-16 (a checkpoint re-entered a unit without finding why it failed): what the executor's records say
  * about a parked unit's lineage, the parked unit first, then each unit it re-entered. Each failure carries the reference a
- * re-entry cites in `fixes`. `reverted`: the paths salvage reverted as outside the pinned scope, with how many salvages
+ * re-entry cites in `fixes`. `reverted`: the protected paths salvage reverted, with how many salvages
  * did; `witnesses`: the required witness tests a lanes attempt found missing or failing, the latest attempt per test.
  */
 export type ParkDiagnosis = Readonly<{
@@ -544,83 +408,6 @@ export type ParkDiagnosis = Readonly<{
   /** The lineage's re-entries, oldest first, each with the failure it cited (null: applied before `fixes`). */
   reentries: readonly Readonly<{ unit: UnitId; reenters: UnitId; fixes: FailureRef | null }>[];
 }>;
-
-/** The diagnosis, rendered for the checkpoint ahead of everything but the vision and the trigger; empty when none. */
-export function diagnosisText(d: ParkDiagnosis | null): string {
-  if (d === null) return '';
-  const unit = (u: ParkDiagnosis['units'][number]): string => {
-    const lines = [
-      ...u.outcomes.map((o) => `- ${o.ref}: ${o.text}`),
-      ...u.lanes.map((l) => `- ${l.ref}: lane failure, ${l.class}${l.hostSuspected === null ? '' : `, host-suspected (${l.hostSuspected.join(', ')})`}`),
-      ...(u.reverted.length === 0 ? [] : [`- Edits outside the pinned scope that salvage reverted: ${u.reverted.map((r) => `${r.path} (${r.salvages}×)`).join(', ')}`]),
-      ...u.witnesses.map((w) => `- Required witness ${w.test.lane}/${w.test.testId} ${w.reason} at lanes attempt ${w.attempt}`),
-    ];
-    return [`Unit ${u.unit}:`, ...(lines.length === 0 ? ['- no failure recorded'] : lines)].join('\n');
-  };
-  const reentries = d.reentries.map((r) => `- ${r.unit} re-entered ${r.reenters}${r.fixes === null ? ' (it cited no failure)' : ` to fix ${r.fixes}`}`);
-  return `\n\n<diagnosis>
-The executor's records of the parked unit's lineage, the parked unit first. A repeated failure, a lane the build keeps failing,
-edits salvage keeps reverting, or a witness test that is never found points at the cause; address it. A reenter op cites one of
-these references in fixes.
-${d.units.map(unit).join('\n')}${reentries.length === 0 ? '' : `\nEarlier re-entries of this lineage:\n${reentries.join('\n')}`}
-</diagnosis>`;
-}
-
-/** A checkpoint decision the executor refused: rejected invalid, or sent to the owner as not applicable as proposed. */
-export type RefusedProposal = Readonly<{ job: JobId; outcome: 'rejected-invalid' | 'owner-request'; reasons: string }>;
-
-/** An earlier job of this checkpoint's trigger whose decision the executor rejected: its reason and detail verbatim. */
-export type PriorRejection = Readonly<{ job: JobId; reason: BundleRejection; detail: string }>;
-
-export type CheckpointInputs = Readonly<{
-  vision: VisionInput;
-  trigger: TriggerView;
-  /** Paid M4b run 3: every earlier job of this trigger whose decision the executor rejected, any reason, oldest first. */
-  priorRejected: readonly PriorRejection[];
-  /**
-   * Paid M4a run 12: the proposals refused earlier under the plan revision of this capture, any trigger (the most recent
-   * few, oldest first; `priorRejected`'s jobs excluded), each with the executor's reasons verbatim: what no checkpoint
-   * proposes again unchanged.
-   */
-  refused: readonly RefusedProposal[];
-  head: Sha;
-  /** The plan in force, rendered: units with their state, edges, limits and routing classes. */
-  plan: string;
-  findings: readonly FindingView[];
-  obligations: readonly ObligationView[];
-  coverage: VisionCoverage;
-  /** Divergences not yet covered by an acknowledged digest (H11). */
-  divergences: readonly Readonly<{ id: DivergenceId; type: DivergenceKind; what: string }>[];
-  contracts: readonly DocText[];
-  rulings: readonly RulingText[];
-  index: ReferenceIndex;
-  target: TargetInput;
-  direction: string;
-  /** M4a rev 3 (H4, F08): every captured input, content-addressed in the run dir; read only through these paths. */
-  manifest: readonly ManifestEntry[];
-  /** M4a rev 3 (H4, F21): every non-retired unit's spec in full, with the item ids it holds (`add` needs a new one). */
-  specs: readonly CheckpointSpec[];
-  /** M4a rev 3 (C3, H4): the ledger's next ruling id (numeric, no padding); several rulings take consecutive ids from it. */
-  nextRulingId: RulingId;
-  /** Arc feedback 2026-10-16: a park trigger's code-produced diagnosis of the parked lineage; null for an audit's trigger. */
-  diagnosis: ParkDiagnosis | null;
-  /**
-   * dev.13 (the convergence tail, src/holistic/tail.ts): whether the arc is at the settled point, and each finding it is
-   * shown that is below a brake, in id order, when the inputs are rendered (code enforces them again when it decides).
-   */
-  brakes: CheckpointBrakes;
-}>;
-
-/** The brakes as a checkpoint is shown them (dev.13). */
-export type CheckpointBrakes = Readonly<{ settled: boolean; findings: readonly Readonly<{ finding: FindingId; brake: 'regress' | 'settled' }>[] }>;
-
-/** What a checkpoint manifest entry names (H4). */
-export const MANIFEST_KINDS = ['plan', 'spec', 'ledger', 'sidecar', 'obligations', 'vision', 'phase0'] as const;
-export type ManifestKind = (typeof MANIFEST_KINDS)[number];
-/** One captured input: its kind, its id within the kind (a unit, a ruling, or the kind's name), its kept path and hash. */
-export type ManifestEntry = Readonly<{ kind: ManifestKind; id: string; path: AbsPath; sha256: Sha256Hex }>;
-/** A unit's spec as a checkpoint reads it: rendered in full, with every item id it holds. */
-export type CheckpointSpec = Readonly<{ unit: UnitId; rev: SpecRev; markdown: string; occupied: readonly string[] }>;
 
 /**
  * M4a (OR-Q16): what a pack review reads, all read-only, rendered from its kept `PackReviewInputs` (K8): the vision,
@@ -698,94 +485,32 @@ export type PolishJudgeInputs = Readonly<{
  * dev.17 (proportional review): one hunk of a docs-only claim the verifier classifies: its id, its file, the file's language
  * as code infers it from the name (null: none known), and the hunk as `git diff -U0` prints it, header included.
  */
-export type VerifierHunk = Readonly<{ id: string; path: RepoPath; language: string | null; text: string }>;
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
-export type VerifierInputs = Readonly<{ unit: UnitId; since: Sha; at: Sha; hunks: readonly VerifierHunk[] }>;
+export type ReviewBrief = Readonly<{ target: UnitTargetInput; vision: VisionInput | null;  spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
+export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build' | 'diagnosis'; brief: ReviewBrief}>;
 
-/**
- * dev.17 (design pass): what the scaffold writer reads (src/pipeline/scaffold.ts): the unit's spec, the plan-check's
- * `scaffold` decision, the arc lane its load test runs in (its argv, cwd and test paths: the files it must reach), the unit
- * worktree it writes in, and on its one retry why the first attempt was refused (the lane's evidence dir when the dry run
- * ran it); null on the first attempt.
- */
-export type ScaffoldInputs = Readonly<{
-  spec: RenderedSpec;
-  scaffold: ScaffoldDecision;
-  loadLane: Readonly<{ id: LaneId; argv: readonly string[]; cwd: RepoPath; testPaths: readonly RepoPattern[] }>;
-  worktree: AbsPath;
-  retry: Readonly<{ reasons: readonly string[]; laneEvidence: AbsPath | null }> | null;
-}>;
-
-/**
- * dev.17 (design pass): what the builder seat reads for a proof of concept (src/pipeline/poc.ts), not a role of its own: the
- * unit's spec, the plan-check's brief and questions, the throwaway worktree at the tip, its evidence dir, and the lessons of
- * the unit's earlier proofs of concept.
- */
-export type PocInputs = Readonly<{
-  spec: RenderedSpec;
-  brief: string;
-  questions: readonly PocQuestion[];
-  worktree: AbsPath;
-  tip: Sha;
-  evidenceDir: AbsPath;
-  lessons: readonly string[];
-}>;
-
+export type ExperienceInputs = Readonly<{mode: 'walkthrough'; brief: WalkthroughInputs}> | Readonly<{mode: 'polish'; brief: PolishJudgeInputs}>;
 export type RoleInputs = {
-  readonly planCheck: PlanCheckInputs;
+  readonly experienceVerdict: ExperienceInputs;
+  readonly campaignAudit: Omit<LensInputs, 'lens' | 'rulings' | 'index'> & Readonly<{method: import('./method/index.ts').MethodContext}>;
   readonly build: BuildInputs;
-  readonly gate: GateInputs;
-  readonly lens: LensInputs;
-  readonly checkpoint: CheckpointInputs;
   readonly packReview: PackReviewPromptInputs;
-  /** M4b: a flow run's kept inputs (src/flow/types.ts `FlowInputs`) without their envelope. */
-  readonly flow: FlowPromptInputs;
-  readonly walkthrough: WalkthroughInputs;
-  readonly polishJudge: PolishJudgeInputs;
   readonly verifier: VerifierInputs;
-  readonly scaffold: ScaffoldInputs;
 };
 
 export const ROLE_INPUTS = {
-  planCheck: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'scope', 'risk', 'checkouts', 'lanePrograms', 'priorRound', 'vision', 'priorInvalid',
-    'scopeGrowth', 'escalation', 'milestones', 'staleLinks', 'design', 'pocs',
-  ],
-  build: [
-    'spec', 'contracts', 'rulings', 'index', 'planCheckNotes', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'scope', 'fixRound', 'witnessChecks',
-    'milestones', 'browser', 'certifiedAt', 'handover',
-  ],
-  gate: [
-    'spec', 'contracts', 'rulings', 'index', 'target', 'direction', 'planCheckNotes', 'obligations', 'standingObligations', 'diff', 'laneLedger', 'evidence', 'scope', 'priorRound',
-    'checks', 'escalation', 'largeDiff', 'milestones', 'review', 'undeclaredContracts',
-  ],
-  lens: ['vision', 'lens', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'rulings', 'index', 'target', 'checkout', 'specsOnly'],
-  checkpoint: [
-    'vision', 'trigger', 'priorRejected', 'refused', 'head', 'plan', 'findings', 'obligations', 'coverage', 'divergences', 'contracts', 'rulings', 'index',
-    'target', 'direction', 'manifest', 'specs', 'nextRulingId', 'diagnosis', 'brakes',
-  ],
+  experienceVerdict: ['mode', 'brief'],
+  campaignAudit: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout'],
+  build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
-  flow: ['triggers', 'chart', 'stations', 'constraint', 'accounting', 'levers', 'givens', 'window', 'verdicts', 'rejections', 'advances', 'pressure'],
-  walkthrough: ['vision', 'milestone', 'round', 'journeys', 'references', 'tweaks', 'findings', 'product', 'units', 'evidenceDir'],
-  polishJudge: ['vision', 'milestone', 'journey', 'proposal', 'references', 'referenceDiff', 'walkEvidenceDir', 'before', 'after', 'evidenceDir'],
-  verifier: ['unit', 'since', 'at', 'hunks'],
-  scaffold: ['spec', 'scaffold', 'loadLane', 'worktree', 'retry'],
+  verifier: ['mode', 'brief'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
-
-// Compile-time half of `prompts.fields==required`: ROLE_INPUTS names every key of each role's inputs.
 type Missing<R extends Role> = Exclude<keyof RoleInputs[R], (typeof ROLE_INPUTS)[R][number]>;
 const ROLE_INPUTS_COMPLETE: { readonly [R in Role]: [Missing<R>] extends [never] ? true : Missing<R> } = {
-  planCheck: true,
+  experienceVerdict: true, campaignAudit: true,
   build: true,
-  gate: true,
-  lens: true,
-  checkpoint: true,
   packReview: true,
-  flow: true,
-  walkthrough: true,
-  polishJudge: true,
   verifier: true,
-  scaffold: true,
 };
 void ROLE_INPUTS_COMPLETE;
 
@@ -889,10 +614,6 @@ export function buildBrowserText(b: BuildBrowser | null): string {
   return `\n\n<browser>\nThis session has the MCP server${b.servers.length === 1 ? '' : 's'} ${b.servers.join(', ')} (a browser drive), so you can bring the product up and look at and screenshot your own work; screenshots it saves land in the evidence directory. Each milestone's bring-up runs from the worktree root with its env, and {port:<name>} stands for a free port you choose:\n${bringUps.join('\n')}\nStop whatever you start before your final report.\n</browser>`;
 }
 
-export function rulingsText(rulings: readonly RulingText[]): string {
-  return rulings.length === 0 ? '(none cited)' : rulings.map((r) => `${r.id}: ${r.text}`).join('\n');
-}
-
 export function bullets(items: readonly string[], empty: string): string {
   return items.length === 0 ? empty : items.map((i) => `- ${i}`).join('\n');
 }
@@ -986,23 +707,10 @@ export function witnessChecksText(checks: readonly WitnessCheckCommand[]): strin
 }
 
 /**
- * Run 10 (C), every reason since 2026-10-15: why the previous plan-check answer (its repair turn's, when it made one) was
- * refused, as the retry reads it (empty when it was not).
- */
-export function planCheckPriorInvalidText(reason: string | null): string {
-  if (reason === null) return '';
-  return `
-
-<prior_attempt>
-Your previous answer on this unit was refused, so nothing of it was applied and the spec is unchanged: ${reason}. Answer again and correct this; do not repeat it.
-</prior_attempt>`;
-}
-
-/**
  * W3: the escalation seat's preface (empty below it): this judgment is an escalation, why, and what the seat below said.
- * `role` names the judgment ("plan-check" or "gate") in the text.
+ * `role` names the judgment ("pre-build" or "gate") in the text.
  */
-export function escalationText(e: EscalationInput | null, role: 'plan-check' | 'gate'): string {
+export function escalationText(e: EscalationInput | null, role: 'pre-build' | 'gate'): string {
   if (e === null) return '';
   const why = e.kind === 'risk-trigger'
     ? `A runtime risk trigger (a contract path touched, or scope growth) moved this ${role} straight to the escalation seat.`
@@ -1017,82 +725,12 @@ Weigh the earlier reasons as another reviewer's claims, not as facts, and decide
 </escalation>`;
 }
 
-/**
- * Scope growth (2026-10-15): the reference sweep's start, and the rejected proposals (only when there are any).
- */
-export function scopeGrowthText(g: PlanCheckScopeGrowth): string {
-  const refs = g.references.map((r) => `- \`${r.removed}\` is still named by: ${r.referrers.join(', ')}`);
-  const rejected = g.rejected.map((r) => `- ${r.patterns.map((p) => `\`${p}\``).join(', ')}: proposed because ${r.reason}; rejected because ${r.rejection}`);
-  return `
-
-<scope_references>
-${refs.length === 0 ? '(none: the spec declares no removes, or nothing outside the envelope names them)' : refs.join('\n')}
-</scope_references>${rejected.length === 0 ? '' : `
-
-<rejected_scope_growth>
-${rejected.join('\n')}
-</rejected_scope_growth>`}`;
-}
-
-/** dev.17 (propagation): the unit's stale links, each to answer by its key; nothing when it has none. */
-export function staleLinksText(lines: readonly string[]): string {
-  return lines.length === 0 ? '' : `\n\n<stale_links>\n${lines.map((l) => `- ${l}`).join('\n')}\n</stale_links>`;
-}
-
-/**
- * dev.17 (design pass): the plan-check's design facts (`PlanCheckDesignInput`): the systems map, the lanes a test item may sit
- * in with their cadence and systems, the spec's forced lanes, and the limits code checks a design against.
- */
-export function designInputText(d: PlanCheckDesignInput): string {
-  const systems = d.systems === null
-    ? '(no systems map: every change names system null)'
-    : Object.entries(d.systems.systems).map(([name, s]) => `- ${name}: ${s.paths.join(', ')}${s.tests.length === 0 ? '' : `; tests ${s.tests.join(', ')}`}${s.dependsOn.length === 0 ? '' : `; depends on ${s.dependsOn.join(', ')}`}`).join('\n');
-  const env = (e: PlanCheckDesignInput['lanes'][number]['environment']): string => (e === null ? '' : `, environment ${e.name}${e.unavailable === null ? '' : ` (unavailable: ${e.unavailable})`}`);
-  const lanes = d.lanes.map((l) => `- ${l.id} (${l.kind}, cadence ${l.cadence}${l.systems === null ? ', the whole tree' : `, systems ${l.systems.join(', ')}`}${env(l.environment)})`);
-  return `<systems>
-${systems}
-</systems>
-
-<test_lanes>
-${lanes.length === 0 ? '(none)' : lanes.join('\n')}
-forced by the spec: ${d.forces.length === 0 ? '(none)' : d.forces.join(', ')}
-</test_lanes>
-
-<design_limits>
-- a system's change is substantial above ${d.substantialLines} changed lines
-- the gate reads ${d.gateInlineLines} changed lines inline
-- proofs of concept left for this unit: ${d.pocsLeft}
-- scaffold decision: ${d.scaffold ? 'available' : 'not available in this arc'}
-</design_limits>`;
-}
-
-/** dev.17 (design pass): the unit's proof-of-concept reports, or nothing before the first. */
-export function pocReportsText(reports: readonly PocReport[]): string {
-  if (reports.length === 0) return '';
-  const one = (r: PocReport): string => {
-    const head = `<poc attempt="${r.attempt}" diff="${r.diff}">\nbrief: ${r.brief}`;
-    if (r.answer === null) return `${head}\nno answer: ${r.why ?? 'none recorded'}\n</poc>`;
-    const answers = r.answer.answers.map((a) => {
-      const q = r.questions.find((x) => x.id === a.questionId);
-      return `- ${a.questionId} ${q === undefined ? '' : `(${q.question}) `}[${a.confidence}]: ${a.answer}\n  evidence: ${a.evidence}`;
-    });
-    return `${head}\n${answers.join('\n')}\nlessons:\n${bullets(r.answer.lessons, '(none)')}\nsurprises:\n${bullets(r.answer.surprises, '(none)')}\n</poc>`;
-  };
-  return `\n\n<proofs_of_concept>\n${reports.map(one).join('\n')}\n</proofs_of_concept>`;
-}
-
 /** A pack review's delta (the review it follows, what changed, the unresolved earlier findings), or nothing for a full review. */
 export function packReviewDeltaText(delta: PackReviewDelta | null): string {
   if (delta === null) return '';
   const target = (t: PackFinding['target']): string => (t.type === 'plan' ? 'plan' : t.type === 'census' ? `census ${t.rule}` : `${t.type} ${t.id}`);
   const previous = delta.previous.map((p) => `- ${p.job}#${p.finding.index} [${p.finding.severity}] ${target(p.finding.target)}: ${p.finding.claim}`);
   return `\n\n<delta since="${delta.since}">\n<changed>\n${delta.changed.join('\n')}\n</changed>\n<previous_findings>\n${previous.join('\n')}\n</previous_findings>\n</delta>`;
-}
-
-/** A specs-only drift (H2, R61): the changed specs, embedded, with what to judge; nothing for a full audit. */
-export function specsOnlyText(specsOnly: readonly RenderedSpec[] | null): string {
-  if (specsOnly === null) return '';
-  return `\n\n<specs_only>\nThis audit runs because a plan revision changed only these units' specs; the product code is unchanged since the code lenses last read it, and only the vision lens runs. Judge what these specs now ask for against the vision. Do not audit the code again.\n${documentsXml(specsOnly.map((s) => ({ source: `spec of unit ${s.unit}, revision ${s.rev} (changed by the revision this audit follows)`, content: s.markdown })))}\n</specs_only>`;
 }
 
 const KIND_TEXT: { readonly [K in BoundedDiff['inlined'][number]['kind']]: string } = {
@@ -1140,19 +778,6 @@ export function boundedDiffText(label: string, d: BoundedDiff, claims: DiffClaim
 }
 
 const idList = (ids: readonly string[]): string => (ids.length === 0 ? 'none' : ids.join(', '));
-
-/** The checkpoint's input manifest (H4): every captured input by kind, id, kept path and hash. */
-export function manifestText(manifest: CheckpointInputs['manifest']): string {
-  return manifest.length === 0 ? '(none)' : manifest.map((m) => `- ${m.kind} ${m.id}: ${m.path} sha256:${m.sha256}`).join('\n');
-}
-
-/** Every non-retired unit's spec in full, each with the item ids it holds (H4, F21), as a documents block. */
-export function checkpointSpecsText(specs: CheckpointInputs['specs']): string {
-  if (specs.length === 0) return '(no unit specs)';
-  return documentsXml(specs.map((s) => ({
-    source: `spec of unit ${s.unit}, revision ${s.rev}; item ids it holds: ${s.occupied.length === 0 ? 'none' : s.occupied.join(', ')}`, content: s.markdown,
-  })));
-}
 
 /** Bytes as a reader scans them: B, KiB or MiB. */
 export function sizeText(bytes: number): string {
@@ -1210,37 +835,9 @@ export function rulesIndexText(rules: readonly PinnedRule[], opts: Readonly<{ ha
   ]).join('\n');
 }
 
-/** The reference index as data: one line per uncited contract and per ruling not embedded. */
-export function referenceIndexText(index: ReferenceIndex): string {
-  const contracts = index.contracts.map((c) => `- ${c.path}: ${c.heading}`);
-  const rulings = index.rulings.map((r) => `- ${r.id}: ${r.line}`);
-  return [
-    `Rulings ledger: ${index.ledger}`,
-    'Contracts not embedded:',
-    contracts.length === 0 ? '(none)' : contracts.join('\n'),
-    'Rulings not embedded:',
-    rulings.length === 0 ? '(none)' : rulings.join('\n'),
-    ...(index.withdrawn.length === 0 ? [] : [`Withdrawn rulings (never cite): ${index.withdrawn.join(', ')}`]),
-  ].join('\n');
-}
-
-export function laneProgramsText(programs: readonly LaneProgram[]): string {
-  if (programs.length === 0) return '(no active lanes)';
-  return programs.map((p) => {
-    const r = p.resolved;
-    const where = r.kind === 'program' ? `resolves to ${r.realpath}` : r.kind === 'repository-file' ? 'is a repository file' : "is not found on the lane's PATH";
-    return `- ${p.lane}: ${p.argv0} ${where}`;
-  }).join('\n');
-}
-
 export function premisesText(premises: readonly Premise[]): string {
   if (premises.length === 0) return '(none recorded)';
   return premises.map((p) => `- ${p.claim} [${p.evidence.length === 0 ? 'no evidence cited' : p.evidence.map((e) => `${e.path}:${e.line}`).join(', ')}]`).join('\n');
-}
-
-/** A spec patch, one op per line as the JSON the plan-check wrote. */
-export function patchText(ops: readonly SpecPatchOp[]): string {
-  return ops.map((op) => `- ${JSON.stringify(op)}`).join('\n');
 }
 
 /** A gate round's findings for the next round's handoff: each with the commands of the experiments it cited (dev.13), not their output. */
@@ -1288,7 +885,7 @@ function obligationState(o: ObligationDef): string {
     case 'waived':
     case 'deferred':
     case 'retired':
-      return `${s.type} by ${s.ruling}`;
+      return `${s.type} by ${s.reason}`;
   }
 }
 
@@ -1326,69 +923,5 @@ export function findingViewsText(findings: readonly FindingView[]): string {
   }).join('\n');
 }
 
-/** The brakes block of a checkpoint (dev.13): the settled point, then each finding below a brake. */
-export function brakesText(b: CheckpointBrakes): string {
-  return [
-    b.settled
-      ? 'The arc is at the settled point: every milestone of the plan has passed and every planned unit has merged.'
-      : 'The arc is not at the settled point.',
-    `Findings below a brake: ${b.findings.length === 0 ? 'none' : b.findings.map((f) => `${f.finding} (${f.brake})`).join(', ')}`,
-  ].join('\n');
-}
-
-export function coverageText(c: VisionCoverage): string {
-  const withdrawn = c.withdrawnCited.map((w) => `${w.clause} (cited by ${w.citedBy.join(', ')})`);
-  return [
-    `Advanced clauses no active obligation serves: ${c.unservedAdvanced.join(', ') || 'none'}`,
-    `Opportunity clauses no active obligation serves (not a gap to close: see the opportunity rules): ${c.unservedOpportunity.join(', ') || 'none'}`,
-    `Horizon clauses (beyond this arc, not a gap): ${c.horizon.join(', ') || 'none'}`,
-    `Active obligations serving no clause: ${c.obligationsServingNone.join(', ') || 'none'}`,
-    `Withdrawn clauses still cited: ${withdrawn.join('; ') || 'none'}`,
-  ].join('\n');
-}
-
-export function divergencesText(divergences: CheckpointInputs['divergences']): string {
-  return divergences.length === 0 ? '(none)' : divergences.map((d) => `- ${d.id} (${d.type}): ${d.what}`).join('\n');
-}
-
-/** What a rejection of each reason tells the next attempt, after its detail. */
-const PRIOR_REJECTION_TEXT: Readonly<Record<PriorRejection['reason'], Readonly<{ as: string; then: string }>>> = {
-  invalid: { as: 'rejected as invalid, for these reasons', then: 'Correct each reason; do not repeat it.' },
-  evidence: { as: 'rejected on its evidence', then: 'The lanes it cited were witnessed again on the head: cite the observations given below, not the ones it cited.' },
-  stale: { as: 'rejected as stale', then: 'What it read changed after its capture: decide again from the inputs below.' },
-  busy: { as: 'rejected as busy', then: 'The stage attempts it named have closed: decide again from the inputs below.' },
-};
-
-/** The earlier rejected decisions of this trigger, as the next attempt reads them (empty when there were none). */
-export function priorRejectedText(prior: CheckpointInputs['priorRejected']): string {
-  if (prior.length === 0) return '';
-  const line = (p: PriorRejection): string => `- ${p.job}, ${PRIOR_REJECTION_TEXT[p.reason].as}: ${p.detail}\n  ${PRIOR_REJECTION_TEXT[p.reason].then}`;
-  const last = prior.some((p) => p.reason === 'invalid') ? '\nThis is the last attempt: a second invalid decision goes to the owner as a request.' : '';
-  return `\n\n<prior_attempt>\nEarlier checkpoints on this trigger decided what the executor rejected, oldest first:\n${prior.map(line).join('\n')}${last}\n</prior_attempt>`;
-}
-
-/** The proposals already refused and why, as every checkpoint reads them (empty when there are none). */
-export function refusedText(refused: CheckpointInputs['refused']): string {
-  if (refused.length === 0) return '';
-  const line = (r: RefusedProposal): string => `- ${r.job} (${r.outcome === 'rejected-invalid' ? 'rejected as invalid' : 'sent to the owner: not applicable as proposed'}): ${r.reasons}`;
-  return `\n\n<refused_proposals>\nProposals already refused on this plan revision, and why. Do not propose any of them again unchanged: correct what each reason names, propose something else, or decide no-op.\n${refused.map(line).join('\n')}\n</refused_proposals>`;
-}
-
-/** Why the checkpoint runs, in sentences. */
-export function triggerText(t: TriggerView): string {
-  if (t.type === 'milestone') {
-    return [`milestones ${t.milestones.join(', ')} retired and their walks ended; weigh the accumulated audit and walk findings since the previous steering checkpoint.`, ...t.walks.map(triggerText)].join('\n');
-  }
-  if (t.type === 'audit') return `the audit ${t.job} completed.`;
-  if (t.type === 'walk') {
-    return `the walkthrough ${t.job} of milestone ${t.milestone} (round ${t.round}) used the running product along its journeys and reported ${t.findings.join(', ')}, which no checkpoint has weighed. `
-      + `Each is a walkthrough finding on ${t.milestone}: a P1 breaks a journey or a floor and holds every unit built on the milestone until a repair lands and a later walk confirms it; a P2 departs from the design reference or the vision and is repaired alongside. `
-      + `Plan repairs from each finding's claim, cause and evidence. The evidence it cites (screenshots, shell transcripts, measurements, server logs) is under ${t.evidenceDir}, readable with Read, which renders images.`;
-  }
-  const c = t.cause;
-  if (c === null) return `unit ${t.unit} parked (log seq ${t.seq}); it has moved on since.`;
-  const ended = `its ${c.stage} attempt ${c.attempt} ended ${c.outcome}`;
-  if (c.design) return `unit ${t.unit} parked on a design question (log seq ${t.seq}): ${ended}.`;
-  return [`unit ${t.unit} parked (log seq ${t.seq}) on an executor-side cause, not a design question: ${ended} and the executor parked it (${c.reason}).`, ...c.detail].join(' ');
-}
-
+/** Neutral path-only slot; the role's wording is defined separately from memory selection. */
+export const systemNotesText = (paths: readonly RepoPath[]): string => paths.length === 0 ? '' : `\n\n<system_notes>\nNon-normative build memory (gotchas, seams, rigs); corpus remains normative.\n${paths.join('\n')}\n</system_notes>`;

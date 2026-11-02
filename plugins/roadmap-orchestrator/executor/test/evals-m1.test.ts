@@ -112,7 +112,7 @@ function assertPassed(f: Fixture): void {
 }
 
 /** What the bumpy scenario exercises beyond the clean one. */
-const BUMPY_BRANCHES: readonly Branch[] = ['redirect', 'red lane', 'fix round', 'gate revise'];
+const BUMPY_BRANCHES: readonly Branch[] = ['red lane', 'fix round', 'gate revise'];
 
 test('evals-m1.setup-valid: setup lays out a plan parsePlan accepts, specs the spec validator accepts, and a green repo', T, async () => {
   const dir = join(tmpDir('m1-setup'), 'fx');
@@ -159,10 +159,9 @@ describe('evals-m1: fake-backed fixture runs', () => {
   let parked: Fixture;
   before(async () => {
     const parkedScenario = join(tmpDir('m1-parked'), 'parked.json');
-    const escalate = { role: 'planCheck', answer: { decision: 'escalate', reasons: ['The contract is ambiguous.'], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] } };
-    // slug escalates on its seat and again on the escalation seat it routes up to: it parks, and page-id, which
-    // runs after it (merged-only, D1), never starts.
-    writeFileSync(parkedScenario, JSON.stringify({ steps: [escalate, escalate] }));
+    const cleanSteps = JSON.parse(readFileSync(join(SCENARIOS, 'clean.json'), 'utf8')).steps;
+    const escalate = {role:'gate',answer:{decision:'escalate',findings:[],directives:[],reasons:['The contract is ambiguous.'],premises:[],standing:[],clusters:null,rulings:[]}};
+    writeFileSync(parkedScenario, JSON.stringify({steps:[...cleanSteps.slice(0,2),escalate,escalate]}));
     // Independent fixture dirs, host dirs and arcs: the four runs go in parallel.
     [clean, claudeOnly, bumpy, parked] = await Promise.all([
       fakeRun('default', join(SCENARIOS, 'clean.json')),
@@ -222,7 +221,7 @@ describe('evals-m1: fake-backed fixture runs', () => {
     const tampered = await check(clean.dir);
     assert.equal(tampered.exit.code, 1);
     assert.ok(failing(tampered).includes('diff-product-only'), JSON.stringify(tampered.result.criteria));
-    assert.match(criterion(tampered, 'diff-product-only').detail, /\.roadmap\/state\.json \(roadmap-dir\)/);
+    assert.match(criterion(tampered, 'diff-product-only').detail, /\.roadmap\/state\.json \(protected-path\)/);
     git(repo, 'update-ref', `refs/heads/${INTEGRATION}`, before_);
     assert.deepEqual(failing(await check(clean.dir)), [], 'restoring the branch restores the pass');
   });

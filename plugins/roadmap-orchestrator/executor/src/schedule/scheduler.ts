@@ -1,3 +1,4 @@
+import { raiseWasteFindings } from '../flow/waste.ts';
 // The scheduler (M2 "Scheduler model"; A12, A17, F5, F13, F19, G2; M3 B7): runs every unit of the arc that may run,
 // each in its own task, and the holistic layer's jobs, from one non-reentrant loop that never awaits long work.
 //
@@ -11,7 +12,7 @@
 //   3. start the probe jobs that are due (`prober.due`), at most one per target;
 //   4. raise the needs-user items now due: a halted unit's (an operator park, a stop; a design park's per OR-Q1,
 //      below) and the park schedule's (escalations, breakers; src/park/schedule.ts); in a holistic arc also the
-//      findings' (`raiseFindingItems`) and an owed audit's (`raiseAuditOwed`); then the holistic jobs (below); then,
+//      findings' (`raiseFindingItems`); then the holistic jobs (below); then,
 //      with nothing running and no mutation pending, end `complete` when the completion predicate holds (below);
 //   5. start a task for every active unit without one whose next stage is a chain (a recovered park's), then for
 //      every ready unit without one (`ready`), and admit waiting tasks (`admitter`), less the scheduler's own holds
@@ -37,8 +38,7 @@
 // item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any other job's,
 // or the loop's own throw crashes the run.
 //
-// Start and restart (G2): before the loop's first iteration a checkpoint's decision and a pack review's end a crash cut
-// short are settled (`settleLatest`, `settlePackReviews`), a published repair batch a crash cut short is finished
+// Start and restart (G2): settle interrupted pack reviews and milestone walks, finish a published repair batch
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is
 // started for every unit whose decided next stage is a chain stage (recovery kept a green publication's slot; a
 // build's chain has its reservation cleaned), whatever pause or readiness says, and for every merged unit (its
@@ -60,10 +60,8 @@
 //
 // The holistic layer (M3; only while the plan in force names a vision, A5). One holistic job runs at a time, in
 // this order of preference: in a corpus arc before its first admission, the pack review (`runPackReview`, M4a OR-Q16,
-// R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the checkpoint
-// (`runCheckpoint`, B6) while one is due or running; (dev.13) the milestone walk (`runWalk`, src/walk/walk.ts) while one is
-// due or running; (dev.17) the code-applied propagation revision (`applyPropagation`, src/holistic/propagation.ts) while a
-// stale set's propagations are unsettled; (dev.13, agent D) the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
+// R16) while one is running or due; the baseline witness (`runBaseline`, A6) while one is owed; the milestone experience verdict (`runWalk`, src/walk/walk.ts) while one is
+// due or running; the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
 // applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
 // while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
 // `processClock`). A job that waits on a condition a command changes (skipped for a
@@ -77,26 +75,18 @@
 // The flaky ledger (dev.17, src/pipeline/deflakemint.ts; every arc): the deflake job (`applyDeflake`) while the ledger has a
 // deflake unit or a `flake-recurring` item due, and each iteration a `deflake-parked` item per park of a deflake unit.
 //
-// The flow track (M4b, src/flow/track.ts; every arc whose revisions carry the `m4b` role set, holistic or not): each
-// run raises the ruler changes, applies an accepted proposal pending its apply and proves one pending its proof, writes
-// the verdicts due, then runs the flow job when triggers are due. One judgment job at a time: the flow job waits while a
-// holistic job runs, and no holistic job starts while it runs. While a proposal is pending its apply, new candidates
-// wait (`flowApply`). Right before `arc-completed`, the verdicts the completion closes and the compact flow series.
 // dev.13, the demo (src/demo/promote.ts): each iteration of an arc with milestones journals the demo failures the host
 // record lists, promotes the latest settled milestone (unless held) and rewrites the keeper's desired file; right before
 // `arc-completed`, the final tip is promoted (`promoteFinal`).
-// M4b rev 3: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
+// Host pressure: each loop iteration reads the host's schedstat cpu totals into an in-memory tick history (`PressureTicks`,
 // a restart starts it fresh), which admission reads to release a host-pressure hold (`AdmitInput.pressure`,
-// src/schedule/ready.ts) and a flow run's inputs bind as the host's cpu wait now (`FlowTrackInput.hostPressure`).
+// src/schedule/ready.ts) and the arbiter reads for admission back-off.
 //
 // The scheduler's holds (on top of admission's, src/schedule/ready.ts):
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
 //       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
 //       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
 //         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts).
-//   - held bundle (arc feedback 2026-10-24, `busyHolds`): a unit a checkpoint's bundle touched mid-stage (rejected `busy`)
-//     is not admitted to its next stage until the trigger's next job has re-decided the held bundle (no call) at the
-//     boundary (src/holistic/checkpoint.ts).
 //   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
 //     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
@@ -110,90 +100,82 @@
 //     rules (all of them waiting, none suspended, none still held against the batch's repairs). Single-finding batches
 //     are planned first.
 //
-// Design parks (OR-Q1, `designParkRoute`): in a holistic arc a design park goes to the checkpoint first, and its
-// own item waits; a checkpoint that respecified the unit re-opens it on its pending revision (`reopened`), one that
-// decided nothing for it (or a respec the unit cannot re-open on) raises the park's item, and a second design park
-// on a respecified lineage raises `respec-second` from the checkpoint instead.
-//
 // Ends. Every arc ends by the completion predicate (§2.10, `completionBlockers`). An arc without the holistic layer
 // completes as in M2 (nothing runs, every unit merged, cut, superseded or parked for the architect, no own-arc residue,
 // no blocking needs-user, no pending command; no close-out). A holistic arc ends
 // `complete` when every unit is merged, cut or
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
-// no lens of L with an outstanding range, no owed trigger; no checkpoint due or running; the latest generation
+// no outstanding audit range or owed trigger; the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
 // change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
-// the close-out settlement runs first (run 10, src/holistic/closeout.ts `settleCloseOut`: unanswered bundle requests
-// declined, a corpus arc's open P2/P3 findings with no obligation banked). The close-out (A8, `publishCloseOut`) runs once all but
+// the close-out settlement runs first (src/holistic/closeout.ts `settleCloseOut`: P2 finding debt and P3 releases). The close-out (A8, `publishCloseOut`) runs once all but
 // itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
 // when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
-import { orderingOf, wakeOrdering } from '../park/ordering.ts';
 import { cpuBasis } from '../core/cpu.ts';
-import { schedulerPressureBlockedDefault, schedulerQueuedAtDefault } from '../core/upgrade.ts';
+import { orderingOf,wakeOrdering } from '../park/ordering.ts';
+
+import { dirname,join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
-import { applyCommand, applyControl } from '../commands/apply.ts';
-import { isControl, pollCommands, POLL_MS, readReceipt, writeReceipt } from '../commands/queue.ts';
-import { dirname, join } from 'node:path';
+import { applyCommand,applyControl } from '../commands/apply.ts';
+import { POLL_MS,isControl,pollCommands,readReceipt,writeReceipt } from '../commands/queue.ts';
 import { crashPoint } from '../core/crash.ts';
-import { type IntentOf, JUDGMENT_STAGES, type Parent, probeTargetKey } from '../core/events.ts';
-import { atomicJson, canonicalJson } from '../core/fsx.ts';
+import { type IntentOf,type Parent,probeTargetKey } from '../core/events.ts';
+import { atomicJson,canonicalJson } from '../core/fsx.ts';
 import {
-  type ArcId, type CommandId, type EnvId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type ResourceName, type Sha, type UnitId, arcId, commandId, findingId,
-  invocationId, jobIdOf, jobIdOfKind, parseJobId, resourceName, unitId,
+type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
+invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId,
 } from '../core/ids.ts';
-import type { Containment, Journal, JournalView } from '../core/interfaces.ts';
-import { type CommandFile, type NeedsUserContent, STAGES, type Stage } from '../core/records.ts';
-import { type Read, arrayOf, bool, literal, nat, object, oneOf, positive, tagged, version } from '../core/validate.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
+import type { Containment,Journal,JournalView } from '../core/interfaces.ts';
+import { type CommandFile,type NeedsUserContent,STAGES,type Stage } from '../core/records.ts';
+import { type Read,arrayOf,bool,literal,nat,object,oneOf,positive,tagged,version } from '../core/validate.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
+import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
+import { demoTicker,promoteFinal,writeDesired } from '../demo/promote.ts';
 import { revParse } from '../git/git.ts';
-import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
-import { type AuditContext, auditPending, raiseAuditOwed, runAudit } from '../holistic/audit.ts';
-import { cadence, integrationHeadNow, processClock } from '../holistic/cadence.ts';
-import { type CheckpointContext, type DesignParkRoute, busyHolds, checkpointPending, designParkRoute, runCheckpoint, settleLatest } from '../holistic/checkpoint.ts';
+import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
+import { type AuditContext,auditPending,runAudit } from '../holistic/audit.ts';
+import { cadence,integrationHeadNow,processClock } from '../holistic/cadence.ts';
+import type { RevisionContext } from '../holistic/admission.ts';
 import { settleCloseOut } from '../holistic/closeout.ts';
-import { beforeCompletion, flowApplyHeld, flowOn, runFlowTrack } from '../flow/track.ts';
-import { demoTicker, promoteFinal, writeDesired } from '../demo/promote.ts';
-import { PressureTicks, hostPressure, readHostCpu } from '../host/pressure.ts';
 import { quiescentGenerations } from '../holistic/convergence.ts';
 import { coverageOf } from '../holistic/coverage.ts';
-import { isActive, raiseFindingItems } from '../holistic/findings.ts';
-import { raiseWalkItems, runWalk, settleWalks, walkPending } from '../walk/walk.ts';
-import { applyPolish, polishDue } from '../walk/polish.ts';
-import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../pipeline/deflakemint.ts';
-import { applyPropagation, propagationDue } from '../holistic/propagation.ts';
-import { compareDue, cutDue, runningCompare, runCompare } from '../walk/compare.ts';
-import { walksPending } from '../walk/milestones.ts';
-import { packReviewHolds, packReviewPending, runPackReview, settlePackReviews } from '../holistic/packreview.ts';
-import { type ArcLaneDef, isExempt, laneRevOf } from '../holistic/types.ts';
-import { type Observation, type ObservationStore, reuse, verdictOf as witnessVerdict } from '../holistic/observe.ts';
-import type { RoutingBase } from '../input/inforce.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
+import { isActive,raiseFindingItems } from '../holistic/findings.ts';
+import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
+import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
+import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
+import { PressureTicks,readHostCpu } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
-import { type PlanM1, type PlanUnit, hasMilestones, lensSetOf } from '../input/plan.ts';
-import { type BlockingItem, blockingItems, holdsUnit, openBlocking, raiseNeedsUser, raisedFor, readNeedsUser } from '../needsuser.ts';
+import type { RoutingBase } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,hasMilestones } from '../input/plan.ts';
+import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
-import { raiseDue as raiseScheduleDue, trippedTargets } from '../park/schedule.ts';
-import { baselineDue, runBaseline } from '../pipeline/baseline.ts';
-import { type StageContext, runOp } from '../pipeline/dispatch.ts';
-import { type BatchOutcome, batchRepairs, finishBatch, findingBlocking, heldBatch, publishBatch } from '../pipeline/integrate.ts';
-import { invocationDir, killWorkload } from '../pipeline/invoke.ts';
-import { arcLaneKey, laneEnvId, observations } from '../pipeline/lanes.ts';
-import { type DocsContext, closeOutFiles, endDetail, publishCloseOut } from '../pipeline/publish.ts';
-import { repairUnits, specFacts } from '../pipeline/reproduce.ts';
-import { at, executorIdentity, holisticInForce, record, start } from '../pipeline/stages.ts';
-import { type Gate, type UnitResult, haltResult, runUnit, upcoming } from '../pipeline/unit.ts';
+import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
+import { baselineDue,runBaseline } from '../pipeline/baseline.ts';
+import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/deflakemint.ts';
+import { type StageContext,runOp } from '../pipeline/dispatch.ts';
+import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
+import { invocationDir,killWorkload } from '../pipeline/invoke.ts';
+import { arcLaneKey,laneEnvId,observations } from '../pipeline/lanes.ts';
+import { type DocsContext,closeOutFiles,endDetail,publishCloseOut } from '../pipeline/publish.ts';
+import { repairUnits,specFacts } from '../pipeline/reproduce.ts';
+import { at,executorIdentity,holisticInForce,record,start } from '../pipeline/stages.ts';
+import { type Gate,type UnitResult,haltResult,runUnit,upcoming } from '../pipeline/unit.ts';
 import { snapshotPublishOp } from '../recover/ops.ts';
 import { recoverReservations } from '../recover/resource.ts';
-import { bringDown, downEnvironments, idleEnvironments, settleEnvironments } from '../resources/environments.ts';
+import { bringDown,downEnvironments,idleEnvironments,settleEnvironments } from '../resources/environments.ts';
 import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
-import type { Arbiter, FirstHolder } from './arbiter.ts';
+import { compareDue,cutDue,runCompare,runningCompare } from '../walk/compare.ts';
+import { walksPending } from '../walk/milestones.ts';
+import { applyPolish,polishDue } from '../walk/polish.ts';
+import { raiseWalkItems,runWalk,settleWalks,walkPending } from '../walk/walk.ts';
+import type { Arbiter,FirstHolder } from './arbiter.ts';
+import { faultJob,faultUnit,jobFaultOpen } from './fault.ts';
 import { holdCycle } from './graph.ts';
-import { faultJob, faultUnit, jobFaultOpen } from './fault.ts';
-import { admitter, findingBlock, nextStage, rankOf, ready } from './ready.ts';
-import { type AdmissionStage, type CommandScope, PARK_ESCALATE_MS, PROBE_BACKOFF_MIN, type ResourceRequest, type TaskState } from './types.ts';
+import { admitter,findingBlock,nextStage,rankOf,ready } from './ready.ts';
+import { type AdmissionStage,type CommandScope,PARK_ESCALATE_MS,PROBE_BACKOFF_MIN,type ResourceRequest,type TaskState } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // sched.json: the scheduler's in-memory view, for `status` only
@@ -252,12 +234,12 @@ export const schedFile: Read<SchedFile> = object((f) => ({
   tasks: f.get('tasks', arrayOf(object((g) => ({ unit: g.get('unit', (v, p) => unitId(v, p)), state: g.get('state', oneOf(TASK_STATES)) })))),
   queue: f.get('queue', arrayOf(object((g): QueueEntry => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
-    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
-    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
+    publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.get('pressureBlocked', bool),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.get('queuedAt', nat)),
   })))),
   jobQueue: f.get('jobQueue', arrayOf(object((g): JobQueueEntry => ({
-    holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.optional('pressureBlocked', bool) ?? schedulerPressureBlockedDefault(),
-    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.optional('queuedAt', nat) ?? schedulerQueuedAtDefault()),
+    holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.get('pressureBlocked', bool),
+    ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.get('queuedAt', nat)),
   })))),
   drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
 }));
@@ -298,9 +280,9 @@ type Task = {
   waiting: Waiting | null;
 };
 
-/** Invocation purposes a pause kills among a paused unit's spawns (and, under `pause --all`, a flow proof's runs: M4b). */
+/** Invocation purposes a pause kills among a paused unit's spawns. */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills (lens, checkpoint and flow calls and flow proofs included; never a docs publication's lanes). */
+/** Invocation purposes a stop kills, including arc judgments and proofs; never a docs publication's lanes. */
 const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof', 'bring-up'];
 
 /** A holistic job that made no progress is asked again only this long after. */
@@ -351,9 +333,9 @@ export function arcSettled(view: JournalView, units: readonly Readonly<{ id: Uni
 // ---------------------------------------------------------------------------------------------------
 // The holistic layer's contexts
 
-/** The contexts the holistic jobs run under: the audit's (a clock, the arbiter's first-served waits), the checkpoint's, the docs'. */
+/** Contexts for campaign audits, root-authored revisions and docs publications. */
 export type HolisticContexts = Readonly<{
-  audit: AuditContext; checkpoint: CheckpointContext; docs: DocsContext;
+  audit: AuditContext; revision: RevisionContext; docs: DocsContext;
   /**
    * The executor's environment identity of an arc lane (§2.8: an observation counts only on its tree, lane revision and
    * environment): the running executor's own (`laneEnvId`); a reader outside it (`status`), the one the executor
@@ -369,7 +351,7 @@ export function holisticContexts(
   const audit: AuditContext = { ...x.stage, acquireFirst: x.arbiter.acquireFirst, clock };
   return {
     audit,
-    checkpoint: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs, laneEnv: x.stage.hostEnv },
+    revision: { ...audit, planFile: x.commands.planFile, routingBase: x.commands.routingBase, docs: x.commands.docs, laneEnv: x.stage.hostEnv },
     docs: { ...x.stage, planFile: x.commands.planFile, arbiter: x.arbiter },
     laneEnv: (lane) => laneEnvId(x.stage, lane),
   };
@@ -386,56 +368,20 @@ export function recordedLaneEnv(view: JournalView, lane: ArcLaneDef): EnvId | nu
 }
 
 /** OR-Q1: what a unit's design park waits for (null outside a holistic arc, or for any other park). */
-export type ParkRoute = (unit: UnitId) => DesignParkRoute | null;
-
-/** The route of a run: `designParkRoute` over its checkpoint context (null for every park outside a holistic arc). */
-export const designRoute = (h: HolisticContexts): ParkRoute => (unit) => designParkRoute(h.checkpoint, unit);
-
-/** The route of an arc without the holistic layer: every park raises its own item. */
-const NO_ROUTE: ParkRoute = () => null;
-
-// ---------------------------------------------------------------------------------------------------
 // Raising a unit's result
-
-/**
- * OR-Q1: whether a design park's own item is raised now under `route`. `respecified`: the checkpoint applied a
- * revision for it, so a judgment-stage park re-opens on its pending revision (`reopened`, as `resume` would), and a
- * unit a planned unit re-enters goes on in its successor; either way no item. Otherwise its item is raised.
- */
-function raisesParkItem(ctx: StageContext, unit: UnitId, route: DesignParkRoute): boolean {
-  switch (route.kind) {
-    case 'checkpoint':
-    case 'respec-second':
-      return false;
-    case 'park-item':
-      return true;
-    case 'respecified': {
-      const view = ctx.journal.view;
-      const u = view.unit(unit);
-      const p = u.pendingRevision;
-      if (p !== null && u.decided !== null && (JUDGMENT_STAGES as readonly Stage[]).includes(u.decided.stage)) {
-        ctx.journal.fact({ kind: 'reopened', unit, command: p.command, specRev: p.rev, specSha256: p.sha256 });
-        return false;
-      }
-      return !ctx.plan().units.some((x) => x.reenters?.unit === unit);
-    }
-  }
-}
 
 /**
  * Writes the needs-user a unit's result carries, once (`raisedFor`): an operator park's or a stop's, parented by
  * the attempt that decided it (a design park's per `route`, OR-Q1); a hold's (a usage-limited backend), parented by
  * the held attempt. A retryable park asks nobody: its probes recover it, and it escalates on its own after 6 h (D2).
  */
-export function raiseResult(ctx: StageContext, unit: UnitId, result: UnitResult, route: ParkRoute = NO_ROUTE): void {
+export function raiseResult(ctx: StageContext, unit: UnitId, result: UnitResult): void {
   const { journal, runDir } = ctx;
   const view = journal.view;
   if (result.kind === 'parked' && !operatorPark(view, unit)) return;
   if (result.kind === 'parked' || result.kind === 'stopped') {
     const parent = decidedParent(view, unit);
     if (raisedFor(view, parent) !== null) return;
-    const r = result.kind === 'parked' ? route(unit) : null;
-    if (r !== null && !raisesParkItem(ctx, unit, r)) return;
     raiseNeedsUser(journal, runDir, result.needsUser, parent);
     return;
   }
@@ -455,7 +401,7 @@ const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligation
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
   'units-open', 'blocking-items', 'pending-commands', 'residues', 'baseline-owed', 'audit-pending', 'coverage-outstanding', 'audit-owed',
-  'checkpoint-pending', 'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+  'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
 ] as const;
 export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
@@ -472,7 +418,7 @@ export type ArcHold = (typeof ARC_HOLDS)[number];
 export function arcHolds(h: HolisticContexts, blocking: readonly BlockingItem[], baselineRunning: boolean): readonly ArcHold[] {
   const out = new Set<ArcHold>();
   if (baselineRunning || baselineOwed(h.audit) !== null || blocking.some((b) => b.reason === 'obligation-baseline')) out.add('baseline');
-  if (packReviewHolds(h.checkpoint)) out.add('pack-review');
+  if (packReviewHolds(h.revision)) out.add('pack-review');
   return ARC_HOLDS.filter((x) => out.has(x));
 }
 
@@ -546,7 +492,7 @@ export function closeOutState(h: HolisticContexts, head: Sha): 'done' | 'nothing
  * §2.10's `complete`: the conditions that fail now (none: complete). `blocking`: the open blocking items; `pending`: the
  * pending mutations. Every arc: `units-open` (holistic: a unit neither merged, cut nor superseded; without the layer, one
  * not settled as M2 settles it, an operator park settling), `blocking-items`, `pending-commands`, `residues`. A holistic
- * arc adds the baseline, audit, checkpoint, quiescence, close-out and obligation clauses (vacuous without the layer: an
+ * arc adds the baseline, audit, quiescence, close-out and obligation clauses (vacuous without the layer: an
  * arc without it has no close-out, its in-tree documents being none of the executor's renderings).
  */
 export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocking: number; pending: number }>): readonly CompletionBlocker[] {
@@ -569,12 +515,11 @@ export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocki
   if (auditPending(ctx)) out.add('audit-pending');
   const c = cadence(ctx, ctx.clock);
   if (c === null) throw new Error('a holistic arc without a cadence');
-  if (coverageOf(fold, c.base, lensSetOf(holistic), c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
+  if (coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
   if (c.owed.length > 0) out.add('audit-owed');
-  if (checkpointPending(h.checkpoint)) out.add('checkpoint-pending');
   // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
   if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) out.add('walk-pending');
-  const g = Math.max(0, ...fold.audits.map((a) => a.started.generation), ...fold.checkpoints.map((x) => x.inputs.generation));
+  const g = Math.max(0, ...fold.audits.map((a) => a.started.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
   if (g > 0 && !quiescentGenerations(view, vision).has(g)) out.add('generation-not-quiescent');
@@ -757,13 +702,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const scopeOf = commandScope(x.commands);
   const h = holisticContexts(x);
   const holistic = (): boolean => view().holistic().on;
-  const route = designRoute(h);
   const demo = demoTicker(x.stage);
-  // A crash right after a checkpoint's decision leaves no checkpoint due, so `runCheckpoint` (which settles too) would
-  // not run: the decision's aftermath a crash cut short (a no-op's divergences, dispositions, the digest) is settled here.
   if (holistic()) {
-    settleLatest(h.checkpoint);
-    settlePackReviews(h.checkpoint);
+    settlePackReviews(h.revision);
     settleWalks(x.stage);
   }
 
@@ -782,8 +723,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const unbatched = new Map<UnitId, string>();
   /** Members a published batch retired: their retire runs in a task of their own. */
   const retiring = new Set<UnitId>();
-  /** While the flow job (the flow track's judgment) runs: no holistic job starts (one judgment job at a time). */
-  let flowJudging = false;
   let lastTick = 0;
   const pressure = arbiter.pressure;
 
@@ -875,7 +814,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (parked === null) throw error;
       return parked;
     };
-    runUnit(ctx, unit, gate).catch(contained).then((result) => raiseResult(x.stage, unit.id, result, route)).catch(fail).finally(() => {
+    runUnit(ctx, unit, gate).catch(contained).then((result) => raiseResult(x.stage, unit.id, result)).catch(fail).finally(() => {
       tasks.delete(unit.id);
       settled();
     });
@@ -892,13 +831,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The scheduler's holds: arc-wide (the baseline, the pack review) and repair batches (R7)
 
-  /**
-   * `flowApply` (M4b): an accepted flow proposal waits for its revision, so no new candidate starts. `bundle` (arc feedback
-   * 2026-10-24): the units a busy-rejected checkpoint's held bundle waits for (`busyHolds`), held at every admission.
-   */
-  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId>; flowApply: boolean; bundle: ReadonlySet<UnitId> }>;
+  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId> }>;
   const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
-    holds.arc || holds.bundle.has(unit) || (stage === 'candidate' && (holds.batch.has(unit) || holds.flowApply));
+    holds.arc || (stage === 'candidate' && holds.batch.has(unit));
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -921,7 +856,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       && (r.progress.kind === 'working' || r.progress.kind === 'approved'));
     const waiting = new Set(live.filter((r) => {
       const t = tasks.get(r.unit);
-      const next = upcoming(v.unit(r.unit), specOf(planUnit(r.unit)).reproduces);
+      const next = upcoming(v.unit(r.unit), specOf(planUnit(r.unit)).reproduces, specOf(planUnit(r.unit)).review);
       return r.progress.kind === 'approved' && next?.kind === 'admission' && next.stage === 'candidate' && (t === undefined || t.state === 'awaiting-admission' || t.state === 'idle');
     }).map((r) => r.unit));
     /** The batch of `group` (findings in canonical order, the first its key): every unit repairing one directly, once all wait. */
@@ -972,7 +907,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const w = task.waiting;
       if (w === null) continue;
       const u = view().unit(task.unit);
-      const next = upcoming(u, specOf(planUnit(task.unit)).reproduces);
+      const next = upcoming(u, specOf(planUnit(task.unit)).reproduces, specOf(planUnit(task.unit)).review);
       // Ended at this boundary: a pause or stop, or the unit moved on without it (cut, superseded, re-opened, retired).
       if (stopping !== null || task.abort.signal.aborted || u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) {
         endTask(task);
@@ -999,7 +934,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const startChains = (): void => {
     for (const unit of plan().units) {
       const u = view().unit(unit.id);
-      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u, specOf(unit).reproduces)?.kind === 'chain') startTask(unit);
+      if (!tasks.has(unit.id) && u.status === 'active' && nextStage(u, specOf(unit).reproduces, specOf(unit).review)?.kind === 'chain') startTask(unit);
     }
     for (const id of retiring) {
       if (tasks.has(id)) continue;
@@ -1045,10 +980,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       killLive('stop', stopKills);
       return;
     }
-    const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit);
+    const steering = new Set(pollCommands(runDir, view().arc).flatMap((c) => c.body.type === 'steer' ? [c.body.unit] : []));
+    const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit) || steering.has(unit);
     for (const task of tasks.values()) if (paused(task.unit) && !task.abort.signal.aborted) task.abort.abort('pause');
-    killLive('pause', (intent) => (intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit))
-      || (c.pausedAll && intent.expect.subject.purpose === 'proof'));
+    killLive('pause', (intent) => intent.parent.type === 'stage' && PAUSE_KILLS.includes(intent.expect.subject.purpose) && paused(intent.parent.unit));
   };
 
   /** The probe targets a mutation probes or smokes through the prober (`resume <u>` of a retryable park, `resume --backend`). */
@@ -1134,7 +1069,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (!operatorPark(view(), unit.id) || raisedFor(view(), decidedParent(view(), unit.id)) !== null) continue;
       const halted = haltResult(x.stage, unit);
       if (halted === null) throw new Error(`unit ${unit.id} is ${status}, but its decision halts nothing`);
-      raiseResult(x.stage, unit.id, halted, route);
+      raiseResult(x.stage, unit.id, halted);
     }
     raiseScheduleDue(journal, runDir, new Date());
   };
@@ -1145,8 +1080,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     lastTick = Date.now();
     raiseFindingItems(journal, runDir, new Date());
     raiseWalkItems(x.stage, new Date());
-    const c = cadence(x.stage, h.audit.clock);
-    if (c !== null) raiseAuditOwed(h.audit, c);
   };
 
   // -------------------------------------------------------------------------------------------------
@@ -1155,37 +1088,31 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   /** Whether every admission is held (`arcHolds`; the baseline job running counts as owed). */
   const arcHeld = (blocking: readonly BlockingItem[]): boolean => holistic() && arcHolds(h, blocking, jobs.has('holistic:baseline')).length > 0;
 
-  /** OR-Q1: a second design park whose `respec-second` the checkpoint job has yet to raise (it raises it when run). */
-  const respecSecondDue = (): boolean => plan().units.some((u) => view().unit(u.id).status === 'park-pending'
-    && raisedFor(view(), decidedParent(view(), u.id)) === null && route(u.id)?.kind === 'respec-second');
-
-  /** The one holistic job (baseline, checkpoint, audit), the batch and the close-out, each started when due. */
+  /** The holistic jobs (baseline, review, experience verdict, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
     if (!holistic()) return;
     // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
-    if (due('holistic') && !flowJudging && !jobFaultOpen(view(), runDir)) {
+    if (due('holistic') && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
-      if (packReviewPending(h.checkpoint)) {
-        trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.checkpoint)).kind === 'ended' ? PROGRESS : WAIT));
+      if (packReviewPending(h.revision)) {
+        trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.revision)).kind === 'ended' ? PROGRESS : WAIT));
       } else if (job !== null) {
         trackRetrying('holistic:baseline', 'holistic', async () => {
           const out = await runBaseline(h.audit);
           return out.kind === 'incomplete' ? { kind: 'no-verdict', job, detail: endDetail(out.end) } : PROGRESS;
         });
-      } else if (checkpointPending(h.checkpoint) || respecSecondDue()) {
-        trackRetrying('holistic:checkpoint', 'holistic', async () => (['decided', 'not-needed'].includes((await runCheckpoint(h.checkpoint)).kind) ? PROGRESS : WAIT));
+
       } else if (walkPending(h.audit)) {
         trackRetrying('holistic:walk', 'holistic', async () => {
           const out = await runWalk(h.audit);
           return out.kind === 'ended' && out.outcome !== 'abandoned' ? PROGRESS : WAIT;
         });
-      } else if (propagationDue(view(), plan()) !== null) {
-        trackRetrying('holistic:propagation', 'holistic', async () => ((await applyPropagation(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+
       } else if (polishDue(view(), plan()) !== null) {
-        trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+        trackRetrying('holistic:polish', 'holistic', async () => ((await applyPolish(h.revision)).kind === 'applied' ? PROGRESS : WAIT));
       } else if (runningCompare(view()) !== null || cutDue(view(), plan()) !== null || compareDue(view(), plan()) !== null) {
         trackRetrying('holistic:compare', 'holistic', async () => {
-          const out = await runCompare(h.checkpoint);
+          const out = await runCompare(h.revision);
           return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
         });
       } else if (auditPending(h.audit)) {
@@ -1210,28 +1137,13 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   };
 
   /**
-   * M4b: the flow track (src/flow/track.ts) on every arc with the loop on, outside the holistic guard: the ruler check,
-   * an accepted proposal's apply and proof, the verdicts due, then the flow job, which waits while a holistic job runs.
-   */
-  const startFlow = (): void => {
-    if (!flowOn(view()) || !due('flow')) return;
-    trackRetrying('flow', 'flow', async () => ((await runFlowTrack(h.checkpoint, {
-      holisticRunning: () => [...jobs.keys()].some((k) => k.startsWith('holistic:')),
-      judging: (on) => {
-        flowJudging = on;
-      },
-      hostPressure: () => hostPressure(pressure.ticks(), 0),
-    })) === 'progress' ? PROGRESS : WAIT));
-  };
-
-  /**
    * dev.17 (flaky ledger, src/pipeline/deflakemint.ts): the deflake job on every arc while the ledger asks for a deflake unit or
    * a `flake-recurring` item; and each iteration, a `deflake-parked` item for a deflake unit's park.
    */
   const startDeflake = (): void => {
     raiseDeflakeParked(x.stage);
     if (!due('deflake') || !deflakeJobPending(x.stage)) return;
-    trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.checkpoint)).kind === 'applied' ? PROGRESS : WAIT));
+    trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.revision)).kind === 'applied' ? PROGRESS : WAIT));
   };
 
   /** A8: the close-out publication (or, with nothing to change, every arc lane on the head), as a job. */
@@ -1284,11 +1196,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     // Run 10 (E, F): nothing but the close-out left, the close-out settlement first (unanswered requests declined, open
     // P2/P3 findings with no obligation banked); what it wrote is read again next time round.
     const settling = view().holistic().on && blockers.every((b) => (CLOSE_OUT_BLOCKERS as readonly string[]).includes(b));
-    if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.checkpoint)) return null;
+    if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.revision)) return null;
     if (blockers.length === 0) {
-      // M4b: the verdicts the completion closes and the compact flow series, right before `arc-completed`.
       if (view().holistic().completion?.active !== true) {
-        beforeCompletion(h.checkpoint);
         promoteFinal(x.stage, integrationHeadNow(x.stage));
         writeDesired(x.stage);
       }
@@ -1375,6 +1285,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     if (stopping !== null) {
       // Stopping: nothing new starts; the halted units' items are raised (a unit's stop names its own), and the
       // run ends once every task and job has settled, every environment down.
+      raiseWasteFindings(x.stage);
       raiseHalted();
       for (const task of tasks.values()) endTask(task);
       if (tasks.size === 0 && jobs.size === 0) {
@@ -1393,14 +1304,14 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       // 3. Due probes.
       startProbes();
       // 4. A halted unit's, the schedule's and the holistic layer's needs-user; the holistic jobs; the end.
+      raiseWasteFindings(x.stage);
       raiseHalted();
       raiseHolistic();
       demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held, flowApply: flowApplyHeld(view()), bundle: holistic() ? busyHolds(h.checkpoint) : new Set() };
+      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held };
       startHolistic(holds, batch);
-      startFlow();
       startDeflake();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {
         const end = await ended(blocking);

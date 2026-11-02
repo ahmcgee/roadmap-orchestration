@@ -1,5 +1,5 @@
-// SpecPatch application and the `spec.patch` file op. Plan-check redirects are the only M1 source of
-// patches (§2.7), besides the executor appending the implementer's decisions. `applySpecPatch` is pure; the
+// SpecPatch application and the `spec.patch` file op: executor-authored build decisions and
+// departures append to the retained spec. `applySpecPatch` is pure; the
 // op records `{path, oldSha256, expectRev, patch}` and the expected `{newSha256, newRev}` before it writes,
 // so recovery decides by the kept spec bytes alone.
 import { existsSync, readFileSync } from 'node:fs';

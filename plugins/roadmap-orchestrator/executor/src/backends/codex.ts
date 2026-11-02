@@ -7,6 +7,7 @@
 import type { BackendError, TokenUsage, Usage } from '../core/records.ts';
 import type { BackendReading } from './adapter.ts';
 import { MalformedOutputError, classifyBackendError } from './errors.ts';
+import { pricedCodexUsage } from './pricing.ts';
 import { type StreamEvent, jsonLines } from './jsonl.ts';
 
 type Event = StreamEvent;
@@ -22,14 +23,16 @@ function turnUsage(u: unknown): TokenUsage | null {
   if (!count(r['input_tokens']) || !count(r['output_tokens'])) return null;
   if (read !== undefined && !count(read)) return null;
   if (write !== undefined && !count(write)) return null;
+  const cost = r['cost_usd'] ?? r['total_cost_usd'];
+  if (cost !== undefined && (typeof cost !== 'number' || !Number.isFinite(cost) || cost < 0)) return null;
   return {
     inputTokens: r['input_tokens'],
     outputTokens: r['output_tokens'],
     cacheReadTokens: read === undefined ? null : read,
     cacheWriteTokens: write === undefined ? null : write,
-    // Codex reports neither a turn count nor a cost.
+    // Codex reports no turn count; preserve native USD cost when present.
     turns: null,
-    costUsd: null,
+    costUsd: cost === undefined ? null : cost as number,
   };
 }
 
@@ -41,7 +44,8 @@ function sum(a: TokenUsage, b: TokenUsage): TokenUsage {
     cacheReadTokens: add(a.cacheReadTokens, b.cacheReadTokens),
     cacheWriteTokens: add(a.cacheWriteTokens, b.cacheWriteTokens),
     turns: null,
-    costUsd: null,
+    costUsd: add(a.costUsd, b.costUsd),
+    ...(a.costEstimated || b.costEstimated ? { costEstimated: true } : {}),
   };
 }
 
@@ -67,7 +71,7 @@ function errorMessage(e: Event, file: string): string {
  * @param stdout the `--json` event stream
  * @param lastMessage the `-o` file's text, or null when Codex wrote none
  */
-export function readCodex(stdout: string, lastMessage: string | null): BackendReading {
+export function readCodex(stdout: string, lastMessage: string | null, model?: string): BackendReading {
   const file = 'stdout';
   let sessionId: string | null = null;
   let completed = 0;
@@ -87,7 +91,9 @@ export function readCodex(stdout: string, lastMessage: string | null): BackendRe
           usageProblem ??= 'absent';
           break;
         }
-        const u = turnUsage(e['usage']);
+        const raw = turnUsage(e['usage']);
+        const priced = raw === null || model === undefined ? null : pricedCodexUsage({ kind: 'known', tokens: raw }, model);
+        const u = priced?.kind === 'known' ? priced.tokens : raw;
         if (u === null) usageProblem = 'malformed';
         else usage = usage === null ? u : sum(usage, u);
         break;
@@ -116,7 +122,7 @@ export function readCodex(stdout: string, lastMessage: string | null): BackendRe
   const usageOut: Usage = completed === 0
     ? { kind: 'unavailable', reason: 'no-result' }
     : usageProblem !== null || usage === null
-      ? { kind: 'unavailable', reason: usageProblem ?? 'absent' }
+      ? { kind: 'unavailable', reason: usageProblem ?? 'absent', ...(usage === null ? {} : { streamed: usage }) }
       : { kind: 'known', tokens: usage };
   return { sessionId, output, usage: usageOut, backendErrors: errors, stopReason: null, access: null };
 }

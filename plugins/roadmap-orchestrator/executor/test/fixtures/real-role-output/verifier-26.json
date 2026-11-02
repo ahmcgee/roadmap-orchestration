@@ -1,0 +1,93 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "packages/flint/src/vessel-export.ts",
+      "hunk": {
+        "path": "packages/flint/src/vessel-export.ts",
+        "line": 2
+      },
+      "text": "vesselExport ignores input.id and always returns { vessel: 'anonymous' }. Corpus rule T-1 requires the caller's vessel id to be preserved verbatim in the vessel field, so A1 is unmet and obligation I-1 does not hold.",
+      "contractRef": "T-1",
+      "defect": "contract-violation",
+      "evidence": [
+        "packages/flint/src/vessel-export.ts:2",
+        "docs/corpus/0010_Exports.md:6"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (imports vesselExport from packages/flint/src/vessel-export.ts; calls it with id 'oak' and id 'MV-42 ', token 'private'; prints JSON)",
+          "output": "\"oak\" -> {\"vessel\":\"anonymous\"}\n\"MV-42 \" -> {\"vessel\":\"anonymous\"}"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "blocking",
+      "path": "packages/flint/test/vessel-export.test.ts",
+      "hunk": {
+        "path": "packages/flint/test/vessel-export.test.ts",
+        "line": 4
+      },
+      "text": "The only test asserts typeof vessel === 'string'. It passes with the hard-coded 'anonymous' return, so the green unit lane and the satisfied witness-presence check do not show that T-1 behaviour ran. The test must assert the supplied id comes back verbatim.",
+      "contractRef": "T-1",
+      "defect": "test-inadequate",
+      "evidence": [
+        "packages/flint/test/vessel-export.test.ts:4"
+      ],
+      "experiments": [
+        {
+          "command": "node --test packages/flint/test/vessel-export.test.ts",
+          "output": "tests 1, pass 1, fail 0 (against the implementation that returns 'anonymous' for every id)"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Change vesselExport in packages/flint/src/vessel-export.ts to return { vessel: input.id }, unchanged (no trimming, casing or defaulting), so it satisfies T-1. Do not log the token or write it anywhere (T-2).",
+    "Replace the typeof-only check in packages/flint/test/vessel-export.test.ts with assertions that vessel strictly equals the supplied id, using at least two distinct ids and one with characters a normaliser would alter, such as 'MV-42 '. The test must fail against a constant return. Keep the test name that the 'export' witness selects, or make sure the witness still selects this test.",
+    "Rerun node tools/gen-goldens.ts after the fix and commit its output only. Do not hand-edit goldens or change anything else."
+  ],
+  "reasons": [
+    "A1: NOT MET. The function and test exist and accept an id and token, but the record does not follow the export contract: T-1 is violated because the id is discarded for the constant 'anonymous'. T-2 is not violated; the token is unused and nothing is logged.",
+    "A2: MET at this head. The executor's regeneration was byte-identical, and a parsed comparison of goldens/flint.json against the baseline shows only the new vessel-export.ts module entry and no removals. The diff touches no other files. Goldens must be regenerated again if the fix changes the signature or imported calls.",
+    "I-1 (anchored at T-1) does not hold. The green unit lane and witness presence are not evidence for it because the test cannot detect the violation."
+  ],
+  "premises": [
+    {
+      "claim": "T-1 requires the vessel field to carry the caller-supplied id verbatim.",
+      "evidence": [
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "claim": "The implementation returns a constant and never reads input.id.",
+      "evidence": [
+        {
+          "path": "packages/flint/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The test checks only the type of the vessel field.",
+      "evidence": [
+        {
+          "path": "packages/flint/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

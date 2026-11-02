@@ -1,32 +1,33 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 contracts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"): the ids, the plan's milestones with
 // their defaults and refusals, the polish origin, the vision's experience kind, the walk facts and their reader and fold
 // rules, the walkthrough and polish-judge answers, the walk roles in force only under milestones (routing revs of an arc
 // without them unchanged), the repo config's walkthrough MCP servers and the acting-judge argv. Behaviour is not here.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, prevHash, serializeEvent } from '../src/core/events.ts';
-import { InvalidIdError, arcId, canonicalIds, jobId, journeyId, milestoneId, polishId, sha, sha256, visionClauseId } from '../src/core/ids.ts';
+import { mkdirSync,writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe,it } from 'node:test';
+import { backendArgv,freshJudgmentSession,writeDenyRules } from '../src/backends/argv.ts';
+import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,prevHash,serializeEvent } from '../src/core/events.ts';
+import { InvalidIdError,arcId,canonicalIds,jobId,journeyId,milestoneId,polishId,sha,sha256,visionClauseId } from '../src/core/ids.ts';
 import { Fold } from '../src/core/state.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
-import { ARC as LOG_ARC, chain } from './fixtures/log-records.ts';
-import { DEFAULT_WALK_ROUNDS, type PlanM1, designUnitOf, hasMilestones, milestonesOf, parsePlan, walkRoundsOf } from '../src/input/plan.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
 import { parseVision } from '../src/holistic/types.ts';
-import { backendArgv, freshJudgmentSession, writeDenyRules } from '../src/backends/argv.ts';
+import { DEFAULT_WALK_ROUNDS,type PlanM1,designUnitOf,hasMilestones,milestonesOf,parsePlan,walkRoundsOf } from '../src/input/plan.ts';
 import { actingWriteDenials } from '../src/pipeline/dispatch.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { validatePolishJudgeOutput, validateWalkthroughOutput } from '../src/prompts/schemas.ts';
-import { arcRolesInForce, arcStack, parseRepoConfig, planStack, resolveRouting, seatsInForce, unsupportedSeats } from '../src/routing/layers.ts';
-import { ACTING_ROLES, FRESH_ROLES, ROLES } from '../src/routing/types.ts';
+import { validatePolishJudgeOutput,validateWalkthroughOutput } from '../src/prompts/schemas.ts';
+import { arcRolesInForce,arcStack,parseRepoConfig,planStack,resolveRouting,seatsInForce,unsupportedSeats } from '../src/routing/layers.ts';
+import { ACTING_ROLES,FRESH_ROLES,ROLES } from '../src/routing/types.ts';
 import { ORIGIN_RANK } from '../src/schedule/types.ts';
+import { ARC as LOG_ARC,chain } from './fixtures/log-records.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const A = sha('a'.repeat(40));
 const H = sha256('d'.repeat(64));
 const AT = isoTime('2026-10-18T12:00:00.000Z');
 
-const envelope = (seq: number): Envelope => ({ v: 1, seq, prev: seq === 1 ? null : H, at: AT, arc: arcId('arc-3') });
+const envelope = (seq: number): Envelope => ({ v: 2, seq, prev: seq === 1 ? null : H, at: AT, arc: arcId('arc-3') });
 function roundTrip(record: LogRecord): Event {
   const e = { ...envelope(2), ...record } as Event;
   const line = serializeEvent(e);
@@ -38,7 +39,7 @@ const fact = (f: object): LogRecord => ({ type: 'fact', fact: f as Fact });
 const refuses = (record: LogRecord, field: RegExp): void =>
   assert.throws(() => roundTrip(record), (err: unknown) => err instanceof SchemaError && field.test(err.field), JSON.stringify(record));
 
-const unit = (id: string, after: string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: [`src/${id}/**`], resources: [], after, contingent: [] });
+const unit = (id: string, after: string[] = []) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], after, contingent: [] });
 const MILESTONE = {
   id: 'MS-1', text: 'A visitor signs up and sees their dashboard.', units: ['u1', 'u2'], design: { unit: 'd1' }, references: ['design/web'],
   bringUp: {
@@ -77,7 +78,7 @@ describe('dev.13 plan: milestones', () => {
     const none = parsePlan(PLAN);
     assert.deepEqual([milestonesOf(none), hasMilestones(none), walkRoundsOf(none), DEFAULT_WALK_ROUNDS], [[], false, 3, 3]);
     const plan = parsePlan({ ...withMilestone({}), limits: { walkRounds: 2 } });
-    assert.deepEqual(plan.milestones, [MILESTONE]);
+    assert.deepEqual(plan.milestones, [{ ...MILESTONE, lanes: [] }]);
     assert.equal(walkRoundsOf(plan), 2);
     assert.equal(designUnitOf(plan.milestones![0]!), 'd1');
     assert.equal(designUnitOf(parsePlan(withMilestone({ design: { supplied: true } })).milestones![0]!), null);
@@ -87,7 +88,7 @@ describe('dev.13 plan: milestones', () => {
     refusedAt(withMilestone({ units: ['u1', 'nope'] }), /^plan\.milestones\[0\]\.units\[1\]$/);
     refusedAt(withMilestone({ design: { unit: 'nope' } }), /\.design\.unit$/);
     refusedAt(withMilestone({ units: ['u1', 'd1'] }), /\.design\.unit$/);
-    refusedAt(withMilestone({}, { ...PLAN, units: [{ ...unit('d1'), origin: 'checkpoint' }, unit('u1', ['d1']), unit('u2', ['d1'])] }), /\.design\.unit$/);
+    refusedAt(withMilestone({}, { ...PLAN, units: [{ ...unit('d1'), origin: 'repair' }, unit('u1', ['d1']), unit('u2', ['d1'])] }), /\.design\.unit$/);
     refusedAt(withMilestone({ journeys: [] }), /\.journeys$/);
     refusedAt(withMilestone({ references: [] }), /\.references$/);
     refusedAt(withMilestone({ resources: ['db'] }), /\.resources\[0\]$/);
@@ -107,7 +108,7 @@ describe('dev.13 plan: milestones', () => {
     assert.deepEqual(plan.units.at(-1)?.polish, { milestone: 'MS-1', proposal: 'X-1' });
     refusedAt({ ...PLAN, units: [...PLAN.units, { ...polish, polish: undefined }] }, /\.polish$/);
     refusedAt({ ...PLAN, units: [...PLAN.units, { ...unit('tweak'), polish: polish.polish }] }, /\.polish$/);
-    assert.ok(ORIGIN_RANK.repair < ORIGIN_RANK.checkpoint && ORIGIN_RANK.checkpoint < ORIGIN_RANK.polish && ORIGIN_RANK.polish < ORIGIN_RANK.planned);
+    assert.ok(ORIGIN_RANK.repair < ORIGIN_RANK.polish && ORIGIN_RANK.polish < ORIGIN_RANK.planned);
   });
 });
 
@@ -145,7 +146,7 @@ describe('dev.13 facts', () => {
     roundTrip(fact({ kind: 'walk-ended', job: 'walk-2', outcome: 'bring-up-failed', findings: ['F-3'], proposals: [], dropped: [] }));
     roundTrip(fact({
       kind: 'polish-proposed', id: 'X-1', job: 'walk-1', milestone: 'MS-1', journey: 'J-1', evidence: ['j1.png'], text: 'Tighten the card gutter to the token.',
-      unit: { id: 'tweak-gutter', scope: ['design/web/**', 'src/web/card.css'], spec: '{}' },
+      unit: { id: 'tweak-gutter', systems: [systemName('app')], spec: '{}' },
     }));
     roundTrip(fact({ kind: 'tweak-judged', unit: 'tweak-gutter', decision: 'keep', reason: 'judged' }));
     roundTrip(fact({ kind: 'milestone-passed', milestone: 'MS-1', job: 'walk-2' }));
@@ -167,7 +168,7 @@ describe('dev.13 facts', () => {
     };
     const started = { kind: 'walk-started', job: 'walk-1', milestone: 'MS-1', round: 1, sha: A, ports: {} };
     const proposed = (id: string, job = 'walk-1') => ({
-      kind: 'polish-proposed', id, job, milestone: 'MS-1', journey: 'J-1', evidence: ['e.png'], text: 't', unit: { id: `t-${id.toLowerCase()}`, scope: ['design/**'], spec: '{}' },
+      kind: 'polish-proposed', id, job, milestone: 'MS-1', journey: 'J-1', evidence: ['e.png'], text: 't', unit: { id: `t-${id.toLowerCase()}`, systems: [systemName('app')], spec: '{}' },
     });
     const ended = (proposals: string[]) => ({ kind: 'walk-ended', job: 'walk-1', outcome: 'reported', findings: [], proposals, dropped: [] });
     const passed = { kind: 'milestone-passed', milestone: 'MS-1', job: 'walk-1' };
@@ -220,11 +221,11 @@ describe('dev.13 answers: walkthrough and polish judge', () => {
     refusedReport({ journeys: [{ journey: 'J-1', outcome: 'blocked', evidence: [], note: 'n' }] }, /\.journeys\[0\]\.outcome$/);
     refusedReport({ journeys: [report().journeys[0], report().journeys[0]] }, /\.journeys\[1\]$/);
     refusedReport({ final: false }, /\.final$/);
-    const spec = {
-      schema: 'roadmap/spec-m1', unit: 'tweak-gutter', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'The card gutter uses space.3.', failLoudIfUndelivered: false, state: 'active' }], scope: ['src/web/**'],
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
+      schema: 'roadmap/spec-m1', unit: 'tweak-gutter', rev: 1, lanes: [], acceptance: [{ id: 'A1', clause: 'The card gutter uses space.3.', failLoudIfUndelivered: false, state: 'active' }],
       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, obligations: [], repairs: [],
     };
-    const polish = { journey: 'J-1', evidence: ['j1.png'], text: 'Use space.3 for the card gutter.', unit: { id: 'tweak-gutter', scope: ['design/web/**', 'src/web/**'], spec } };
+    const polish = { journey: 'J-1', evidence: ['j1.png'], text: 'Use space.3 for the card gutter.', unit: { id: 'tweak-gutter', systems: ['app'], spec } };
     const read = validateWalkthroughOutput(report({ polish: [polish] }));
     assert.equal(typeof read.polish[0]?.unit.spec, 'string', 'the spec is read into spec.json text');
     refusedReport({ polish: [{ ...polish, unit: { ...polish.unit, spec: { ...spec, schema: 'nope' } } }] }, /\.spec/);
@@ -247,25 +248,25 @@ describe('dev.13 roles and routing', () => {
   });
 
   it('without milestones no walk seat is in force and every routing rev is unchanged; with them both walk seats are hashed', () => {
-    const moved = { walkthrough: { arc: 'summit' }, polishJudge: { arc: 'efficient' } } as const;
+    const moved = { experienceVerdict: {arc: 'summit'} } as const;
     for (const plan of [doc, corpus]) {
       const off = resolveRouting(planStack('default', null, plan, 'm4b'));
-      assert.ok(!seatsInForce(off).some((s) => s.role === 'walkthrough' || s.role === 'polishJudge'));
+      assert.ok(!seatsInForce(off).some((s) => s.role === 'experienceVerdict'));
       assert.equal(resolveRouting(planStack('default', null, { ...plan, routing: moved }, 'm4b')).rev, off.rev, 'a walk seat moved changes no rev without milestones');
       const on = resolveRouting(planStack('default', null, { ...plan, milestones }, 'm4b'));
-      assert.ok(on.milestones && seatsInForce(on).some((s) => s.role === 'walkthrough') && seatsInForce(on).some((s) => s.role === 'polishJudge'));
+      assert.ok(on.milestones && seatsInForce(on).some((s) => s.role === 'experienceVerdict') && seatsInForce(on).some((s) => s.role === 'experienceVerdict'));
       assert.notEqual(on.rev, off.rev);
-      assert.equal(on.table.walkthrough.arc.model, 'claude-opus-5-5');
-      assert.deepEqual([on.classes.walkthrough.arc, on.classes.polishJudge.arc], ['frontier', 'frontier']);
+      assert.equal(on.table.experienceVerdict.arc.model, 'claude-opus-5-5');
+      assert.deepEqual([on.classes.experienceVerdict.arc, on.classes.experienceVerdict.arc], ['frontier', 'frontier']);
     }
-    assert.throws(() => arcRolesInForce('none', 'm4b', true), /outside a holistic arc/);
+    assert.throws(() => arcRolesInForce('none', true), /outside a holistic arc/);
   });
 
   it('a Codex rebind of the walk seats is refused: Codex has no walkthrough prompt', () => {
     const config = parseRepoConfig({ routing: { classes: { frontier: { backend: 'codex', model: 'gpt-5.6-sol', effort: 'high' } } } });
     const r = resolveRouting(planStack('default', config, { ...corpus, milestones }, 'm4b'));
     const roles = unsupportedSeats(r, null).map((x) => (x.kind === 'unsupported-routing' ? `${x.role}:${x.why}` : x.kind));
-    assert.ok(roles.includes('walkthrough:codex-judgment') && roles.includes('polishJudge:codex-judgment'), roles.join(' '));
+    assert.ok(roles.includes('experienceVerdict:codex-judgment'), roles.join(' '));
   });
 
   it('the repo config names the walk MCP servers; args and env default to none', () => {
@@ -283,7 +284,7 @@ describe('dev.13 roles and routing', () => {
 
   it('an acting judge acts: a shell, bypassPermissions, project settings, exactly its MCP servers, the system prompt appended', () => {
     const call = {
-      kind: 'claude-acting-judge', role: 'walkthrough', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, session: freshJudgmentSession(),
+      kind: 'claude-acting-judge', role: 'experienceVerdict', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, session: freshJudgmentSession(),
       schemaText: '{}', system: 'SYS', mcpConfig: absPath('/run/inputs/abc.mcp.json'), evidenceDirs: [absPath('/run/evidence/jobs/walk-1')], denyWrites: [],
     } as const;
     const argv = backendArgv(call);
@@ -292,7 +293,7 @@ describe('dev.13 roles and routing', () => {
       ['Read,Grep,Glob,Bash,Write,Edit,Agent', 'bypassPermissions', 'project', '/run/inputs/abc.mcp.json', 'SYS']);
     assert.ok(argv.includes('--strict-mcp-config') && !argv.includes('--disable-slash-commands') && !argv.includes('--system-prompt'));
     assert.deepEqual(argv.slice(-2), ['--add-dir', '/run/evidence/jobs/walk-1']);
-    const gate = backendArgv({ ...call, role: 'gate', mcpConfig: null });
+    const gate = backendArgv({ ...call, role: 'verifier', mcpConfig: null });
     assert.ok(!gate.includes('--mcp-config') && gate.includes('--strict-mcp-config'), 'no servers: none load');
   });
 

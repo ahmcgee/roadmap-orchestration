@@ -1,0 +1,72 @@
+{
+  "summary": "R-8 is fixed. `isHeld` now logs one `console.warn` per call when `at` cannot be compared, and still frees nothing. That covers an invalid `Date`, `null` (no longer read as the epoch), `NaN`/`Infinity`, booleans, objects, and text that isn't an ISO timestamp with offset. The warning prints neither `at` nor any `reservedBy`. I also closed the gate's non-blocking note: `reservedUntil` must now be an ISO timestamp with offset (D2), so '8 November' stays held and warns instead of freeing the book. New tests assert the warning fires, omits the name, and stays silent for a valid `at`; existing assertions are unchanged. All 29 store tests pass, the witness check passes, and three deliberate breakages each failed the test they target. `docs/systems/store.md` and `decisions.json` are updated. Changes are uncommitted for the executor.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "store tests after the R-8 fix, 29 pass (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "mutation nowarn: warning removed; expected failure, new warning test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=warns when the time",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation coerce: `at` read through new Date, so null is the epoch; expected failure, new warning test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=warns when the time",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation lenient: reservedUntil read by Date.parse alone; expected failure, hand-typed end test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=hand-typed",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "witness-check, passed:true",
+      "argv": [
+        "/redacted/path",
+        "witness-check",
+        "--lane-file",
+        "/redacted/path"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/store.js",
+      "test/store.test.js",
+      "docs/systems/store.md"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "New contract for later units: a string `at` or `reservedUntil` must be an ISO timestamp with offset. A time with no offset, or a bare date, reads as unreadable: held, with a warning. `Date.toISOString()` output and `Date` objects both work, so anything writing `reservedUntil` must include an offset or Z.",
+    "The `isHeld` warning fires on any uncomparable `at`, even for a free book, so a caller bug shows up straight away. It is one line per call, so a page listing many books with a bad `at` logs one line per book.",
+    "Rollover days such as 31 February are still left to `Date.parse`, so they read as a real date; recorded in decisions.json.",
+    "The active decision `break-under-guard` describes the residual race as needing a crash inside the guard plus a stalled waiter. `docs/systems/store.md` is more exact: a crash holding the guard, then a close interleave, with no stall needed. Worth aligning the decision text when it is next revised.",
+    "decisions.json in 9-build carries over every entry from 2-build and adds `at-uncomparable-warns` and `strict-iso-instants`. No disputes were filed."
+  ],
+  "final": true
+}

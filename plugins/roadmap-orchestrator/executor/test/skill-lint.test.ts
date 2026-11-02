@@ -8,11 +8,11 @@
 //   the files an agent loads at run time (each SKILL.md, reference.md) no display name or model family
 //   name either. RATIONALE-1.0.md is maintainer text that cites the models arc 1 ran on as evidence.
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync,readdirSync } from 'node:fs';
+import { join,relative } from 'node:path';
+import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
-import { type Command, parseCommand } from '../src/input/cli.ts';
+import { type Command,parseCommand } from '../src/input/cli.ts';
 import { MODELS } from '../src/routing/models.ts';
 
 const SKILLS = fileURLToPath(new URL('../../skills/', import.meta.url));
@@ -22,15 +22,15 @@ const PLACEHOLDERS: Readonly<Record<string, string>> = {
   path: '/tmp/repo', 'plan.json': 'plan.json', file: 'out.json', 'record.json': 'ruling.json', ms: '1000', min: '30',
   n: '2', K: '3', unit: 'u-1', arc: 'arc-1', edge: 'e-1', text: 'the lane passed', name: 'db', 'needs-user-id': 'nu-7',
   'option-id': 'apply', 'D-n': 'D-1', lenses: 'invariants,vision', ref: 'HEAD', sha: 'a'.repeat(40), briefId: '0123456789abcdef', dir: 'export', 'P-n': 'P-1',
-  proposal: 'flow-1.0', lever: 'concurrency', seq: '42',
+  finding: 'F-1', line: 'test/restart.ts:8 retains the write', obligation: 'I-1', proposal: 'flow-1.0', lever: 'concurrency', seq: '42',
 };
 
 /** Every command kind, so a kind added to `Command` fails typecheck here until reference.md documents it. */
 const KINDS: { readonly [K in Command['command']]: true } = {
   tui: true, version: true, start: true, status: true, watch: true, stop: true, pause: true, ack: true, resume: true, sweep: true, apply: true,
-  'resolve-edge': true, 'run-only': true, rule: true, reverse: true, steer: true, 'merge-in': true, audit: true, 'close-admissions': true,
+  'resolve-edge': true, 'run-only': true, reverse: true, steer: true, dismiss: true, note: true, witness: true, 'merge-in': true, audit: true, 'close-admissions': true,
   gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, 'chain-status': true, answer: true,
-  'witness-check': true, 'resume-arc': true, 'inputs-export': true, 'flow-decide': true, 'flow-request': true, 'flow-given': true, 'scope-decide': true, demo: true,
+  'witness-check': true, 'resume-arc': true, 'inputs-export': true,  demo: true,
 };
 
 type Node = Readonly<{ type: 'word'; text: string }> | Readonly<{ type: 'optional'; groups: readonly (readonly Node[])[] }> | Readonly<{ type: 'choice'; groups: readonly (readonly Node[])[] }>;
@@ -91,12 +91,17 @@ function filesUnder(dir: string): string[] {
 }
 
 describe('skill-lint', () => {
-  it('skill-lint.cli-forms: every CLI form in reference.md parses, and every command is documented', () => {
+  it('skill-lint.cli-forms: live reference forms parse, the retired lens selector is refused, and every command is documented', () => {
     const forms = [...readFileSync(REFERENCE, 'utf8').matchAll(/`(roadmap [^`]+)`/g)].map((m) => m[1] as string);
     assert.ok(forms.length > 0, 'reference.md documents no CLI form');
     const seen = new Set<string>();
     for (const form of forms) {
       for (const argv of argvsOf(form)) {
+        // P3c retires the selector; P4 owns the remaining reference prose. Still test its explicit refusal.
+        if (argv[0] === 'audit' && argv.includes('--lens')) {
+          assert.throws(() => parseCommand(argv), /unknown option --lens/, form);
+          continue;
+        }
         let parsed: Command;
         try {
           parsed = parseCommand(argv);

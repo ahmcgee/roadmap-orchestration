@@ -1,0 +1,75 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "convert.ts",
+      "hunk": {
+        "path": "convert.ts",
+        "line": 1
+      },
+      "text": "Spec A1 contradicts non-negotiable V-2. A1 requires that toFahrenheit rounds to the nearest integer, while V-2 says results are never rounded silently and the caller chooses the precision. The checkout already does what A1 asks: toFahrenheit has the signature (c: number) and applies Math.round unconditionally, so the caller has no way to choose precision and nothing signals the rounding. By arithmetic, toFahrenheit(36.6) returns 98, not 97.88. This also undermines V-3, because a traveller cannot trust the number without checking it by hand. toCelsius does not round, so the two directions also behave differently. A build that meets A1 violates the vision, and a build that honours V-2 fails A1. The builder cannot resolve this; the spec has to change.",
+      "contractRef": "V-2 (conflicts with spec A1)",
+      "evidence": [
+        "convert.ts:1 — Math.round is applied unconditionally and there is no precision parameter",
+        "convert.ts:2 — toCelsius returns the unrounded value",
+        "spec A1 — 'toFahrenheit rounds to the nearest integer'",
+        "vision V-2 — 'Results are never rounded silently; the caller chooses the precision'"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": "contract-violation",
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "path": "convert.ts",
+      "hunk": null,
+      "text": "The spec names no proof, and the checkout has no tests or test configuration; convert.ts is the only file. As written, A1 asserts nothing about toCelsius beyond its export, so a wrong formula would satisfy it. Once A1 is corrected, the witnesses should exercise both exports through convert.ts. They should use known points (0C/32F, 100C/212F, -40C/-40F), and a non-integer input such as 36.6C, where a rounding implementation gives a different result from an exact one. They should also cover caller-chosen precision and the default path when no precision is supplied.",
+      "contractRef": "spec A1; testing method",
+      "evidence": [
+        "convert.ts is the only file returned by a glob of the checkout",
+        "spec A1 — specifies exports and toFahrenheit rounding only"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Root: amend A1 via apply --reason so it no longer requires unconditional rounding in toFahrenheit. Restate it to match V-2: both conversions return unrounded results unless the caller chooses a precision, and the spec defines how precision is passed and what happens when it is omitted.",
+    "Builder: do not treat convert.ts:1's Math.round as correct, even though it matches the current A1. Remove the silent rounding once A1 is amended, and apply the same precision behaviour to toFahrenheit and toCelsius.",
+    "Builder: add tests through convert.ts for both exports, covering 0C/32F, 100C/212F, -40C/-40F, a non-integer input such as 36.6C (97.88F unrounded), caller-chosen precision, and the default when no precision is supplied."
+  ],
+  "reasons": [
+    "Spec A1 mandates the silent rounding that non-negotiable V-2 forbids, and the existing toFahrenheit already implements it. Fixing the conflict needs a plan amendment, which only the root can make.",
+    "This finding annotates the build and does not itself hold the unit. The revise decision reflects that blocking findings require revise and directives.",
+    "The findings rest on reading the supplied documents and convert.ts. I ran no experiments because no execution tool was available in this session; the 36.6C result is hand arithmetic.",
+    "Scope is otherwise sound: two exports in one module matches docs/arch.md and the intent, and leaving out Kelvin matches the working assumption for Q-1."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit rounds unconditionally and offers no precision choice, as A1 requires and V-2 forbids.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "toCelsius returns an unrounded result, so the two conversions treat precision differently.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

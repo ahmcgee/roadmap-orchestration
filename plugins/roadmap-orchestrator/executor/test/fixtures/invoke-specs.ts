@@ -64,13 +64,13 @@ export function specFor(d: SpecDescriptor): LaunchSpec {
     const env = { PATH: `${d.binDir}:${path()}` };
     return {
       runDir, origin,
-      subject: { purpose: 'backend', role: 'gate', tier: 'med', routingRev: ROUTING_REV, unit: UNIT, attempt: 1 },
+      subject: { purpose: 'backend', role: 'verifier', tier: 'med', routingRev: ROUTING_REV, unit: UNIT, attempt: 1 },
       launch: (invDir: AbsPath): LaunchContent => {
         const session = freshJudgmentSession();
-        const argv = backendArgv({ kind: 'claude-judgment', role: 'planCheck', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' }, session, schemaText: SCHEMA_TEXT, system: 'You answer with the JSON object the schema describes.', evidenceDirs: [] });
+        const argv = backendArgv({ kind: 'claude-judgment', role: 'verifier', triple: { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' }, session, schemaText: SCHEMA_TEXT, system: 'You answer with the JSON object the schema describes.', evidenceDirs: [] });
         return {
           argv, cwd, env, stdinPath: null, stallMs: null, graceMs: d.graceMs,
-          terminal: { type: 'backend', purpose: 'backend', role: 'gate', routingRev: ROUTING_REV, schemaPath: absPath(OK_SCHEMA), outputPath: absPath(join(invDir, 'stdout')), session },
+          terminal: { type: 'backend', purpose: 'backend', role: 'verifier', routingRev: ROUTING_REV, schemaPath: absPath(OK_SCHEMA), outputPath: absPath(join(invDir, 'stdout')), session },
         };
       },
     };

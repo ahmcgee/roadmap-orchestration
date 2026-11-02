@@ -1,3 +1,4 @@
+
 // The scripted root agent of fake M4a runs (`driver --fake <script>`): it stands in for the headless `claude -p` session,
 // one process per turn, speaking the same stream-json the driver reads (an init event, a Bash `tool_use` and its
 // `tool_result` per command, the final text, a `result`), and keeps its state in `fake/root-state.json`. It follows
@@ -27,36 +28,27 @@
 //     vision-silent  after arc 1, a draft of arc 2 whose `phase0 check` reports no slice candidate: stops `vision-silent`
 //   any other wake (a unit merged while the run runs: its timing is the backends') needs nothing: "Nothing for me"
 //
-// M4b: in both scripts arc 1 (guard, confirm and the six read-outs) starts behind `run-only guard confirm quay-list`, so
-// on its `run: blocked` wake (the three merged, everything else held) the root agent works the flow loop in its turn.
-// `story` (`flowLoop`): two `flow request`s (the second the cooldown's one bypass), each run's proposal accepted (the
-// replay bait, its proof `changed`; the plant lane at six files a time, proof `preserved`, applied), then `run-only
-// --clear`, so the other five read-outs are the revision's verdict window; at arc 1's completion it reads the verdict.
-// `vision-silent` (`flowNoAction`): it waits for the third merge's constraint-shift run to end with no proposal, then
-// lifts the limit. Arc 2's plan carries arc 1's suite lanes as they
-// ended; the root agent requests one flow run right after arc 2's start and rejects its build-class proposal on the
-// item's wake. The scripted root agent waits on the journal's frozen flow facts (`untilFact`).
-//
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
-import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawn,spawnSync } from 'node:child_process';
+import { createHash,randomUUID } from 'node:crypto';
+import { closeSync,cpSync,existsSync,mkdirSync,openSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
+import { join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { amendmentsOf, readArcRef } from '../../src/chain.ts';
+import { readArcRef } from '../../src/chain.ts';
 import type { Fact } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import {
-  type ArcNo, ARC1_CURATION, ARC1_QUESTION, CENSUS_OTHERS, CORPUS_ROOT, DIRECTION, FILES, LANES, MAPPING, OBLIGATIONS, SLICES, SLOW_LANE, TEST_PATHS, UNITS, corpusFor,
-  PASS_PATH, specLane, specOf, suiteLanes, unitsOf,
+type ArcNo,ARC1_CURATION,ARC1_QUESTION,CENSUS_OTHERS,CORPUS_ROOT,DIRECTION,FILES,LANES,MAPPING,FIXTURE_SYSTEMS,OBLIGATIONS,
+PASS_PATH,OPPORTUNITY,FITS_WITNESS,
+SLICES,SLOW_LANE,TEST_PATHS,UNITS,corpusFor,
+specLane,specOf,suiteLanes,unitsOf,
 } from './golden.ts';
-import { MAIN, layout } from './layout.ts';
-import { BLOCKED_SEEN_BARRIER, CHECKPOINT_AMENDMENT, DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from './scenario.ts';
+import { MAIN,layout } from './layout.ts';
+import { BLOCKED_SEEN_BARRIER } from './scenario.ts';
 
 export const FAKE_SCRIPTS = ['story', 'vision-silent'] as const;
 export type FakeScript = (typeof FAKE_SCRIPTS)[number];
@@ -87,9 +79,8 @@ type State = {
   paused: Readonly<{ unit: string; lane: string }> | null;
   /** The owner's answer to P-1 as `roadmap answer` recorded it (the `answer` wake), applied by arc 2's Phase 0 and carried by arc 3's. */
   p1: Readonly<{ answer: string; at: string }> | null;
-  /** M4b, story: arc 1's flow loop ran on its blocked wake (`flowLoop`); arc 2's proposal was rejected on its item's wake. */
-  flowDone: boolean;
-  flowRejected: boolean;
+  /** Arc 1's blocked wake released the remaining read-outs. */
+  readoutsReleased: boolean;
 };
 
 /** The parts of `roadmap status` the scripted root agent reads. */
@@ -197,7 +188,7 @@ class Turn {
 
   /**
    * In-turn waiting (a Monitor) on `arc`'s journal until `pick` finds a fact; fails loud after `timeoutMs`. The scripted
-   * root agent's one read of the log itself: the flow facts are frozen (SCHEMAS.md "M4b"), status.flow is step B1's.
+   * root agent reads the journal's recorded facts while supervising the arc.
    */
   untilFact<T>(arc: string, what: string, pick: (facts: readonly Fact[]) => T | undefined, timeoutMs = 300_000): T {
     const dir = absPath(join(layout(this.dir).product, '.git', 'roadmap-runtime', arc));
@@ -234,7 +225,7 @@ const writeFile = (path: string, text: string): void => {
 };
 
 function arcLane(id: string, journey: string) {
-  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
+  return { id, argv: ['node', '--test', journey], cwd: '.', env: PASS_PATH, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'node-test', testPaths: [...TEST_PATHS] };
 }
 
 type Pin = Readonly<{ rules: readonly Readonly<{ id: string; textSha256: string }>[] }>;
@@ -243,7 +234,7 @@ type Pin = Readonly<{ rules: readonly Readonly<{ id: string; textSha256: string 
 function obligationsOf(n: ArcNo, pin: Pin) {
   const inForce = OBLIGATIONS.filter((o) => o.deliveredIn === null || o.deliveredIn <= n);
   const lanes = LANES.filter((x) => inForce.some((o) => o.lane === x.id)).map((x) => arcLane(x.id, x.journey));
-  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
+  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { systems: [] } }).lanes.map((x) => [x.id as string, laneRevOf(x)]));
   const ref = (id: string) => {
     const r = pin.rules.find((x) => x.id === id);
     if (r === undefined) throw new Error(`arc ${n}'s pin holds no ${id}`);
@@ -260,11 +251,11 @@ function obligationsOf(n: ArcNo, pin: Pin) {
       const future = o.deliveredIn === n;
       return {
         id: o.id, rev: 1, statement: o.statement, rule: ref(o.rule), serves: o.serves, witness,
-        proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: revs.get(o.lane), witness },
+        proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {testIds: witness.testIds, ...(('files' in witness ? {files: witness.files} : {}))} },
         deliveredBy: future ? [...o.deliveredBy] : [], activation: future ? 'future' : 'must-hold', contracts: [], state: { type: 'active' },
       };
     }),
-    mapping: { paths: MAPPING.map((m) => ({ pattern: m.pattern, obligations: m.obligations.filter((x) => ids.has(x)) })).filter((m) => m.obligations.length > 0) },
+    mapping: { systems: MAPPING.map((m) => ({ system: m.system, obligations: m.obligations.filter((x) => ids.has(x)) })).filter((m) => m.obligations.length > 0) },
     census: pin.rules.map((r) => {
       const o = inForce.find((x) => x.rule === r.id);
       return { rule: r.id, state: o !== undefined ? { type: 'obligation', id: o.id } : { type: CENSUS_OTHERS[r.id] ?? 'out-of-slice' } };
@@ -285,17 +276,10 @@ type Ctx = Readonly<{ t: Turn; dir: string; state: State }>;
 
 /** Reads arc n-1's amendments and the baseline's open debt; dispositions per the golden story. */
 function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline: string) {
-  if (previous === undefined) return { debt: [], amendments: [] };
+  if (previous === undefined) return { debt: [],  };
   const l = layout(c.dir);
   const ref = readArcRef(absPath(l.product), arcId(previous.arc));
   if (ref === null) throw new Error(`no ref for ${previous.arc}`);
-  const amendments = amendmentsOf(ref).map((a) => {
-    // Arc 2 applies arc 1's checkpoint amendment as T-24; arc 3 applies arc 2's converted day-view admit as T-25.
-    const fromCheckpoint = n === 2 && a.fact.source.type === 'checkpoint' && a.fact.proposal === CHECKPOINT_AMENDMENT.proposal;
-    const fromAdmit = n === 3 && a.fact.source.type === 'admit';
-    if (fromCheckpoint || fromAdmit) return { id: a.id, disposition: { type: 'applied', rules: [fromCheckpoint ? 'T-24' : 'T-25'] } };
-    return { id: a.id, disposition: { type: 'deferred', reason: 'the high-water heights wait for the visiting-yacht scene (V-7)' } };
-  });
   const debtMd = c.t.git('show', `${baseline}:.roadmap/debt.md`);
   const ledger = parseDebtBlock(debtMd);
   if (ledger === null) throw new Error('the baseline has no debt block');
@@ -303,7 +287,7 @@ function dispositions(c: Ctx, n: ArcNo, previous: ArcState | undefined, baseline
     id: i.id,
     disposition: n === 2 && i.bankReason === 'finding-deferred' ? { type: 'promote', unit: 'notice' } : { type: 'keep', reason: 'cosmetic; the harbour has no other name in use yet' },
   }));
-  return { debt, amendments };
+  return { debt };
 }
 
 /** Composes arc n's inputs (pin, obligations, specs, ledger, Phase-0 record, plan), its branch, and checks it. */
@@ -330,7 +314,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     const raw = JSON.parse(c.t.roadmap(['corpus', 'pin', '--repo', l.product, '--commit', seed, '--baseline', seed, '--out', join(inputs, 'preimage.corpus.json')])) as { sha256: string; pin: { files: readonly { path: string; sha256: string }[] } };
     preimage = { pinSha256: raw.sha256, files: raw.pin.files.filter((f) => f.path === '0030_Bookings.md') };
   }
-  const { debt, amendments } = dispositions(c, n, opts.previous, baseline);
+  const { debt } = dispositions(c, n, opts.previous, baseline);
   const question = opts.answer === undefined ? { ...ARC1_QUESTION, state: { type: 'open' } } : { ...ARC1_QUESTION, state: { type: 'answered', ...opts.answer } };
   // Arc 1 writes the corpus's suite gate (plant S); a later arc carries the previous arc's suite lanes as they ended.
   const previousRef = opts.previous === undefined ? null : readArcRef(absPath(l.product), arcId(opts.previous.arc));
@@ -341,7 +325,7 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     curation: n === 1 ? ARC1_CURATION : [{ tier: 'structural', what: n === 2 ? 'applied arc-1/M-1 as T-24; T-23 replaces T-9 per the owner\'s answer to P-1' : 'added the harbour master\'s day view as T-25', files: n === 2 ? ['0030_Bookings.md', '0040_Notifications.md'] : ['0060_Operations.md'], rules: n === 2 ? ['T-23', 'T-24'] : ['T-25'] }],
     corpusDivergences: n === 1 ? [{ tier: 'semantic', what: 'removed the busy-week override that let the harbour master double-book a berth: V-2 says never', preimage, cites: ['V-2'], rules: ['T-7'] }] : [],
     questions: opts.draft === 'vision-silent' ? [{ ...ARC1_QUESTION, state: { type: 'open' } }] : [question],
-    debt, amendments, slice,
+    debt, slice,
   }));
   writeFile(join(inputs, 'plan.json'), json({
     schema: 'roadmap/plan-m1', arc, integrationBranch: `arc/${arc}`, baseline, worktreeRoot: l.worktrees,
@@ -349,9 +333,9 @@ function composeArc(c: Ctx, n: ArcNo, baseline: string, opts: Readonly<{ answer?
     suite: { lanes: suite },
     resources: [],
     // Arc 2 audits every publication: cutoff's audit is the one whose checkpoint admits the opportunity.
-    holistic: { advances: slice.advances, obligations: 'obligations.json', audit: { every: n === 2 ? 1 : 2, lenses: ['vision'] } },
-    limits: { convergenceK: 3 },
-    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, risk: u.risk, scope: u.scope, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
+    holistic: { advances: slice.advances, obligations: 'obligations.json' },
+    limits: { },
+    units: units.map((u) => ({ id: u.id, spec: `${u.id}.json`, review: 'always', risk: u.risk, systems: u.systems, resources: [], after: u.after.filter((a) => units.some((x) => x.id === a)) })),
     ...(opts.previous === undefined ? {} : { chain: { previousArc: opts.previous.arc, previousHead: opts.previous.head } }),
   }));
   c.t.git('branch', `arc/${arc}`, baseline);
@@ -401,7 +385,7 @@ const RUNNING = (a: ArcState) => `Arc ${a.arc} is running. No Monitor here: endi
 function bootstrapArc1(c: Ctx, k: string): ArcState {
   const l = layout(c.dir);
   c.t.git('switch', '--quiet', '-c', 'roadmap-work', MAIN);
-  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) } }));
+  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) }, systemsMap: FIXTURE_SYSTEMS }));
   writeCorpus(c, 1);
   cpSync(join(FILES, 'golden', 'journeys'), join(l.product, 'journeys'), { recursive: true });
   c.t.git('add', '--all');
@@ -416,7 +400,7 @@ function bootstrap(c: Ctx, answer: string): string {
   if (k === undefined) throw new Error(`the owner's answer names no K: ${answer}`);
   const a = bootstrapArc1(c, k);
   c.state.arcs.push(a);
-  // M4b: three units run before the flow loop decides (`flowLoop`, `flowNoAction`), five after it: a verdict needs three a side.
+  // Three units run before the blocked wake, then the root releases the remaining read-outs.
   mkdirSync(join(layout(c.dir).product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
   c.t.roadmap(['run-only', 'guard', 'confirm', 'quay-list', '--repo', layout(c.dir).product, '--arc', a.arc]);
   start(c, a);
@@ -432,28 +416,20 @@ function onWake(c: Ctx, prompt: string): string {
   const lines = watchLines(prompt);
   const current = c.state.arcs.at(-1)!;
   const l = layout(c.dir);
-  // M4b, story arc 2: the requested run's proposal item comes whenever the run could start (after the holistic jobs); its
-  // decision goes first, and the wake's other events are read after it.
-  const flowItem = current.n === 2 && c.state.script === 'story' && !c.state.flowRejected && lines.some((w) => w.event === 'needs-user' && w.reason === 'flow-proposal');
-  const rejected = flowItem ? `${rejectArc2Proposal(c, current)} ` : '';
-  if (rejected !== '') {
-    const rest = lines.filter((w) => !(w.event === 'needs-user' && w.reason === 'flow-proposal'));
-    if (rest.length === 0) return `${rejected}${RUNNING(current)}`;
-    return `${rejected}${onWake(c, rest.map((w) => JSON.stringify(w)).join('\n'))}`;
-  }
   for (const w of lines) {
     if (w.event === 'needs-user' && w.reason === 'pack-review' && !c.state.packFixed) {
       // The finding is right: guard's spec gains the clause, and the changed pack is reviewed again.
-      const path = join(current.inputs, 'guard.json');
+      const exported = join(l.inputs, `${current.arc}.pack-fix`);
+      const base = JSON.parse(c.t.roadmap(['inputs', 'export', '--repo', l.product, '--arc', current.arc, '--out', exported])) as { planRev: number };
+      const path = join(exported, 'guard.json');
       const spec = JSON.parse(readFileSync(path, 'utf8')) as { rev: number; acceptance: { id: string; clause: string; failLoudIfUndelivered: boolean; state: string }[] };
-      spec.rev += 1;
       spec.acceptance.push({ id: `A${spec.acceptance.length + 1}`, clause: 'A refused booking writes nothing: the ledger file is unchanged.', failLoudIfUndelivered: true, state: 'active' });
       writeFile(path, json(spec));
-      c.t.roadmap(['apply', '--repo', l.product, '--arc', current.arc]);
+      c.t.roadmap(['apply', '--repo', l.product, '--arc', current.arc, '--from', exported, '--rev', String(base.planRev), '--reason', 'Address the blocking pack-review finding on guard.']);
       c.state.packFixed = true;
       return `The pack review's blocking finding on guard was right: guard's spec now says a refused booking writes nothing (rev 2), applied; the changed pack is reviewed again. ${RUNNING(current)}`;
     }
-    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.flowDone) return c.state.script === 'story' ? flowLoop(c, current) : flowNoAction(c, current);
+    if (w.event === 'units' && w.run === 'blocked' && current.n === 1 && !c.state.readoutsReleased) return releaseReadouts(c, current);
     if (w.event === 'units' && w.run === 'blocked' && current.n === 2 && !c.state.blockedSeen) {
       // cutoff merged and notice waits behind the run-only limit, as intended. The fixture's audit of cutoff waits for
       // this wake (scenario.ts BLOCKED_SEEN_BARRIER), so its checkpoints run while this turn supervises (`superviseArc2`).
@@ -470,65 +446,17 @@ function onWake(c: Ctx, prompt: string): string {
   return `Nothing for me in this wake-up. ${RUNNING(current)}`;
 }
 
-/**
- * M4b, story arc 1's blocked wake: guard, confirm and quay-list merged and run-only holds the rest. Two flow runs on request (the second the
- * cooldown's one bypass, RC-5), each proposal accepted as `FLOW_1` scripts it, each step waiting on the journal's flow
- * facts: the bait's proof is `changed` (refused), the plant lane's `preserved` (applied). Then the limit goes, so the
- * other five read-outs are admitted after the revision.
- */
-function flowLoop(c: Ctx, a: ArcState): string {
-  const l = layout(c.dir);
-  const at = ['--repo', l.product, '--arc', a.arc];
+function releaseReadouts(c: Ctx, a: ArcState): string {
   assertHeldAfterQuay(c, a);
-  const done: string[] = [];
-  for (const f of [FLOW_1.bait, FLOW_1.shard]) {
-    c.t.roadmap(['flow', 'request', '--reason', f.request, ...at]);
-    const proposal = endedProposal(c, a, f.job);
-    c.t.roadmap(['flow', f.decision, proposal, '--reason', f.reason, ...at]);
-    const proof = c.t.untilFact(a.arc, `${proposal}'s proof`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-proof' }> => x.kind === 'flow-proof' && x.proposal === proposal));
-    if (proof.outcome !== f.proof) throw new Error(`story: ${proposal}'s proof should be ${f.proof}: ${JSON.stringify(proof)}`);
-    if (f.proof === 'preserved') c.t.untilFact(a.arc, `${proposal} applied`, (facts) => facts.find((x) => x.kind === 'flow-applied' && x.proposal === proposal));
-    done.push(`${proposal} accepted, proof ${proof.outcome}${f.proof === 'preserved' ? ', applied' : ', refused'}`);
-  }
-  c.t.roadmap(['run-only', '--clear', ...at]);
-  c.state.flowDone = true;
-  return `guard, confirm and quay-list merged; the flow loop decided while the rest waited: ${done.join('; ')}. I lifted the run-only limit. ${RUNNING(a)}`;
+  c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
+  c.state.readoutsReleased = true;
+  return `guard, confirm and quay-list merged. I lifted the run-only limit. ${RUNNING(a)}`;
 }
 
 /** The blocked wake's premise: quay-list merged, the next read-out behind run-only. */
 function assertHeldAfterQuay(c: Ctx, a: ArcState): void {
   const s = JSON.parse(c.t.roadmap(['status', '--repo', layout(c.dir).product, '--arc', a.arc])) as Status;
   if (unitOf(s, 'quay-list').state !== 'merged' || unitOf(s, 'free-berths').state !== 'awaiting-admission') throw new Error(`blocked, but not with quay-list merged and free-berths behind run-only: ${JSON.stringify(s.units)}`);
-}
-
-/**
- * M4b, vision-silent arc 1's blocked wake: the third merge's constraint-shift run (flow-1) starts once no holistic job
- * runs, whatever the timing (the held units keep work remaining); it answers noAction, and the root agent lifts the limit.
- */
-function flowNoAction(c: Ctx, a: ArcState): string {
-  assertHeldAfterQuay(c, a);
-  const ended = c.t.untilFact(a.arc, 'flow-1 ended', (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === 'flow-1'));
-  if (ended.outcome !== 'done' || ended.proposal !== null) throw new Error(`vision-silent: flow-1 should end done with no proposal: ${JSON.stringify(ended)}`);
-  c.t.roadmap(['run-only', '--clear', '--repo', layout(c.dir).product, '--arc', a.arc]);
-  c.state.flowDone = true;
-  return `guard, confirm and quay-list merged; the flow run found nothing to change yet. I lifted the run-only limit. ${RUNNING(a)}`;
-}
-
-/** The proposal flow run `job` of arc `a` ended with (waiting on the journal); fails loud on any other end. */
-function endedProposal(c: Ctx, a: ArcState, job: string): string {
-  const ended = c.t.untilFact(a.arc, `${job} ended`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-ended' }> => x.kind === 'flow-ended' && x.job === job));
-  if (ended.outcome !== 'done' || ended.proposal === null) throw new Error(`story: ${job} should end done with a proposal: ${JSON.stringify(ended)}`);
-  return ended.proposal.id;
-}
-
-/** M4b, story arc 2: the wake that carries the requested run's `flow-proposal` item; the root agent rejects it. */
-function rejectArc2Proposal(c: Ctx, a: ArcState): string {
-  const f = FLOW_2.buildClass;
-  const proposal = endedProposal(c, a, f.job);
-  c.t.roadmap(['flow', f.decision, proposal, '--reason', f.reason, '--repo', layout(c.dir).product, '--arc', a.arc]);
-  c.t.untilFact(a.arc, `${proposal} decided`, (facts) => facts.find((x) => x.kind === 'flow-decided' && x.proposal === proposal));
-  c.state.flowRejected = true;
-  return `Rejected ${proposal} (${f.answer.proposal.action.lever}): ${f.reason}`;
 }
 
 function arcComplete(c: Ctx, a: ArcState): string {
@@ -547,10 +475,6 @@ function arcComplete(c: Ctx, a: ArcState): string {
     return `Arc ${a.arc} completed; its PR is open against main. phase0 check offers no slice candidate: every world clause of the vision is served and held.\nPlease merge the PR into main with a merge commit.\nROADMAP-SESSION: stopped vision-silent`;
   }
   if (a.n === 1) {
-    // M4b: the plant lane change's verdict, its window closed by the completion.
-    const shard = `${FLOW_1.shard.job}.0`;
-    const verdict = c.t.untilFact(a.arc, `${shard}'s verdict`, (facts) => facts.find((x): x is Extract<Fact, { kind: 'flow-verdict' }> => x.kind === 'flow-verdict' && x.proposal === shard));
-    if (verdict.verdict !== 'improved') throw new Error(`story: ${shard}'s verdict should be improved: ${JSON.stringify(verdict)}`);
     // K = 1 and the bootstrap start counts as acked: arc 2 is allowed (paid run 12's root agent stopped here instead).
     if (chain.nextStart.reason !== 'within-k') throw new Error(`story: after arc 1 the next start should be allowed: ${JSON.stringify(chain)}`);
     // The owner reads P-1 in the brief and answers it through `roadmap answer` while this turn runs (paid run 14: the
@@ -571,7 +495,6 @@ function arcComplete(c: Ctx, a: ArcState): string {
       'On resume I start arc 2\'s Phase 0 with your answers, or the working assumptions where you have none.',
     ].join('\n');
   }
-  if (!c.state.flowRejected) throw new Error('story: arc 2 completed before its flow proposal\'s item woke the root agent');
   if (chain.nextStart.reason !== 'limit') throw new Error(`story: after arc 2 the next start should be refused at K: ${JSON.stringify(chain)}`);
   // K is reached. The fixture shows the executor's own refusal too: arc 3's inputs, refused at check and at start.
   const baseline = betweenArc(c, 3, head);
@@ -599,8 +522,6 @@ function arc2(c: Ctx, reply: string): string {
   mkdirSync(join(l.product, '.git', 'roadmap-runtime', a.arc), { recursive: true });
   c.t.roadmap(['run-only', 'cutoff', '--repo', l.product, '--arc', a.arc]);
   start(c, a);
-  // M4b: one flow run now, so its cooldown covers the arc (no constraint-shift run is left to the merges' timing).
-  c.t.roadmap(['flow', 'request', '--reason', FLOW_2.buildClass.request, '--repo', l.product, '--arc', a.arc]);
   const after = (JSON.parse(c.t.roadmap(['chain', 'status', '--repo', l.product])) as { answers: readonly unknown[] }).answers;
   if (after.length !== 0) throw new Error(`story: arc 2 applies P-1, so chain status should list no answer: ${JSON.stringify(after)}`);
   c.state.phase = 'running';
@@ -618,29 +539,45 @@ function logIntervention(c: Ctx, arc: string, lever: string, bullets: Readonly<{
   writeFileSync(file, `${existsSync(file) ? '' : '# Operator log\n\n'}${entry}`, { flag: 'a' });
 }
 
-/**
- * Arc 2's blocked wake, after releasing cutoff's audit: supervise in this turn, each step waiting on a state the journal
- * or status shows, never on time. The audit's checkpoint admits the opportunity `fits` and converts the over-budget day view
- * (scenario.ts); its bundle departs from the plan, so a non-blocking `divergence-digest` item is raised. Once the drift
- * audit that bundle owes has its checkpoint (`DRIFT_CHECKPOINT`) decided, the run-only limit goes and notice runs. Its
- * `slow` lane hangs (golden.ts SLOW_LANE): the root agent pauses notice and ends the turn. The next wake therefore holds
- * exactly the digest and the run newly `held`, both open before the watch starts (`resumePaused` follows).
- */
+/** Root applies the campaign repair, clears run-only, then pauses the hanging lane for the next held-unit wake. */
 function superviseArc2(c: Ctx, a: ArcState): string {
   const l = layout(c.dir);
   const at = ['--repo', l.product, '--arc', a.arc];
-  c.t.untilFact(a.arc, `checkpoint ${DRIFT_CHECKPOINT} decided`, (facts) => facts.find((x) => x.kind === 'bundle-decided' && x.job === DRIFT_CHECKPOINT));
-  const decided = JSON.parse(c.t.roadmap(['status', ...at])) as Status;
-  const o = decided.opportunities;
-  if (o.length !== 1 || o[0]!.units.join() !== 'fits') throw new Error(`the checkpoint should have admitted fits as the one opportunity: ${JSON.stringify(o)}`);
-  if (!decided.needsUser.some((x) => x.reason === 'divergence-digest')) throw new Error(`the bundle raised no divergence digest: ${JSON.stringify(decided.needsUser)}`);
+  c.t.roadmap(['audit', ...at]);
+  c.t.untilFact(a.arc, 'the campaign audit reported', (facts) => facts.find((x) => x.kind === 'audit-ended' && x.job === 'audit-1'));
+  const exported = join(l.inputs, `${a.arc}-root-fits`);
+  const base = JSON.parse(c.t.roadmap(['inputs', 'export', ...at, '--out', exported])) as {planRev: number};
+  const plan = JSON.parse(readFileSync(join(exported, 'plan.json'), 'utf8'));
+  const obligations = JSON.parse(readFileSync(join(exported, 'obligations.json'), 'utf8'));
+  const fit = OPPORTUNITY.fits;
+  const spec = {...specOf({id: fit.unit.id, systems: fit.unit.systems, unitLane: fit.unitLane, acceptance: fit.acceptance}), obligations: ['I-1', FITS_WITNESS.parent, FITS_WITNESS.child.id]};
+  writeFile(join(exported, 'fits.json'), json(spec));
+  plan.units.push({...fit.unit, origin: 'planned', review: 'always', spec: 'fits.json', resources: []});
+  plan.holistic.advances = [...FITS_WITNESS.cites];
+  const parent = obligations.obligations.find((o: {id: string}) => o.id === FITS_WITNESS.parent);
+  const witness = {lane: FITS_WITNESS.child.lane, testIds: [FITS_WITNESS.child.test], files: ['journeys/berths.journey.js']};
+  const pin = JSON.parse(readFileSync(join(exported, plan.corpus), 'utf8')) as Pin;
+  const draughtRule = pin.rules.find((r) => r.id === FITS_WITNESS.child.rule);
+  if (draughtRule === undefined) throw new Error('the exported corpus has no draught rule');
+  obligations.obligations.push(
+    {...parent, id: FITS_WITNESS.restated, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], activation: 'must-hold', deliveredBy: [], proofJudgment: {...parent.proofJudgment, obligationRev: 1}},
+    {...parent, id: FITS_WITNESS.child.id, parent: parent.id, rev: 1, serves: [...FITS_WITNESS.cites], statement: FITS_WITNESS.child.statement, rule: {id: draughtRule.id, textSha256: draughtRule.textSha256}, witness, activation: 'future', deliveredBy: ['fits'], proofJudgment: {verdict: 'proves', obligationRev: 1, witness: {testIds: witness.testIds, files: witness.files}}},
+  );
+  parent.state = {type: 'split', children: [FITS_WITNESS.restated, FITS_WITNESS.child.id]};
+  parent.witness = null;
+  parent.proofJudgment = null;
+  obligations.census.find((e: {rule: string}) => e.rule === FITS_WITNESS.child.rule).state = {type: 'obligation', id: FITS_WITNESS.child.id};
+  writeFile(join(exported, 'plan.json'), json(plan));
+  writeFile(join(exported, 'obligations.json'), json(obligations));
+  c.t.roadmap(['apply', ...at, '--from', exported, '--rev', String(base.planRev), '--reason', 'The root adds fits with its draught witness and keeps the parent obligation as a split restatement.']);
+  c.t.untilFact(a.arc, 'the root fits revision applied', (facts) => facts.find((f) => f.kind === 'plan-applied' && f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits')));
   c.t.roadmap(['run-only', '--clear', ...at]);
   const hung = c.t.until(a.arc, `notice running its ${SLOW_LANE.id} lane`, (s) => unitOf(s, 'notice').running?.lane?.id === SLOW_LANE.id);
   c.state.paused = { unit: 'notice', lane: JSON.stringify(unitOf(hung, 'notice').running!.lane) };
   c.t.roadmap(['pause', 'notice', ...at]);
   c.t.until(a.arc, 'notice held', (s) => unitOf(s, 'notice').state === 'held');
   return [
-    `cutoff merged; notice waited behind my run-only limit for the checkpoints. The checkpoint admitted fits as this arc's opportunity (O-1, V-7) and converted the day view into an amendment (D-1 is in the digest); then I lifted the run-only limit.`,
+    `cutoff merged; notice waited behind my run-only limit for the campaign audit. The root admitted fits with its witness using apply --reason and left the day view for a later slice; then I lifted the run-only limit.`,
     `notice's ${SLOW_LANE.id} lane hung: I paused notice and resume it on the next wake. ${RUNNING(a)}`,
   ].join('\n');
 }
@@ -659,7 +596,7 @@ function resumePaused(c: Ctx, a: ArcState): string {
     change: 'a per-lane time budget from the lane\'s own history would end a lane that progresses forever without me',
   });
   c.state.paused = null;
-  return `Resumed ${paused.unit} after my pause (OP-1 in the operator log). The divergence digest (D-1, the opportunity) goes to the owner at the next check-in. ${RUNNING(a)}`;
+  return `Resumed ${paused.unit} after my pause (OP-1 in the operator log). The root-authored fits revision remains in force. ${RUNNING(a)}`;
 }
 
 function turn(c: Ctx, prompt: string): string {
@@ -699,7 +636,7 @@ if (import.meta.main) {
   let state: State;
   if (resume === undefined) {
     if (existsSync(statePath)) throw new Error(`${statePath} exists: a fresh session in a used fixture`);
-    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], packFixed: false, blockedSeen: false, paused: null, p1: null, flowDone: false, flowRejected: false };
+    state = { session: randomUUID(), script: fakeScript(script), phase: 'new', arcs: [], packFixed: false, blockedSeen: false, paused: null, p1: null, readoutsReleased: false };
   } else {
     state = JSON.parse(readFileSync(statePath, 'utf8')) as State;
     if (state.session !== resume) throw new Error(`resume ${resume}, but the session is ${state.session}`);

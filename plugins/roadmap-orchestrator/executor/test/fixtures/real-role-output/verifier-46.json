@@ -1,0 +1,121 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "src/slug.js",
+      "text": "Implementation trap in A1: applying toLowerCase() or a /iu regex before classifying characters lets non-ASCII characters through as ASCII or into the output. The usual `text.toLowerCase().replace(/[^a-z0-9]+/g,'-')` turns U+212A KELVIN SIGN into 'k', and U+0130 into 'i-'. Contract rule 2 requires every non-ASCII character to be part of a separator run. A case-insensitive /iu class is also wrong: it keeps U+017F in the output, breaking the contract's lowercase-ASCII alphabet. Classify with an explicit /[^A-Za-z0-9]+/g, without the i flag, and lowercase after replacing. The result is then correct for all of these inputs.",
+      "contractRef": ".roadmap/contracts/one.md slugify rules 1 and 2",
+      "evidence": [
+        ".roadmap/contracts/one.md:5-8"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (candidates: lowerFirst=toLowerCase then /[^a-z0-9]+/g; lowerLast=/[^A-Za-z0-9]+/g then toLowerCase; iuFlag=/[^a-z0-9]+/giu then toLowerCase)",
+          "output": "kelvin lowerFirst \"akb\"\nkelvin lowerLast \"a-b\"\nkelvin iuFlag \"akb\"\ndotI lowerFirst \"ai-b\"\ndotI lowerLast \"a-b\"\ndotI iuFlag \"a-b\"\nlongS lowerFirst \"a-b\"\nlongS lowerLast \"a-b\"\nlongS iuFlag \"aſb\"\nspec lowerFirst \"hello-world\"\nspec lowerLast \"hello-world\"\nspec iuFlag \"hello-world\""
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "test/slug.test.js",
+      "text": "Witness adequacy for A3: the spec's only literal example, slugify('  Hello, World!  '), passes under all three candidates above, including the two wrong ones, so it does not prove A1. The test should also pin these cases: 'aKb' -> 'a-b' and 'aİb' -> 'a-b' (non-ASCII is a separator even if it case-folds to ASCII); 'aſb' -> 'a-b'; digits kept ('Route 66' -> 'route-66'); a mixed run collapsing to one hyphen ('a -_- b' -> 'a-b'); underscore as a separator; leading-only and trailing-only separators, tested separately; a non-ASCII letter ('Café' -> 'caf'). Also pin D1 with slugify('!!!') === '' and slugify('') === '', so that a 'page' fallback in slugify fails the test. Import through ../src/slug.js, as the existing test files do.",
+      "contractRef": ".roadmap/contracts/one.md slugify rules 1-3; spec D1; C-2",
+      "evidence": [
+        ".roadmap/constraints.md:4",
+        "test/text.test.js:1-3"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path",
+          "output": "spec lowerFirst \"hello-world\"\nspec lowerLast \"hello-world\"\nspec iuFlag \"hello-world\"\nempty lowerFirst \"\"\nempty lowerLast \"\"\nempty iuFlag \"\""
+        }
+      ],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": ".roadmap/contracts/one.md",
+      "text": "Scope boundary: this unit delivers slugify only. pageId and src/page-id.js belong to the same contract but are not in the acceptance, and D1 leaves the empty slug to pageId. Do not add src/page-id.js, an empty-slug fallback, or input coercion and type checks in this unit. Keep slugify pure, with no module state: a shared /g regex used with .test() or .exec() would carry lastIndex state, though .replace() with a /g regex is fine (rule 4, C-1). Do not add dependencies; package.json must stay free of them.",
+      "contractRef": ".roadmap/contracts/one.md slugify rule 4; C-1",
+      "evidence": [
+        ".roadmap/contracts/one.md:9-16",
+        ".roadmap/constraints.md:3",
+        ".roadmap/invariants.md:4"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "The spec is buildable as written. Its premises match the repository, and the acceptance is consistent with contract one.",
+    "The slug lane's argv targets the file A3 requires, and that file runs under `node --test`.",
+    "Three notes annotate the build: a case-folding trap in the obvious implementation, the weakness of the spec's single literal example as a test, and the scope boundary with pageId.",
+    "The spec lists a `scratch` resource that the slug lane does not use (its resources are none). This is harmless and needs no action."
+  ],
+  "premises": [
+    {
+      "claim": "F1 holds: package.json declares type module, so src/*.js are ES modules.",
+      "evidence": [
+        {
+          "path": "package.json",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "src/slug.js and test/slug.test.js do not exist yet, so this unit adds new files and does not collide with existing helpers. The existing modules are numbers.js and text.js.",
+      "evidence": [
+        {
+          "path": "src/text.js",
+          "line": 2
+        },
+        {
+          "path": "src/numbers.js",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "A1 and A2 restate slugify rules 1-3, and D1 agrees with the contract's assignment of the empty slug to pageId.",
+      "evidence": [
+        {
+          "path": ".roadmap/contracts/one.md",
+          "line": 7
+        },
+        {
+          "path": ".roadmap/contracts/one.md",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "claim": "The cited rulings are C-1 (pure ES modules with no runtime dependencies or I/O) and C-2 (exported functions covered by tests, one test file per module). test/slug.test.js satisfies the one-file-per-module form.",
+      "evidence": [
+        {
+          "path": ".roadmap/constraints.md",
+          "line": 3
+        },
+        {
+          "path": ".roadmap/constraints.md",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

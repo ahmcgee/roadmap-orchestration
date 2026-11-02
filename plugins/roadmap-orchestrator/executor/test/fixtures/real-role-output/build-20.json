@@ -1,0 +1,28 @@
+{
+  "summary": "Added src/page-id.js (pageId imports slugify, falls back to 'page', throws RangeError unless Number.isInteger(n) && n > 0) and test/page-id.test.js covering B1–B3 including the plausible-wrong-validator values and slugify-specific titles. Targeted lane passes.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "page-id lane",
+      "argv": [
+        "node",
+        "--test",
+        "test/page-id.test.js"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/page-id.js",
+      "test/page-id.test.js",
+      "src/slug.js (imported)"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Number.isInteger allows 1e21 -> 'a-1e+21'; contract says only 'positive integer', so left as is (possible contract amendment)."
+  ],
+  "final": true
+}

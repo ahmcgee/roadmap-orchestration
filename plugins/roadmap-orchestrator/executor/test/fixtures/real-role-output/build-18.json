@@ -1,0 +1,161 @@
+{
+  "summary": "`src/store.js` now has `updateShelf(path, change)`, which takes a cross-process lock, re-reads the file, applies the change and saves unless the change refused. `saveShelf` now uses a unique temporary name per write, syncs before renaming, and cleans up on failure. Dead or older-than-30-second locks are broken safely; a live lock fails after 5s with `ShelfBusyError` (`code` `SHELF_BUSY`). `isHeld(book, at)` is the shared reservation reading, and `loadShelf` logs one warning per load, by book id only, for books held with no end date or an unreadable one. `docs/systems/store.md` records the protocol and why the lock exists. All 26 store tests pass, including 6 repeat runs in parallel, and the witness check passes (41/41, `T-27` id exact). Six deliberate breakages each failed the tests they target. After those runs I changed only a comment in `src/store.js` and the wording in `docs/systems/store.md`; the repeats and witness check ran after the comment change, and nothing was re-run after the doc edit. Changes are uncommitted for the executor.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "store tests, first full run (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=spec",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "mutation inplace: saveShelf writes in place; expected failure, T-27 witness fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=T-27",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation nolock: lock bypassed; expected failure, hammer and twenty-concurrent tests fail (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=hammering|twenty concurrent",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation naivebreak: check-then-unlink without the guard; expected failure, multi-child dead-lock test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=waiters starting together",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation pidonly: pid-only temporary name; expected failure, twenty-writes test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=twenty writes",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation emptygone: empty or pid-less lock treated as dead; expected failure, live-lock test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=live lock fails",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutation epoch: null reservedUntil parsed as the epoch; expected failure, no-end test fails (throwaway copy)",
+      "argv": [
+        "node",
+        "--test",
+        "--test-name-pattern=no end until",
+        "test/store.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "store tests, repeat 1 of 6 run in parallel (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "store tests, repeat 2 of 6 run in parallel (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "store tests, repeat 3 of 6 run in parallel (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "store tests, repeat 4 of 6 run in parallel (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "store tests, repeat 5 of 6 run in parallel (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "store tests, repeat 6 of 6 run in parallel (TZ=Pacific/Auckland)",
+      "argv": [
+        "node",
+        "--test",
+        "test/store.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "witness-check, passed:true with 41/41 tests",
+      "argv": [
+        "/redacted/path",
+        "witness-check",
+        "--lane-file",
+        "/redacted/path"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/store.js",
+      "test/store.test.js",
+      "test/helpers/store-child.js",
+      "docs/systems/store.md"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Contract for the reserve and keeper units: `change` edits the shelf in place and may be async. A refusal is the error `change` throws, passed through unchanged with nothing saved. `updateShelf` resolves to what `change` returned. Busy is `error.code === SHELF_BUSY` after 5s. Nothing but `updateShelf` should call `saveShelf`.",
+    "`src/pages.js:29` still tests `reservedBy === null` and does not use `isHeld`, so a lapsed reservation keeps showing 'reserved' until the page unit switches over. Left alone because of the non-goal (no pages).",
+    "With the seed data's b2, the server now writes one stderr warning per `GET /`, as A5 asks. `test/floor.test.js` pipes the server's stderr and never reads it; that is fine at today's request counts, but a later test making hundreds of requests should drain it.",
+    "The lock file holds only the pid, as D1 says. Holder identity comes from the inode, pinned by keeping the lock file open. Every removal of the lock goes through a short guard file, `<data file>.lock.guard.tmp`. See decisions.json for the alternatives rejected.",
+    "Two accepted gaps are documented in `docs/systems/store.md`. A crash while holding the guard, followed by a close interleave of waiters on a stale lock, could put two writers inside. A holder stalled past 30s exactly between its final check and its rename could overwrite the next writer.",
+    "An empty lock left by a crash between create and pid write is only broken by the 30s age rule, so callers get busy errors until then.",
+    "The read-only-directory test skips when run as root; it ran and passed here. The failed-rename test uses a directory as the data path, so no case has a rename failing over an existing data file; old-file safety on failure is shown by the read-only-directory and refusal tests.",
+    "No browser check was run: this unit adds no pages or routes."
+  ],
+  "final": true
+}

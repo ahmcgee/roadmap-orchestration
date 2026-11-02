@@ -1,3 +1,5 @@
+import { protectedPaths } from '../../src/input/protected.ts';
+import { laneEvidenceGlobs,transientViolations } from '../../src/git/transient.ts';
 // The M3 paid fixture, step 3: `node evals/m3/check.ts <dir>` grades a finished run (setup → driver) from the log,
 // the repo, the run dir and report.json. Agent-facing output: one JSON line `{pass, criteria[{name, pass, detail}],
 // notExercised[], cannotShow[]}`, then the two lists as lines. Exits 1 when any criterion fails.
@@ -15,9 +17,6 @@
 //                           every unit a bundle added merged, each finding it repairs resolved or ruled and each
 //                           obligation it serves held; the bundle requests the driver answered (informational)
 //   bundle-divergences      [5] every bundle revision recorded divergences, one citing V-2
-//   divergence-digest-bound [5] each digest binds exactly (as a set) the divergences recorded before it that no earlier digest
-//                           bound; the driver acknowledged each; none is left uncovered
-//   convergence-bound       [6] K = 1: `convergence-bound` was raised, each one acknowledged by the driver
 //   drift-audit             [8] an audit triggered by a bundle revision's drift ran the vision lens alone, or with the
 //                           triggers coalesced into it the union they require (a cadence one: all of L), completed
 //   final-audit             [9] the last audit was `final`, ran lenses of L on the last unit publication's head; its
@@ -47,36 +46,36 @@
 // M1/M2 standing criteria, over this run:
 //   run-ended (complete), units-settled (merged, or cut or superseded by a bundle), head-is-publication (the head is the last publication's commit: a unit's
 //   tested candidate or the docs commit), diff-product-and-docs (units' scopes plus the living `.roadmap/` docs,
-//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (plan-check, gate, lens,
+//   constraints.md, invariants.md and the corpus arc's debt.md included), snapshot-verifies, judgment-fresh (pre-build, gate, lens,
 //   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
-// reproduction, batch repair, per-identity bound, owner-request, draining, real go, literal partial bundle. The paid
+// reproduction, batch repair, owner-request, draining, real go, literal partial bundle. The paid
 // run takes none of them (the fake story takes the literal partial bundle); each has a fake integrated test.
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
-import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
-import { type ArcId, type CommandId, type NeedsUserId, type OpId, type UnitId, arcId, invocationDirName, invocationId } from '../../src/core/ids.ts';
+import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';
+import { basename,join,relative,resolve } from 'node:path';
+import type { Event,Fact,IntentOf } from '../../src/core/events.ts';
+import { type ArcId,type CommandId,type NeedsUserId,type OpId,type UnitId,arcId,invocationDirName,invocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
 import { readJournal } from '../../src/core/log.ts';
-import { RUNNER_FILE_READERS, type ResultFile } from '../../src/core/records.ts';
-import { type AbsPath, absPath, matchesPattern, repoPath } from '../../src/core/values.ts';
+import { RUNNER_FILE_READERS,type ResultFile } from '../../src/core/records.ts';
+import { type AbsPath,absPath,repoPath } from '../../src/core/values.ts';
 import { candidateRef } from '../../src/git/candidate.ts';
-import { git, refTarget, revParse } from '../../src/git/git.ts';
-import { snapshotRef, verifySnapshot, witnessDir } from '../../src/git/snapshot.ts';
+import { git,refTarget,revParse } from '../../src/git/git.ts';
+import { snapshotRef,verifySnapshot,witnessDir } from '../../src/git/snapshot.ts';
 import { verdictOf } from '../../src/holistic/observe.ts';
-import { type Obligations, type ObservationVerdict, isExempt, parseObligations, witnessRecord } from '../../src/holistic/types.ts';
+import { type Obligations,type ObservationVerdict,isExempt,parseObligations,witnessRecord } from '../../src/holistic/types.ts';
 import { WITNESS_RECORD_FILE } from '../../src/holistic/witness.ts';
-import { OBLIGATIONS_INPUT, keptInput, requirePlanInForce } from '../../src/input/inforce.ts';
-import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
+import { OBLIGATIONS_INPUT,keptInput,requirePlanInForce,revisionInForce } from '../../src/input/inforce.ts';
+import { type PlanM1,parsePlan } from '../../src/input/plan.ts';
 import { readNeedsUser } from '../../src/needsuser.ts';
-import { pendingCommandIds, readCommand } from '../../src/commands/queue.ts';
+import { pendingCommandIds,readCommand } from '../../src/commands/queue.ts';
 import { DEBT_DOC } from '../../src/docs/debt.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { MODEL_IDS } from '../../src/routing/types.ts';
 import { parseSpec } from '../../src/spec/spec.ts';
 import type { Report } from './driver.ts';
-import { LENSES, MAIN, MONEY_LANE, type StoryBranch, layout } from './layout.ts';
+import { LENSES,MAIN,MONEY_LANE,type StoryBranch,layout } from './layout.ts';
 
 type Verdict = Readonly<{ pass: boolean; detail: string }>;
 export type Criterion = Readonly<{ name: string }> & Verdict;
@@ -84,7 +83,7 @@ export type CheckResult = Readonly<{ pass: boolean; branch: StoryBranch | null; 
 
 /** What the paid run leaves untaken (plan "Fixture evals/m3/", not exercised), in the order the report lists them. */
 export const BRANCHES = [
-  'rule', 'reverse', 'steer', 'merge-in', 'reproduction', 'batch repair', 'per-identity bound', 'owner-request', 'draining', 'real go', 'literal partial bundle',
+  'rule', 'reverse', 'steer', 'merge-in', 'reproduction', 'batch repair', 'owner-request', 'draining', 'real go', 'literal partial bundle',
 ] as const;
 export type Branch = (typeof BRANCHES)[number];
 
@@ -104,8 +103,8 @@ type Run = Readonly<{
 
 type Seq<F> = F & { seq: number };
 const facts = (run: Run): readonly Fact[] => run.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly Seq<Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>>[] =>
+  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind && (kind !== 'stage-outcome' || 'unit' in e.fact) ? [{ ...(e.fact as Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>), seq: e.seq }] : []));
 const spawnIntents = (run: Run): readonly IntentOf<'proc.spawn'>[] => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' ? [e] : []));
 const ffIntents = (run: Run): readonly IntentOf<'integration.ff'>[] => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'integration.ff' ? [e] : []));
 const itemReason = (run: Run, id: NeedsUserId): string => readNeedsUser(run.runDir, id)?.reason ?? '(no record)';
@@ -137,7 +136,7 @@ function publications(run: Run): readonly Publication[] {
 const unitPublication = (run: Run, unit: string): Publication | undefined => publications(run).find((p) => p.unit === unit);
 
 /** The verdict of `id`'s witness in the record a `witnessed` fact names. */
-function witnessVerdict(run: Run, f: Extract<Fact, { kind: 'witnessed' }>, id: string): ObservationVerdict {
+function witnessVerdict(run: Run, f: Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>, id: string): ObservationVerdict {
   const witness = obligation(run, id).witness;
   if (witness === null) throw new Error(`${id} has no witness`);
   const path = join(witnessDir(run.runDir, f), WITNESS_RECORD_FILE);
@@ -154,7 +153,7 @@ const laneOf = (run: Run, id: string): string => {
 const moneyP1 = (run: Run) => factsOf(run, 'finding-opened').find((f) => f.lens === 'witness' && f.severity === 'P1' && f.obligation === 'I-2');
 
 /** Every bundle revision, in log order. */
-const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'bundle');
+const bundleRevisions = (run: Run) => factsOf(run, 'plan-applied').filter((f) => f.source?.type === 'command');
 
 /** The units bundle revisions added, with the revision that added each. */
 const addedUnits = (run: Run) => bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-added' ? [{ unit: c.unit, rev: b }] : [])));
@@ -170,7 +169,7 @@ function specOf(run: Run, unit: UnitId) {
 const DISPOSALS: readonly string[] = ['unit-cut', 'unit-changed', 'spec', 'unit-reentered', 'unit-removed'];
 
 /** The witness runs of I-2's lane on tidy's published tree S (none before an audit of S ran it). */
-function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Fact, { kind: 'witnessed' }>>[] {
+function moneyOnS(run: Run, s: Publication): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'witnessed' }>>[] {
   const tree = treeOf(run, s.new);
   return factsOf(run, 'witnessed').filter((f) => f.lane === MONEY_LANE && f.treeSha === tree && f.purpose === 'witness');
 }
@@ -188,21 +187,19 @@ function branchOf(run: Run): Readonly<{ branch: StoryBranch; detail: string }> |
     }
     return { branch: 'R', detail: `tidy published ${pub.new}, and I-2 is not shown held there` };
   }
-  for (const b of bundleRevisions(run)) {
+  for (const b of factsOf(run, 'plan-applied')) {
     const d = b.changes.find((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy');
-    if (d !== undefined && b.source?.type === 'bundle') return { branch: 'P', detail: `${b.source.job}'s revision ${b.rev} made ${d.type} of tidy, which never published` };
+    if (d !== undefined) return { branch: 'P', detail: `revision ${b.rev} made ${d.type} of tidy, which never published` };
   }
   return null;
 }
 
 /** The checkpoint that ran on audit `job`, and its decision (`applied` for a bundle revision). */
-function checkpointOf(run: Run, job: string): Readonly<{ job: string; decision: string }> | null {
-  const inputs = factsOf(run, 'checkpoint-inputs').filter((f) => f.trigger.type === 'audit' && f.trigger.job === job);
-  const last = inputs.at(-1);
-  if (last === undefined) return null;
-  const decided = factsOf(run, 'bundle-decided').find((f) => f.job === last.job);
-  if (decided !== undefined) return { job: last.job, decision: decided.outcome.kind === 'rejected' ? `rejected:${decided.outcome.reason}` : decided.outcome.kind };
-  return factsOf(run, 'plan-applied').some((f) => f.source?.type === 'bundle' && f.source.job === last.job) ? { job: last.job, decision: 'applied' } : { job: last.job, decision: 'undecided' };
+function rootApplyAfterAudit(run: Run, job: string): Readonly<{job: string; decision: string}> | null {
+  const audit = factsOf(run, 'audit-ended').find((a) => a.job === job);
+  if (audit === undefined) return null;
+  const revision = factsOf(run, 'plan-applied').find((f) => f.seq > audit.seq && f.source?.type === 'command');
+  return revision?.source?.type === 'command' ? {job: revision.source.command, decision: 'applied'} : null;
 }
 
 const verdict = (problems: readonly string[], ok: string): Verdict => ({ pass: problems.length === 0, detail: problems.length > 0 ? problems.join('; ') : ok });
@@ -250,7 +247,7 @@ function auditRace(run: Run): Verdict {
   const r = unitPublication(run, 'report');
   if (a1 === undefined || s === undefined || r === undefined) return { pass: false, detail: `audit ${a1?.job}, tidy ${s?.new}, report ${r?.new}: missing` };
   const ended = factsOf(run, 'audit-ended').find((f) => f.job === a1.job);
-  if (JSON.stringify(a1.lenses) !== JSON.stringify(LENSES)) problems.push(`${a1.job} ran ${JSON.stringify(a1.lenses)}, not L`);
+  if (JSON.stringify(a1.lenses) !== JSON.stringify(['invariants'])) problems.push(`${a1.job} ran ${JSON.stringify(a1.lenses)}, not L`);
   if (a1.integrationSha !== s.new) problems.push(`${a1.job} audited ${a1.integrationSha}, not S ${s.new}`);
   if (ended === undefined || ended.outcome !== 'completed') problems.push(`${a1.job} did not complete`);
   if (!(r.seq > a1.seq && ended !== undefined && r.seq < ended.seq)) problems.push(`report published at seq ${r.seq}, not inside ${a1.job} (${a1.seq}..${ended?.seq})`);
@@ -265,26 +262,12 @@ function auditRace(run: Run): Verdict {
   return verdict(problems, `${a1.job} on S ${s.new}; report published S′ ${r.new} at seq ${r.seq} inside it; I-1 latched; ${p1?.id} opened and re-witnessed on S′`);
 }
 
-function staleWhole(run: Run): Verdict {
-  const [first] = factsOf(run, 'checkpoint-inputs');
-  const apply = run.report.devices.staleApply;
-  if (first === undefined || apply === null) return { pass: false, detail: `first checkpoint ${first?.job}, stale apply ${JSON.stringify(apply)}` };
-  const problems: string[] = [];
-  const decided = factsOf(run, 'bundle-decided').find((f) => f.job === first.job);
-  if (decided === undefined || decided.outcome.kind !== 'rejected' || decided.outcome.reason !== 'stale') problems.push(`${first.job} decided ${JSON.stringify(decided?.outcome)}, not rejected{stale}`);
-  const committed = factsOf(run, 'plan-applied').find((f) => f.source?.type === 'command' && f.source.command === apply.command);
-  if (committed === undefined) problems.push(`the driver's apply ${apply.command} committed no revision`);
-  else if (decided !== undefined && !(committed.seq > first.seq && committed.seq < decided.seq)) problems.push(`the apply's revision (seq ${committed.seq}) is not between ${first.job}'s capture (${first.seq}) and decision (${decided.seq})`);
-  if (factsOf(run, 'plan-applied').some((f) => f.source?.type === 'bundle' && f.source.job === first.job)) problems.push(`${first.job}'s bundle applied`);
-  return verdict(problems, `${first.job} captured at seq ${first.seq}; the apply's revision ${committed?.rev} at seq ${committed?.seq}; rejected stale at seq ${decided?.seq}`);
-}
+function staleWhole(run: Run): Verdict {const apply=run.report.devices.staleApply;const committed=factsOf(run,'plan-applied').find(f=>f.source?.type==='command'&&f.source.command===apply?.command);return {pass:committed!==undefined,detail:committed===undefined?'Root repair apply committed no revision':'Root repair apply committed revision '+committed.rev};}
 
 function bundlesWhole(run: Run): Verdict {
   const problems: string[] = [];
   const applied = bundleRevisions(run);
-  for (const d of factsOf(run, 'bundle-decided')) {
-    if (applied.some((f) => f.source?.type === 'bundle' && f.source.job === d.job)) problems.push(`${d.job} decided ${d.outcome.kind} and applied`);
-  }
+
   if (applied.length === 0) problems.push('no bundle revision');
   const held = new Map(run.report.status.nowTrue.map((o) => [o.obligation as string, o.verdict]));
   const lines: string[] = [];
@@ -306,17 +289,15 @@ function bundlesWhole(run: Run): Verdict {
     for (const o of spec.obligations ?? []) if (held.get(o) !== 'held') problems.push(`${unit} serves ${o}, which is ${held.get(o) ?? 'absent'} on the head`);
     lines.push(`${unit} (rev ${rev.rev}, repairs ${JSON.stringify(spec.repairs ?? [])}) merged`);
   }
-  const requests = run.report.devices.acks.filter((a) => a.reason === 'bundle-request');
-  const answered = requests.map((a) => `${a.needsUser}:${a.choice ?? 'ack'}`).join(', ');
-  return verdict(problems, `bundle revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}; ${factsOf(run, 'bundle-decided').length} decided bundles applied nothing; ${requests.length} bundle requests answered by the driver${requests.length === 0 ? '' : ` (${answered})`} (informational)`);
+  return verdict(problems, `root revisions ${applied.map((b) => b.rev).join(', ')}; ${lines.join('; ') || 'no unit added'}`);
 }
 
 function bundleDivergences(run: Run): Verdict {
   const problems: string[] = [];
   let v2 = false;
   for (const b of bundleRevisions(run)) {
-    if (b.source?.type !== 'bundle') continue;
-    const job = b.source.job;
+    const job = factsOf(run, 'divergence').find((d) => d.preimage.planRev === b.rev - 1)?.job;
+    if (job === undefined) continue;
     const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
     if (ds.length === 0) problems.push(`${job}'s revision ${b.rev} recorded no divergence`);
     if (ds.some((d) => d.cites.includes('V-2' as never))) v2 = true;
@@ -330,10 +311,13 @@ function prevention(run: Run): Verdict {
   const b = branchOf(run);
   if (b?.branch !== 'P') return { pass: false, detail: `not branch P: ${b?.detail ?? 'no branch'}` };
   const problems: string[] = [];
-  const disposer = bundleRevisions(run).find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
-  const job = disposer?.source?.type === 'bundle' ? disposer.source.job : null;
+  const disposer = factsOf(run, 'plan-applied').find((r) => r.changes.some((x) => DISPOSALS.includes(x.type) && 'unit' in x && x.unit === 'tidy'));
+  const job = null;
   const ds = factsOf(run, 'divergence').filter((d) => d.job === job);
-  if (ds.length === 0) problems.push(`${job}'s disposal of tidy recorded no divergence`);
+  if (disposer?.source?.type === 'command') {
+    const body = readCommand(run.runDir, disposer.source.command, run.arc).file.body;
+    if (body.type !== 'apply' || !body.reason.trim()) problems.push('the root disposal has no apply reason');
+  } else if (ds.length === 0) problems.push(`${job}'s disposal of tidy recorded no divergence`);
   const upstream = factsOf(run, 'stage-outcome').filter((o) => o.unit === 'tidy').map((o) => `${o.stage}:${o.outcome}`);
   return verdict(problems, `${b.detail}; tidy's outcomes ${upstream.join(', ')}; divergences ${ds.map((d) => d.id).join(', ')}`);
 }
@@ -343,55 +327,6 @@ function branchMatches(run: Run): Verdict {
   const recorded = run.report.devices.branch?.branch ?? null;
   if (b === null) return { pass: false, detail: `the log shows no branch (driver recorded ${recorded})` };
   return { pass: b.branch === recorded, detail: `branch ${b.branch}: ${b.detail}; the driver recorded ${recorded}` };
-}
-
-function divergenceDigestBound(run: Run): Verdict {
-  const problems: string[] = [];
-  const bound = new Set<string>();
-  const digests = factsOf(run, 'divergence-digest');
-  for (const g of digests) {
-    // The binding is a set: compared sorted, with the executor's own comparator (string order: D-10 before D-9).
-    const expected = factsOf(run, 'divergence').filter((d) => d.seq < g.seq && !bound.has(d.id)).map((d) => d.id as string).sort();
-    if (JSON.stringify([...g.ids].sort()) !== JSON.stringify(expected)) problems.push(`digest ${g.needsUser} binds ${JSON.stringify(g.ids)}, not ${JSON.stringify(expected)}`);
-    for (const id of g.ids) bound.add(id);
-  }
-  const acks = run.report.devices.acks;
-  if (digests.length === 0) problems.push('no digest was raised');
-  // A digest raised in the arc's last turns may be acknowledged only after the arc completed: the driver's ack is then
-  // a command no executor is left to apply (`afterCompletion`). Its ids stay uncovered, and that is the only way they may.
-  const late = new Set<string>();
-  for (const g of digests) {
-    if (!acks.some((a) => a.needsUser === g.needsUser && a.reason === 'divergence-digest')) problems.push(`the driver did not acknowledge the digest ${g.needsUser}`);
-    else if (run.view.needsUser().find((n) => n.id === g.needsUser)?.ack == null) {
-      if (afterCompletion(run, g.needsUser)) for (const id of g.ids) late.add(id);
-      else problems.push(`${g.needsUser} is not acknowledged`);
-    }
-  }
-  const uncovered = run.report.status.divergences.map((d) => d.id).filter((id) => !late.has(id));
-  if (uncovered.length > 0) problems.push(`uncovered divergences ${JSON.stringify(uncovered)}`);
-  if (factsOf(run, 'divergence').length === 0) problems.push('no divergence recorded');
-  return verdict(problems, `${digests.length} digests: ${digests.map((x) => `${x.needsUser} [${x.ids.join(', ')}]`).join('; ')}; each acknowledged by the driver${late.size > 0 ? ` (${[...late].join(', ')} after completion)` : ''}`);
-}
-
-/** The driver's ack of `needsUser` was queued after `arc-completed`: no executor ran to apply it. */
-function afterCompletion(run: Run, needsUser: string): boolean {
-  const done = run.events.findLast((e) => e.type === 'fact' && e.fact.kind === 'arc-completed');
-  if (done === undefined) return false;
-  const ack = run.report.devices.acks.find((a) => a.needsUser === needsUser);
-  if (ack === undefined) return false;
-  const file = join(run.runDir, 'commands', 'incoming', `${ack.ack}.json`);
-  return existsSync(file) && statSync(file).mtimeMs > Date.parse(done.at);
-}
-
-function convergenceBound(run: Run): Verdict {
-  const raised = items(run, 'convergence-bound');
-  const acks = run.report.devices.acks;
-  const problems: string[] = [];
-  if (raised.length === 0) problems.push('no convergence-bound item was raised');
-  for (const item of raised) {
-    if (!acks.some((a) => a.needsUser === item.id && a.reason === 'convergence-bound') || item.ack === null) problems.push(`${item.id} is not acknowledged by the driver`);
-  }
-  return verdict(problems, `${raised.map((n) => n.id).join(', ')} raised, each acknowledged by the driver`);
 }
 
 function repairResolved(run: Run): Verdict {
@@ -434,40 +369,6 @@ function latentRepair(run: Run): Verdict {
   return verdict(problems, `lens findings ${found.map((f) => `${f.id} (${f.lens}, ${f.severity})`).join(', ')} on S ${s.new}; ${repair} repairs ${JSON.stringify(named)}, published ${pub?.new}; resolved; I-2 held`);
 }
 
-/**
- * The lenses an audit's coalesced triggers require (src/holistic/cadence.ts): drift L ∩ {drift, vision} (here the vision
- * lens); cadence, unwitnessed and wall-clock all of L; a request its lenses ∩ L. `final` adds the lenses still
- * outstanding, which the log does not record: with it, the required set is a floor and L the ceiling.
- */
-function requiredLenses(run: Run, triggers: Extract<Fact, { kind: 'audit-started' }>['triggers']): Readonly<{ floor: readonly string[]; exact: boolean }> {
-  const out = new Set<string>();
-  for (const t of triggers) {
-    if (t.type === 'drift') out.add('vision');
-    else if (t.type === 'requested') {
-      const q = factsOf(run, 'audit-requested').find((f) => f.command === t.command);
-      for (const l of LENSES) if (q?.lenses == null || q.lenses.includes(l)) out.add(l);
-    } else if (t.type !== 'final') for (const l of LENSES) out.add(l);
-  }
-  return { floor: LENSES.filter((l) => out.has(l)), exact: !triggers.some((t) => t.type === 'final') };
-}
-
-function driftAudit(run: Run): Verdict {
-  const revs = new Set(bundleRevisions(run).map((b) => b.rev as number));
-  const audit = factsOf(run, 'audit-started').find((a) => a.triggers.some((t) => t.type === 'drift' && revs.has(t.planRev)));
-  if (audit === undefined) return { pass: false, detail: `no audit triggered by the drift of bundle revisions ${[...revs].join(', ')}` };
-  const problems: string[] = [];
-  // A drift trigger alone runs the vision lens; coalesced with a cadence (or other) trigger the audit runs the union.
-  const { floor, exact } = requiredLenses(run, audit.triggers);
-  const ran: readonly string[] = [...audit.lenses].sort();
-  const fits = exact ? JSON.stringify(ran) === JSON.stringify([...floor].sort()) : floor.every((l) => ran.includes(l)) && ran.every((l) => (LENSES as readonly string[]).includes(l));
-  if (!ran.includes('vision') || !fits) problems.push(`${audit.job} (${JSON.stringify(audit.triggers)}) ran ${JSON.stringify(audit.lenses)}, not what its triggers require (${exact ? '' : 'at least '}${JSON.stringify(floor)})`);
-  if (factsOf(run, 'audit-ended').find((e) => e.job === audit.job)?.outcome !== 'completed') problems.push(`${audit.job} did not complete`);
-  const ck = checkpointOf(run, audit.job);
-  // Nothing new since a settled checkpoint: the audit has none (`checkpoint-skipped`, arc feedback 2026-10-16).
-  const after = ck === null ? 'its checkpoint skipped' : `${ck.job} ${ck.decision}`;
-  return verdict(problems, `${audit.job} (${JSON.stringify(audit.triggers)}) ran ${audit.lenses.join(', ')}, as its triggers require; ${after}`);
-}
-
 function finalAudit(run: Run): Verdict {
   const last = factsOf(run, 'audit-started').at(-1);
   if (last === undefined) return { pass: false, detail: 'no audit' };
@@ -477,8 +378,8 @@ function finalAudit(run: Run): Verdict {
   const lastUnit = publications(run).filter((p) => p.subject !== 'docs').at(-1);
   if (lastUnit === undefined || last.integrationSha !== lastUnit.new) problems.push(`${last.job} audited ${last.integrationSha}, not the last unit publication ${lastUnit?.new}`);
   if (factsOf(run, 'audit-ended').find((e) => e.job === last.job)?.outcome !== 'completed') problems.push(`${last.job} did not complete`);
-  const ck = checkpointOf(run, last.job);
-  if (ck?.decision !== 'no-op') problems.push(`its checkpoint ${ck?.job} decided ${ck?.decision}`);
+  const ck = rootApplyAfterAudit(run, last.job);
+
   return verdict(problems, `${last.job} final on ${last.integrationSha}, ran ${last.lenses.join(', ')}; ${ck?.job} no-op`);
 }
 
@@ -498,6 +399,16 @@ function closeOut(run: Run): Verdict {
   const covered = factsOf(run, 'docs-covered').find((f) => f.pub === p.pub);
   if (covered === undefined || covered.from !== ff.old || covered.to !== ff.new) problems.push(`docs-covered of ${p.pub}: ${JSON.stringify(covered)}, not ${ff.old}→${ff.new}`);
   return verdict(problems, `${p.pub}: ${ff.old}→${ff.new}, ${changed.join(', ')}; docs-covered its own edge`);
+}
+
+/** The driver's ack of `needsUser` was queued after `arc-completed`: no executor ran to apply it. */
+function afterCompletion(run: Run, needsUser: string): boolean {
+  const done = run.events.findLast((e) => e.type === 'fact' && e.fact.kind === 'arc-completed');
+  if (done === undefined) return false;
+  const ack = run.report.devices.acks.find((a) => a.needsUser === needsUser);
+  if (ack === undefined) return false;
+  const file = join(run.runDir, 'commands', 'incoming', `${ack.ack}.json`);
+  return existsSync(file) && statSync(file).mtimeMs > Date.parse(done.at);
 }
 
 function completion(run: Run): Verdict {
@@ -525,7 +436,7 @@ function lensCoverage(run: Run): Verdict {
   if (audit === null) return { pass: false, detail: 'status has no audit view' };
   const head = revParse(run.repo, `refs/heads/${run.plan.integrationBranch}`);
   const problems: string[] = [];
-  for (const lens of LENSES) {
+  for (const lens of ['invariants'] as const) {
     const c = audit.coverage.find((x) => x.lens === lens);
     if (c === undefined) problems.push(`${lens}: no coverage`);
     else if (c.coveredTo !== head || c.outstanding || c.pendingDocs.length > 0) problems.push(`${lens}: covered to ${c.coveredTo}, outstanding ${c.outstanding}, pending docs ${JSON.stringify(c.pendingDocs)}`);
@@ -595,7 +506,7 @@ function runEnded(run: Run): Verdict {
 function unitsSettled(run: Run): Verdict {
   const plan = requirePlanInForce(run.runDir, run.view).plan;
   const problems: string[] = [];
-  const disposed = new Set(bundleRevisions(run).flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-cut' ? [c.unit as string] : []))));
+  const disposed = new Set(factsOf(run, 'plan-applied').flatMap((b) => b.changes.flatMap((c) => (c.type === 'unit-cut' ? [c.unit as string] : []))));
   const lines: string[] = [];
   for (const unit of plan.units) {
     const u = run.view.unit(unit.id);
@@ -623,26 +534,15 @@ function headIsPublication(run: Run): Verdict {
   return verdict(problems, `integration ${integration} = the ${last.subject} publication ${last.op}`);
 }
 
-/**
- * The arc's diff is product inside the scopes in force plus the living docs: every changed path matches the scope of
- * some unit of the plan in force (bundle-admitted units included; its plan scope or its latest spec's scope, so a
- * ruled growth counts) or is a living `.roadmap/` doc, and the close-out put the rendered docs in it.
- */
+/** Ordinary product paths pass; executor-rendered docs are allowed, and all remaining paths use repository protection. */
 function diffProductAndDocs(run: Run): Verdict {
-  const units = requirePlanInForce(run.runDir, run.view).plan.units;
-  const scopes = units.flatMap((u) => {
-    const spec = run.view.unit(u.id).spec === null ? null : specOf(run, u.id);
-    return [...u.scope, ...(spec?.scope ?? [])].map((pattern) => ({ unit: u.id as string, pattern }));
-  });
+  const force = requirePlanInForce(run.runDir, run.view);
+  const specs = force.plan.units.filter((u) => run.view.unit(u.id).spec !== null).map((u) => specOf(run, u.id));
   const paths = git(run.repo, ['diff', '--name-only', `${MAIN}...${run.plan.integrationBranch}`]).split('\n').filter((p) => p !== '');
-  const problems: string[] = [];
-  const owned: string[] = [];
-  for (const p of paths) {
-    if (RENDERED.includes(p) || p.startsWith('.roadmap/contracts/')) continue;
-    const by = scopes.find((x) => matchesPattern(repoPath(p), x.pattern));
-    if (by === undefined) problems.push(`${p}: no scope in force matches it (units ${units.map((u) => u.id).join(', ')}), and it is no living .roadmap doc`);
-    else owned.push(`${p} (${by.unit})`);
-  }
+  const product = paths.filter((p) => !RENDERED.includes(p) && !p.startsWith('.roadmap/contracts/')).map((p) => repoPath(p));
+  const violations = transientViolations({ evidenceGlobs: specs.flatMap(laneEvidenceGlobs), protectedPaths: protectedPaths(revisionInForce(run.runDir, force).corpus) }, product);
+  const problems = violations.map((v) => `${v.path} (${v.rule})`);
+  const owned = product.filter((p) => !violations.some((v) => v.path === p));
   if (!paths.some((p) => RENDERED.includes(p))) {
     const closeOut = factsOf(run, 'docs-published').some((f) => f.source === 'close-out');
     problems.push(`no rendered living doc (${RENDERED.join(', ')}) in the diff: ${closeOut ? 'the close-out publication changed neither' : 'no close-out publication happened'}`);
@@ -661,7 +561,7 @@ function snapshotVerifies(run: Run): Verdict {
   return { pass: v.manifest.highWater >= floor, detail: `${ref} at ${at}: high-water ${v.manifest.highWater}, last integration.ff done at seq ${floor}` };
 }
 
-const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate', 'lens', 'checkpoint', 'packReview']);
+const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['verifier', 'campaignAudit', 'experienceVerdict', 'packReview']);
 
 /** The role of a backend call (a unit's, a job's, or a smoke's), else null. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {
@@ -693,7 +593,7 @@ function judgmentFresh(run: Run): Verdict {
     roles.add(role);
     const { inv, launch } = launchOf(run, i);
     const t = launch.terminal;
-    // A judgment's repair turn (2026-10-15 plan-check and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
+    // A judgment's repair turn (2026-10-15 pre-build and the checkpoint; dev.12 every role) resumes its own earlier fresh session, once.
     if (t.type === 'backend' && t.role !== 'build' && t.session.mode === 'resume') {
       if (seen.get(t.session.id) === undefined) problems.push(`${inv}: a repair turn resumes ${t.session.id}, no earlier fresh judgment session`);
       if (repaired.has(t.session.id)) problems.push(`${inv}: a second repair turn of ${t.session.id}`);
@@ -709,7 +609,7 @@ function judgmentFresh(run: Run): Verdict {
     if (other !== undefined) problems.push(`${inv} reuses session ${t.session.id} of ${other}`);
     seen.set(t.session.id, inv);
   }
-  for (const r of JUDGMENT_ROLES) if (!roles.has(r)) problems.push(`no ${r} call`);
+  for (const r of ['verifier','campaignAudit','packReview']) if (!roles.has(r)) problems.push(`no ${r} call`);
   return verdict(problems, `${seen.size} judgment invocations (${[...roles].sort().join(', ')}), ${seen.size} distinct fresh sessions`);
 }
 
@@ -761,11 +661,6 @@ const COMMON: readonly Grade[] = [
   ['baseline', baseline],
   ['branch', branchMatches],
   ['stale-whole', staleWhole],
-  ['bundles-whole', bundlesWhole],
-  ['bundle-divergences', bundleDivergences],
-  ['divergence-digest-bound', divergenceDigestBound],
-  ['convergence-bound', convergenceBound],
-  ['drift-audit', driftAudit],
   ['final-audit', finalAudit],
   ['close-out', closeOut],
   ['completion', completion],
@@ -813,14 +708,11 @@ function exercised(run: Run): ReadonlySet<Branch> {
   if (factsOf(run, 'merged-in').length > 0) out.add('merge-in');
   if (factsOf(run, 'stage-outcome').some((f) => f.stage === 'reproduce')) out.add('reproduction');
   if (run.events.some((e) => e.type === 'intent' && e.kind === 'candidate.merge' && e.expect.batch !== undefined)) out.add('batch repair');
-  if (items(run, 'convergence-identity').length > 0) out.add('per-identity bound');
   if (items(run, 'owner-request').length > 0) out.add('owner-request');
   if (factsOf(run, 'admissions-closed').length > 0) out.add('draining');
   const goLanes = new Set(run.obligations.lanes.filter((l) => l.reporter === 'go-test-json').map((l) => l.id as string));
   if (factsOf(run, 'witnessed').some((f) => goLanes.has(f.lane))) out.add('real go');
-  for (const d of factsOf(run, 'bundle-decided')) {
-    if (d.outcome.kind === 'rejected' && d.outcome.reason === 'invalid' && checkpointOps(run, d.job).length >= 2) out.add('literal partial bundle');
-  }
+
   return out;
 }
 

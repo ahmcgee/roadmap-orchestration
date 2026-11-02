@@ -2,29 +2,28 @@
 // verbatim in a clean detached checkout of the salvage SHA, each under its reservation, with one evidence
 // dir per lane. Named tests: verify.verbatim-serial, verify.dirty-tree.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, laneId, opIdOf, resourceName, sha, specRev } from '../src/core/ids.ts';
-import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
-import { fileSha256 } from '../src/spec/spec.ts';
+import { invocationId,laneId,opIdOf,resourceName,sha,specRev } from '../src/core/ids.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { pinDispatch, unitBranch } from '../src/pipeline/dispatch.ts';
+import { readInputFiles,recordPlan } from '../src/input/inforce.ts';
+import { pinDispatch,unitBranch } from '../src/pipeline/dispatch.ts';
 import { fingerprintAt } from '../src/pipeline/gate.ts';
-import { laneLedgerText } from '../src/prompts/inputs.ts';
-import { killWorkload } from '../src/pipeline/invoke.ts';
-import { LANE_STALL_MS, type LaneRecord, seriesDirty, seriesLedger, specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
+import { LANE_STALL_MS,type LaneRecord,seriesDirty,seriesLedger,specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
-import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
+import { lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
+import { laneLedgerText } from '../src/prompts/inputs.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { absPath, isoTimeOf } from '../src/core/values.ts';
+import { fileSha256 } from '../src/spec/spec.ts';
+import { events,intents } from './fixtures/invoke-specs.ts';
+import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,headOf,keptSpec,launchOf,outcomeFacts,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
 import { waitFor } from './helpers/invocation.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { events, intents } from './fixtures/invoke-specs.ts';
-import { DB, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, headOf, launchOf, outcomeFacts, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -110,7 +109,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
   assert.equal(done.outcome.kind, 'not-certified');
   assert.ok(done.next.kind === 'stage' && done.next.stage === 'build' && done.next.round === 'fix');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
   // The dirty checkout is never kept; what the lane wrote is snapshotted first (ignored output is not dirt).
@@ -131,7 +130,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
 });
 
 test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane runs or any checkout exists', T, async () => {
-  const run = laneRun([{ id: 'needs-db', argv: ['true'], tier: 'estate', resources: [DB] }], [DB]);
+  const run = laneRun([{ id: 'needs-db', argv: ['true'], cadence: 'unit', resources: [DB] }], [DB]);
   writeFileSync(join(run.stateDir, `${DB}.occupant`), 'someone-else');
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'occupied');
@@ -210,7 +209,7 @@ test('lanes.ignored-capture: a failing lane\'s undeclared ignored output is capt
   assert.deepEqual(capturedFiles(join(dir, 'ignored')), ['.local/demo/a[1]*.log', '.local/demo/run.log']);
   assert.deepEqual(record.fixDirs, ['output', 'tree', 'ignored'].map((d) => join(dir, d, 'files')));
   const census = {
-    v: 1, written: { files: 5, bytes: 9 + 4 + 5 + 4 + 4 }, captured: { files: 3, bytes: 9 + 4 + 5 },
+    v: 2, written: { files: 5, bytes: 9 + 4 + 5 + 4 + 4 }, captured: { files: 3, bytes: 9 + 4 + 5 },
     uncaptured: [{ dir: '.local/demo/', reason: 'excluded', files: 1, bytes: 4 }, { dir: 'node_modules/dep/', reason: 'build-output', files: 1, bytes: 4 }],
   };
   assert.deepEqual(record.ignored, census);
@@ -245,13 +244,13 @@ test('lanes.ignored-census-pass: a passing lane\'s ignored writes are counted, n
   assert.match(text[1]!, /; ignored writes: 2 files \(10 B\), 0 captured; uncaptured: 2 under \.local\/b\/ \(not-declared\)$/);
   assert.doesNotMatch(text[2]!, /ignored writes/, 'a lane that wrote no ignored file has no clause');
 
-  // A lane an older executor ran has no census: it reads back as null, and the ledger says nothing of it.
+  // Schema 2 requires the census of a completed lane; missing evidence is refused.
   const [spawn] = laneSpawns(run);
   assert.ok(spawn !== undefined && spawn.parent.type === 'stage');
+  const parent = spawn.parent;
   rmSync(join(done.ledger[0]!.evidenceDir, 'ignored.json'));
-  const [first] = seriesLedger(run.ctx, spawn.parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawn.parent));
-  assert.equal(first?.ignored, null);
-  assert.doesNotMatch(laneLedgerText([first!]), /ignored writes/);
+  assert.throws(() => seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, parent)), /ENOENT:.*ignored\.json/);
+
 });
 
 test('lanes.ignored-killed: a lane killed mid-run gets its ignored output captured too', T, async () => {

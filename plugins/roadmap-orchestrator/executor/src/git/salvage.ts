@@ -1,24 +1,3 @@
-// `salvage.commit` (R8): turn whatever an implementer left in its worktree into one deterministic commit
-// on the unit branch, through a controlled temporary index, so nothing rides along by accident.
-//
-// Classify `status --porcelain=v2 -z` (every staged, unstaged and untracked path, one per path). Approved =
-// inside the pinned scope, not under `.roadmap/`, not a declared evidence/state path. Ignored files are
-// never approved and never touched, so status runs without `--ignored` (listing every file of an ignored
-// `node_modules` would buy nothing). Everything else is rejected: its content is copied out to
-// `<rejectedRoot>/<rejectedManifestSha256>/` with a manifest, then restored from HEAD (tracked) or
-// removed (untracked) in the worktree.
-//
-// The tree: a temporary GIT_INDEX_FILE copied from the real index → rejected paths reset to the old tree
-// (so pre-staged rejected content cannot ride along) → approved paths updated from the worktree
-// (additions, modifications, deletions) → write-tree. The act: re-derive the approved set, rejected
-// manifest and tree and check them against the record → copy rejected content out → commit-tree with the
-// recorded inputs → `update-ref <branch> new old` (CAS) → read-tree new into the real index → restore
-// rejected paths. Postcondition: branch = HEAD = new, real index tree = new's tree, status clean except
-// ignored.
-//
-// Determinism: the tree follows from the worktree content and the rules, and the commit from the tree,
-// parent, recorded identity, dates and message, so a redo from the same inputs makes the same object.
-import { type EffectiveScope, inScope } from '../core/records.ts';
 import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,8 +18,8 @@ import {
 
 /** The unit's pinned rules, from its dispatch record and spec. Recovery rebuilds the op from the same rules. */
 export type SalvageRules = Readonly<{
-  /** The dispatch record's effective write envelope; a derived exclusion rejects as `out-of-scope`. */
-  scope: EffectiveScope;
+
+  protectedPaths: readonly RepoPattern[];
   /** Declared evidence and state paths (spec lane `evidenceGlobs`): never committed. */
   excluded: readonly RepoPattern[];
   /** Rejected content is preserved under `<rejectedRoot>/<rejectedManifestSha256>/`. */
@@ -52,7 +31,7 @@ export type SalvageRequest = Readonly<{ worktree: AbsPath; branch: RefName; iden
 /** An approved path: `present` → its worktree content is committed; absent → it is deleted. */
 export type ApprovedChange = Readonly<{ path: RepoPath; present: boolean }>;
 
-export type RejectReason = 'roadmap-dir' | 'excluded' | 'out-of-scope';
+export type RejectReason = 'protected-path' | 'excluded';
 
 /** `tracked`: the path exists in the old tree (restored from HEAD), else it is removed. `content: null`: deleted in the worktree. */
 export type RejectedEntry = Readonly<{
@@ -98,9 +77,8 @@ export class SalvageStateError extends Error {
 const matchesAny = (path: RepoPath, patterns: readonly RepoPattern[]): boolean => patterns.some((p) => matchesPattern(path, p));
 
 function rejectReason(rules: SalvageRules, path: RepoPath): RejectReason | null {
-  if (path === '.roadmap' || path.startsWith('.roadmap/')) return 'roadmap-dir';
+  if (matchesAny(path, rules.protectedPaths)) return 'protected-path';
   if (matchesAny(path, rules.excluded)) return 'excluded';
-  if (!inScope(rules.scope, path)) return 'out-of-scope';
   return null;
 }
 
@@ -157,7 +135,7 @@ export function planSalvage(rules: SalvageRules, request: SalvageRequest): Salva
 
 const rejectedEntry: Read<RejectedEntry> = object((f) => ({
   path: f.get('path', (v, p) => repoPath(v, p)),
-  reason: f.get('reason', oneOf(['roadmap-dir', 'excluded', 'out-of-scope'] as const)),
+  reason: f.get('reason', oneOf(['protected-path', 'excluded'] as const)),
   tracked: f.get('tracked', bool),
   content: f.get('content', nullable(object((g) => ({ sha256: g.get('sha256', (v, p) => sha256(v, p)), size: g.get('size', nat) })))),
 }));

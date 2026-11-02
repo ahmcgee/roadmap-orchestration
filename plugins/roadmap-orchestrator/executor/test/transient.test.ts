@@ -24,7 +24,7 @@ describe('transient check', () => {
   it('merge.transient-refusal: .roadmap/state.json and evidence paths refuse the candidate; a product path passes', () => {
     const s = scene(base, 'clean');
     const refused = [
-      ['.roadmap/state.json', 'roadmap-dir'],
+      ['.roadmap/state.json', 'protected-path'],
       ['evidence/lane-1/stdout.txt', 'evidence'],
     ] as const;
     for (const [path, rule] of refused) {
@@ -48,7 +48,7 @@ describe('transient check', () => {
 
   it('refuses every transient rule and passes product paths', () => {
     const rules: TransientRules = {
-      evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }, { lane: laneId('logs'), glob: repoPattern('**/*.lane.log') }], scope: { include: [repoPattern('**')], exclude: [] },
+      evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }, { lane: laneId('logs'), glob: repoPattern('**/*.lane.log') }], protectedPaths: [repoPattern('.roadmap')],
     };
     const paths = [
       '.roadmap/config.json', '.roadmap/constraints.md', '.roadmap/contracts/api/v1.md', '.roadmap/debt.md', '.roadmap/invariants.md',
@@ -58,13 +58,13 @@ describe('transient check', () => {
     ].map((p) => repoPath(p));
     assert.deepEqual(transientViolations(rules, paths), [
       { path: '.roadmap-runtime/arc/events.jsonl', rule: 'run-state' },
-      { path: '.roadmap/config.json', rule: 'roadmap-dir' },
-      { path: '.roadmap/constraints.md', rule: 'roadmap-dir' },
-      { path: '.roadmap/contracts/api/v1.md', rule: 'roadmap-dir' },
-      { path: '.roadmap/debt.md', rule: 'roadmap-dir' },
-      { path: '.roadmap/invariants.md', rule: 'roadmap-dir' },
-      { path: '.roadmap/notes.md', rule: 'roadmap-dir' },
-      { path: '.roadmap/runtime/x', rule: 'roadmap-dir' },
+      { path: '.roadmap/config.json', rule: 'protected-path' },
+      { path: '.roadmap/constraints.md', rule: 'protected-path' },
+      { path: '.roadmap/contracts/api/v1.md', rule: 'protected-path' },
+      { path: '.roadmap/debt.md', rule: 'protected-path' },
+      { path: '.roadmap/invariants.md', rule: 'protected-path' },
+      { path: '.roadmap/notes.md', rule: 'protected-path' },
+      { path: '.roadmap/runtime/x', rule: 'protected-path' },
       { path: 'a/__codex/log', rule: 'run-state' },
       { path: 'a/__preview/x.png', rule: 'run-state' },
       { path: 'evidence/x', rule: 'evidence' },
@@ -78,25 +78,23 @@ describe('transient check', () => {
     ]);
   });
 
-  it('m3 rules: the pinned scope passes, a path outside it and every .roadmap/ path are refused', () => {
+  it('repository protection: product paths pass and roadmap or corpus paths are refused', () => {
     const s = scene(base, 'clean');
-    const rules: TransientRules = { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], scope: { include: [repoPattern('src'), repoPattern('docs/**/*.md')], exclude: [] }};
+    const rules: TransientRules = { evidenceGlobs: [{ lane: laneId('unit'), glob: repoPattern('out/lanes') }], protectedPaths: [repoPattern('.roadmap'), repoPattern('corpus')]};
     const inScope = commitOn(s.repo, s.m0, { 'src/d.ts': 'export const d = 4;\n', 'docs/guide/x.md': '# x\n' }, 'unit in scope\n');
     assert.equal(planCandidate(s.repo, { ...candidateRequest(worktree(s), inScope), rules }).kind, 'merge');
 
     const paths = [
       '.roadmap/config.json', '.roadmap/contracts/api/v1.md', '.roadmap/notes.md', 'docs/guide/x.md', 'docs/guide/x.txt',
-      'lib/y.ts', 'src/evidence/fine.ts', 'src/y.ts', 'srcx/z.ts',
+      'corpus/y.ts', 'lib/y.ts', 'src/evidence/fine.ts', 'src/y.ts', 'srcx/z.ts',
     ].map((p) => repoPath(p));
     assert.deepEqual(transientViolations(rules, paths), [
-      { path: '.roadmap/config.json', rule: 'roadmap-dir' },
-      { path: '.roadmap/contracts/api/v1.md', rule: 'roadmap-dir' },
-      { path: '.roadmap/notes.md', rule: 'roadmap-dir' },
-      { path: 'docs/guide/x.txt', rule: 'out-of-scope' },
-      { path: 'lib/y.ts', rule: 'out-of-scope' },
-      { path: 'srcx/z.ts', rule: 'out-of-scope' },
+      { path: '.roadmap/config.json', rule: 'protected-path' },
+      { path: '.roadmap/contracts/api/v1.md', rule: 'protected-path' },
+      { path: '.roadmap/notes.md', rule: 'protected-path' },
+      { path: 'corpus/y.ts', rule: 'protected-path' },
     ]);
-    // The rules the scope never reached still hold inside it.
+    // Evidence and executor artifacts are refused in product paths too.
     assert.deepEqual(transientViolations(rules, [repoPath('src/inv/3-1/stdout'), repoPath('src/__preview/a.png')]), [
       { path: 'src/__preview/a.png', rule: 'run-state' },
       { path: 'src/inv/3-1/stdout', rule: 'executor-file' },
@@ -107,18 +105,17 @@ describe('transient check', () => {
     assert.equal(decision.kind, 'transient-violation');
     if (decision.kind !== 'transient-violation') return;
     assert.deepEqual(decision.violations, [
-      { path: '.roadmap/contracts/x.md', rule: 'roadmap-dir' },
-      { path: 'lib/y.ts', rule: 'out-of-scope' },
+      { path: '.roadmap/contracts/x.md', rule: 'protected-path' },
     ]);
   });
 
   it('the fix directive names the lane and the entry of a declared-evidence path, and never tells the builder to delete its own work (M4b run 3)', () => {
     const directives = transientDirectives([
-      { path: repoPath('lib/y.ts'), rule: 'out-of-scope' },
+      { path: repoPath('corpus/y.ts'), rule: 'protected-path' },
       { path: repoPath('src/cli.js'), rule: 'lane-evidence', lane: laneId('confirm-order'), glob: repoPattern('src/**/*.js') },
     ], 'candidate');
     assert.equal(directives.length, 2);
-    assert.match(directives[0]!, /: lib\/y\.ts \(out-of-scope\)\. Remove them from the branch;/);
+    assert.match(directives[0]!, /: corpus\/y\.ts \(protected-path\)\. Remove them from the branch;/);
     assert.doesNotMatch(directives[0]!, /src\/cli\.js/);
     assert.match(directives[1]!, /src\/cli\.js \(lane confirm-order, entry `src\/\*\*\/\*\.js`\)/);
     assert.match(directives[1]!, /A path that is the unit's own work \(its source or tests\) is not: keep it/);

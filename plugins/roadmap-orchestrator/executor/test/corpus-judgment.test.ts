@@ -1,3 +1,4 @@
+import { readRepoConfig } from '../src/preflight/checks.ts';
 // M4a step C2: a corpus arc's judgments, approvals and debt, through the unit driver with fake backends (real processes,
 // real git; test/fixtures/corpus-unit.ts). Named tests: judgment.corpus-materialised-readonly, gate.no-vision-doc,
 // gate.debt-banked, publish.debt-render, gate.fingerprint-corpus; and the DEBT_BANK crash row (test/matrix.ts).
@@ -31,7 +32,7 @@ import { runFixture } from './helpers/proc.ts';
 import { commitAll, git, tmpDir } from './helpers/repo.ts';
 import { type CallRecord, readCalls } from './helpers/scenario.ts';
 import { type CorpusUnitArc, VISION_PATH, setupCorpusArc } from './fixtures/corpus-unit.ts';
-import { BASE, followContext, stepTo, unitOf } from './fixtures/route-common.ts';
+import { followContext, stepTo, unitOf } from './fixtures/route-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun, contextFor, gateStep, isGateCall, mulBuild, outcomes, setupArc } from './fixtures/unit-common.ts';
 import { DEBT_BANK, crashCells } from './matrix.ts';
@@ -39,7 +40,7 @@ import { DEBT_BANK, crashCells } from './matrix.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const U1 = unitId('u1');
 
-const note = (text: string, drag: string | null) => ({ severity: 'note', path: null, text, contractRef: null, experiments: [], debt: drag === null ? null : { drag } });
+const note = (text: string, drag: string | null) => ({evidence: ["fixture:1"],  severity: 'note', path: null, text, contractRef: null, experiments: [], debt: drag === null ? null : { drag } });
 const NOTE = 'Rename mul to multiply once the API settles.';
 const DRAG = 'Every later caller is written against the old name and must be renamed with it.';
 /** What the note banks (dev.13): its text, then its drag. */
@@ -77,7 +78,7 @@ const viewDir = (a: CorpusUnitArc, pinSha: string, view: 'full' | 'without-visio
 
 /** The arc with a published debt ledger at its baseline and B-1 kept, its gate approving with `FINDINGS`. */
 async function debtArc(extraGates: number = 0): Promise<CorpusUnitArc> {
-  const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS, unreviewed: UNREVIEWED }));
+  const gates = Array.from({ length: 1 + extraGates }, () => gateStep({ decision: 'approve', findings: FINDINGS, standing: []}));
   const arc = await setupCorpusArc([planCheckStep({ decision: 'approve' }), mulBuild(), ...gates], {
     baseline: { [DEBT_DOC]: renderDebt(BASELINE_DEBT) },
     phase0: { debt: [{ id: 'B-1', disposition: { type: 'keep', reason: 'not this arc' } }] },
@@ -118,13 +119,13 @@ describe('a corpus arc\'s unit through its gate', T, () => {
   }, T);
   after(() => r.journal.close());
 
-  it('judgment.corpus-materialised-readonly: plan-check reads the rules index and the pin materialised read-only from kept bytes, the vision doc included', () => {
+  it('judgment.corpus-materialised-readonly: pre-build reads the rules index and the pin materialised read-only from kept bytes, the vision doc included', () => {
     const [check] = readCalls(a.d.scenarioPath);
     assert.ok(check !== undefined && check.as === 'claude' && !isGateCall(check));
     const dir = viewDir(a, a.pinSha256, 'full');
-    assert.ok(readable(addDirs(check), dir), `plan-check may read ${dir}: ${addDirs(check).join(' ')}`);
-    // The run dir, which holds both views, is readable (2026-10-16): plan-check is pointed at the full view.
-    assert.ok(check.stdin.includes(dir), `plan-check is told of the full view ${dir}`);
+    assert.ok(readable(addDirs(check), dir), `pre-build may read ${dir}: ${addDirs(check).join(' ')}`);
+    // The run dir, which holds both views, is readable (2026-10-16): pre-build is pointed at the full view.
+    assert.ok(check.stdin.includes(dir), `pre-build is told of the full view ${dir}`);
     assert.deepEqual(filesUnder(dir), a.pin.files.map((f) => f.path).sort(), 'every pinned file, the vision doc among them');
     for (const f of a.pin.files) {
       const path = join(dir, f.path);
@@ -132,8 +133,8 @@ describe('a corpus arc\'s unit through its gate', T, () => {
       assert.equal(sha256Hex(readFileSync(path)), f.sha256, `${f.path} holds its pinned bytes`);
     }
     assert.throws(() => writeFileSync(join(dir, a.pin.files[0]!.path), 'edited'), /EACCES/);
-    for (const rule of a.pin.rules) assert.equal(check.stdin.includes(rule.text), ['T-1', 'T-3'].includes(rule.id), `plan-check embeds exactly the chosen rules: ${rule.id}`);
-    assert.ok(check.stdin.includes(`${dir}/${a.pin.vision.path}`), 'plan-check is told where the vision doc is');
+    for (const rule of a.pin.rules) assert.equal(check.stdin.includes(rule.text), ['T-1', 'T-3'].includes(rule.id), `pre-build embeds exactly the chosen rules: ${rule.id}`);
+    assert.ok(check.stdin.includes(`${dir}/${a.pin.vision.path}`), 'pre-build is told where the vision doc is');
   });
 
   it('gate.no-vision-doc: the gate reads the rules index and a view of the pin without the vision doc', () => {
@@ -175,7 +176,7 @@ describe('a corpus arc\'s unit through its gate', T, () => {
     const line = status(absPath(a.d.runDir), arcId(a.d.arc), absPath(a.d.hostDir)).units.find((u) => u.unit === U1);
     // dev.17: the live answer carries each finding's defect, reraises and hunk (null on these notes).
     const findings = FINDINGS.map((f) => ({ defect: null, reraises: null, hunk: null, ...f }));
-    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings, unreviewed: UNREVIEWED });
+    assert.deepEqual(line?.gate, { attempt: r.journal.view.unit(U1).approval!.attempt, decision: 'approve', findings, standing: []});
   });
 
   it('publish.debt-render: the close-out renders debt.md from the baseline ledger, the Phase-0 dispositions and the banked items, and invariants.md with the pin\'s registry', () => {
@@ -206,10 +207,10 @@ async function repin(a: CorpusUnitArc, r: ArcRun): Promise<CorpusPin> {
   const out = await corpusPin({ repo: absPath(a.d.repo), commit: sha(commit), baseline: sha(a.baseline), out: absPath(join(a.planDir, PIN_FILE)) });
   assert.equal(out.kind, 'pinned', JSON.stringify(out));
   const files = readInputFiles(absPath(a.d.planPath), absPath(a.d.repo));
-  const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
+  const rows = phase0Rows(phase0InputOf(files, readRepoConfig(files.repo), null), APPLY);
   assert.deepEqual(rows.rows, []);
   keepCorpusFiles(r.ctx.runDir, rows.opened!.files);
-  recordPlan(r.journal, r.ctx.runDir, files, [], BASE);
+  recordPlan(r.journal, r.ctx.runDir, files, [], r.ctx.routingBase);
   return parseCorpusPin(JSON.parse(readFileSync(join(a.planDir, PIN_FILE), 'utf8')));
 }
 
@@ -276,7 +277,7 @@ describe(`matrix row ${DEBT_BANK}`, () => {
         const events = readJournal(absPath(a.d.runDir), arcId(a.d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
         return {
           approvals: events.flatMap((f) => (f.kind === 'approval' ? [f.attempt] : [])), debt: events.filter((f) => f.kind === 'debt-banked'),
-          gates: events.filter((f) => f.kind === 'stage-outcome' && f.stage === 'gate').length,
+          gates: events.filter((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.stage === 'gate').length,
         };
       };
       const killed = log();
@@ -294,4 +295,3 @@ describe(`matrix row ${DEBT_BANK}`, () => {
     });
   }
 });
-

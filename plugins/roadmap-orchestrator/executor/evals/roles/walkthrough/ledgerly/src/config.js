@@ -15,6 +15,7 @@ export function parseConfig(text, file) {
   const config = { currency: 'EUR', teams: [] };
   const warnings = [];
   let team = null;
+  let seen = new Set();
   text.split(/\r?\n/).forEach((raw, i) => {
     const line = i + 1;
     const t = raw.replace(/#.*$/, '').trim();
@@ -25,16 +26,19 @@ export function parseConfig(text, file) {
       if (config.teams.some((x) => x.id === id)) throw new InputError(`${file}:${line}: team "${id}" is defined twice; keep one [team.${id}] section`);
       team = { id, name: id, budget: null, alertAt: DEFAULT_ALERT_AT, line };
       config.teams.push(team);
+      seen = new Set();
       return;
     }
     if (t.startsWith('[')) throw new InputError(`${file}:${line}: unknown section ${t}; a section looks like [team.<id>], for example [team.platform]`);
-    const kv = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(t);
+    const kv = /^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(.*)$/.exec(t);
     if (kv === null) throw new InputError(`${file}:${line}: expected "key = value", got "${t}"`);
     const [, key, value] = kv;
     const known = team === null ? TOP_KEYS : TEAM_KEYS;
     if (!known.includes(key)) {
 {{unknown-key}}
     }
+    if (seen.has(key)) throw new InputError(`${file}:${line}: key "${key}" is defined twice; keep one ${key} line in this section`);
+    seen.add(key);
     if (key === 'currency') {
       if (!CURRENCIES.includes(value)) throw new InputError(`${file}:${line}: currency must be one of ${CURRENCIES.join(', ')}, got "${value}"`);
       config.currency = value;

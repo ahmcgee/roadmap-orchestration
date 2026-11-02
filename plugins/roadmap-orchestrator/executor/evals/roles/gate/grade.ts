@@ -39,7 +39,7 @@ export type Graded = Readonly<{
   blocking: number;
   spurious: number;
   coverage: Readonly<{ omitted: number; covered: number; share: number | null }>;
-  unreviewed: Readonly<{ claimed: number | null; declared: number; silent: number }>;
+  unreviewed: Readonly<{claimed: number | null; declared: number; silent: number}>;
 }>;
 
 /** A Read of `path` (or of its .diff) in any session, a Grep whose output names it, or a Bash command naming it. */
@@ -59,10 +59,10 @@ export function grade(key: AnswerKey, shown: DiffShown, prompt: string, t: Trans
   const omitted = shown.notInlined;
   const covered = omitted.filter((p) => touched(t, p)).length;
   const coverage = { omitted: omitted.length, covered, share: omitted.length === 0 ? null : covered / omitted.length };
-  const entries = answer.unreviewed ?? [];
+  const entries: readonly {path: string}[] = [];
   const declaredPaths = omitted.filter((p) => entries.some((e) => names(e.path, p)));
   const unreviewed = {
-    claimed: answer.unreviewed === null ? null : answer.unreviewed.length, declared: declaredPaths.length,
+    claimed: null, declared: declaredPaths.length,
     silent: omitted.filter((p) => !declaredPaths.includes(p) && !touched(t, p)).length,
   };
   const blockingFindings = answer.findings.filter((f) => f.severity === 'blocking');

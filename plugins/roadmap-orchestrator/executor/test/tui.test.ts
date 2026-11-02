@@ -1,59 +1,59 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, cpSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { open } from 'node:fs/promises';
-import { once } from 'node:events';
-import { Worker } from 'node:worker_threads';
 import { spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { appendFileSync,cpSync,mkdirSync,readFileSync,readdirSync,renameSync,rmSync,writeFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { ObserverJournal, readJournal, openJournal, LogCorruptError } from '../src/core/log.ts';
-import { arcId, opKey, sha256, unitId } from '../src/core/ids.ts';
-import { absPath, isoTime } from '../src/core/values.ts';
-import { status } from '../src/status.ts';
-import { parseCommand } from '../src/input/cli.ts';
-import { runnerFiles } from '../src/runner/files.ts';
-import { keepInput, inputPath } from '../src/input/inforce.ts';
-import { launchSha256 } from '../src/runner/launch.ts';
-import type { LaunchFile } from '../src/core/records.ts';
-import { invocationDir } from '../src/pipeline/invoke.ts';
-import { claimRecord } from './fixtures/host-records.ts';
+import { Worker } from 'node:worker_threads';
 import { readBootId } from '../src/contain/proc.ts';
-import { selfIdentity } from '../src/host/liveness.ts';
-import { activityState, assessmentExplanation } from '../src/tui/outcome.ts';
+import { arcId,opKey,sha256,unitId } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
-import { witnessDir } from '../src/git/snapshot.ts';
-import { ModelReader } from '../src/tui/models.ts';
-import { InvocationRelations } from '../src/tui/relations.ts';
-import { ViewerDiagnostics } from '../src/tui/diagnostics.ts';
-import { executionSummary } from '../src/tui/execution.ts';
-import { parseObligations, laneRevOf } from '../src/holistic/types.ts';
-import { Observer } from '../src/tui/observer.ts';
-import { LogReader } from '../src/tui/log-reader.ts';
-import { TranscriptReader, normalize, PAGE_BYTES, safe } from '../src/tui/transcript.ts';
-import { dependencyDrawing } from '../src/tui/graph-view.ts';
-import { estateOutline, estateRowLabel } from '../src/tui/estate-tree.ts';
-import { graph } from '../src/tui/graph.ts';
-import { ViewState, matches } from '../src/tui/state.ts';
-import { clip, width, wrap, fit, ink, line, paint, plain, stateTone } from '../src/tui/terminal.ts';
-import { contentHeight } from '../src/tui/view.ts';
-import { markdown, documentLines } from '../src/tui/markdown.ts';
-import { document, project, summary } from '../src/tui/projection.ts';
-import { promptLines } from '../src/tui/prompt.ts';
-import { originalInput } from '../src/tui/navigation.ts';
-import { connect, estate } from '../src/tui/estate.ts';
-import { parseDebtLedger } from '../src/debt/types.ts';
+import { LogCorruptError,ObserverJournal,openJournal,readJournal } from '../src/core/log.ts';
+import type { LaunchFile } from '../src/core/records.ts';
+import { absPath,isoTime } from '../src/core/values.ts';
 import { debtKey } from '../src/debt/ledger.ts';
 import { mintDebt } from '../src/debt/mint.ts';
+import { parseDebtLedger } from '../src/debt/types.ts';
 import { renderDebt } from '../src/docs/debt.ts';
+import { witnessDir } from '../src/git/snapshot.ts';
+import { laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { selfIdentity } from '../src/host/liveness.ts';
+import { parseCommand } from '../src/input/cli.ts';
+import { inputPath,keepInput } from '../src/input/inforce.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { runnerFiles } from '../src/runner/files.ts';
+import { launchSha256 } from '../src/runner/launch.ts';
+import { status } from '../src/status.ts';
+import { ViewerDiagnostics } from '../src/tui/diagnostics.ts';
+import { estateOutline,estateRowLabel } from '../src/tui/estate-tree.ts';
+import { connect,estate } from '../src/tui/estate.ts';
+import { executionSummary } from '../src/tui/execution.ts';
+import { dependencyDrawing } from '../src/tui/graph-view.ts';
+import { graph } from '../src/tui/graph.ts';
+import { LogReader } from '../src/tui/log-reader.ts';
+import { documentLines,markdown } from '../src/tui/markdown.ts';
+import { ModelReader } from '../src/tui/models.ts';
+import { originalInput } from '../src/tui/navigation.ts';
+import { Observer } from '../src/tui/observer.ts';
+import { activityState,assessmentExplanation } from '../src/tui/outcome.ts';
+import { document,project,summary } from '../src/tui/projection.ts';
+import { promptLines } from '../src/tui/prompt.ts';
+import { InvocationRelations } from '../src/tui/relations.ts';
+import { ViewState,matches } from '../src/tui/state.ts';
+import { clip,fit,ink,line,paint,plain,stateTone,width,wrap } from '../src/tui/terminal.ts';
+import { PAGE_BYTES,TranscriptReader,normalize,safe } from '../src/tui/transcript.ts';
+import type { Display,Entry,Invocation,LogReadRequest,ObserveRequest } from '../src/tui/types.ts';
+import { contentHeight } from '../src/tui/view.ts';
 import { setupCorpusArc } from './fixtures/corpus-unit.ts';
-import type { Display, Entry, Invocation, LogReadRequest, ObserveRequest } from '../src/tui/types.ts';
-import { contextFor, setupArc } from './fixtures/unit-common.ts';
-import { tmpDir, git } from './helpers/repo.ts';
+import { claimRecord } from './fixtures/host-records.ts';
+import { contextFor,setupArc } from './fixtures/unit-common.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 
 function fixture() {
   const d = setupArc({ steps: [], units: [{ id: 'root' }, { id: 'left', after: ['root'] }, { id: 'right', after: ['root'] }, { id: 'join', after: ['left', 'right'] }] });
   const r = contextFor(d); r.journal.close();
-  writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+  writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
   const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: absPath(d.runDir), arc: arcId(d.arc) }, token: 1 };
   return { d, request };
 }
@@ -232,7 +232,7 @@ test('log scrolling freezes viewport, counts new bytes, resumes following; detai
 test('estate relationships and filters use recorded references, with reverse navigation', () => {
   const entries = connect([entry('V-1', { id: 'V-1' }), entry('I-1', { serves: ['V-1'], deliveredBy: ['unit'] }), entry('unit', { obligations: ['I-1'] }), entry('inactive', {}, 'withdrawn')]);
   assert.deepEqual(entries[0]!.links, ['I-1']); assert.ok(entries[2]!.links.includes('I-1'));
-  assert.ok(matches({ ...entries[2]!, role: 'gate', unit: 'unit' } as Entry, 'unit:unit role:gate status:active'));
+  assert.ok(matches({ ...entries[2]!, role: 'verifier', unit: 'unit' } as Entry, 'unit:unit role:verifier status:active'));
   const ui = new ViewState(); ui.accept({ ...observed(), estate: entries }); ui.view = 2;
   assert.equal(ui.rows().length, 3); ui.key('', 'w', 10); assert.equal(ui.rows().length, 4);
   ui.selected.set('2:0', 'V-1'); ui.open(); ui.key('tab', '', 10); ui.open(); assert.equal(ui.detail!.id, 'I-1');
@@ -344,7 +344,7 @@ test('all retained invocations, lost retries, command sources and invalid runner
   const promptPath = inputPath(dir, keepInput(dir, Buffer.from(prompt), 'prompt.txt'), 'prompt.txt');
   let launch!: LaunchFile;
   const current = journal.begin({ kind: 'proc.spawn', key: opKey('spawn:running'), parent: { type: 'arc' }, deadlineAt: null, body: (op, inv) => {
-    launch = { v: 1, arc, op, inv, argv: ['node', '-e', ''], cwd: dir, env: {}, stdinPath: promptPath,
+    launch = { v: 2, arc, op, inv, argv: ['node', '-e', ''], cwd: dir, env: {}, stdinPath: promptPath,
       deadlineAt: isoTime('2099-01-01T00:00:00.000Z'), stallMs: null, graceMs: 1000, containment: 'session', test: null,
       terminal: { type: 'command', purpose: 'smoke', expectedExit: 0 } };
     return { expect: { ...body().expect, launchSha256: launchSha256(launch) }, post: null };
@@ -493,7 +493,7 @@ test('friendly estate projection prioritises intent and criteria, preserves unkn
   assert.ok(text.indexOf('Record details') > text.indexOf('Units'));
   assert.match(text, /Baseline commit: abc123/);
   assert.equal(summary(JSON.stringify(plan)), 'Ship a useful search tool.');
-  const spec = { schema: 'roadmap/spec-m1', unit: 'search', acceptance: [{ id: 'A1', clause: 'Find matching pages.', state: 'active', failLoudIfUndelivered: true }],
+  const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit: 'search', acceptance: [{ id: 'A1', clause: 'Find matching pages.', state: 'active', failLoudIfUndelivered: true }],
     lanes: [{ id: 'tests', argv: ['node', '--test', 'test files/search.js'], expectedExit: 0 }], unknownFlag: false, futureField: { nestedValue: 'retained' }, absent: null };
   const detail = document(JSON.stringify(spec)).map((r) => r.text).join('\n');
   assert.match(detail, /Acceptance criteria \(1\)/);
@@ -599,7 +599,7 @@ test('Markdown estate keeps raw source, searchable text and navigation at both s
 
 test('unit navigation names status, specification, plan and input destinations, and restores the complete return location', () => {
   const d = observed();
-  const planner: Invocation = { ...entry('planner', {}), label: 'root / planCheck', unit: 'root', role: 'planCheck', attempt: 2, session: 'session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
+  const planner: Invocation = { ...entry('planner', {}), label: 'root / planCheck', unit: 'root', role: 'verifier', attempt: 2, session: 'session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
   d.invocations = [planner];
   const ui = new ViewState(); ui.accept(d); ui.query = 'root'; ui.open();
   assert.equal(ui.detail!.kind, 'unit-status'); assert.equal(ui.query, '');
@@ -613,7 +613,7 @@ test('unit navigation names status, specification, plan and input destinations, 
   const related = ui.related();
   assert.deepEqual(related.slice(0, 4).map((row) => row.label), ['Unit specification: root', 'Implementation plan: root (unavailable)', 'Arc execution plan', 'Recorded arc intent']);
   assert.ok(related.some((row) => row.label.startsWith('Contract:')));
-  assert.ok(related.some((row) => row.label === 'Plan-check input · attempt 2'));
+  assert.ok(related.some((row) => row.label === 'Verifier input · attempt 2'));
   assert.match(ui.render(80, 24, false).join('\n'), /Open: Unit specification: root/);
   ui.open(); assert.equal(ui.detail!.kind, 'specification'); assert.equal(ui.pane, 0);
   ui.key('escape', '', 7); assert.equal(ui.detail!.kind, 'unit-status'); assert.equal(ui.pane, 1); assert.equal(ui.linkIndex, 0);
@@ -658,7 +658,7 @@ test('filters, help and source tabs act locally and preserve the underlying navi
 
 test('repair input is distinguished from the original prompt and linked only through a recorded session', () => {
   const d = observed();
-  const initial: Invocation = { ...entry('initial', {}), label: 'root / planCheck', unit: 'root', role: 'planCheck', attempt: 1, inputKind: 'initial', session: 'recorded-session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
+  const initial: Invocation = { ...entry('initial', {}), label: 'root / planCheck', unit: 'root', role: 'verifier', attempt: 1, inputKind: 'initial', session: 'recorded-session', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:01:00Z', quietMs: null, latest: '' };
   const repair: Invocation = { ...initial, id: 'repair', label: 'root / planCheck / repair', inputKind: 'repair', startedAt: '2026-01-01T00:02:00Z' };
   const unrelated: Invocation = { ...initial, id: 'other-session', session: 'different', startedAt: '2025-01-01T00:00:00Z' };
   d.invocations = [repair, unrelated, initial];
@@ -666,7 +666,7 @@ test('repair input is distinguished from the original prompt and linked only thr
   assert.equal(originalInput({ ...repair, session: '' }, d), null);
   assert.equal(originalInput(repair, { ...d, invocations: [repair, unrelated] }), null);
   const ui = new ViewState(); ui.accept(d); ui.open(); ui.key('right', '', 7);
-  assert.equal(ui.related().find((r) => r.label === 'Plan-check input · attempt 1')!.id, 'input:initial');
+  assert.equal(ui.related().find((r) => r.label === 'Verifier input · attempt 1')!.id, 'input:initial');
   assert.match(ui.related().find((r) => r.id === 'input:repair')!.label, /repair prompt/);
   ui.linkIndex = ui.related().findIndex((r) => r.id === 'input:repair'); ui.open();
   ui.acceptLog({ key: 'repair', start: 0, end: 30, size: 30, lines: ['Your answer was refused: return a corrected answer.'], error: null }, 7);
@@ -800,7 +800,7 @@ test('dependency navigation selects nodes, preserves typed edges, and labels off
 
 test('Overview prioritizes all retained activity for the map selection and preserves independent Activity navigation', () => {
   const d = observed(); const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true;
-  const inv = (id: string, unit: string, running = false): Invocation => ({ ...entry(id, {}, running ? 'running' : 'failed'), unit, role: 'planCheck', attempt: 1, session: id,
+  const inv = (id: string, unit: string, running = false): Invocation => ({ ...entry(id, {}, running ? 'running' : 'failed'), unit, role: 'verifier', attempt: 1, session: id,
     startedAt: d.at, endedAt: running ? null : d.at, quietMs: 0, latest: 'Recorded activity' });
   const recent = Array.from({ length: 20 }, (_, i) => inv(`recent-${i}`, 'right'));
   d.invocations = [inv('live-other', 'right', true), ...recent, inv('old-root', 'root'), inv('old-left', 'left')];
@@ -843,7 +843,7 @@ test('map activity uses recorded unit, milestone and condition membership withou
 
 test('Activity communicates map context in colour and monochrome at both terminal sizes, including no matches', () => {
   const d = observed(); const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true;
-  d.invocations = ['left', 'root'].map((unit) => ({ ...entry(`inv-${unit}`, {}, 'failed'), unit, role: 'planCheck', attempt: 1, session: '', startedAt: d.at, endedAt: d.at, quietMs: 0, latest: 'Test failure' }));
+  d.invocations = ['left', 'root'].map((unit) => ({ ...entry(`inv-${unit}`, {}, 'failed'), unit, role: 'verifier', attempt: 1, session: '', startedAt: d.at, endedAt: d.at, quietMs: 0, latest: 'Test failure' }));
   for (const ascii of [false, true]) for (const [w, h] of [[120, 35], [80, 24]] as const) {
     const frame = ui.renderFrame(w, h, ascii); const text = frame.map(plain).join('\n');
     assert.match(text, /Activity.*root/); assert.match(text, /\* 1 linked to map/); assert.match(text, /\* Run\s+root/);
@@ -1002,7 +1002,7 @@ test('Debt includes inherited dispositions and newly banked items before publica
   const { d } = await setupCorpusArc([], { baseline: { '.roadmap/debt.md': renderDebt(baseline) }, phase0: { debt: [{ id: 'B-1', disposition: { type: 'keep', reason: 'Deferred until next slice' } }] } });
   const r = contextFor(d);
   try {
-    writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+    writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
     const request: ObserveRequest = { locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { runDir: r.ctx.runDir, arc: arcId(d.arc) }, token: 1 };
     const observer = new Observer(); const first = observer.observe(request); assert.equal(first.error, null);
     assert.equal(first.display!.estate.find((e) => e.id === 'debt')!.label, 'Debt (1 open)');
@@ -1133,7 +1133,7 @@ test('arc witness commands link through the obligation revision and lane hash, n
   assert.deepEqual(linked.get('arc/10#1')?.relatedUnits, ['u1']); assert.match(linked.get('arc/10#1')!.context!, /Baseline witness check.*I-1 → u1.*before delivery/);
   assert.equal(linked.has('arc/11#1'), false);
   const witness = { lane: lane.id, laneRev: laneRevOf(lane), envId: '0123456789abcdef', treeSha: '1'.repeat(40), inv: 'arc/10#1', purpose: 'witness' };
-  const record = { v: 1, ...witness, runner: lane.reporter, malformed: false, records: [{ testId: 't1', selected: 1, outcome: 'fail' }] };
+  const record = { v: 2, ...witness, runner: lane.reporter, malformed: false, records: [{ testId: 't1', selected: 1, outcome: 'fail' }] };
   const bytes = JSON.stringify(record);
   const fact = { kind: 'witnessed', ...witness, for: { type: 'job', job: 'baseline-1' }, recordsSha256: sha256Hex(bytes) };
   const dir = witnessDir(absPath(d.runDir), { ...fact, seq: 20 } as never); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'witness.json'), bytes);
@@ -1219,14 +1219,14 @@ test('walkthrough and bring-up activities show recorded milestone scope rather t
   const d = observed(); const relations = new InvocationRelations();
   const events = [
     { type:'fact',fact:{ kind:'walk-started',job:'walk-1',milestone:'MS-1' } },
-    { type:'intent',kind:'proc.spawn',op:'arc/10',ordinal:1,parent:{type:'job',job:'walk-1'},expect:{subject:{purpose:'arc-backend',job:'walk-1',role:'walkthrough'}} },
+    { type:'intent',kind:'proc.spawn',op:'arc/10',ordinal:1,parent:{type:'job',job:'walk-1'},expect:{subject:{purpose:'arc-backend',job:'walk-1',role:'experienceVerdict'}} },
     { type:'intent',kind:'proc.spawn',op:'arc/11',ordinal:1,parent:{type:'arc'},expect:{subject:{purpose:'bring-up',milestone:'MS-2',step:'setup'}} },
     { type:'intent',kind:'proc.spawn',op:'arc/12',ordinal:1,parent:{type:'job',job:'flow-1'},expect:{subject:{purpose:'arc-backend',job:'flow-1',role:'flow'}} },
   ] as never;
   const mapped = relations.read(d.run.runDir,events);
   assert.equal(mapped.get('arc/10#1')!.milestone,'MS-1'); assert.equal(mapped.get('arc/11#1')!.milestone,'MS-2');
   assert.equal(mapped.get('arc/12#1')?.milestone,undefined,'unrelated arc jobs do not acquire milestone scope');
-  d.invocations = [{ ...entry('arc/10#1',{},'success'), ...mapped.get('arc/10#1'), label:'walk-1 / walkthrough', unit:'walk-1',role:'walkthrough',execution:'agent',scope:'arc',model:'example-model',attempt:1,session:'',startedAt:d.at,endedAt:d.at,quietMs:0,latest:'' }];
+  d.invocations = [{ ...entry('arc/10#1',{},'success'), ...mapped.get('arc/10#1'), label:'walk-1 / walkthrough', unit:'walk-1',role:'experienceVerdict',execution:'agent',scope:'arc',model:'example-model',attempt:1,session:'',startedAt:d.at,endedAt:d.at,quietMs:0,latest:'' }];
   const ui = new ViewState();ui.accept(d);ui.key('','2',18);
   for (const [w,h] of [[120,35],[80,24]]) {
     const frame = ui.render(w!,h!,false).join('\n');assert.match(frame,/Milestone MS-1/);assert.doesNotMatch(frame,/Arc-wide/);
@@ -1315,7 +1315,7 @@ test('stopped snapshots explain pending walkthroughs and the gates units actuall
   assert.equal(JSON.parse(joined.body).reason, joined.waitReason);
   assert.doesNotMatch(joined.waitReason, /left|right/, 'satisfied prerequisites are not waiting reasons');
   const ui = new ViewState(); ui.accept(d); ui.expandedGraph = true; ui.selected.set('1:0', 'join');
-  ui.diagnostics.accept(Buffer.from('roadmap: upgrade default (legacy): retained legacy format\n'), 'stderr');
+  ui.diagnostics.accept(Buffer.from('roadmap: optional preview unavailable\n'), 'stderr');
   for (const [w, h] of [[120, 35], [80, 24]]) {
     const frame = ui.render(w!, h!, false); assert.equal(frame.length, h); assert.ok(frame.every((row) => width(row) === w! - 1));
     const text = frame.join('\n'); assert.match(text, /Executor stopped/); assert.match(text, /walkthrough pending/); assert.match(text, /Waiting for: MS-1 milestone gate/);
@@ -1330,7 +1330,7 @@ test('stopped snapshots explain pending walkthroughs and the gates units actuall
 
 test('worker diagnostics are readable informational notes, never run banners or false faults', () => {
   const ui = new ViewState(); ui.accept(observed());
-  const warning = 'roadmap: upgrade default (lane.tier.spec): a spec lane declaring tier; read as its cadence';
+  const warning = 'roadmap: optional preview unavailable (capture.preview)';
   ui.diagnostics.accept(Buffer.from(warning + '\n'), 'stderr');
   ui.diagnostics.accept(Buffer.from(warning + '\n'), 'stderr');
   assert.equal(ui.diagnostics.entries().length, 1);
@@ -1341,9 +1341,9 @@ test('worker diagnostics are readable informational notes, never run banners or 
     assert.match(text, /4 Exceptions & notes/); assert.match(text, /Exceptions 0/); assert.match(text, /faults 0/);
     assert.doesNotMatch(text, /upgrade default|lane\.tier|Observer:/);
   }
-  ui.key('', '4', 18); assert.equal(ui.rows().length, 1); assert.match(ui.selection()!.label, /Viewer note: older run format/);
+  ui.key('', '4', 18); assert.equal(ui.rows().length, 1); assert.match(ui.selection()!.label, /Viewer diagnostics/);
   ui.open(); const detail = ui.render(120, 35, false).join('\n');
-  assert.match(detail, /No action is needed/); assert.match(detail, /Technical Details/); assert.match(detail, /lane\.tier\.spec/);
+  assert.match(detail, /Technical messages from the viewer/); assert.match(detail, /Technical Details/); assert.match(detail, /capture\.preview/);
   ui.key('escape', '', 18); ui.error = 'journal corruption';
   assert.equal(ui.rows().length, 2); assert.equal(ui.rows()[0]!.id, 'observation-error');
   assert.match(ui.render(120, 35, false).join('\n'), /STALE.*journal corruption/);
@@ -1357,7 +1357,8 @@ test('diagnostic retention handles split UTF-8 and independent streams, strips c
   diagnostics.accept(text.subarray(split), 'stderr');
   let entry = diagnostics.entries()[0]!;
   assert.equal(entry.label, 'Viewer diagnostics'); assert.match(entry.body, /café unexpected diagnostic/);
-  assert.doesNotMatch(entry.description!, /No action is needed/);
+  assert.match(entry.description!, /Technical messages from the viewer/);
+  assert.doesNotMatch(entry.description!, /upgrade defaults|compatibility defaults/i);
   diagnostics.accept(Buffer.from('\x1b[2Jcontrol\n'), 'stderr');
   assert.doesNotMatch(diagnostics.entries()[0]!.body, /\\u001b/);
   diagnostics.accept(Buffer.from('x'.repeat(10000)), 'stdout');

@@ -7,53 +7,53 @@
 // gate.recovered-recorded-tip, publication.ownership (live, pause before and after green, a crash at each
 // boundary), park.salvage-and-teardown-fail-restart, rounds.no-escalation; also stage.repeat-park.
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { before, describe, it, test } from 'node:test';
+import { before,describe,it,test } from 'node:test';
 import { setImmediate as tick } from 'node:timers/promises';
-import type { Event, Fact, IntentOf, Parent, StageOutcomeFact } from '../src/core/events.ts';
-import { INTEGRATION_SLOT, type ResourceUnit, arcId, cpuToken, resourceName, sha, unitId } from '../src/core/ids.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
+import type { Event,Fact,IntentOf,Parent,StageOutcomeFact } from '../src/core/events.ts';
+import { INTEGRATION_SLOT,type ResourceUnit,arcId,cpuToken,resourceName,sha,unitId } from '../src/core/ids.ts';
+import { openJournal,readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { createProber } from '../src/park/probe.ts';
 import { backendEnv } from '../src/preflight/smoke.ts';
-import { type StageContext, type StageParent, isCancelled, unitBranch } from '../src/pipeline/dispatch.ts';
-import { consumeJudgment, fingerprintAt, gate } from '../src/pipeline/gate.ts';
-import { candidate, ff, snapshot } from '../src/pipeline/integrate.ts';
+import { type StageContext,type StageParent,isCancelled,unitBranch } from '../src/pipeline/dispatch.ts';
+import { consumeJudgment,fingerprintAt,gate } from '../src/pipeline/gate.ts';
+import { candidate,ff,snapshot } from '../src/pipeline/integrate.ts';
 import { reserveNow } from '../src/pipeline/lanes.ts';
 import {
-  type BuildRun, type LanesDone, at, build, evidence, lanes, planCheck, quiesce, record, recordedCall, salvage, start, teardown,
+type BuildRun,type LanesDone,at,build,evidence,lanes,preBuild,quiesce,record,recordedCall,salvage,start,teardown,
 } from '../src/pipeline/stages.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { DOCS_NOT_YET } from '../src/recover/revision.ts';
 import { cpuCapacity } from '../src/resources/pool.ts';
-import { cleanup, heldReservation, reserve, run as runReservation, resourceTable } from '../src/resources/reserve.ts';
+import { cleanup,heldReservation,reserve,run as runReservation,resourceTable } from '../src/resources/reserve.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
 import type { Acquire } from '../src/schedule/types.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { type CodexAct,type Expect,type Step,readCalls } from './helpers/scenario.ts';
 import { release } from './helpers/barrier.ts';
-import { BARRIER, recoveryContext, strandedCall } from './fixtures/rec-common.ts';
+import { BARRIER,recoveryContext,strandedCall } from './fixtures/rec-common.ts';
 import {
-  admitAll, testProbes,
-  BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, planCheckStep, serialRuntime, setupUnit, spawnIntents, started, worktreeOf,
+admitAll,testProbes,
+BUILD_REPORT,DB,SCENARIO_TIMEOUT_MS,type StageRun,U1,launchOf,planCheckStep,serialRuntime,setupUnit,spawnIntents,started,worktreeOf,
 } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcOptions, SUITE_LANE, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor,type ArcOptions,SUITE_LANE,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
 import { CLEAR } from './fixtures/probe-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const live = (): AbortSignal => new AbortController().signal;
 const STRAIGHT: readonly Step[] = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
-const ADMISSION = ['plan-check', 'build', 'lanes', 'gate', 'candidate'] as const;
+const ADMISSION = ['pre-build', 'build', 'lanes', 'gate', 'candidate'] as const;
 
 const eventsOf = (d: ArcDescriptor): readonly Event[] => readJournal(absPath(d.runDir), arcId(d.arc)).events;
 const runEvents = (run: StageRun): readonly Event[] => readJournal(run.runDir, run.journal.view.arc).events;
 const ofAttempt = (p: Parent, f: Readonly<{ unit: string; stage: string; attempt: number }>): boolean =>
   p.type === 'stage' && p.unit === f.unit && p.stage === f.stage && p.attempt === f.attempt;
-const outcomeOf = (e: Event): StageOutcomeFact | null => (e.type === 'fact' && e.fact.kind === 'stage-outcome' ? e.fact : null);
+const outcomeOf = (e: Event): StageOutcomeFact | null => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) ? e.fact : null);
 const transitions = (events: readonly Event[]): readonly (Event & IntentOf<'resource.transition'>)[] =>
   events.filter((e): e is Event & IntentOf<'resource.transition'> => e.type === 'intent' && e.kind === 'resource.transition');
 const slotStatus = (ctx: StageContext) => resourceTable(ctx.journal.view).get(INTEGRATION_SLOT)?.status ?? { state: 'free' };
@@ -87,7 +87,7 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
   }
   const events = eventsOf(d);
   const expected: Readonly<Record<(typeof ADMISSION)[number], readonly ResourceUnit[]>> = {
-    'plan-check': tokens(1), build: tokens(4), lanes: tokens(2), gate: tokens(1), candidate: [INTEGRATION_SLOT],
+    'pre-build': tokens(1), build: tokens(4), lanes: tokens(2), gate: tokens(1), candidate: [INTEGRATION_SLOT],
   };
   for (const stage of ADMISSION) {
     const f = events.map(outcomeOf).find((o) => o !== null && o.stage === stage);
@@ -102,10 +102,10 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
     assert.deepEqual(first.expect.resources, expected[stage], `${stage}'s entry reservation`);
     // Nothing the attempt wrote comes before its reservation (no fact since the previous outcome or, for the first
     // stage, since the plan revision) but a judgment's capture under the fence (M3 Checkpoint A: the fence, then
-    // `@cpu`): plan-check's pin and its judgment-inputs, the gate's judgment-inputs.
+    // `@cpu`): pre-build's pin and its judgment-inputs, the gate's judgment-inputs.
     const since = events.findLast((x) => x.seq < first.seq && (outcomeOf(x) !== null || (x.type === 'fact' && x.fact.kind === 'plan-applied')))?.seq ?? 0;
     const facts = events.filter((e) => e.type === 'fact' && e.seq > since && e.seq < first.seq);
-    const capture = stage === 'plan-check' ? ['dispatch', 'judgment-inputs'] : stage === 'gate' ? ['judgment-inputs'] : [];
+    const capture = stage === 'pre-build' ? ['dispatch', 'judgment-inputs'] : stage === 'gate' ? ['judgment-inputs'] : [];
     assert.deepEqual(facts.map((e) => e.type === 'fact' && e.fact.kind), capture, `${stage}: only its capture between the previous outcome and the reservation`);
   }
   // The build's reservation is held through its chain and released by teardown.
@@ -115,7 +115,7 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
   assert.ok(released[0]!.parent.type === 'stage' && released[0]!.parent.stage === 'teardown', 'released under teardown');
 });
 
-test('gate.judgment-inputs: plan-check and gate write their inputs before the entry reservation and the spawn; the gate\'s carry its fingerprint', T, async () => {
+test('gate.judgment-inputs: pre-build and gate write their inputs before the entry reservation and the spawn; the gate\'s carry its fingerprint', T, async () => {
   const d = setupArc({ steps: STRAIGHT });
   const base = git(d.repo, 'rev-parse', 'main');
   const r = contextFor(d);
@@ -123,20 +123,20 @@ test('gate.judgment-inputs: plan-check and gate write their inputs before the en
     await stepUntil(r, 'u1', (f) => f.stage === 'gate');
     const events = eventsOf(d);
     const inputs = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'judgment-inputs' ? [e] : []));
-    assert.deepEqual(inputs.map((e) => e.type === 'fact' && e.fact.kind === 'judgment-inputs' && e.fact.stage), ['plan-check', 'gate']);
+    assert.deepEqual(inputs.map((e) => e.type === 'fact' && e.fact.kind === 'judgment-inputs' && e.fact.stage), ['pre-build', 'gate']);
     const planRevNow = r.journal.view.planApplied()!.rev;
     for (const e of inputs) {
       assert.ok(e.type === 'fact' && e.fact.kind === 'judgment-inputs');
       const f = e.fact;
       assert.equal(f.tip, base, `${f.stage}: the integration tip it read`);
       assert.equal(f.head, f.stage === 'gate' ? git(d.repo, 'rev-parse', unitBranch(r.ctx.plan().arc, U1)) : null);
-      assert.equal(f.specRev, f.stage === 'gate' ? 2 : 1, `${f.stage}: the spec rev it read (dev.17: the approve's design record lands as rev 2)`);
+      assert.equal(f.specRev, 1, `${f.stage}: the spec rev it read (dev.17: the approve's design record lands as rev 2)`);
       assert.equal(f.planRev, planRevNow);
       assert.equal(f.routingRev, r.ctx.routing(null).rev);
       // 1.0.0-dev.12: the gate's also record what its bounded diff inlined (the unit's two files) and did not, and that the
       // diff is under the large-diff threshold; dev.17: and the design record's size estimate (the fake approve's, 10 lines).
       const fingerprint = f.stage === 'gate'
-        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null, review: { ledger: [], disputes: [], delta: null }, designEstimate: 10 }
+        ? { fingerprint: fingerprintAt(r.ctx, r.unit('u1'), sha(base)), diffShown: { inlined: ['src/mul.js', 'test/mul.test.js'], notInlined: [] }, largeDiff: null, review: { ledger: [], disputes: [], delta: null }, designEstimate: null, standingReview: [] }
         : {};
       assert.deepEqual(r.journal.view.judgmentInputs(U1, f.stage, f.attempt), {
         unit: f.unit, stage: f.stage, attempt: f.attempt, tip: f.tip, head: f.head, specRev: f.specRev, specSha256: f.specSha256, planRev: f.planRev, routingRev: f.routingRev, ...fingerprint,
@@ -232,7 +232,7 @@ async function cancelWhileWaiting(run: StageRun, going: (ctx: StageContext) => P
 
 test('stage.cancel-wait-journals-nothing: a first build paused while waiting for its reservation never started; resumed, it runs fresh', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] })] });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const attempts = run.journal.view.unit(U1).counters.attempts;
   await cancelWhileWaiting(run, (ctx) => build(ctx, run.unit, { kind: 'fresh' }));
   // Resumed: the driver runs the decided fresh build, as the next attempt.
@@ -251,7 +251,7 @@ test('stage.cancel-wait-journals-nothing: a fix round paused while waiting for i
       codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', 'resume'] }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const red = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
   assert.equal(red.outcome.kind, 'red');
   assert.ok(red.fix !== null);
@@ -272,7 +272,7 @@ test('gate.cancel-wait-recaptures: a gate paused while waiting for its @cpu leav
   const run = setupUnit({
     steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] }), gateStep({ decision: 'approve' })],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const green = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
   assert.equal(green.outcome.kind, 'green');
   const b = blocked(run);
@@ -472,7 +472,7 @@ test('park.salvage-and-teardown-fail-restart: an adopted build\'s failed salvage
     steps: [planCheckStep({ decision: 'approve' }), codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', '-C'] })],
     resources: [DB],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const b = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
   assert.ok(b.run !== null);
   assert.deepEqual(b.run.reservation?.resources, tokens(4), 'new builds reserve CPU only');
@@ -539,14 +539,14 @@ test('park.salvage-and-teardown-fail-restart: an adopted build\'s failed salvage
 
 test('stage.repeat-park: a retryable park on a target the unit recovered on within 6 h is written operator, and its item is env-blocked', () => {
   const run = setupUnit({ steps: [] });
-  const parent = at(start(run.ctx, U1, 'plan-check'), 'plan-check');
+  const parent = at(start(run.ctx, U1, 'gate'), 'gate');
   const first = record(run.ctx, parent, 'process-fault', null, { backend: 'claude', failed: [], environment: null });
   assert.equal(first.next.kind, 'park');
   const park = runEvents(run).map(outcomeOf).findLast((o) => o !== null)!;
   assert.deepEqual(park.park, { class: 'retryable', targets: [{ type: 'backend', backend: 'claude' }] });
   run.journal.fact({ kind: 'probe', target: { type: 'backend', backend: 'claude' }, covers: [runEvents(run).findLast((e) => outcomeOf(e) !== null)!.seq], result: 'pass', nextProbeAt: null } as Fact);
   assert.equal(run.journal.view.unit(U1).status, 'active', 'recovered');
-  const again = record(run.ctx, at(start(run.ctx, U1, 'plan-check'), 'plan-check'), 'process-fault', null, { backend: 'claude', failed: [], environment: null });
+  const again = record(run.ctx, at(start(run.ctx, U1, 'gate'), 'gate'), 'process-fault', null, { backend: 'claude', failed: [], environment: null });
   assert.ok(again.next.kind === 'park');
   assert.equal(again.next.needsUser.reason, 'env-blocked');
   assert.deepEqual(runEvents(run).map(outcomeOf).findLast((o) => o !== null)!.park, { class: 'operator', kind: 'env' });
@@ -558,6 +558,11 @@ test('stage.repeat-park: a retryable park on a target the unit recovered on with
 
 test('rounds.no-escalation: red, a stalled fix round, then the next fix round resumes its session on the same seat; nothing escalates', T, async () => {
   const run = setupUnit({
+    // Distinct checks keep this about session continuity: a repeated lane red is separately base-compared.
+    lanes: [
+      { id: 'first-check', argv: ['sh', '-c', 'test -f src/notes.md || node --test test/add.test.js'] },
+      { id: 'next-check', argv: ['sh', '-c', 'test ! -f src/notes.md || node --test test/add.test.js'] },
+    ],
     unit: { limits: { certifications: 1 } },
     steps: [
       planCheckStep({ decision: 'approve' }),
@@ -566,7 +571,7 @@ test('rounds.no-escalation: red, a stalled fix round, then the next fix round re
       codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', 'resume'] }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   const red1 = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
   assert.equal(red1.outcome.kind, 'red');
   assert.ok(red1.fix !== null);
@@ -587,7 +592,6 @@ test('rounds.no-escalation: red, a stalled fix round, then the next fix round re
   const launch = launchOf(run, third);
   assert.equal(launch.argv[0], 'codex');
   assert.ok(launch.terminal.type === 'backend' && 'session' in launch.terminal && launch.terminal.session.mode === 'resume', 'the session resumes');
-  assert.equal(runEvents(run).some((e) => e.type === 'fact' && e.fact.kind === 'implementer-escalated'), false);
   assert.equal(run.journal.view.unit(U1).buildTier, 'med');
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null));
 });

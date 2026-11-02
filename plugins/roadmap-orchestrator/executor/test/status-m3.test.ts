@@ -1,41 +1,43 @@
+import { inputShaOf } from '../src/git/reusekey.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 // `roadmap status`'s M3 keys (src/status.ts; DESIGN-1.0.md §2.4, plan "`status` (additive)"), in process over holistic
 // arcs whose log is written directly (real repos, real run dirs, the real fold): the facts are the frozen M3 ones, so
 // what a later step writes renders the same. Named tests: status.target, status.findings-audit, status.coverage-per-lens,
 // status.decisions-since, status.divergences-since-ack, status.completion-sealed, status.log-size, status.non-holistic-arc,
 // status.dev9-alias.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync,readFileSync,statSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, it } from 'node:test';
 import { submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, RevisionPayload } from '../src/core/events.ts';
+import type { Fact,IntentOf,RevisionPayload } from '../src/core/events.ts';
 import {
-  type RoutingRev, type Sha, type UnitId, arcId, commandId, envId, invocationId, jobId, opKey, planRev, sha, sha256, unitId,
+type RoutingRev,type Sha,type UnitId,arcId,commandId,envId,invocationId,jobId,opKey,planRev,sha,sha256,unitId,
 } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { snapshotRequestOf, witnessDir } from '../src/git/snapshot.ts';
-import { type ArcLaneDef, laneRevOf, parseObligations, parseRulingSidecar } from '../src/holistic/types.ts';
-import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
+import { snapshotRequestOf,witnessDir } from '../src/git/snapshot.ts';
+import { type ArcLaneDef,laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { witnessRecordOf,writeWitnessRecord } from '../src/holistic/witness.ts';
 import {
-  RULINGS_INPUT, RULING_INPUT, commitRevisionNow, keepInput, keptPayload,
+RULINGS_INPUT,RULING_INPUT,commitRevisionNow,keepInput,keptPayload,
 } from '../src/input/inforce.ts';
-import { ledgerAfter } from '../src/spec/rulings.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
 import { snapshotPublishOp } from '../src/recover/ops.ts';
-import { resolveRouting, resolveRoutingUnder } from '../src/routing/layers.ts';
-import { PRE_DEV10_BUILTIN_SEATS, PRE_DEV12_BUILTIN_SEATS, PRE_DEV17_BUILTIN_SEATS } from '../src/core/upgrade.ts';
-import { MODEL_IDS, unitSeatRef } from '../src/routing/types.ts';
-import { type Status, status } from '../src/status.ts';
+import { resolveRouting } from '../src/routing/layers.ts';
+const ledgerAfter = (text: string, s: {id: string; statement: string}): string => `${text}${s.id} — ${s.statement}\n`;
+
 import type { NeedsUserReason } from '../src/core/records.ts';
-import { runOp } from './fixtures/git-common.ts';
+import { MODEL_IDS,unitSeatRef } from '../src/routing/types.ts';
+import { type Status,status } from '../src/status.ts';
 import { auditArc } from './fixtures/audit-common.ts';
-import { VISION, holisticArc, tipTree } from './fixtures/brake-common.ts';
+import { VISION,holisticArc,tipTree } from './fixtures/brake-common.ts';
+import { runOp } from './fixtures/git-common.ts';
 import { ruleRecord } from './fixtures/publish-common.ts';
-import { type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
-import { commitAll, git, writeFiles } from './helpers/repo.ts';
+import { type ArcRun,contextFor,setupArc } from './fixtures/unit-common.ts';
+import { commitAll,git,writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 60_000 };
 const U = (id: string): UnitId => unitId(id);
@@ -73,7 +75,7 @@ function witness(r: ArcRun, lane: ArcLaneDef, tree: string, outcomes: Readonly<R
   mkdirSync(dir, { recursive: true });
   const tests = Object.entries(outcomes).sort(([a], [b]) => (a < b ? -1 : 1)).map(([testId, outcome]) => ({ testId, selected: 1, outcome }));
   const recordsSha256 = writeWitnessRecord(dir, witnessRecordOf({ lane, envId: base.envId, treeSha: base.treeSha, inv, purpose: 'witness' }, tests));
-  r.journal.fact({ kind: 'witnessed', ...base, recordsSha256 });
+  r.journal.fact({ kind: 'witnessed', ...base, recordsSha256, inputSha: tree !== 'e'.repeat(40) ? inputShaOf(absPath(r.d.repo), sha(tree), lane, systemsMapInForce(r.journal.view.planApplied())) : sha(tree) });
   return dir;
 }
 
@@ -95,15 +97,6 @@ function publish(r: ArcRun, unit: string, files: Readonly<Record<string, string>
 /** The vision sha in force (what a checkpoint's inputs record). */
 const visionSha = (r: ArcRun) => r.journal.view.planApplied()!.visionSha256!;
 
-function checkpointInputs(r: ArcRun, n: number, generation: number): void {
-  const v = visionSha(r);
-  r.journal.fact({
-    kind: 'checkpoint-inputs', job: jobId('ckpt', n), trigger: { type: 'audit', job: jobId('audit', 1) }, generation,
-    vector: { plan: planRev(r.journal.view.planApplied()!.rev), specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256: v, contracts: [] },
-    headSha: sha(git(r.d.repo, 'rev-parse', 'main')), visionSha256: v, findings: [], observations: [],
-  } as unknown as Fact);
-}
-
 const item = (r: ArcRun, reason: NeedsUserReason, blocking: boolean) => raiseNeedsUser(r.journal, r.ctx.runDir, {
   blocking, subject: { type: 'arc' }, reason, summary: reason, recommendation: 'look', options: [], evidence: [],
 }, { type: 'arc' });
@@ -118,7 +111,7 @@ describe('status M3', () => {
         { id: 'I-2', activation: 'future', deliveredBy: ['u1'], testIds: ['t2'] },
         { id: 'I-3', activation: 'future', deliveredBy: ['u2', 'u3'], testIds: ['t3'] },
         { id: 'I-4', testIds: ['t4'], lane: 'other' },
-        { id: 'I-5', testIds: ['t5'], state: { type: 'waived', ruling: 'C-1' } },
+        { id: 'I-5', testIds: ['t5'], state: { type: 'waived', reason: 'test disposition', rev: 2 } },
       ],
     });
     const r = contextFor(d);
@@ -137,10 +130,10 @@ describe('status M3', () => {
         cutLine: 'the helpers ship', nextMilestone: { obligation: 'I-2', statement: 'I-2 holds.', unmerged: ['u1'] }, criticalPath: ['u2', 'u3'],
         obligations: { total: 5, nowTrue: 1, notYetTrue: 3, latched: 0, split: 0, waived: 1, deferred: 0, retired: 0 },
       });
-      assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', ruling: 'C-1' }], []]);
+      assert.deepEqual([s.waived, s.deferred], [[{ obligation: 'I-5', reason: 'test disposition' }], []]);
       assert.deepEqual(s.vision, {
         rev: 1, confirmation: null, clauses: VISION.clauses, questions: [], advances: ['V-1', 'V-2'],
-        coverage: { unservedAdvanced: ['V-2'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
+        coverage: { unservedAdvanced: ['V-2'], horizon: [], obligationsServingNone: [], withdrawnCited: [] },
       });
       noModelIds(s);
 
@@ -225,15 +218,15 @@ describe('status M3', () => {
   it('status.findings-audit / status.coverage-per-lens: per lens in L its watermark follows audits and docs edges (pending until the gap closes), the uncovered range, the generation and running audit, checkpoint lane minutes; active findings and their metrics; the owed audit and the completion predicate', T, async () => {
     const { d } = auditArc({
       steps: [], units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }], obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: [], trees: {},
-      audit: { lenses: ['invariants', 'vision'] },
+
     });
     const r = contextFor(d);
     try {
       const t0 = sha(git(d.repo, 'rev-parse', 'main'));
       const [, t1] = publish(r, 'u1', { 'src/one.js': 'export const one = 1;\n' });
       const v = visionSha(r);
-      r.journal.fact({
-        kind: 'audit-started', job: jobId('audit', 1), triggers: [{ type: 'cadence' }], generation: 1, lenses: ['invariants', 'vision'], integrationSha: t1,
+      r.journal.fact({diffBudget: 24000,
+        kind: 'audit-started', job: jobId('audit', 1), triggers: [{ type: 'final' }], generation: 1, lenses: ['invariants', 'vision'], integrationSha: t1,
         planRev: planRev(1), ledgerSha256: null, obligationsSha256: null, visionSha256: v, owners: [], priorFindings: [], highWater: r.journal.view.highWater(),
       } as unknown as Fact);
       let s = statusOf(r);
@@ -242,38 +235,31 @@ describe('status M3', () => {
         kind: 'finding-opened', id: 'F-1', key: sha256('1'.repeat(64)), lens: 'invariants', severity: 'P1', obligation: 'I-1', visionClauses: ['V-1'], claim: 'I-1 is broken',
         evidence: [{ path: 'src/one.js', blob: null }], mutant: null, source: { type: 'job', job: 'audit-1' }, gateHadPassed: true,
       } as unknown as Fact);
-      r.journal.fact({ kind: 'audit-ended', job: jobId('audit', 1), covered: [{ lens: 'invariants', from: t0, to: t1 }], findings: ['F-1'], suppressed: 0, outcome: 'completed' } as unknown as Fact);
+      r.journal.fact({refused: [],  kind: 'audit-ended', job: jobId('audit', 1), covered: [{ lens: 'invariants', from: t0, to: t1 }], findings: ['F-1'], suppressed: 0, outcome: 'completed' } as unknown as Fact);
       const [, t2] = publish(r, 'u2', { 'src/two.js': 'export const two = 2;\n' });
       r.journal.fact({ kind: 'docs-covered', pub: jobId('docs', 1), from: t1, to: t2 } as unknown as Fact);
 
       s = statusOf(r);
-      assert.deepEqual(s.audit?.lenses, ['invariants', 'vision']);
+      assert.deepEqual(s.audit?.lenses, ['invariants']);
       assert.deepEqual(s.audit?.coverage, [
         { lens: 'invariants', coveredTo: t2, outstanding: false, pendingDocs: [] },
-        { lens: 'vision', coveredTo: t0, outstanding: true, pendingDocs: [{ pub: 'docs-1', from: t1, to: t2 }] },
       ]);
-      assert.deepEqual(s.audit?.uncovered, [{ lens: 'vision', from: t0, to: t2 }]);
-      assert.deepEqual([s.audit?.generation, s.audit?.running, s.audit?.checkpointLaneMinutes], [1, null, 0]);
+      assert.deepEqual(s.audit?.uncovered, []);
+      assert.deepEqual([s.audit?.generation, s.audit?.running], [1, null]);
       assert.deepEqual(s.findings.active, [{ id: 'F-1', lens: 'invariants', severity: 'P1', state: 'open', owner: null, obligation: 'I-1', claim: 'I-1 is broken' }]);
       assert.deepEqual(s.findings.metrics, [{ id: 'F-1', lens: 'invariants', severity: 'P1', gateHadPassed: true, disposition: null, merged: false, timeToResolveMs: null }]);
 
       // A checkpoint of generation 1 runs a lane; an audit-owed item is raised: the completion predicate (the scheduler's
       // `completionBlockers`) names every gap, the running checkpoint among them.
-      checkpointInputs(r, 1, 1);
-      journeySpawn(r, 'ckpt-1', lanesOf(r).get('journey')!, t2);
-      const owed = item(r, 'audit-owed', false);
+      const owed = item(r, 'revision-notice', false);
       await sleep(30);
       s = statusOf(r);
-      assert.ok((s.audit?.checkpointLaneMinutes ?? 0) > 0, 'a running checkpoint lane counts to now');
-      assert.deepEqual(s.owed, { audits: [owed] });
       assert.deepEqual(s.completion.unmet, [
-        'units-open', 'baseline-owed', 'coverage-outstanding', 'checkpoint-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+        'units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged',
       ]);
-      r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 1), outcome: { kind: 'no-op' } } as unknown as Fact);
       ack(r, owed);
       s = statusOf(r);
-      assert.deepEqual(s.owed, { audits: [] });
-      assert.deepEqual(s.completion.unmet, ['units-open', 'baseline-owed', 'coverage-outstanding', 'close-out', 'obligations-not-discharged'], 'a no-op checkpoint makes generation 1 quiescent');
+      assert.deepEqual(s.completion.unmet, ['units-open', 'baseline-owed', 'close-out', 'obligations-not-discharged'], 'a no-op checkpoint makes generation 1 quiescent');
       assert.equal(s.run.state, 'no-owner', 'a holistic arc is complete only through arc-completed');
       noModelIds(s);
     } finally {
@@ -287,60 +273,36 @@ describe('status M3', () => {
     try {
       let s = statusOf(r);
       assert.deepEqual([s.decisionsSince, s.divergences], [[], []], 'the arc\'s first revision decides nothing');
-      assert.deepEqual(s.convergence, { k: 3, counter: 0, since: 0, open: [] });
-
-      checkpointInputs(r, 1, 1);
-      const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'checkpoint', job: 'ckpt-1' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
+      const record = ruleRecord(r, 'C-2', { ruledBy: { type: 'code', reason: 'close-out' }, cites: ['V-1'], evidence: ['scripted evidence'], statement: 'Keep helpers pure.' });
       const rulingSha = keepInput(r.ctx.runDir, Buffer.from(`${JSON.stringify(record)}\n`), RULING_INPUT);
       const prev = keptPayload(r.ctx.runDir, r.journal.view.planApplied()!.payloadSha256!);
       // The revision lands C-2 in the ledger with its sidecar, as `rule` and a bundle's activation do.
       const ledgerText = readFileSync(join(r.ctx.runDir, 'inputs', `${prev.manifest.rulings.ledgerSha256}.${RULINGS_INPUT}`), 'utf8');
-      const ledgerSha256 = keepInput(r.ctx.runDir, Buffer.from(ledgerAfter(ledgerText, parseRulingSidecar(record))), RULINGS_INPUT);
+      const ledgerSha256 = keepInput(r.ctx.runDir, Buffer.from(`${ledgerText}C-2 — Keep helpers pure.\n`), RULINGS_INPUT);
       const draft = (what: string) => ({
         job: jobId('ckpt', 1), type: 'interpretation', from: 'V-1', what, cites: ['V-1'], evidence: ['scripted evidence'],
         preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] }, compensation: { hint: 'nothing to undo', kind: 'none' },
       }) as const;
       commitRevisionNow(r.journal, r.ctx.runDir, {
-        ...prev, source: { type: 'bundle', job: jobId('ckpt', 1) }, base: planRev(1), rev: planRev(2),
-        manifest: { ...prev.manifest, rulings: { ledgerSha256, sidecars: { ...prev.manifest.rulings.sidecars, 'C-2': rulingSha } } },
+        ...prev, source: { type: 'walk', job: jobId('walk', 1) }, base: planRev(1), rev: planRev(2),
+        manifest: { ...prev.manifest, rulings: { ledgerSha256,  } },
         changes: [{ type: 'unit-cut', unit: U('u2') }, { type: 'limits', unit: null }], dispositions: [],
         divergences: [draft('trust means tested'), draft('helpers stay small')],
       } as unknown as RevisionPayload, { type: 'job', job: jobId('ckpt', 1) });
 
       s = statusOf(r);
-      const checkpoint = { type: 'checkpoint', job: 'ckpt-1' };
+      const checkpoint = { type: 'executor' };
       assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.oneLine, x.ruledBy]), [
-        ['ruling', 'C-2', 'Keep helpers pure.', checkpoint],
-        ['bundle', 'ckpt-1', 'plan rev 2: unit-cut u2, limits', checkpoint],
         ['cut', 'u2', 'u2 cut (plan rev 2)', checkpoint],
         ['divergence', 'D-1', 'interpretation: trust means tested', checkpoint],
         ['divergence', 'D-2', 'interpretation: helpers stay small', checkpoint],
       ]);
-      assert.deepEqual(s.divergences.map((x) => [x.id, x.bundle, x.cites, x.evidence, x.compensation, x.digest]), [
-        ['D-1', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
-        ['D-2', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }, null],
+      assert.deepEqual(s.divergences.map((x) => [x.id, x.bundle, x.cites, x.evidence, x.compensation]), [
+        ['D-1', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }],
+        ['D-2', 'ckpt-1', ['V-1'], ['scripted evidence'], { hint: 'nothing to undo', kind: 'none' }],
       ]);
-      assert.deepEqual(s.convergence, { k: 3, counter: 1, since: 0, open: [] });
       assert.deepEqual(s.vision?.coverage.withdrawnCited, []);
 
-      const digest = item(r, 'divergence-digest', false);
-      r.journal.fact({ kind: 'divergence-digest', needsUser: digest, ids: ['D-1', 'D-2'] } as unknown as Fact);
-      assert.deepEqual(statusOf(r).divergences.map((x) => [x.id, x.digest]), [['D-1', digest], ['D-2', digest]], 'an open digest binds them');
-      const bound = item(r, 'convergence-bound', false);
-      assert.deepEqual(statusOf(r).convergence, { k: 3, counter: 1, since: 0, open: [bound] });
-      ack(r, digest);
-      ack(r, bound);
-      s = statusOf(r);
-      assert.deepEqual([s.divergences, s.decisionsSince], [[], []], 'the acknowledged digest covers them, and nothing was decided since');
-      assert.deepEqual([s.convergence?.counter, s.convergence?.open], [0, []], 'acknowledging the bound resets the counter');
-      assert.ok((s.convergence?.since ?? 0) > 0);
-
-      checkpointInputs(r, 2, 2);
-      r.journal.fact({ kind: 'bundle-decided', job: jobId('ckpt', 2), outcome: { kind: 'no-op' } } as unknown as Fact);
-      r.journal.fact({ kind: 'divergence', id: 'D-3', index: 0, ...draft('a later reading'), job: jobId('ckpt', 2) } as unknown as Fact);
-      s = statusOf(r);
-      assert.deepEqual(s.decisionsSince.map((x) => [x.kind, x.id, x.ruledBy]), [['divergence', 'D-3', { type: 'checkpoint', job: 'ckpt-2' }]]);
-      assert.deepEqual(s.divergences.map((x) => [x.id, x.digest]), [['D-3', null]]);
       noModelIds(s);
     } finally {
       r.journal.close();
@@ -385,7 +347,7 @@ describe('status M3', () => {
       assert.deepEqual([s.host.log.bytes, s.host.log.events, s.host.log.compactionDue], [size(), readJournal(r.ctx.runDir, arcId(d.arc)).events.length, false]);
       assert.ok(Number.isInteger(s.host.log.foldMs) && s.host.log.foldMs >= 0);
       const before = s.host.log;
-      r.journal.fact({ kind: 'executor-started', generation: 2 });
+      r.journal.fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
       s = statusOf(r);
       assert.deepEqual([s.host.log.events, s.host.log.bytes], [before.events + 1, size()]);
       assert.ok(s.host.log.bytes > before.bytes);
@@ -408,8 +370,7 @@ describe('status M3', () => {
         usage: { inputTokens: 10, outputTokens: 2, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
       });
       const s = statusOf(r);
-      assert.deepEqual([s.holistic, s.target, s.vision, s.audit, s.convergence], [false, null, null, null, null]);
-      assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings, s.owed], [[], [], [], [], [], [], { active: [], metrics: [], released: { checkpoint: 0, p3: 0, regress: 0, settled: 0, closeOut: 0 }, refusedAdmits: { regress: 0, settled: 0 } }, { audits: [] }]);
+      assert.deepEqual([s.nowTrue, s.notYetTrue, s.waived, s.deferred, s.divergences, s.decisionsSince, s.findings], [[], [], [], [], [], [], { active: [], metrics: [], released: { root: 0, closeOut: 0 } }]);
       assert.deepEqual(s.completion, { planRev: null, head: null, active: false, sealed: false, notSealed: 'not completed', unmet: ['units-open'] });
       assert.deepEqual(s.spend.byModel, { models: [{ model: 'gpt-5.6-luna', calls: 1, input: 10, output: 2, cacheRead: 0, cacheWrite: 0, turns: 0, costUsd: 0, unavailable: 0 }], unresolvedRevs: [] });
       assert.equal(s.routing?.rev, rev);
@@ -419,98 +380,23 @@ describe('status M3', () => {
     }
   });
 
-  it('status.dev16-alias: meter rows under the rev 1.0.0-dev.12 to dev.16 recorded (Sonnet judged low and med, Opus built high) join today\'s table: nothing unresolved', T, () => {
-    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
-    const r = contextFor(d);
-    try {
-      const stack = { profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' } as const;
-      const now = resolveRouting(stack).rev;
-      const dev16 = resolveRoutingUnder(PRE_DEV17_BUILTIN_SEATS, stack);
-      assert.notEqual(dev16.rev, now, 'dev.17\'s seats moved the rev');
-      assert.deepEqual([dev16.table.planCheck.low.model, dev16.table.gate.med.model, dev16.table.build.high.model], ['claude-sonnet-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
-      const meter = seatMeter(r);
-      meter(dev16.rev, 'planCheck', 'low', 3);
-      meter(dev16.rev, 'build', 'med', 20);
-      meter(now, 'gate', 'med', 4);
-      const s = statusOf(r);
-      assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 2, 7], ['gpt-5.6-luna', 1, 20]]);
-      noModelIds(s);
-    } finally {
-      r.journal.close();
-    }
-  });
+
 });
 
 /** A meter row for u1's seat `role.tier` under `rev`, as an earlier executor recorded it (its spawn, then its usage). */
-function seatMeter(r: ArcRun): (rev: RoutingRev, role: 'planCheck' | 'build' | 'gate', tier: 'low' | 'med', input: number) => void {
+function seatMeter(r: ArcRun): (rev: RoutingRev, role: 'verifier' | 'build' | 'gate', tier: 'low' | 'med', input: number) => void {
   let n = 0;
   return (rev, role, tier, input) => {
     n += 1;
-    const stage = role === 'planCheck' ? 'plan-check' : role;
+    const stage = role === 'verifier' ? 'pre-build' : role;
     const inv = invocationId(r.journal.begin({
       kind: 'proc.spawn', key: opKey(`earlier:${n}`), parent: { type: 'stage', unit: U('u1'), stage, attempt: n }, deadlineAt: null,
-      body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
+      body: () => ({ expect: { subject: { purpose: 'backend', routingRev: rev, unit: U('u1'), attempt: n, ...unitSeatRef(role === 'gate' ? 'verifier' : role, tier) }, launchSha256: sha256('c'.repeat(64)) }, post: null }),
     }).op, 1);
     r.journal.fact({
-      kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role, tier), unit: U('u1'), attempt: n },
+      kind: 'meter', inv, routingRev: rev, subject: { type: 'seat', ...unitSeatRef(role === 'gate' ? 'verifier' : role, tier), unit: U('u1'), attempt: n },
       usage: { inputTokens: input, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null, turns: null, costUsd: null },
     });
   };
 }
 
-describe('status: routing revs recorded before 1.0.0-dev.10 (efficient judgment) and before dev.12 (the gate risk ladder), OR-L3', () => {
-  it('status.dev9-alias: a meter row under the rev an earlier executor recorded joins its revision\'s current table: nothing unresolved, byModel on today\'s bindings', T, () => {
-    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
-    const r = contextFor(d);
-    try {
-      const stack = { profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' } as const;
-      const now = resolveRouting(stack).rev;
-      const dev9 = resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, stack).rev;
-      assert.notEqual(dev9, now, 'the seat table moved the rev');
-      const meter = seatMeter(r);
-      meter(dev9, 'planCheck', 'med', 100);
-      meter(dev9, 'build', 'med', 20);
-      meter(dev9, 'gate', 'low', 3);
-      meter(now, 'planCheck', 'low', 4);
-      const s = statusOf(r);
-      assert.deepEqual(s.spend.byModel.unresolvedRevs, [], 'the earlier rev resolves through its alias');
-      assert.equal(s.spend.byModel.models.reduce((x, m) => x + m.input, 0), s.spend.byRole.reduce((x, t) => x + t.input, 0), 'byModel totals equal the meter\'s');
-      // dev.9 judged plan-check med and gate low on Opus; OR-L3 attributes them to today's bindings, frontier (Opus) again
-      // since dev.17.
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 3, 107], ['gpt-5.6-luna', 1, 20]]);
-      noModelIds(s);
-    } finally {
-      r.journal.close();
-    }
-  });
-
-  it('status.dev11-alias: meter rows under the rev 1.0.0-dev.10 and dev.11 recorded (gate low efficient, med frontier) join today\'s table: nothing unresolved; byModel and byClass render today\'s seats (every gate row on frontier since dev.17)', T, () => {
-    const d = setupArc({ steps: [], units: [{ id: 'u1' }] });
-    const r = contextFor(d);
-    try {
-      const stack = { profile: 'default', classes: null, repoConfig: null, plan: null, unit: null, arcRoles: 'm4b' } as const;
-      const now = resolveRouting(stack).rev;
-      const dev11 = resolveRoutingUnder(PRE_DEV12_BUILTIN_SEATS, stack);
-      assert.notEqual(dev11.rev, now, 'the gate ladder moved the rev');
-      assert.notEqual(dev11.rev, resolveRoutingUnder(PRE_DEV10_BUILTIN_SEATS, stack).rev);
-      // The table dev.11 hashed: gate low on Sonnet high, med on Opus medium.
-      assert.deepEqual([dev11.table.gate.low.model, dev11.table.gate.low.effort, dev11.table.gate.med.model, dev11.table.gate.med.effort], ['claude-sonnet-5-5', 'high', 'claude-opus-5-5', 'medium']);
-      const meter = seatMeter(r);
-      meter(dev11.rev, 'gate', 'low', 3);
-      meter(dev11.rev, 'gate', 'med', 50);
-      meter(dev11.rev, 'build', 'med', 20);
-      meter(now, 'gate', 'low', 4);
-      const s = statusOf(r);
-      assert.deepEqual(s.spend.byModel.unresolvedRevs, []);
-      assert.deepEqual(s.spend.byClass.unresolvedRevs, []);
-      assert.deepEqual(s.spend.byModel.models.map((m) => [m.model, m.calls, m.input]), [['claude-opus-5-5', 3, 57], ['gpt-5.6-luna', 1, 20]]);
-      assert.deepEqual(s.spend.byClass.classes.map((c) => [c.class, c.input]), [['efficient', 20], ['frontier', 57]]);
-      assert.equal(s.routing?.seats.gate.low, 'frontier');
-      assert.equal(s.routing?.bindings.economy, 'builtin');
-      noModelIds(s);
-    } finally {
-      r.journal.close();
-    }
-  });
-});

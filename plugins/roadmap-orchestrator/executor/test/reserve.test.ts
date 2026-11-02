@@ -8,23 +8,26 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sessionContainment } from '../src/contain/session.ts';
 import type { Holder } from '../src/core/events.ts';
-import { type ResourceName, type ResourceUnit, INTEGRATION_SLOT, commandId, invocationId, opId, unitId } from '../src/core/ids.ts';
+import { INTEGRATION_SLOT,type ResourceName,type ResourceUnit,commandId,invocationId,opId,unitId } from '../src/core/ids.ts';
 import { specM1 } from '../src/core/records.ts';
-import { invocationDir, invoke } from '../src/pipeline/invoke.ts';
+import { invocationDir,invoke } from '../src/pipeline/invoke.ts';
 import { requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
-  type Reservation, type ResourceContext, type StageHolder, type SweepHolder, cancel, cleanup, entryOf, buildLanes,
-  lockOrder, reserve, reserveForSweep, resourceTable, run, transition,
+type Reservation,type ResourceContext,type StageHolder,type SweepHolder,
+buildLanes,
+cancel,cleanup,entryOf,
+lockOrder,reserve,reserveForSweep,resourceTable,run,transition,
 } from '../src/resources/reserve.ts';
 import { stageRecipes } from '../src/resources/teardown.ts';
-import { renderSpec } from '../src/spec/render.ts';
 import { runnerFiles } from '../src/runner/files.ts';
-import { waitFor } from './helpers/invocation.ts';
-import { backend, dones, intents, scenario, specFor } from './fixtures/invoke-specs.ts';
+import { renderSpec } from '../src/spec/render.ts';
+import { backend,dones,intents,scenario,specFor } from './fixtures/invoke-specs.ts';
 import {
-  CACHE, DB, QUEUE, type ResRun, UNIT, calls, laneInvocation, newRun, openRun, stageHolder, stageParent, tableOf, transitions,
+CACHE,DB,QUEUE,
+UNIT,calls,laneInvocation,newRun,openRun,stageHolder,stageParent,tableOf,transitions
 } from './fixtures/res-plan.ts';
+import { waitFor } from './helpers/invocation.ts';
 
 const T = { timeout: 60_000 };
 
@@ -155,12 +158,12 @@ test('res.lock-order', { timeout: 180_000 }, async () => {
 
 test('res.estate-excluded-from-implementer', () => {
   const lane = (id: string, tier: 'fast' | 'estate', resources: readonly string[], state = 'active') => ({
-    id, argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier, resources, evidenceGlobs: [], state,
+    id, argv: ['npm', 'test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: tier === 'fast' ? 'build' : 'unit', resources, evidenceGlobs: [], state,
   });
-  const spec = (lanes: readonly unknown[]) => specM1({
+  const spec = (lanes: readonly unknown[]) => specM1({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes,
     acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**'], resources: ['db', 'queue'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+     resources: ['db', 'queue'], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
   }, 'spec');
   const r = newRun();
   const { journal } = openRun(r);

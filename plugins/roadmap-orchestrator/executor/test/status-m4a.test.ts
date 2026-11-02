@@ -1,3 +1,7 @@
+
+import { absPath } from '../src/core/values.ts';
+import { inputShaOf } from '../src/git/reusekey.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 // `roadmap status`'s M4a keys (src/status.ts; DESIGN-1.0.md §2.4 A-M4-13), in process over a real corpus arc (corpus-unit's:
 // a real repo, a real pin, a real run dir and fold) whose log is written directly with the frozen M4a facts, and the
 // read-time timings over a synthetic log. Named tests: status.corpus-census, status.recorded-config (paid M4a run 12),
@@ -7,15 +11,13 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, test } from 'node:test';
 import type { Event, Fact } from '../src/core/events.ts';
-import {
-  amendmentIdOf, arcId, debtId, divergenceIdOf, envId, invocationId, jobId, opKey, sha, sha256, unitId,
-} from '../src/core/ids.ts';
+import { arcId, debtId, envId, invocationId, jobId, opKey, sha, sha256, unitId } from '../src/core/ids.ts';
 import { debtKey } from '../src/debt/ledger.ts';
 import { witnessDir } from '../src/git/snapshot.ts';
 import { type ArcLaneDef, laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { witnessRecordOf, writeWitnessRecord } from '../src/holistic/witness.ts';
 import { type Status, stageTimings, status } from '../src/status.ts';
-import { DEFAULT_REPO } from './helpers/forge.ts';
+
 import { withForge } from './helpers/corpusarc.ts';
 import { tipTree } from './fixtures/brake-common.ts';
 import { corpusHolisticArc } from './fixtures/corpus-holistic.ts';
@@ -41,7 +43,7 @@ function witnessHeld(r: ArcRun, lane: ArcLaneDef, tree: string): void {
   const dir = witnessDir(r.ctx.runDir, base);
   mkdirSync(dir, { recursive: true });
   const recordsSha256 = writeWitnessRecord(dir, witnessRecordOf({ lane, envId: base.envId, treeSha: base.treeSha, inv, purpose: 'witness' }, [{ testId: 't1', selected: 1, outcome: 'pass' }]));
-  r.journal.fact({ kind: 'witnessed', ...base, recordsSha256 });
+  r.journal.fact({ kind: 'witnessed', ...base, recordsSha256, inputSha: tree !== 'e'.repeat(40) ? inputShaOf(absPath(r.d.repo), sha(tree), lane, systemsMapInForce(r.journal.view.planApplied())) : sha(tree) });
 }
 
 describe('status M4a', () => {
@@ -64,7 +66,7 @@ describe('status M4a', () => {
       // Before the first admission a pack review is due and holds every admission (K14, H9), with the baseline owed.
       assert.deepEqual(s.packReview, { state: 'due', reviews: [] });
       assert.deepEqual(s.holds, ['baseline', 'pack-review']);
-      assert.deepEqual([s.amendments, s.debt], [[], { banked: [], ledger: [] }]);
+      assert.deepEqual([s.debt], [{ banked: [], ledger: [] }]);
       // The chain of a bootstrap arc integrating on main: position 1, acked, no PR; no K committed in this repo.
       // The arc has no ref yet, so the next start waits for it.
       assert.deepEqual(s.chain, {
@@ -84,13 +86,7 @@ describe('status M4a', () => {
           { index: 1, severity: 'note', target: { type: 'plan' }, claim: 'the cut line is vague', evidence: [] },
         ],
       } as Fact);
-      // An earlier executor's checkpoint capture and its intake (the issues integration was removed in 1.0.0-dev.21: read and
-      // ignored, scaffolding); an amendment from a divergence; a banked note.
-      r.journal.fact({ kind: 'issues-captured', job: jobId('ckpt', 1), sha256: sha256('c'.repeat(64)), repo: DEFAULT_REPO, filtered: { comments: 2, pullRequests: 1 } } as unknown as Fact);
-      r.journal.fact({ kind: 'issue-intake', job: jobId('ckpt', 1), issue: 'issue-3', outcome: { type: 'none', reason: 'tracked by u1' } } as unknown as Fact);
-      r.journal.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(1), source: { type: 'divergence', divergence: divergenceIdOf(1) }, rules: [], proposal: 'Name the tide window.', why: 'D-1', evidence: [],
-      } as Fact);
+      // An amendment from a divergence and a banked note.
       const what = 'Tidy the berth helpers.';
       r.journal.fact({
         kind: 'debt-banked', id: debtId('B-1'), bankReason: 'gate-note', what, key: debtKey({ unit: unitId('u1'), bankReason: 'gate-note', what }),
@@ -106,7 +102,6 @@ describe('status M4a', () => {
       });
       assert.ok(s.holds.includes('pack-review'));
       assert.equal('issues' in s, false, 'status shows no issues');
-      assert.deepEqual(s.amendments, [{ id: 'M-1', source: { type: 'divergence', divergence: 'D-1' }, rules: [], proposal: 'Name the tide window.', why: 'D-1' }]);
       assert.deepEqual(s.debt, {
         banked: [{ id: 'B-1', bankReason: 'gate-note', what, seq: s.debt?.banked[0]?.seq }],
         ledger: [{ id: 'B-1', state: 'open', originArc: r.d.arc, what }],

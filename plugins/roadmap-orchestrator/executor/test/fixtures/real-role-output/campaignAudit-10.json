@@ -1,0 +1,126 @@
+{
+  "findings": [
+    {
+      "severity": "P1",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "authenticate passes the raw token to audit.log before validating it, so every credential presented, valid or not, goes unredacted to the logger that CONTRACT.md says is persisted. This breaks the contract rule that bearer credentials must never be written to logs. The code does not use the word 'bearer'; I treat the token as a bearer credential because it is the value authenticate validates. The code was read, not executed.",
+      "cause": "authenticate audit logging: raw token is passed to the persisted audit logger before validation",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P2",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "The only test is a vacuous witness for the logging contract. It asserts only authenticate's return value and never observes what reaches audit.log, so it would stay green with the credential leak in place. It also has no rejected-token case. As checked in, the test file declares or imports neither assert nor authenticate, and the checkout has no setup file that supplies them, so it cannot exercise the real entry point unless the environment injects those names.",
+      "cause": "authenticate test witness: assertion checks only the return value and never observes audit logger output",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P2",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "src/unit.js uses audit and validate but neither declares nor imports them, and no other source file or setup file in the checkout defines them. Because the file is an ES module, authenticate throws ReferenceError at audit.log unless the runtime injects a global audit, and the same applies to validate. The throw is inferred from reading the code, since no lane or test was run. If this holds at runtime, the checkout does not deliver a working authenticate, and the test's expected true return cannot be reached.",
+      "cause": "authenticate call: audit and validate are referenced without any declaration or import in the module",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "The range contains one source line that sends the token to audit.log, which directly conflicts with CONTRACT.md's ban on logging bearer credentials to a persisted logger.",
+    "The only test checks the return value and never observes logger output, so it gives no evidence that the contract holds.",
+    "Missing environment evidence: no test or certification lane was run, because this audit had read-only tools. Runtime claims come from reading the complete files, and a runtime that injects globals could change the ReferenceError outcome but not the logging violation.",
+    "No mutants are reported because none were run and the input names no lane.",
+    "The vision has no active clauses and there are no obligations, so findings cite only CONTRACT.md. Document drift check: CONTRACT.md was not changed to fit the code, and the code conflicts with it."
+  ],
+  "premises": [
+    {
+      "claim": "CONTRACT.md forbids writing bearer credentials to logs and states that the audit logger is persisted.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "authenticate calls audit.log(token) with the unmodified token before calling validate(token), and src/unit.js contains no imports or declarations of audit or validate.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The test file is one assertion on authenticate's return value for 'fixture-token', with no imports and no observation of the logger.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Stop writing the raw token to the audit logger in authenticate, and make sure no form of the credential reaches any log.",
+      "evidence": [
+        "src/unit.js:1 calls audit.log(token) with the unmodified token before validate(token).",
+        "CONTRACT.md:1 forbids logging bearer credentials and states that the audit logger is persisted."
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Add a witness that runs the real authenticate entry point with valid and rejected tokens, captures audit logger output, and asserts the token value never appears in it. Keep the existing return-value assertion.",
+      "evidence": [
+        "test/unit.test.js:1 asserts only the return value and never observes audit.log.",
+        "test/unit.test.js:1 has no import or declaration of assert or authenticate."
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Bind audit and validate explicitly in src/unit.js, or supply evidence that the runtime injects them, then run the certification lanes so the runtime behaviour is established.",
+      "evidence": [
+        "src/unit.js:1 references audit and validate with no import or declaration.",
+        "The checkout contains no other source or setup file: only src/unit.js, test/unit.test.js, CONTRACT.md, prompt.txt and schema.json."
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

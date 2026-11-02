@@ -1,65 +1,63 @@
+import { nonBlank } from './validate.ts';
+import { type SystemName,systemName } from '../core/ids.ts';
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
-// hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log" is the
+// hash rule. The journal (append, tail, fold) is step 2 and builds on these. SCHEMAS.md "Event log and effect contracts" is the
 // prose twin of this module.
-import { type CpuBasis, cpuBasis } from './cpu.ts';
 import type { Buffer } from 'node:buffer';
+import { type BankReason,type DebtSource,BANK_REASONS,debtSource } from '../debt/types.ts';
+import { type HostFingerprint,hostFingerprint } from '../host/sample.ts';
+import { fraction } from './validate.ts';
+import { type PressureAvailability,PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
+import { type CpuBasis,cpuBasis } from './cpu.ts';
+import { type ArcId,type ClaudeSessionId,type CommandId,type DebtId,type DivergenceId,type EdgeId,type EnvId,type FindingId,type InvocationId,type JobId,type JourneyId,type KnownDefectId,type LaneId,type LaneRev,type MilestoneId,type NeedsUserId,type ObligationId,type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceName,type ResourceUnit,type RoutingRev,type ServeName,type Sha,type Sha256Hex,type SpecRev,type UnitId,type VisionClauseId,arcId,claudeSessionId,commandId,compareResourceUnits,debtId,divergenceId,edgeId,envId,findingId,idList,invocationIdOf,jobIdOf,jobIdOfKind,journeyId,knownDefectId,laneId,laneRev,milestoneId,needsUserId,obligationId,opIdOf,opKey,parseInvocationId,parseJobId,parseOpId,planRev,polishId,resourceInstance,resourceName,resourceUnit,routingRev,serveName,sha,sha256,specRev,unitId,visionClauseId } from './ids.ts';
+import { canonicalJson,sha256Hex } from './json.ts';
+import { type OrderingWait,orderingWait } from './ordering.ts';
 import {
-  type AmendmentId, type ArcId, type CommandId, type DebtId, type DivergenceId, type EdgeId, type EnvId, type FindingId, type InvocationId,
-  type JobId, type KnownDefectId, type LaneId, type LaneRev, type NeedsUserId, type ObligationId, type OpId, type OpKey, type OpportunityId, type PlanRev,
-  knownDefectId, opportunityId,
-  type ResourceInstance, type ResourceName, type ResourceUnit, type RoutingRev, type RuleId, type RulingId, type Sha, type Sha256Hex, type SpecRev,
-  type ProposalId, type UnitId, type VisionClauseId, INTEGRATION_SLOT, proposalId, proposalJob, amendmentId, arcId, commandId, compareResourceUnits, debtId, divergenceId, edgeId, envId,
-  findingId, invocationIdOf, jobIdOf, jobIdOfKind, laneId, laneRev, needsUserId, obligationId, opIdOf, opKey, parseInvocationId, parseJobId, parseOpId,
-  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, ruleId, rulingId, sha, sha256, specRev, unitId,
-  visionClauseId, idList, type ClaudeSessionId, claudeSessionId,
-  type JourneyId, type MilestoneId, type PolishId, type ServeName, journeyId, milestoneId, polishId, serveName,
-} from './ids.ts';
-import { type BankReason, type DebtSource, BANK_REASONS, debtSource } from '../debt/types.ts';
-import {
-  type FlowDropped, type FlowEndedConstraint, type FlowMetric, type FlowOutcome, type FlowPreimage, type FlowProposal, type FlowTrigger, type FlowVerdictKind,
-  type GuardBreach, type HostFingerprint, type ProofMinutes, type ProofOutcome, type VerdictAfter, type VerdictBefore, FLOW_OUTCOMES, FLOW_VERDICTS,
-  MIN_VERDICT_SAMPLES, PROOF_OUTCOMES, flowDropped, fraction, flowEndedConstraint, flowMetric, flowPreimage, flowProposal, flowTriggers, guardBreaches, hostFingerprint,
-  proofMinutes, verdictAfter, verdictBefore,
-} from '../flow/types.ts';
-import { type PressureAvailability, PRESSURE_AVAILABILITIES } from '../host/pressure.ts';
-import { canonicalJson, sha256Hex } from './json.ts';
-import {
-  COMMAND_VERDICTS, DEMO_ACTS, LENS_KIND_NAMES, type ApprovalFingerprint, type DemoAct, type BackendOutcomeKind, type CommandVerdict, type ContainmentMode,
-  type DispatchRecord, type KillReason, type KnownDefectMatch, type LensKindName, type PauseTarget, type PlanManifest, type RedRev, type ResidueRecord, type ResumeTarget,
-  type RevisionManifest, type SpecPatch, type Stage, type TokenUsage, type ClassUsage, type PromptSize, classUsages, type UsageUnavailableReason, approvalFingerprint, containmentMode,
-  dispatchRecord, killReason, knownDefectMatch, optionId, pauseTarget, manifestSpecs, resumeTarget, revisionInputs, specPatch, stage, tokenUsage,
-  usageUnavailableReason, type Stochastic, stochastic,
+type ApprovalFingerprint,
+type BackendOutcomeKind,
+type ClassUsage,
+type CommandVerdict,type ContainmentMode,
+type DemoAct,
+type DispatchRecord,type KillReason,type KnownDefectMatch,type LensKindName,type PauseTarget,type PlanManifest,
+type PromptSize,
+type RedRev,type ResidueRecord,type ResumeTarget,
+type RevisionManifest,type SpecPatch,type Stage,
+type Stochastic,
+type TokenUsage,
+type UsageUnavailableReason,
+COMMAND_VERDICTS,DEMO_ACTS,LENS_KIND_NAMES,
+approvalFingerprint,
+classUsages,
+containmentMode,
+dispatchRecord,killReason,knownDefectMatch,
+manifestSpecs,
+optionId,pauseTarget,
+resumeTarget,revisionInputs,specPatch,stage,
+stochastic,
+tokenUsage,
+usageUnavailableReason,
 } from './records.ts';
-import { type OrderingWait, orderingWait } from './ordering.ts';
-import { issuesIgnored, orderingDefault } from './upgrade.ts';
+
+import { type AuditTrigger,type ContractOp,type DivergenceDraft,type FindingEvidence,type FindingLens,type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type PackDisposition,type PackFinding,type PlanDefect,type WitnessPurpose,FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,contractOp,divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,packDisposition,packFinding,planDefect } from '../holistic/types.ts';
+import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
-  type BusyAttempt, type ClassifiedAdmit, type Conversion, type ConversionReason, BUNDLE_REJECTIONS, CONVERSION_REASONS, classifiedAdmit, conversion,
-  type AuditTrigger, type BundleOutcome, type CheckpointTrigger, type ContractOp, type DivergenceDraft, type FindingEvidence, type FindingLens,
-  type FindingSeverity, type FindingSource, type FindingTo, type MutantRef, type ObligationDisposition, type ObservationKey, type PackDisposition, type PackFinding,
-  type RevisionVector, type WitnessPurpose, FINDING_LENSES, FINDING_SEVERITIES, OBLIGATION_DISPOSITIONS, WITNESS_PURPOSES, auditTrigger,
-  checkpointTrigger, contractOp, divergenceDraft, divergenceDraftFields, findingEvidence, findingSource, findingTo, mutantRef, observationKey,
-  packDisposition, packFinding, revisionVector, type PlanDefect, planDefect,
-} from '../holistic/types.ts';
+type ArcSeatRef,type Backend,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,routingProvenance,seatFields,unitSeatFields
+} from '../routing/types.ts';
+import { type FlakyEvent,flakyEvent } from './flaky.ts';
+import { type ReviewFindingId,reviewFindingId } from './ids.ts';
 import {
-  type Read, Fields, SchemaError, arrayOf, assertUnique, bool, int, literal, nat, nullable, object, oneOf, positive, sortedBy, str, tagged, text,
-  version,
+type ApprovalBlobs,type FindingsLedgerEntry,type GateReview,type LedgerOutcome,LEDGER_OUTCOMES,approvalBlobs,findingsLedgerEntry,gateReview,
+} from './review.ts';
+import { type StaleSet,staleSet,staleSetFields } from './stale.ts';
+import {
+type Read,Fields,SchemaError,arrayOf,assertUnique,bool,int,literal,nat,nullable,object,oneOf,positive,sortedBy,str,tagged,text,
+version,
 } from './validate.ts';
 import {
-  type AbsPath, type GitDate, type IsoTime, type RefName, type RepoPath, type RepoPattern, absPath, gitDate, isoTime,
-  refName, repoPath, repoPattern,
+type AbsPath,type GitDate,type IsoTime,type RefName,type RepoPath,type RepoPattern,absPath,gitDate,isoTime,
+refName,repoPath,repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
-import {
-  type ArcSeatRef, type Backend, type RiskTier, type RoutingProvenance, type SeatRef, type UnitSeatRef, arcSeatFields, backend, riskTier,
-  routingProvenance, seatFields, unitSeatFields,
-} from '../routing/types.ts';
-import { type SystemsMap, systemsMap } from '../input/systems.ts';
-import { type FlakyEvent, flakyEvent } from './flaky.ts';
-import { type PropagationTarget, type StaleAnswer, type StaleSet, propagationTarget, staleAnswer, staleSet, staleSetFields } from './stale.ts';
-import {
-  type ApprovalBlobs, type FindingsLedgerEntry, type GateReview, type LedgerOutcome, LEDGER_OUTCOMES, approvalBlobs, findingsLedgerEntry, gateReview,
-} from './review.ts';
-import { type ReviewFindingId, reviewFindingId } from './ids.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
@@ -201,12 +199,6 @@ export type SpawnSubject =
   }>
   | Readonly<{ purpose: 'teardown' | 'probe'; unit: UnitId | null; resource: ResourceInstance }>
   /**
-   * M4b: one side of a suite-lane proof (RC-4): proof job `job` runs lane `lane` with its `old` or `new` argv at the
-   * integration head `at`, in a clean checkout. It journals no `witnessed`; its records are kept and named only by
-   * `flow-proof`.
-   */
-  | Readonly<{ purpose: 'proof'; job: JobId; proposal: ProposalId; lane: LaneId; side: 'old' | 'new'; at: Sha }>
-  /**
    * dev.13: one command of milestone `milestone`'s bring-up (src/walk/bringup.ts), its owner the spawn's parent (a walk
    * job). `step` names it as the `walk-tools-missing` row does: `setup[i]`, `serve.<name>`, `seed[i]`. A `serve` process
    * runs until its owner stops it (`proc.kill{teardown}`); recovery cancels a live one (its owner brings the product up
@@ -329,30 +321,21 @@ export type IntegrationFfExpect = Readonly<{ ref: RefName; old: Sha; new: Sha }>
 /** The revision a revision is evaluated against: the plan rev in force, or 0 before the arc's first (M3 step A2). */
 export type RevisionBase = PlanRev | 0;
 
-/**
- * Where a revision came from (G1): the arc's start, an architect command, a checkpoint bundle, the executor's own patch, or
- * (M4b) an accepted flow proposal, committed under the fence.
- * A bundle's `admits` and `conversions` (M4a rev 3, OR-A1, Q4): code's classification of its `admit` ops, persisted in
- * the decision record before any settlement and never recomputed; both present (in a corpus arc) or both absent (an
- * `architecture-doc` arc, or 1.0.0-dev.6: unclassified, never counted against a budget or a follow-up; `bundleClassesOf`).
- * dev.13: `conversions` alone (non-empty) outside a corpus arc: the admits a brake converted (src/holistic/tail.ts).
- */
+/** The start, root command, executor patch or accepted walk change that authored a revision. */
 export type RevisionSource =
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'command'; command: CommandId }>
-  | Readonly<{ type: 'bundle'; job: JobId; admits?: readonly ClassifiedAdmit[]; conversions?: readonly Conversion[] }>
   | Readonly<{ type: 'executor'; inv: InvocationId }>
-  | Readonly<{ type: 'flow'; proposal: ProposalId }>
   /** dev.13: the code-applied polish revision of walk `job`: its applied proposals admitted as polish units (src/walk/polish.ts). */
   | Readonly<{ type: 'walk'; job: JobId }>
   /** dev.13: the cut of polish unit `unit`, which its compare judged `drop` (`polish-dropped`, src/walk/compare.ts). */
   | Readonly<{ type: 'compare'; unit: UnitId }>
-  /** dev.17 (design pass): the split of `unit` its plan-check call `inv` decided (src/pipeline/split.ts). */
+  /** dev.17 (design pass): the split of `unit` its pre-build call `inv` decided (src/pipeline/split.ts). */
   | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
   /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
   | Readonly<{ type: 'deflake' }>
   /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
-  | Readonly<{ type: 'propagation'; rev: PlanRev }>;
+;
 
 /** Expected postconditions beyond what the kind and `expect` already fix; `null` where they fix everything. */
 export type OpPost = {
@@ -386,11 +369,10 @@ export type OpOutcome = {
   'resource.transition': Readonly<{ kind: 'transitioned' }>;
   /**
    * `pressure` (M4b rev 3, additive): the launch's own cpu wait (src/host/pressure.ts), read from its exit.json `cpu`
-   * in every settle mode; null without schedstat, for a launch under `PRESSURE_MIN_WALL_MS`, or an exit.json an earlier
-   * runner wrote. Absent on a spawn an earlier executor closed: read as null (`spawnPressureOf`).
+   * in every settle mode; null without schedstat or for a launch under `PRESSURE_MIN_WALL_MS`.
    */
   'proc.spawn':
-    | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary; pressure?: number | null }>
+    | Readonly<{ kind: 'result'; resultSha256: Sha256Hex; summary: ResultSummary; pressure: number | null }>
     | Readonly<{ kind: 'lost'; treeEffects: boolean }>;
   'proc.kill': Readonly<{ kind: 'quiesced' }>;
   'evidence.snapshot': Readonly<{ kind: 'captured'; manifestSha256: Sha256Hex; files: number }>;
@@ -420,6 +402,7 @@ export type Parent =
   | Readonly<{ type: 'command'; command: CommandId }>
   | Readonly<{ type: 'op'; op: OpId }>
   | Readonly<{ type: 'arc' }>
+  | Readonly<{ type: 'waste'; key: string }>
   /** M3: an op of a durable job (an audit's worktree, a docs publication's commit, a batch's merges). */
   | Readonly<{ type: 'job'; job: JobId }>;
 
@@ -474,30 +457,15 @@ export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
   // enters a `resolve` round (A6). `interrupted` (arc feedback 2026-10-15): only ever the recovery hold of a preparation
   // a crash cut short (`cause: recovery`); the stage itself is never cancelled.
-  prepare: ['clean-plan-check', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
+  prepare: ['clean-pre-build', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
-  // plan-check; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
+  // pre-build; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
   reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
-  // M4a rev 3 (E) to dev.16: `in-session` (a frontier or summit builder under `planCheck.shape: by-builder`: no plan-check
-  // call, the build assessed in session). dev.17 records none; read from an older log.
-  // Paid M4b run 5: `read-denied`, as at the gate (no longer recorded since 2026-10-16; read from a 1.0.0-dev.11 log).
-  // Scope growth (2026-10-15): `scope-growth` (the answer proposed scope growth code verified: a hold until the root agent's
-  // `scope accept|reject <unit>`, src/commands/scope.ts).
-  // 2026-10-16: `context-exceeded` (the call's prompt or context outgrew the model's window: an uncharged env park), at
-  // plan-check, build and gate.
-  // dev.17 (design pass): `split` (the split revision lands, cutting the unit: a hold no resume releases), `scaffold` and `poc`
-  // (on to those stages), `plan-defect` (an answer refused twice for a plan defect: an uncharged park naming why).
-  'plan-check': [
-    'approve', 'redirect', 'infeasible', 'escalate', 'risk-lowered', 'scope-widened', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed',
-    'in-session', 'read-denied', 'scope-growth', 'context-exceeded', 'executor-fault', 'split', 'scaffold', 'poc', 'plan-defect',
-  ],
-  // M4a rev 3 (E, R55) to dev.16: the in-session assessment found the spec `infeasible`, or raised the risk floor onto
-  // another implementer seat (`risk-raised`). dev.17 records neither; read from an older log.
+  'pre-build': ['approve', 'interrupted', 'executor-fault'],
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
-  build: [
-    'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'infeasible',
-    'risk-raised', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
+  build: ['spec-wrong',
+    'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
   ],
   quiesce: ['empty', 'executor-fault'],
   evidence: ['captured', 'executor-fault'],
@@ -511,19 +479,17 @@ export const STAGE_OUTCOME_KINDS = {
   // the unit's diff base alone too; uncharged, on to the gate (the candidate decides against the tip). `witness-lane-missing`
   // (2026-10-15, arc feedback #3): as at build. Plan defects (2026-10-16): `plan-defect` (a missing witness the lane never
   // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
-  // `scope-growth` (salvage reverted the same out-of-scope path on the unit's last two build rounds: the hold of a
-  // plan-check's proposal, with that path as the proposal, until `scope accept|reject`).
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
   // environment, never a red lane), here and at the candidate.
   lanes: [
-    'green', 'red', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'scope-growth', 'executor-fault', 'env-unavailable',
+    'green', 'red', 'regression', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
+    'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
   // TEMPORARY SCAFFOLDING (BACKLOG "Scaffolding to delete"): no longer recorded since 2026-10-16, when the judge's read
   // surface widened to the repository and the run dir and a refused read stopped voiding an approval; kept, with its
-  // transition row, so a 1.0.0-dev.11 log whose latest gate or plan-check outcome is one still folds and retries.
+  // transition row, so a 1.0.0-dev.11 log whose latest gate or pre-build outcome is one still folds and retries.
   // dev.17 (proportional review): `delta-empty` (no file changed since the unit's approval and no target it bound moved:
   // code skips the gate and approves again at the new fingerprint, uncharged).
   gate: [
@@ -538,31 +504,21 @@ export const STAGE_OUTCOME_KINDS = {
   ],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
-  // dev.17 (design pass): the scaffold writer's attempt. `scaffolded`: the skeleton passed code's checks and is the unit's
-  // first executor-authored commit; `refused`: it failed one (one retry, told why); `plan-defect`: refused again, or its
-  // load test cannot run (an uncharged park naming why).
-  scaffold: [
-    'scaffolded', 'refused', 'plan-defect', 'refusal', 'process-fault', 'lost', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed',
-    'executor-fault',
-  ],
-  // dev.17 (design pass): a proof of concept's throwaway build. `answered`: its closed answer read; `unanswered`: none to read
-  // (malformed, a refusal, lost). Either goes back to a fresh plan-check with the report.
-  poc: ['answered', 'unanswered', 'process-fault', 'interrupted', 'routing-changed', 'context-exceeded', 'occupied', 'cleanup-failed', 'executor-fault'],
 } as const satisfies { readonly [S in Exclude<Stage, 'retire'>]: readonly string[] };
 export type OutcomeStage = keyof typeof STAGE_OUTCOME_KINDS;
 export type StageOutcomeKind<S extends OutcomeStage = OutcomeStage> = (typeof STAGE_OUTCOME_KINDS)[S][number];
 export const OUTCOME_STAGES = Object.keys(STAGE_OUTCOME_KINDS) as readonly OutcomeStage[];
 
 /** Judgment stages run a fresh judgment session; a refusal or escalation there routes up the role's seats. */
-export const JUDGMENT_STAGES = ['plan-check', 'gate'] as const satisfies readonly OutcomeStage[];
+export const JUDGMENT_STAGES = ['pre-build', 'gate'] as const satisfies readonly OutcomeStage[];
 export type JudgmentStage = (typeof JUDGMENT_STAGES)[number];
 /** Stages with an uncharged retry (malformed report, blocked lane). */
-export const RETRY_STAGES = ['plan-check', 'build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
+export const RETRY_STAGES = ['build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
 export type RetryStage = (typeof RETRY_STAGES)[number];
 
 /**
  * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
- * unit's counters and status from it. `advance`: on to another stage, no counter. `redirect`, `revise`,
+ * unit's counters and status from it. `advance`: on to another stage, no counter. `revise`,
  * `candidate-red`, `smoke` (M4a rev 3: a mutation-smoke fix round): a bounded round within its bound. `retry`: the stage's one uncharged retry.
  * `route-up`: re-dispatched at the role's escalation seat. `trigger`: a risk trigger (contract path touched,
  * scope growth) that puts the next judgment dispatch on the escalation seat. `hold`: the stage was interrupted
@@ -570,7 +526,7 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
  * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
  */
-export const OUTCOME_CLASSES = ['advance', 'redirect', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
+export const OUTCOME_CLASSES = ['advance', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
@@ -613,8 +569,7 @@ export type ParkRecord =
 
 /**
  * Why a stage was interrupted, when not an operator pause or stop (G5): its backend parked, at the park fact's
- * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay. M4b: an
- * accepted flow proposal `pending-apply` holds new candidate starts until its revision is committed (`flow-apply`).
+ * seq. A covering passing probe or `resume --backend` releases exactly such holds; operator pauses stay.
  * M4b rev 3 (RC-11, step H2): a unit whose run `inv` was starved, or red under pressure with its rerun pending, is held
  * until a minute of scheduler ticks since the hold shows the host's cpu wait below `PRESSURE_SATURATED` or 30 min pass (`host-pressure`).
  * Arc feedback 2026-10-15: `recovery` closes an admission-stage attempt a crash cut short that no recorded backend call
@@ -623,7 +578,6 @@ export type ParkRecord =
  */
 export type HoldCause =
   | Readonly<{ type: 'backend'; backend: Backend; parkSeq: number }>
-  | Readonly<{ type: 'flow-apply'; proposal: ProposalId }>
   | Readonly<{ type: 'host-pressure'; inv: InvocationId }>
   | Readonly<{ type: 'recovery' }>;
 
@@ -642,49 +596,30 @@ export type StageOutcomeDetail =
   | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
   | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
-  | Readonly<{ kind: 'infeasible'; notes: string }>
   | Readonly<{ kind: 'base-red'; base: Sha; lanes: readonly LaneId[]; changedCheckout: boolean }>
   /**
-   * Scope growth (2026-10-15): the plan-check's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
+   * Scope growth (2026-10-15): the pre-build's proposals code verified (`ScopeGrowthProposal`), in answer order; at lanes
    * (plan defects, 2026-10-16) one proposal of the paths salvage reverted twice running.
    */
-  | Readonly<{ kind: 'scope-growth'; proposals: readonly ScopeGrowthProposal[] }>
   /** Plan defects (2026-10-16): lanes `plan-defect`, the defects code found behind the missing witnesses (non-empty). */
   | Readonly<{ kind: 'plan-defect'; defects: readonly PlanDefect[] }>
   /**
-   * 2026-10-16: plan-check, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
+   * 2026-10-16: pre-build, build or gate `context-exceeded`, the call whose prompt or context outgrew the model's window and
    * its prompt's size in bytes (stdin and the system prompt; dispatch.ts `verdictOf`).
    */
   | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
   /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
-  | Readonly<{ kind: 'executor-fault'; stack: string }>
-  /** dev.17 (design pass): plan-check `split`, the children the split revision adds (two or more, in answer order). */
-  | Readonly<{ kind: 'split'; children: readonly UnitId[] }>
-  /** dev.17 (design pass): plan-check or scaffold `plan-defect`, every reason code refused the design for (non-empty). */
-  | Readonly<{ kind: 'design-defect'; reasons: readonly string[] }>
-  /**
-   * dev.17 (design pass): scaffold `refused`, why code refused the skeleton (non-empty) and, when its dry run ran the load
-   * test's lane, that run's evidence dir: what the retry is told.
-   */
-  | Readonly<{ kind: 'scaffold-refused'; reasons: readonly string[]; laneEvidence: AbsPath | null }>;
-/**
- * One verified scope-growth proposal of a plan-check (src/pipeline/stages.ts `verifiedGrowth`): repository patterns outside
- * the unit's pinned scope, each matching a file at the integration tip the plan-check read (ascending, non-empty), and the
- * plan-check's reason.
- */
-export type ScopeGrowthProposal = Readonly<{ patterns: readonly RepoPattern[]; reason: string }>;
+  | Readonly<{ kind: 'executor-fault'; stack: string }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
-  'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect', 'build/infeasible': 'infeasible',
+  'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect',
   'lanes/base-red': 'base-red',
-  'plan-check/scope-growth': 'scope-growth', 'lanes/scope-growth': 'scope-growth', 'lanes/plan-defect': 'plan-defect',
-  'plan-check/context-exceeded': 'context-exceeded', 'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
-  'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'plan-check/executor-fault': 'executor-fault',
+  'lanes/plan-defect': 'plan-defect',
+  'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
+  'prepare/executor-fault': 'executor-fault', 'reproduce/executor-fault': 'executor-fault', 'pre-build/executor-fault': 'executor-fault',
   'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
   'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
   'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
-  'plan-check/split': 'split', 'plan-check/plan-defect': 'design-defect', 'scaffold/plan-defect': 'design-defect', 'scaffold/refused': 'scaffold-refused', 'scaffold/context-exceeded': 'context-exceeded',
-  'poc/context-exceeded': 'context-exceeded', 'scaffold/executor-fault': 'executor-fault', 'poc/executor-fault': 'executor-fault',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -707,6 +642,14 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
 
+/** Arc jobs share the efficacy feed without participating in the unit state machine. */
+export type JobStageOutcomeFact = Readonly<{
+  kind: 'stage-outcome'; stage: 'experience-verdict' | 'campaign-audit';
+  job: JobId; milestone: MilestoneId | null;
+  verdict: 'pass' | 'revise' | 'keep' | 'drop' | 'abandoned' | 'bring-up-failed';
+  findings: Readonly<{ P1: number; P2: number; P3: number; total: number }>;
+}>;
+
 /** The lanes outcomes covered by the uncharged certification allowance. */
 export const certificationRed = (stage: string, outcome: string): boolean =>
   stage === 'lanes' && (outcome === 'red' || outcome === 'not-certified' || outcome === 'witnesses-missing');
@@ -721,7 +664,7 @@ export type JudgmentInputs = Readonly<{
   attempt: number;
   /** The integration tip the judgment read. */
   tip: Sha;
-  /** The unit commit it read (the gate); null for a plan-check. */
+  /** The unit commit it read (the gate); null for a pre-build. */
   head: Sha | null;
   specRev: SpecRev;
   specSha256: Sha256Hex;
@@ -751,6 +694,7 @@ export type JudgmentInputs = Readonly<{
    * is read without them (`gateReviewOf`).
    */
   review?: GateReview;
+  standingReview?: readonly ReviewItem[];
   /**
    * dev.17 (design pass): the changed lines the unit's design record estimated (src/core/design.ts `designSize`), null when
    * its spec has none. Only on a gate's; absent on one an earlier executor recorded. A `largeDiff` beside an estimate within
@@ -765,7 +709,20 @@ export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: rea
 /** A gate's diff over the large-diff threshold (`JudgmentInputs.largeDiff`): the files its attachment left out for size. */
 export type GateLargeDiff = Readonly<{ overflow: number }>;
 
+export type CiFact =
+  | Readonly<{ kind: 'external-witness'; command: CommandId; obligation: ObligationId; obligationRev: number; laneRev: LaneRev; inputSha: Sha; head: Sha; result: 'pass' | 'fail'; evidence: string; evidenceSha256: Sha256Hex | null }>
+  | Readonly<{ kind: 'external-reopened'; command: CommandId; unit: UnitId }>
+  | Readonly<{ kind: 'spike-completed'; unit: UnitId }>
+  | Readonly<{ kind: 'attempt-marker'; unit: UnitId; marker: 'M4'; builds: number; judged: number }>
+  | Readonly<{ kind: 'attempt-capped'; unit: UnitId; builds: number; judged: number }>
+  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail' }>;
+
+export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
+export type SurfaceFact =
+  | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
+  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
 export type Fact =
+  | CiFact
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
   /** One usage fact per invocation, charged to `subject`. */
@@ -776,7 +733,7 @@ export type Fact =
    * Both absent: a Codex call's, or one an executor before 1.0.0-dev.12 wrote (nothing delegated).
    */
   | Readonly<{
-    kind: 'meter'; prompt?: PromptSize; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
+    kind: 'meter'; prompt?: PromptSize; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; usage: TokenUsage; incomplete?: UsageUnavailableReason; session?: ClaudeSessionId; delegated?: readonly ClassUsage[];
   }>
   /** `streamed` (dev.17): what a judgment's stream without a result showed (records.ts `Usage`); the meter counts its tokens. */
   | Readonly<{ kind: 'usage-unavailable'; inv: InvocationId; routingRev: RoutingRev; subject: MeterSubject; reason: UsageUnavailableReason; streamed?: TokenUsage }>
@@ -798,12 +755,7 @@ export type Fact =
   | Readonly<{ kind: 'paused'; command: CommandId; target: PauseTarget }>
   | Readonly<{ kind: 'stop-requested'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
-  /**
-   * Scope growth (2026-10-15): the root agent's `scope accept|reject <unit>` on the proposals of the unit's plan-check
-   * attempt `attempt`, held `scope-growth`. Releases that hold (the unit re-runs plan-check); an accept writes it after the
-   * ruled-growth revision it committed (src/commands/scope.ts).
-   */
-  | Readonly<{ kind: 'scope-decided'; unit: UnitId; attempt: number; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
+
   /**
    * dev.17 (arc feedback 2026-10-23, item 7): the scheduler held `apply` `command` because its scope holds units in a stage
    * (`waitsFor`, sorted): it lands at their stage boundary (A12), evaluated then. Once per command, before its `queued`
@@ -814,8 +766,8 @@ export type Fact =
    * A unit re-opened on a spec revision the architect applied (`specRev`, the unit's recorded spec rev + 1,
    * whose bytes hash to `specSha256`): by `resume <unit>` of a unit parked at a judgment stage (`command`: the
    * resume), or by the driver at an in-flight unit's next stage boundary that allows it (`command`: the apply
-   * that recorded the revision, null for a start). The unit re-enters at plan-check as a new attempt; its
-   * counters are kept, and the redirect bound counts from here.
+   * that recorded the revision, null for a start). The unit re-enters at pre-build as a new attempt; its
+   * counters are kept.
    */
   | Readonly<{ kind: 'reopened'; unit: UnitId; command: CommandId | null; specRev: SpecRev; specSha256: Sha256Hex }>
   /**
@@ -846,12 +798,6 @@ export type Fact =
   /** `run-only` (M2): admission is limited to `units` (sorted), or unlimited again (null). */
   | Readonly<{ kind: 'run-only'; command: CommandId; units: readonly UnitId[] | null }>
   /**
-   * Legacy (D4, retired in dev.17; written by dev.16 and earlier): a fix round after a stalled one ran cold on the
-   * `build.high` seat (A11, G1). `attempt` is the escalated build attempt, `stalled` the build attempt whose round stalled,
-   * `from` the unit's build tier until then. No longer written; a dev.16 log's still folds (state.ts `buildTier`).
-   */
-  | Readonly<{ kind: 'implementer-escalated'; unit: UnitId; attempt: number; from: RiskTier; to: 'high'; stalled: number }>
-  /**
    * An executor started under host generation `generation` (step 13b), written at every start once the
    * journal is open. It clears the stop marker: a stop ends one run, not the arc. Pause markers and holds
    * persist until a `resume`.
@@ -861,7 +807,7 @@ export type Fact =
    * additive): whether this host reports schedstat cpu wait (src/host/pressure.ts); absent on an earlier start, read as
    * `unavailable` (`startPressureOf`). A sibling of the fingerprint, which seeds and givens compare by field equality.
    */
-  | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure?: PressureAvailability }>
+  | Readonly<{ kind: 'executor-started'; generation: number; host?: HostFingerprint; pressure: PressureAvailability }>
   /**
    * The gate at `attempt` approved the unit, bound to `fingerprint` (R2): recorded before its stage-outcome,
    * read by the candidate and ff stages, and re-checked at T before `integration.ff`. dev.17: `blobs`, what it approved by
@@ -870,9 +816,9 @@ export type Fact =
    */
   | Readonly<{ kind: 'approval'; unit: UnitId; attempt: number; fingerprint: ApprovalFingerprint; blobs?: ApprovalBlobs }>
   | StageOutcomeFact
+  | JobStageOutcomeFact
   | HolisticFact
   | M4aFact
-  | FlowFact
   | WalkFact
   | FlakyFact
   | PropagationFact
@@ -880,29 +826,20 @@ export type Fact =
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
- * dev.17 proportional review (DESIGN-1.0.md §4 "Proportional review"; SCHEMAS.md "Proportional review").
+ * dev.17 proportional review (DESIGN-1.0.md §2.1 "Unit pipeline and review"; SCHEMAS.md "Role input and output contracts").
  *
  * `review-ledger`: a gate attempt's answer entered the findings ledger: `minted`, each finding with a path that exists at the
  * head it judged, by its place in the answer (`index`), its entry (blocking: open; any other class settled at once, banked
  * or released); `settled`, the open entries of the unit this answer settled (a ruled dispute, a fixed or released finding).
  * At most one per gate attempt, before its stage-outcome.
  *
- * `docs-only`: a lanes attempt checked its build's `docsOnlySince` claim against the diff from the unit's last certified
- * tree `since` to the salvage SHA `at`: accepted by code alone (`code`) or with the verifier (`verifier`), carrying the
- * passes of `carried` over; or `refused` with the reason, the lanes then running as normal (uncharged).
- *
- * `docs-only-miss`: calibration: a candidate attempt found red a lane whose pass the unit's docs-only acceptance carried over.
  */
 export type ReviewFact =
   | Readonly<{
     kind: 'review-ledger'; unit: UnitId; attempt: number; minted: readonly Readonly<{ index: number; entry: FindingsLedgerEntry }>[];
     settled: readonly Readonly<{ id: ReviewFindingId; outcome: LedgerOutcome }>[];
-  }>
-  | Readonly<{ kind: 'docs-only'; unit: UnitId; attempt: number; since: Sha; at: Sha; verdict: DocsOnlyVerdict; reason: string | null; carried: readonly LaneId[] }>
-  | Readonly<{ kind: 'docs-only-miss'; unit: UnitId; attempt: number; lanes: readonly LaneId[] }>;
+  }>;
 export type ReviewFactKind = ReviewFact['kind'];
-export const DOCS_ONLY_VERDICTS = ['code', 'verifier', 'refused'] as const;
-export type DocsOnlyVerdict = (typeof DOCS_ONLY_VERDICTS)[number];
 
 /**
  * M3 fields of `plan-applied`: `source` (G1); `payloadSha256` (the kept `inputs/<sha>.revision.json` it was appended
@@ -949,9 +886,9 @@ export type AuditInputs = Readonly<{
   highWater: number;
   /**
    * The lens-range fix (2026-10-16): the byte budget each lens chunk's and the owners' attached diffs keep within
-   * (src/holistic/lensdiff.ts). Absent on an audit an earlier executor started: read through `auditDiffBudgetOf`.
+   * (src/holistic/lensdiff.ts). Captured on every schema-2 audit.
    */
-  diffBudget?: number;
+  diffBudget: number;
 }>;
 
 /** One lens's covered range: `from` its watermark before, `to` how far its reported chunks reached (at most the audited SHA). */
@@ -964,8 +901,9 @@ export type CoveredRange = Readonly<{ lens: LensKindName; from: Sha; to: Sha }>;
  */
 export type LensRefusal = Readonly<{ lens: LensKindName; attempt: number; claim: string; cause: string; reason: string }>;
 
-/** The M3 facts (SCHEMAS.md "M3: the holistic layer"). */
+/** The M3 facts (SCHEMAS.md "Vision, obligations and witnesses"). */
 export type HolisticFact =
+  | SurfaceFact
   /** A witness run's records (`witness.json`, hashed): the observation key and whom it ran for. */
   /** dev.17: `inputSha`, the lane's input on the tree (src/git/reusekey.ts); absent before dev.17: `treeSha`. */
   | Readonly<{
@@ -989,67 +927,38 @@ export type HolisticFact =
   }>
   | Readonly<{ kind: 'finding-transition'; id: FindingId; to: FindingTo }>
   | (Readonly<{ kind: 'audit-started' }> & AuditInputs)
-  /** M4b: `refused` (absent on an earlier executor's fact: none recorded), in call order. */
+  /** Refused drafts in call order. */
   | Readonly<{
     kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned';
-    refused?: readonly LensRefusal[];
+    refused: readonly LensRefusal[];
   }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
-  /**
-   * M4a: `corpusSha256` (the pin in force; absent: none). `issues`: the issue capture an earlier executor recorded, read as
-   * written and ignored (`issuesIgnored`, src/core/upgrade.ts); never written.
-   */
-  | Readonly<{
-    kind: 'checkpoint-inputs'; job: JobId; trigger: CheckpointTrigger; generation: number; vector: RevisionVector; headSha: Sha; visionSha256: Sha256Hex;
-    findings: readonly FindingId[]; observations: readonly ObservationKey[]; issues?: unknown; corpusSha256?: Sha256Hex;
-  }>
-  | Readonly<{ kind: 'bundle-decided'; job: JobId; outcome: BundleOutcome }>
-  /**
-   * A checkpoint suppressed by `nothingNew` or the equal-input guard: once per trigger, settling its generation as a
-   * no-op. New audit skips also carry `audit` for existing readers; old audit-only records read byte-preserving and
-   * `checkpointSkipTriggerOf` supplies their trigger (warned). A matching older running capture settles here too.
-   */
-  | (Readonly<{ kind: 'checkpoint-skipped'; generation: number; visionSha256: Sha256Hex; carried: readonly FindingId[] }> & (Readonly<{ audit: JobId; trigger?: CheckpointTrigger }> | Readonly<{ audit?: never; trigger: CheckpointTrigger }>))
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
   | (Readonly<{ kind: 'divergence'; id: DivergenceId; index: number }> & DivergenceDraft)
   /** H11: the digest item binds exactly these ids; its acknowledgement covers them. */
-  | Readonly<{ kind: 'divergence-digest'; needsUser: NeedsUserId; ids: readonly DivergenceId[] }>
+  | Readonly<{ kind: 'finding-dismissed'; id: FindingId; command: CommandId; counterEvidence: string; by: Readonly<{ role: 'root'; routingRev: RoutingRev }> }>
+  | Readonly<{ kind: 'noted'; unit: UnitId; command: CommandId; brief: Sha256Hex }>
   | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
   | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
-  | Readonly<{ kind: 'audit-requested'; command: CommandId; lenses: readonly LensKindName[] | null }>
+  | Readonly<{ kind: 'audit-requested'; command: CommandId }>
   | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
   | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
 
-/**
- * Where a corpus amendment came from (M4a): a checkpoint's proposal or a divergence code derived it from; since M4a rev 3
- * (R35) a checkpoint `admit` op code converted (`index` the op's, `reason` the conversion's); since run 10 (E) a bundle
- * request the close-out declined. `issue`: a captured issue's intake, which only an earlier executor recorded (the issues
- * integration was removed in 1.0.0-dev.21; scaffolding, `issuesIgnored`): read and dispositioned as any amendment.
- */
-export type AmendmentSource =
-  | Readonly<{ type: 'checkpoint'; job: JobId; index: number }>
-  | Readonly<{ type: 'divergence'; divergence: DivergenceId }>
-  | Readonly<{ type: 'issue'; job: JobId; issue: string }>
-  | Readonly<{ type: 'admit'; job: JobId; index: number; reason: ConversionReason }>
-  /** Run 10 (E): a non-blocking bundle request of checkpoint `job` nobody answered by the close-out, declined by the executor. */
-  | Readonly<{ type: 'request'; job: JobId; needsUser: NeedsUserId }>;
-
 /** A mutation smoke's per-target verdicts (D2, Q15), each list ascending by lane then test id. */
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
 
 /**
- * The M4a facts (SCHEMAS.md "M4a"); their behaviour is A4's (debt), C3's (amendments, intake, pack review, captures).
- * M4a rev 3: `lane-reused`, `series-certified` (N1), `smoke-ran` (N3), `finding-corroborated` (N5).
+ * The M4a facts (SCHEMAS.md "Corpus, Phase 0, debt and chain"); their behaviour is A4's (debt), C3's (intake, pack review, captures).
+ * M4a rev 3: `lane-reused`, `series-certified` (N1), `smoke-ran` (N3).
  */
 export type M4aFact =
   /**
-   * A debt item banked (R7): after the approving gate's `approval`, or a checkpoint's deferral; idempotent per `source`.
-   * `opportunity` (M4a rev 3, LR-k) exactly on an `opportunity-overrun` item: the opportunity it names.
+   * A debt item banked (R7): after the approving gate's `approval` or a close-out finding deferral; idempotent per `source`.
    */
-  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource; opportunity?: OpportunityId }>
+  | Readonly<{ kind: 'debt-banked'; id: DebtId; bankReason: BankReason; what: string; key: Sha256Hex; source: DebtSource }>
   /**
    * A series reused a lane's earlier pass instead of running it (F1a, R52), written before the lane would have run;
    * keyed `(parent, lane)`. `from`: the reused execution's series parent, invocation and SHA.
@@ -1066,68 +975,13 @@ export type M4aFact =
   | Readonly<{ kind: 'series-certified'; parent: Parent; checkout: AbsPath; at: Sha }>
   /** A unit attempt's mutation smoke ran (D2, Q17): `key` its allowance key; a later attempt with the same key reuses `verdict`. */
   | Readonly<{ kind: 'smoke-ran'; unit: UnitId; attempt: number; key: Sha256Hex; verdict: SmokeVerdict }>
-  /** A second lens's draft merged into finding `id` within one audit (H7, R62): its lens and claim, kept as its rationale. */
-  | Readonly<{ kind: 'finding-corroborated'; id: FindingId; lens: LensKindName; claim: string }>
-  /**
-   * Run 10 (E): the executor declined a non-blocking needs-user item nobody answered by the close-out (a `bundle-request`),
-   * so a non-blocking item never holds completion. It closes the item as an acknowledgement would (`choice`: the item's
-   * declining option, `reject` or `decline`, null when it offers none), with no `.ack.json` twin; at most once per id, and
-   * never with a `needs-user-acked`.
-   */
-  | Readonly<{ kind: 'needs-user-declined'; id: NeedsUserId; choice: string | null; reason: string }>
-  /** A proposed change to the corpus, dispositioned at the next Phase 0. */
-  | Readonly<{ kind: 'corpus-amendment'; id: AmendmentId; source: AmendmentSource; rules: readonly RuleId[]; proposal: string; why: string; evidence: readonly string[] }>
-  /** A pack review's kept inputs (K8): written after `inputs/<inputsSha256>.pack-review.json` and before the spawn; `key` its required-review key. */
   | Readonly<{ kind: 'pack-review-started'; job: JobId; planRev: PlanRev; inputsSha256: Sha256Hex; key: Sha256Hex }>
   /**
    * A pack review's findings, each identified by `(job, index)` (K13). `dispositions` (M4a rev 3, H3): a completed delta
    * re-review's disposition of each unresolved finding of the reviews before it, by origin `(job, index)`; absent on a
    * full review (the first, or after an abandoned one) and on an abandoned one.
    */
-  | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[]; dispositions?: readonly PackDisposition[] }>
-  /**
-   * A checkpoint's issue outcome and its issue capture, which only an earlier executor wrote (the issues integration was
-   * removed in 1.0.0-dev.21): read as written, their other fields untyped, and ignored (`issuesIgnored`; scaffolding).
-   */
-  | Readonly<{ kind: 'issue-intake' }>
-  // The capture's digest still names immutable snapshot bytes; its other fields remain ignored.
-  | Readonly<{ kind: 'issues-captured'; sha256: Sha256Hex }>;
-
-/**
- * The M4b facts (SCHEMAS.md "M4b"); their behaviour is the later steps' (B1: series, runs; B2: decisions, proofs,
- * applies; A2: verdicts). The fold sees the jobs they name and nothing else yet.
- */
-export type FlowFact =
-  /** The arc's compact flow series kept as `inputs/<sha256>.flow-series.json`, right before an `arc-completed`; covers events up to `highWater`. */
-  | Readonly<{ kind: 'flow-series'; sha256: Sha256Hex; highWater: number }>
-  /** A flow run's kept inputs (`inputs/<inputsSha256>.flow-inputs.json`), written under the fence before its call. */
-  | Readonly<{ kind: 'flow-started'; job: JobId; triggers: readonly FlowTrigger[]; inputsSha256: Sha256Hex }>
-  /**
-   * A flow run's end: `done` with the surviving proposal or none (`dropped`: the proposal code's checks dropped, with the
-   * reason), or `invalid` (no valid answer after one retry) or `failed`, with neither. `proposal.id` is `<job>.0`.
-   */
-  | Readonly<{ kind: 'flow-ended'; job: JobId; outcome: FlowOutcome; proposal: FlowProposal | null; dropped: FlowDropped | null; constraint: FlowEndedConstraint }>
-  /** `roadmap flow request --reason` (RC-5): bypasses the cooldown, at most once per cooldown window. */
-  | Readonly<{ kind: 'flow-requested'; command: CommandId; reason: string }>
-  /** `roadmap flow accept|reject <proposal> --reason`: once per proposal. A rejection adds its RC-9 key. */
-  | Readonly<{ kind: 'flow-decided'; proposal: ProposalId; command: CommandId; decision: 'accepted' | 'rejected'; reason: string }>
-  /**
-   * A suite-lane proof of an accepted proposal (RC-4), proof job `job` at the integration head's tree `treeSha`: the old and
-   * new argv's kept witness records (`inputs/<sha>.flow-proof.json`) and minutes, present for `preserved` and `changed`;
-   * `breaksStandIn`: the new argv would break the lane's F6 stand-in.
-   */
-  | Readonly<{
-    kind: 'flow-proof'; proposal: ProposalId; job: JobId; treeSha: Sha; oldSha256: Sha256Hex | null; newSha256: Sha256Hex | null; outcome: ProofOutcome;
-    minutes: ProofMinutes | null; breaksStandIn: boolean;
-  }>
-  /** An accepted proposal in force: plan revision `revision` (source `flow{proposal}`), and what it replaced. */
-  | Readonly<{ kind: 'flow-applied'; proposal: ProposalId; revision: PlanRev; preimage: FlowPreimage }>
-  /** An applied proposal's verdict window closed (fires `verdict-closed`); `worse` raises `flow-worse` and adds the RC-9 key. */
-  | Readonly<{
-    kind: 'flow-verdict'; proposal: ProposalId; metric: FlowMetric; before: VerdictBefore; after: VerdictAfter; guards: readonly GuardBreach[];
-    verdict: FlowVerdictKind; preimage: FlowPreimage;
-  }>;
-export type FlowFactKind = FlowFact['kind'];
+  | Readonly<{ kind: 'pack-review-ended'; job: JobId; outcome: 'completed' | 'abandoned'; findings: readonly PackFinding[]; dispositions?: readonly PackDisposition[] }>;
 
 /** How a milestone walk ended: its report read (`reported`), its product never came up (`bring-up-failed`), or neither. */
 export const WALK_OUTCOMES = ['reported', 'bring-up-failed', 'abandoned'] as const;
@@ -1143,10 +997,10 @@ export type TweakDecision = (typeof TWEAK_DECISIONS)[number];
 export const TWEAK_REASONS = ['judged', 'reference-untouched', 'bring-up-failed', 'abandoned'] as const;
 export type TweakReason = (typeof TWEAK_REASONS)[number];
 /** A polish proposal's unit as the walkthrough authored it: `spec` is spec.json's canonical text (an admit's). */
-export type PolishUnitDraft = Readonly<{ id: UnitId; scope: readonly RepoPattern[]; spec: string }>;
+export type PolishUnitDraft = Readonly<{ id: UnitId; systems: readonly SystemName[]; spec: string }>;
 
 /**
- * The dev.13 facts (SCHEMAS.md "dev.13: milestone walkthroughs and design units"); their behaviour is agents C, D and G's.
+ * The dev.13 facts (SCHEMAS.md "Milestones and bring-up"); their behaviour is agents C, D and G's.
  * The fold keeps them in log order (`walkFacts`) and holds their ids to order.
  */
 export type WalkFact =
@@ -1210,7 +1064,7 @@ export const FLAKE_ONS = ['unit', 'tip'] as const;
 export type FlakeOn = (typeof FLAKE_ONS)[number];
 
 /**
- * dev.17, the flaky ledger (SCHEMAS.md "dev.17: the flaky ledger"; src/pipeline/deflake.ts). `flake-observed`: a lane run
+ * dev.17, the flaky ledger (SCHEMAS.md "Experience and evidence fact payloads"; src/pipeline/deflake.ts). `flake-observed`: a lane run
  * red then green on its diagnostic rerun (same tree, same environment), written once per such rerun before the lane's
  * record is read, by `owner`'s series. `set` says where the lane is defined; `event.failing` the test ids the red run's
  * reporter named (an arc lane's; empty for a spec or suite lane, whose key is the lane). `on` (dev.21): the tree it was
@@ -1220,7 +1074,7 @@ export type FlakeOn = (typeof FLAKE_ONS)[number];
 export type FlakyFact = Readonly<{ kind: 'flake-observed'; owner: LaneOwner; lane: LaneId; set: FlakyLaneSet; on?: FlakeOn; event: FlakyEvent; forgiven: boolean }>;
 
 /**
- * The dev.17 propagation facts (SCHEMAS.md "dev.17: propagation"; src/holistic/propagation.ts). The fold keeps them in log
+ * The dev.17 propagation facts (SCHEMAS.md "Specs and design"; src/holistic/propagation.ts). The fold keeps them in log
  * order (`propagationFacts`).
  */
 export type PropagationFact =
@@ -1230,29 +1084,23 @@ export type PropagationFact =
    */
   | (Readonly<{ kind: 'stale-set'; rev: PlanRev }> & StaleSet)
   /**
-   * An in-flight unit with stale links its plan-check has not answered since they were recorded, re-opened at plan-check at
+   * An in-flight unit with stale links its pre-build has not answered since they were recorded, re-opened at pre-build at
    * its first boundary that allows a re-entry (`reentryAllowed`), as a pending spec revision re-opens one; `rev` is the latest
    * stale set naming it. Its counters are kept.
    */
   | Readonly<{ kind: 'stale-reopened'; unit: UnitId; rev: PlanRev }>
   /**
-   * Plan-check attempt `attempt` of `unit`, judging the revisions of plan rev `rev`, answered every stale link of the unit
-   * recorded up to that rev (`answers`, one per link key, the check `staleAnswerReasons`): written before its approve or
-   * redirect outcome, once per attempt. The links are settled; a later stale set opens new ones.
-   */
-  | Readonly<{ kind: 'stale-answered'; unit: UnitId; attempt: number; rev: PlanRev; answers: readonly StaleAnswer[] }>
-  /**
    * A propagation the code-applied revision did not mint (the arc draining, or the admit path or the classifier refusing its
    * unit): settled, never minted. Once per (`rev`, `target`).
    */
-  | Readonly<{ kind: 'propagation-refused'; rev: PlanRev; target: PropagationTarget; reasons: readonly string[] }>;
+;
 export type PropagationFactKind = PropagationFact['kind'];
 
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
 /** The plan fields besides units, suite, resources and routing that an apply may change. `capacity` since M2. */
-export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity'] as const;
+export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity', 'expectations'] as const;
 export type PlanField = (typeof PLAN_FIELDS)[number];
 
 /**
@@ -1264,7 +1112,7 @@ export type PlanField = (typeof PLAN_FIELDS)[number];
 export const SPEC_EDITS = ['undispatched', 'evidence', 'revision', 'withdrawn'] as const;
 export type SpecEdit = (typeof SPEC_EDITS)[number];
 
-/** One change of a `plan-applied` fact against the previous plan in force (SCHEMAS.md "Plan in force"). */
+/** One change of a `plan-applied` fact against the previous plan in force (SCHEMAS.md "Plan in force and CAS"). */
 export type PlanChange =
   | Readonly<{ type: 'unit-added' | 'unit-removed' | 'unit-changed'; unit: UnitId }>
   /** The undispatched units' order changed. */
@@ -1281,7 +1129,7 @@ export type PlanChange =
    * M2: `unit` (added in the same change set) re-enters `reenters`, which is superseded: the new unit inherits its
    * counters (`chargeableFailures` reset only with a ruling: `reset`), risk floor and lineage.
    */
-  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean; widened?: ReentryWidening }>
+  | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean; }>
   /** M3: an obligation added, split (H14), re-witnessed, or disposed by a ruling in force (weakening). */
   | Readonly<{ type: 'obligation'; id: ObligationId; edit: ObligationEdit }>
   | Readonly<{ type: 'mapping' }>
@@ -1300,16 +1148,13 @@ export type PlanChange =
    */
   | Readonly<{ type: 'corpus'; pinSha256: Sha256Hex; guideSha256: Sha256Hex }>
   /**
-   * M4a (H7): a Phase-0 record edit (source `command` only); changes only the required-review key. `issuesSha256`: the
-   * issue capture an earlier executor recorded with it, read as written and ignored (`issuesIgnored`); never written.
+   * M4a (H7): a Phase-0 record edit (source `command` only); changes only the required-review key.
    */
-  | Readonly<{ type: 'phase0'; sha256: Sha256Hex; issuesSha256?: Sha256Hex }>
+  | Readonly<{ type: 'phase0'; sha256: Sha256Hex }>
   /** M4a rev 3 (F1b): a unit's `priority` changed (no drain; any status but merged). */
   | Readonly<{ type: 'unit-priority'; unit: UnitId }>
   /** M4a rev 3 (F4): the plan's `knownDefects` changed. */
   | Readonly<{ type: 'known-defects' }>
-  /** M4a rev 3 (E) to dev.16: the plan's `planCheck.shape` changed (no drain). Read from older logs; dev.17 writes none. */
-  | Readonly<{ type: 'plan-check-shape' }>
   /** Plan defects (2026-10-16): the plan's `derived` entries changed (no drain; each unit re-pins its widening at its next dispatch check). */
   | Readonly<{ type: 'derived' }>
   /**
@@ -1318,12 +1163,6 @@ export type PlanChange =
    * brake (src/walk/milestones.ts); absent: none (lasting).
    */
   | Readonly<{ type: 'milestones'; rewalk?: readonly MilestoneId[] }>;
-
-/**
- * M4a rev 3 (F5): a re-entry leaving its lineage's scope envelope, accepted on an active ruling applying to the new unit
- * whose statement names exactly the added patterns (ascending, non-empty).
- */
-export type ReentryWidening = Readonly<{ patterns: readonly RepoPattern[]; ruling: RulingId }>;
 
 /**
  * `restored` (M3 step A2): an exempt obligation active again; `edited`: its serves, contracts, deliveredBy changed, or
@@ -1349,13 +1188,12 @@ export type RevisionPayload = Readonly<{
   rev: PlanRev;
   manifest: RevisionManifest;
   changes: readonly PlanChange[];
-  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; ruling: RulingId }>[];
+  dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>[];
   divergences: readonly DivergenceDraft[];
   publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
   routingProvenance: RoutingProvenance;
   /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
   systemsMap?: SystemsMap | null;
-  owner?: RevisionManifest;
   /**
    * dev.17 (propagation): the revision's stale set (src/holistic/propagation.ts `staleSetOf`), present exactly when it changes
    * a target a link may name (a requirement's rev, a contract, a vision clause); its `stale-set` fact is appended from it.
@@ -1462,7 +1300,6 @@ const lockOrder: Read<readonly ResourceUnit[]> = (value, path) => {
 };
 
 const jobR: Read<JobId> = (v, p) => jobIdOf(v, p);
-const proposalR: Read<ProposalId> = (v, p) => proposalId(v, p);
 const docsJobR: Read<JobId> = (v, p) => jobIdOfKind('docs')(v, p);
 const batchJobR: Read<JobId> = (v, p) => jobIdOfKind('batch')(v, p);
 const findingR: Read<FindingId> = (v, p) => findingId(v, p);
@@ -1490,30 +1327,11 @@ const laneOwner: Read<LaneOwner> = tagged('type', {
 const revisionSource: Read<RevisionSource> = tagged('type', {
   start: object((f): RevisionSource => ({ type: f.get('type', literal('start')) })),
   command: object((f): RevisionSource => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
-  bundle: object((f): RevisionSource => {
-    const admits = f.optional('admits', sortedBy(classifiedAdmit, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
-    const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { order: 'by op index' }));
-    if (admits !== undefined && conversions === undefined) throw new SchemaError(`${f.path}.conversions`, 'conversions beside admits (a classified bundle)', { admits, conversions });
-    const out = { type: f.get('type', literal('bundle')), job: f.get('job', (v, p) => jobIdOfKind('ckpt')(v, p)) };
-    if (conversions === undefined) return out;
-    if (admits === undefined) {
-      // dev.13: a brake's conversions outside a corpus arc (none classified).
-      if (conversions.length === 0 || conversions.some((c) => c.reason !== 'regress-brake' && c.reason !== 'settled-brake')) {
-        throw new SchemaError(`${f.path}.conversions`, 'admits beside conversions (a classified bundle), or only a brake\'s conversions', conversions);
-      }
-      return { ...out, conversions };
-    }
-    const both = [...admits.map((a) => a.index), ...conversions.map((c) => c.index)];
-    if (new Set(both).size !== both.length) throw new SchemaError(`${f.path}.conversions`, 'op indices an admit class does not also name', both);
-    return { ...out, admits, conversions };
-  }),
   executor: object((f): RevisionSource => ({ type: f.get('type', literal('executor')), inv: f.get('inv', invR) })),
-  flow: object((f): RevisionSource => ({ type: f.get('type', literal('flow')), proposal: f.get('proposal', proposalR) })),
   walk: object((f): RevisionSource => ({ type: f.get('type', literal('walk')), job: f.get('job', (v, p) => jobIdOfKind('walk')(v, p)) })),
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
   split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
   deflake: object((f): RevisionSource => ({ type: f.get('type', literal('deflake')) })),
-  propagation: object((f): RevisionSource => ({ type: f.get('type', literal('propagation')), rev: f.get('rev', (v, p) => planRev(v, p)) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1579,10 +1397,6 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
   }),
   teardown: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('teardown')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
   probe: object((f): SpawnSubject => ({ purpose: f.get('purpose', literal('probe')), unit: f.get('unit', nullable(unitR)), resource: f.get('resource', instR) })),
-  proof: object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('proof')), job: f.get('job', (v, p) => jobIdOfKind('proof')(v, p)), proposal: f.get('proposal', proposalR), lane: f.get('lane', laneR),
-    side: f.get('side', oneOf(['old', 'new'] as const)), at: f.get('at', shaR),
-  })),
   'bring-up': object((f): SpawnSubject => ({
     purpose: f.get('purpose', literal('bring-up')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)), step: f.get('step', str),
   })),
@@ -1675,8 +1489,8 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     post: nothing,
     outcome: tagged('kind', {
       result: object((f): OpOutcome['proc.spawn'] => {
-        const pressure = f.optional('pressure', nullable(fraction));
-        return { kind: f.get('kind', literal('result')), resultSha256: f.get('resultSha256', sha256R), summary: f.get('summary', resultSummary), ...(pressure === undefined ? {} : { pressure }) };
+        const pressure = f.get('pressure', nullable(fraction));
+        return { kind: f.get('kind', literal('result')), resultSha256: f.get('resultSha256', sha256R), summary: f.get('summary', resultSummary), pressure };
       }),
       lost: object((f): OpOutcome['proc.spawn'] => ({ kind: f.get('kind', literal('lost')), treeEffects: f.get('treeEffects', bool) })),
     }),
@@ -1882,6 +1696,7 @@ const parent: Read<Parent> = tagged('type', {
   command: object((f): Parent => ({ type: f.get('type', literal('command')), command: f.get('command', cmdR) })),
   op: object((f): Parent => ({ type: f.get('type', literal('op')), op: f.get('op', opR) })),
   arc: object((f): Parent => ({ type: f.get('type', literal('arc')) })),
+  waste: object((f): Parent => ({ type: f.get('type', literal('waste')), key: f.get('key', str) })),
   job: object((f): Parent => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
 });
 
@@ -1899,7 +1714,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-changed': object((f): PlanChange => ({ type: f.get('type', literal('unit-changed')), unit: f.get('unit', unitR) })),
   order: object((f): PlanChange => ({ type: f.get('type', literal('order')) })),
   spec: object((f): PlanChange => ({
-    type: f.get('type', literal('spec')), unit: f.get('unit', unitR), edit: f.get('edit', oneOf(SPEC_EDITS)), specRev: f.get('specRev', specRevR),
+    type: f.get('type', literal('spec')), unit: f.get('unit', unitR), edit: f.get('edit', oneOf(SPEC_EDITS)), specRev: f.get('specRev', (v, p) => specRev(v, p)),
     specSha256: f.get('specSha256', sha256R),
   })),
   routing: object((f): PlanChange => {
@@ -1915,10 +1730,7 @@ const planChange: Read<PlanChange> = tagged('type', {
   'unit-reentered': object((f): PlanChange => {
     const out = { type: f.get('type', literal('unit-reentered')), unit: f.get('unit', unitR), reenters: f.get('reenters', unitR), reset: f.get('reset', bool) };
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
-    const widened = f.optional('widened', object((g): ReentryWidening => ({
-      patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
-    })));
-    return widened === undefined ? out : { ...out, widened };
+    return out;
   }),
   obligation: object((f): PlanChange => ({ type: f.get('type', literal('obligation')), id: f.get('id', obligationR), edit: f.get('edit', oneOf(OBLIGATION_EDITS)) })),
   mapping: object((f): PlanChange => ({ type: f.get('type', literal('mapping')) })),
@@ -1927,16 +1739,9 @@ const planChange: Read<PlanChange> = tagged('type', {
   holistic: object((f): PlanChange => ({ type: f.get('type', literal('holistic')) })),
   advances: object((f): PlanChange => ({ type: f.get('type', literal('advances')) })),
   corpus: object((f): PlanChange => ({ type: f.get('type', literal('corpus')), pinSha256: f.get('pinSha256', sha256R), guideSha256: f.get('guideSha256', sha256R) })),
-  phase0: object((f): PlanChange => {
-    const out = { type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) };
-    const issuesSha256 = f.optional('issuesSha256', sha256R);
-    if (issuesSha256 === undefined) return out;
-    issuesIgnored('plan-changed.phase0.issuesSha256');
-    return { ...out, issuesSha256 };
-  }),
+  phase0: object((f): PlanChange => ({ type: f.get('type', literal('phase0')), sha256: f.get('sha256', sha256R) })),
   'unit-priority': object((f): PlanChange => ({ type: f.get('type', literal('unit-priority')), unit: f.get('unit', unitR) })),
   'known-defects': object((f): PlanChange => ({ type: f.get('type', literal('known-defects')) })),
-  'plan-check-shape': object((f): PlanChange => ({ type: f.get('type', literal('plan-check-shape')) })),
   derived: object((f): PlanChange => ({ type: f.get('type', literal('derived')) })),
   milestones: object((f): PlanChange => {
     const rewalk = f.optional('rewalk', arrayOf(milestoneR, { nonEmpty: true }));
@@ -1953,7 +1758,7 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     manifest: f.get('manifest', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) }))),
     changes: f.get('changes', arrayOf(planChange)),
     dispositions: f.get('dispositions', arrayOf(object((g) => ({
-      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), ruling: g.get('ruling', (v, p): RulingId => rulingId(v, p)),
+      obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), reason: g.get('reason', str), rev: g.get('rev', positive),
     })))),
     divergences: f.get('divergences', arrayOf(divergenceDraft)),
     publication: f.get('publication', nullable(object((g) => ({
@@ -1963,10 +1768,9 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
   const systems = f.optional('systemsMap', nullable(systemsMap));
-  const owner = f.optional('owner', object((g) => ({ planSha256: g.get('planSha256', sha256R), specs: g.get('specs', manifestSpecs), ...revisionInputs(g) })));
   const stale = f.optional('stale', staleSet);
   if (out.rev !== out.base + 1) throw new SchemaError(`${f.path}.rev`, String(out.base + 1), out.rev);
-  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(owner === undefined ? {} : { owner }), ...(stale === undefined ? {} : { stale }) };
+  return { ...out, ...(systems === undefined ? {} : { systemsMap: systems }), ...(stale === undefined ? {} : { stale }) };
 });
 
 export function parseRevisionPayload(value: unknown): RevisionPayload {
@@ -1988,16 +1792,12 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
     const cls = f.get('class', literal('operator'));
     const kind = f.get('kind', oneOf(OPERATOR_PARK_KINDS));
     const ordering = f.optional('ordering', nullable(orderingWait));
-    if (ordering === undefined) orderingDefault();
+
     if (ordering != null && kind !== 'design') throw new SchemaError(`${f.path}.ordering`, 'ordering only on a design park', ordering);
     if (kind === 'env') return { class: cls, kind, ...(ordering === undefined ? {} : { ordering: null }) };
     return { class: cls, kind, ...(ordering === undefined ? {} : { ordering }) };
   }),
 });
-
-const scopeGrowthProposal: Read<ScopeGrowthProposal> = object((g) => ({
-  patterns: g.get('patterns', sortedBy((v, p) => repoPattern(v, p), (x) => x, { nonEmpty: true })), reason: g.get('reason', str),
-}));
 
 const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'witnesses-missing': object((f): StageOutcomeDetail => {
@@ -2011,7 +1811,6 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
   'known-defect': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('known-defect')), id: f.get('id', (v, p) => knownDefectId(v, p)), match: f.get('match', knownDefectMatch),
   })),
-  infeasible: object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('infeasible')), notes: f.get('notes', str) })),
   'base-red': object((f): StageOutcomeDetail => {
     const out = {
       kind: f.get('kind', literal('base-red')), base: f.get('base', shaR), lanes: f.get('lanes', arrayOf(laneR)), changedCheckout: f.get('changedCheckout', bool),
@@ -2019,26 +1818,16 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     if (out.lanes.length === 0 && !out.changedCheckout) throw new SchemaError(f.path, 'a red lane or a changed checkout', out);
     return out;
   }),
-  'scope-growth': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('scope-growth')), proposals: f.get('proposals', arrayOf(scopeGrowthProposal, { nonEmpty: true })) })),
   'plan-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('plan-defect')), defects: f.get('defects', arrayOf(planDefect, { nonEmpty: true })) })),
   'context-exceeded': object((f): StageOutcomeDetail => ({
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
   })),
   'executor-fault': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('executor-fault')), stack: f.get('stack', str) })),
-  split: object((f): StageOutcomeDetail => {
-    const out = { kind: f.get('kind', literal('split')), children: f.get('children', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })) };
-    if (out.children.length < 2) throw new SchemaError(`${f.path}.children`, 'two or more children', out.children);
-    return out;
-  }),
-  'design-defect': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('design-defect')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })) })),
-  'scaffold-refused': object((f): StageOutcomeDetail => ({
-    kind: f.get('kind', literal('scaffold-refused')), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })), laneEvidence: f.get('laneEvidence', nullable((v, p) => absPath(v, p))),
-  })),
+
 });
 
 const holdCause: Read<HoldCause> = tagged('type', {
   backend: object((f): HoldCause => ({ type: f.get('type', literal('backend')), backend: f.get('backend', backend), parkSeq: f.get('parkSeq', positive) })),
-  'flow-apply': object((f): HoldCause => ({ type: f.get('type', literal('flow-apply')), proposal: f.get('proposal', proposalR) })),
   'host-pressure': object((f): HoldCause => ({ type: f.get('type', literal('host-pressure')), inv: f.get('inv', invR) })),
   recovery: object((f): HoldCause => ({ type: f.get('type', literal('recovery')) })),
 });
@@ -2058,49 +1847,9 @@ const witnessFor: Read<WitnessFor> = tagged('type', {
 });
 const lensR = oneOf(LENS_KIND_NAMES);
 const lensSet: Read<readonly LensKindName[]> = sortedBy(lensR, (l) => l, { nonEmpty: true });
-const findingSet: Read<readonly FindingId[]> = idList(findingR, { legacyStringOrder: true });
+const findingSet: Read<readonly FindingId[]> = idList(findingR);
 const auditJobR: Read<JobId> = (v, p) => jobIdOfKind('audit')(v, p);
-const ckptJobR: Read<JobId> = (v, p) => jobIdOfKind('ckpt')(v, p);
-
-const bundleOutcome: Read<BundleOutcome> = tagged('kind', {
-  'no-op': object((f): BundleOutcome => {
-    const conversions = f.optional('conversions', sortedBy(conversion, (x) => String(x.index).padStart(6, '0'), { nonEmpty: true, order: 'by op index' }));
-    return { kind: f.get('kind', literal('no-op')), ...(conversions === undefined ? {} : { conversions }) };
-  }),
-  rejected: object((f): BundleOutcome => {
-    const out = { kind: f.get('kind', literal('rejected')), reason: f.get('reason', oneOf(BUNDLE_REJECTIONS)), detail: f.get('detail', str) };
-    const units = f.optional('units', sortedBy(
-      object((g): BusyAttempt => ({ unit: g.get('unit', unitR), stage: g.get('stage', stage), attempt: g.get('attempt', positive) })), (x) => x.unit, { nonEmpty: true },
-    ));
-    if ((out.reason === 'busy') !== (units !== undefined)) throw new SchemaError(`${f.path}.units`, out.reason === 'busy' ? 'the open attempts a busy bundle touched' : 'absent unless busy', units);
-    return units === undefined ? out : { ...out, units };
-  }),
-  requested: object((f): BundleOutcome => ({ kind: f.get('kind', literal('requested')), needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)) })),
-});
-
 const reviewJobR: Read<JobId> = (v, p) => jobIdOfKind('review')(v, p);
-const ruleList: Read<readonly RuleId[]> = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
-
-/** Scaffolding (`issuesIgnored`): JSON the removed issues integration wrote, `what` naming it; returned as written. */
-const issuesLegacy = <T>(what: string): Read<T> => (value) => {
-  issuesIgnored(what);
-  return value as T;
-};
-
-const amendmentSource: Read<AmendmentSource> = tagged('type', {
-  checkpoint: object((f): AmendmentSource => ({ type: f.get('type', literal('checkpoint')), job: f.get('job', ckptJobR), index: f.get('index', nat) })),
-  divergence: object((f): AmendmentSource => ({ type: f.get('type', literal('divergence')), divergence: f.get('divergence', (v, p) => divergenceId(v, p)) })),
-  issue: object((f): AmendmentSource => {
-    issuesIgnored('corpus-amendment.source.issue');
-    return { type: f.get('type', literal('issue')), job: f.get('job', ckptJobR), issue: f.get('issue', str) };
-  }),
-  admit: object((f): AmendmentSource => ({
-    type: f.get('type', literal('admit')), job: f.get('job', ckptJobR), index: f.get('index', nat), reason: f.get('reason', oneOf(CONVERSION_REASONS)),
-  })),
-  request: object((f): AmendmentSource => ({
-    type: f.get('type', literal('request')), job: f.get('job', ckptJobR), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
-  })),
-});
 
 const testRef: Read<TestRef> = object((f) => ({ lane: f.get('lane', laneR), testId: f.get('testId', str) }));
 /** Test refs ascending by lane, then test id, each once. */
@@ -2115,19 +1864,20 @@ const smokeVerdict: Read<SmokeVerdict> = object((f) => {
 
 export type M4aFactKind = M4aFact['kind'];
 /** The readers of the M4a facts, spread into `fact`. */
-const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
+const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fact> } = {
   'debt-banked': object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('debt-banked')), id: f.get('id', (v, p) => debtId(v, p)), bankReason: f.get('bankReason', oneOf(BANK_REASONS)), what: f.get('what', str),
       key: f.get('key', sha256R), source: f.get('source', debtSource),
     };
-    const opportunity = f.optional('opportunity', (v, p) => opportunityId(v, p));
-    if ((out.bankReason === 'opportunity-overrun') !== (opportunity !== undefined)) {
-      throw new SchemaError(`${f.path}.opportunity`, out.bankReason === 'opportunity-overrun' ? 'the opportunity an overrun names' : 'absent (only an opportunity overrun names one)', opportunity);
-    }
-    if ((out.bankReason === 'opportunity-overrun') !== (out.source.type === 'admit')) throw new SchemaError(`${f.path}.source`, out.bankReason === 'opportunity-overrun' ? 'the admit that overran' : 'a gate or finding source', out.source);
-    return opportunity === undefined ? out : { ...out, opportunity };
+    return out;
   }),
+  'external-witness': object((f): Fact => ({ kind: f.get('kind', literal('external-witness')), command: f.get('command', cmdR), obligation: f.get('obligation', obligationR), obligationRev: f.get('obligationRev', positive), laneRev: f.get('laneRev', laneRevR), inputSha: f.get('inputSha', shaR), head: f.get('head', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceSha256: f.get('evidenceSha256', nullable(sha256R)) })),
+  'external-reopened': object((f): Fact => ({ kind: f.get('kind', literal('external-reopened')), command: f.get('command', cmdR), unit: f.get('unit', unitR) })),
+  'spike-completed': object((f): Fact => ({ kind: f.get('kind', literal('spike-completed')), unit: f.get('unit', unitR) })),
+  'attempt-marker': object((f): Fact => ({ kind: f.get('kind', literal('attempt-marker')), unit: f.get('unit', unitR), marker: f.get('marker', literal('M4')), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
+  'attempt-capped': object((f): Fact => ({ kind: f.get('kind', literal('attempt-capped')), unit: f.get('unit', unitR), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
+  'lane-base-compared': object((f): Fact => ({ kind: f.get('kind', literal('lane-base-compared')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lane: f.get('lane', laneR), base: f.get('base', shaR), evidence: f.get('evidence', absR), result: f.get('result', oneOf(['pass', 'fail'] as const)) })),
   'lane-reused': object((f): Fact => {
     const set = f.optional('set', oneOf(['spec', 'suite'] as const));
     const at = f.optional('at', shaR);
@@ -2141,16 +1891,6 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
   'smoke-ran': object((f): Fact => ({
     kind: f.get('kind', literal('smoke-ran')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), key: f.get('key', sha256R), verdict: f.get('verdict', smokeVerdict),
   })),
-  'finding-corroborated': object((f): Fact => ({ kind: f.get('kind', literal('finding-corroborated')), id: f.get('id', findingR), lens: f.get('lens', lensR), claim: f.get('claim', str) })),
-  'needs-user-declined': object((f): Fact => ({
-    kind: f.get('kind', literal('needs-user-declined')), id: f.get('id', (v, p): NeedsUserId => needsUserId(v, p)), choice: f.get('choice', nullable(optionId)),
-    reason: f.get('reason', str),
-  })),
-  'corpus-amendment': object((f): Fact => ({
-    kind: f.get('kind', literal('corpus-amendment')), id: f.get('id', (v, p) => amendmentId(v, p)), source: f.get('source', amendmentSource),
-    rules: f.get('rules', ruleList), proposal: f.get('proposal', str), why: f.get('why', str), evidence: f.get('evidence', arrayOf(str)),
-  })),
-  'issue-intake': issuesLegacy<Fact>('issue-intake'),
   'pack-review-started': object((f): Fact => ({
     kind: f.get('kind', literal('pack-review-started')), job: f.get('job', reviewJobR), planRev: f.get('planRev', planRevR), inputsSha256: f.get('inputsSha256', sha256R),
     key: f.get('key', sha256R),
@@ -2170,70 +1910,6 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind]: Read<Fact> } = {
     assertUnique(dispositions, (d) => `${d.job}#${d.index}`, `${f.path}.dispositions`);
     return { ...out, dispositions };
   }),
-  'issues-captured': (value, path): Fact => {
-    const legacy = issuesLegacy<Record<string, unknown>>('issues-captured')(value, path);
-    return { ...legacy, kind: 'issues-captured', sha256: sha256R(legacy['sha256'], `${path}.sha256`) };
-  },
-};
-
-const flowJobR: Read<JobId> = (v, p) => jobIdOfKind('flow')(v, p);
-const proofJobR: Read<JobId> = (v, p) => jobIdOfKind('proof')(v, p);
-
-/** The readers of the M4b facts, spread into `fact`. */
-const FLOW_FACT_READERS: { readonly [K in FlowFactKind]: Read<Fact> } = {
-  'flow-series': object((f): Fact => ({ kind: f.get('kind', literal('flow-series')), sha256: f.get('sha256', sha256R), highWater: f.get('highWater', positive) })),
-  'flow-started': object((f): Fact => ({
-    kind: f.get('kind', literal('flow-started')), job: f.get('job', flowJobR), triggers: f.get('triggers', flowTriggers), inputsSha256: f.get('inputsSha256', sha256R),
-  })),
-  'flow-ended': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('flow-ended')), job: f.get('job', flowJobR), outcome: f.get('outcome', oneOf(FLOW_OUTCOMES)),
-      proposal: f.get('proposal', nullable(flowProposal)), dropped: f.get('dropped', nullable(flowDropped)), constraint: f.get('constraint', flowEndedConstraint),
-    };
-    const done = out.outcome === 'done';
-    if (!done && (out.proposal !== null || out.dropped !== null)) throw new SchemaError(`${f.path}.proposal`, `none (nor a dropped one) for a run ${out.outcome}`, out.proposal ?? out.dropped);
-    if (done !== (out.constraint.judged !== null)) throw new SchemaError(`${f.path}.constraint.judged`, done ? 'the role\'s reading of the constraint' : `null for a run ${out.outcome}`, out.constraint.judged);
-    if (out.proposal !== null && out.dropped !== null) throw new SchemaError(`${f.path}.dropped`, 'null beside a surviving proposal', out.dropped);
-    const id = out.proposal?.id ?? out.dropped?.proposal.id;
-    if (id !== undefined && (proposalJob(id) !== out.job || id !== `${out.job}.0`)) throw new SchemaError(`${f.path}.proposal.id`, `${out.job}.0`, id);
-    return out;
-  }),
-  'flow-requested': object((f): Fact => ({ kind: f.get('kind', literal('flow-requested')), command: f.get('command', cmdR), reason: f.get('reason', str) })),
-  'flow-decided': object((f): Fact => ({
-    kind: f.get('kind', literal('flow-decided')), proposal: f.get('proposal', proposalR), command: f.get('command', cmdR),
-    decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
-  })),
-  'flow-proof': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('flow-proof')), proposal: f.get('proposal', proposalR), job: f.get('job', proofJobR), treeSha: f.get('treeSha', shaR),
-      oldSha256: f.get('oldSha256', nullable(sha256R)), newSha256: f.get('newSha256', nullable(sha256R)), outcome: f.get('outcome', oneOf(PROOF_OUTCOMES)),
-      minutes: f.get('minutes', nullable(proofMinutes)), breaksStandIn: f.get('breaksStandIn', bool),
-    };
-    const compared = out.outcome === 'preserved' || out.outcome === 'changed';
-    if (compared && (out.oldSha256 === null || out.newSha256 === null || out.minutes === null)) {
-      throw new SchemaError(`${f.path}.minutes`, `both runs' records and minutes for a ${out.outcome} proof`, { oldSha256: out.oldSha256, newSha256: out.newSha256, minutes: out.minutes });
-    }
-    return out;
-  }),
-  'flow-applied': object((f): Fact => ({
-    kind: f.get('kind', literal('flow-applied')), proposal: f.get('proposal', proposalR), revision: f.get('revision', planRevR), preimage: f.get('preimage', flowPreimage),
-  })),
-  'flow-verdict': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('flow-verdict')), proposal: f.get('proposal', proposalR), metric: f.get('metric', flowMetric), before: f.get('before', verdictBefore),
-      after: f.get('after', verdictAfter), guards: f.get('guards', guardBreaches), verdict: f.get('verdict', oneOf(FLOW_VERDICTS)), preimage: f.get('preimage', flowPreimage),
-    };
-    if (out.guards.length > 0 && out.verdict !== 'worse') throw new SchemaError(`${f.path}.verdict`, 'worse (a guard was breached)', out.verdict);
-    // Too few samples on either side (M4b B1 amendment: the before-window's too) is inconclusive, a breach aside.
-    const few = Math.min(out.after.samples.length, out.before.samples.length) < MIN_VERDICT_SAMPLES;
-    if (out.verdict === 'inconclusive' && !few) {
-      throw new SchemaError(`${f.path}.verdict`, `conclusive with ${out.before.samples.length} samples before and ${out.after.samples.length} after (inconclusive below ${MIN_VERDICT_SAMPLES})`, out.verdict);
-    }
-    if (out.verdict !== 'inconclusive' && out.verdict !== 'worse' && few) {
-      throw new SchemaError(`${f.path}.verdict`, `inconclusive with ${out.before.samples.length} samples before and ${out.after.samples.length} after`, out.verdict);
-    }
-    return out;
-  }),
 };
 
 const walkJobR: Read<JobId> = (v, p) => jobIdOfKind('walk')(v, p);
@@ -2252,18 +1928,7 @@ const ports: Read<Readonly<Record<ServeName, number>>> = (value, path) => {
 const PROPAGATION_FACT_READERS: { readonly [K in PropagationFactKind]: Read<Fact> } = {
   'stale-set': object((f): Fact => ({ kind: f.get('kind', literal('stale-set')), rev: f.get('rev', (v, p) => planRev(v, p)), ...staleSetFields(f) })),
   'stale-reopened': object((f): Fact => ({ kind: f.get('kind', literal('stale-reopened')), unit: f.get('unit', unitR), rev: f.get('rev', (v, p) => planRev(v, p)) })),
-  'stale-answered': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('stale-answered')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), rev: f.get('rev', (v, p) => planRev(v, p)),
-      answers: f.get('answers', arrayOf(staleAnswer, { nonEmpty: true })),
-    };
-    assertUnique(out.answers, (a) => a.link, `${f.path}.answers`);
-    return out;
-  }),
-  'propagation-refused': object((f): Fact => ({
-    kind: f.get('kind', literal('propagation-refused')), rev: f.get('rev', (v, p) => planRev(v, p)), target: f.get('target', propagationTarget),
-    reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
-  })),
+
 };
 
 /** The readers of the dev.13 facts, spread into `fact`. */
@@ -2292,7 +1957,7 @@ const WALK_FACT_READERS: { readonly [K in WalkFactKind]: Read<Fact> } = {
     kind: f.get('kind', literal('polish-proposed')), id: f.get('id', (v, p): PolishId => polishId(v, p)), job: f.get('job', walkJobR), milestone: f.get('milestone', milestoneR),
     journey: f.get('journey', (v, p): JourneyId => journeyId(v, p)), evidence: f.get('evidence', arrayOf(str, { nonEmpty: true })), text: f.get('text', str),
     unit: f.get('unit', object((g): PolishUnitDraft => ({
-      id: g.get('id', unitR), scope: g.get('scope', sortedBy((v, p): RepoPattern => repoPattern(v, p), (x) => x, { nonEmpty: true })), spec: g.get('spec', str),
+      id: g.get('id', unitR), systems: g.get('systems', sortedBy((v, p): SystemName => systemName(v, p), (x) => x, { nonEmpty: true })), spec: g.get('spec', str),
     }))),
   })),
   'tweak-judged': object((f): Fact => {
@@ -2335,18 +2000,6 @@ const REVIEW_FACT_READERS: { readonly [K in ReviewFactKind]: Read<Fact> } = {
     assertUnique(out.settled, (s) => s.id, `${f.path}.settled`);
     return out;
   }),
-  'docs-only': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('docs-only')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), since: f.get('since', shaR), at: f.get('at', shaR),
-      verdict: f.get('verdict', oneOf(DOCS_ONLY_VERDICTS)), reason: f.get('reason', nullable(str)), carried: f.get('carried', sortedBy(laneR, (l) => l)),
-    };
-    if ((out.verdict === 'refused') !== (out.reason !== null)) throw new SchemaError(`${f.path}.reason`, out.verdict === 'refused' ? 'why it was refused' : 'null on an acceptance', out.reason);
-    if (out.verdict === 'refused' && out.carried.length > 0) throw new SchemaError(`${f.path}.carried`, 'none on a refusal', out.carried);
-    return out;
-  }),
-  'docs-only-miss': object((f): Fact => ({
-    kind: f.get('kind', literal('docs-only-miss')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lanes: f.get('lanes', sortedBy(laneR, (l) => l, { nonEmpty: true })),
-  })),
 };
 
 /** The readers of the M3 facts, spread into `fact`. */
@@ -2370,7 +2023,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     const out = {
       kind: f.get('kind', literal('finding-opened')), id: f.get('id', findingR), key: f.get('key', sha256R), lens: f.get('lens', oneOf(FINDING_LENSES)),
       severity: f.get('severity', oneOf(FINDING_SEVERITIES)), obligation: f.get('obligation', nullable(obligationR)),
-      visionClauses: f.get('visionClauses', idList((v, p): VisionClauseId => visionClauseId(v, p), { legacyStringOrder: true })), claim: f.get('claim', str),
+      visionClauses: f.get('visionClauses', idList((v, p): VisionClauseId => visionClauseId(v, p))), claim: f.get('claim', str),
       evidence: f.get('evidence', arrayOf(findingEvidence)), mutant: f.get('mutant', nullable(mutantRef)), source: f.get('source', findingSource),
       gateHadPassed: f.get('gateHadPassed', bool),
     };
@@ -2386,9 +2039,9 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     if (out.source.type === 'demo' && !(walk && out.severity === 'P1')) throw new SchemaError(`${f.path}.source`, 'a walk job (only a walkthrough P1 comes from the demo)', out.source);
     if (walk && out.source.type === 'job' && parseJobId(out.source.job).kind !== 'walk') throw new SchemaError(`${f.path}.source.job`, 'a walk-<n> job', out.source.job);
     if (out.mutant !== null && out.lens !== 'vacuity') throw new SchemaError(`${f.path}.mutant`, 'null except for a vacuity finding', out.mutant);
-    // R17: plan-check opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
-    if ((out.lens === 'plan-check') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'plan-check' ? 'the plan-check attempt' : 'the job that opened it', out.source);
-    if (out.lens === 'plan-check' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a plan-check vision conflict', out.severity);
+    // R17: pre-build opens only P3 vision-conflict findings, from its own attempt; every other opener is a job.
+    if ((out.lens === 'pre-build') !== (out.source.type === 'stage')) throw new SchemaError(`${f.path}.source`, out.lens === 'pre-build' ? 'the pre-build attempt' : 'the job that opened it', out.source);
+    if (out.lens === 'pre-build' && (out.severity !== 'P3' || out.visionClauses.length === 0)) throw new SchemaError(`${f.path}.severity`, 'P3 citing vision clauses for a pre-build vision conflict', out.severity);
     // A must-hold not held on an audit snapshot opens a P1 over its obligation; dev.17: a batch lane red at an audit, a P1 over none.
     if (out.lens === 'witness' && (out.severity !== 'P1' || (out.obligation === null) !== (lane !== undefined))) {
       throw new SchemaError(`${f.path}.severity`, 'P1 over its obligation (or, a batch lane red, over none) for a witness finding', out.severity);
@@ -2397,13 +2050,11 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       throw new SchemaError(`${f.path}.lane`, 'absent (only a batch lane red names one: a walk job\'s walkthrough P1, an audit job\'s witness P1)', lane);
     }
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
-    // M4a: a checkpoint's issue intake (an earlier executor's; removed in 1.0.0-dev.21) opened P2 or P3 only.
-    if (out.lens === 'issue' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for an issue finding', out.severity);
     return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }), ...(lane === undefined ? {} : { lane }) };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
-    const diffBudget = f.optional('diffBudget', positive);
+    const diffBudget = f.get('diffBudget', positive);
     return {
       kind: f.get('kind', literal('audit-started')),
       job: f.get('job', auditJobR),
@@ -2418,7 +2069,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       owners: f.get('owners', sortedBy(object((g) => ({ unit: g.get('unit', unitR), head: g.get('head', shaR) })), (o) => o.unit)),
       priorFindings: f.get('priorFindings', findingSet),
       highWater: f.get('highWater', positive),
-      ...(diffBudget === undefined ? {} : { diffBudget }),
+      diffBudget,
     };
   }),
   'audit-ended': object((f): Fact => {
@@ -2430,39 +2081,17 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       suppressed: f.get('suppressed', nat),
       outcome: f.get('outcome', oneOf(['completed', 'abandoned'] as const)),
     };
-    const refused = f.optional('refused', arrayOf(object((g): LensRefusal => ({
+    const refused = f.get('refused', arrayOf(object((g): LensRefusal => ({
       lens: g.get('lens', lensR), attempt: g.get('attempt', positive), claim: g.get('claim', str), cause: g.get('cause', str), reason: g.get('reason', str),
     }))));
-    return { ...out, ...(refused === undefined ? {} : { refused }) };
+    return { ...out, refused };
   }),
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
-  'checkpoint-inputs': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('checkpoint-inputs')), job: f.get('job', ckptJobR), trigger: f.get('trigger', checkpointTrigger),
-      generation: f.get('generation', positive), vector: f.get('vector', revisionVector), headSha: f.get('headSha', shaR), visionSha256: f.get('visionSha256', sha256R),
-      findings: f.get('findings', findingSet),
-      observations: f.get('observations', sortedBy(observationKey, (k: ObservationKey) => `${k.treeSha}/${k.lane}/${k.laneRev}/${k.envId}`)),
-    };
-    if (out.vector.visionSha256 !== out.visionSha256) throw new SchemaError(`${f.path}.vector.visionSha256`, out.visionSha256, out.vector.visionSha256);
-    const issues = f.optional('issues', issuesLegacy<unknown>('checkpoint-inputs.issues'));
-    const corpusSha256 = f.optional('corpusSha256', sha256R);
-    return { ...out, ...(issues === undefined ? {} : { issues }), ...(corpusSha256 === undefined ? {} : { corpusSha256 }) };
-  }),
-  'bundle-decided': object((f): Fact => ({ kind: f.get('kind', literal('bundle-decided')), job: f.get('job', ckptJobR), outcome: f.get('outcome', bundleOutcome) })),
-  'checkpoint-skipped': object((f): Fact => {
-    const kind = f.get('kind', literal('checkpoint-skipped'));
-    const audit = f.optional('audit', auditJobR);
-    const trigger = f.optional('trigger', checkpointTrigger);
-    if (audit === undefined && trigger === undefined) throw new SchemaError(f.path, 'a checkpoint trigger or a legacy audit', null);
-    if (audit !== undefined && trigger !== undefined && (trigger.type !== 'audit' || trigger.job !== audit)) throw new SchemaError(f.path, 'an audit matching the trigger', audit);
-    const rest = { kind, generation: f.get('generation', positive), visionSha256: f.get('visionSha256', sha256R), carried: f.get('carried', findingSet) };
-    return audit === undefined ? { ...rest, trigger: trigger! } : { ...rest, audit, ...(trigger === undefined ? {} : { trigger }) };
-  }),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
-  'divergence-digest': object((f): Fact => ({
-    kind: f.get('kind', literal('divergence-digest')), needsUser: f.get('needsUser', (v, p): NeedsUserId => needsUserId(v, p)),
-    ids: f.get('ids', idList((v, p): DivergenceId => divergenceId(v, p), { nonEmpty: true, legacyStringOrder: true })),
-  })),
+  'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
+  'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
+  'finding-dismissed': object((f): Fact => ({ kind: f.get('kind', literal('finding-dismissed')), id: f.get('id', findingR), command: f.get('command', cmdR), counterEvidence: f.get('counterEvidence', nonBlank), by: f.get('by', object((g) => ({ role: g.get('role', literal('root')), routingRev: g.get('routingRev', (v, p) => routingRev(v, p)) }))) })),
+  noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
     kind: f.get('kind', literal('steered')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R),
     budgetMin: f.get('budgetMin', positive), resume: f.get('resume', bool),
@@ -2470,7 +2099,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   'merged-in': object((f): Fact => ({
     kind: f.get('kind', literal('merged-in')), unit: f.get('unit', unitR), command: f.get('command', cmdR), integrationTip: f.get('integrationTip', shaR), head: f.get('head', shaR),
   })),
-  'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR), lenses: f.get('lenses', nullable(lensSet)) })),
+  'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR) })),
   'admissions-closed': object((f): Fact => ({ kind: f.get('kind', literal('admissions-closed')), command: f.get('command', cmdR) })),
   'docs-published': object((f): Fact => ({ kind: f.get('kind', literal('docs-published')), pub: f.get('pub', docsJobR), source: f.get('source', literal('close-out')), commit: f.get('commit', shaR) })),
   'arc-completed': object((f): Fact => ({
@@ -2488,7 +2117,7 @@ export const fact: Read<Fact> = tagged('kind', {
     if ((session === undefined) !== (delegated === undefined)) throw new SchemaError(f.path, 'session and delegated together, or neither', { session, delegated });
     return {
       kind: f.get('kind', literal('meter')), ...promptField(f), inv: f.get('inv', invR), routingRev: f.get('routingRev', revR), subject: f.get('subject', meterSubject),
-      usage: f.get('usage', tokenUsage), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
+      usage: f.get('usage', tokenUsage), ...(() => { const incomplete = f.optional('incomplete', usageUnavailableReason); return incomplete === undefined ? {} : { incomplete }; })(), ...(session === undefined || delegated === undefined ? {} : { session, delegated }),
     };
   }),
   'usage-unavailable': object((f): Fact => {
@@ -2515,17 +2144,13 @@ export const fact: Read<Fact> = tagged('kind', {
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
   'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
-  'scope-decided': object((f): Fact => ({
-    kind: f.get('kind', literal('scope-decided')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), command: f.get('command', cmdR),
-    decision: f.get('decision', oneOf(['accepted', 'rejected'] as const)), reason: f.get('reason', str),
-  })),
   'apply-queued': object((f): Fact => {
     const out = { kind: f.get('kind', literal('apply-queued')), command: f.get('command', cmdR), waitsFor: f.get('waitsFor', arrayOf(unitR, { nonEmpty: true })) };
     assertUnique(out.waitsFor, (u) => u, `${f.path}.waitsFor`);
     return out;
   }),
   reopened: object((f): Fact => ({
-    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', specRevR),
+    kind: f.get('kind', literal('reopened')), unit: f.get('unit', unitR), command: f.get('command', nullable(cmdR)), specRev: f.get('specRev', (v, p) => specRev(v, p)),
     specSha256: f.get('specSha256', sha256R),
   })),
   unparked: object((f): Fact => {
@@ -2544,24 +2169,25 @@ export const fact: Read<Fact> = tagged('kind', {
   'judgment-inputs': object((f): Fact => {
     const out = {
       kind: f.get('kind', literal('judgment-inputs')), unit: f.get('unit', unitR), stage: f.get('stage', oneOf(JUDGMENT_STAGES)), attempt: f.get('attempt', positive),
-      tip: f.get('tip', shaR), head: f.get('head', nullable(shaR)), specRev: f.get('specRev', specRevR), specSha256: f.get('specSha256', sha256R),
+      tip: f.get('tip', shaR), head: f.get('head', nullable(shaR)), specRev: f.get('specRev', (v, p) => specRev(v, p)), specSha256: f.get('specSha256', sha256R),
       planRev: f.get('planRev', (v, p) => planRev(v, p)), routingRev: f.get('routingRev', revR),
     };
-    if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a plan-check', out.head);
+    if ((out.stage === 'gate') !== (out.head !== null)) throw new SchemaError(`${f.path}.head`, out.stage === 'gate' ? 'the unit commit the gate read' : 'null for a pre-build', out.head);
     const fingerprint = f.optional('fingerprint', approvalFingerprint);
-    if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a plan-check', fingerprint);
+    if ((fingerprint !== undefined) !== (out.stage === 'gate')) throw new SchemaError(`${f.path}.fingerprint`, out.stage === 'gate' ? 'the gate\'s approval fingerprint' : 'absent on a pre-build', fingerprint);
     const paths = sortedBy((v, p) => repoPath(v, p), (x) => x);
     const diffShown = f.optional('diffShown', object((g): DiffShown => ({ inlined: g.get('inlined', paths), notInlined: g.get('notInlined', paths) })));
-    if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a plan-check', diffShown);
+    if (diffShown !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.diffShown`, 'absent on a pre-build', diffShown);
     const largeDiff = f.optional('largeDiff', nullable(object((g): GateLargeDiff => ({ overflow: g.get('overflow', positive) }))));
-    if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a plan-check', largeDiff);
+    if (largeDiff !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.largeDiff`, 'absent on a pre-build', largeDiff);
     const review = f.optional('review', gateReview);
-    if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a plan-check', review);
+    const standingReview = f.optional('standingReview', arrayOf(object((g) => ({id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str))}))));
+    if (review !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.review`, 'absent on a pre-build', review);
     const designEstimate = f.optional('designEstimate', nullable(nat));
-    if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a plan-check', designEstimate);
+    if (designEstimate !== undefined && out.stage !== 'gate') throw new SchemaError(`${f.path}.designEstimate`, 'absent on a pre-build', designEstimate);
     if (fingerprint === undefined) return out;
     if (fingerprint.unitCommit !== out.head) throw new SchemaError(`${f.path}.fingerprint.unitCommit`, `the head the gate read (${out.head})`, fingerprint.unitCommit);
-    return {
+    return { ...(standingReview === undefined ? {} : {standingReview}),
       ...out, fingerprint, ...(diffShown === undefined ? {} : { diffShown }), ...(largeDiff === undefined ? {} : { largeDiff }), ...(review === undefined ? {} : { review }),
       ...(designEstimate === undefined ? {} : { designEstimate }),
     };
@@ -2572,15 +2198,6 @@ export const fact: Read<Fact> = tagged('kind', {
   'run-only': object((f): Fact => ({
     kind: f.get('kind', literal('run-only')), command: f.get('command', cmdR), units: f.get('units', nullable(sortedBy(unitR, (u) => u, { nonEmpty: true }))),
   })),
-  'implementer-escalated': object((f): Fact => {
-    const out = {
-      kind: f.get('kind', literal('implementer-escalated')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), from: f.get('from', riskTier),
-      to: f.get('to', literal('high')), stalled: f.get('stalled', positive),
-    };
-    if (out.from === 'high') throw new SchemaError(`${f.path}.from`, 'a build tier below high', out.from);
-    if (!(out.stalled < out.attempt)) throw new SchemaError(`${f.path}.stalled`, `a build attempt before ${out.attempt}`, out.stalled);
-    return out;
-  }),
   'plan-applied': object((f): Fact => {
     const scheduling = f.optional('scheduling', literal('dag'));
     const opt: Record<string, unknown> = {};
@@ -2607,10 +2224,10 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   'executor-started': object((f): Fact => {
     const host = f.optional('host', hostFingerprint);
-    const pressure = f.optional('pressure', oneOf(PRESSURE_AVAILABILITIES));
+    const pressure = f.get('pressure', oneOf(PRESSURE_AVAILABILITIES));
     return {
       kind: f.get('kind', literal('executor-started')), generation: f.get('generation', positive), ...(host === undefined ? {} : { host }),
-      ...(pressure === undefined ? {} : { pressure }),
+      pressure,
     };
   }),
   approval: object((f): Fact => {
@@ -2622,7 +2239,6 @@ export const fact: Read<Fact> = tagged('kind', {
   }),
   ...HOLISTIC_FACT_READERS,
   ...M4A_FACT_READERS,
-  ...FLOW_FACT_READERS,
   ...WALK_FACT_READERS,
   'flake-observed': object((f): Fact => {
     const out = {
@@ -2636,7 +2252,14 @@ export const fact: Read<Fact> = tagged('kind', {
   ...PROPAGATION_FACT_READERS,
   ...REVIEW_FACT_READERS,
   'stage-outcome': object((f): Fact => {
-    const s = f.get('stage', oneOf(OUTCOME_STAGES));
+    const stage = f.get('stage', oneOf([...OUTCOME_STAGES, 'experience-verdict', 'campaign-audit'] as const));
+    if (stage === 'experience-verdict' || stage === 'campaign-audit') {
+      const findings = f.get('findings', object((g) => ({ P1: g.get('P1', nat), P2: g.get('P2', nat), P3: g.get('P3', nat), total: g.get('total', nat) })));
+      if (findings.total !== findings.P1 + findings.P2 + findings.P3) throw new SchemaError(`${f.path}.findings.total`, 'the severity counts summed', findings.total);
+      return { kind: f.get('kind', literal('stage-outcome')), stage, job: f.get('job', jobIdOf), milestone: f.get('milestone', nullable(milestoneId)),
+        verdict: f.get('verdict', oneOf(['pass', 'revise', 'keep', 'drop', 'abandoned', 'bring-up-failed'] as const)), findings };
+    }
+    const s = stage;
     const out = {
       kind: f.get('kind', literal('stage-outcome')),
       unit: f.get('unit', unitR),
@@ -2660,11 +2283,9 @@ export const fact: Read<Fact> = tagged('kind', {
     // The fold keys retries and route-ups by stage, so those classes only exist where the stage has them.
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
-    // An interruption holds the unit, and so does a scope-growth proposal (a plan-check's, or a lanes attempt's after two
-    // reverts of one path) and (dev.17) a plan-check's split until its revision cuts the unit; nothing else does; a hold
-    // never charges.
-    const holds = out.outcome === 'interrupted' || ((s === 'plan-check' || s === 'lanes') && out.outcome === 'scope-growth') || (s === 'plan-check' && out.outcome === 'split');
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a scope-growth or a split', out.class);
+    // An interruption or a pre-build split holds the unit, uncharged, until resumed or cut by its split revision.
+    const holds = out.outcome === 'interrupted';
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a split', out.class);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

@@ -1,0 +1,171 @@
+{
+  "summary": "The reservation flow is built and requests executor certification. The shelf page has Reserve links; GET /reserve/<id> shows the form with a fresh token; POST /reserve/<id> checks and writes inside updateShelf, then redirects 303 to GET /reserved/<id>, which shows no name. M2, M3, M4 and M6 are in, plus two new refusals, M7 (name too long or not plain) and M8 (body too large). createApp takes settings and now options, and lapsed holds free the book. All seven W witnesses exist under their exact names. After the last test change, test/reserve.test.js passes (24 tests) and witness-check reports passed; the full suite passed 68/68 before that change.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "existing suites after the page and server rewrite (exit code not captured; output piped: 44 pass, 0 fail)",
+      "argv": [
+        "node",
+        "--test",
+        "test/shelf.test.js",
+        "test/floor.test.js",
+        "test/store.test.js",
+        "test/window.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "full suite, TZ=Pacific/Auckland, before the final test-only change (68 pass, 0 fail)",
+      "argv": [
+        "node",
+        "--test",
+        "test/*.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "witness-check, after the final change: {\"passed\":true}",
+      "argv": [
+        "roadmap",
+        "witness-check",
+        "--lane-file",
+        "<evidence>/witness/witness.json"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "reserve tests after the final change, TZ=Pacific/Auckland (24 pass, 0 fail)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "mutant in a scratch copy: write outside the lock (fails T-32, A8 busy)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: tokenless POST matches a null claim (fails A9 no token)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: page ignores lapse (fails both T-34 tests)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: lapsed claim replayed (fails A9 lapsed; survived until a case was added)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: confirmation for an unreadable end (fails D1, T-16, seed data)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: repeat re-saves the file (fails A9 repeat)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: name in the confirmation (fails T-18, T-20)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: no cap while reading (fails the chunked A8 tests by name, no longer hangs)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: no declared-length cap (fails A8 declared length)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "mutant: fresh token on re-render (fails T-7, A8 busy, A8 name limit)",
+      "argv": [
+        "node",
+        "--test",
+        "test/reserve.test.js",
+        "test/floor.test.js"
+      ],
+      "exit": 1
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/server.js",
+      "src/pages.js",
+      "src/store.js (new heldEnd export)",
+      "public/style.css",
+      "docs/design/page/README.md",
+      "docs/systems/store.md",
+      "test/reserve.test.js (new)",
+      "test/floor.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "For the root (660#1:7, unchanged): /reserved/<id> follows D1 as written and depends only on the book, not on who holds it. If B's hold lapsed and A then reserved the book, B's old tab reloads and reads 'waiting for you' with A's deadline; anyone given the URL sees the same. This bears on V-7. Binding the page to the claim would change D1, so it needs your amendment. I did not build a test of this scenario.",
+    "Design record: A1 says to follow docs/design/page/, but that text contradicted A2, A9 and D1 (200 on POST, a name in M1's heading, nothing hidden in the form). I treated the record as stale rather than the spec as wrong and updated it, as 660#1:3 asked. corpus-pin.json's root is docs/corpus, so the file is not pinned. M1's heading is now `It's yours.`. M7 and M8 are new wording for A8's refusals.",
+    "A8 and A9 have no declared W witnesses, though both are fail-loud. These named tests exist in test/reserve.test.js if you want to declare them. A8: 'a book gone since the form opened', 'a form opened on a gone book, or a malformed id', 'a busy shelf', 'a first name is limited to 60 characters', 'every value goes through esc', 'a very large body declared up front', 'a chunked body with no declared length', 'a body just within the limit' (each prefixed 'A8 '). A9: 'the POST redirects to the confirmation', 'a double tap', 'no token, or an unusable one', 'a claim that has lapsed' (each prefixed 'A9 '). D1: 'D1 the confirmation shows only for a hold with an end that can be read'.",
+    "Choices in decisions.json worth a look: a POST with no usable token on a free book still reserves, under a server-made claim, so a second such POST gets M3. A token is 1 to 64 of [A-Za-z0-9_-]. Refusal order is gone, then held, then the name. A token whose hold has lapsed makes a new reservation if the book is still free.",
+    "Seam for settings-file: createApp({ dataPath, settings = DEFAULT_SETTINGS, now }) and layout(title, body, settings) now take the name and address, and every page passes them. T-25's witness, T-31's window line and reading the file remain with that unit. Addresses are printed with a following full stop, so an address ending in one would show two; validation there could reject that.",
+    "Browser check of the real server at 360 by 640, on a scratch copy of the seed data: no sideways scrolling on the shelf (including b1's long URL), M4 or the confirmation (scrollWidth 360). The Reserve links and M4's back link and button measured 44px, the input 46px. On M4 focus landed in the field and the refusal was first in main with role=alert. Enter submitted the form through to /reserved/b1. Console entries were only the 400 and 409 page statuses and a favicon 404. The server log had no names. The form's top margin was added after these screenshots, and I did not retake them. The lettered fonts are not installed here, so the screenshots show a fallback face. Screenshots in the evidence directory: shelf-360.png, refusal-m4-360.png, refusal-m3-360.png, confirmation-360.png. I checked keyboard use only for Enter in the field; the full keyboard and screen-reader pass belongs to page-access.",
+    "Two limits on the evidence: the first mutation pass had no exit codes, so the listed mutant exits come from a second pass after the tests were bounded; that pass ran only reserve and floor tests. The final test-only change (per-test timeouts and closing connections in after) was followed by reserve tests and witness-check, not a separate full-suite run by me, though witness-check runs the lane's command.",
+    "The A8 busy test and the log-redaction test each wait out the store's real 5-second lock wait, so test/reserve.test.js takes about 12 seconds."
+  ],
+  "final": true
+}

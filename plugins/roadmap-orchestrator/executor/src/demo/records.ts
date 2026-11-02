@@ -1,4 +1,4 @@
-// The demo's two files (SCHEMAS.md "dev.13" "The demo"): what the executor wants (`demo.desired.json`, in the run dir, derived
+// The demo's two files (SCHEMAS.md "The demo"): what the executor wants (`demo.desired.json`, in the run dir, derived
 // from the log and rewritten whenever it changes) and what the host runs (`demo.json`, in the host dir, written by the
 // supervisor alone). The executor promotes and the supervisor's keeper brings versions up (src/demo/keeper.ts); these two
 // files are the whole protocol between them: the keeper reads the desired file, and the executor reads the host record for

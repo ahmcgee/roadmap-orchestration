@@ -1,4 +1,4 @@
-// `mutant.apply` (M3 step B3; DESIGN-1.0.md §2.5 "Mutants are executed, never judged by reading"; plan "Mutant
+// `mutant.apply` (M3 step B3; DESIGN-1.0.md §2.1 "Unit pipeline and review"; plan "Mutant
 // reproduction"): a mutant patch (kept as `inputs/<patchSha256>.patch`) applied in a detached worktree at `at`, so a lane
 // runs on the patched tree under `purpose: mutant` (G13: the record carries the patched tree's real id and never
 // certifies). M4a rev 3 (D2): a mutant is made `of` a vacuity finding (its patch, kept when the finding opened) or of a

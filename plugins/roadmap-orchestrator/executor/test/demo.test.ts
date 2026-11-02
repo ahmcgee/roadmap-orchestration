@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // dev.13 (plan §4a; SCHEMAS.md "dev.13" "The demo"): promotion on settle (src/demo/promote.ts) and the supervisor's keeper
 // (src/demo/keeper.ts), integrated: a corpus arc over unit-common's repo with milestones, walk facts written as agent C's walk
 // job writes them, and a tiny real product (a node http server with a setup and a seed step) brought up from real git
@@ -93,7 +94,7 @@ function settle(r: ArcRun, ms: string, at: ReturnType<typeof sha>, extra: Readon
     const id = r.journal.view.nextPolishId();
     r.journal.fact({
       kind: 'polish-proposed', id, job, milestone: milestoneId(ms), journey: journeyId(`J-${ms.slice(3)}`), evidence: ['shot.png'], text: 'tighten the header',
-      unit: { id: unitId(`polish-${id.toLowerCase()}`), scope: [repoPattern('design/web/**')], spec: '{}' },
+      unit: { id: unitId(`polish-${id.toLowerCase()}`), systems: [systemName('app')], spec: '{}' },
     });
     proposals.push(id);
   }

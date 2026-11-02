@@ -1,4 +1,5 @@
-// The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md §3 "Merge"):
+import { protectedPathsInForce } from '../input/protected.ts';
+// The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md "Git truth and backend invariants"):
 // candidate → suite lanes → ff-only publication → snapshot, so the tested head is the published head.
 //
 // The publication transaction (A2, F3): the candidate takes `integration-slot` as its entry reservation, under
@@ -17,7 +18,7 @@
 //              prefix guard) → `candidate.merge` onto the current tip T → the candidate checkout, detached
 //              (`candidateWorktreeRequest`) → the plan's suite lanes up to `candidate` the candidate's diff selects
 //              (dev.17, `candidateLanes`), serially and verbatim. Outcomes:
-//              - a transient violation or prefix collision: refused, a scope-growth fix round (C, trigger);
+//              - a transient violation or prefix collision: refused, a protected-path fix round (C, trigger);
 //              - a conflict: `mergein.prepare` in the unit worktree (MERGE_HEAD = T), then the resolve
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;
 //              - red (or a suite that dirtied the checkout): the suite runs again on T alone in its own
@@ -59,6 +60,7 @@
 // Re-entry: a stage attempt a restart cut short runs again as a new attempt. A merge-in it already
 // prepared (MERGE_HEAD = T in the unit worktree) and a publication op it already closed are read back
 // from the journal rather than repeated.
+import { memoryMessage, salvageSummaries } from './memory.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
@@ -91,20 +93,16 @@ import {
 } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import {
-  type Cancelled, type StageContext, type StageParent, dispatchOf, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree,
-} from './dispatch.ts';
+import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
   type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
 } from './lanes.ts';
-import { carriedLanes } from './docsonly.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, environmentFacts, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
-import { SCOPE_GROWTH_BLOCKER } from '../prompts/directives.ts';
 
 export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.candidate-${attempt}`));
@@ -164,9 +162,9 @@ function candidateRequest(ctx: StageContext, unit: PlanUnit, attempt: number): C
   return {
     arc: ctx.plan().arc, unit: unit.id, integration: branchRef(ctx.plan().integrationBranch), unitCommit: unitTip(ctx, unit.id),
     worktree: candidateWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt),
-    rules: unitTransientRules(dispatchOf(ctx.journal.view, unit.id), spec),
+    rules: unitTransientRules(protectedPathsInForce(ctx.runDir, ctx.journal.view), spec),
     identity: executorIdentity(),
-    message: `roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}\n`,
+    message: memoryMessage(`roadmap ${ctx.plan().arc}: candidate of unit ${unit.id}`, salvageSummaries(ctx, unit.id)),
   };
 }
 
@@ -221,9 +219,15 @@ export function candidateLanes(ctx: StageContext, tip: Sha, candidate: Sha): rea
 async function suite(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>,
 ): Promise<Series> {
+  // Candidate-cadence spec lanes run on this candidate on the current tip, owned by the delivering unit.
+  // Their separate series preserves `set: spec`, evidence and red/fix attribution (including tip-alone diagnostics).
+  const spec = loadUnitSpec(ctx, ctx.plan().units.find((u) => u.id === parent.unit)!).spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'candidate');
+  const own = spec.length === 0 ? null : await runLaneSeries(ctx, parent, spec, 'spec', checkout, absPath(join(root, '_spec')), laneRuntime(ctx, parent.unit), false);
+  if (own !== null && own.tree !== null) await removeVerificationTree(ctx, own.tree, parent);
+  if (own !== null && (own.end.kind !== 'green' || own.dirty.length > 0)) return { ...own, tree: null };
   const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
-  return series;
+  return own === null ? series : { ...series, ledger: [...own.ledger, ...series.ledger] };
 }
 
 /** A suite that did not pass, or that changed its checkout (never certified under a SHA). */
@@ -261,10 +265,6 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
-      // dev.17 calibration: a lane whose pass the unit's docs-only acceptance carried over is red here (src/pipeline/docsonly.ts).
-      const carried = new Set<string>(carriedLanes(ctx, unit.id));
-      const missed = onCandidate.end.kind === 'red' && carried.has(onCandidate.end.lane.lane) ? [onCandidate.end.lane.lane] : [];
-      if (missed.length > 0) ctx.journal.fact({ kind: 'docs-only-miss', unit: unit.id, attempt: parent.attempt, lanes: missed });
       // Red on the candidate: the tip alone decides whose red it is.
       const tip = intent.expect.integrationTip;
       const alone = await suite(ctx, parent, lanes, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());
@@ -419,7 +419,12 @@ export function gradeTree(
   claims: Claims, runs: readonly JourneyRun[], completing: ReadonlySet<ObligationId>, repairs: ReadonlySet<ObligationId>, p1: ReadonlySet<ObligationId>,
 ): TreeGrade {
   const records = new Map(runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
+  const external = new Set(claims.obligations.lanes.filter((l) => l.witnessClass === 'external').map((l) => l.id));
   const defs = claims.obligations.obligations;
+  const externalIds = new Set(defs.filter((o) => external.has(o.witness?.lane!)).map((o) => o.id));
+  claims = { ...claims, selected: new Set([...claims.selected].filter((id) => !externalIds.has(id))) };
+  completing = new Set([...completing].filter((id) => !externalIds.has(id)));
+  repairs = new Set([...repairs].filter((id) => !externalIds.has(id)));
   const verdict = (_o: ObligationDef, w: WitnessRef): ObservationVerdict | null => {
     const rec = records.get(w.lane);
     return rec === undefined ? null : verdictOf(rec, w);
@@ -432,6 +437,7 @@ export function gradeTree(
   // non-exempt child holds. Not its effect: a held future child completing here is `latch`, one delivered elsewhere
   // `measured`, and neither is `discharged` (paid m3 run 7: a repair of a latched parent split into such children).
   const holds = (o: ObligationDef): boolean => {
+    if (externalIds.has(o.id)) return true; // Root evidence follows publication, including a split parent's external leaves.
     if (o.state.type !== 'split') return o.witness !== null && verdict(o, o.witness) === 'held';
     return o.state.children.every((c) => {
       const child = byId.get(c);
@@ -811,8 +817,7 @@ export function latestCandidate(ctx: StageContext, unit: UnitId): IntentOf<'cand
 /**
  * The fix round's directives for a transient refusal. A path a lane's `evidenceGlobs` entry matches is named with the
  * lane and the entry: it may be the unit's own work under a spec that mislabels it as lane output (M4b run 3), which
- * the builder must keep and report, never delete. Every other path is removed, or (an out-of-scope path the work needs) named in
- * the report's blockers as a scope growth only the root agent grants (`SCOPE_GROWTH_BLOCKER`). `by`: the check that refused, the
+ * the builder must keep and report, never delete. Protected and transient paths are removed; a required protected edit is reported as a blocker. `by`: the check that refused, the
  * candidate's or (field report 2026-10-24) the salvage's of the round's commit.
  */
 export function transientDirectives(violations: readonly TransientViolation[], by: 'candidate' | 'salvage'): readonly string[] {
@@ -820,7 +825,7 @@ export function transientDirectives(violations: readonly TransientViolation[], b
   const declared = violations.flatMap((v) => (v.rule === 'lane-evidence' ? [v] : []));
   const other = violations.filter((v) => v.rule !== 'lane-evidence');
   return [
-    ...(other.length === 0 ? [] : [`${refused}: these paths must not reach integration (run state, evidence, executor files, in-tree .roadmap/ paths, or paths outside the unit's pinned scope): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; if the work needs an out-of-scope path, ${SCOPE_GROWTH_BLOCKER} instead of keeping it.`]),
+    ...(other.length === 0 ? [] : [`${refused}: these paths must not reach integration (run state, evidence, executor files, protected repository paths): ${other.map((v) => `${v.path} (${v.rule})`).join(', ')}. Remove them from the branch; report a blocker if the spec requires changing a protected path.`]),
     ...(declared.length === 0 ? [] : [`${refused}: these paths match a lane's declared evidenceGlobs, which name the files that lane's run writes (its outputs) and never reach integration: ${declared.map((v) => `${v.path} (lane ${v.lane}, entry \`${v.glob}\`)`).join(', ')}. Remove from the branch only a path that is lane output. A path that is the unit's own work (its source or tests) is not: keep it, change nothing for it, and say in your report that lane ${[...new Set(declared.map((v) => v.lane))].join(', ')}'s evidenceGlobs cover the unit's work, so the spec's entry needs correcting by the architect.`]),
   ];
 }
@@ -925,7 +930,7 @@ async function publish(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'ff
 }
 
 // ---------------------------------------------------------------------------------------------------
-// A repair batch's publication (M3 B2; R7, G5, H4; DESIGN-1.0.md §2.8 "Batch repair")
+// A repair batch's publication (M3 B2; R7, G5, H4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs")
 //
 // All approved units repairing one finding publish as one candidate: `publishBatch` takes `integration-slot` under
 // `batch{finding, attempt}` (first of every unit waiter, as a repair ranks first, R6) for the batch's durable job
@@ -1114,7 +1119,7 @@ export async function publishBatch(ctx: BatchContext, findings: readonly Finding
   const approvals = new Map(sorted.map((u) => [u.id, approvalOf(ctx, u.id)] as const));
   const decision = planBatchCandidate(ctx.repo, {
     arc: plan.arc, job, integration, worktree: batchCheckout(plan.worktreeRoot, plan.arc, job, 'candidate', attempt), identity: executorIdentity(),
-    message: `roadmap ${plan.arc}: batch ${job} repairing ${findings.join(', ')} (${sorted.map((u) => u.id).join(', ')})\n`,
+    message: memoryMessage(`roadmap ${plan.arc}: batch ${job} repairing ${findings.join(', ')} (${sorted.map((u) => u.id).join(', ')})`, sorted.flatMap((u) => salvageSummaries(ctx, u.id))),
     members: sorted.map((u) => {
       const fingerprint = approvals.get(u.id)!;
       const head = unitTip(ctx, u.id);

@@ -1,0 +1,275 @@
+{
+  "findings": [
+    {
+      "severity": "P1",
+      "obligation": "I-15",
+      "visionClauses": [
+        "V-7",
+        "V-1"
+      ],
+      "claim": "GET /reserved/<id> tells any visitor \"It's yours\" and \"is waiting for you\" for any book held with a readable end, whoever holds it. The route takes no claim or token and never compares the visitor to the hold, so a second neighbour can be promised a book already promised to someone else. Ordinary path: Mina reserves b3 and the hold lapses. Noor reserves b3. Mina reloads her old confirmation tab or opens it from history, and is told the book is hers, with Noor's new deadline. The URL is also one letter away from /reserve/b3, so a neighbour who was refused can reach the same promise. test/reserve.test.js:235 fetches /reserved/b3 with no token or cookie after Noor's reservation and gets 'Sunday at six (15 November)'. test/reserve.test.js:201 gets 200 the same way. T-32 stays green because it counts POST outcomes and never asks who is shown the confirmation. reserve-flow decision D1 and design M1 specify this open GET, and hide only the name. That conflicts with V-7, which is non-negotiable, and the vision wins. Verified by reading the code and tests; not run.",
+      "cause": "show reservation confirmation: the promise is served to any visitor for a held book because the page never checks that the visitor made the hold",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 122
+        },
+        {
+          "path": "src/server.js",
+          "line": 124
+        },
+        {
+          "path": "src/pages.js",
+          "line": 111
+        },
+        {
+          "path": "src/pages.js",
+          "line": 114
+        },
+        {
+          "path": "src/pages.js",
+          "line": 115
+        },
+        {
+          "path": "test/reserve.test.js",
+          "line": 201
+        },
+        {
+          "path": "test/reserve.test.js",
+          "line": 235
+        },
+        {
+          "path": "docs/design/page/README.md",
+          "line": 62
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P3",
+      "obligation": "I-2",
+      "visionClauses": [
+        "V-1"
+      ],
+      "claim": "Vacuous witness, not a product defect. The positive half of the T-2 witness cannot fail. It looks for the list item containing 'Marked Reserved Title' and matches /reserved/i against that item, and the fixture's own title satisfies the regex. Removing the reserved mark from the page leaves the named witness for I-2 green, so its 'held' observation does not rest on the mark. Other tests in the lane pin the mark with '· reserved' (test/shelf.test.js:33, test/reserve.test.js:68), so the current product is covered. The free-book assertion on the next line already uses the stricter /·\\s*reserved/i. Verified by reading; the mutant has not been run.",
+      "cause": "t-2 reserved mark witness: the positive assertion matches the word reserved in the fixture title instead of the page's mark",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 14
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 61
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 62
+        },
+        {
+          "path": "src/pages.js",
+          "line": 37
+        },
+        {
+          "path": "test/shelf.test.js",
+          "line": 33
+        }
+      ],
+      "mutant": {
+        "lane": "witness",
+        "edits": [
+          {
+            "path": "src/pages.js",
+            "old": "const state = held ? ' · reserved' : '';",
+            "new": "const state = '';"
+          }
+        ]
+      }
+    },
+    {
+      "severity": "P3",
+      "obligation": "I-6",
+      "visionClauses": [
+        "V-3",
+        "V-8"
+      ],
+      "claim": "Vacuous witness for half of I-6. The rule names a default path, data/shelf.json, but no test in the lane runs it. T-17 and the other spawned servers set SWAPSHELF_DATA (test/floor.test.js:23, test/access.test.js:18). The createApp tests pass dataPath directly, and no test references DEFAULT_DATA. The tests that mention data/shelf.json only copy it as a seed. A wrong default therefore passes every test in the lane. The shipped value is correct today (src/store.js:9), and the server does use it (src/server.js:155). Verified by reading and grep; the mutant has not been run.",
+      "cause": "t-17 data file witness: the default data path is never exercised because every test supplies its own path",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 9
+        },
+        {
+          "path": "src/server.js",
+          "line": 155
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 23
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 106
+        },
+        {
+          "path": "test/access.test.js",
+          "line": 18
+        }
+      ],
+      "mutant": {
+        "lane": "witness",
+        "edits": [
+          {
+            "path": "src/store.js",
+            "old": "export const DEFAULT_DATA = 'data/shelf.json';",
+            "new": "export const DEFAULT_DATA = 'data/books.json';"
+          }
+        ]
+      }
+    },
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [
+        "V-12",
+        "V-11"
+      ],
+      "claim": "A reservation that fails to write for any reason other than a held lock gets a bare text/plain page instead of the designed refusal. Design M6 covers the case where 'the books' file cannot be written at this moment', but the handler only maps SHELF_BUSY to M6. EACCES, ENOSPC or a corrupt file falls through to the outer catch. The neighbour then sees 'Something went wrong on our side. Try again in a minute.' with no shelf styling, no form, no typed name, no link back, and no statement that nothing was reserved. Advice to retry in a minute is also wrong for a corrupt or missing file, which stays broken until the keeper acts. store.test.js shows saveShelf rejecting with EACCES, but no test reaches this server branch. Verified by reading the code; the failure was not reproduced over HTTP.",
+      "cause": "reserve a book: a write failure other than a busy lock falls through to an unstyled plain-text page instead of the designed refusal",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 105
+        },
+        {
+          "path": "src/server.js",
+          "line": 106
+        },
+        {
+          "path": "src/server.js",
+          "line": 147
+        },
+        {
+          "path": "src/server.js",
+          "line": 148
+        },
+        {
+          "path": "docs/design/page/README.md",
+          "line": 116
+        },
+        {
+          "path": "test/store.test.js",
+          "line": 161
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "This session had read-only tools, so I ran no tests, mutants or server. Every finding comes from reading the code, tests, specs and retained evidence, and the two mutants are proposed, not executed.",
+    "The diff supplied for a1c438e..bc762b3 leaves out reserve-flow, search and page-access. I audited those from the checkout (src/server.js, src/pages.js, public/style.css and the tests), but did not confirm that its HEAD is the audited commit 4c36dee.",
+    "The P1 rests on a conflict with V-7. reserve-flow D1 and design M1 specify the open confirmation GET, so the code follows its spec and the spec conflicts with the vision.",
+    "I found no defect in the lock protocol, atomic save, hold rule, lapse logic, escaping or name handling in pages and logs from reading them. The T-1, T-3 to T-7, T-16, T-18 to T-21, T-27 to T-29, T-32 and T-34 witnesses exercise their claims as written.",
+    "I-19 to I-35 are future obligations for units not yet built, so I did not judge them as unmet. The keeper-cli spec already covers the missing-condition and lapsed-hold seams with the page.",
+    "Document drift check: docs/design/page/README.md and docs/systems/store.md match the code in the checkout, including M7, M8 and heldEnd. The collection-hours line in design step 1 is not on the page yet, because it belongs to I-21 and settings-file."
+  ],
+  "premises": [
+    {
+      "claim": "The confirmation route reads only the book id and the hold state; it takes no claim, token or cookie.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 122
+        },
+        {
+          "path": "src/server.js",
+          "line": 124
+        }
+      ]
+    },
+    {
+      "claim": "The claim token is compared only on POST, in checkReservation, so the repeat check never protects the GET confirmation.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 78
+        },
+        {
+          "path": "src/server.js",
+          "line": 109
+        }
+      ]
+    },
+    {
+      "claim": "The confirmation wording is a direct promise to the reader: 'It's yours' and 'is waiting for you'.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 114
+        },
+        {
+          "path": "src/pages.js",
+          "line": 115
+        }
+      ]
+    },
+    {
+      "claim": "Reservations under concurrent POSTs are decided under the lock, and the check is repeated inside updateShelf.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 96
+        },
+        {
+          "path": "src/server.js",
+          "line": 98
+        },
+        {
+          "path": "test/reserve.test.js",
+          "line": 188
+        }
+      ]
+    },
+    {
+      "claim": "The T-2 fixture's title contains the word the assertion looks for.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 14
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 61
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "op": "request",
+      "summary": "Decide whether to amend reserve-flow decision D1 and design M1 so the confirmation promise is shown only to the neighbour whose claim made the hold, with no accounts (T-28) and no client-side script (T-16). As written, they specify the open GET behind the P1 finding.",
+      "evidence": [
+        "specs/reserve-flow.json D1: GET /reserved/<id> shows the confirmation while the book is held, showing no name",
+        "docs/design/page/README.md:62",
+        "src/server.js:122-125",
+        "test/reserve.test.js:235"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    },
+    {
+      "op": "request",
+      "summary": "Missing environment evidence, not a product defect: provide retained captures of journeys J-1 to J-4 before relying on them for V-5, V-9, V-10 or V-11. Include keyboard focus, a 360px no-sideways-scroll measurement, and a render where the hand-lettered face or a phone's cursive fallback actually loads. The retained reserve-flow screenshots show the headings in a serif fallback, so they cannot show the hand lettering a neighbour would see.",
+      "evidence": [
+        "evidence/jobs/walk-2/walk-2.walk/manifest.json lists no files, and walk-1 holds only its manifest and server logs",
+        "evidence/reserve-flow/4-evidence/build/files/work/reserve-flow/2-build/shelf-360.png shows the h1 in a serif face",
+        "evidence/reserve-flow/4-evidence/build/files/work/reserve-flow/2-build/confirmation-360.png shows the h2 in a serif face",
+        "evidence/page-access/4-evidence/build/files/work/page-access/2-build/page-2026-11-01T14-45-23-769Z.yml is the one accessibility snapshot I read, and it covers the shelf page only",
+        "public/style.css:8"
+      ],
+      "dismisses": null,
+      "counterEvidence": null
+    }
+  ]
+}

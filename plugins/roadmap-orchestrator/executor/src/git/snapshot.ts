@@ -11,20 +11,17 @@
 // | `inputs/<sha256>.<ext>`                | a `plan-applied` (plan, specs, ledger, obligations, vision, payload), |
 // |                                        | a `revision.commit` intent (payload), a kept payload (its manifest's |
 // |                                        | inputs, sidecars, renders; M4a: a corpus arc's pin, guide and       |
-// |                                        | Phase-0 record and legacy issues captures, optional), a kept pin |
+// |                                        | Phase-0 record), a kept pin |
 // |                                        | pinned corpus file,                                              |
 // |                                        | `.corpus-file`), a `spec.patch` done, a `dispatch`,                 |
 // |                                        | `judgment-inputs` or `reopened` fact (spec), a `steered` fact (brief), |
-// |                                        | a vacuity `finding-opened` (its mutant `.patch`), an older         |
-// |                                        | `issues-captured` fact (its capture),                             |
+// |                                        | a vacuity `finding-opened` (its mutant `.patch`),                  |
 // |                                        | a `pack-review-started` fact (its                                  |
-// |                                        | kept `PackReviewInputs`); M4b: a `flow-started` fact (its kept      |
-// |                                        | `FlowInputs`), a `flow-series` fact (the compact series), a        |
-// |                                        | `flow-proof` fact (each side's kept witness records, when present) |
+// |                                        | kept `PackReviewInputs`)                                           |
 // | `start.json`                           | the latest `executor-started` fact (its generation)                |
 // | `inv/<seq>-<ordinal>/result.json`,     | a backend `proc.spawn` done `result` (reads.json: a Claude call's)  |
 // | `reads.json`                           |                                                                    |
-// | `inv/<seq>-<ordinal>/exit.json`       | a done lane/build/journey/proof/mutant spawn: CPU telemetry         |
+// | `inv/<seq>-<ordinal>/exit.json`       | a done lane/build/journey/mutant spawn: CPU telemetry         |
 // | `witness/<seq>-<ordinal>.json`         | a `witnessed` fact (a job's, a candidate's or a mutant's run): its `witness.json` |
 // | `needs-user/<id>.json`, `<id>.ack.json`| a done `needsuser.raise` intent; a `needs-user-acked` fact          |
 // | `evidence-manifests/<seq>.json`        | a done `evidence.snapshot` (the manifest only, never raw evidence) |
@@ -51,41 +48,41 @@
 // Steady-state verification checks the complete path/object-id set and hashes delta blobs, relying on the
 // verified base's immutable Git objects. Standalone verification and crash recovery always read the full tree.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdtempSync,readFileSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
-  type CommitInputs, type Event, type IntentOf, type IntentRecord, type OpOutcome, type RevisionPayload, type WitnessFor, parentUnit, parseEventLine,
-  parseRevisionPayload, prevHash, serializeEvent,
+type CommitInputs,type Event,type IntentOf,type IntentRecord,type OpOutcome,
+type WitnessFor,parentUnit,parseEventLine,
+parseRevisionPayload,prevHash,serializeEvent
 } from '../core/events.ts';
 import { canonicalJson as fileJson } from '../core/fsx.ts';
 import {
-  type ArcId, type FindingId, type InvocationId, type JobId, type LaneId, type NeedsUserId, type OpId, type Sha, type Sha256Hex, type UnitId, arcId, invocationDirName,
-  invocationId, parseOpId, sha, sha256,
+type ArcId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type Sha,type Sha256Hex,type UnitId,arcId,invocationDirName,
+invocationId,parseOpId,sha,sha256,
 } from '../core/ids.ts';
-import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
-import { canonicalJson, canonicalRecordBytes, sha256Hex } from '../core/json.ts';
+import type { GitSteps,IntentBody,JournalView } from '../core/interfaces.ts';
+import { canonicalJson,canonicalRecordBytes,sha256Hex } from '../core/json.ts';
 import { EVENTS_FILE } from '../core/log.ts';
-import { isRed, runStart } from '../core/records.ts';
+import { RED_FILE,isRed,runStart } from '../core/records.ts';
 import { Fold } from '../core/state.ts';
-import { Fields, type Read, literal, nat, object, positive, sortedBy, tagged, version } from '../core/validate.ts';
-import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from '../core/version.ts';
-import { START_FILE } from '../executor.ts';
+import { Fields,type Read,literal,nat,object,positive,sortedBy,tagged,version } from '../core/validate.ts';
+import { type AbsPath,type RefName,type RepoPath,absPath,refName,repoPath } from '../core/values.ts';
+import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
 import { parseCorpusPin } from '../corpus/types.ts';
+import { START_FILE } from '../executor.ts';
 import { WITNESS_RECORD_FILE } from '../holistic/witness.ts';
 import {
-  CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, FLOW_PROOF_INPUT, FLOW_SERIES_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT,
-  PHASE0_INPUT, PLAN_INPUT, RENDER_INPUT, REVISION_INPUT,
-  RULING_INPUT, RULINGS_INPUT, SPEC_INPUT, VISION_INPUT, inputPath,
+CORPUS_FILE_INPUT,CORPUS_GUIDE_INPUT,CORPUS_INPUT,OBLIGATIONS_INPUT,PACK_REVIEW_INPUT,
+PHASE0_INPUT,PLAN_INPUT,RENDER_INPUT,REVISION_INPUT,
+RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inputPath
 } from '../input/inforce.ts';
-import { NEEDS_USER_DIR, needsUserAckPath } from '../needsuser.ts';
+import { NEEDS_USER_DIR,needsUserAckPath } from '../needsuser.ts';
 import { BRIEF_INPUT } from '../pipeline/rounds.ts';
 import { manifestPath } from './evidence.ts';
-import { RED_FILE } from '../core/records.ts';
+import { type Identity,catFileBlobs,catFileType,commitTree,git,lsTree,refTarget,updateRefCas,writeTreeFromIndex } from './git.ts';
 import { MUTANT_PATCH_INPUT } from './mutant.ts';
-import { type Identity, catFileBlobs, catFileType, commitTree, git, lsTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
 
 export class SnapshotStateError extends Error {
   readonly ref: RefName;
@@ -161,8 +158,6 @@ type Source =
   | Readonly<{ type: 'log' }>
   | Readonly<{ type: 'fold' }>
   | Readonly<{ type: 'input'; sha256: Sha256Hex; ext: string }>
-  /** An earlier executor's issues capture (scaffolding, see `legacyIssues`): carried when kept, absent otherwise. */
-  | Readonly<{ type: 'legacy-issues'; sha256: Sha256Hex }>
   | Readonly<{ type: 'start' }>
   | Readonly<{ type: 'inv'; inv: InvocationId; file: 'result.json' | 'reads.json' | 'exit.json' }>
   /** A witness run keeps its record in its execution's dir (`witnessDir`): `<dir>/witness.json`. */
@@ -173,14 +168,12 @@ type Source =
   | Readonly<{ type: 'red'; path: RepoPath }>
   | Readonly<{ type: 'ack'; id: NeedsUserId }>;
 
-const ISSUES_INPUT = 'issues.json';
-
 type Item = Readonly<{
   path: RepoPath;
   namedBy: NamedBy;
   /** The sha256 the naming record states; null when it names the file without one. */
   sha256: Sha256Hex | null;
-  /** A backend call's reads.json (a Claude call writes one, a Codex call none), a red lane's red.json, and a legacy issues capture. */
+  /** A backend call's reads.json (a Claude call writes one, a Codex call none), and a red lane's red.json. */
   optional: boolean;
   source: Source;
   /** start.json only: the generation the naming `executor-started` fact records. */
@@ -207,10 +200,6 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
   };
   const input = (sha: Sha256Hex, ext: string, by: NamedBy): void =>
     add({ path: repoPath(`inputs/${sha}.${ext}`), namedBy: by, sha256: sha, source: { type: 'input', sha256: sha, ext } });
-  // Scaffolding until no arc started before 1.0.0-dev.21 is in flight: dev.21 left issues captures out of its snapshots
-  // and dev.22 put them back, so a ref dev.21 published lacks them. Nothing reads them; a carried one still hashes.
-  const legacyIssues = (sha: Sha256Hex, by: NamedBy): void =>
-    add({ path: repoPath(`inputs/${sha}.${ISSUES_INPUT}`), namedBy: by, sha256: sha, optional: true, source: { type: 'legacy-issues', sha256: sha } });
   const payload = (sha: Sha256Hex, by: NamedBy): void => {
     const path = repoPath(`inputs/${sha}.${REVISION_INPUT}`);
     if (items.has(path)) return;
@@ -221,15 +210,12 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
     input(m.planSha256, PLAN_INPUT, from);
     for (const s of Object.values(m.specs)) input(s, SPEC_INPUT, from);
     input(m.rulings.ledgerSha256, RULINGS_INPUT, from);
-    for (const s of Object.values(m.rulings.sidecars)) input(s, RULING_INPUT, from);
     if (m.obligations !== null) input(m.obligations, OBLIGATIONS_INPUT, from);
     if (m.vision !== null) input(m.vision, VISION_INPUT, from);
-    // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide and Phase-0 record (an earlier
-    // executor's `phase0Issues` capture, optional: `legacyIssues`).
+    // M4a: a corpus arc's pin and every corpus file it pins (named by the pin), guide and Phase-0 record.
     if (m.corpus !== undefined) pin(m.corpus, from);
     if (m.corpusGuide !== undefined) input(m.corpusGuide, CORPUS_GUIDE_INPUT, from);
     if (m.phase0 !== undefined) input(m.phase0, PHASE0_INPUT, from);
-    if (m.phase0Issues !== undefined) legacyIssues(m.phase0Issues, from);
     for (const r of p.publication?.renders ?? []) input(r.sha256, RENDER_INPUT, from);
   };
 
@@ -273,7 +259,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         // Work telemetry reads exits. Launch environments remain local, outside the snapshot.
         // Optional for snapshots from earlier releases, whose closure did not retain these records.
         const subject = intent.expect.subject;
-        const work = subject.purpose === 'lane' || subject.purpose === 'journey' || subject.purpose === 'proof' || subject.purpose === 'mutant'
+        const work = subject.purpose === 'lane' || subject.purpose === 'journey' || subject.purpose === 'mutant'
           || (subject.purpose === 'backend' && subject.role === 'build');
         if (work) {
           const inv = invocationId(intent.op, intent.ordinal);
@@ -305,31 +291,25 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
       case 'dispatch':
         input(f.record.specSha256, SPEC_INPUT, by);
         break;
+      case 'external-witness':
+        if (f.evidenceSha256 !== null) input(f.evidenceSha256, 'external-evidence', by);
+        break;
       case 'judgment-inputs':
       case 'reopened':
         input(f.specSha256, SPEC_INPUT, by);
         break;
+      case 'review-completed':
+        if (f.note !== null) input(f.note, BRIEF_INPUT, by);
+        break;
+      case 'noted':
       case 'steered':
         input(f.brief, BRIEF_INPUT, by);
         break;
       case 'finding-opened':
         if (f.mutant !== null) input(f.mutant.patchSha256, MUTANT_PATCH_INPUT, by);
         break;
-      case 'issues-captured':
-        legacyIssues(f.sha256, by);
-        break;
       case 'pack-review-started':
         input(f.inputsSha256, PACK_REVIEW_INPUT, by);
-        break;
-      case 'flow-started':
-        input(f.inputsSha256, FLOW_INPUTS_INPUT, by);
-        break;
-      case 'flow-series':
-        input(f.sha256, FLOW_SERIES_INPUT, by);
-        break;
-      case 'flow-proof':
-        if (f.oldSha256 !== null) input(f.oldSha256, FLOW_PROOF_INPUT, by);
-        if (f.newSha256 !== null) input(f.newSha256, FLOW_PROOF_INPUT, by);
         break;
       case 'witnessed':
         // A job's, a candidate's and a mutant's lane run alike (a mutant's record never certifies, G13).
@@ -459,8 +439,6 @@ function sourceFile(runDir: AbsPath, source: Source): Readonly<{ path: string; w
       return null;
     case 'input':
       return { path: inputPath(runDir, source.sha256, source.ext), what: 'kept input' };
-    case 'legacy-issues':
-      return { path: inputPath(runDir, source.sha256, ISSUES_INPUT), what: 'kept input' };
     case 'start':
       return { path: join(runDir, START_FILE), what: 'start.json' };
     case 'inv':

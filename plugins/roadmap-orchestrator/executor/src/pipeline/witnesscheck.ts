@@ -1,3 +1,5 @@
+import { inUnitSystems } from '../input/systems.ts';
+import { mapInForce } from './lanes.ts';
 // Witness presence before the gate (M4a rev 3, D1, R33, R51, R56; corpus arcs only, LR-h).
 //
 // After a green, certified spec series the lanes stage asks which witness test ids the unit must make pass at its salvage
@@ -29,7 +31,7 @@ import { type TestRef, testRefKey } from '../core/events.ts';
 import { durableMkdir, exclusivePublish } from '../core/fsx.ts';
 import type { LaneId, ResourceInstance, Sha } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type NeedsUserContent, effectiveScope, inScope } from '../core/records.ts';
+import { type NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, type RepoPath, absPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { isAncestor } from '../git/ff.ts';
@@ -169,7 +171,7 @@ export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvage
   if (obligations === null) return [];
   const keys = new Set(missing.map(testRefKey));
   const ids = new Set(required.flatMap((r) => (keys.has(testRefKey(r)) && r.source.type === 'obligation' ? [r.source.id] : [])));
-  const scope = effectiveScope(dispatchOf(ctx.journal.view, unit.id));
+  const map = mapInForce(ctx.journal.view);
   const present = (file: RepoPath): boolean => gitRun(ctx.repo, ['cat-file', '-e', `${salvaged}:${file}`], { okCodes: [0, 128] }).code === 0;
   return obligations.obligations.filter((o) => ids.has(o.id)).flatMap((o) => {
     const w = o.witness;
@@ -178,7 +180,7 @@ export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvage
     return w.files.flatMap((file): PlanDefect[] => {
       const misses = lane === undefined ? null : laneMisses(lane, file);
       if (misses !== null) return [{ type: 'witness-not-in-lane', obligation: o.id, lane: w.lane, file, missing: misses }];
-      if (!present(file) && !inScope(scope, file)) return [{ type: 'witness-file-unreachable', obligation: o.id, file, units: [unit.id] }];
+      if (!present(file) && (map === null || !inUnitSystems(map, unit.systems, file))) return [{ type: 'witness-file-unreachable', obligation: o.id, file, units: [unit.id] }];
       return [];
     });
   });

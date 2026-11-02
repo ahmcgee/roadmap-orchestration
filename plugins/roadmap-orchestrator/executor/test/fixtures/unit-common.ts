@@ -1,32 +1,35 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
+import { systemName } from '../../src/core/ids.ts';
+import { requirePlanInForce,revisionInForce } from '../../src/input/inforce.ts';
 // Shared by the gate, integrate and unit driver tests (and the unit-child fixture): an arc over a real git
 // repo made from test/fixtures/unit-repo, whose integration tip is green by default (`add` fixed at T) so
 // the plan's suite (`node --test`, every test file) passes there. Each unit's job is to add `mul` with its
 // test, which its own spec lane runs. Everything a child executor needs to rebuild the same StageContext
 // is in an `ArcDescriptor` (plain JSON), and `contextFor` builds it, in the test process or the child.
-import { cpSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join,relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { CommandContext } from '../../src/commands/apply.ts';
 import { sessionContainment } from '../../src/contain/session.ts';
 import type { StageOutcomeFact } from '../../src/core/events.ts';
-import type { CommandContext } from '../../src/commands/apply.ts';
-import { type UnitId, arcId, unitId } from '../../src/core/ids.ts';
-import type { CommandBody, RevisionManifest } from '../../src/core/records.ts';
-import { backendEnv } from '../../src/preflight/smoke.ts';
+import { type UnitId,arcId,unitId } from '../../src/core/ids.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal, readJournal } from '../../src/core/log.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { type OpenJournal,openJournal,readJournal } from '../../src/core/log.ts';
+import type { CommandBody,RevisionManifest } from '../../src/core/records.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { readInputFiles, revisionManifestOf } from '../../src/input/inforce.ts';
+import { inForceFiles,readInputFiles,revisionManifestOf } from '../../src/input/inforce.ts';
 import { type PlanUnit, parsePlan } from '../../src/input/plan.ts';
 import type { StageContext } from '../../src/pipeline/dispatch.ts';
 import { step } from '../../src/pipeline/unit.ts';
+import { backendEnv } from '../../src/preflight/smoke.ts';
 import { DOCS_NOT_YET } from '../../src/recover/revision.ts';
-import { type RepoConfig, arcStack, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
-import type { ArcRoleSet, RiskTier } from '../../src/routing/types.ts';
-import { makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type CallRecord, type ClaudeAct, type CodexAct, type Expect, type Step, writeScenario } from '../helpers/scenario.ts';
+import { type RepoConfig, planStack, resolveRouting } from '../../src/routing/layers.ts';
+import type { ArcRoleSet,RiskTier } from '../../src/routing/types.ts';
+import { makeRepo,revParse,tmpDir } from '../helpers/repo.ts';
+import { type CallRecord,type ClaudeAct,type CodexAct,type Expect,type Step,writeScenario } from '../helpers/scenario.ts';
 import { arcFor } from './invoke-specs.ts';
-import { BUILD_REPORT, type LaneJson, recordFirstPlan, serialRuntime, testProbes } from './stage-common.ts';
+import { BUILD_REPORT,type LaneJson,recordFirstPlan,serialRuntime,testProbes } from './stage-common.ts';
 
 const REPO_FILES = fileURLToPath(new URL('./unit-repo/', import.meta.url));
 const RULINGS = fileURLToPath(new URL('./unit-rulings.md', import.meta.url));
@@ -43,8 +46,8 @@ export const MUL_LANE: LaneJson = { id: 'mul', argv: ['node', '--test', 'test/mu
 /** The plan's suite: every test file of the repo (node's default patterns). */
 export const SUITE_LANE: LaneJson = { id: 'suite', argv: ['node', '--test'] };
 
-/** `scope`: the unit's (spec and plan) scope; default `UNIT_SCOPE`. */
-export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; scope?: readonly string[] }>;
+/** A unit and its declared systems (default: the first system in the fixture map). */
+export type UnitSpecJson = Readonly<{ id: string; risk?: RiskTier; lanes?: readonly LaneJson[]; after?: readonly string[]; systems?: readonly string[] }>;
 
 /** A unit's default scope. */
 export const UNIT_SCOPE: readonly string[] = ['src/**', 'test/**', 'contracts/**'];
@@ -80,7 +83,10 @@ export function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
-    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cost === undefined ? {} : { cost: l.cost }),
+    ...(l.placement === undefined ? {} : { placement: l.placement }),
+    ...(l.kind === undefined ? {} : { kind: l.kind }), ...(l.capture === undefined ? {} : { capture: l.capture }),
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
   };
@@ -92,16 +98,16 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   cpSync(REPO_FILES, repo, { recursive: true });
   writeFileSync(join(repo, '.gitignore'), 'out/\n');
   writeFileSync(join(repo, 'src', 'add.js'), opts.base === 'red' ? ADD_BROKEN : ADD_FIXED);
-  makeRepo(repo, { files: {} });
+  makeRepo(repo, { files: { '.roadmap/config.json': JSON.stringify({ systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] }, lib: { paths: ['lib/**'] }, mul: { paths: ['src/mul.js'] }, div: { paths: ['src/div.js'] }, documentation: { paths: ['docs/**'] } } } }) } });
 
   const planDir = tmpDir('unit-plan');
   const units = opts.units ?? [{ id: 'u1' }];
   for (const u of units) {
-    writeFileSync(join(planDir, `${u.id}.json`), JSON.stringify({
+    writeFileSync(join(planDir, `${u.id}.json`), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
       schema: 'roadmap/spec-m1', unit: u.id, rev: 1,
       lanes: (u.lanes ?? [MUL_LANE]).map((l) => ({ ...laneJson(l), state: 'active' })),
       acceptance: [{ id: 'A1', clause: 'mul(2, 3) is 6', failLoudIfUndelivered: true, state: 'active' }],
-      scope: u.scope ?? UNIT_SCOPE, resources: [], decisions: [], facts: [],
+       resources: [], decisions: [], facts: [],
       cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] },
     }));
   }
@@ -113,7 +119,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
     worktreeRoot: tmpDir('unit-wt'), contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md',
     direction: 'Keep it small.', suite: { lanes: (opts.suite ?? [SUITE_LANE]).map(laneJson) }, resources: [],
     units: units.map((u) => ({
-      id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', scope: u.scope ?? UNIT_SCOPE, resources: [], ...(u.after === undefined ? {} : { after: u.after }),
+      ...(opts.steps.some((s) => s.review && (s.unit === undefined || s.unit === u.id)) ? {review: 'always'} : {}), id: u.id, spec: `${u.id}.json`, risk: u.risk ?? 'med', systems: (u.systems ?? Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1)).map((s) => systemName(s)), resources: [], ...(u.after === undefined ? {} : { after: u.after }),
     })),
   }));
   const scenarioDir = tmpDir('unit-scenario');
@@ -121,7 +127,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   return {
     arc, repo, planPath, runDir: tmpDir('unit-run'), hostDir: join(tmpDir('unit-host'), 'roadmap'),
     binDir: scenario.binDir, scenarioPath: scenario.path, scenarioDir,
-    ...(opts.systemsMap === undefined ? {} : { config: parseRepoConfig({ systemsMap: opts.systemsMap }) }),
+    config: readRepoConfig(absPath(repo))!,
   };
 }
 
@@ -129,13 +135,14 @@ export type ArcRun = Readonly<{ ctx: StageContext; journal: OpenJournal; d: ArcD
 
 /** Opens the arc's journal and builds its StageContext (default profile), as the executor would. */
 export function contextFor(d: ArcDescriptor): ArcRun {
+  d = { ...d, config: { ...readRepoConfig(absPath(d.repo)), ...d.config, ...((d.config?.systemsMap ?? readRepoConfig(absPath(d.repo))?.systemsMap) === undefined ? {} : { systemsMap: (d.config?.systemsMap ?? readRepoConfig(absPath(d.repo))?.systemsMap)! }) } };
   const plan = parsePlan(JSON.parse(readFileSync(d.planPath, 'utf8')));
   const journal = openJournal(absPath(d.runDir), arcId(d.arc));
   // As a first start does: the files become the plan in force (rev 1), whose specs the stages load.
   if (journal.view.planApplied() === null) {
     recordFirstPlan(journal, absPath(d.runDir), absPath(d.planPath), absPath(d.repo), 'default', d.config ?? null, d.arcRoles ?? 'm4b');
   }
-  const routing = resolveRouting({ ...arcStack('default', d.config ?? null, null), arcRoles: d.arcRoles ?? 'm4b' });
+  const routing = resolveRouting(planStack('default', d.config ?? null, plan, d.arcRoles ?? 'm4b'));
   const resources = {
     journal, containment: sessionContainment, runDir: absPath(d.runDir), plan: () => plan, repo: absPath(d.repo),
     hostDir: openHostDir(absPath(d.hostDir)),
@@ -169,15 +176,22 @@ export function commandContextFor(r: ArcRun, stage: StageContext = r.ctx): Comma
   };
 }
 
-/** An `apply` of the plan and specs as the files hold them now (what `roadmap apply [--base]` submits). */
+/** An apply fixture based on the revision in force unless an exported base is supplied. */
 export function applyBody(d: ArcDescriptor, base: RevisionManifest | null = null): Extract<CommandBody, { type: 'apply' }> {
-  const manifest = revisionManifestOf(readInputFiles(absPath(d.planPath), absPath(d.repo)));
+  const files = readInputFiles(absPath(d.planPath), absPath(d.repo));
+  if (files.vision?.bytes != null && files.vision.path.startsWith(d.repo + '/')) {
+    const dest = join(dirname(d.planPath), 'repo', relative(d.repo, files.vision.path));
+    mkdirSync(dirname(dest), {recursive: true}); writeFileSync(dest, files.vision.bytes);
+  }
+  const manifest = revisionManifestOf(files);
   if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
-  return { type: 'apply', base, manifest, visionEdit: false };
+  const view = readJournal(absPath(d.runDir), arcId(d.arc)).view;
+  const force = requirePlanInForce(absPath(d.runDir), view);
+  return { type: 'apply', planFile: absPath(d.planPath), rev: force.rev, reason: 'Test revision reason', base: base ?? (() => { const m = revisionManifestOf(inForceFiles(absPath(d.runDir), view, force, revisionInForce(absPath(d.runDir), force), absPath(d.planPath), absPath(d.repo))); if ('missing' in m) throw new Error(m.missing.join('; ')); return m; })(), manifest };
 }
 
-/** An `apply` that declares a vision edit (`roadmap apply --vision-edit`): a changed vision file is otherwise `vision-leak`. */
-export const visionApplyBody = (d: ArcDescriptor): CommandBody => ({ ...applyBody(d), visionEdit: true });
+/** A revision that includes the edited vision. */
+export const visionApplyBody = (d: ArcDescriptor): CommandBody => applyBody(d);
 
 export const U1: UnitId = unitId('u1');
 export const unitWorktreePath = (r: ArcRun, unit: UnitId = U1): AbsPath => absPath(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unit));
@@ -195,12 +209,13 @@ const GATE: Expect = {
 };
 
 export type GateAnswer = Readonly<{
+  reasons?: readonly string[];
   decision: 'approve' | 'revise' | 'escalate';
   ordering?: Readonly<{ blockers: readonly string[] }> | null;
   directives?: readonly string[];
   findings?: readonly JsonValue[];
   premises?: readonly JsonValue[];
-  unreviewed?: readonly JsonValue[];
+  standing?: readonly JsonValue[];
   clusters?: readonly JsonValue[] | null;
   /** dev.17: the rulings on the disputes the gate was given; default none. */
   rulings?: readonly JsonValue[];
@@ -221,12 +236,13 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
  */
 const dev17Finding = (f: JsonValue): JsonValue => {
   const o = f as Readonly<Record<string, JsonValue>>;
-  return { defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
+  return { evidence: [typeof o['path'] === 'string' ? `${o['path']}:1` : 'fixture:1'], defect: o['severity'] === 'blocking' ? 'incorrect-behaviour' : null, reraises: null, hunk: null, ...o };
 };
 
 const gateAnswer = (a: GateAnswer): JsonValue => ({
-  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: ['A1 holds'], premises: [...(a.premises ?? [])],
-  unreviewed: [...(a.unreviewed ?? [])], clusters: a.clusters ?? null, rulings: [...(a.rulings ?? [])],
+  rulings: [...(a.rulings ?? [])],
+  decision: a.decision, ordering: a.ordering ?? null, findings: (a.findings ?? []).map(dev17Finding), directives: [...(a.directives ?? [])], reasons: [...(a.reasons ?? ['A1 holds'])], premises: [...(a.premises ?? [])],
+  standing: [...(a.standing ?? [])], clusters: a.clusters ?? null,
 }) as JsonValue;
 
 /**
@@ -246,12 +262,12 @@ export function gateRepairStep(a: GateAnswer, stdinContains: readonly string[] =
 
 /** A gate call: a Claude judgment whose schema is the gate's (the one with directives), whatever its prompt module. */
 export function isGateCall(c: CallRecord): boolean {
-  return c.as === 'claude' && (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"directives"');
+  return c.as === 'claude' && c.cwd.includes('.gate-') && (c.argv[c.argv.indexOf('--json-schema') + 1] ?? '').includes('"directives"');
 }
 
-/** dev.17: a plan-check call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
+/** dev.17: a pre-build call, an acting judge since the design pass: its `--tools` carry web search (src/backends/argv.ts `PLAN_CHECK_TOOLS`). */
 export function isPlanCheckCall(c: CallRecord): boolean {
-  return c.as === 'claude' && (c.argv[c.argv.indexOf('--tools') + 1] ?? '').includes('WebSearch');
+  return c.as === 'claude' && c.stdin.includes('<mode>pre-build</mode>');
 }
 
 /** A Codex implementer round: `acts`, then the report. */
@@ -266,6 +282,11 @@ export function mulBuild(extra: Readonly<Record<string, string>> = {}, acts: rea
 
 /** Appends steps to the arc's scenario before any call: for steps that name the run dir, known only once laid out. */
 export function appendSteps(d: ArcDescriptor, steps: readonly Step[]): void {
+  if (steps.some((s) => s.review)) {
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as {units: {id: string; review?: string}[]};
+    for (const unit of plan.units) if (steps.some((s) => s.review && (s.unit === undefined || s.unit === unit.id))) unit.review = 'always';
+    writeFileSync(d.planPath, JSON.stringify(plan));
+  }
   const file = JSON.parse(readFileSync(d.scenarioPath, 'utf8')) as { steps: Step[] };
   file.steps.push(...steps);
   writeFileSync(d.scenarioPath, `${JSON.stringify(file, null, 2)}\n`);
@@ -297,5 +318,23 @@ export async function stepUntil(r: ArcRun, id: string, until: (f: StageOutcomeFa
  * (`readJournal`), because executor tests poll this while the executor is appending.
  */
 export function outcomes(d: ArcDescriptor, unit = 'u1'): readonly string[] {
-  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+  return readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit ? [`${e.fact.stage}:${e.fact.outcome}`] : []));
+}
+
+/** Refresh the fixture's editable files from the plan in force, as a new export does. */
+export function syncInputs(r: Readonly<{
+  ctx: Pick<StageContext, 'runDir'>;
+  journal: Pick<StageContext['journal'], 'view'>;
+  d: ArcDescriptor;
+}>): RevisionManifest {
+  const force = requirePlanInForce(r.ctx.runDir, r.journal.view);
+  const rev = revisionInForce(r.ctx.runDir, force);
+  const f = inForceFiles(r.ctx.runDir, r.journal.view, force, rev, absPath(r.d.planPath), absPath(r.d.repo));
+  writeFileSync(r.d.planPath, f.planBytes);
+  for (const file of [...f.specs.values(), f.ledger, f.obligations, f.vision]) if (file?.bytes != null) {
+    mkdirSync(dirname(file.path), {recursive: true}); writeFileSync(file.path, file.bytes);
+  }
+  const manifest = revisionManifestOf(f);
+  if ('missing' in manifest) throw new Error(manifest.missing.join('; '));
+  return manifest;
 }

@@ -1,3 +1,4 @@
+import { protectedPathsInForce } from '../input/protected.ts';
 // The first recovery pass (plan "Recovery on `roadmap start`"): every intent a dead executor left open is
 // closed by its kind's reconciler before anything is dispatched. Order:
 //
@@ -6,6 +7,7 @@
 //   git         worktree.*, evidence.snapshot, salvage.commit, mergein.prepare, candidate.merge, docs.commit, mutant.apply,
 //               integration.ff, snapshot.publish: the reconciler reads the postcondition and returns a
 //               disposition this module applies (done, redo through the op's own act and verify, abort).
+//   notices     revision-owned needsuser.raise: settled before the parent can replay its notice.
 //   revisions   revision.commit (M3, G1): after the git ops, so its docs `ff` is closed; before the command ops, so
 //               an apply's re-run finds its revision in force or re-evaluates (src/recover/revision.ts). An abort
 //               raises nothing: its source re-evaluates.
@@ -33,7 +35,7 @@ import type { IntentOf, IntentRecord, OpKind, OpOutcome, Parent } from '../core/
 import { type InvocationId, type OpId, invocationId } from '../core/ids.ts';
 import type { Disposition, DispositionKind, Journal, JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type LogSnapshot, openJournal, readJournal } from '../core/log.ts';
-import { type HostLockClaim, type NeedsUserContent, effectiveScope } from '../core/records.ts';
+import { type HostLockClaim, type NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { refTarget } from '../git/git.ts';
 import type { SalvageRules } from '../git/salvage.ts';
@@ -94,11 +96,11 @@ function unitOf(ctx: StageContext, intent: IntentRecord): PlanUnit {
   return unit;
 }
 
-/** The salvage rules, rebuilt exactly as the salvage stage binds them: the effective scope, the spec's evidence globs. */
+/** The salvage rules, rebuilt exactly as the salvage stage binds them: repository protection and the spec's evidence globs. */
 function salvageRules(ctx: StageContext, unit: PlanUnit): SalvageRules {
   const { spec } = loadUnitSpec(ctx, unit);
   return {
-    scope: effectiveScope(dispatchOf(ctx.journal.view, unit.id)),
+    protectedPaths: protectedPathsInForce(ctx.runDir, ctx.journal.view),
     excluded: [...new Set(spec.lanes.flatMap((l) => l.evidenceGlobs))].sort(),
     rejectedRoot: absPath(join(ctx.runDir, 'rejected', unit.id)),
   };
@@ -322,6 +324,14 @@ async function pass(ctx: RecoveryContext): Promise<readonly Recovered[]> {
   for (const intent of openOf(s.journal, ['proc.spawn'])) await track(intent, async () => (await spawn(intent as IntentOf<'proc.spawn'>, s.journal.view)).kind);
 
   for (const kind of GIT_KINDS) for (const intent of openOf(s.journal, [kind])) await track(intent, () => step(ctx, intent));
+
+  // Automatic revision notices are child operations of the still-open commit. Settle the child
+  // first so appendRevision observes the original completed notice instead of raising it again.
+  for (const notice of openOf(s.journal, ['needsuser.raise'])) {
+    if (notice.parent.type === 'op' && s.journal.view.latestIntent(notice.parent.op).kind === 'revision.commit') {
+      await track(notice, () => step(ctx, notice));
+    }
+  }
 
   const revision = revisionReconciler(s.runDir, s.journal);
   for (const intent of openOf(s.journal, ['revision.commit'])) {

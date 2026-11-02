@@ -5,41 +5,41 @@
 // gc.keeps-records, gc.refuses-live, gc.dry-run, gc.host-files, gc.sealed-after-head-advanced,
 // gc.refuses-later-work, gc.verifies-before-delete, gc.generation-cited-kept, gc.crash-resumable.
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { type ChildProcess,spawn } from 'node:child_process';
+import { cpSync,existsSync,mkdirSync,readFileSync,readdirSync,statSync,writeFileSync } from 'node:fs';
+import { dirname,join,relative } from 'node:path';
 import { test } from 'node:test';
-import { identityOf, readBootId } from '../src/contain/proc.ts';
-import { DEFAULT_KEEP, GC_DELETING, type GcOutcome, type GcReport, gc, sealingOf } from '../src/commands/gc.ts';
+import { DEFAULT_KEEP,GC_DELETING,type GcOutcome,type GcReport,gc,sealingOf } from '../src/commands/gc.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { type ArcId, type NeedsUserId, type Sha, arcId, commandId, invocationId, opId, poolInstance, resourceName, sha, supervisorNeedsUserId, unitId } from '../src/core/ids.ts';
+import { identityOf,readBootId } from '../src/contain/proc.ts';
+import { type ArcId,type NeedsUserId,type Sha,arcId,commandId,invocationId,opId,poolInstance,resourceName,sha,supervisorNeedsUserId,unitId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { openJournal, readJournal } from '../src/core/log.ts';
+import { openJournal,readJournal } from '../src/core/log.ts';
 import type { ProcIdentity } from '../src/core/records.ts';
-import { type AbsPath, absPath, repoPattern } from '../src/core/values.ts';
+import { type AbsPath,absPath,repoPattern } from '../src/core/values.ts';
 import { writeFileNeedsUser } from '../src/executor.ts';
+import { gitCommonDir,git as gitRaw,lsTree } from '../src/git/git.ts';
+import { snapshotRef,snapshotRequestOf } from '../src/git/snapshot.ts';
 import { compactResidues } from '../src/host/compact.ts';
-import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
+import { HOST_LOCK,hostPath,openHostDir } from '../src/host/hostdir.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
+import { claimHost,readClaim,releaseHost } from '../src/host/lock.ts';
 import { publishOwner } from '../src/host/owner.ts';
-import { RESIDUE_ARCHIVE, recordDisposition, recordResidue } from '../src/host/residues.ts';
+import { RESIDUE_ARCHIVE,recordDisposition,recordResidue } from '../src/host/residues.ts';
 import { runDir as runDirOf } from '../src/input/cli.ts';
-import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
-import { git as gitRaw, gitCommonDir, lsTree } from '../src/git/git.ts';
-import { snapshotRef, snapshotRequestOf } from '../src/git/snapshot.ts';
+import { readInputFiles,recordPlan } from '../src/input/inforce.ts';
 import { raiseNeedsUser } from '../src/needsuser.ts';
 import { executorIdentity } from '../src/pipeline/stages.ts';
-import { evidenceSnapshotOp, snapshotPublishOp } from '../src/recover/ops.ts';
+import { evidenceSnapshotOp,snapshotPublishOp } from '../src/recover/ops.ts';
 import { status } from '../src/status.ts';
 import { runOp } from './fixtures/git-common.ts';
 import { claimRecord } from './fixtures/host-records.ts';
 import { BASE } from './fixtures/route-common.ts';
 import { setupArc } from './fixtures/unit-common.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { GC, crashCells } from './matrix.ts';
-import { git, revParse, tmpDir } from './helpers/repo.ts';
+import { git,revParse,tmpDir } from './helpers/repo.ts';
+import { GC,crashCells } from './matrix.ts';
 
 const T = { timeout: 60_000 };
 const CLI_TIMEOUT_MS = 30_000;
@@ -112,7 +112,7 @@ async function seal(a: Arc, opts: SealOptions = {}): Promise<Sha> {
     writeFileSync(join(a.runDir, 'work', 'u1', '1-build', 'decisions.json'), '{"decisions":[]}\n');
     if (opts.cite !== undefined) {
       raiseNeedsUser(j, a.runDir, {
-        blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary: 'an audit is owed', recommendation: 'run the audit', options: [], evidence: opts.cite,
+        blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary: 'an audit is owed', recommendation: 'run the audit', options: [], evidence: opts.cite,
       }, { type: 'arc' });
     }
     const head = sha(revParse(a.repo, 'main'));
@@ -159,7 +159,7 @@ function generations(dir: AbsPath, n: number): void {
     writeFileSync(hostPath(dir, `supervisor.ready.${g}`), '');
     writeFileSync(hostPath(dir, `executor.${g}.out`), '');
     writeFileSync(hostPath(dir, `executor.${g}.err`), `generation ${g}\n`);
-    writeFileSync(hostPath(dir, `executor.${g}.exit.json`), JSON.stringify({ v: 1, generation: g, at: '2026-10-29T00:00:00.000Z', child: { type: 'exited', code: 0 }, stages: { kind: 'known', last: null, open: [] } }));
+    writeFileSync(hostPath(dir, `executor.${g}.exit.json`), JSON.stringify({ v: 2, generation: g, at: '2026-10-29T00:00:00.000Z', child: { type: 'exited', code: 0 }, stages: { kind: 'known', last: null, open: [] } }));
   }
   writeFileSync(hostPath(dir, 'host.generation'), `${n}\n`);
 }

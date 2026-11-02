@@ -19,23 +19,23 @@
 // adopts a pinned runner by waiting for it); the publication pin when A's gate approves. The residue park is
 // resumed (`resume u2`: probe now) once A has merged. Every pin is one-shot, so a stage a crash cut short runs
 // again without parking.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { submitCommand } from '../../src/commands/queue.ts';
-import { arcId, edgeId, unitId } from '../../src/core/ids.ts';
+import { arcId,edgeId,unitId } from '../../src/core/ids.ts';
 import type { CommandBody } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
+import { release } from '../helpers/barrier.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
-import type { CodexAct, Step } from '../helpers/scenario.ts';
-import { release } from '../helpers/barrier.ts';
-import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
-import { type Hook, type Laid, STRAIGHT } from './pm-common.ts';
+import type { CodexAct,Step } from '../helpers/scenario.ts';
+import { type ExecRun,SMOKE_DEFAULT,journalOf,setupExec } from './exec-common.ts';
+import { type Hook,type Laid,STRAIGHT } from './pm-common.ts';
 import type { LaneJson } from './stage-common.ts';
 import { planCheckStep } from './stage-common.ts';
 import { startedGenerations } from './sup-common.ts';
-import { type UnitSpecJson, MUL_LANE, appendSteps, codexStep, gateStep } from './unit-common.ts';
+import { type UnitSpecJson,MUL_LANE,appendSteps,codexStep,gateStep,laneJson } from './unit-common.ts';
 
 export const A = 'u1';
 export const B = 'u2';
@@ -79,9 +79,6 @@ function editPlan(r: ExecRun, edit: (plan: PlanJson) => void): void {
 }
 
 const command = (argv: readonly string[]) => ({ argv, cwd: '.', env: { set: {}, pass: ['PATH'] } });
-const lane = (l: LaneJson): Json => ({
-  id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: l.tier ?? 'fast', resources: l.resources ?? [], evidenceGlobs: [],
-});
 
 // ---------------------------------------------------------------------------------------------------
 // Reading the run
@@ -92,7 +89,7 @@ export const merged = (r: ExecRun, unit: string): boolean => existsSync(join(r.r
 export const restarted = (r: ExecRun): boolean => existsSync(join(r.runDir, 'events.jsonl')) && startedGenerations(r).length >= 2;
 /** Whether `unit`'s gate has approved: its next stage is the candidate (or later). */
 export const approved = (r: ExecRun, unit: string): boolean =>
-  existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.unit === unit && e.fact.stage === 'gate' && e.fact.outcome === 'approve');
+  existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.unit === unit && e.fact.stage === 'gate' && e.fact.outcome === 'approve');
 /** B is parked on estate#1 and the first probe of it failed: the next is a minute away. */
 export const residueParked = (r: ExecRun): boolean =>
   existsSync(join(r.runDir, 'events.jsonl')) && journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'probe' && e.fact.target.type === 'resource' && e.fact.result === 'fail');
@@ -119,8 +116,8 @@ export type Concurrent = Readonly<{ peer: Peer; laid: Laid; stateDir: string }>;
 export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
   const barriers = tmpDir('cm-barriers');
   const units: UnitSpecJson[] = [
-    { id: A, lanes: peer === 'lane' ? [MUL_LANE, { id: 'estate-a', tier: 'estate', resources: ['estate'], argv: ['ESTATE_A'] }] : [MUL_LANE] },
-    { id: B, lanes: peer === 'lane' ? [TWO_LANE, { id: 'estate-b', tier: 'estate', resources: ['estate'], argv: ['ESTATE_B'] }] : [TWO_LANE] },
+    { id: A, lanes: peer === 'lane' ? [MUL_LANE, { id: 'estate-a', cadence: 'unit', resources: ['estate'], argv: ['ESTATE_A'] }] : [MUL_LANE] },
+    { id: B, lanes: peer === 'lane' ? [TWO_LANE, { id: 'estate-b', cadence: 'unit', resources: ['estate'], argv: ['ESTATE_B'] }] : [TWO_LANE] },
     ...(peer === 'publication' ? [{ id: C, lanes: [THREE_LANE] }] : []),
   ];
   const r = setupExec(t, { steps: [], units });
@@ -134,7 +131,7 @@ export function layoutConcurrent(t: Owner, peer: Peer): Concurrent {
       ...(peer === 'teardown' ? [{ name: 'slow', probe: command([process.execPath, fixture('res-tool.ts'), 'probe', stateDir, 'slow']), teardown: command([process.execPath, CM_PIN, barriers, PIN]) }] : []),
     ];
     // Estate: only a candidate runs it (C's, holding the slot), never a unit's lanes stage.
-    if (peer === 'publication') plan.suite.lanes.push(lane({ id: 'c-pin', tier: 'estate', argv: [process.execPath, CM_PIN, barriers, C_PIN] }));
+    if (peer === 'publication') plan.suite.lanes.push(laneJson({ id: 'c-pin', cadence: 'candidate', argv: [process.execPath, CM_PIN, barriers, C_PIN] }));
     for (const u of plan.units) {
       if (u.id === A) {
         u['resources'] = ['db'];

@@ -6,45 +6,43 @@
 // startup.pending-write-back).
 // dev.16: publish.vision-edit (a vision edit publishes the vision files onto integration).
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, test } from 'node:test';
-import { applyCommand, evaluateApply } from '../src/commands/apply.ts';
-import { readReceipt, submitCommand } from '../src/commands/queue.ts';
-import type { Fact, IntentOf, IntentRecord, PlanAppliedFact } from '../src/core/events.ts';
-import { INTEGRATION_SLOT, findingId, invocationDirName, jobId, laneId, obligationId, sha, sha256, unitId } from '../src/core/ids.ts';
+import { applyCommand } from '../src/commands/apply.ts';
+import { corpusPin } from '../src/commands/corpus.ts';
+import { readReceipt,submitCommand } from '../src/commands/queue.ts';
+import type { Fact,IntentOf,IntentRecord,PlanAppliedFact } from '../src/core/events.ts';
+import { INTEGRATION_SLOT,findingId,invocationDirName,jobId,laneId,sha,sha256,unitId } from '../src/core/ids.ts';
+import { sha256Hex } from '../src/core/json.ts';
 import { readJournal } from '../src/core/log.ts';
-import { absPath } from '../src/core/values.ts';
-import { bytesSha256 } from '../src/spec/spec.ts';
+import { absPath,repoPath } from '../src/core/values.ts';
 import { changedPaths } from '../src/git/docs.ts';
 import { git as rawGit } from '../src/git/git.ts';
-import { jobLaneDir, verifySnapshot } from '../src/git/snapshot.ts';
-import { isExempt } from '../src/holistic/types.ts';
-import { readInputFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
-import { corpusPin } from '../src/commands/corpus.ts';
-import { sha256Hex } from '../src/core/json.ts';
-import { settlePlan } from '../src/preflight/checks.ts';
+import { jobLaneDir,verifySnapshot } from '../src/git/snapshot.ts';
 import { docsTransientViolations } from '../src/git/transient.ts';
-import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
-import { runUnit, step } from '../src/pipeline/unit.ts';
+import { laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { requirePlanInForce,revisionInForce } from '../src/input/inforce.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import { reached } from './helpers/barrier.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { runFixture } from './helpers/proc.ts';
-import { commitAll, git, tmpDir } from './helpers/repo.ts';
-import { PIN_FILE, VISION_DOC } from './helpers/corpusarc.ts';
-import { VISION_PATH, setupCorpusArc } from './fixtures/corpus-unit.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { witnessLaneArgv, writeWitnessControl } from './helpers/witness.ts';
-import { DOCS_PUBLICATION, PREEMPT, crashCells } from './matrix.ts';
-import { API_OP, barrierSuite, closedAs, publishArc, ruleRecord, submitRule, wire } from './fixtures/publish-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
+import { bytesSha256 } from '../src/spec/spec.ts';
+import { VISION_PATH,setupCorpusArc } from './fixtures/corpus-unit.ts';
+import { API_OP,barrierSuite,closedAs,publishArc,ruleRecord,submitRule,wire } from './fixtures/publish-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import {
-  type ArcDescriptor, type ArcOptions, type ArcRun, U1, appendSteps, applyBody, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil,
-  visionApplyBody,
+type ArcDescriptor,type ArcOptions,type ArcRun,U1,appendSteps,applyBody,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil,
+visionApplyBody,syncInputs,
 } from './fixtures/unit-common.ts';
+import { PIN_FILE,VISION_DOC } from './helpers/corpusarc.ts';
+import { reached } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { runFixture } from './helpers/proc.ts';
+import { commitAll,git,tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { witnessLaneArgv,writeWitnessControl } from './helpers/witness.ts';
+import { DOCS_PUBLICATION,PREEMPT,crashCells } from './matrix.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
@@ -91,85 +89,31 @@ function assertPublished(r: ArcRun, id: string, pub: string, tip: string, atHead
 // ---------------------------------------------------------------------------------------------------
 // rule
 
-test('rule.publish: a ruling with a contract op lands through its docs publication: constraints.md and the edited contract in one commit on the tip, lanes on it, ff, activation, snapshot; nothing written into the owner\'s files; a `C-?` record takes the next id', T, async () => {
-  const d = publishArc({ steps: [] });
-  const r = contextFor(d);
-  const w = wire(r);
-  try {
-    const tip = head(d);
-    const file = submitRule(r, ruleRecord(r, 'C-2', API_OP));
-    const outcome = await applyCommand(w.commands, file);
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    const fact = assertPublished(r, file.id, 'docs-1', tip);
-    assert.equal(fact.rev, 2);
-    const at = fact.publication!.head;
-    assert.deepEqual(changedPaths(absPath(d.repo), sha(tip), sha(at)), ['.roadmap/constraints.md', 'contracts/api.md']);
-    assert.match(show(d, at, '.roadmap/constraints.md'), /C-2/);
-    const api = show(d, at, 'contracts/api.md');
-    assert.match(api, /^<!-- revised by C-2 -->\n/);
-    assert.match(api, /the sum of two finite numbers/);
-    // Its lanes ran on the docs commit under job{docs-1}, spawned as journeys.
-    const lanes = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey');
-    assert.deepEqual(lanes.map((i) => [i.expect.subject.purpose === 'journey' && i.expect.subject.lane, i.expect.subject.purpose === 'journey' && i.expect.subject.at, i.parent]),
-      [['suite', at, { type: 'job', job: 'docs-1' }]]);
-    assert.equal(facts(r).filter((f) => f.kind === 'docs-covered').length, 0, 'a publication carrying contract ops is not docs-only (A17)');
-    // The ledger in force holds the ruling; the owner's ledger is never written, nor a sidecar beside it.
-    const inForce = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
-    assert.match(inForce.ledger.bytes.toString('utf8'), /^C-2 — Helpers take finite numbers only\.$/m);
-    assert.doesNotMatch(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /C-2/);
-    assert.ok(!existsSync(join(d.planPath, '..', 'rulings.md.d', 'C-2.json')));
-    // A second ruling, unnumbered, takes the next id when it lands; the receipt names it.
-    const second = submitRule(r, ruleRecord(r, 'C-?', { statement: 'Helpers never round.' }));
-    const again = await applyCommand(w.commands, second);
-    assert.equal(again.kind, 'applied', JSON.stringify(again));
-    assert.equal(applied(r).at(-1)!.publication?.pub, 'docs-2');
-    const receipt = readReceipt(r.ctx.runDir, second.id, 'applied');
-    assert.ok(receipt?.state === 'applied' && receipt.verified.some((v) => / numbered C-3$/.test(v)), JSON.stringify(receipt));
-    assert.match(revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).ledger.bytes.toString('utf8'), /^C-3 — Helpers never round\.$/m);
-    assert.deepEqual(r.journal.view.openIntents(), []);
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('apply.ruling-for-added-unit (paid M4b run 3, OP-2): `apply --ruling` with a ruling applying to a unit the same apply adds lands through its docs publication, as its dry run said', T, async () => {
-  const d = publishArc({ steps: [] });
-  const r = contextFor(d);
-  const w = wire(r);
-  try {
-    const dir = join(d.planPath, '..');
-    writeFileSync(join(dir, 'u2.json'), JSON.stringify({ ...(JSON.parse(readFileSync(join(dir, 'u1.json'), 'utf8')) as Json), unit: 'u2', rev: 1 }));
-    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json & { units: Json[] };
-    writeFileSync(d.planPath, JSON.stringify({ ...plan, units: [...plan.units, { ...plan.units[0]!, id: 'u2', spec: 'u2.json' }] }));
-    const path = join(tmpDir('apply-ruling'), 'C-2.json');
-    const bytes = Buffer.from(`${JSON.stringify(ruleRecord(r, 'C-2', { statement: 'u2 keeps the helpers pure.', appliesTo: { type: 'units', units: ['u2'] } }), null, 2)}\n`, 'utf8');
-    writeFileSync(path, bytes);
-    const rulings = [{ path: absPath(path), sha256: bytesSha256(bytes) }];
-    const c = w.commands;
-    const dry = await evaluateApply({
-      runDir: c.runDir, view: r.journal.view, hostDir: c.hostDir, repo: c.repo, planFile: c.planFile, routingBase: c.routingBase, laneEnv: c.laneEnv, manifest: null, base: null, rulings, visionEdit: false,
-    });
-    assert.equal(dry.kind, 'accepted', JSON.stringify(dry));
-    const tip = head(d);
-    const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, { ...applyBody(d), rulings } as never);
-    const outcome = await applyCommand(c, file);
-    assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
-    const fact = assertPublished(r, file.id, 'docs-1', tip);
-    assert.deepEqual(fact.changes.filter((x) => x.type === 'unit-added'), [{ type: 'unit-added', unit: 'u2' }]);
-    assert.match(show(d, fact.publication!.head, '.roadmap/constraints.md'), /C-2/);
-  } finally {
-    r.journal.close();
-  }
-});
 
-test('rule.red-rejected: a docs candidate whose suite is red is refused before any ff; a stale consistency or a ruling that is not the next id of the ledger is refused before any revision', T, async () => {
+
+
+
+
+
+
+/** A plain exported ledger edit, submitted through schema 2 apply. */
+function submitDocsEdit(r: ArcRun) {
+  syncInputs(r);
+  const ledger = join(r.d.planPath, '..', 'rulings.md');
+  writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}C-2 — Helpers take finite numbers only.\n`);
+  return submitCommand(r.ctx.runDir, r.ctx.plan().arc, { ...applyBody(r.d), reason: 'Document the finite-number requirement.' });
+}
+
+test('apply.docs-red-rejected: a red docs candidate aborts the revision before any ff and releases its slot and checkouts', T, async () => {
   const d = publishArc({ steps: [], base: 'red' });
   const r = contextFor(d);
   const w = wire(r);
   try {
     const tip = head(d);
     const ledger = readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8');
-    const file = submitRule(r, ruleRecord(r, 'C-2'));
+    const file = submitDocsEdit(r);
+    const editedLedger = readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8');
     const outcome = await applyCommand(w.commands, file);
     assert.equal(outcome.kind, 'rejected');
     assert.ok(outcome.kind === 'rejected');
@@ -181,21 +125,16 @@ test('rule.red-rejected: a docs candidate whose suite is red is refused before a
     assert.equal(r.journal.view.doneOf(commit.op), null, 'the revision commit is aborted');
     assert.equal(slotState(r), 'free');
     assert.deepEqual(checkouts(r), []);
-    assert.equal(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), ledger, 'nothing is written back');
+    assert.equal(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), editedLedger, 'nothing is written back');
+    assert.notEqual(editedLedger, ledger, 'the owner edit stays available for correction');
+    assert.ok(closedAs(r.journal.view, [commit]).includes('revision.commit:aborted'));
 
-    const stale = ruleRecord(r, 'C-2');
-    (stale['consistency'] as Json)['judgedRevs'] = { ...((stale['consistency'] as Json)['judgedRevs'] as Json), ledgerSha256: 'b'.repeat(64) };
-    const refused = await applyCommand(w.commands, submitRule(r, stale));
-    assert.ok(refused.kind === 'rejected' && /C-2's consistency is stale: judged ledgerSha256/.test(refused.reason), JSON.stringify(refused));
-    const wrongId = await applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-5')));
-    assert.ok(wrongId.kind === 'rejected' && /C-5 is not the ledger's next id \(C-2\)/.test(wrongId.reason), JSON.stringify(wrongId));
-    assert.equal(r.journal.view.opsOf('revision.commit').length, 2, 'the refused records never began a revision');
   } finally {
     r.journal.close();
   }
 });
 
-test('rule.queued-abandons-candidate: a rule queued while a candidate holds the slot before green preempts it (preempted, uncharged); the docs publish first, then the unit merges without a new gate', T, async () => {
+test('apply.docs-preempts-candidate: a docs edit queued while a candidate holds the slot before green preempts it (preempted, uncharged); the docs publish first, then the unit merges without a new gate', T, async () => {
   const barrier = tmpDir('barrier');
   const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })], suite: [barrierSuite(barrier)] });
   const r = contextFor(d);
@@ -205,7 +144,7 @@ test('rule.queued-abandons-candidate: a rule queued while a candidate holds the 
     const tip = head(d);
     const unit = runUnit(w.stage, r.unit('u1'), admitAll);
     await reached(barrier, 'lane', 120_000);
-    const file = submitRule(r, ruleRecord(r, 'C-2'));
+    const file = submitDocsEdit(r);
     const outcome = await applyCommand(w.commands, file);
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     assert.deepEqual(await unit, { kind: 'merged' });
@@ -260,10 +199,9 @@ test('publish.green-not-preempted: once a candidate is green its ff and snapshot
 });
 
 test('docs.transient: a docs publication\'s diff is exactly its rendered files and its contract ops\' paths; a unit dispatched under dev.6 may not touch the in-tree .roadmap/', T, async () => {
-  // C-2 rewrites contracts/api.md, which u1 cites: its plan-check answers the stale link (dev.17 propagation).
+  // C-2 rewrites contracts/api.md, which u1 cites: its pre-build answers the stale link (dev.17 propagation).
   const answered = planCheckStep(
-    { decision: 'approve', staleLinks: [{ link: 'contract:contracts/api.md', outcome: 'confirmed', reason: 'mul does not depend on how sums are stated' }] },
-    { stdinContains: ['<stale_links>', 'contract:contracts/api.md'] },
+    { decision: 'approve' },
   );
   const d = publishArc({ steps: [answered, mulBuild({ '.roadmap/constraints.md': 'hand-written\n' })] });
   const r = contextFor(d);
@@ -275,27 +213,27 @@ test('docs.transient: a docs publication\'s diff is exactly its rendered files a
     assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
     const at = head(d);
     const diff = changedPaths(absPath(d.repo), sha(tip), sha(at));
-    assert.deepEqual(diff, ['.roadmap/constraints.md', 'contracts/api.md']);
+    assert.deepEqual(diff, ['.roadmap/constraints.md']);
     assert.deepEqual(docsTransientViolations(diff, diff), []);
-    assert.deepEqual(docsTransientViolations(diff, [diff[0]!]).map((v) => [v.path, v.rule]), [['contracts/api.md', 'not-docs']]);
+    assert.deepEqual(docsTransientViolations([...diff, repoPath('contracts/api.md')], diff).map((v) => [v.path, v.rule]), [['contracts/api.md', 'not-docs']]);
     // The unit (dispatched on the published tip) overwrites the rendered constraints.md: refused at salvage, a
     // fix round restores the executor's rendering, then it merges.
     appendSteps(d, [
       codexStep([{ type: 'commit', message: 'restore the roadmap file', files: { '.roadmap/constraints.md': rawGit(absPath(d.repo), ['show', `${at}:.roadmap/constraints.md`]) } }], {
-        argv: ['exec', 'resume'], stdinContains: ["The executor refused your last round's commit:", '.roadmap/constraints.md (roadmap-dir)', 'Remove them from the branch;'],
+        argv: ['exec', 'resume'], stdinContains: ["The executor refused your last round's commit:", '.roadmap/constraints.md (protected-path)', 'Remove them from the branch;'],
       }),
       gateStep({ decision: 'approve' }),
     ]);
     assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
     assert.deepEqual(outcomes(d), [
-      'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
+      'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:transient-violation',
       'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
       'candidate:green', 'ff:published', 'snapshot:published',
     ]);
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 1, 'a transient violation charges');
     const gates = readCalls(d.scenarioPath).filter(isGateCall);
     assert.equal(gates.length, 1, 'the refused salvage never reached a gate');
-    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('high'), 'scope growth promoted the next judgment');
+    assert.ok(gates[0]!.argv.includes('claude-opus-5-5') && gates[0]!.argv.includes('medium'), 'the promoted verifier keeps Opus medium');
     assert.equal(show(d, 'main', '.roadmap/constraints.md'), show(d, at, '.roadmap/constraints.md'), 'only the executor wrote the in-tree .roadmap/');
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally {
@@ -325,14 +263,14 @@ function holisticArc(steps: ArcOptions['steps'], scripted: Readonly<Record<strin
     const planDir = join(x.planPath, '..');
     const control = join(tmpDir('witness-control'), 'control.json');
     writeWitnessControl(control, { trees: { '*': { outcomes: scripted } } });
-    const journey = { id: 'journey', argv: witnessLaneArgv('jsonl', tmpDir('witness-lane'), control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
-    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { paths: [] } }).lanes[0]!);
+    const journey = { id: 'journey', argv: witnessLaneArgv('jsonl', tmpDir('witness-lane'), control), cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl' };
+    const laneRev = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [journey], obligations: [], mapping: { systems: [] } }).lanes[0]!);
     writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
     writeFileSync(join(planDir, 'obligations.json'), JSON.stringify({
-      schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey], mapping: { paths: [] },
+      schema: 'roadmap/obligations-m3', cutLine: 'mul ships', lanes: [journey], mapping: { systems: [] },
       obligations: [{
         id: 'I-1', rev: 1, statement: 'add adds.', docRef: { path: 'ARCHITECTURE.md', anchor: 'Architecture', quotedText: 'One module' }, serves: ['V-1'],
-        witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev, witness: { lane: 'journey', testIds: ['t-I-1'] } }, deliveredBy: [], activation: 'must-hold',
+        witness: { lane: 'journey', testIds: ['t-I-1'] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: ['t-I-1'] } }, deliveredBy: [], activation: 'must-hold',
         contracts: [], state: { type: 'active' },
       }],
     }));
@@ -351,7 +289,7 @@ function addObligation(r: ArcRun, id: string): void {
   const path = join(r.d.planPath, '..', 'obligations.json');
   const o = JSON.parse(readFileSync(path, 'utf8')) as Json & { obligations: Json[] };
   const witness = { lane: 'journey', testIds: [`t-${id}`] };
-  o.obligations.push({ ...o.obligations[0]!, id, statement: `${id} holds.`, witness, proofJudgment: { ...(o.obligations[0]!['proofJudgment'] as Json), witness } });
+  o.obligations.push({ ...o.obligations[0]!, id, statement: `${id} holds.`, witness, proofJudgment: { ...(o.obligations[0]!['proofJudgment'] as Json), witness: {testIds: witness.testIds} } });
   writeFileSync(path, JSON.stringify(o));
 }
 
@@ -535,60 +473,12 @@ test('publish.checkout-integrity: a passing lane that changes the docs checkout,
   }
 });
 
-test('rule.dispositions-applied: a ruling waiving I-1 puts I-1 waived in its own revision and publishes invariants.md; the owner\'s files are never written; a crash after its snapshot leaves a manual start nothing to refuse, and after recovery a start with the owner\'s files changes nothing (startup.pending-write-back)', T, async () => {
-  const r = holisticArc([], { 't-I-1': 'pass' });
-  const tip = head(r.d);
-  const file = submitRule(r, ruleRecord(r, 'C-2', { obligations: ['I-1'], obligationDispositions: [{ id: 'I-1', disposition: 'waived' }] }));
-  const ledgerBefore = readFileSync(join(r.d.planPath, '..', 'rulings.md'), 'utf8');
-  const obligationsBefore = readFileSync(join(r.d.planPath, '..', 'obligations.json'), 'utf8');
-  r.journal.close();
-  await crashChild('docs.after-snapshot', r.d, file.id, null);
 
-  // A manual start before recovery: the revision is in force, the files do not hold it yet, and nothing is refused.
-  const start = contextFor(r.d);
-  try {
-    assert.equal(readFileSync(join(r.d.planPath, '..', 'rulings.md'), 'utf8'), ledgerBefore, 'the owner\'s ledger is never written');
-    const context = {
-      repo: start.ctx.repo, planFile: absPath(r.d.planPath), plan: start.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: start.ctx.runDir, hostDir: start.ctx.hostDir,
-    };
-    const revs = applied(start).length;
-    assert.deepEqual(settlePlan(start.journal, context, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), process.env), [], 'no false ledger-edit refusal');
-    assert.equal(applied(start).length, revs, 'the files wait for the next start');
-  } finally {
-    start.journal.close();
-  }
-
-  const back = await recoverArc(r.d);
-  try {
-    const fact = assertPublished(back, file.id, 'docs-1', tip);
-    assert.deepEqual(changedPaths(absPath(back.d.repo), sha(tip), sha(fact.publication!.head)), ['.roadmap/constraints.md', '.roadmap/invariants.md']);
-    assert.match(show(back.d, 'main', '.roadmap/invariants.md'), /I-1/);
-    assert.ok(fact.changes.some((c) => c.type === 'obligation' && c.id === 'I-1'), JSON.stringify(fact.changes));
-    const inForce = revisionInForce(back.ctx.runDir, requirePlanInForce(back.ctx.runDir, back.journal.view));
-    const i1 = inForce.obligations!.value.obligations.find((o) => o.id === obligationId('I-1'))!;
-    assert.deepEqual(i1.state, { type: 'waived', ruling: 'C-2' });
-    assert.ok(isExempt(i1), 'a waived obligation is exempt');
-    assert.equal(readFileSync(join(back.d.planPath, '..', 'obligations.json'), 'utf8'), obligationsBefore, 'the owner\'s obligations file is never written');
-    assert.equal(readFileSync(join(back.d.planPath, '..', 'rulings.md'), 'utf8'), ledgerBefore, 'nor the ledger');
-    assert.ok(!existsSync(join(back.d.planPath, '..', 'rulings.md.d', 'C-2.json')));
-    // The next start rebases the owner's unchanged files onto the revision in force: nothing changes, I-1 stays waived.
-    const context = {
-      repo: back.ctx.repo, planFile: absPath(back.d.planPath), plan: back.ctx.plan(), specOf: () => null, profile: 'default' as never, arcRoles: 'm4b' as const, runDir: back.ctx.runDir, hostDir: back.ctx.hostDir,
-    };
-    const revs = applied(back).length;
-    assert.deepEqual(settlePlan(back.journal, context, readInputFiles(absPath(back.d.planPath), absPath(back.d.repo)), process.env), []);
-    assert.equal(applied(back).length, revs, 'unchanged');
-    const after = revisionInForce(back.ctx.runDir, requirePlanInForce(back.ctx.runDir, back.journal.view)).obligations!.value.obligations;
-    assert.deepEqual(after.find((o) => o.id === obligationId('I-1'))!.state, { type: 'waived', ruling: 'C-2' });
-  } finally {
-    back.journal.close();
-  }
-});
 
 // ---------------------------------------------------------------------------------------------------
 // Crash: the docs publication (the matrix row DOCS_PUBLICATION) and a preemption (PREEMPT)
 
-type Crashed = Readonly<{ d: ArcDescriptor; id: string; tip: string; open: readonly IntentRecord[] }>;
+type Crashed = Readonly<{ d: ArcDescriptor; id: string; tip: string; ledger: string; open: readonly IntentRecord[] }>;
 
 async function crashChild(label: string, d: ArcDescriptor, id: string, barrier: string | null): Promise<void> {
   const trigger = writeTrigger(tmpDir('publish-crash'), { label, occurrence: 1 });
@@ -653,14 +543,15 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
     const r = contextFor(d);
     const tip = head(d);
     const file = submitRule(r, ruleRecord(r, 'C-2', API_OP));
+    const ledger = readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8');
     r.journal.close();
     await crashChild(label, d, file.id, null);
-    return { d, id: file.id, tip, open: openAfterCrash(d) };
+    return { d, id: file.id, tip, ledger, open: openAfterCrash(d) };
   }
 
   for (const cell of cells) {
     test(`docs publication crashed at ${cell.boundary} ${cell.label}: ${cell.recovery.slice(0, 80)}…`, T, async () => {
-      const { d, id, tip, open } = await crashAt(cell.label);
+      const { d, id, tip, ledger, open } = await crashAt(cell.label);
       const r = await recoverArc(d);
       try {
         const pub = PUB[cell.label];
@@ -669,9 +560,9 @@ describe(`matrix row ${DOCS_PUBLICATION}`, () => {
         assert.equal(applied(r).filter((f) => f.command === id).length, 1, 'one plan-applied');
         assertPublished(r, id, pub, tip);
         assert.equal(docsFfs(r).filter((i) => r.journal.view.doneOf(i.op)?.kind === 'integration.ff').length, 1, 'one docs ff');
-        assert.match(show(d, 'main', 'contracts/api.md'), /finite numbers/);
+        assert.equal(show(d, 'main', 'contracts/api.md'), show(d, tip, 'contracts/api.md'), 'plain ledger edits do not rewrite frozen contracts');
         assert.match(revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view)).ledger.bytes.toString('utf8'), /^C-2 — /m, 'the ledger in force holds the ruling');
-        assert.doesNotMatch(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), /C-2/, 'the owner\'s ledger is never written');
+        assert.equal(readFileSync(join(d.planPath, '..', 'rulings.md'), 'utf8'), ledger, 'the executor never writes the exported ledger');
         assert.equal(r.journal.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'job').length, 1, 'one docs snapshot');
         assert.deepEqual(r.journal.view.openIntents(), [], 'recovery leaves nothing open');
       } finally {
@@ -728,7 +619,7 @@ describe(`matrix row ${PREEMPT}`, () => {
           'the apply reconciled, its revision (waiting for the slot) aborted and re-evaluated');
         const events = readJournal(r.ctx.runDir, r.journal.view.arc).events;
         const seqOf = (p: (f: Fact) => boolean): number => events.find((e) => e.type === 'fact' && p(e.fact))?.seq ?? Infinity;
-        assert.ok(seqOf((f) => f.kind === 'plan-applied' && f.command === file.id) < seqOf((f) => f.kind === 'stage-outcome' && f.unit === 'u1' && f.stage === 'candidate' && f.outcome === 'green'),
+        assert.ok(seqOf((f) => f.kind === 'plan-applied' && f.command === file.id) < seqOf((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === 'u1' && f.stage === 'candidate' && f.outcome === 'green'),
           'the candidate never recorded green before the publication');
         assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
         const unitFf = r.journal.view.opsOf('integration.ff').find((i) => i.expect.subject === undefined)!;

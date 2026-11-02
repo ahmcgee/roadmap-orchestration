@@ -1,19 +1,19 @@
 {
   "steps": [
     {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one, C-1 and C-2."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "scopeGrowth": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -40,25 +40,25 @@
           "A1, A2 and A3 hold; contract one slugify rules 1 to 3 are tested."
         ],
         "premises": [],
-        "unreviewed": [],
         "clusters": null,
-        "rulings": []
+        "rulings": [],
+        "standing": []
       }
     },
     {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one, C-1 and C-2."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "scopeGrowth": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -85,9 +85,9 @@
           "B1 to B4 hold; pageId imports slugify."
         ],
         "premises": [],
-        "unreviewed": [],
         "clusters": null,
-        "rulings": []
+        "rulings": [],
+        "standing": []
       }
     }
   ]

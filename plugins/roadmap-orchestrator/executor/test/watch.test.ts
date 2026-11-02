@@ -6,21 +6,21 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { identityOf, readBootId } from '../src/contain/proc.ts';
-import { atomicJson, canonicalJson, exclusiveCreate } from '../src/core/fsx.ts';
-import { arcId, commandId, unitId } from '../src/core/ids.ts';
+import { identityOf,readBootId } from '../src/contain/proc.ts';
+import { atomicJson,canonicalJson,exclusiveCreate } from '../src/core/fsx.ts';
+import { arcId,commandId,unitId } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { CliError } from '../src/input/cli.ts';
-import { absPath, isoTimeOf } from '../src/core/values.ts';
+import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { SCHEMA_VERSION } from '../src/core/version.ts';
-import { HOST_LOCK, hostPath, openHostDir } from '../src/host/hostdir.ts';
+import { HOST_LOCK,hostPath,openHostDir } from '../src/host/hostdir.ts';
 import { publishOwner } from '../src/host/owner.ts';
-import { needsUserAckPath, raiseNeedsUser } from '../src/needsuser.ts';
-import { HEARTBEAT_MIN, WATCH_POLL_MS, cursorAt, watch, watchActionable } from '../src/watch.ts';
+import { needsUserAckPath,raiseNeedsUser } from '../src/needsuser.ts';
+import { HEARTBEAT_MIN,WATCH_POLL_MS,cursorAt,watch,watchActionable } from '../src/watch.ts';
 import { tmpDir } from './helpers/repo.ts';
 import { claimRecord } from './fixtures/host-records.ts';
-import { LANES_BLOCKED, parkUnit } from './fixtures/probe-common.ts';
-import { contextFor, setupArc } from './fixtures/unit-common.ts';
+import { LANES_BLOCKED,parkUnit } from './fixtures/probe-common.ts';
+import { contextFor,setupArc } from './fixtures/unit-common.ts';
 
 type Line = Record<string, unknown>;
 
@@ -95,13 +95,13 @@ test('watch.emits-needs-user: a raised needs-user and its ack appear within 2 s;
   }
 });
 
-test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-user does: an owner request, a divergence digest, both convergence brakes, an owed audit, the finding items and M4a\'s pack-review and issue-policy-untrusted, each once with its reason and blocking flag', { timeout: 30_000 }, async () => {
+test('watch.m3-kinds: the holistic layer\'s items wake the watcher as any needs-user does: an owner request, a divergence digest, both convergence brakes, an owed audit, the finding items and M4a\'s pack-review, each once with its reason and blocking flag', { timeout: 30_000 }, async () => {
   const runDir = absPath(tmpDir('watch-m3-run'));
   const hostDir = openHostDir(absPath(join(tmpDir('watch-m3-host'), 'roadmap')));
   const arc = arcId(`w-${randomBytes(5).toString('hex')}`);
   const kinds = [
-    ['owner-request', true], ['divergence-digest', false], ['convergence-bound', false], ['convergence-identity', false], ['audit-owed', false],
-    ['finding-p1-escalated', true], ['new-finding-draining', true], ['pack-review', true], ['issue-policy-untrusted', true],
+    ['owner-request', true], ['revision-notice', false],
+    ['finding-p1-escalated', true], ['new-finding-draining', true], ['pack-review', true],
   ] as const;
   const lines: Line[] = [];
   const stop = new AbortController();
@@ -139,7 +139,7 @@ test('watch.actionable: `--actionable` prints only the open items not seen, each
 
   const journal = openJournal(runDir, arc);
   const raise = (summary: string) => raiseNeedsUser(journal, runDir, {
-    blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary, recommendation: 'look', options: [], evidence: [],
+    blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary, recommendation: 'look', options: [], evidence: [],
   }, { type: 'arc' });
   const answered = raise('answered before the watch');
   exclusiveCreate(needsUserAckPath(runDir, answered), canonicalJson({ v: SCHEMA_VERSION, id: answered, command: commandId('cmd-00000000000000ab'), choice: null, at: isoTimeOf(new Date()) }));
@@ -178,7 +178,7 @@ test('watch.cursor-replay: a watch restarted with --from <the last seq read> rep
   atomicJson(hostPath(r.ctx.hostDir, HOST_LOCK), claim);
   publishOwner(r.ctx.hostDir, claim, { pid: identityOf(executor.pid).pid, start: identityOf(executor.pid).start });
   const raise = (summary: string) => raiseNeedsUser(r.journal, runDir, {
-    blocking: false, subject: { type: 'arc' }, reason: 'audit-owed', summary, recommendation: 'look', options: [], evidence: [],
+    blocking: false, subject: { type: 'arc' }, reason: 'revision-notice', summary, recommendation: 'look', options: [], evidence: [],
   }, { type: 'arc' });
   /** One actionable watch, from `from`, until `done` holds of its lines, plus three polls for anything further. */
   const session = async (from: number | null, done: (lines: readonly Line[]) => boolean): Promise<readonly Line[]> => {

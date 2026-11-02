@@ -17,31 +17,31 @@
 // process reached, and how often: the cells of a scenario are its executor's labels at occurrence 1, and 2
 // where the label repeats.
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,renameSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { isAlive, scan, statOf } from '../../src/contain/proc.ts';
-import { arcId, invocationId } from '../../src/core/ids.ts';
-import type { ProcIdentity } from '../../src/core/records.ts';
+import { pathToFileURL } from 'node:url';
+import { isAlive,scan,statOf } from '../../src/contain/proc.ts';
+import { arcId,invocationId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
+import type { ProcIdentity } from '../../src/core/records.ts';
 import { absPath } from '../../src/core/values.ts';
 import { type ExitReason } from '../../src/executor.ts';
 import { lastGeneration } from '../../src/host/lock.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { RESOLVE_DIRECTIVE } from '../../src/prompts/directives.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
-import { BACKOFF_MS, executorLogs, lastLine } from '../../src/supervisor.ts';
-import { reached, release } from '../helpers/barrier.ts';
-import { type Exit, fixture, runUntilExit } from '../helpers/proc.ts';
+import { BACKOFF_MS,executorLogs,lastLine } from '../../src/supervisor.ts';
+import { reached,release } from '../helpers/barrier.ts';
+import { type Exit,fixture,runUntilExit } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
-import { type FileSet, tmpDir } from '../helpers/repo.ts';
-import { type CodexAct, type Step, readCalls } from '../helpers/scenario.ts';
-import { type ExecOptions, type ExecRun, SMOKE_DEFAULT, cli, execEnv, journalOf, setupExec, until } from './exec-common.ts';
-import { claimOf, ownerOf, stateOf } from './sup-common.ts';
-import { type LaneJson, planCheckStep } from './stage-common.ts';
+import { type FileSet,tmpDir } from '../helpers/repo.ts';
+import { type CodexAct,type Step,readCalls } from '../helpers/scenario.ts';
+import { type ExecOptions,type ExecRun,SMOKE_DEFAULT,cli,execEnv,journalOf,setupExec,until } from './exec-common.ts';
+import { type LaneJson,planCheckStep } from './stage-common.ts';
+import { claimOf,ownerOf,stateOf } from './sup-common.ts';
 import {
-  ADD_BROKEN, ADD_FIXED, MUL, SUITE_LANE, U1, appendSteps, codexStep, gateRepairStep, gateStep, literal, mulBuild, outcomes, workDirPattern,
+ADD_BROKEN,ADD_FIXED,MUL,SUITE_LANE,U1,appendSteps,codexStep,gateRepairStep,gateStep,literal,mulBuild,outcomes,workDirPattern,
 } from './unit-common.ts';
 
 /** How long one supervised run (all its starts and restarts) may take before the cell calls it hung. */
@@ -126,7 +126,7 @@ export const STRAIGHT: Scenario = {
   hooks: () => [],
 };
 export const STRAIGHT_OUTCOMES = {
-  u1: ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
+  u1: ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
 } as const;
 
 /**
@@ -140,11 +140,10 @@ export const STRAIGHT_OUTCOMES = {
  */
 export const BUMPY: Scenario = {
   // u2 is gated after u1 merged: the explicit edge the serial story meant (an M2 arc schedules a DAG).
-  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, tier: 'estate' }] }),
+  arc: () => ({ units: [{ id: 'u1' }, { id: 'u2', lanes: [TWO_LANE], after: ['u1'] }], suite: [{ ...SUITE_LANE, cadence: 'candidate' }] }),
   steps: (r) => [
-    planCheckStep({ decision: 'redirect', patch: [{ op: 'add', section: 'decisions', item: DECISION }] }),
-    { ...planCheckStep({ decision: 'approve' }), expect: { ...planCheckStep({ decision: 'approve' }).expect, stdinContains: [DECISION.text] } },
-    codexStep([{ type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
+    planCheckStep({decision: 'approve'}),
+    codexStep([{type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: JSON.stringify({decisions: [DECISION]})}, { type: 'dirty', files: { ...MUL, 'src/mul.js': MUL_WRONG } }], { argv: ['exec', '-C'] }),
     codexStep([
       { type: 'readFromPrompt', pattern: laneOutput(r, 'u1', 'mul'), file: 'stdout', contains: 'MUL-MARKER' },
       { type: 'commit', message: 'fix mul', files: { 'src/mul.js': MUL['src/mul.js'] } },
@@ -169,11 +168,11 @@ export const BUMPY: Scenario = {
 const BUILT = ['build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'] as const;
 export const BUMPY_OUTCOMES = {
   u1: [
-    'plan-check:redirect', 'plan-check:approve', ...BUILT, 'lanes:red', ...BUILT, 'lanes:green', 'gate:revise', ...BUILT, 'lanes:green', 'gate:approve',
+    'pre-build:approve', ...BUILT, 'lanes:red', ...BUILT, 'lanes:green', 'gate:revise', ...BUILT, 'lanes:green', 'gate:approve',
     'candidate:green', 'ff:published', 'snapshot:published',
   ],
   u2: [
-    'plan-check:approve', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:conflict', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:red',
+    'pre-build:approve', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:conflict', ...BUILT, 'lanes:green', 'gate:approve', 'candidate:red',
     ...BUILT, 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published',
   ],
 } as const;
@@ -197,7 +196,7 @@ export const MALFORMED_CONSUMED: Scenario = {
   steps: () => [planCheckStep({ decision: 'approve' }), mulBuild(), { ...gateStep({ decision: 'approve' }), acts: [{ type: 'malformed' }] }, gateStep({ decision: 'approve' })],
 };
 export const MALFORMED_OUTCOMES = {
-  u1: ['plan-check:approve', ...BUILT, 'lanes:green', 'gate:malformed', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
+  u1: ['pre-build:approve', ...BUILT, 'lanes:green', 'gate:malformed', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'],
 } as const;
 
 /**
@@ -234,7 +233,7 @@ export const CANCEL: Scenario = {
     ];
   },
 };
-export const CANCEL_OUTCOMES = { u1: ['plan-check:approve', 'build:interrupted', ...STRAIGHT_OUTCOMES.u1.slice(1)] } as const;
+export const CANCEL_OUTCOMES = { u1: ['pre-build:approve', 'build:interrupted', ...STRAIGHT_OUTCOMES.u1.slice(1)] } as const;
 
 /** Straight, for a crash inside ff while integration is moved under the dead executor (`whileDown`). */
 export const STALE: Scenario = {
@@ -251,7 +250,7 @@ export const STALE: Scenario = {
  */
 export const STALE_LANE: Scenario = {
   arc: (barriers) => ({
-    suite: [SUITE_LANE, { id: 'advance', tier: 'estate', argv: [process.execPath, fixture('pm-lane-barrier.ts'), barriers, 'suite'] }],
+    suite: [SUITE_LANE, { id: 'advance', cadence: 'candidate', argv: [process.execPath, fixture('pm-lane-barrier.ts'), barriers, 'suite'] }],
   }),
   steps: STALE.steps,
   hooks: (r, barriers) => [atBarrier(barriers, 'suite', () => void advanceIntegration(r.repo, NOTES, 'unrelated work lands first'))],
@@ -526,4 +525,4 @@ export function buildRunner(r: ExecRun): ProcIdentity {
   return file.runner;
 }
 
-export { reached, release, until };
+export { reached,release,until };

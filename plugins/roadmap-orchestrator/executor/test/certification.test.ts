@@ -1,20 +1,27 @@
 // Turn-boundary certification: real unit loops, git checkouts and fake backends behind PATH shims.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { runUnit, step } from '../src/pipeline/unit.ts';
-import { build, planCheck } from '../src/pipeline/stages.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
+import { build,preBuild } from '../src/pipeline/stages.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { readCalls } from './helpers/scenario.ts';
-import { events, intents } from './fixtures/invoke-specs.ts';
-import { admitAll, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
-import { U1, codexStep, contextFor, mulBuild, setupArc, stepUntil } from './fixtures/unit-common.ts';
+import { events,intents } from './fixtures/invoke-specs.ts';
+import { BUILD_REPORT,admitAll,planCheckStep,setupUnit,started } from './fixtures/stage-common.ts';
+import { U1,gateStep,codexStep,contextFor,mulBuild,setupArc,stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: 300_000 };
 
 test('certification: three reds free, fourth charged, allowance resets, twelfth parks at the chargeable bound', T, async () => {
-  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), ...Array.from({ length: 11 }, (_, i) => codexStep([{ type: 'commit', message: 'repair attempt', files: { 'src/attempt.js': `export const attempt = ${i};\n` } }], { argv: ['exec', 'resume'] }))],
-    units: [{ id: 'u1', lanes: [{ id: 'red', argv: ['node', '-e', 'process.exit(1)'] }] }], suite: [] });
+  const repairs = Array.from({length: 11}, (_, i) => {
+    const acts = [{type: 'commit' as const, message: 'repair attempt', files: {'src/attempt.js': `export const attempt = ${i};\n`}}];
+    return i < 7 ? codexStep(acts, {argv: ['exec', 'resume']}) : {as: 'claude' as const, expect: {argv: [i === 7 ? '--session-id' : '--resume'], argvLacks: ['--tools']}, acts: [...acts, {type: 'emit' as const, value: BUILD_REPORT}]};
+  });
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), mulBuild(), ...repairs.slice(0, 7), gateStep({decision: 'approve'}), ...repairs.slice(7)],
+    // Alternate distinct reds: this exercises the ordinary certification allowance, independently of
+    // repeated-red base comparison (a confirmed repeat follows regression/base-red instead).
+    units: [{ id: 'u1', lanes: [0, 1].map((parity) => ({ id: `red-${parity}`, argv: ['node', '-e',
+      `const fs=require('node:fs'); const n=fs.existsSync('src/attempt.js') ? Number(fs.readFileSync('src/attempt.js','utf8').match(/= (\\d+)/)[1])+1 : 0; process.exit(fs.existsSync('src/mul.js') && n%2===${parity} ? 1 : 0);`] })) }], suite: [] });
   let r = contextFor(d);
   try {
     await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.unchargedLanesReds === 3);
@@ -23,17 +30,22 @@ test('certification: three reds free, fourth charged, allowance resets, twelfth 
     r = contextFor(d);
     assert.equal(r.journal.view.unit(U1).counters.unchargedLanesReds, 3, 'restart retains the spent uncharged allowance');
     assert.equal((await runUnit(r.ctx, r.unit('u1'), admitAll)).kind, 'parked');
-    const reds = events(d.runDir).flatMap((e) => e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'lanes' ? [e.fact] : []);
+    const reds = events(d.runDir).flatMap((e) => e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'lanes' ? [e.fact] : []);
     assert.deepEqual(reds.map((f) => f.chargeable), [false, false, false, true, false, false, false, true, false, false, false, true]);
     assert.deepEqual(reds.map((f) => f.unchargedLanesReds), [1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0]);
     assert.deepEqual(reds.map((f) => f.class), [...Array(11).fill('advance'), 'park']);
     assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 3);
-    const builds = readCalls(d.scenarioPath).filter((c) => c.as === 'codex');
+    const builds = readCalls(d.scenarioPath).filter(c=>c.as==='codex'||(c.argv[c.argv.indexOf('--json-schema')+1]??'').includes('"grounding"'));
     assert.equal(builds.length, 12);
+    const diagnosis = readCalls(d.scenarioPath).find((c) => c.stdin.includes('<mode>diagnosis</mode>'));
+    assert.ok(diagnosis !== undefined, 'M4 runs a diagnosis');
+    assert.ok(diagnosis.stdin.includes(`${d.runDir}/evidence/u1/`), 'diagnosis receives the failing evidence locations');
+    assert.ok(diagnosis.stdin.includes('u1/lanes#'), 'diagnosis identifies the failed attempts');
     for (let i = 1; i < builds.length; i++) {
-      assert.deepEqual(builds[i]!.argv.slice(0, 2), ['exec', 'resume']);
+      if(i<8)assert.deepEqual(builds[i]!.argv.slice(0,2),['exec','resume']);
+      else assert.ok(builds[i]!.argv.includes(i===8?'--session-id':'--resume'),'M4 moves the remaining builds to Claude');
       assert.match(builds[i]!.stdin, new RegExp(`Certification allowance: ${3 - i % 4} uncharged red certifications remaining`));
-      assert.match(builds[i]!.stdin, /failing evidence/i);
+      assert.ok(builds[i]!.stdin.includes(`${d.runDir}/evidence/u1/`),'the fix receives its failing lane evidence');
     }
     assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
   } finally { r.journal.close(); }
@@ -83,7 +95,7 @@ test('certification: builds reserve cpu only and omit resource-bearing build lan
     lanes: [{ id: 'local', argv: ['true'] }, { id: 'estate-build', argv: ['echo', 'ESTATE-ONLY-COMMAND'], resources: ['db'] }],
     suite: [{ id: 'estate-suite', argv: ['echo', 'ESTATE-SUITE-COMMAND'], resources: ['db'] }] });
   try {
-    started(await planCheck(run.ctx, run.unit));
+    started(await preBuild(run.ctx, run.unit));
     const done = started(await build(run.ctx, run.unit, { kind: 'fresh' }));
     assert.ok(done.run !== null);
     const held = [...resourceTable(run.journal.view)].filter(([, r]) => r.status.state !== 'free');
@@ -102,7 +114,7 @@ test('certification: builds reserve cpu only and omit resource-bearing build lan
     const call = readCalls(run.scenario.path).find((c) => c.as === 'codex')!;
     assert.ok(!call.stdin.includes('ESTATE-ONLY-COMMAND'));
     assert.ok(!call.stdin.includes('ESTATE-SUITE-COMMAND'));
-    assert.match(call.stdin, /do not rehearse the full lane suite/);
+    assert.match(call.stdin, /<build_lanes>[\s\S]*local/);
     while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
     const named = intents(run.runDir, 'resource.transition').filter((i) => i.kind === 'resource.transition' && i.expect.edge.type === 'reserve'
       && i.expect.resources.some((r) => String(r) === 'db'));

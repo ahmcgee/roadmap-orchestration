@@ -231,7 +231,7 @@ type Parked = Readonly<{ r: ArcRun; old: Sha; tip: Sha; item: NeedsUserId; branc
 
 /** u1 driven to its gate park (its needs-user raised as the executor does), then `main` advanced by `advance`. */
 async function parkedArc(advance: Readonly<Record<string, string>>, after: readonly Step[] = []): Promise<Parked> {
-  const d = setupArc({ steps: [...TO_PARK, ...after] });
+  const d = setupArc({ steps: [...TO_PARK, ...after], units: [{ id: 'u1', systems: ['app', 'documentation'] }] });
   const r = contextFor(d);
   const parked = await runUnit(r.ctx, r.unit('u1'), admitAll);
   assert.ok(parked.kind === 'parked' && parked.needsUser.reason === 'escalation', JSON.stringify(parked));
@@ -344,7 +344,7 @@ describe('merge-in command', () => {
       });
       assert.ok(laneRuns.length > 0);
       assert.deepEqual([...new Set(laneRuns)], [head], 'the lanes ran at the merged head');
-      const gates = events(r.d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'gate' ? [e.fact] : []));
+      const gates = events(r.d.runDir).flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === 'gate' ? [e.fact] : []));
       assert.deepEqual(gates.map((g) => g.outcome), ['escalate', 'escalate', 'approve']);
       const inputs = r.journal.view.judgmentInputs(U1, 'gate', gates[2]!.attempt);
       assert.ok(inputs !== null, 'the gate after the merge-in recorded its inputs');

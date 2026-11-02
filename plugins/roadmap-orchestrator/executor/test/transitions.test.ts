@@ -9,7 +9,6 @@ import {
 } from '../src/core/events.ts';
 import { seatRev, specRev } from '../src/core/ids.ts';
 import { type UnitCounters, type UnitState, afterStageOutcome, fold, newUnitState } from '../src/core/state.ts';
-import { repoPattern } from '../src/core/values.ts';
 import { type Next, type ParkClass, type StageOutcome, TABLE, decidedBy, outcomeFact, parkClassOf, transition } from '../src/pipeline/transitions.ts';
 import { resourceInstance } from '../src/core/ids.ts';
 import { ARC, AT, H, REV, U1, chain } from './fixtures/log-records.ts';
@@ -20,18 +19,17 @@ type Given = Readonly<{
   routedUp?: UnitState['routedUp'];
   promotion?: boolean;
   risk?: UnitState['risk'];
-  redirectBase?: number;
 }>;
 
 /** A unit at risk `med` with nothing counted, patched by `g`. */
 function unit(g: Given = {}): UnitState {
-  const base = newUnitState(U1, 'plan-check', g.risk ?? 'med');
+  const base = newUnitState(U1, 'pre-build', g.risk ?? 'med');
   const c = { ...base.counters, retries: { ...base.counters.retries } };
   for (const [name, n] of Object.entries(g.counters ?? {}) as [Counter, number][]) {
     if (name.startsWith('retries.')) c.retries[name.slice('retries.'.length) as RetryStage] = n;
     else c[name as Exclude<Counter, `retries.${RetryStage}`>] = n;
   }
-  return { ...base, counters: c, routedUp: g.routedUp ?? [], promotion: g.promotion ?? false, redirectBase: g.redirectBase ?? 0 };
+  return { ...base, counters: c, routedUp: g.routedUp ?? [], promotion: g.promotion ?? false };
 }
 
 const outcome = <S extends OutcomeStage>(stage: S, kind: StageOutcomeKind<S>): StageOutcome => ({ stage, kind }) as StageOutcome;
@@ -54,7 +52,7 @@ function show(n: Next): string {
 
 function flat(c: UnitCounters): Record<Counter, number> {
   const out: Record<string, number> = {
-    chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, redirects: c.redirects, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
+    chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
   };
   for (const s of RETRY_STAGES) out[`retries.${s}`] = c.retries[s];
   return out as Record<Counter, number>;
@@ -71,63 +69,39 @@ function delta(before: UnitCounters, after: UnitCounters): Partial<Record<Counte
 type Row = { [S in OutcomeStage]: readonly [S, StageOutcomeKind<S>, Given, string, OutcomeClass, Partial<Record<Counter, number>>] }[OutcomeStage];
 const ROWS: readonly Row[] = [
   // prepare (a re-entered unit's first stage, M2): where the prepared worktree enters
-  ['prepare', 'clean-plan-check', {}, 'plan-check@med', 'advance', {}],
+  ['prepare', 'clean-pre-build', {}, 'pre-build@med', 'advance', {}],
   ['prepare', 'clean-build', {}, 'build/fresh@med', 'advance', {}],
   ['prepare', 'clean-verify', {}, 'lanes', 'advance', {}],
   ['prepare', 'conflicted', {}, 'build/resolve@med', 'advance', {}],
   // Arc feedback 2026-10-15: only ever a recovery hold of a preparation a crash cut short.
   ['prepare', 'interrupted', {}, 'hold', 'hold', {}],
   // reproduce (a vacuity repair's first stage, M3)
-  ['reproduce', 'reproduced', {}, 'plan-check@med', 'advance', {}],
+  ['reproduce', 'reproduced', {}, 'pre-build@med', 'advance', {}],
   ['reproduce', 'not-reproduced', {}, 'park:not-reproduced', 'park', {}],
   ['reproduce', 'inapplicable', {}, 'park:not-reproduced', 'park', {}],
   ['reproduce', 'blocked', {}, 'park:lane-blocked', 'park', {}],
   ['reproduce', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   ['reproduce', 'interrupted', {}, 'hold', 'hold', {}],
   ['reproduce', 'cleanup-failed', {}, 'park:residue', 'park', {}],
-  // plan-check (fresh judgment)
-  ['plan-check', 'approve', {}, 'build/fresh@med', 'advance', {}],
-  ['plan-check', 'redirect', {}, 'plan-check@med', 'redirect', { redirects: 1 }],
-  ['plan-check', 'redirect', { counters: { redirects: 1 } }, 'plan-check@med', 'redirect', { redirects: 1 }],
-  ['plan-check', 'redirect', { counters: { redirects: 2 } }, 'plan-check@escalation', 'route-up', {}],
-  ['plan-check', 'redirect', { counters: { redirects: 2 }, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
+  // pre-build (fresh judgment)
+  ['pre-build', 'approve', {}, 'build/fresh@med', 'advance', {}],
   // The bound counts redirects since the latest reopen (the architect's spec edit), not over the unit.
-  ['plan-check', 'redirect', { counters: { redirects: 3 }, redirectBase: 2, routedUp: ['plan-check'] }, 'plan-check@escalation', 'redirect', { redirects: 1 }],
-  ['plan-check', 'redirect', { counters: { redirects: 4 }, redirectBase: 2, routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
-  ['plan-check', 'infeasible', {}, 'plan-check@escalation', 'route-up', {}],
-  ['plan-check', 'infeasible', { routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
-  ['plan-check', 'escalate', {}, 'plan-check@escalation', 'route-up', {}],
   // A high-risk unit judges on its high seat and escalates to the escalation seat like any other (item 9).
-  ['plan-check', 'escalate', { risk: 'high' }, 'plan-check@escalation', 'route-up', {}],
-  ['plan-check', 'risk-lowered', {}, 'plan-check@escalation', 'route-up', {}],
-  ['plan-check', 'scope-widened', {}, 'plan-check@escalation', 'route-up', {}],
-  ['plan-check', 'scope-widened', { routedUp: ['plan-check'] }, 'park:escalation', 'park', {}],
-  ['plan-check', 'interrupted', {}, 'hold', 'hold', {}],
-  ['plan-check', 'refusal', {}, 'plan-check@escalation', 'route-up', {}],
-  ['plan-check', 'refusal', { routedUp: ['plan-check'] }, 'park:refusal', 'park', {}],
-  ['plan-check', 'malformed', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
-  ['plan-check', 'malformed', { counters: { 'retries.plan-check': 1 } }, 'park:malformed', 'park', {}],
+  ['pre-build', 'interrupted', {}, 'hold', 'hold', {}],
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park (a dev.11 record only,
   // scaffolding: no longer recorded since 2026-10-16).
-  ['plan-check', 'read-denied', {}, 'plan-check@med', 'retry', { 'retries.plan-check': 1 }],
-  ['plan-check', 'read-denied', { counters: { 'retries.plan-check': 1 } }, 'park:read-denied', 'park', {}],
-  ['plan-check', 'process-fault', {}, 'park:process-fault', 'park', {}],
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
-  ['plan-check', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
-  // M4a rev 3 (E) to dev.16: a by-builder frontier unit's plan-check recorded in-session (no call). dev.17 has no in-session
-  // assessment: a unit an older log left there runs its plan-check before it builds.
-  ['plan-check', 'in-session', {}, 'plan-check@med', 'advance', {}],
+  // M4a rev 3 (E) to dev.16: a by-builder frontier unit's pre-build recorded in-session (no call). dev.17 has no in-session
+  // assessment: a unit an older log left there runs its pre-build before it builds.
   // Scope growth (2026-10-15): a verified proposal holds the unit for the root agent, uncharged.
-  ['plan-check', 'scope-growth', {}, 'hold', 'hold', {}],
   // 2026-10-16: the prompt or context outgrew the model's window: an uncharged env park, never the retryable process-fault
   // row (no probe, no repeat rule), whatever the counters.
-  ['plan-check', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
-  ['plan-check', 'context-exceeded', { counters: { 'retries.plan-check': 1, chargeableFailures: 2 } }, 'park:context-exceeded', 'park', {}],
   // build (implementer)
   ['build', 'success', {}, 'quiesce', 'advance', {}],
   ['build', 'refusal', {}, 'park:refusal', 'park', {}],
   ['build', 'malformed', {}, 'build/resume@med', 'retry', { 'retries.build': 1 }],
   ['build', 'malformed', { counters: { 'retries.build': 1 } }, 'park:malformed', 'park', {}],
+  ['build', 'spec-wrong', {}, 'park:spec-wrong', 'park', {}],
   ['build', 'process-fault', {}, 'park:process-fault', 'park', {}],
   ['build', 'routing-changed', { counters: { chargeableFailures: 2 } }, 'park:routing-changed', 'park', {}],
   // transitions.lost-build: a lost implementer call never charges. Without tree effects it was already
@@ -143,8 +117,6 @@ const ROWS: readonly Row[] = [
   ['build', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
   // M4a rev 3 (E, R55) to dev.16, read from an older log: the in-session assessment's outcomes. Infeasible parks design with the escalation's reason (a
   // build has no escalation seat to route up to); a raised floor on another seat builds fresh there, uncharged.
-  ['build', 'infeasible', {}, 'park:escalation', 'park', {}],
-  ['build', 'risk-raised', {}, 'build/fresh@med', 'advance', {}],
   // 2026-10-15 (arc feedback #3): a required witness item on no arc lane in force parks env, uncharged (resume re-runs it).
   ['build', 'witness-lane-missing', {}, 'park:witness-lane-missing', 'park', {}],
   ['build', 'witness-lane-missing', { counters: { chargeableFailures: 2 } }, 'park:witness-lane-missing', 'park', {}],
@@ -164,6 +136,8 @@ const ROWS: readonly Row[] = [
   // lanes (clean detached worktree at the salvage SHA)
   ['lanes', 'green', {}, 'gate@med', 'advance', {}],
   ['lanes', 'green', { promotion: true }, 'gate@escalation', 'advance', {}],
+  ['lanes', 'regression', {}, 'build/fix@med', 'advance', { chargeableFailures: 1 }],
+  ['lanes', 'regression', { counters: { chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
   ['lanes', 'red', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],
   ['lanes', 'red', { counters: { chargeableFailures: 2, unchargedLanesReds: 3 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1, unchargedLanesReds: -3 }],
   ['lanes', 'not-certified', {}, 'build/fix@med', 'advance', { unchargedLanesReds: 1 }],
@@ -193,7 +167,6 @@ const ROWS: readonly Row[] = [
   // repeated reverts hold the unit for the root agent.
   ['lanes', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
   ['lanes', 'plan-defect', { counters: { chargeableFailures: 2 } }, 'park:plan-defect', 'park', {}],
-  ['lanes', 'scope-growth', {}, 'hold', 'hold', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
@@ -236,7 +209,7 @@ const ROWS: readonly Row[] = [
   // but ff and snapshot (src/schedule/fault.ts).
   ['prepare', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['reproduce', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
-  ['plan-check', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  ['pre-build', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['build', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['quiesce', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['evidence', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
@@ -253,34 +226,9 @@ const ROWS: readonly Row[] = [
   ['ff', 'foreign-move', {}, 'stop:foreign-ref-move', 'stop', {}],
   // snapshot
   ['snapshot', 'published', {}, 'retire', 'retire', {}],
-  // dev.17 (design pass): plan-check's design decisions, each uncharged. A split holds the unit until its revision cuts it.
-  ['plan-check', 'split', {}, 'hold', 'hold', {}],
-  ['plan-check', 'scaffold', {}, 'scaffold', 'advance', {}],
-  ['plan-check', 'poc', {}, 'poc', 'advance', {}],
-  ['plan-check', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
+  // dev.17 (design pass): pre-build's design decisions, each uncharged. A split holds the unit until its revision cuts it.
   // The scaffold writer's stage: committed, on to the first build; refused once, it tries again; twice, a plan defect.
-  ['scaffold', 'scaffolded', {}, 'build/fresh@med', 'advance', {}],
-  ['scaffold', 'refused', {}, 'scaffold', 'advance', {}],
-  ['scaffold', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
-  ['scaffold', 'refusal', {}, 'park:refusal', 'park', {}],
-  ['scaffold', 'process-fault', {}, 'park:process-fault', 'park', {}],
-  ['scaffold', 'lost', {}, 'park:process-fault', 'park', {}],
-  ['scaffold', 'interrupted', {}, 'hold', 'hold', {}],
-  ['scaffold', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
-  ['scaffold', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
-  ['scaffold', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
-  ['scaffold', 'cleanup-failed', {}, 'park:residue', 'park', {}],
-  ['scaffold', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
-  // A proof of concept: answered or not, back to a fresh plan-check with its report.
-  ['poc', 'answered', {}, 'plan-check@med', 'advance', {}],
-  ['poc', 'unanswered', {}, 'plan-check@med', 'advance', {}],
-  ['poc', 'process-fault', {}, 'park:process-fault', 'park', {}],
-  ['poc', 'interrupted', {}, 'hold', 'hold', {}],
-  ['poc', 'routing-changed', {}, 'park:routing-changed', 'park', {}],
-  ['poc', 'context-exceeded', {}, 'park:context-exceeded', 'park', {}],
-  ['poc', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
-  ['poc', 'cleanup-failed', {}, 'park:residue', 'park', {}],
-  ['poc', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  // A proof of concept: answered or not, back to a fresh pre-build with its report.
 ];
 
 /** Every (stage, outcome) the fact vocabulary admits; StageOutcome is derived from the same list. */
@@ -305,21 +253,21 @@ describe('transitions', () => {
 
   it('transitions.park-class: every park row has its class (A7); an operator park writes it, a retryable one its stated targets', () => {
     const CLASS: Readonly<Record<string, ParkClass>> = {
-      'plan-check redirect': 'design', 'plan-check infeasible': 'design', 'plan-check scope-widened': 'design', 'plan-check refusal': 'design',
-      'plan-check malformed': 'design', 'plan-check process-fault': 'retryable', 'plan-check routing-changed': 'env', 'plan-check read-denied': 'env',
-      'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
+      'pre-build redirect': 'design', 'pre-build infeasible': 'design', 'pre-build scope-widened': 'design', 'pre-build refusal': 'design',
+      'pre-build malformed': 'design', 'pre-build process-fault': 'retryable', 'pre-build routing-changed': 'env', 'pre-build read-denied': 'env',
+      'build spec-wrong':'design', 'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
       'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'salvage cleanup-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
-      'lanes red': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
+      'lanes red': 'design', 'lanes regression': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
-      'plan-check context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
+      'pre-build context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce env-unavailable': 'retryable', 'reproduce cleanup-failed': 'retryable',
-      ...Object.fromEntries(['prepare', 'reproduce', 'plan-check', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate', 'scaffold', 'poc'].map((st) => [`${st} executor-fault`, 'env'])),
+      ...Object.fromEntries(['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'].map((st) => [`${st} executor-fault`, 'env'])),
       // dev.17 (design pass): a plan defect is the plan's to fix (an apply, then `resume`), as at lanes.
-      'plan-check plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',
+      'pre-build plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',
       'scaffold routing-changed': 'env', 'scaffold context-exceeded': 'env', 'scaffold occupied': 'env', 'scaffold cleanup-failed': 'retryable',
       'poc process-fault': 'retryable', 'poc routing-changed': 'env', 'poc context-exceeded': 'env', 'poc occupied': 'env', 'poc cleanup-failed': 'retryable',
     };
@@ -458,13 +406,13 @@ describe('transitions', () => {
     const { nexts, state } = drive([outcome('gate', 'refusal'), outcome('gate', 'refusal')]);
     assert.deepEqual(nexts.map(show), ['gate@escalation', 'park:refusal']);
     assert.deepEqual(state.routedUp, ['gate']);
-    // Per role: a routed-up plan-check leaves the gate on the unit's seat; a routed-up gate stays on escalation.
+    // Per role: a routed-up pre-build leaves the gate on the unit's seat; a routed-up gate stays on escalation.
     const perRole = drive([
-      outcome('plan-check', 'escalate'), outcome('plan-check', 'approve'), outcome('lanes', 'green'), outcome('gate', 'escalate'),
+      outcome('pre-build', 'approve'), outcome('lanes', 'green'), outcome('gate', 'escalate'),
       outcome('gate', 'revise'), outcome('lanes', 'green'), outcome('gate', 'escalate'),
     ]);
     assert.deepEqual(perRole.nexts.map(show), [
-      'plan-check@escalation', 'build/fresh@med', 'gate@med', 'gate@escalation', 'build/fix@med', 'gate@escalation', 'park:escalation',
+      'build/fresh@med', 'gate@med', 'gate@escalation', 'build/fix@med', 'gate@escalation', 'park:escalation',
     ]);
   });
 
@@ -488,7 +436,7 @@ describe('transitions', () => {
   });
 
   it('transitions.malformed-one-uncharged: one uncharged retry per stage, then park', () => {
-    for (const [stage, retried] of [['plan-check', 'plan-check@med'], ['build', 'build/resume@med'], ['gate', 'gate@med']] as const) {
+    for (const [stage, retried] of [['build', 'build/resume@med'], ['gate', 'gate@med']] as const) {
       const { nexts, facts, state } = drive([outcome(stage, 'malformed'), outcome(stage, 'malformed')]);
       assert.deepEqual(nexts.map(show), [retried, 'park:malformed'], stage);
       assert.deepEqual(facts.map((f) => [f.class, f.chargeable]), [['retry', false], ['park', false]], stage);
@@ -500,7 +448,7 @@ describe('transitions', () => {
 
 describe('transitions (holds)', () => {
   it('transitions.interrupted-holds: an interruption moves no counter, holds the unit and keeps a pending promotion', () => {
-    for (const stage of ['plan-check', 'build', 'lanes', 'gate', 'candidate'] as const) {
+    for (const stage of ['pre-build', 'build', 'lanes', 'gate', 'candidate'] as const) {
       const { nexts, facts, state } = drive([outcome(stage, 'interrupted')]);
       assert.deepEqual(nexts.map(show), ['hold'], stage);
       assert.deepEqual(facts.map((f) => [f.class, f.chargeable]), [['hold', false]], stage);
@@ -524,7 +472,7 @@ type Driven = Readonly<{ nexts: readonly Next[]; facts: readonly ReturnType<type
  */
 function drive(outcomes: readonly StageOutcome[]): Driven {
   const records: LogRecord[] = [{
-    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } },
+    type: 'fact', fact: { kind: 'dispatch', record: { unit: U1, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3' } },
   }];
   const attempts = new Map<OutcomeStage, number>();
   const nexts: Next[] = [];

@@ -1,25 +1,25 @@
+import { systemsMap } from '../src/input/systems.ts';
 // M3 step A1: obligation edits and split semantics (H14), impact selection (split closure, unmapped paths),
 // re-derivation against the previous arc's published block (R2), the byte-stable invariants.md, and the vision
 // record's rules (coverage both directions, withdrawn cites, edits).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type ObligationId, divergenceId, obligationId, rulingId, unitId, visionClauseId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { type ObligationId,divergenceId,obligationId,rulingId,unitId,visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
-import { parseInvariantsBlock, renderInvariants } from '../src/docs/invariants.ts';
-import { gateObligations, selectObligations } from '../src/holistic/impact.ts';
-import { type ClassifyContext, classifyObligations } from '../src/holistic/obligations.ts';
+import { parseInvariantsBlock,renderInvariants } from '../src/docs/invariants.ts';
+import { gateObligations,selectObligations } from '../src/holistic/impact.ts';
+import { type ClassifyContext,classifyObligations } from '../src/holistic/obligations.ts';
 import { rederive } from '../src/holistic/rederive.ts';
-import { type Obligations, type RulingSidecar, type Vision, laneRevOf, parseObligations, parseRulingSidecar, parseVision } from '../src/holistic/types.ts';
-import { advancesReasons, citeReasons, visionCoverage, visionEditReasons } from '../src/holistic/vision.ts';
-import { coverageText } from '../src/prompts/inputs.ts';
+import { type Obligations,type Vision,laneRevOf,parseObligations,parseVision } from '../src/holistic/types.ts';
+import { advancesReasons,citeReasons,visionCoverage,visionEditReasons } from '../src/holistic/vision.ts';
 
 const LANE = {
-  id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [],
+  id: 'journey', argv: ['node', '--test', 'journey.test.js'], cwd: 'test', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [],
   evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test',
 };
-const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], obligations: [], mapping: { paths: [] } }).lanes[0]!);
-const proof = (id: string, rev = 1, testIds: readonly string[] = [id]): object => ({ verdict: 'proves', obligationRev: rev, laneRev: LANE_REV, witness: { lane: 'journey', testIds } });
+const LANE_REV = laneRevOf(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [LANE], obligations: [], mapping: { systems: [] } }).lanes[0]!);
+const proof = (id: string, rev = 1, testIds: readonly string[] = [id]): object => ({ verdict: 'proves', obligationRev: rev,  witness: {  testIds } });
 
 type Raw = Record<string, unknown>;
 const ob = (id: string, over: Raw = {}): Raw => ({
@@ -34,11 +34,11 @@ const BASE: Raw[] = [
   ob('I-2', { statement: 'Money is never mis-rounded. Totals round half-even.', contracts: ['docs/money.md'] }),
   ob('I-3', { statement: 'Unknown commands exit 2.', serves: ['V-2'] }),
 ];
-const file = (obligations: Raw[], mapping: Raw[] = [{ pattern: 'src/format.js', obligations: ['I-3'] }, { pattern: 'src/report/**', obligations: ['I-1'] }]): Obligations =>
-  parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'the ledger CLI', lanes: [LANE], obligations, mapping: { paths: mapping } });
+const file = (obligations: Raw[], mapping: Raw[] = [{ system: 'format', obligations: ['I-3'] }, { system: 'report', obligations: ['I-1'] }]): Obligations =>
+  parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'the ledger CLI', lanes: [LANE], obligations, mapping: { systems: mapping } });
 const PREV = file(BASE);
 /** The obligations without I-3 (and its mapping entry). */
-const WITHOUT_I3 = (): Obligations => file(BASE.filter((o) => o['id'] !== 'I-3'), [{ pattern: 'src/report/**', obligations: ['I-1'] }]);
+const WITHOUT_I3 = (): Obligations => file(BASE.filter((o) => o['id'] !== 'I-3'), [{ system: 'report', obligations: ['I-1'] }]);
 
 const VISION: Vision = parseVision({
   schema: 'roadmap/vision-m3', rev: 1, confirmation: null,
@@ -52,18 +52,10 @@ const VISION: Vision = parseVision({
   questions: [],
 });
 
-const ruling = (id: string, dispositions: readonly Readonly<{ id: string; disposition: string }>[]): RulingSidecar => parseRulingSidecar({
-  schema: 'roadmap/ruling-m3', id, statement: `ruling ${id}`, kind: 'disposition', ruledBy: { type: 'architect' }, trigger: 'phase 0', supersedes: [], condition: null,
-  docRefs: [{ path: 'docs/target.md', anchor: '#i-2', quotedText: 'I-2', relation: 'consistent' }], contractRefs: [], contractOps: [],
-  obligations: [...new Set(dispositions.map((d) => d.id))].sort(), obligationDispositions: dispositions, cites: [], evidence: [], appliesTo: { type: 'arc' },
-  lifetime: 'standing', status: 'active',
-  consistency: {
-    verdict: 'consistent', judgedRevs: { head: 'a'.repeat(40), ledgerSha256: '1'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' },
-  },
-});
+const ruling = (id: string, dispositions: readonly unknown[]): {statement: string} => ({statement: `Reviewed ${id}`});
 
-const ARCHITECT: ClassifyContext = { vision: VISION, rulings: [], author: { type: 'architect' }, latched: new Set(), published: new Set() };
-const withRulings = (rulings: readonly RulingSidecar[]): ClassifyContext => ({ ...ARCHITECT, rulings });
+const ARCHITECT: ClassifyContext = { vision: VISION, author: { type: 'architect' }, latched: new Set(), published: new Set() };
+const withRulings = (rulings: readonly {statement: string}[]): ClassifyContext => ({ ...ARCHITECT, author: {type: 'architect', reason: rulings[0]?.statement ?? '', rev: 2} });
 const replace = (id: string, over: Raw): Raw[] => BASE.map((o) => (o['id'] === id ? { ...o, ...over } : o));
 
 describe('obligation edits', () => {
@@ -85,21 +77,19 @@ describe('obligation edits', () => {
       [file(replace('I-3', { statement: 'Unknown commands exit 64.', rev: 2, proofJudgment: proof('I-3', 2) })), 'statement changed', 'amended'],
       [file(replace('I-3', { docRef: { path: 'docs/target.md', anchor: '#cli', quotedText: 'exit' }, rev: 2, proofJudgment: proof('I-3', 2) })), 'docRef changed', 'amended'],
       [file(replace('I-3', { activation: 'future', deliveredBy: ['tidy'], rev: 2, proofJudgment: proof('I-3', 2) })), 'must-hold → future', 'amended'],
-      [file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } })), 'waived by C-5', 'waived'],
+      [file(replace('I-3', { state: { type: 'waived', reason: 'test disposition', rev: 2 } })), 'waived: test disposition', 'waived'],
       [file(replace('I-3', { witness: { lane: 'journey', testIds: ['other'] }, proofJudgment: proof('I-3', 1, ['other']) })), 'witness no longer names "I-3"', 'amended'],
     ];
     for (const [obligations, what, disposition] of cases) {
       const v = classifyObligations(PREV, obligations, ARCHITECT);
-      assert.ok(v.reasons.some((r) => r.startsWith(`I-3 is weakened (${what}) without a ruling in force naming it ${disposition}`)), `${what}: ${JSON.stringify(v.reasons)}`);
+      assert.ok(v.reasons.some((r) => r.startsWith(`I-3 is weakened (${what}) without an apply --reason`)), `${what}: ${JSON.stringify(v.reasons)}`);
       const ok = classifyObligations(PREV, obligations, withRulings([ruling('C-5', [{ id: 'I-3', disposition }])]));
       assert.deepEqual(ok.reasons, [], what);
-      assert.ok(ok.changes.some((c) => c.type === 'disposed' && c.id === 'I-3' && c.disposition === disposition && c.ruling === 'C-5'), what);
+      assert.ok(ok.changes.some((c) => c.type === 'disposed' && c.id === 'I-3' && c.disposition === disposition && c.reason === ruling('C-5', []).statement), what);
     }
-    // A ruling naming another disposition does not do; a state's own ruling must be the one.
-    assert.ok(classifyObligations(PREV, file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } })), withRulings([ruling('C-5', [{ id: 'I-3', disposition: 'deferred' }])])).reasons.length > 0);
-    assert.ok(classifyObligations(PREV, file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } })), withRulings([ruling('C-6', [{ id: 'I-3', disposition: 'waived' }])])).reasons.length > 0);
+    assert.ok(classifyObligations(PREV, WITHOUT_I3(), {...ARCHITECT, author: {type: 'architect', reason: ''}}).reasons.length > 0);
     // Restoring, and strengthening, need none.
-    const waived = file(replace('I-3', { state: { type: 'waived', ruling: 'C-5' } }));
+    const waived = file(replace('I-3', { state: { type: 'waived', reason: 'test disposition', rev: 2 } }));
     assert.deepEqual(classifyObligations(waived, PREV, ARCHITECT).changes, [{ type: 'restored', id: 'I-3' }]);
     const latched = classifyObligations(PREV, file(replace('I-1', { activation: 'must-hold', rev: 2, proofJudgment: proof('I-1', 2) })), ARCHITECT);
     assert.deepEqual(latched, { changes: [{ type: 'edited', id: 'I-1', fields: ['activation'] }], mapping: false, lanes: [], cutLine: false, reasons: [] });
@@ -107,21 +97,32 @@ describe('obligation edits', () => {
 
   it('obligations.revs-and-proofs: the rev rises exactly with a normative change; a stale proof judgment is refused; a new witness must prove; a proof binds the complete witness definition', () => {
     assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { rev: 2, proofJudgment: proof('I-2', 2) })), ARCHITECT).reasons, ['I-2 takes rev 1, not 2 (the rev rises exactly when its statement, docRef, rule or activation changes)']);
-    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), laneRev: '0000000000000000' } })), ARCHITECT).reasons,
-      [`I-2's proof judgment is stale (judged obligation rev 1, lane 0000000000000000; now rev 1, lane ${LANE_REV})`]);
+    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), obligationRev: 2 } })), ARCHITECT).reasons,
+      ["I-2's proof judgment is stale (judged obligation rev 2; now 1)"]);
     // Checkpoint A: a witness whose test set grows (lane and obligation revs unchanged) needs a fresh proof of that witness.
     const grownWitness = { lane: 'journey', testIds: ['I-2', 'half-even'] };
     const unreviewed = classifyObligations(PREV, file(replace('I-2', { witness: grownWitness })), ARCHITECT);
-    assert.deepEqual(unreviewed.reasons, [`I-2's proof judgment is stale (judged witness {"lane":"journey","testIds":["I-2"]}; now {"lane":"journey","testIds":["I-2","half-even"]})`]);
+    assert.deepEqual(unreviewed.reasons, ["I-2's proof judgment is stale (judged test ids or files differ)"]);
     const grown = classifyObligations(PREV, file(replace('I-2', { witness: grownWitness, proofJudgment: proof('I-2', 1, grownWitness.testIds) })), ARCHITECT);
     assert.deepEqual(grown, { changes: [{ type: 'witness', id: 'I-2' }], mapping: false, lanes: [], cutLine: false, reasons: [] });
-    // A proof of the same tests on another lane id is stale too.
-    const otherLane = { lane: 'suite', testIds: ['I-2'] };
-    assert.deepEqual(classifyObligations(PREV, file(replace('I-2', { proofJudgment: { ...proof('I-2'), witness: otherLane } })), ARCHITECT).reasons,
-      [`I-2's proof judgment is stale (judged witness {"lane":"suite","testIds":["I-2"]}; now {"lane":"journey","testIds":["I-2"]})`]);
+    // Moving a witness to another lane with the same ids/files reuses its proof judgment.
+    const movedRaw = JSON.parse(JSON.stringify(PREV)) as {lanes: {id: string}[]; obligations: {id: string; witness: {lane: string}}[]};
+    movedRaw.lanes.push({...movedRaw.lanes[0]!, id: 'journey2'});
+    movedRaw.obligations.find((o) => o.id === 'I-2')!.witness.lane = 'journey2';
+    const movedObligations = parseObligations(movedRaw);
+    const rebound = classifyObligations(PREV, movedObligations, ARCHITECT);
+    assert.deepEqual(rebound.reasons, []);
+    assert.ok(rebound.changes.some((c) => c.type === 'witness' && c.id === 'I-2'));
+    assert.ok(!rebound.changes.some((c) => c.type === 'disposed'));
+    assert.deepEqual(rederive(renderInvariants(PREV, []), movedObligations, {}), [],
+      'moving identical test ids to another lane must never raise obligation-dropped');
+    const editedLane = {...movedRaw, lanes: movedRaw.lanes.map((l) => ({...l, argv: ['node', '--test', '--test-concurrency=2', 'journey.test.js']}))};
+    assert.deepEqual(classifyObligations(movedObligations, parseObligations(editedLane), ARCHITECT).reasons, [],
+      'editing lane argv with identical test ids keeps the proof fresh');
+    assert.deepEqual(rederive(renderInvariants(movedObligations, []), parseObligations(editedLane), {}), []);
     const unproven = classifyObligations(PREV, file(replace('I-2', { witness: { lane: 'journey', testIds: ['I-2', 'x'] }, proofJudgment: { ...proof('I-2', 1, ['I-2', 'x']), verdict: 'insufficient' } })), ARCHITECT);
     assert.deepEqual(unproven.reasons, ["I-2's witness is judged insufficient (a new witness must prove it)"]);
-    const moved = classifyObligations(PREV, file(BASE, [{ pattern: 'src/**', obligations: ['I-3'] }]), ARCHITECT);
+    const moved = classifyObligations(PREV, file(BASE, [{ system: 'src', obligations: ['I-3'] }]), ARCHITECT);
     assert.equal(moved.mapping, true);
   });
 
@@ -136,11 +137,6 @@ describe('obligation edits', () => {
     });
     const drops = splitInto([ob('I-4', { statement: 'Money is never mis-rounded.', serves: ['V-2'] })]);
     assert.deepEqual(classifyObligations(PREV, drops, ARCHITECT).reasons, ['I-2\'s children drop parent text: "Totals round half-even."']);
-    const ckpt = classifyObligations(PREV, drops, { ...ARCHITECT, author: { type: 'checkpoint', cites: [visionClauseId('V-2')] } });
-    assert.deepEqual(ckpt.reasons, []);
-    assert.deepEqual(ckpt.changes, [{ type: 'split', id: 'I-2', children: ['I-4'], dropped: ['Totals round half-even.'] }]);
-    assert.deepEqual(classifyObligations(PREV, drops, { ...ARCHITECT, author: { type: 'checkpoint', cites: [visionClauseId('V-4')] } }).reasons,
-      ["I-2's split cites V-4, which is withdrawn (a withdrawn clause may not be newly cited)"]);
     // A split parent stays split into the same children; an existing obligation is not a new child.
     assert.deepEqual(classifyObligations(keeps, keeps, ARCHITECT).reasons, []);
     const regrow = file([
@@ -183,13 +179,15 @@ describe('obligation edits', () => {
   });
 });
 
+const IMPACT_MAP = systemsMap({ systems: { format: { paths: ['src/format.js'] }, report: { paths: ['src/report', 'src/report/**'] }, src: { paths: ['src/**'] } } }, 'map');
+
 describe('impact selection', () => {
   const O = file([
     ...BASE,
     ob('I-4', { statement: 'Parse errors name the line.', docRef: { path: 'docs/parse.md', anchor: '#errors', quotedText: 'line' }, witness: { lane: 'journey', testIds: ['parse'] } }),
-  ], [{ pattern: 'src/format.js', obligations: ['I-3'] }, { pattern: 'src/report', obligations: ['I-1'] }, { pattern: 'src/**', obligations: ['I-4'] }]);
+  ], [{ system: 'format', obligations: ['I-3'] }, { system: 'report', obligations: ['I-1'] }, { system: 'src', obligations: ['I-4'] }]);
   const select = (over: Partial<Parameters<typeof selectObligations>[0]> = {}): readonly ObligationId[] => selectObligations({
-    obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
+    systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
   });
   const ids = (...xs: string[]): ObligationId[] => xs.map((x) => obligationId(x));
 
@@ -219,7 +217,7 @@ describe('impact selection', () => {
 
   it('impact.gate-standing: only fallback selections are standing, including latched future obligations', () => {
     const input = {
-      obligations: O, units: [{ unit: unitId('tidy'), declared: ids('I-3'), repairs: [] }],
+      systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: ids('I-3'), repairs: [] }],
       closure: [], changedPaths: [repoPath('README.md')], revised: [], latched: new Set(ids('I-1')),
     };
     assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3'), standing: ids('I-1', 'I-2', 'I-4') });
@@ -230,7 +228,7 @@ describe('impact selection', () => {
   });
 
   it('impact.gate-mapped: a mapped path has no standing obligations', () => {
-    const input = { obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>() };
+    const input = { systemsMap: IMPACT_MAP, obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>() };
     assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3', 'I-4'), standing: [] });
   });
 
@@ -246,15 +244,15 @@ describe('impact selection', () => {
       ob('I-3', { parent: 'I-1', witness: null, proofJudgment: null, state: { type: 'split', children: ['I-4'] } }),
       ob('I-4', { parent: 'I-3' }),
       ob('I-5'),
-    ], [{ pattern: 'src/a.js', obligations: ['I-4'] }, { pattern: 'src/b.js', obligations: ['I-5'] }]);
+    ], [{ system: 'a', obligations: ['I-4'] }, { system: 'b', obligations: ['I-5'] }]);
     const pick = (over: Partial<Parameters<typeof selectObligations>[0]>): readonly ObligationId[] => selectObligations({
-      obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
+      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
     });
     assert.deepEqual(pick({ changedPaths: [repoPath('src/a.js')] }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ revised: ids('I-1') }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ changedPaths: [repoPath('src/b.js')] }), ids('I-5'));
     const partition = gateObligations({
-      obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(),
+      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(),
     });
     assert.deepEqual(partition.direct, ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(partition.standing, ids('I-5'));
@@ -279,47 +277,38 @@ describe('invariants.md and re-derivation', () => {
 
   it('rederive.drop-refused: a published id missing or weakened needs a Phase-0 ruling; a split parent is present; new ids are free', () => {
     const published = renderInvariants(PREV, []);
-    assert.deepEqual(rederive(null, PREV, []), []);
-    assert.deepEqual(rederive('# Invariants\n', PREV, []), []);
-    assert.deepEqual(rederive(published, file([...BASE, ob('I-9')]), []), []);
+    assert.deepEqual(rederive(null, PREV, {}), []);
+    assert.deepEqual(rederive('# Invariants\n', PREV, {}), []);
+    assert.deepEqual(rederive(published, file([...BASE, ob('I-9')]), {}), []);
     const dropped = WITHOUT_I3();
-    assert.deepEqual(rederive(published, dropped, []), ['obligation-dropped: I-3 (removed) has no Phase-0 ruling naming it retired']);
-    assert.deepEqual(rederive(published, dropped, [ruling('C-1', [{ id: 'I-3', disposition: 'retired' }])]), []);
-    assert.deepEqual(rederive(published, null, []).length, 3);
+    assert.deepEqual(rederive(published, dropped, {}), ['obligation-dropped: I-3 (removed) has no Phase-0 reason for retired']);
+    assert.deepEqual(rederive(published, dropped, {'I-3': 'retire after review'}), []);
+    assert.deepEqual(rederive(published, null, {}).length, 3);
     const weakened = file(replace('I-2', { activation: 'future', deliveredBy: ['tidy'], rev: 2, proofJudgment: proof('I-2', 2) }));
-    assert.deepEqual(rederive(published, weakened, []), ['obligation-dropped: I-2 (must-hold → future) has no Phase-0 ruling naming it amended']);
+    assert.deepEqual(rederive(published, weakened, {}), ['obligation-dropped: I-2 (must-hold → future) has no Phase-0 reason for amended']);
     const split = file([
       ...replace('I-2', { witness: null, proofJudgment: null, state: { type: 'split', children: ['I-4'] } }),
       ob('I-4', { parent: 'I-2', statement: 'Money is never mis-rounded. Totals round half-even.' }),
     ]);
-    assert.deepEqual(rederive(published, split, []), []);
-    const retired = renderInvariants(file(replace('I-3', { state: { type: 'retired', ruling: 'C-2' } })), []);
-    assert.deepEqual(rederive(retired, WITHOUT_I3(), []), [], 'a retired obligation may leave');
+    assert.deepEqual(rederive(published, split, {}), []);
+    const retired = renderInvariants(file(replace('I-3', { state: { type: 'retired', reason: 'test disposition', rev: 2 } })), []);
+    assert.deepEqual(rederive(retired, WITHOUT_I3(), {}), [], 'a retired obligation may leave');
   });
 });
 
 describe('the vision record', () => {
   it('vision.coverage: advanced clauses unserved, the horizon, obligations serving no active clause, withdrawn clauses still cited', () => {
-    const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', ruling: 'C-1' } })]);
+    const o = file([...BASE, ob('I-4', { serves: ['V-4'] }), ob('I-5', { serves: ['V-3'], state: { type: 'waived', reason: 'test disposition', rev: 2 } })]);
     const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
     const citers = [{ id: rulingId('C-2'), cites: [visionClauseId('V-4')] }, { id: divergenceId('D-1'), cites: [visionClauseId('V-2')] }];
-    assert.deepEqual(visionCoverage(VISION, advances, o, citers, []), {
+    assert.deepEqual(visionCoverage(VISION, advances, o, citers), {
       unservedAdvanced: ['V-3', 'V-5'],
-      unservedOpportunity: [],
       horizon: ['V-1'],
       obligationsServingNone: ['I-4'],
       withdrawnCited: [{ clause: 'V-4', citedBy: ['C-2', 'I-4'] }],
     });
     const all = ['V-1', 'V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    assert.deepEqual(visionCoverage(VISION, all, null, [], []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], unservedOpportunity: [], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
-  });
-
-  it('vision.coverage-opportunity: an opportunity\'s unserved clause is listed apart, never as an advanced gap (paid M4b runs 3 and 5)', () => {
-    const o = file([...BASE, ob('I-4', { serves: ['V-4'] })]);
-    const advances = ['V-2', 'V-3', 'V-5'].map((c) => visionClauseId(c));
-    const c = visionCoverage(VISION, advances, o, [], [visionClauseId('V-5'), visionClauseId('V-2')]);
-    assert.deepEqual([c.unservedAdvanced, c.unservedOpportunity], [['V-3'], ['V-5']], 'V-2 is served; V-5 is the opportunity\'s and unserved');
-    assert.match(coverageText(c), /^Advanced clauses no active obligation serves: V-3\nOpportunity clauses no active obligation serves \(not a gap to close: see the opportunity rules\): V-5$/m);
+    assert.deepEqual(visionCoverage(VISION, all, null, []), { unservedAdvanced: ['V-1', 'V-2', 'V-3', 'V-5'], horizon: [], obligationsServingNone: [], withdrawnCited: [] });
   });
 
   it('vision.advances: every id an active clause of the vision, one a world clause', () => {

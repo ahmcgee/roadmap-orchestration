@@ -1,18 +1,18 @@
 // Persistent TUI example: real git, stages and runner records; scripted model backends only.
 // Run from executor/: node test/fixtures/tui-lineage-demo.ts [new-directory]
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { chmodSync,mkdirSync,mkdtempSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { arcId, unitId } from '../../src/core/ids.ts';
+import { arcId,unitId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
-import { readInputFiles, recordPlan } from '../../src/input/inforce.ts';
-import { at, record, start } from '../../src/pipeline/stages.ts';
+import { readInputFiles,recordPlan } from '../../src/input/inforce.ts';
+import { at,record,start } from '../../src/pipeline/stages.ts';
 import { runUnit } from '../../src/pipeline/unit.ts';
 import { Observer } from '../../src/tui/observer.ts';
-import { VISION, ADVANCES } from './brake-common.ts';
-import { admitAll, planCheckStep } from './stage-common.ts';
-import { contextFor, setupArc, stepUntil, mulBuild, gateStep } from './unit-common.ts';
+import { ADVANCES,VISION } from './brake-common.ts';
+import { admitAll,planCheckStep } from './stage-common.ts';
+import { contextFor,gateStep,mulBuild,setupArc,stepUntil } from './unit-common.ts';
 
 const base = process.argv[2] ? resolve(process.argv[2]) : mkdtempSync('/var/tmp/roadmap-lineage-demo-');
 if (process.argv[2]) mkdirSync(base); // Never overwrite an existing example.
@@ -60,7 +60,7 @@ try {
 r = contextFor(d);
 try { assert.deepEqual(await runUnit(r.ctx, r.unit('multiply-v2'), admitAll), { kind: 'merged' }); }
 finally { r.journal.close(); }
-writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 1, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
+writeFileSync(join(d.runDir, 'start.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString(), repo: d.repo, planFile: d.planPath, profile: 'default' }));
 const reply = new Observer().observe({ locator: { type: 'host' }, hostDir: absPath(d.hostDir), pinned: { arc: arcId(d.arc), runDir: absPath(d.runDir) }, token: 1 });
 assert.equal(reply.error, null);
 assert.deepEqual(reply.display!.exceptions, []);

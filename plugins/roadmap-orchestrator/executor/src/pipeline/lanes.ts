@@ -1,4 +1,5 @@
-// Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §4 Verification, Lanes): the
+import { externalVerdict } from '../holistic/external.ts';
+// Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): the
 // executor runs a series of lanes serially, verbatim, under their reservations, in a clean detached
 // checkout, in cadence order (build, unit, candidate, batch; dev.17), and keeps one evidence dir per lane. The same series
 // runs a unit's spec lanes at the salvage SHA (set `spec`, the lanes stage), the plan's build and unit suite lanes and the
@@ -67,63 +68,71 @@
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
 // record is its last passing run (else its last run). Never the red-lane protocol, never flaky. A deflake unit's
 // verification (dev.17, `verify` on its spawns) runs its lane the same way with every run required to pass.
-import { resourceEnvironments } from '../input/plan.ts';
-import { cpuCost, laneCpuKey } from '../resources/calibrate.ts';
-import { CPU_COST } from '../schedule/types.ts';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, posix } from 'node:path';
+import { captureLaunch } from './capture.ts';
+import { existsSync,mkdirSync,readFileSync } from 'node:fs';
+import { basename,dirname,join,posix } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import { sameExecution } from '../input/laneexecution.ts';
-import type { FlakeOn, IntentOf, LaneIdentity, Parent, WitnessFor } from '../core/events.ts';
+import type { FlakeOn,IntentOf,LaneIdentity,Parent,WitnessFor } from '../core/events.ts';
+import type { FlakyEvent } from '../core/flaky.ts';
+import { exclusivePublish,canonicalJson as fileJson,readJson } from '../core/fsx.ts';
 import {
-  type EnvId, type InvocationId, type JobId, type LaneId, type LaneRev, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type UnitId,
-  invocationDirName, invocationId, laneRev, opKey, parseInvocationId, parseOpId, sha256,
+type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type UnitId,
+invocationDirName,invocationId,laneRev,opKey,parseInvocationId,parseOpId,sha256,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { HOST_SIGNATURES_DEV6, spawnPressureOf, laneTimeoutDefault } from '../core/upgrade.ts';
-import { type ObservationStore, type WitnessedEntry, observationOf, observationStore, reuse, verdictOf } from '../holistic/observe.ts';
-import { type ReuseKey, inputShaOf } from '../git/reusekey.ts';
-import { type SystemsMap, laneInput, laneTestFiles, systemsMapInForce } from '../input/systems.ts';
-import { type ArcLaneDef, type ObligationDef, type Obligations, type WitnessRecord, isExempt, laneRevOf } from '../holistic/types.ts';
-import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, envIdOf, hostIdentity, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
-import { git, revParse } from '../git/git.ts';
-import { isAncestor } from '../git/ff.ts';
-import { candidateLaneDir, jobEvidenceRoot, jobLaneDir, witnessDir } from '../git/snapshot.ts';
-import type { AcquireFirst } from '../schedule/arbiter.ts';
-import { exclusivePublish, canonicalJson as fileJson, readJson } from '../core/fsx.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
+import { spawnPressureOf } from '../core/projections.ts';
 import {
-  type CommandVerdict, type IgnoredCensus, isRed, type LaneDef, type RedRev, type SpecM1, STDERR_FILE, STDOUT_FILE, type NeedsUserContent, ignoredCensus,
-  LANE_CADENCES, TEST_FILES_TOKEN, cadenceAtOrBefore,
+type CommandVerdict,type IgnoredCensus,
+LANE_CADENCES,
+type LaneDef,
+type NeedsUserContent,
+type RedRev,
+STDERR_FILE,STDOUT_FILE,
+type SpecM1,
+TEST_FILES_TOKEN,cadenceAtOrBefore,
+ignoredCensus,
+isRed,
 } from '../core/records.ts';
-import { type AbsPath, type IsoTime, type RepoPath, type RepoPattern, absPath, branchRef, isoTimeOf, repoPath, repoPattern } from '../core/values.ts';
-import { type EvidenceManifest, FILES_DIR, capturedEvidence, manifestPath, namedPathGlobs, patternPath, readManifest } from '../git/evidence.ts';
-import { ignoredWrites, planIgnored } from '../git/ignored.ts';
-import { statusPorcelainV2Z } from '../git/git.ts';
-import { type WorktreeCreateRequest, removedSince, standing } from '../git/worktree.ts';
-import { type HostSample, readHostSample } from '../host/sample.ts';
+import { type AbsPath,type IsoTime,type RepoPath,type RepoPattern,absPath,branchRef,isoTimeOf,repoPath,repoPattern } from '../core/values.ts';
+import { type EvidenceManifest,FILES_DIR,capturedEvidence,manifestPath,namedPathGlobs,patternPath,readManifest } from '../git/evidence.ts';
+import { isAncestor } from '../git/ff.ts';
+import { git,revParse,statusPorcelainV2Z } from '../git/git.ts';
+import { ignoredWrites,planIgnored } from '../git/ignored.ts';
+import { type ReuseKey,inputShaOf } from '../git/reusekey.ts';
+import { candidateLaneDir,jobEvidenceRoot,jobLaneDir,witnessDir } from '../git/snapshot.ts';
+import { type WorktreeCreateRequest,removedSince,standing } from '../git/worktree.ts';
+import { type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
+import { type ArcLaneDef,type ObligationDef,type Obligations,type WitnessRecord,isExempt,laneRevOf } from '../holistic/types.ts';
+import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,envIdOf,hostIdentity,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
 import { PRESSURE_SATURATED } from '../host/pressure.ts';
-import { HOST_SIGNATURES, HOST_SIGNATURES_REV, type HostSignatureId, outputSignatures, outputTail } from '../host/signatures.ts';
-import { type Argv0, resolveArgv0 } from '../preflight/argv0.ts';
-import type { BuildLane, LaneLedgerEntry, ObligationView } from '../prompts/inputs.ts';
-import { instanceEnv, laneCpu, requestOf } from '../resources/pool.ts';
-import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
+import { type HostSample,readHostSample } from '../host/sample.ts';
+import { HOST_SIGNATURES,HOST_SIGNATURES_REV,type HostSignatureId,outputSignatures,outputTail } from '../host/signatures.ts';
+import { sameExecution } from '../input/laneexecution.ts';
+import { resourceEnvironments } from '../input/plan.ts';
+import { type SystemsMap,laneInput,laneTestFiles,systemsMapInForce } from '../input/systems.ts';
+import { type Argv0,resolveArgv0 } from '../preflight/argv0.ts';
+import type { BuildLane,LaneLedgerEntry,ObligationView } from '../prompts/inputs.ts';
+import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { cpuCost,laneCpuKey } from '../resources/calibrate.ts';
+import { releaseEnvironment,useEnvironment } from '../resources/environments.ts';
+import { instanceEnv,laneCpu,requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import {
-  type JobHolder, type Reservation, type ResourceContext, type SpecLane, type StageHolder, cleanup, heldReservation, jobOwnerLabel, reserve, run,
+type JobHolder,type Reservation,type ResourceContext,type SpecLane,type StageHolder,cleanup,heldReservation,jobOwnerLabel,reserve,run,
 } from '../resources/reserve.ts';
-import { OWNER_ENV, ownerLabel } from '../resources/teardown.ts';
+import { OWNER_ENV,ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
-import type { Acquire, Rank, ResourceRequest } from '../schedule/types.ts';
-import { type StageContext, type StageParent, evidenceRoot, runOp, verificationWorktree } from './dispatch.ts';
-import { invocationDir, invoke } from './invoke.ts';
+import type { AcquireFirst } from '../schedule/arbiter.ts';
+import type { Acquire,Rank,ResourceRequest } from '../schedule/types.ts';
+import { CPU_COST } from '../schedule/types.ts';
+import { flakeOf,observeFlake } from './deflake.ts';
+import { type StageContext,type StageParent,evidenceRoot,runOp,verificationWorktree } from './dispatch.ts';
+import { invocationDir,invoke } from './invoke.ts';
 import {
-  type FailureSignature, type LaneCancel, type LaneHost, type RedClass, type RedEvidence, type RepeatOf, classifyRed, failureSignature, hostWasBusy,
-  laneAbortReason, laneCancelOf, readRedClass, redLane, writeRedClass,
+type FailureSignature,type LaneCancel,type LaneHost,type RedClass,type RedEvidence,type RepeatOf,classifyRed,failureSignature,hostWasBusy,
+laneAbortReason,laneCancelOf,readRedClass,redLane,writeRedClass,
 } from './redlane.ts';
-import { evidenceSnapshotOp, worktreeCreateOp, worktreeRemoveOp } from '../recover/ops.ts';
-import { flakeOf, observeFlake } from './deflake.ts';
-import type { FlakyEvent } from '../core/flaky.ts';
 
 /**
  * The tree a flake of a run at `at` was seen on (dev.21, src/core/events.ts `FlakeOn`): a unit's own (`unit`) when a unit
@@ -141,12 +150,12 @@ export const LANE_STALL_MS = 10 * 60_000;
 export const LANE_DEADLINE_MS = 6 * 60 * 60_000;
 const laneDeadlineMs = (lane: Pick<LaneDef, 'timeoutMin'>): number => {
   if (lane.timeoutMin !== undefined) return lane.timeoutMin * 60_000;
-  laneTimeoutDefault();
+
   return LANE_DEADLINE_MS;
 };
 export const LANE_GRACE_MS = 5_000;
 
-/** One deadline and retained terminal for every lane consumer, including mutant and flow proof runs. */
+/** One deadline and retained terminal for every lane consumer, including mutant runs. */
 export function laneCommand(lane: LaneDef) {
   return {
     deadlineAt: isoTimeOf(new Date(Date.now() + laneDeadlineMs(lane))),
@@ -251,7 +260,7 @@ export function seriesOrder<L extends LaneDef>(lanes: readonly L[], red: Readonl
 
 /** The spec's series: struck and deferred lanes do not run. */
 export function laneOrder(spec: SpecM1): readonly SpecLane[] {
-  return seriesOrder(spec.lanes.filter((l) => l.state === 'active'));
+  return seriesOrder(spec.lanes.filter((l) => l.state === 'active' && cadenceAtOrBefore(l.cadence, 'unit')));
 }
 
 /**
@@ -347,10 +356,10 @@ function treeManifest(dir: AbsPath): EvidenceManifest {
   return manifest;
 }
 
-/** The lane's census, or null when none was recorded (a lane an older executor ran, or a crash before the write). */
-function readCensus(dir: AbsPath): IgnoredCensus | null {
+/** The census committed by lane postprocessing. */
+function readCensus(dir: AbsPath): IgnoredCensus {
   const path = join(dir, IGNORED_FILE);
-  return existsSync(path) ? ignoredCensus(readJson(path), path) : null;
+  return ignoredCensus(readJson(path), path);
 }
 
 function hostSample(value: unknown, path: string): HostSample {
@@ -366,10 +375,9 @@ function hostSample(value: unknown, path: string): HostSample {
   return { load1: num('load1', false), cpus: num('cpus', true), memTotalKb: num('memTotalKb', true), memAvailableKb: num('memAvailableKb', false) };
 }
 
-/** A run's host samples (`host.json`), or null when none were recorded (an older executor, or a crash before the write). */
-function readLaneHost(dir: AbsPath): LaneHost | null {
+/** The host samples committed by lane postprocessing. */
+function readLaneHost(dir: AbsPath): LaneHost {
   const path = join(dir, HOST_FILE);
-  if (!existsSync(path)) return null;
   const raw = readJson(path);
   if (typeof raw !== 'object' || raw === null) throw new Error(`${path}: not an object`);
   const { start, end, ...rest } = raw as Record<string, unknown>;
@@ -384,7 +392,7 @@ function readLaneHost(dir: AbsPath): LaneHost | null {
  * exit.json the end), its evidence dir's census and host samples, and a red run's host signatures. The live
  * series and every later reader build records here, so they are the same record.
  */
-function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDef, dir: AbsPath): LaneRun {
+function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDef, dir: AbsPath, pendingEvidence = false): LaneRun {
   if (intent.parent.type !== 'stage') throw new Error(`lane spawn ${intent.op} has no stage parent`);
   const subject = intent.expect.subject;
   if (subject.purpose !== 'lane') throw new Error(`${intent.op} spawned a ${subject.purpose}, not a lane`);
@@ -400,8 +408,8 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
   const verdict: CommandVerdict = result?.verdict ?? 'process-fault';
   return {
     lane: lane.id, argv: subject.files === undefined ? lane.argv : testArgvOf(lane, subject.files), expectedExit: lane.expectedExit, exitCode: result?.exitCode ?? null, verdict, evidenceDir: dir,
-    ignored: readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs: fixDirsOf(dir, lane),
-    host: readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], redRev === null ? HOST_SIGNATURES_DEV6 : HOST_SIGNATURES) : [],
+    ignored: pendingEvidence ? null : readCensus(dir), inv, at, endedAt: files.read('exit.json')?.endedAt ?? at, fixDirs: fixDirsOf(dir, lane),
+    host: pendingEvidence ? null : readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], HOST_SIGNATURES) : [],
     // A run's own record; a reused lane's ledger entry sets it (`reusedRecord`).
     reused: null, redRev, pressure: donePressure(ctx.journal.view, intent.op),
   };
@@ -423,18 +431,6 @@ function redClassOf(run: LaneRun): RedClass | null {
   if (!isRed(run.verdict)) return null;
   if (run.redRev === null) return classifyRed(evidenceOf(run), null);
   return readRedClass(run.evidenceDir)?.class ?? null;
-}
-
-/**
- * 1.0.0-dev.6 adoption (temporary scaffolding, deleted with `HOST_SIGNATURES_DEV6`): the class of an unstamped red run,
- * which dev.6 never persisted, re-derived from its raw evidence with the frozen table, as `redClassOf` does; null once
- * that evidence is gone (gc, or a run dir restored from the snapshot ref, which never carries raw output).
- */
-export function dev6RedClass(runDir: AbsPath, inv: InvocationId, dir: AbsPath): RedClass | null {
-  const invDir = invocationDir(runDir, inv);
-  const output = [join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)];
-  if (!output.every((f) => existsSync(f))) return null;
-  return classifyRed({ signatures: outputSignatures(output, HOST_SIGNATURES_DEV6), host: readLaneHost(dir) }, null);
 }
 
 /**
@@ -500,14 +496,14 @@ type ReuseContext = Readonly<{ journal: Readonly<{ view: JournalView }>; repo: A
 export const mapInForce = (view: JournalView): SystemsMap | null => systemsMapInForce(view.planApplied());
 
 /** `lane`'s input on commit `at` under the map in force (src/git/reusekey.ts). */
-export const laneInputAt = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, lane: LaneDef, at: Sha): Sha =>
-  inputShaOf(ctx.repo, revParse(ctx.repo, `${at}^{tree}`), lane, mapInForce(ctx.journal.view));
+export const laneInputAt = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, lane: LaneDef, at: Sha, systems?: LaneDef['systems']): Sha =>
+  inputShaOf(ctx.repo, revParse(ctx.repo, `${at}^{tree}`), { ...lane, ...(lane.systems !== undefined || systems === undefined ? {} : { systems }) }, mapInForce(ctx.journal.view));
 
 /** What a run of a lane at a commit is reused by now: its identity, argv[0], and its input on the commit. */
-export type LaneNow = Readonly<{ identity: LaneIdentity; argv0: Argv0; inputSha: Sha }>;
+export type LaneNow = Readonly<{ identity: LaneIdentity; argv0: Argv0; inputSha: Sha; systems?: LaneDef['systems'] }>;
 
-export function laneNow(ctx: ReuseContext, lane: LaneDef, at: Sha): LaneNow {
-  return { ...laneIdentity(ctx, lane), inputSha: laneInputAt(ctx, lane, at) };
+export function laneNow(ctx: ReuseContext, lane: LaneDef, at: Sha, systems?: LaneDef['systems']): LaneNow {
+  return { ...laneIdentity(ctx, lane), inputSha: laneInputAt(ctx, lane, at, systems), ...(systems === undefined ? {} : { systems }) };
 }
 
 /** An arc lane's reuse key on `tree` (a tree id) in environment `envId`: what its observation is stored under. */
@@ -595,12 +591,15 @@ function spawnRecord(ctx: StageContext, parent: StageParent, lane: LaneDef, spaw
 
 /**
  * The evidence root of the series a certified run's first spawn `inv` ran in: the parent dir of where its output was
- * snapshotted (`<root>/<lane>/output`), or null when nothing was snapshotted (a crash cut its series short).
+ * snapshotted (`<root>/<lane>/output`), or null when postprocessing never finished. `host.json` is published
+ * last, after the snapshots and census, so its presence marks a readable execution rather than a partial crash artifact.
  */
 function seriesRootOf(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, inv: InvocationId): AbsPath | null {
   const source = invocationDir(ctx.runDir, inv);
   const snap = ctx.journal.view.opsOf('evidence.snapshot').find((i) => i.expect.source === source);
-  return snap === undefined ? null : absPath(dirname(dirname(snap.expect.dest)));
+  if (snap === undefined) return null;
+  const lane = dirname(snap.expect.dest);
+  return existsSync(join(lane, HOST_FILE)) ? absPath(dirname(lane)) : null;
 }
 
 /** One series' execution of a lane, read back: its series, set and commit, its spawns' identity and its record. */
@@ -654,6 +653,7 @@ function laneHistory(ctx: StageContext, unit: UnitId, lane: LaneDef, exclude: St
   const view = ctx.journal.view;
   const ran: LaneHistoryEntry[] = executionsOf(view, lane.id)
     .filter((e) => e.set === 'spec' && e.parent.unit === unit && !sameParent(e.parent, exclude))
+    .filter((e) => seriesRootOf(ctx, invocationId(e.spawns[0]!.op, e.spawns[0]!.ordinal)) === specSeriesRoot(ctx.runDir, e.parent))
     .map((e) => ({ seq: e.seq, parent: e.parent, execution: e.parent, at: e.at, record: spawnRecord(ctx, e.parent, lane, e.spawns, specSeriesRoot(ctx.runDir, e.parent)), reused: false }));
   const reused: LaneHistoryEntry[] = view.holistic().laneReuses
     .filter((r) => r.lane === lane.id && (r.set ?? 'spec') === 'spec' && r.parent.type === 'stage' && r.parent.unit === unit && !sameParent(r.parent, exclude))
@@ -680,7 +680,7 @@ export function reusablePass(ctx: StageContext, parent: StageParent, lane: LaneD
   for (let i = executions.length - 1; i >= 0; i--) {
     const e = executions[i]!;
     if (!sameIdentity(e.identity, now.identity)) continue;
-    if (e.at !== at && laneInputAt(ctx, lane, e.at) !== now.inputSha) continue;
+    if (laneInputAt(ctx, lane, e.at, ctx.plan().units.find((u) => u.id === e.parent.unit)?.systems) !== now.inputSha) continue;
     const record = executionRecord(ctx, lane, e);
     if (record === null || !cleanPass(ctx, record)) return null;
     return { from: { parent: e.parent, inv: record.inv, at: e.at }, record: { ...record, reused: { at: e.at, inv: record.inv } } };
@@ -839,7 +839,7 @@ async function runLane(
         for (const name of Object.keys(extra)) if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.id} declares ${name}, which the executor sets`);
       }
       return {
-        argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()), cwd: absPath(join(tree, lane.cwd)), env: { ...env, ...extra }, stdinPath: null,
+        ...captureLaunch({ ...lane, argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()) }, { ...env, ...extra }, absPath(join(invDir, 'captures'))), cwd: absPath(join(tree, lane.cwd)), stdinPath: null,
         ...command.launch,
       };
     },
@@ -849,7 +849,7 @@ async function runLane(
 
   // One evidence dir per run: its stdout and stderr, and its declared evidence from the checkout.
   let evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
-    source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
+    source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE), ...(lane.capture === undefined ? [] : [repoPattern('captures/**')])], dest: absPath(join(dir, 'output')),
   })).op;
   if (lane.evidenceGlobs.length > 0) {
     evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
@@ -860,7 +860,7 @@ async function runLane(
   // The ignored-output census, from the lane's start and verdict as its files record them; a lane that did
   // not pass also gets its undeclared ignored output captured.
   const spawned = spawnOf(ctx.journal.view, outcome.op);
-  const ended = laneRun(ctx, spawned, lane, dir);
+  const ended = laneRun(ctx, spawned, lane, dir, true);
   const declared = lane.evidenceGlobs.length === 0 ? [] : treeManifest(dir).files.map((f) => f.path);
   const writes = ignoredWrites(tree, new Date(ended.at).getTime());
   const plan = planIgnored(writes, { passed: ended.verdict === 'pass', declared: new Set(declared), excludes: lane.evidenceExcludes });
@@ -910,13 +910,11 @@ export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): Re
  * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
  * `verify` (dev.17): a deflake unit's verification runs per lane (src/pipeline/deflake.ts `verifyRunsOf`): that lane runs
  * fresh, that many times, every run passing. A flaky lane (red, then green on its diagnostic rerun) is recorded in the
- * flaky ledger (`observeFlake`) and passes when the ledger forgives it. `carry` (dev.17, a verified docs-only change:
- * src/pipeline/docsonly.ts): passes reused in place of `reusablePass`, by lane id.
+ * flaky ledger (`observeFlake`) and passes when the ledger forgives it.
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
   rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), verify: ReadonlyMap<LaneId, number> = new Map(),
-  carry: ReadonlyMap<LaneId, Reusable> = new Map(),
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -1010,7 +1008,7 @@ export async function runLaneSeries(
   };
 
   for (const lane of lanes) {
-    const now = laneNow(ctx, lane, at);
+    const now = laneNow(ctx, lane, at, ctx.plan().units.find((u) => u.id === parent.unit)?.systems);
     // dev.17: a deflake unit's verification runs its lane fresh, `runs` times, every run passing (never reused, never test-only).
     const verifyRuns = verify.get(lane.id);
     if (verifyRuns !== undefined) {
@@ -1024,7 +1022,7 @@ export async function runLaneSeries(
       continue;
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
-    const reusable = witnesses.has(lane.id) ? null : carry.get(lane.id) ?? reusablePass(ctx, parent, lane, at, now);
+    const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
     const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {
@@ -1317,7 +1315,7 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Journey series (M3 B2; DESIGN-1.0.md §2.8 "Journey lanes"; plan "Journey lanes and the held-claims brake")
+// Journey series (M3 B2; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"; plan "Journey lanes and the held-claims brake")
 //
 // Arc lanes (and a job's suite lanes) run owned by no unit, under the same arbiter, locks, watchdog, evidence and
 // red-lane rules as a series: in a unit's candidate under its stage holder (`owner: unit`), and under a job's holder
@@ -1364,7 +1362,7 @@ export { sameExecution } from '../input/laneexecution.ts';
 /** Each suite lane's identical arc lane among `arc` (the first, by `sameExecution`), by suite lane id; never a stochastic lane's. */
 export function suiteStandIns(suite: readonly LaneDef[], arc: readonly ArcLaneDef[]): ReadonlyMap<LaneId, ArcLaneDef> {
   return new Map(suite.flatMap((s) => {
-    const a = s.stochastic === undefined ? arc.find((l) => sameExecution(s, l)) : undefined;
+    const a = s.stochastic === undefined ? arc.find((l) => l.witnessClass !== 'external' && sameExecution(s, l)) : undefined;
     return a === undefined ? [] : [[s.id, a] as const];
   }));
 }
@@ -1488,6 +1486,10 @@ export function observedViews(
   const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));
   return defs.map((o) => {
     const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
+    if (lane?.witnessClass === 'external') {
+      const verdict = externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o);
+      return { obligation: o, exempt: isExempt(o), latched: latched.has(o.id), observation: verdict === null ? null : { key: { treeSha: tree, lane: lane.id, laneRev: laneRevOf(lane), envId: laneEnvId(ctx, lane) }, verdict } };
+    }
     const found = lane === undefined ? null : reuse(store, arcLaneKey(ctx, tree, lane, laneEnvId(ctx, lane)));
     return { obligation: o, exempt: isExempt(o), latched: latched.has(o.id), observation: found === null || o.witness === null ? null : { key: found.key, verdict: verdictOf(found.record, o.witness) } };
   });
@@ -1571,7 +1573,7 @@ export async function runJourneySeries(
       launch: (invDir) => {
         mkdirSync(dirOf(lane, invDir), { recursive: true });
         return {
-          argv: lane.def.argv, cwd: absPath(join(checkout.path, lane.def.cwd)), env: envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), stdinPath: null,
+          ...captureLaunch(lane.def, envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), absPath(join(invDir, 'captures'))), cwd: absPath(join(checkout.path, lane.def.cwd)), stdinPath: null,
           ...command.launch,
         };
       },
@@ -1581,7 +1583,7 @@ export async function runJourneySeries(
     const dir = dirOf(lane, invDir);
     mkdirSync(dir, { recursive: true });
     let evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, {
-      source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE)], dest: absPath(join(dir, 'output')),
+      source: invDir, globs: [repoPattern(STDOUT_FILE), repoPattern(STDERR_FILE), ...(lane.def.capture === undefined ? [] : [repoPattern('captures/**')])], dest: absPath(join(dir, 'output')),
     })).op;
     if (lane.def.evidenceGlobs.length > 0) {
       evidenceOp = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${who}`, parent, { source: checkout.path, globs: lane.def.evidenceGlobs, dest: absPath(join(dir, 'tree')) })).op;
@@ -1664,6 +1666,7 @@ export async function runJourneySeries(
   const counted = (lane: JourneyLane, r: JourneyRan, flaky: boolean): JourneyRun => ({ lane: lane.def.id, inv: r.inv, verdict: r.verdict, flaky, dir: r.dir, record: witness(lane, r) });
 
   for (const lane of lanes) {
+    if (lane.witness?.witnessClass === 'external') continue;
     if (store !== null && lane.witness !== null && !lane.suite) {
       const o = reuse(store, arcLaneKey(ctx, treeSha, lane.witness, laneEnvId(ctx, lane.witness)));
       if (o !== null) {

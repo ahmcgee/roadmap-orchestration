@@ -1,0 +1,137 @@
+{
+  "findings": [
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "unit",
+        "id": "u-convert"
+      },
+      "claim": "Acceptance clause A2, \"toFahrenheit rounds its result to the nearest integer\", contradicts V-2, \"Results are never rounded silently; the caller chooses the precision\": A2 fixes the precision with no caller input, and it preserves the Math.round already in convert.ts line 1, while toCelsius in the same file does not round.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The vision says \"This arc advances: V-1, V-2, V-3\", but the Phase-0 slice lists advances [\"V-1\"] and the only obligation, I-1, serves only V-1, so no obligation serves V-2 or V-3; I-1's witness of toFahrenheit(100) returning 212 also passes under the current rounding code, and so gives no evidence for V-2.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "blocking",
+      "target": {
+        "type": "census",
+        "rule": "T-2"
+      },
+      "claim": "The census marks T-2 (\"toCelsius(32) returns 0\") out-of-slice, but V-1 is conversion \"between Celsius and Fahrenheit\" and A1 requires u-convert to export toCelsius, so the slice needs this rule; as drafted, no obligation or test checks toCelsius behaviour even though the unit lane could check it directly.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-1"
+      },
+      "claim": "I-1 carries a proofJudgment of \"proves\" for witness test id \"convert\", but the repository contains no test file, no acceptance clause in u-convert requires one to be written, and there is no package.json or tsconfig, so whether the unit lane's bare `node --test` would discover a TypeScript test and import convert.ts depends on a test file name and Node version the pack does not fix.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "u-convert"
+      },
+      "claim": "The plan says u-convert \"implements convert.ts\", but that file already exists and already satisfies both A1 and A2, so the spec as written asks for no change to the code.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        },
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "rule",
+        "id": "T-1"
+      },
+      "claim": "The rules index places T-1 and T-2 in docs/target.md, but that file is absent from the working directory, so the corpus text and I-1's textSha256 pin cannot be checked against the repository at this head.",
+      "evidence": []
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "plan"
+      },
+      "claim": "The vision lists open question Q-1 on Kelvin with the working assumption \"Celsius and Fahrenheit only\", but the Phase-0 questions list is empty, so the record does not carry the question or its assumption.",
+      "evidence": []
+    }
+  ],
+  "dispositions": [],
+  "reasons": [
+    "I read the whole pack and listed every file in the working directory; convert.ts is the only file found, and I read it in full.",
+    "A2 is blocking because a spec clause and a vision clause cannot both hold, and the vision decides what the pack is for.",
+    "The missing V-2 and V-3 coverage is blocking because the vision says the arc advances three clauses, while the slice and the obligations cover only V-1.",
+    "The T-2 census state is blocking because the census method treats out-of-slice for a rule the slice needs as a wrong state, and V-1 and A1 both reach toCelsius.",
+    "The test, already-satisfied-unit, missing corpus file and Q-1 items are notes because the pack can still run with them, though each could cost an engineer time or leave the record incomplete.",
+    "I did not recompute I-1's textSha256 because the corpus file is absent and I had no tool to hash the text, and I did not run the lane because this review is read-only.",
+    "Time and clock checks produced no finding because neither the code nor the pack has any date- or time-dependent behaviour."
+  ],
+  "premises": [
+    {
+      "claim": "toFahrenheit in convert.ts rounds its result with Math.round.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "toCelsius in convert.ts is exported and returns (f - 32) * 5 / 9 without rounding.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "A file listing of the working directory returned only convert.ts, so it holds no test file, package.json, tsconfig or docs/target.md.",
+      "evidence": [
+        {
+          "path": "convert.ts",
+          "line": 1
+        }
+      ]
+    }
+  ]
+}

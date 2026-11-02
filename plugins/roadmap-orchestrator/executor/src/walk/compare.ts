@@ -1,4 +1,6 @@
-// A polish unit's compare (dev.13, plan §4 "Polish units", R2; SCHEMAS.md "dev.13"): after its gate approved it and
+import { jobStageOutcome } from '../stageoutcome.ts';
+import { experiencePolish } from '../prompts/schemas.ts';
+// A polish unit's compare (dev.13, plan §4 "Polish units", R2; SCHEMAS.md "Milestones and bring-up"): after its gate approved it and
 // before its candidate is admitted, a polish unit's tweak is judged against the product as it is. A polish unit's
 // candidate admission waits until its `tweak-judged` is a `keep` (src/schedule/ready.ts, constraint `compare`); a `drop`
 // never lands, so nothing needs reverting. The compare is a durable job `compare-<n>`, one at a time, run in the holistic
@@ -28,41 +30,41 @@
 //   7. Teardown of both instances and checkouts; then `tweak-judged{decision, judged}`, and a drop's cut (step 0).
 // Crash labels: `compare.after-started`, `compare.after-judged` (`tweak-judged` written, a drop's cut not yet),
 // `compare.after-cut`.
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync,mkdirSync,statSync } from 'node:fs';
 import { join } from 'node:path';
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { walkMcpConfig } from '../backends/mcp.ts';
+import { type FencedCommitContext,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
-import type { Parent, WalkFact } from '../core/events.ts';
+import type { Parent,WalkFact } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type JobId, type ServeName, type Sha, type UnitId, parseInvocationId } from '../core/ids.ts';
+import { type JobId,type ServeName,type Sha,type UnitId,parseInvocationId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { type FencedCommitContext, commitUnderFence, evaluateRevision } from '../commands/apply.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { boundedDiff } from '../git/boundeddiff.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
-import { diffBase, unitDiffPaths } from '../git/transient.ts';
+import { diffBase,unitDiffPaths } from '../git/transient.ts';
 import { removeCheckout } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
 import { POLISH_DROPPED } from '../input/classify.ts';
-import { inForceFiles, requirePlanInForce, revisionInForce } from '../input/inforce.ts';
-import { type Milestone, type PlanM1, type PlanUnit, advancesOf, derivedOf, milestoneOf, parsePlan } from '../input/plan.ts';
-import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
-import { type BackendCallOutcome, type RepairTurn, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
+import { inForceFiles,requirePlanInForce,revisionInForce } from '../input/inforce.ts';
+import { type Milestone,type PlanM1,type PlanUnit,advancesOf,derivedOf,milestoneOf,parsePlan } from '../input/plan.ts';
+import { raiseNeedsUser,raisedFor } from '../needsuser.ts';
+import { referenceFiles } from '../phase0/rows.ts';
+import { type BackendCallOutcome,type RepairTurn,arcSeat,callActingJudge,recordedArcCall,repairTurnOf,runOp,verdictOf } from '../pipeline/dispatch.ts';
 import { GATE_DIFF_BUDGET } from '../pipeline/gate.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
-import { holisticInForce, inMs } from '../pipeline/stages.ts';
-import { referenceFiles } from '../phase0/rows.ts';
+import { holisticInForce,inMs } from '../pipeline/stages.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
-import { renderPrompt, promptFor } from '../prompts/index.ts';
-import { type PolishJudgeInputs, visionInputOf } from '../prompts/inputs.ts';
-import { type PolishJudgeOutput, validatePolishJudgeOutput } from '../prompts/schemas.ts';
+import { promptFor,renderPrompt } from '../prompts/index.ts';
+import { type PolishJudgeInputs,visionInputOf } from '../prompts/inputs.ts';
+import { type PolishJudgeOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
-import { type Instance, allocatePorts, bringUp, substitutePorts, tearDown } from './bringup.ts';
+import { type Instance,allocatePorts,bringUp,substitutePorts,tearDown } from './bringup.ts';
 import { evidencePath } from './report.ts';
-import { type WalkContext, WALK_SESSION_MIN, reserveJob, releaseJob } from './walk.ts';
+import { type WalkContext,WALK_SESSION_MIN,releaseJob,reserveJob } from './walk.ts';
 
 /** What a compare needs: a walk's context (processes, resources, the arbiter's first-served waits) and the fenced commit's. */
 export type CompareContext = WalkContext & FencedCommitContext;
@@ -118,13 +120,6 @@ export function compareDue(view: JournalView, plan: PlanM1): PlanUnit | null {
 export const cutDue = (view: JournalView, plan: PlanM1): PlanUnit | null =>
   plan.units.find((u) => u.origin === 'polish' && u.cut === undefined && tweakOf(view, u.id)?.decision === 'drop') ?? null;
 
-/** Whether a compare or a dropped tweak's cut is due or running (the scheduler's question before `runCompare`). */
-export function comparePending(ctx: Pick<CompareContext, 'journal' | 'runDir'>): boolean {
-  const view = ctx.journal.view;
-  const plan = requirePlanInForce(ctx.runDir, view).plan;
-  return runningCompare(view) !== null || cutDue(view, plan) !== null || compareDue(view, plan) !== null;
-}
-
 /** Compares a unit gets: the first and one retry; the second failed (not interrupted) one drops the tweak, reason `abandoned`. */
 export const COMPARE_ATTEMPTS = 2;
 
@@ -145,6 +140,8 @@ export const compareEvidenceDir = (ctx: Pick<CompareContext, 'runDir'>, job: Job
 
 /** Writes `tweak-judged` (step 7, or step 2's / 5's code drop). */
 function judge(ctx: CompareContext, unit: UnitId, decision: 'keep' | 'drop', reason: Extract<WalkFact, { kind: 'tweak-judged' }>['reason']): CompareOutcome {
+  const compare = comparesOf(ctx.journal.view).findLast((c) => c.unit === unit);
+  if (compare !== undefined) jobStageOutcome(ctx.journal, compare.job, 'experience-verdict', ctx.plan().units.find((u) => u.id === unit)?.polish?.milestone ?? null, decision, []);
   ctx.journal.fact({ kind: 'tweak-judged', unit, decision, reason });
   crashPoint('compare.after-judged');
   return { kind: 'judged', unit, decision, reason };
@@ -166,7 +163,8 @@ export async function cutDropped(ctx: CompareContext, unit: PlanUnit): Promise<C
   const evaluated = evaluateRevision(rctx, files, proposer);
   if (evaluated.kind !== 'accepted') throw new Error(`the cut of dropped tweak ${unit.id} was refused: ${evaluated.kind === 'rejected' ? evaluated.reasons.join('; ') : 'unchanged'}`);
   const out = await commitUnderFence(ctx, evaluated, proposer, proposer, { type: 'arc' });
-  if (out.kind === 'rejected') return { kind: 'cut', unit: unit.id, committed: false };
+  if (out.kind === 'rejected' && out.reasons.some((r) => r.startsWith('stale:'))) return cutDropped(ctx, unit);
+  if (out.kind === 'rejected') return {kind: 'cut', unit: unit.id, committed: false};
   crashPoint('compare.after-cut');
   return { kind: 'cut', unit: unit.id, committed: true };
 }
@@ -176,7 +174,7 @@ function skipReason(ctx: CompareContext): 'backend-parked' | 'paused' | null {
   const view = ctx.journal.view;
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return 'paused';
-  return view.parkedBackends().includes(arcSeat(ctx, 'polishJudge').triple.backend) ? 'backend-parked' : null;
+  return view.parkedBackends().includes(arcSeat(ctx, 'experienceVerdict').triple.backend) ? 'backend-parked' : null;
 }
 
 /** Runs the cut, or the compare, due or running now (see the header). */
@@ -242,7 +240,7 @@ function readJudge(ctx: CompareContext, job: JobId, called: BackendCallOutcome, 
     case 'success': {
       let output: PolishJudgeOutput;
       try {
-        output = validatePolishJudgeOutput(v.value);
+        output = experiencePolish(v.value);
       } catch (error) {
         if (error instanceof SchemaError) return { kind: 'failed', reasons: [`the answer is off its schema: ${error.message}`], refused: true, interrupted: false };
         throw error;
@@ -279,7 +277,7 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
   const servers = ctx.routingBase.config?.walkthrough?.mcp;
   if (journey.via === 'browser' && servers === undefined) throw new Error(`${job}: ${journey.id} is a browser journey and the repo config names no walkthrough.mcp servers (Phase 0 refuses this)`);
   const mcpConfig = journey.via === 'browser' ? walkMcpConfig(servers!, evidenceDir) : null;
-  const prompt = promptFor('polishJudge', arcSeat(ctx, 'polishJudge').triple.model);
+  const prompt = promptFor('experienceVerdict', arcSeat(ctx, 'experienceVerdict').triple.model);
   const deadlineAt = inMs(WALK_SESSION_MIN * 60_000);
   const instances: Partial<Record<Side, Instance>> = {};
   const made = new Set<Side>();
@@ -348,16 +346,16 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
   };
   /** Call `attempt`: the recorded one consumed, else asked (fresh, or as the repair turn) with both instances up. */
   const ask = async (attempt: number, repair: Readonly<{ turn: RepairTurn; reasons: readonly string[] }> | null): Promise<Readonly<{ read: Read; called: BackendCallOutcome }> | CompareOutcome> => {
-    let called = recordedArcCall(ctx, job, 'polishJudge', attempt);
+    let called = recordedArcCall(ctx, job, 'experienceVerdict', attempt);
     if (called === null || called.kind === 'lost') {
       const ended = await ensureUp();
       if (ended !== null) return ended;
       const cwd = checkoutOf(ctx, job, 'after');
       if (repair !== null && repair.turn.cwd !== cwd) throw new Error(`${job}: a refused polish judge call ran in ${repair.turn.cwd}, not ${cwd}`);
       called = await callActingJudge(ctx, {
-        job, role: 'polishJudge', attempt, system: prompt.system, cwd, evidenceDirs: dirs, mcpConfig, deadlineAt,
+        job, role: 'experienceVerdict', attempt, system: prompt.system, cwd, evidenceDirs: dirs, mcpConfig, deadlineAt,
         ...(repair === null
-          ? { ...renderPrompt(prompt, inputsOf()), schema: prompt.schema, session: freshJudgmentSession() }
+          ? { ...renderPrompt(prompt, {mode: 'polish', brief: inputsOf()}), schema: prompt.schema, session: freshJudgmentSession() }
           : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: repair.turn.schema, session: repair.turn.session }),
       });
     }
@@ -369,7 +367,7 @@ async function compareOnce(ctx: CompareContext, c: CompareRecord, m: Milestone, 
     if ('kind' in first) return first;
     let read = first.read;
     if (read.kind === 'failed' && read.refused) {
-      const recordedAgain = recordedArcCall(ctx, job, 'polishJudge', 2);
+      const recordedAgain = recordedArcCall(ctx, job, 'experienceVerdict', 2);
       const turn = recordedAgain?.kind === 'result' ? null : repairTurnOf(ctx.runDir, first.called.inv);
       if (recordedAgain?.kind === 'result' || turn !== null) {
         const again = await ask(2, turn === null ? null : { turn, reasons: read.reasons });

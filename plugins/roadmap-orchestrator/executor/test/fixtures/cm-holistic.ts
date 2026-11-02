@@ -1,56 +1,27 @@
-// The concurrent crash matrix's M3 scenarios (test/serial/concurrent-matrix.test.ts; M3 B8): an arc's job steps while its units
-// are in flight, run by the real supervised `roadmap start` through the whole-pipeline harness (pm-common.ts), keyed
-// per unit and per job. The jobs and batch arcs are holistic on a corpus target (corpus-target.ts, M4a D0), each with its
-// pack review (`review-1`, no finding) before the first admission. A job's crash points pass no unit: a cell selects the occurrence the recording attributes to
-// the job (by its log's records, pm-holistic.ts `ownerOf`), and asserts the op the crash hit is the job's. The
-// watcher queues the architect's commands (`audit`, `apply`, `rule`) as the CLI does, in its own process.
-//
-//   jobs     two units, u1 and u2, each parked in a live build runner (the fake implementer at barrier `<unit>.build`),
-//            while an `audit` command runs audit-1 (its vision lens) and its checkpoint ckpt-1 applies a bundle (an
-//            arc-wide limits op: the revision, its divergence, the digest item). The builds are released once the digest
-//            is raised (the bundle's last record), or when a crashed executor's successor has started (its recovery
-//            adopts a pinned runner by waiting for it); each unit's spec lane then parks (cm-pin.ts) until the drift
-//            audit audit-2, which finds nothing new, has its checkpoint skipped (checkpoint-skipped), so no unit
-//            publishes before the jobs' story is over, crashed or not. Then both merge, the final audit audit-3 and
-//            ckpt-2 (a no-op), the close-out, completion.
-//   batch    u3 parked in a live build runner while an `audit` command runs audit-1, whose lens opens F-1 (a P1 over
-//            I-2), and ckpt-1 decides a no-op; then the architect admits the repair units u1 and u2 (each repairing F-1)
-//            with an `apply`; both approved, they publish as one batch (batch-1: its slot, the chained candidate, its
-//            lanes, the batch ff, its snapshot), resolving F-1. u3's build is released once the batch ff is done, or when
-//            a crashed executor's successor has started. Then u3 merges, the final audit and checkpoint, the close-out.
-//   preempt  u1's candidate parks in a suite lane holding the publication slot before green (the `c-pin` lane, which
-//            parks on its first run only) when a `rule` lands C-2 with a contract op: its docs publication preempts the
-//            candidate (the kill of its lane, reason `preempt`), publishes, and u1 runs a fresh candidate onto the new
-//            tip, whose ff is fingerprint-invalid (the contract its approval bound changed); the contract op's stale set
-//            re-opens u1 at plan-check (dev.17 propagation), which answers it, a build resumes its session, it is gated
-//            again and merges. A crashed executor's successor
-//            releases the parked run (its recovery adopts it by waiting for it): a crash before the preemption can then
-//            let the candidate go green first (safety, not the uncrashed order, is claimed).
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+// Concurrent campaign audits and root decisions, repair batches and preempting docs publication.
+// The jobs story keeps u1/u2 in live build runners while campaign audit raises an owner request and
+// root apply changes scheduling priority without draining those builds, closing the request by subject.
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sha } from '../../src/core/ids.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
-import { parseRulingSidecar } from '../../src/holistic/types.ts';
-import { rulingContextAt } from '../../src/pipeline/publish.ts';
-import { consistencyRevs } from '../../src/spec/rulings.ts';
-import { bytesSha256 } from '../../src/spec/spec.ts';
+
 import { release } from '../helpers/barrier.ts';
-import { checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../helpers/holistic.ts';
+import { lensAnswer,lensStep,packReviewStep } from '../helpers/holistic.ts';
 import { fixture } from '../helpers/proc.ts';
 import type { Owner } from '../helpers/reap.ts';
-import { git, tmpDir } from '../helpers/repo.ts';
+import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { ADVANCES,obligationsJson } from './brake-common.ts';
+import { restarted,submit } from './cm-common.ts';
 import { corpusTarget } from './corpus-target.ts';
-import { restarted, submit } from './cm-common.ts';
-import { type ExecRun, SMOKE_DEFAULT, journalOf, setupExec } from './exec-common.ts';
-import type { Hook, Laid } from './pm-common.ts';
-import { type Sampled, ownerOf, sampleBy } from './pm-holistic.ts';
-import { API_OP, barrierSuite } from './publish-common.ts';
+import { type ExecRun,SMOKE_DEFAULT,journalOf,setupExec } from './exec-common.ts';
+import type { Hook,Laid } from './pm-common.ts';
+import { type Sampled,ownerOf,sampleBy } from './pm-holistic.ts';
+import { barrierSuite } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
-import { MUL, MUL_LANE, SUITE_LANE, appendSteps, applyBody, codexStep, gateStep } from './unit-common.ts';
+import { MUL,MUL_LANE,SUITE_LANE,appendSteps,applyBody,codexStep,gateStep,syncInputs } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -69,14 +40,12 @@ const DIV = {
 } as const;
 const DIV_LANE = { id: 'div', argv: ['node', '--test', 'test/div.test.js'] } as const;
 const TWO_LANE = { id: 'two', argv: ['node', '--test', 'test/two.test.js'] } as const;
-const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
-const NOOP = checkpointAnswer({ decision: 'no-op' });
 
 const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 const build = (files: Readonly<Record<string, string>>, barrier?: string): Step =>
   codexStep([...(barrier === undefined ? [] : [{ type: 'barrier' as const, name: barrier, timeoutMs: PIN_TIMEOUT_MS, perUnit: true as const }]), { type: 'commit', message: 'add work', files }], { argv: ['exec', '-C'] });
 const pinLane = (barriers: string, name: string): Json =>
-  ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], state: 'active' });
+  ({ id: name, argv: [process.execPath, CM_PIN, barriers, name], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], state: 'active' });
 
 /** The log's facts of `kind` so far (none before the log exists). */
 const factsNow = (r: ExecRun, kind: string): readonly Json[] =>
@@ -91,10 +60,10 @@ const once = (name: string, when: () => boolean, act: () => Promise<unknown> | v
 function makeHolistic(r: ExecRun, units: readonly string[], i2 = false): void {
   const control = join(tmpDir('cm-witness-control'), 'control.json');
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
-  const mapping = [...['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1'] })), ...(i2 ? [{ pattern: 'lib/**', obligations: ['I-2'] }] : [])];
+  const mapping = [...['app'].map((system) => ({ system, obligations: ['I-1'] })), ...(i2 ? [{ system: 'lib', obligations: ['I-2'] }] : [])];
   // The journey lane's test paths and each witness's file in the baseline (a fresh start requires both, plan defects 2026-10-16).
   const obligations = [{ id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, ...(i2 ? [{ id: 'I-2', testIds: ['t2'], files: ['test/add.test.js'] }] : [])];
-  corpusTarget(r, { obligations: obligationsJson({ obligations, mapping, laneExtra: { journey: { testPaths: ['test/**'] } } }, control), advances: ADVANCES, audit: { lenses: ['vision'] }, planExtra: { capacity: { cpu: 16 } } });
+  corpusTarget(r, { obligations: obligationsJson({ obligations, mapping, laneExtra: { journey: { testPaths: ['test/**'] } } }, control), advances: ADVANCES, planExtra: { capacity: { cpu: 16 } } });
   for (const u of units) {
     const spec = join(r.planPath, '..', `${u}.json`);
     writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), obligations: ['I-1'] }));
@@ -123,27 +92,13 @@ function pinSpecLane(r: ExecRun, u: string, barriers: string, name: string): voi
   writeFileSync(spec, JSON.stringify({ ...(JSON.parse(readFileSync(spec, 'utf8')) as Json), lanes: [pinLane(barriers, name)] }));
 }
 
-/** The `rule` record landing C-2 with a contract op on contracts/api.md, its consistency judged at the integration tip now. */
-function ruleC2(r: ExecRun): string {
-  const tip = sha(git(r.repo, 'rev-parse', 'main'));
-  const draft: Json = {
-    schema: 'roadmap/ruling-m3', id: 'C-2', statement: 'Helpers take finite numbers only.', kind: 'decision', ruledBy: { type: 'architect' }, trigger: 'review',
-    supersedes: [], condition: null,
-    docRefs: [{ path: 'contracts/api.md', anchor: '#api-contract', quotedText: 'returns the sum', relation: 'consistent' }],
-    ...API_OP, obligations: [], obligationDispositions: [], cites: [], evidence: [],
-    appliesTo: { type: 'arc' }, lifetime: 'arc', status: 'active',
-    consistency: { verdict: 'consistent', judgedRevs: { head: tip, ledgerSha256: 'a'.repeat(64), obligationsSha256: null, visionSha256: null, contracts: [] }, by: { type: 'architect' } },
-  };
-  const reader = { journal: journalOf(r), runDir: absPath(r.runDir), planFile: absPath(r.planPath), repo: absPath(r.repo) };
-  const fresh = consistencyRevs(parseRulingSidecar(draft), rulingContextAt(reader as never, tip));
-  if ('reasons' in fresh) throw new Error(fresh.reasons.join('; '));
-  const path = join(tmpDir('cm-rule'), 'C-2.json');
-  writeFileSync(path, `${JSON.stringify({ ...draft, consistency: { ...(draft['consistency'] as Json), judgedRevs: fresh.revs } }, null, 2)}\n`);
-  return path;
+/** Refresh editable files from the executor's current revision before making an owner edit. */
+function exportCurrentInputs(r: ExecRun): void {
+  syncInputs({ d: r, ctx: { runDir: absPath(r.runDir) }, journal: journalOf(r) });
 }
 
 /** An approving gate's note: the corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
-const gateNote = (what: string) => ({
+const gateNote = (what: string) => ({evidence: ["fixture:1"],
   severity: 'note', path: null, text: `The ${what} helper has no overflow test.`, contractRef: null, experiments: [],
   debt: { drag: `Every caller of ${what} must guard overflow itself until it has one.` },
 }) as const;
@@ -164,19 +119,22 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       packReviewStep('review-1'),
       ...keyed('u1', [approve, build(MUL, 'build'), gateStep({ decision: 'approve', findings: [gateNote('mul')] })]),
       ...keyed('u2', [approve, build(TWO, 'build'), gateStep({ decision: 'approve', findings: [gateNote('two')] })]),
-      lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
-      // audit-2 finds nothing new after the settled ckpt-1: no checkpoint (checkpoint-skipped); the final audit-3's is ckpt-2.
-      lensStep('audit-2', 'vision'),
-      lensStep('audit-3', 'vision'), checkpointStep('ckpt-2', NOOP),
+      {...lensStep('audit-1', 'vision'), acts: [{type: 'emit', value: {...lensAnswer() as Record<string, import('../../src/core/json.ts').JsonValue>, requests: [{op: 'request', summary: 'Prioritize u1 before starting more work.', evidence: ['src/mul.js:1'], dismisses: null, counterEvidence: null}]}}]}, lensStep('audit-2', 'vision'),
     ]);
     const pinned = (u: string): boolean => existsSync(join(r.scenarioDir, `${u}.build.reached`));
     const hooks: readonly Hook[] = [
-      once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit', lenses: null })),
-      once('release-builds', () => factsNow(r, 'divergence-digest').length > 0 || restarted(r), () => {
+      once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit' })),
+      once('root-apply', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1') && !factsNow(r, 'plan-applied').some((f) => f['rev'] === 2), () => {
+        exportCurrentInputs(r);
+        const plan = JSON.parse(readFileSync(r.planPath, 'utf8')) as Json;
+        writeFileSync(r.planPath, JSON.stringify({...plan, units: (plan['units'] as Json[]).map((u) => u['id'] === 'u1' ? {...u, priority: 'high'} : u)}));
+        submit(r, applyBody(r));
+      }),
+      once('release-builds', () => journalOf(r).view.opsOf('command.apply').some((i) => journalOf(r).view.planAppliedBy(i.expect.command)?.rev === 2 && journalOf(r).view.doneOf(i.op) !== null) || restarted(r), () => {
         release(r.scenarioDir, 'u1.build');
         release(r.scenarioDir, 'u2.build');
       }),
-      once('release-lanes', () => factsNow(r, 'checkpoint-skipped').some((f) => f['audit'] === 'audit-2'), () => {
+      once('release-lanes', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1'), () => {
         release(barriers, 'u1-lanes');
         release(barriers, 'u2-lanes');
       }),
@@ -191,10 +149,10 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       ...SMOKE_DEFAULT,
       packReviewStep('review-1'),
       ...keyed('u3', [approve, build(TWO, 'build'), gateStep({ decision: 'approve' })]),
-      lensStep('audit-1', 'vision', [{ severity: 'P1', obligation: 'I-2', claim: 'I-2 is not held on the audited head' }]), checkpointStep('ckpt-1', NOOP),
+      lensStep('audit-1', 'vision', [{ severity: 'P1', obligation: 'I-2', claim: 'I-2 is not held on the audited head' }]),
       ...keyed('u1', [approve, build(MUL), gateStep({ decision: 'approve' })]),
       ...keyed('u2', [approve, build(DIV), gateStep({ decision: 'approve' })]),
-      lensStep('audit-2', 'vision'), checkpointStep('ckpt-2', NOOP),
+      lensStep('audit-2', 'vision'),
     ]);
     const batchPublished = (): boolean => {
       if (!existsSync(join(r.runDir, 'events.jsonl'))) return false;
@@ -202,8 +160,9 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       return view.opsOf('integration.ff').some((i) => i.expect.subject?.type === 'batch' && view.doneOf(i.op)?.kind === 'integration.ff');
     };
     const hooks: readonly Hook[] = [
-      once('audit', () => existsSync(join(r.scenarioDir, 'u3.build.reached')), () => submit(r, { type: 'audit', lenses: null })),
-      once('admit-repairs', () => factsNow(r, 'bundle-decided').some((f) => f['job'] === 'ckpt-1'), () => {
+      once('audit', () => existsSync(join(r.scenarioDir, 'u3.build.reached')), () => submit(r, { type: 'audit' })),
+      once('admit-repairs', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1'), () => {
+        exportCurrentInputs(r);
         admitRepairs(r);
         submit(r, applyBody(r));
       }),
@@ -214,17 +173,17 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
   // The pin parks on its first run only (publish-common.ts `barrierSuite`): the preempting kill ends that run, and every
   // later run (the publication's own suite, u1's fresh candidate) passes at once.
   const r = setupExec(t, { steps: [], suite: [SUITE_LANE, { ...barrierSuite(barriers), id: 'c-pin' }] });
-  // The contract op changes a contract the approval bound: u1's green candidate onto the new tip is fingerprint-invalid,
-  // its stale link re-opens it at plan-check (dev.17 propagation), the build resumes, and a second gate approves.
+  // Editing the cited ledger changes the approval fingerprint. After the docs publication preempts the
+  // candidate, the unit is gated again; a plain ledger edit rewrites no contract and needs no new build.
   appendSteps(r, [...SMOKE_DEFAULT, ...keyed('u1', [
     planCheckStep({ decision: 'approve' }), build(MUL), gateStep({ decision: 'approve' }),
-    planCheckStep({ decision: 'approve', staleLinks: [{ link: 'contract:contracts/api.md', outcome: 'confirmed', reason: 'C-2 narrows the sum to finite numbers; mul holds' }] }),
-    codexStep([]), gateStep({ decision: 'approve' }),
+    gateStep({ decision: 'approve' }),
   ])]);
   const hooks: readonly Hook[] = [
     once('rule', () => existsSync(join(barriers, 'lane.reached')), () => {
-      const path = ruleC2(r);
-      submit(r, { type: 'rule', path: absPath(path), sha256: bytesSha256(readFileSync(path)) });
+      exportCurrentInputs(r);
+      writeFileSync(join(r.planPath, '..', 'rulings.md'), 'C-1 — Helpers take finite numbers.\n');
+      submit(r, applyBody(r));
     }),
     once('release', () => restarted(r), () => writeFileSync(join(barriers, 'lane.release'), '')),
   ];
@@ -234,8 +193,8 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
 // ---------------------------------------------------------------------------------------------------
 // Sampling: the stepping job's occurrences
 
-/** The stepping jobs: the jobs scenario's audit-1 (the audit row) and ckpt-1 (the bundle row), the batch scenario's batch-1. */
-export const STEPPING = { audit: 'audit-1', bundle: 'ckpt-1', batch: 'batch-1' } as const;
+/** Audit and root-apply stages in the jobs story, and the repair batch's job. */
+export const STEPPING = { audit: 'audit-1', apply: 'root-apply', batch: 'batch-1' } as const;
 export type JobRow = keyof typeof STEPPING | 'preempt';
 
 /**
@@ -245,14 +204,20 @@ export type JobRow = keyof typeof STEPPING | 'preempt';
  * each fact kind there.
  */
 export function sampleJob(row: JobRow, record: string, snap: LogSnapshot): readonly Sampled[] {
-  const from = row === 'preempt' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'proc.kill' && e.expect.reason === 'preempt')?.seq : 0;
+  const source = snap.view.opsOf('revision.commit').find((i) => i.expect.rev === 2)?.expect.source;
+  const applyOp = row === 'apply' && source?.type === 'command' ? snap.view.opsOf('command.apply').find((i) => i.expect.command === source.command) : undefined;
+  const apply = applyOp === undefined ? null : snap.events.find((e) => e.type === 'intent' && e.op === applyOp.op);
+  const until = applyOp === undefined ? Infinity : snap.events.find((e) => e.type === 'done' && e.op === applyOp.op)?.seq ?? Infinity;
+  const request = row === 'apply' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'needsuser.raise' && e.parent.type === 'job' && e.parent.job === 'audit-1') : null;
+  const from = row === 'apply' ? request?.seq ?? apply?.seq : row === 'preempt' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'proc.kill' && e.expect.reason === 'preempt')?.seq : 0;
   if (from === undefined) throw new Error('the preempt recording has no preempting kill');
   const owned = (owner: string, label: string): boolean => {
+    if (row === 'apply') return owner === 'command' || owner === 'job:audit-1' && label.startsWith('needsuser.raise.');
     if (row !== 'preempt') return owner === `job:${STEPPING[row]}`;
     return owner.startsWith('job:docs-') || owner === 'command' || (label.startsWith('kill.') && owner === 'unit:u1');
   };
   return sampleBy(record, snap, ({ label, e }) => {
-    if (e.seq < from || !owned(ownerOf(snap.view, e), label)) return null;
+    if (e.seq < from || e.seq >= until || !owned(ownerOf(snap.view, e), label)) return null;
     if (label.startsWith('log.append.')) return e.type === 'fact' && e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable' ? `fact ${e.fact.kind}` : null;
     return row;
   });

@@ -4,11 +4,11 @@
 // The case table itself is `table.total` in test/m3-schemas.test.ts. `gradeTree` (src/pipeline/integrate.ts): a red
 // lane witnessing only measured obligations is never unexplained.
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type ObligationId, type UnitId, laneId, obligationId, unitId } from '../src/core/ids.ts';
-import { type ObligationEffect, brakesOn, completes, latches, obligationEffects } from '../src/holistic/table.ts';
-import { type ObligationDef, OBSERVATION_VERDICTS, type ObservationVerdict, parseObligations, witnessRecord } from '../src/holistic/types.ts';
-import { type Claims, gradeTree } from '../src/pipeline/integrate.ts';
+import { describe,it } from 'node:test';
+import { type ObligationId,type UnitId,laneId,obligationId,unitId } from '../src/core/ids.ts';
+import { type ObligationEffect,brakesOn,completes,latches,obligationEffects } from '../src/holistic/table.ts';
+import { OBSERVATION_VERDICTS,type ObligationDef,type ObservationVerdict,parseObligations,witnessRecord } from '../src/holistic/types.ts';
+import { type Claims,gradeTree } from '../src/pipeline/integrate.ts';
 import type { JourneyRun } from '../src/pipeline/lanes.ts';
 
 const LANE_REV = '0123456789abcdef';
@@ -17,7 +17,7 @@ type Raw = Record<string, unknown>;
 function raw(id: string, over: Raw = {}): Raw {
   return {
     id, rev: 1, statement: `statement of ${id}`, docRef: { path: 'docs/target.md', anchor: '#a', quotedText: 'q' }, serves: ['V-1'],
-    witness: { lane: 'journey', testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: 'journey', testIds: [id] } },
+    witness: { lane: 'journey', testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [id] } },
     deliveredBy: [], activation: 'must-hold', contracts: [], state: { type: 'active' }, ...over,
   };
 }
@@ -26,8 +26,8 @@ const splitRaw = (id: string, children: readonly string[], over: Raw = {}): Raw 
 
 function file(obligations: readonly Raw[]): readonly ObligationDef[] {
   return parseObligations({
-    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { paths: [] }, obligations,
-    lanes: [{ id: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' }],
+    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { systems: [] }, obligations,
+    lanes: [{ id: 'journey', argv: ['node', '--test'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' }],
   }).obligations;
 }
 
@@ -38,7 +38,7 @@ const verdicts = [...OBSERVATION_VERDICTS, null] as const;
 type Leaf = Readonly<{ name: string; over: Raw; latched: boolean; completing: boolean; verdict: ObservationVerdict | null; effect: ObligationEffect }>;
 function* leaves(): Generator<Leaf> {
   for (const state of ['waived', 'deferred', 'retired'] as const) {
-    yield { name: state, over: { state: { type: state, ruling: 'C-1' } }, latched: false, completing: false, verdict: 'held', effect: 'exempt' };
+    yield { name: state, over: { state: { type: state, reason: 'Explicit owner disposition', rev: 2 } }, latched: false, completing: false, verdict: 'held', effect: 'exempt' };
   }
   for (const verdict of verdicts) {
     const held = verdict === 'held';
@@ -138,15 +138,15 @@ describe('table.effects: the table over an obligations file', () => {
 });
 
 describe('gradeTree: measured lanes', () => {
-  const lane = (id: string): Raw => ({ id, argv: ['node', '--test', `test/${id}.test.js`], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' });
-  const witnessed = (id: string, lid: string): Raw => ({ witness: { lane: lid, testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1, laneRev: LANE_REV, witness: { lane: lid, testIds: [id] } } });
+  const lane = (id: string): Raw => ({ id, argv: ['node', '--test', `test/${id}.test.js`], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [], reporter: 'node-test' });
+  const witnessed = (id: string, lid: string): Raw => ({ witness: { lane: lid, testIds: [id] }, proofJudgment: { verdict: 'proves', obligationRev: 1,  witness: {  testIds: [id] } } });
   // I-1 must-hold on `journey`; I-2 future on `clash`, delivered by a sibling unit not yet published (paid M4b run 5).
   const obligations = parseObligations({
-    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { paths: [] }, lanes: [lane('journey'), lane('clash')],
+    schema: 'roadmap/obligations-m3', cutLine: 'cut', mapping: { systems: [] }, lanes: [lane('journey'), lane('clash')],
     obligations: [raw('I-1', witnessed('I-1', 'journey')), raw('I-2', { ...witnessed('I-2', 'clash'), activation: 'future', deliveredBy: ['clash-refusal'] })],
   });
   const record = (lid: string, malformed: boolean, testId: string): ReturnType<typeof witnessRecord> => witnessRecord({
-    v: 1, lane: lid, laneRev: LANE_REV, envId: '0123456789abcdef', treeSha: 'a'.repeat(40), inv: 'arc/1#1', runner: 'node-test', purpose: 'witness', malformed,
+    v: 2, lane: lid, laneRev: LANE_REV, envId: '0123456789abcdef', treeSha: 'a'.repeat(40), inv: 'arc/1#1', runner: 'node-test', purpose: 'witness', malformed,
     records: malformed ? [] : [{ testId, selected: 1, outcome: 'pass' }],
   }, 'record');
   const run = (lid: string, malformed: boolean, testId: string): JourneyRun => ({

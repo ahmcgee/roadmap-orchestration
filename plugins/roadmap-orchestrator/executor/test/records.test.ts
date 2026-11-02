@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  type ExitFile, MIN_GRACE_MS, RUNNER_FILE_READERS, type RunnerFileName, approvalFingerprint, classifyCommand, classifyTerminal, commandFile,
-  handshakeFile, hostLockClaim, hostOwner, needsUserAck, needsUserRecord, readinessFile, receipt, recoveryLockClaim,
-  specM1, specPatch, supervisorState, laneDef,
+type ExitFile,MIN_GRACE_MS,RUNNER_FILE_READERS,type RunnerFileName,approvalFingerprint,classifyCommand,classifyTerminal,commandFile,
+handshakeFile,hostLockClaim,hostOwner,
+laneDef,
+needsUserAck,needsUserRecord,readinessFile,receipt,recoveryLockClaim,
+specM1,specPatch,supervisorState,
 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 
 const UUID = '0190f6c2-8f3a-7d21-9a4e-3b5c6d7e8f90';
 const T0 = '2026-09-25T12:00:00.000Z';
 const T1 = '2026-09-25T12:00:01.000Z';
-const bind = { v: 1, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
+const bind = { v: 2, arc: 'arc-1', op: 'arc-1/7', inv: 'arc-1/7#1' };
 
 it('lane.timeoutMin is optional, finite and positive, with fractional minutes supported', () => {
   const lane = { id: 'check', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'unit', resources: [], evidenceGlobs: [] };
@@ -34,7 +36,7 @@ const RUNNER_SAMPLES: { readonly [N in RunnerFileName]: Record<string, unknown> 
   'cancel.json': { ...bind, reason: 'pause', at: T0 },
   'exit.json': { ...bind, child: { type: 'exited', code: 0 }, cause: 'exited', endedAt: T0, quiescedAt: T1 },
   'result.json': {
-    ...bind, type: 'backend', role: 'gate', routingRev: '0123456789abcdef', session: UUID,
+    ...bind, type: 'backend', role: 'verifier', routingRev: '0123456789abcdef', session: UUID,
     outcome: { kind: 'success', value: { decision: 'approve' } }, usage: { kind: 'unavailable', reason: 'absent' }, backendErrors: [],
   },
   'reads.json': {
@@ -54,6 +56,13 @@ function without(obj: Record<string, unknown>, key: string): Record<string, unkn
 }
 
 describe('records', () => {
+  it('launch.json preserves executor capture/report protocol env but refuses runner identity and arbitrary ROADMAP variables', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    const env = Object.fromEntries(['ROADMAP_WITNESS_FILE', 'ROADMAP_CAPTURE_CONFIG', 'ROADMAP_CAPTURE_DIR', 'ROADMAP_CAPTURE_STATES', 'ROADMAP_CAPTURE_SLOT', 'ROADMAP_CAPTURE_PORT'].map((k) => [k, 'protocol value']));
+    assert.deepEqual(read({ ...RUNNER_SAMPLES['launch.json'], env }, 'launch.json').env, env);
+    for (const name of ['ROADMAP_OP', 'ROADMAP_INV', 'ROADMAP_ROLE', 'ROADMAP_ARBITRARY']) assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], env: { [name]: 'forged' } }, 'launch.json'), SchemaError);
+  });
+
   it('launch.json refuses a grace under MIN_GRACE_MS (the backstop at deadline + 2 * grace must not beat exit.json)', () => {
     const read = RUNNER_FILE_READERS['launch.json'];
     assert.equal(MIN_GRACE_MS, 1_000);
@@ -150,7 +159,7 @@ describe('records', () => {
       it(`${name} accepts the sample`, () => {
         assert.deepEqual(RUNNER_FILE_READERS[name](sample, name), sample);
       });
-      // A field the previous release did not write is defaulted at read time (src/core/upgrade.ts), tested above.
+      // A field the previous release did not write is defaulted at read time (src/core/projections.ts), tested above.
       for (const field of Object.keys(sample).filter((f) => !(UPGRADE_DEFAULTED[name] ?? []).includes(f))) {
         it(`${name} rejects a missing ${field}`, () => {
           assert.throws(() => RUNNER_FILE_READERS[name](without(sample, field), name), (err: unknown) =>
@@ -172,7 +181,7 @@ describe('records', () => {
     });
     it('launch.json: a judgment role takes only a Claude judgment session, fresh or (dev.12, every role) resumed for its repair turn', () => {
       const launch = RUNNER_SAMPLES['launch.json'];
-      const terminal = { ...(launch['terminal'] as Record<string, unknown>), role: 'gate' };
+      const terminal = { ...(launch['terminal'] as Record<string, unknown>), role: 'verifier' };
       for (const mode of ['fresh', 'resume'] as const) assert.ok(RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode, id: UUID } } }, 'launch.json'));
       assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'claude', mode: 'continue', id: UUID } } }, 'launch.json'), /session\.mode/);
       assert.throws(() => RUNNER_FILE_READERS['launch.json']({ ...launch, terminal: { ...terminal, session: { backend: 'codex', mode: 'fresh' } } }, 'launch.json'), /session\.backend/);
@@ -198,10 +207,10 @@ describe('records', () => {
 
   it('spec.json M1 subset parses and rejects duplicate item ids', () => {
     const lane = { id: 'L1', argv: ['npm', 'test'], cwd: '.', env: { set: { CI: '1' }, pass: ['HOME'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: ['coverage/**'], state: 'active' };
-    const spec = {
+    const spec = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [lane],
       acceptance: [{ id: 'A1', clause: 'x works', failLoudIfUndelivered: true, state: 'active' }],
-      scope: ['src/**'], resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
+       resources: [], decisions: [{ id: 'R1', text: 'use y', state: 'active' }], facts: [], cites: { contracts: [], rulings: [] },
     };
     // evidenceExcludes is optional input: absent reads as [], present is kept, malformed is refused.
     assert.deepEqual(specM1(spec, 'spec'), { ...spec, lanes: [{ ...lane, evidenceExcludes: [] }] });
@@ -211,12 +220,12 @@ describe('records', () => {
     assert.throws(() => specM1({ ...spec, facts: [{ id: 'A1', text: 'dup', state: 'active' }] }, 'spec'), /spec\.<item ids>/);
     assert.throws(() => specM1({ ...spec, lanes: [{ ...lane, cadence: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.cadence/);
     const { cadence: _c, ...dev16 } = lane;
-    assert.throws(() => specM1({ ...spec, lanes: [{ ...dev16, tier: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.tier/);
+    assert.throws(() => specM1({ ...spec, lanes: [{ ...dev16, tier: 'slow' }] }, 'spec'), /spec\.lanes\[0\]\.cadence/);
   });
 
   it('SpecPatch reads each op form and refuses an empty patch', () => {
     const patch = {
-      expectRev: 1, by: { role: 'planCheck', routingRev: '0123456789abcdef', inv: 'arc-1/7#1' },
+      expectRev: 1, by: { role: 'executor', inv: 'arc-1/7#1' },
       ops: [{ op: 'add', section: 'facts', item: { id: 'F2', text: 't' } }, { op: 'strike', id: 'A1' }],
     };
     assert.deepEqual(specPatch(patch, 'patch'), patch);
@@ -227,29 +236,29 @@ describe('records', () => {
   it('host files validate', () => {
     const proc = { pid: 10, start: 20 };
     const nonce = 'e'.repeat(32);
-    const claim = { v: 1, nonce, generation: 1, bootId: UUID, supervisor: proc, arc: 'arc-1', runDir: '/r/.git/roadmap-runtime/arc-1', repo: '/r' };
+    const claim = { v: 2, nonce, generation: 1, bootId: UUID, supervisor: proc, arc: 'arc-1', runDir: '/r/.git/roadmap-runtime/arc-1', repo: '/r' };
     assert.deepEqual(hostLockClaim(claim, 'host.lock'), claim);
     assert.throws(() => hostLockClaim(without(claim, 'runDir'), 'host.lock'), /host\.lock\.runDir/);
-    assert.ok(hostOwner({ v: 1, nonce, generation: 1, executor: null }, 'owner'));
-    assert.ok(recoveryLockClaim({ v: 1, nonce, bootId: UUID, holder: proc, at: T0 }, 'rec'));
-    assert.ok(handshakeFile({ v: 1, nonce, generation: 2 }, 'hs'));
-    assert.ok(readinessFile({ v: 1, generation: 2, state: 'failed', at: T0, reason: 'x' }, 'ready'));
-    assert.throws(() => readinessFile({ v: 1, generation: 2, state: 'ready', at: T0, reason: 'x' }, 'ready'), /ready\.reason/);
-    assert.ok(supervisorState({ v: 1, generation: 3, crashes: [T0, T1], heartbeatStaleMs: 300_000 }, 'sup'));
-    assert.throws(() => supervisorState({ v: 1, generation: 3, crashes: [T1, T0], heartbeatStaleMs: 300_000 }, 'sup'), /sup\.crashes/);
+    assert.ok(hostOwner({ v: 2, nonce, generation: 1, executor: null }, 'owner'));
+    assert.ok(recoveryLockClaim({ v: 2, nonce, bootId: UUID, holder: proc, at: T0 }, 'rec'));
+    assert.ok(handshakeFile({ v: 2, nonce, generation: 2 }, 'hs'));
+    assert.ok(readinessFile({ v: 2, generation: 2, state: 'failed', at: T0, reason: 'x' }, 'ready'));
+    assert.throws(() => readinessFile({ v: 2, generation: 2, state: 'ready', at: T0, reason: 'x' }, 'ready'), /ready\.reason/);
+    assert.ok(supervisorState({ v: 2, generation: 3, crashes: [T0, T1], heartbeatStaleMs: 300_000 }, 'sup'));
+    assert.throws(() => supervisorState({ v: 2, generation: 3, crashes: [T1, T0], heartbeatStaleMs: 300_000 }, 'sup'), /sup\.crashes/);
   });
 
   it('commands, receipts and needs-user validate', () => {
-    assert.ok(commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'resume', target: { type: 'backend', backend: 'codex' } } }, 'cmd'));
-    assert.throws(() => commandFile({ v: 1, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'admit' } }, 'cmd'), /cmd\.body\.type/);
-    assert.ok(receipt({ v: 1, command: 'cmd-0123456789abcdef', state: 'applied', at: T0, op: 'arc-1/9', verified: ['unit u1 parked'] }, 'r'));
-    assert.throws(() => receipt({ v: 1, command: 'cmd-0123456789abcdef', state: 'applied', at: T0 }, 'r'), /r\.op/);
+    assert.ok(commandFile({ v: 2, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'resume', target: { type: 'backend', backend: 'codex' } } }, 'cmd'));
+    assert.throws(() => commandFile({ v: 2, id: 'cmd-0123456789abcdef', arc: 'arc-1', at: T0, body: { type: 'admit' } }, 'cmd'), /cmd\.body\.type/);
+    assert.ok(receipt({ v: 2, command: 'cmd-0123456789abcdef', state: 'applied', at: T0, op: 'arc-1/9', verified: ['unit u1 parked'] }, 'r'));
+    assert.throws(() => receipt({ v: 2, command: 'cmd-0123456789abcdef', state: 'applied', at: T0 }, 'r'), /r\.op/);
     const nu = {
-      v: 1, id: 'nu-9', arc: 'arc-1', raisedAt: T0, blocking: true, subject: { type: 'unit', unit: 'u1' }, reason: 'residue',
+      v: 2, id: 'nu-9', arc: 'arc-1', raisedAt: T0, blocking: true, subject: { type: 'unit', unit: 'u1' }, reason: 'residue',
       summary: 's', recommendation: 'isolate', options: [{ id: 'isolated', label: 'I isolated it' }, { id: 'transferred', label: 'I own it now' }], evidence: [],
     };
     assert.deepEqual(needsUserRecord(nu, 'nu'), nu);
     assert.throws(() => needsUserRecord({ ...nu, reason: 'other' }, 'nu'), /nu\.reason/);
-    assert.ok(needsUserAck({ v: 1, id: 'nu-9', command: 'cmd-0123456789abcdef', choice: 'isolated', at: T1 }, 'ack'));
+    assert.ok(needsUserAck({ v: 2, id: 'nu-9', command: 'cmd-0123456789abcdef', choice: 'isolated', at: T1 }, 'ack'));
   });
 });

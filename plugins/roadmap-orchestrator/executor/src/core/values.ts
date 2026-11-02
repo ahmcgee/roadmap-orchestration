@@ -83,3 +83,15 @@ export const bootId = checked('BootId', 'lowercase uuid', (s) => /^[0-9a-f]{8}-[
 /** A host-lock claim nonce: 32 lowercase hex from a CSPRNG. */
 export type Nonce = Brand<string, 'Nonce'>;
 export const nonce = checked('Nonce', '32 lowercase hex', (s) => /^[0-9a-f]{32}$/.test(s));
+
+/** The literal prefix of a pattern (before its first glob character): two patterns may overlap when one's prefixes the other's. */
+const literalPrefix = (p: string): string => {
+  const i = p.search(/[*?[{]/);
+  return i === -1 ? p : p.slice(0, i);
+};
+/** Prefix-conservative overlap of two repo patterns: false only when no path can match both. */
+export function mayOverlap(a: string, b: string): boolean {
+  const x = literalPrefix(a);
+  const y = literalPrefix(b);
+  return x.startsWith(y) || y.startsWith(x);
+}

@@ -8,49 +8,49 @@
 // a hung lane and the lane reuse after it, arc 3 refused at K, stop k-limit) and `vision-silent` (arc 1, then no slice
 // candidate, stop vision-silent). The story synchronises on events, never on time, so its turns are the same every run.
 // M4b's plants (S: the stale serial run of the suite gate; G: the soak run that stays in it) are in the product
-// and the golden outputs; the story works the flow loop (arc 1: a `changed` bait proof, a `preserved` shard and its
-// verdict; arc 2: a reject).
+// and the golden outputs; their test sets remain checked across the chain.
 // Named tests: evals-m4a.setup-valid, evals-m4a.fake, evals-m4a.pack-review-hold,
 // evals-m4a.amendments-debt, evals-m4a.k-limit, evals-m4a.brief, evals-m4a.check-oracle,
 // evals-m4a.adjudication-tree, evals-m4a.rerun-refused, evals-m4a.vision-silent, evals-m4a.witness-missing,
 // evals-m4a.smoke-survivor, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause,
 // evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format,
-// evals-m4a.flow-loop, evals-m4a.flow-criteria, evals-m4a.plant-lane.
+// evals-m4a.ruler-criteria, evals-m4a.plant-lane.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { cpSync,existsSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { after,before,describe,test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { after, before, describe, test } from 'node:test';
-import { type ArcRef, amendmentsOf } from '../../src/chain.ts';
-import type { Event, Fact, Parent } from '../../src/core/events.ts';
+import { stageTree,verdictProblems } from '../../evals/m4a/adjudicate.ts';
+import {
+CRITERIA,
+type CheckResult,
+type RulerArc,LEVERS,arcView,chainOf,parseOperatorLog,
+rulerArgvs,rulerRecordProblems,triplesProblems,
+} from '../../evals/m4a/check.ts';
+import {
+MIN_ARC1_UNITS,type Report,SPEND_APPROVED,type Turn,codeAnswer,failFastText,firstPlanCheck,ghOnPath,launchEnv,numberedQuestions,openBriefQuestions,
+plantCheck,plantLaneOf,spendHold,stagePlugin,
+} from '../../evals/m4a/driver.ts';
+import { fakeArc,fakeHostDir } from '../../evals/m4a/fake-root.ts';
+import { FILES,FITS_WITNESS,LANES,READOUTS,REPLAY_LANE,SHARD,SLOW_LANE,SUITE_LANE,corpusFor,rawCorpus,unitsOf } from '../../evals/m4a/golden.ts';
+import { type ArcView,defectVerdicts,matches,readKey,spanPresent } from '../../evals/m4a/key.ts';
+import { PLANT,SEED_SUITE_ARGV,layout } from '../../evals/m4a/layout.ts';
+import { CLOCK_FILE,FAKE_TICK_MS,PAID_TICK } from '../../evals/m4a/setup.ts';
+import { ANSWER_KEY,needles,toolTraffic } from '../../evals/m4a/transcript.ts';
+import { type ArcRef } from '../../src/chain.ts';
+import type { Event,Fact,Parent } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
-import { verdictProblems, stageTree } from '../../evals/m4a/adjudicate.ts';
-import {
-  type CheckResult, CRITERIA, type FlowArc, LEVERS, arcView, chainOf, flowArcOf, flowConstraintVerdict, flowLoopVerdict, flowShardVerdict, parseOperatorLog,
-  rulerArgvs, rulerRecordProblems, triplesProblems,
-} from '../../evals/m4a/check.ts';
-import {
-  MIN_ARC1_UNITS, type Report, SPEND_APPROVED, type Turn, codeAnswer, failFastText, firstPlanCheck, ghOnPath, launchEnv, numberedQuestions, openBriefQuestions,
-  plantCheck, plantLaneOf, spendHold, stagePlugin,
-} from '../../evals/m4a/driver.ts';
+import { parseObligations } from '../../src/holistic/types.ts';
+import { collectWitness,witnessEnv } from '../../src/holistic/witness.ts';
+import type { PlanM1 } from '../../src/input/plan.ts';
 import type { BriefPayload } from '../../src/phase0/types.ts';
 import { itemKey } from '../../src/watch.ts';
-import { fakeArc, fakeHostDir } from '../../evals/m4a/fake-root.ts';
-import { FILES, FITS_WITNESS, LANES, READOUTS, REPLAY_LANE, SHARD, SLOW_LANE, SUITE_LANE, corpusFor, rawCorpus, unitsOf } from '../../evals/m4a/golden.ts';
-import { DRIFT_CHECKPOINT, FLOW_1, FLOW_2 } from '../../evals/m4a/scenario.ts';
-import { CLOCK_FILE, FAKE_TICK_MS, PAID_TICK } from '../../evals/m4a/setup.ts';
-import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
-import { parseObligations } from '../../src/holistic/types.ts';
-import type { PlanM1 } from '../../src/input/plan.ts';
-import { type ArcView, defectVerdicts, matches, readKey, spanPresent } from '../../evals/m4a/key.ts';
-import { PLANT, SEED_SUITE_ARGV, layout } from '../../evals/m4a/layout.ts';
-import { ANSWER_KEY, needles, toolTraffic } from '../../evals/m4a/transcript.ts';
-import { type Exit, runUntilExit } from '../helpers/proc.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from '../helpers/reap.ts';
+import { type Exit,runUntilExit } from '../helpers/proc.ts';
+import { type RunScope,assertNoSurvivors,teardown,track } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
 
 after(assertNoSurvivors);
@@ -104,8 +104,8 @@ async function runFixture(name: 'story' | 'vision-silent'): Promise<Fixture> {
 
 const journal = (dir: string, n: number): readonly Event[] => readJournal(absPath(join(layout(dir).product, '.git', 'roadmap-runtime', fakeArc(dir, n))), arcId(fakeArc(dir, n))).events;
 type Seq<F> = F & { seq: number };
-const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Fact, { kind: K }>>[] =>
-  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(events: readonly Event[], kind: K): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>>[] =>
+  events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: K }>), seq: e.seq }] : []));
 const raisedOf = (events: readonly Event[], reason: string, dir: string, n: number): readonly Readonly<{ id: string; seq: number }>[] =>
   events.flatMap((e) => {
     if (e.type !== 'intent' || e.kind !== 'needsuser.raise') return [];
@@ -114,7 +114,7 @@ const raisedOf = (events: readonly Event[], reason: string, dir: string, n: numb
   });
 
 /** A unit's stage outcomes, `<stage>:<outcome>` in log order, and the facts themselves. */
-const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<Extract<Fact, { kind: 'stage-outcome' }>>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
+const outcomesOf = (events: readonly Event[], unit: string): readonly Seq<Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'stage-outcome' }>>[] => factsOf(events, 'stage-outcome').filter((f) => f.unit === unit);
 const named = (o: readonly Readonly<{ stage: string; outcome: string }>[]): readonly string[] => o.map((f) => `${f.stage}:${f.outcome}`);
 /** The `lane` spawns of `unit`'s lane `lane` (spec, suite or journey runs alike). */
 const laneSpawns = (events: readonly Event[], unit: string, lane: string): readonly Event[] =>
@@ -252,32 +252,54 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(report.leftovers, [], 'nothing of the fixture outlived the session and the stop of its arc');
     // A unit merging wakes the root agent too (owner ruling 2026-10-07), on a `units` line of a running run; when it lands
     // apart from the story's events is timing, so those wakes and lines are set aside: each such wake shows a merged
-    // unit and the scripted root agent does nothing on it. So is arc 2's flow-proposal item (M4b): its run starts whenever
-    // no holistic job runs, and the root agent rejects it on whichever wake carries it, once.
-    type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string> };
+    // unit and the scripted root agent does nothing on it. Non-blocking waste advisories can also land on their own
+    // or alongside any story event; assert their delivery and handling before checking the original story sequence.
+    type WakeLine = { event: string; reason?: string; run?: string; units?: Record<string, string>; id?: string; blocking?: boolean };
     const linesOf = (t: Turn): WakeLine[] => t.prompt.split('\n').slice(1).map((x) => JSON.parse(x) as WakeLine);
-    const flowItem = (e: WakeLine): boolean => e.event === 'needs-user' && e.reason === 'flow-proposal';
-    const merging = (e: WakeLine): boolean => (e.event === 'units' && e.run === 'running') || flowItem(e);
+    const merging = (e: WakeLine): boolean => e.event === 'units' && e.run === 'running';
     const mergeOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(merging);
     for (const t of report.turns.filter(mergeOnly)) {
-      if (linesOf(t).some(flowItem)) assert.match(t.result ?? '', /^Rejected flow-1\.0 \(build-class\)/);
-      else {
-        assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
+      assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
+      assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
+    }
+    const advisory = (e: WakeLine): boolean => e.event === 'needs-user' && e.reason === 'waste-finding';
+    const incidental = (e: WakeLine): boolean => merging(e) || advisory(e);
+    const incidentalOnly = (t: Turn): boolean => t.kind === 'wake' && linesOf(t).every(incidental);
+    const surfaced: string[] = [];
+    for (const t of report.turns.filter((t) => t.kind === 'wake')) {
+      const notices = linesOf(t).filter(advisory);
+      if (notices.length === 0) continue;
+      const arc = /^roadmap watch \(arc ([^)]+)\):/.exec(t.prompt)?.[1];
+      assert.ok(arc !== undefined, t.prompt);
+      for (const notice of notices) {
+        assert.equal(notice.blocking, false, t.prompt);
+        surfaced.push(`${arc}/${notice.id}`);
+      }
+      if (incidentalOnly(t)) {
+        if (linesOf(t).some(merging)) assert.ok(linesOf(t).some((e) => Object.values(e.units ?? {}).includes('merged')), t.prompt);
         assert.match(t.result ?? '', /^Nothing for me in this wake-up\./);
       }
     }
-    assert.equal(report.turns.filter((t) => /^Rejected flow-1\.0/.test(t.result ?? '')).length, 1, 'arc 2\'s proposal was rejected on one wake');
-    const storyTurns = report.turns.filter((t) => !mergeOnly(t));
+    const raisedWaste = ([1, 2] as const).flatMap((n) => raisedOf(n === 1 ? arc1 : arc2, 'waste-finding', story.dir, n).map((x) => `${fakeArc(story.dir, n)}/${x.id}`));
+    assert.ok(raisedWaste.length > 0, 'the repeated witness lanes produce waste advisories');
+    assert.deepEqual(surfaced.sort(), raisedWaste.sort(), 'each advisory wakes the root once, including notices coalesced with story events');
+    const storyTurns = report.turns.filter((t) => !incidentalOnly(t));
     assert.deepEqual(storyTurns.map((t) => t.kind), ['start', 'owner', 'wake', 'wake', 'wake', 'owner', 'wake', 'wake', 'wake']);
     // Each wake carries exactly the events the story synchronises on (paid run 10 batch: two events 3.7 s apart against
     // the 3 s debounce once made an extra wake); the same lines every run, whatever the timing.
-    const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !merging(e)).map((e) => (
+    const wakes = storyTurns.filter((t) => t.kind === 'wake').map((t) => linesOf(t).filter((e) => !incidental(e)).map((e) => (
       e.event === 'needs-user' ? `needs-user:${e.reason}` : `${e.event}:${e.run}`
     )).sort());
     assert.deepEqual(wakes, [
       ['needs-user:pack-review'], ['units:blocked'], ['units:complete'],
-      ['units:blocked'], ['needs-user:divergence-digest', 'units:held'], ['units:complete'],
+      ['units:blocked'], ['units:held'], ['units:complete'],
     ]);
+    assert.deepEqual(raisedOf(arc2, 'divergence-digest', story.dir, 2), [], 'campaign audits cannot create checkpoint divergence digests');
+    const rootRevision = factsOf(arc2, 'plan-applied').find((f) => f.changes.some((change) => change.type === 'unit-added' && change.unit === 'fits'));
+    assert.ok(rootRevision !== undefined, 'the root admitted fits through apply');
+    const rootClear = factsOf(arc2, 'run-only').find((f) => f.units === null && f.seq > rootRevision.seq)!;
+    assert.ok(rootClear !== undefined, 'the root cleared run-only after its revision applied');
+    assert.ok(rootRevision.seq < rootClear.seq, 'the root applies its material revision before clearing run-only');
     // The chain boundaries (paid runs 12, 13): arc 1's check-in is one final message, no numbered question (P-1 stays in
     // the brief), a hold for the spend approval, then the action taken on resume (arc 2 starts under K = 1: the bootstrap
     // start counts as acked); arc 2's carries the stop.
@@ -315,7 +337,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assertEveryStepPlayed(story.dir, [1, 2]);
   });
 
-  test('evals-m4a.pack-review-hold: review-1\'s blocking finding holds admission until the fixed pack\'s review-2 supersedes it', () => {
+  test('evals-m4a.pack-review-hold: the repair apply closes review-1\'s item, and admission waits for review-2', () => {
     const started = factsOf(arc1, 'pack-review-started');
     const ended = factsOf(arc1, 'pack-review-ended');
     assert.deepEqual(started.map((s) => s.job), ['review-1', 'review-2']);
@@ -327,16 +349,15 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.ok(fix !== undefined && fix.seq > item.seq && fix.seq < started[1]!.seq, 'the root agent\'s apply came between the item and review-2');
     const dispatch = factsOf(arc1, 'dispatch');
     assert.ok(dispatch.length > 0 && dispatch.every((d) => d.seq > ended[1]!.seq), 'nothing was admitted before review-2 ended');
-    assert.deepEqual(factsOf(arc1, 'needs-user-acked').filter((a) => a.id === item.id), [], 'review-2 superseded the item: nobody acked it');
+    const closed = factsOf(arc1, 'needs-user-acked').filter((a) => a.id === item.id);
+    assert.deepEqual(closed.map((a) => [a.command, a.choice]), [[fix.command, null]], 'the repair apply closes exactly the original pack item');
+    assert.ok(closed[0]!.seq > fix.seq && closed[0]!.seq < started[1]!.seq, 'closure follows the repair and precedes review-2');
   });
 
-  test('evals-m4a.amendments-debt: arc 1 banks a gate note and a deferred finding and derives two amendments; arc 2 dispositions all four', () => {
-    assert.deepEqual(factsOf(arc1, 'corpus-amendment').map((a) => a.source.type), ['checkpoint', 'checkpoint']);
+  test('evals-m4a.amendments-debt: arc 1 banks the gate note and audit finding; arc 2 dispositions both, with no checkpoint amendments', () => {
     assert.deepEqual(factsOf(arc1, 'debt-banked').map((d) => d.bankReason).sort(), ['finding-deferred', 'gate-note']);
     const { one, two } = chainOf(absPath(layout(story.dir).product));
     const p0 = arcView(two!).phase0;
-    assert.deepEqual(p0.amendments.map((a) => a.id), amendmentsOf(one!).map((a) => a.id));
-    assert.deepEqual(p0.amendments.map((a) => a.disposition.type).sort(), ['applied', 'deferred']);
     assert.deepEqual(p0.debt.map((d) => d.disposition.type).sort(), ['keep', 'promote']);
     const head = (r: ArcRef) => spawnSync('git', ['-C', layout(story.dir).product, 'show', `${r.view.holistic().completion!.head}:.roadmap/debt.md`], { encoding: 'utf8' }).stdout;
     const ledger = parseDebtBlock(head(two!));
@@ -354,7 +375,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.equal(chainOf(absPath(layout(story.dir).product)).arcs.length, 2, 'no third arc started');
   });
 
-  test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries the amendments, debt and P-1', () => {
+  test('evals-m4a.brief: the brief spans both arcs, K = 1 with arc 2 unacked, and carries debt and P-1 without checkpoint amendments', () => {
     const l = layout(story.dir);
     // check.ts restored the scrambled live files (K20) after its from-ref check; the brief reads the committed config.
     assert.equal(spawnSync('git', ['-C', l.product, 'status', '--porcelain', '--', ...story.report.scrambled], { encoding: 'utf8' }).stdout.trim(), '', 'check.ts restored every scrambled path');
@@ -365,7 +386,6 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(payload.chain.k, 1);
     assert.deepEqual(payload.chain.unackedStarts, [fakeArc(story.dir, 2)]);
     const [one, two] = payload.arcs;
-    assert.equal(one!.amendments.length, 2);
     assert.equal(one!.debt.banked.length, 2);
     assert.equal(two!.debt.dispositioned.length, 2);
     assert.deepEqual(two!.questions.map((q) => [q.id, q.state.type]), [['P-1', 'answered']]);
@@ -488,38 +508,34 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual([report.endedBy, report.stopReason], ['stopped', 'vision-silent']);
     assertEveryStepPlayed(silent.dir, [1]);
     const silentArc1 = journal(silent.dir, 1);
-    assert.deepEqual(factsOf(silentArc1, 'flow-ended').map((f) => [f.job, f.outcome, f.proposal]), [['flow-1', 'done', null]], 'one flow run, the third merge\'s, with no proposal');
-    const held = factsOf(silentArc1, 'dispatch').filter((d) => d.record.unit === 'free-berths');
-    assert.ok(held.length > 0 && held.every((d) => d.seq > factsOf(silentArc1, 'flow-ended')[0]!.seq), 'the read-outs after quay-list waited for it');
     const chain = chainOf(absPath(layout(silent.dir).product));
     assert.equal(chain.arcs.length, 1);
     const pass = checked.result.criteria.filter((c) => c.pass).map((c) => c.name);
-    // M4b: arc 1's constraint-shift run (noAction) names the slot and its suite component, so flow-constraint holds; the
-    // loop and the shard need a decided proposal and a verdict. M4b rev 3: its lane runs carry pressure (pressure-recorded).
-    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'flow-constraint', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop or a decided flow proposal fail here');
+    // This single-arc stop still checks lane integrity and recorded host pressure.
+    assert.deepEqual(pass, ['isolation', 'arc1-complete', 'brief-acked-once', 'no-model-ids', 'host-released', 'profile', 'ruler-intact', 'pressure-recorded'], 'the paid run\'s criteria that need a second arc, the k-limit stop fail here');
     assert.match(checked.result.criteria.find((c) => c.name === 'stopped-at-k')!.detail, /vision-silent/);
   });
 
   test('evals-m4a.witness-missing: guard\'s first build passes its unit lane but fails the berths witness, so a fix round naming the test comes before any gate', () => {
     const guard = outcomesOf(arc1, 'guard');
-    assert.deepEqual(named(guard).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), ['plan-check:approve', 'build:success', 'lanes:witnesses-missing', 'build:success', 'lanes:green', 'gate:approve']);
+    assert.deepEqual(named(guard).filter((o) => /^(lanes|gate|build|pre-build):/.test(o)), ['pre-build:approve', 'build:success', 'lanes:witnesses-missing', 'build:success', 'lanes:green', 'gate:approve']);
     const missing = guard.find((o) => o.outcome === 'witnesses-missing')!;
     assert.deepEqual(missing.detail, { kind: 'witnesses-missing', missing: [], failed: [{ lane: 'berths', testId: LANES.find((x) => x.id === 'berths')!.test }] });
     // The fix round's call is the scenario's resume step that expects the failing id in its prompt (every step played once).
     const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'guard');
-    assert.equal(calls.length, 4, 'plan-check, build, the witness fix round, gate');
+    assert.equal(calls.length, 4, 'pre-build, build, the witness fix round, gate');
     assert.match(calls[2]!.stdin, /Failing: test "a berth is never booked twice for one tide window" on lane berths/);
     assert.match(calls[2]!.stdin, /witness-check --lane-file/, 'the fix round names the witness check command');
   });
 
-  test('evals-m4a.smoke-survivor: confirm (high risk) is plan-checked and built; smoke finds W-1 surviving, one fix round, then the gate', () => {
+  test('evals-m4a.smoke-survivor: confirm (high risk) is pre-builded and built; smoke finds W-1 surviving, one fix round, then the gate', () => {
     const confirm = outcomesOf(arc1, 'confirm');
-    assert.deepEqual(named(confirm).filter((o) => /^(lanes|gate|build|plan-check):/.test(o)), [
-      'plan-check:approve', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
+    assert.deepEqual(named(confirm).filter((o) => /^(lanes|gate|build|pre-build):/.test(o)), [
+      'pre-build:approve', 'build:success', 'lanes:smoke-survived', 'build:success', 'lanes:smoke-survived', 'gate:approve',
     ]);
     const calls = callsOf(story.dir, 1).filter((c) => c.unit === 'confirm');
-    assert.equal(calls.length, 4, 'plan-check, build, the smoke fix round, gate');
-    assert.ok(calls[0]!.argv.includes('--tools') && calls[3]!.argv.includes('--tools'), 'plan-check and the gate judge');
+    assert.equal(calls.length, 4, 'pre-build, build, the smoke fix round, gate');
+    assert.ok(calls[0]!.argv.includes('--tools') && calls[3]!.argv.includes('--tools'), 'pre-build and the gate judge');
     const tides = { lane: 'tides', testId: LANES.find((x) => x.id === 'tides')!.test };
     const ran = factsOf(arc1, 'smoke-ran').filter((f) => f.unit === 'confirm');
     assert.equal(ran.length, 2);
@@ -532,13 +548,9 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(confirm.find((o) => o.outcome === 'smoke-survived')!.detail, { kind: 'smoke-survived', obligations: [], testIds: [tides] });
   });
 
-  test('evals-m4a.opportunity: arc 2\'s checkpoint admits fits as the opportunity O-1 with its witness (V-7 joins advances) and converts the over-budget day view into an amendment, which arc 3 applies as T-25', () => {
-    const bundle = factsOf(arc2, 'plan-applied').find((p) => p.source?.type === 'bundle');
-    assert.ok(bundle !== undefined && bundle.source?.type === 'bundle');
-    assert.deepEqual(bundle.source.admits, [{ index: 0, unit: 'fits', class: { type: 'opportunity', id: 'O-1', clauses: ['V-7'] } }]);
-    assert.deepEqual(bundle.source.conversions, [{ index: 1, unit: 'dayview', reason: 'over-budget', opportunity: null }]);
-    const [amendment] = factsOf(arc2, 'corpus-amendment');
-    assert.deepEqual(amendment?.source, { type: 'admit', job: 'ckpt-1', index: 1, reason: 'over-budget' });
+  test('evals-m4a.opportunity: root apply admits fits with its witness, V-7 joins advances, and the day view remains future work', () => {
+    const authored = factsOf(arc2, 'plan-applied').find((p) => p.changes.some((c) => c.type === 'unit-added' && c.unit === 'fits'));
+    assert.ok(authored?.source.type === 'command', 'the root authors the additional unit through apply');
     assert.deepEqual(named(outcomesOf(arc2, 'fits')).filter((o) => o.startsWith('ff:')), ['ff:published'], 'fits merged');
     assert.deepEqual(named(outcomesOf(arc2, 'dayview')), [], 'the converted unit never ran');
     const two = chainOf(absPath(layout(story.dir).product)).two!;
@@ -554,12 +566,10 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     );
     assert.deepEqual(obligations.census?.find((e) => e.rule === FITS_WITNESS.child.rule)?.state, { type: 'obligation', id: FITS_WITNESS.child.id });
     assert.ok(factsOf(arc2, 'obligation-latched').some((f) => f.obligation === FITS_WITNESS.child.id), 'fits\' publication latched its witness');
-    // The bundle's drift audit and its checkpoint ran before notice was admitted (the root agent waited on them).
-    const drift = factsOf(arc2, 'checkpoint-inputs').find((f) => f.job === DRIFT_CHECKPOINT)!;
-    assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > drift.seq));
-    const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as { amendments: { id: string; disposition: unknown }[] };
-    assert.equal(amendmentsOf(two).length, 1);
-    assert.deepEqual(arc3.amendments, amendmentsOf(two).map((a) => ({ id: a.id, disposition: { type: 'applied', rules: ['T-25'] } })), 'arc 2\'s one amendment, the converted admit');
+    // The requested campaign audit completed before notice was admitted.
+    const audited = factsOf(arc2, 'audit-ended').find((f) => f.job === 'audit-1')!;
+    assert.ok(factsOf(arc2, 'dispatch').filter((d) => d.record.unit === 'notice').every((d) => d.seq > audited.seq));
+    const arc3 = JSON.parse(readFileSync(join(layout(story.dir).inputs, fakeArc(story.dir, 3), 'phase0.json'), 'utf8')) as {amendments: unknown[]};
   });
 
   test('evals-m4a.lane-reuse-after-pause: the root agent pauses notice in its hung slow lane and resumes it; the resumed attempt reuses the unit lane\'s pass and logs one intervention', () => {
@@ -578,38 +588,6 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assert.deepEqual(log, { n: 1, byLever: { pause: 1 }, malformed: [] });
   });
 
-  test('evals-m4a.flow-loop: arc 1 proves a bait changed and applies the plant lane at six files a time with an improved verdict; arc 2 carries it and rejects a build-class step', () => {
-    const product = absPath(layout(story.dir).product);
-    assert.deepEqual(plantCheck(product), { kind: 'in-play', arc: fakeArc(story.dir, 1), lane: SUITE_LANE, units: unitsOf(1).length }, 'the fail-fast found plant S in play');
-    const { one, two } = chainOf(product);
-    const a1 = flowArcOf(one!);
-    const facts = <K extends Fact['kind']>(a: FlowArc, kind: K) => a.facts.flatMap((x) => (x.fact.kind === kind ? [x.fact as Extract<Fact, { kind: K }>] : []));
-    // flow-1 is the request's or, when the third merge's first constraint label got there first, constraint-shift's (the
-    // request then goes to flow-2); flow-2 is always the cooldown's one requested bypass.
-    const started = facts(a1, 'flow-started');
-    assert.deepEqual(started.map((f) => f.job), ['flow-1', 'flow-2']);
-    assert.ok(started[0]!.triggers.every((x) => x === 'requested' || x === 'constraint-shift'), JSON.stringify(started[0]!.triggers));
-    assert.ok(started[1]!.triggers.includes('requested'), JSON.stringify(started[1]!.triggers));
-    assert.deepEqual(facts(a1, 'flow-ended').map((f) => [f.proposal?.id, f.proposal?.action.lever, f.proposal?.target]), [
-      ['flow-1.0', 'suite-lane', `suite:${REPLAY_LANE.id}`], ['flow-2.0', 'suite-lane', `suite:${SUITE_LANE}`],
-    ]);
-    assert.deepEqual(facts(a1, 'flow-decided').map((d) => [d.proposal, d.decision, d.reason]), [['flow-1.0', 'accepted', FLOW_1.bait.reason], ['flow-2.0', 'accepted', FLOW_1.shard.reason]]);
-    assert.deepEqual(facts(a1, 'flow-proof').map((p) => [p.proposal, p.outcome]), [['flow-1.0', 'changed'], ['flow-2.0', 'preserved']]);
-    const [applied, ...more] = facts(a1, 'flow-applied');
-    assert.ok(applied !== undefined && more.length === 0 && applied.proposal === 'flow-2.0', 'only the preserved change was applied');
-    const revision = a1.revisions.find((r) => r.rev === (applied.revision as number))!;
-    assert.deepEqual(revision.plan.suite.lanes.find((x) => x.id === SUITE_LANE)?.argv, SHARD.argv);
-    assert.deepEqual(factsOf(arc1, 'plan-applied').find((p) => p.rev === applied.revision)?.source, { type: 'flow', proposal: 'flow-2.0' });
-    const [v] = facts(a1, 'flow-verdict');
-    assert.deepEqual([v?.proposal, v?.metric, v?.verdict], ['flow-2.0', { type: 'suite-run', lane: SUITE_LANE }, 'improved']);
-    assert.ok((v?.after.samples.length ?? 0) >= 3, 'the read-outs after quay-list ran the suite after the change');
-    // Arc 2 carries the change; its one requested run's build-class step is rejected with a reason.
-    assert.deepEqual(two!.plan.suite.lanes.find((x) => x.id === SUITE_LANE)?.argv, SHARD.argv);
-    const a2 = flowArcOf(two!);
-    assert.deepEqual(facts(a2, 'flow-ended').map((f) => [f.job, f.outcome, f.proposal?.action.lever]), [['flow-1', 'done', 'build-class']]);
-    assert.deepEqual(facts(a2, 'flow-decided').map((d) => [d.proposal, d.decision, d.reason]), [['flow-1.0', 'rejected', FLOW_2.buildClass.reason]]);
-    for (const name of ['flow-constraint', 'flow-loop', 'flow-shard', 'ruler-intact']) assert.ok(story.checked.result.criteria.find((c) => c.name === name)?.pass, name);
-  });
 });
 
 test('skill.operator-log-format: reference.md\'s operator-log example parses with check.ts\'s parser, every lever in the closed list', () => {
@@ -673,32 +651,20 @@ test('evals-m4a.wake-key (paid run 2): needs-user ids are arc-scoped, so an id r
 });
 
 // ---------------------------------------------------------------------------------------------------
-// M4b: the flow criteria and the fail-fast on synthetic records (no run needed)
+// Fixture lane integrity and fail-fast on synthetic records (no run needed)
 
-const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] });
+const lane = (id: string, argv: readonly string[]) => ({ id, argv: [...argv], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] });
 const planOf = (argv: readonly string[], units = MIN_ARC1_UNITS): PlanM1 => ({
   suite: { lanes: [lane(SUITE_LANE, argv), lane(REPLAY_LANE.id, REPLAY_LANE.argv)] }, units: Array.from({ length: units }, (_, i) => ({ id: `u${i + 1}` })),
 }) as unknown as PlanM1;
-const obligationsOf = (soakArgv: readonly string[]) => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane('soak', soakArgv), reporter: 'node-test' }], obligations: [], mapping: { paths: [] } });
-const SHA = 'a'.repeat(64);
-const SHARD_PROPOSAL = { id: 'flow-2.0', target: `suite:${SUITE_LANE}`, action: { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SHARD.argv], reporter: 'node-test', cpu: SHARD.cpu }, rationale: 'r', risks: 'r' };
-const PREIMAGE = { lever: 'suite-lane', lane: SUITE_LANE, argv: [...SEED_SUITE_ARGV], cpu: null };
-type Synthetic = Readonly<{ component?: string; reason?: string; proof?: string; verdict?: string; soakArgv?: readonly string[]; finalArgv?: readonly string[] }>;
+const obligationsOf = (soakArgv: readonly string[]) => parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [{ ...lane('soak', soakArgv), reporter: 'node-test' }], obligations: [], mapping: { systems: [] } });
+type Synthetic = Readonly<{ soakArgv?: readonly string[]; finalArgv?: readonly string[] }>;
 
-/** One arc whose flow-2 changes the plant lane (`SHARD`) as the story's does; each option mutates one record. */
-function syntheticArc(o: Synthetic = {}): FlowArc {
-  const facts: unknown[] = [
-    { kind: 'flow-started', job: 'flow-2', triggers: ['requested'], inputsSha256: SHA },
-    { kind: 'flow-ended', job: 'flow-2', outcome: 'done', proposal: SHARD_PROPOSAL, dropped: null, constraint: { code: { station: 'slot:integration', internal: false, component: o.component ?? `suite:${SUITE_LANE}` }, judged: { station: 'slot:integration', agree: true, reason: 'r' } } },
-    { kind: 'flow-decided', proposal: 'flow-2.0', command: 'cmd-1', decision: 'accepted', reason: o.reason ?? 'the serial flag is stale' },
-    { kind: 'flow-proof', proposal: 'flow-2.0', job: 'proof-1', treeSha: '0'.repeat(40), oldSha256: SHA, newSha256: SHA, outcome: o.proof ?? 'preserved', minutes: { old: 6, new: 1 }, breaksStandIn: false },
-    { kind: 'flow-applied', proposal: 'flow-2.0', revision: 2, preimage: PREIMAGE },
-    { kind: 'flow-verdict', proposal: 'flow-2.0', metric: { type: 'suite-run', lane: SUITE_LANE }, before: { samples: [6], centre: 6, mrBar: 0 }, after: { samples: [1, 1, 1] }, guards: [], verdict: o.verdict ?? 'improved', preimage: PREIMAGE },
-  ];
+/** One arc with original and revised fixture lanes; each option mutates one record. */
+function syntheticArc(o: Synthetic = {}): RulerArc {
   const soak = ['node', '--test', PLANT.soakFile];
   return {
     arc: 'm4a-synthetic-1',
-    facts: facts.map((fact, i) => ({ seq: i + 10, fact: fact as Fact })),
     revisions: [
       { rev: 1, plan: planOf(SEED_SUITE_ARGV), obligations: obligationsOf(soak) },
       { rev: 2, plan: planOf(o.finalArgv ?? SHARD.argv), obligations: obligationsOf(o.soakArgv ?? soak) },
@@ -706,23 +672,9 @@ function syntheticArc(o: Synthetic = {}): FlowArc {
   };
 }
 
-test('evals-m4a.flow-criteria: flow-constraint, flow-loop, flow-shard and ruler-intact pass on the story\'s records and fail on each one mutated', () => {
+test('evals-m4a.ruler-criteria: lane integrity passes on the story\'s records and fails on each one mutated', () => {
   const good = syntheticArc();
-  assert.equal(flowConstraintVerdict(good).pass, true);
-  assert.equal(flowLoopVerdict([good]).pass, true);
-  assert.equal(flowShardVerdict([good]).pass, true, flowShardVerdict([good]).detail);
   assert.deepEqual(rulerRecordProblems([good]), []);
-  assert.deepEqual(flowLoopVerdict([]).pass, false, 'no run at all');
-
-  assert.match(flowConstraintVerdict(syntheticArc({ component: 'ff' })).detail, /no run named the slot with a suite component/);
-  assert.match(flowLoopVerdict([syntheticArc({ reason: '  ' })]).detail, /no proposal decided with a reason/);
-  const inconclusive = syntheticArc({ verdict: 'inconclusive' });
-  assert.match(flowLoopVerdict([inconclusive]).detail, /no conclusive verdict/);
-  assert.equal(flowShardVerdict([inconclusive]).pass, false);
-  assert.equal(flowShardVerdict([syntheticArc({ verdict: 'no-effect' })]).pass, false, 'conclusive but not improved');
-  const changed = syntheticArc({ proof: 'changed' });
-  assert.equal(flowShardVerdict([changed]).pass, false);
-  assert.deepEqual(rulerRecordProblems([changed]), ['m4a-synthetic-1: flow-2.0 changed suite\'s argv without a preserved proof']);
   const slowerSoak = rulerRecordProblems([syntheticArc({ soakArgv: ['node', '--test', '--test-concurrency=2', PLANT.soakFile] })]);
   assert.equal(slowerSoak.length, 1);
   assert.match(slowerSoak[0]!, /rev 2: the soak lane soak has laneRev/);
@@ -754,7 +706,7 @@ test('evals-m4a.plant-lane: the fail-fast finds plant S only in a suite lane who
 });
 
 test('evals-m4a.unit-floor: the fail-fast stops an arc 1 whose first plan has fewer units than a conclusive verdict needs', () => {
-  assert.equal(MIN_ARC1_UNITS, 6, 'three suite runs before the flow change and three after it, one per integration');
+  assert.equal(MIN_ARC1_UNITS, 6, 'six independent units exercise suite runs across integrations');
   assert.deepEqual(firstPlanCheck('a', planOf(SEED_SUITE_ARGV)), { kind: 'in-play', arc: 'a', lane: SUITE_LANE, units: MIN_ARC1_UNITS });
   const small = firstPlanCheck('a', planOf(SEED_SUITE_ARGV, MIN_ARC1_UNITS - 1));
   assert.deepEqual(small, { kind: 'too-few-units', arc: 'a', units: ['u1', 'u2', 'u3', 'u4', 'u5'] });

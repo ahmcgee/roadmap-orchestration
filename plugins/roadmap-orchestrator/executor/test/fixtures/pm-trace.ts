@@ -1,5 +1,7 @@
 // The recovery trace each executor crash point allows (test/oracle.ts `Trace`), shared by the whole-pipeline
 // matrix (test/serial/pipeline-matrix.test.ts) and the concurrent one (test/serial/concurrent-matrix.test.ts).
+import assert from 'node:assert/strict';
+import type { LogSnapshot } from '../../src/core/log.ts';
 import type { Event } from '../../src/core/events.ts';
 import { type Trace, UNCRASHED } from '../oracle.ts';
 
@@ -19,6 +21,10 @@ export const FROM_B2: Readonly<Record<string, Trace['recoveredBy']>> = {
 
 /** Every executor label but the journal's: what recovery does to the op it cut short. */
 export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
+  'command.apply.queued': R('adopted', 'redone'),
+  'command.apply.before-effect': R('reconciled'),
+  'command.apply.after-effect': R('reconciled'),
+  'command.apply.after-receipt': R('reconciled'),
   'spawn.after-intent': R('reconciled'),
   'launch.after-launch-json': R('reconciled'),
   // The runner lives on: adopted, or once it has exited its exit.json is adapted again.
@@ -71,8 +77,6 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'recover.after-op': NONE,
   // M3 B7: arc-completed written, its terminal snapshot not: nothing open; the restart publishes the snapshot.
   'complete.after-fact': NONE,
-  // M4b: flow-series written, arc-completed not: nothing open; the restart keeps no second series and completes.
-  'flow.series-before-completed': NONE,
   // M3 (the holistic row): a digest item's raise, as the needs-user row's.
   'needsuser.raise.before-publish': R('redone'),
   'needsuser.raise.after-publish': R('reconciled'),
@@ -82,15 +86,10 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'audit.after-lens': NONE,
   'audit.before-ended': NONE,
   'audit.after-ended': NONE,
-  'checkpoint.after-inputs': NONE,
-  'checkpoint.after-call': NONE,
-  'bundle.after-applied': NONE,
-  'bundle.after-decided': NONE,
   // M4a (a corpus arc): the pack review's facts, a checkpoint's amendment settlement.
   'packreview.after-started': NONE,
   'packreview.after-call': NONE,
   'packreview.after-ended': NONE,
-  'amendment.after-decided': NONE,
   'debt.after-approval': NONE,
   // M4a rev 3 N3 (a corpus arc's unit stages): the witness lane files published (no build call); the witness check's series
   // certified (its verdict unwritten); the smoke's patch kept, its mutant applied, its mutant lanes witnessed, its smoke-ran
@@ -108,8 +107,6 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'mutant.act-end': R('reconciled'),
   'mutant.after-done': NONE,
   // M4a rev 3 N2: a decision record's conversion amendment (or an overrun's debt item) written: settled again from the record.
-  'bundle.after-conversion-amendment': NONE,
-  'bundle.after-overrun-debt': NONE,
   // The close-out's docs.commit: open (redone, then the unpublished holder abandoned) or done.
   'docs.act-start': R('redone'),
   'docs.after-commit-tree': R('redone'),
@@ -133,18 +130,19 @@ export const BATCH_TRACE: Readonly<Record<string, Trace>> = { 'ff.act-start': R(
  * lost done leaves its op open with its act complete (reconciled), a lost usage fact leaves its spawn open
  * (reconciled), a lost intent or other fact leaves nothing open. After the fsync the record is durable: an
  * intent is its op's B2 state, anything else leaves nothing open. M3: a fact a `revision.commit` writes inside
- * its op (its plan-applied, its divergences; `inRevision`: that op was open when the record was appended) leaves
- * the revision open, lost or durable: recovery finishes it from its kept payload (reconciled).
+ * its op (its plan-applied, its divergences; `inMutation`: the revision or root command was open when the record was appended) leaves
+ * the revision open, lost or durable: recovery finishes it from its kept payload (reconciled). The same applies
+ * to facts written inside an open root command, whose receipt reconciliation completes its subject closure.
  */
-export function appendTrace(label: string, e: Event, inRevision = false): Trace {
+export function appendTrace(label: string, e: Event, inMutation = false): Trace {
   const tailDiscarded = label === 'log.append.after-partial-write';
-  const revisionFact = e.type === 'fact' && inRevision;
+  const mutationFact = e.type === 'fact' && inMutation;
   if (label === 'log.append.after-fsync') {
-    if (revisionFact) return R('reconciled');
+    if (mutationFact) return R('reconciled');
     if (e.type !== 'intent') return NONE;
     return R(...(FROM_B2[e.kind] ?? ['redone']));
   }
-  const lostOpen = e.type === 'done' || revisionFact || (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable'));
+  const lostOpen = e.type === 'done' || mutationFact || (e.type === 'fact' && (e.fact.kind === 'meter' || e.fact.kind === 'usage-unavailable'));
   return { recoveredBy: lostOpen ? ['reconciled'] : [], required: lostOpen, tailDiscarded };
 }
 
@@ -157,4 +155,36 @@ export function inRevisionAt(events: readonly Event[], seq: number): boolean {
     if ((e.type === 'done' || e.type === 'abort') && open.has(e.op)) open.delete(e.op);
   }
   return open.size > 0;
+}
+
+/** A root apply remains open while its inputs and subject-closure facts are published. */
+export function inCommandAt(events: readonly Event[], seq: number): boolean {
+  const open = new Set<string>();
+  for (const e of events) {
+    if (e.seq >= seq) break;
+    if (e.type === 'intent' && e.kind === 'command.apply') open.add(e.op);
+    if ((e.type === 'done' || e.type === 'abort') && open.has(e.op)) open.delete(e.op);
+  }
+  return open.size > 0;
+}
+
+/** A notice inside a revision recovers its child raise and then reconciles its parent commit. */
+export function traceAt(label: string, events: readonly Event[], seq: number): Trace | undefined {
+  if (label === 'plan.apply.after-inputs' && inCommandAt(events, seq + 1)) return R('reconciled');
+  if (label === 'needsuser.raise.before-publish' && inRevisionAt(events, seq)) return R('redone', 'reconciled');
+  return LABEL_TRACE[label];
+}
+
+/** Require both sides of that dependency, rather than merely allowing their recovery kinds. */
+export function assertRevisionNoticeRecovery(crash: LogSnapshot, end: LogSnapshot, label: string): void {
+  if (label !== 'needsuser.raise.before-publish' && label !== 'needsuser.raise.after-publish') return;
+  const notice = crash.view.openIntents().find((i) => i.kind === 'needsuser.raise');
+  assert.ok(notice !== undefined, 'the notice raise is open at its publication boundary');
+  if (notice.parent.type !== 'op') return;
+  const parent = crash.view.latestIntent(notice.parent.op);
+  if (parent.kind !== 'revision.commit') return;
+  assert.equal(end.view.doneOf(notice.op)?.recoveredBy, label === 'needsuser.raise.before-publish' ? 'redone' : 'reconciled', 'the original notice raise recovers once');
+  assert.equal(end.view.doneOf(parent.op)?.recoveredBy, 'reconciled', 'the parent revision reconciles after its notice');
+  const notices = end.view.opsOf('needsuser.raise').filter((i) => i.parent.type === 'op' && i.parent.op === parent.op);
+  assert.deepEqual(notices.map((i) => i.op), [notice.op], 'recovery creates no duplicate notice intent');
 }

@@ -1,4 +1,4 @@
-// Vacuity repairs and the repair side of findings (DESIGN-1.0.md §2.5 "Mutants are executed, never judged by reading",
+// Vacuity repairs and the repair side of findings (DESIGN-1.0.md §2.1 "Unit pipeline and review",
 // §2.8 "Findings and repair"; plan "Mutant reproduction"; M3 step B3).
 //
 // A vacuity finding carries a mutant: a patch the lens claims the obligation's witness does not catch. A unit whose spec
@@ -6,7 +6,7 @@
 // executor-verified obligation is reproducing the mutant: `mutant.apply` in a detached worktree at the integration tip
 // (src/git/mutant.ts), then the mutant's lane there under `purpose: mutant` (a `mutant` spawn, a `witnessed{purpose:
 // mutant, for: mutant{finding, of}}` fact naming the patched tree's real id: G13, never certifying). The old witness
-// permitting the mutant (its tests held) is `reproduced` → plan-check. Tests that kill it: `not-reproduced`, the unit
+// permitting the mutant (its tests held) is `reproduced` → pre-build. Tests that kill it: `not-reproduced`, the unit
 // parks and code dismisses the finding (`syncRepairs` reads it from the log). A patch that no longer applies, or a lane
 // no longer in force, or a run that witnessed nothing definite: `inapplicable`, the unit parks and the next audit
 // re-evaluates. Each mutant lane runs under the attempt's stage holder with the lane's own reservation (the first one as
@@ -23,42 +23,43 @@
 // (src/holistic/findings.ts `ownershipMoves`: owned, fixed-on-branch, resolved, open again) and code's dismissal of a
 // finding whose mutant a `reproduce` killed. It is re-runnable, so the driver calls it around every stage and a
 // restart writes only what is missing.
-import { specLaneIds } from './deflake.ts';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { existsSync,mkdirSync,readFileSync } from 'node:fs';
+import { basename,join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { MutantOf, OutcomeStage, WitnessFor } from '../core/events.ts';
-import { mutantSubjectDefault } from '../core/upgrade.ts';
-import { type FindingId, type LaneId, type OpId, type ResourceInstance, type ResourceName, type ResourceUnit, type Sha, type Sha256Hex, type UnitId, invocationId, opKey } from '../core/ids.ts';
+import type { MutantOf,OutcomeStage,WitnessFor } from '../core/events.ts';
+import { type FindingId,type LaneId,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type Sha256Hex,type UnitId,invocationId,opKey } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { specShaInForce } from '../input/inforce.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type NeedsUserContent, type SpecM1, STDERR_FILE, STDOUT_FILE, specRepairs } from '../core/records.ts';
-import type { FindingState, UnitState } from '../core/state.ts';
-import { type AbsPath, absPath, repoPattern } from '../core/values.ts';
+import { mutantOf } from '../core/projections.ts';
+import { type NeedsUserContent,type SpecM1,STDERR_FILE,STDOUT_FILE,specRepairs } from '../core/records.ts';
+import type { FindingState,UnitState } from '../core/state.ts';
+import { type AbsPath,absPath,repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
-import { mutantPatchPath, patchedTree } from '../git/mutant.ts';
+import { mutantPatchPath,patchedTree } from '../git/mutant.ts';
 import { mutantLaneDir } from '../git/snapshot.ts';
 import { removedSince } from '../git/worktree.ts';
-import { type RepairProgress, type RepairUnit, isActive, repairedObligations, ruleFinding, syncFindings } from '../holistic/findings.ts';
+import { type RepairProgress,type RepairUnit,isActive,repairedObligations,ruleFinding,syncFindings } from '../holistic/findings.ts';
 import { verdictOf } from '../holistic/observe.ts';
-import { type SpecLinks, specLinksOf } from '../holistic/staleset.ts';
-import { type ArcLaneDef, type MutantRef, type ObservationVerdict, type WitnessRecord, type WitnessRef, laneRevOf, witnessRecord } from '../holistic/types.ts';
-import { WITNESS_LINES, WITNESS_RECORD_FILE, collectWitness, witnessEnv, witnessRecordOf, writeWitnessRecord } from '../holistic/witness.ts';
-import { type PlanM1, type PlanUnit, environmentsOf } from '../input/plan.ts';
-import { releaseEnvironment, useEnvironment } from '../resources/environments.ts';
+import { type SpecLinks,specLinksOf } from '../holistic/staleset.ts';
+import { type ArcLaneDef,type MutantRef,type ObservationVerdict,type WitnessRecord,type WitnessRef,laneRevOf,witnessRecord } from '../holistic/types.ts';
+import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
+import { specShaInForce } from '../input/inforce.ts';
+import { type PlanM1,type PlanUnit,environmentsOf } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
-import { type Reservation, type StageHolder, cleanup } from '../resources/reserve.ts';
-import type { SpecFacts, SpecFactsOf } from '../schedule/ready.ts';
-import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, pinDispatch, runOp } from './dispatch.ts';
-import { invocationDir, invoke } from './invoke.ts';
-import { laneCommand, laneEnv, laneEnvId, laneRequest } from './lanes.ts';
-import { type LaneCancel, laneAbortReason, laneCancelOf } from './redlane.ts';
-import { type Held, type StageDone, at, environmentFacts, failedFacts, holdEntry, holisticInForce, integrationTip, loadUnitSpec, record, stageHolder, start } from './stages.ts';
+import { evidenceSnapshotOp,mutantApplyOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { releaseEnvironment,useEnvironment } from '../resources/environments.ts';
+import { type Reservation,type StageHolder,cleanup } from '../resources/reserve.ts';
+import type { SpecFacts,SpecFactsOf } from '../schedule/ready.ts';
+import { specLaneIds } from './deflake.ts';
+import { type Cancelled,type StageContext,type StageParent,enter,evidenceRoot,isCancelled,pinDispatch,runOp } from './dispatch.ts';
+import { invocationDir,invoke } from './invoke.ts';
+import { laneCommand,laneEnv,laneEnvId,laneRequest } from './lanes.ts';
+import { type LaneCancel,laneAbortReason,laneCancelOf } from './redlane.ts';
+import { type Held,type StageDone,at,environmentFacts,failedFacts,holdEntry,holisticInForce,integrationTip,loadUnitSpec,record,stageHolder,start } from './stages.ts';
 import { decidedBy } from './transitions.ts';
-import { evidenceSnapshotOp, mutantApplyOp, worktreeRemoveOp } from '../recover/ops.ts';
 
-type SpecReader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>;
+import { markers } from './surface.ts';
+type SpecReader = Readonly<{ plan: StageContext['plan']; journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>;
 
 // ---------------------------------------------------------------------------------------------------
 // What a unit's spec says about its repairs
@@ -81,10 +82,11 @@ export function specFacts(ctx: SpecReader): SpecFactsOf {
     // dev.17: the unit's spec-side lanes, read only when an open deflake unit asks (src/pipeline/deflake.ts `deflakeHold`).
     const lanes = (): ReadonlySet<LaneId> => specLaneIds(loadUnitSpec(ctx, unit).spec);
     const links = (): SpecLinks => specLinksOf(loadUnitSpec(ctx, unit).spec);
+    const review = markers(ctx, unit, loadUnitSpec(ctx, unit).spec).length > 0;
     const findings = ctx.journal.view.holistic().findings;
-    if (!findings.some(isActive)) return { reproduces: false, repairs: new Set(), lanes, links };
+    if (!findings.some(isActive)) return { review, reproduces: false, repairs: new Set(), lanes, links };
     const repairs = specRepairs(loadUnitSpec(ctx, unit).spec);
-    return { reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs), lanes, links };
+    return { review, reproduces: vacuityTargets(findings, repairs).length > 0, repairs: repairedObligations(findings, repairs), lanes, links };
   };
 }
 
@@ -316,8 +318,8 @@ export async function reproduce(ctx: StageContext, unit: PlanUnit): Promise<Stag
   const targets = vacuityTargets(ctx.journal.view.holistic().findings, specRepairs(spec));
   if (targets.length === 0) throw new Error(`unit ${unit.id}: reproduce, but it repairs no active vacuity finding with a mutant`);
   const parent = at(start(ctx, unit.id, 'reproduce'), 'reproduce');
-  // The unit's first stage pins its dispatch record (scope envelope, risk floor, routing), as plan-check does for any
-  // other unit; after a re-open the record exists, and plan-check re-pins it.
+  // The unit's first stage pins its dispatch record (scope envelope, risk floor, routing), as pre-build does for any
+  // other unit; after a re-open the record exists, and pre-build re-pins it.
   if (ctx.journal.view.dispatchOf(unit.id) === null) pinDispatch(ctx, unit, { rev: spec.rev, sha256 });
   let first = true;
   for (const finding of targets) {
@@ -495,7 +497,7 @@ function codeDismissals(ctx: StageContext): readonly FindingId[] {
     const killed = view.opsOf('proc.spawn').flatMap((i) => {
       const s = i.expect.subject;
       if (!(i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'reproduce' && i.parent.attempt === d.attempt && s.purpose === 'mutant')) return [];
-      const of = mutantSubjectDefault(s);
+      const of = mutantOf(s);
       return of.type === 'finding' ? [of.finding] : [];
     }).at(-1);
     if (killed === undefined) throw new Error(`unit ${unit.id}: reproduce attempt ${d.attempt} decided not-reproduced without a mutant run`);

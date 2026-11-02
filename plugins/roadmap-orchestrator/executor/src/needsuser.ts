@@ -12,29 +12,29 @@
 // refused claim's) are files only (`fileNeedsUser`); `blockingItems` reads both for admission.
 //
 // M3 (B7; the OR rulings), M4a and M4b: whether an item of a reason from M3 on blocks is fixed by its reason (`m3Blocking`),
-// and a raise that disagrees fails loud. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
+// and a raise that disagrees fails loud. A request naming only settled findings is informational: its decision already landed. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
 // `new-finding-draining`, `steered`, `not-reproduced`, `owner-request` (A16: only the owner may act), `respec-second`
-// (OR-Q1), and M4a's `pack-review` (K14) and `issue-policy-untrusted` (OR-L6; only an earlier executor raised it, and it
-// holds no admission now). Non-blocking (`NON_BLOCKING_M3_REASONS`):
-// `bundle-request`, the convergence brakes (OR-Q2/3: they act on the checkpoint, never halt units), `audit-owed`,
-// `divergence-digest`, and M4b's `flow-proposal`, `flow-host`, `flow-worse`, `flow-invalid` and `ruler-changed`. Blocking means the arc is not `complete` while the item is open (§2.10); what an open item holds
+// (OR-Q1), and M4a's `pack-review` (K14).
+// Non-blocking (`NON_BLOCKING_M3_REASONS`):
+// `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is
+// open (§2.10); what an open item holds
 // back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline` and `pack-review` (every
 // admission until it is answered), the scheduler's. A `pack-review` item a later pack
 // review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply
 // then edited (dev.13), is open no more (`supersededItems`): it holds and blocks nothing.
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from './core/crash.ts';
-import { type IntentOf, type Parent, parentUnit } from './core/events.ts';
-import { durableMkdir, durableRename, durableWrite, readJson } from './core/fsx.ts';
-import { type NeedsUserId, type Sha256Hex, type SpecRev, type UnitId, needsUserId, needsUserIdForOp, opKey, sha256 } from './core/ids.ts';
-import type { Journal, JournalView, NeedsUserState, Reconciler } from './core/interfaces.ts';
-import { canonicalJson, canonicalRecordBytes, sha256Hex } from './core/json.ts';
+import { type IntentOf,type Parent,parentUnit } from './core/events.ts';
+import { durableMkdir,durableRename,durableWrite,readJson } from './core/fsx.ts';
+import { type NeedsUserId,type Sha256Hex,type SpecRev,type UnitId,needsUserId,needsUserIdForOp,opKey,sha256 } from './core/ids.ts';
+import type { Journal,JournalView,NeedsUserState,Reconciler } from './core/interfaces.ts';
+import { canonicalJson,canonicalRecordBytes,sha256Hex } from './core/json.ts';
 import {
-  NEEDS_USER_REASONS, NON_BLOCKING_M3_REASONS, type NeedsUserAck, type NeedsUserReason, type NeedsUserRecord, type Stage, needsUserAck, needsUserRecord,
-  type NeedsUserContent, failureRefOf,
+NEEDS_USER_REASONS,NON_BLOCKING_M3_REASONS,type NeedsUserAck,type NeedsUserReason,type NeedsUserRecord,type Stage,needsUserAck,needsUserRecord,
+type NeedsUserContent,failureRefOf,
 } from './core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from './core/values.ts';
+import { type AbsPath,absPath,isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import type { RiskTier } from './routing/types.ts';
 
@@ -53,7 +53,7 @@ const fileSha = (path: AbsPath): Sha256Hex => sha256(sha256Hex(readFileSync(path
 /** The reasons from M3 on (every reason from `obligation-baseline` on, M4a's included); an earlier reason's raiser decides whether it blocks. */
 const M3_REASONS: readonly NeedsUserReason[] = NEEDS_USER_REASONS.slice(NEEDS_USER_REASONS.indexOf('obligation-baseline'));
 
-/** Whether an item with `reason` is raised blocking: fixed for an M3 reason (the OR rulings), null for an earlier one. */
+/** Default blocking flag by reason; raiseNeedsUser exempts requests naming only settled findings. Earlier reasons return null. */
 export function m3Blocking(reason: NeedsUserReason): boolean | null {
   if (!M3_REASONS.includes(reason)) return null;
   return !(NON_BLOCKING_M3_REASONS as readonly NeedsUserReason[]).includes(reason);
@@ -65,7 +65,10 @@ export function m3Blocking(reason: NeedsUserReason): boolean | null {
  * parked, or the arc. The executor reads it back to raise each such item once (`raisedFor`).
  */
 export function raiseNeedsUser(journal: Journal, runDir: AbsPath, content: NeedsUserContent, parent: Parent): NeedsUserId {
-  const blocking = m3Blocking(content.reason);
+  const subject = content.subject;
+  const settledRequest = content.reason === 'owner-request' && subject.type === 'findings' && subject.findings.length > 0 && subject.findings.every((id) =>
+    journal.view.holistic().findings.some((f) => f.id === id && (f.state === 'ruled' || f.state === 'resolved')));
+  const blocking = settledRequest ? false : m3Blocking(content.reason);
   if (blocking !== null && blocking !== content.blocking) {
     throw new Error(`a ${content.reason} needs-user is raised ${blocking ? 'blocking' : 'non-blocking'}, not ${content.blocking ? 'blocking' : 'non-blocking'}`);
   }
@@ -129,7 +132,7 @@ export function raisedFor(view: JournalView, parent: Parent): NeedsUserId | null
   return raise === undefined ? null : raise.expect.id;
 }
 
-/** The item of `reason` raised for `parent` (several reasons may share a parent: a flow run's proposal and its verdict), or null. */
+/** The item of `reason` raised for `parent` (several reasons may share a parent), or null. */
 export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Parent, reason: NeedsUserReason): NeedsUserId | null {
   const key = canonicalJson(parent);
   const raise = view.opsOf('needsuser.raise').find((i) => canonicalJson(i.parent) === key && view.doneOf(i.op) !== null && readNeedsUser(runDir, i.expect.id)?.reason === reason);
@@ -188,12 +191,12 @@ export function readNeedsUserAck(runDir: AbsPath, id: NeedsUserId): NeedsUserAck
 // What a park's recommendation says: exactly what `resume` does for it
 
 /**
- * A unit parked at a judgment stage (plan-check or gate): `resume <unit>` re-opens it once a revision of its
+ * A unit parked at a judgment stage (pre-build or gate): `resume <unit>` re-opens it once a revision of its
  * spec is applied (commands/apply.ts), so that is what the item recommends.
  */
 export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecRev): string {
   return `Read the evidence. To re-run the unit, edit its spec ${specPath} in place and set "rev" to ${rev + 1}, run \`roadmap apply\`, `
-    + `then \`roadmap resume ${unit}\`: it re-enters at plan-check on the new revision, keeping the unit's branch, worktree and implementer `
+    + `then \`roadmap resume ${unit}\`: it re-enters at pre-build on the new revision, keeping the unit's branch, worktree and implementer `
     + 'session. Or acknowledge this item to leave the unit parked.';
 }
 
@@ -263,7 +266,7 @@ export type BlockingItem = Readonly<{ id: NeedsUserId; reason: NeedsUserReason; 
 export function blockingItems(runDir: AbsPath, view: JournalView): readonly BlockingItem[] {
   return openBlockingItems(runDir, view).map((id) => {
     const { reason, subject } = recordOf(runDir, id);
-    return { id, reason, subject: subject.type, unit: subject.type === 'unit' ? subject.unit : null };
+    return { id, reason, subject: subject.type === 'findings' ? 'arc' : subject.type, unit: subject.type === 'unit' ? subject.unit : null };
   });
 }
 

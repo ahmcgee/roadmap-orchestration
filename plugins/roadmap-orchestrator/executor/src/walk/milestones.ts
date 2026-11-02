@@ -1,4 +1,4 @@
-// Where each milestone stands (dev.13, plan §2–§4; SCHEMAS.md "dev.13"): derived from the log's walk facts, the plan in
+// Where each milestone stands (dev.13, plan §2–§4; SCHEMAS.md "Milestones and bring-up"): derived from the log's walk facts, the plan in
 // force and the findings, never stored. Pure but for the repairing units the caller reads (src/pipeline/reproduce.ts
 // `repairUnits`: which units' specs repair which findings).
 //
@@ -30,7 +30,7 @@ import type { WalkOutcome } from '../core/events.ts';
 import type { NeedsUserContent } from '../core/records.ts';
 import type { IsoTime } from '../core/values.ts';
 import { type RepairUnit, isActive } from '../holistic/findings.ts';
-import { lineageMembers } from '../input/envelope.ts';
+import { lineageMembers } from '../input/lineage.ts';
 import { type Milestone, type PlanM1, milestonesOf, walkRoundsOf } from '../input/plan.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
 
@@ -83,7 +83,7 @@ export type RoundView = Readonly<{
    * `checkpoint`: a finding of the walk no checkpoint has weighed (`unweighedWalkFindings`); `polish`: an applied proposal
    * is in no unit of the plan yet and was not refused (agent D's polish revision, src/walk/polish.ts, has yet to act).
    */
-  pending: 'checkpoint' | 'polish' | null;
+  pending: 'root' | 'polish' | null;
   /** The admitted units (lineage heads) neither merged nor cut. */
   inFlight: readonly UnitId[];
   /** The admitted units (lineage heads) merged. */
@@ -116,11 +116,8 @@ export type MilestoneProgress =
  */
 export function unweighedWalkFindings(view: JournalView, w: WalkRecord): readonly FindingId[] {
   if (w.ended === null) return [];
-  const vision = view.planApplied()?.visionSha256;
-  const weighed = new Set<string>(view.holistic().checkpoints
-    .filter((c) => c.decided !== null && c.decided.kind !== 'rejected' && c.inputs.visionSha256 === vision).flatMap((c) => c.inputs.findings));
   const mine = new Set<string>(w.ended.findings);
-  return canonicalIds(view.holistic().findings.filter((f) => mine.has(f.id) && isActive(f) && f.state === 'open' && !weighed.has(f.id)).map((f) => f.id));
+  return canonicalIds(view.holistic().findings.filter((f) => mine.has(f.id) && isActive(f) && f.state === 'open').map((f) => f.id));
 }
 
 /** The polish proposals the code-applied polish revision refused (`polish-refused`): settled, never applied. */
@@ -140,7 +137,7 @@ export function roundOf(view: JournalView, plan: PlanM1, walk: WalkRecord, repai
   const heads = units.map((u) => headOf(view, u));
   const status = (u: UnitId): string => view.unit(u).status;
   const settledProposals = new Set([...plan.units.flatMap((u) => (u.polish === undefined ? [] : [u.polish.proposal])), ...refusedProposals(view)]);
-  const pending = unweighedWalkFindings(view, walk).length > 0 ? 'checkpoint' : applied.some((p) => !settledProposals.has(p)) ? 'polish' : null;
+  const pending = unweighedWalkFindings(view, walk).some((id) => view.holistic().findings.some((f) => f.id === id && f.severity === 'P1') && !repairs.some((r) => r.repairs.includes(id))) ? 'root' : applied.some((p) => !settledProposals.has(p)) ? 'polish' : null;
   return {
     job: walk.job, round: walk.round, applied, units, pending,
     inFlight: [...new Set(heads.filter((h) => status(h) !== 'retired' && status(h) !== 'cut'))],
@@ -203,7 +200,7 @@ export function settledMilestones(view: JournalView, plan: PlanM1, repairs: Repa
   });
 }
 
-/** The status line's state (SCHEMAS.md "dev.13"): `building` until reached, then `walking | blocked | passed | polishing | settled`. */
+/** The status line's state (SCHEMAS.md "Milestones and bring-up"): `building` until reached, then `walking | blocked | passed | polishing | settled`. */
 export type MilestoneState = 'building' | 'walking' | 'blocked' | 'passed' | 'polishing' | 'settled';
 
 /**
@@ -249,10 +246,10 @@ export function walkItemsDue(view: JournalView, plan: PlanM1, repairs: readonly 
       out.set(w.job, {
         job: w.job,
         content: {
-          blocking: true, subject: { type: 'arc' }, reason: 'finding-p1-escalated',
+          blocking: true, subject: { type: 'findings', findings: unowned }, reason: 'finding-p1-escalated',
           summary: `Milestone ${m.id}'s walk ${w.job} found ${unowned.join(', ')} (P1, it breaks a journey or a floor), and no unit has owned ${unowned.length > 1 ? 'them' : 'it'} for more than 6 h. `
             + `Milestone ${m.id}'s node stays unpassed, so every unit that descends from it waits.`,
-          recommendation: `Admit a repair with \`roadmap apply\` (or let the checkpoint admit one), or rule the finding; read the walk's evidence under evidence/jobs/${w.job}/.`,
+          recommendation: `Admit a repair with \`roadmap apply\` (with concrete counter-evidence for any dismissal), or rule the finding; read the walk's evidence under evidence/jobs/${w.job}/.`,
           options: [], evidence: [],
         },
       });
@@ -272,13 +269,14 @@ export function walkItemsDue(view: JournalView, plan: PlanM1, repairs: readonly 
       });
       continue;
     }
-    if (p.kind !== 'settled' || milestonePassed(view, m.id) || out.has(p.last.job)) continue;
+    const last = p.kind === 'settled' ? p.last : p.kind === 'round-open' && p.round.round >= walkRoundsOf(plan) ? walksOf(view, m.id).find((w) => w.job === p.round.job) : null;
+    if (last === null || last === undefined || milestonePassed(view, m.id) || out.has(last.job)) continue;
     const p1s = activeWalkP1s(view, m.id);
-    out.set(p.last.job, {
-      job: p.last.job,
+    out.set(last.job, {
+      job: last.job,
       content: {
-        blocking: true, subject: { type: 'arc' }, reason: 'finding-p1-escalated',
-        summary: `Milestone ${m.id}'s walks are over (round ${p.last.round} of ${walkRoundsOf(plan)}, its last ${p.last.job}) and its node never passed`
+        blocking: true, subject: p1s.length > 0 ? { type: 'findings', findings: p1s } : { type: 'arc' }, reason: 'finding-p1-escalated',
+        summary: `Milestone ${m.id}'s walks are over (round ${last.round} of ${walkRoundsOf(plan)}, its last ${last.job}) and its node never passed`
           + `${p1s.length > 0 ? `: ${p1s.join(', ')} still break${p1s.length > 1 ? '' : 's'} it` : ''}. Every unit that descends from ${m.id} waits.`,
         recommendation: `Decide how ${m.id} passes: repair what breaks it and raise limits.walkRounds, or change the milestone with \`roadmap apply\`; then acknowledge this item.`,
         options: [], evidence: [],

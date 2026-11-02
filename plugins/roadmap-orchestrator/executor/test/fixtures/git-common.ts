@@ -24,9 +24,9 @@ export const IDENTITY: Identity = {
   committer: { name: 'Roadmap Executor', email: 'executor@roadmap.invalid', date: gitDate('1767225660 +0000') },
 };
 
-export function rules(runDir: string, scope: readonly string[] = ['src'], excluded: readonly string[] = ['src/evidence']): SalvageRules {
+export function rules(runDir: string, excluded: readonly string[] = ['src/evidence']): SalvageRules {
   return {
-    scope: { include: scope.map((s): RepoPattern => repoPattern(s)), exclude: [] },
+    protectedPaths: [repoPattern('.roadmap'), repoPattern('docs')],
     excluded: excluded.map((s): RepoPattern => repoPattern(s)),
     rejectedRoot: absPath(join(runDir, 'rejected')),
   };

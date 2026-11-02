@@ -1,4 +1,4 @@
-// `roadmap reverse <D-n>` (M3, H13; DESIGN-1.0.md §2.8 "Divergences"; plan "Checkpoint and bundles", Reversal): a
+// `roadmap reverse <D-n>` (M3, H13; DESIGN-1.0.md §2.8 "Vision, corpus and obligations"; plan "Checkpoint and bundles", Reversal): a
 // fresh compensating revision, built at request time from the divergence's preimage and committed like any revision
 // (the apply core and the fence, src/commands/apply.ts). A divergence records no executable inverse.
 //
@@ -130,7 +130,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
     return { kind: 'rejected', reason: `${divergence}'s effect is in the product tree: a verified repair unit reverses it (§2.8), not \`reverse\` (${d.compensation.hint})` };
   }
   if (d.compensation.kind === 'none') return { kind: 'rejected', reason: `${divergence} records nothing to restore (${d.compensation.hint})` };
-  const decided = view.holistic().checkpoints.find((c) => c.inputs.job === d.job)?.decided;
+  const decided = (() => { const revision = view.opsOf('revision.commit').find((i) => keptPayload(ctx.runDir, i.expect.payloadSha256).divergences.some((x) => x.job === d.job && x.what === d.what) && view.doneOf(i.op) !== null); return revision === undefined ? null : {kind: 'applied' as const, planRev: revision.expect.rev}; })();
   if (decided?.kind !== 'applied') return { kind: 'rejected', reason: `${divergence}'s checkpoint ${d.job} applied no revision: nothing to restore` };
   const refused: string[] = [];
   if (d.preimage.ledgerSha256 !== null) refused.push(`${divergence} touched the rulings ledger: a ruling is withdrawn by superseding it (\`roadmap rule\`)`);
@@ -191,6 +191,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons, 'reverse') };
   if (evaluated.kind === 'unchanged') return { kind: 'applied', verified: [`${divergence}'s preimage is in force already (rev ${evaluated.rev})`] };
   const committed = await commitUnderFence(ctx, evaluated, { type: 'reverse' }, { type: 'command', command: id }, parentOf(id));
+  if (committed.kind === 'rejected' && committed.reasons.some((r) => r.startsWith('stale:'))) return reverse(ctx, id, divergence);
   if (committed.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(committed.reasons, 'reverse') };
   return { kind: 'applied', verified: [`plan rev ${committed.fact.rev} in force: ${divergence} reversed`, ...committed.fact.changes.map((c) => canonicalJson(c))] };
 }

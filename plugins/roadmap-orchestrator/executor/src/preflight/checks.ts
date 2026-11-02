@@ -1,3 +1,7 @@
+import { parseCorpusPin } from '../corpus/types.ts';
+import { referenceCommit } from '../phase0/rows.ts';
+import { protectedPaths } from '../input/protected.ts';
+import { SCHEMA_VERSION } from '../core/version.ts';
 // The startup rejection table's checks (SCHEMAS.md "Startup rejection table") and their composition.
 //
 // `runChecks` evaluates in groups, and stops at the first group that refuses (every rejection of that
@@ -11,16 +15,10 @@
 //   3. host claim   host-busy, previous-arc-unreconciled, recovery-holder-dead, owner-mismatch (step 7)
 //   4. journal      log-corrupt at open, containment-mode-changed; a first start records the mode; last, the
 //                   plan in force (`settlePlan`): a first start records the files (M3: after the Phase-0 row
-//                   `obligation-dropped`, and the classifier's lane-evidence row `evidenceScopeConflicts` over
-//                   every unit, both reported as plan-change-refused), a later start rebases them from the owner's
-//                   files of the latest revision applied from them, or with `start --base` from an export's manifest
-//                   (`StartInput.base`, as `apply --base`; deflake scope, 2026-10-23), onto the files in force (src/input/rebase.ts:
-//                   files unchanged since are the plan in force) and applies a change through the apply core
-//                   (src/commands/apply.ts `evaluateRevision`, source `start`) or refuses (plan-change-refused, a
-//                   conflict included, and a change needing a docs publication: rulings, obligations, a corpus arc's
-//                   vision, which go through an apply); a revision a crash left mid-commit is recovery's first, and so
-//                   is a committed command (its `command.apply` still open with its revision in force: recovery
-//                   finishes it), so the files wait for the next start.
+//                   `obligation-dropped`, and lane evidence covering tracked paths in unit systems or protectedPaths over
+//                   every unit, both reported as plan-change-refused). A later start uses the plan in force;
+//                   revisions land through CAS apply.
+//                   Recovery finishes an interrupted revision or committed command before startup records any plan.
 //
 // M3: group 1 also loads the ruling sidecars, the obligations and the vision the files name (`revisionInputRows`).
 //
@@ -50,47 +48,48 @@
 //
 // Order within groups 1 and 2 follows the table. Nothing here names a model: routing refusals name the
 // seat and the layer.
-import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { accessSync,constants,existsSync,readFileSync,readdirSync,statSync,statfsSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { finishPendingAcks,successorOf } from '../chain.ts';
 import { detectContainmentMode } from '../contain/detect.ts';
-import { durableMkdir, readJson } from '../core/fsx.ts';
-import { type ArcId, INTEGRATION_SLOT, type ResourceName, type Sha, type UnitId, sha } from '../core/ids.ts';
+import { durableMkdir,readJson } from '../core/fsx.ts';
+import { type ArcId,INTEGRATION_SLOT,type ResourceName,type Sha,type UnitId,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { LogCorruptError, type OpenJournal, ObserverJournal } from '../core/log.ts';
-import type { HostLockClaim, LaneDef, RevisionManifest, SpecM1 } from '../core/records.ts';
+import { LogCorruptError,ObserverJournal,type OpenJournal } from '../core/log.ts';
+import type { HostLockClaim,LaneDef,SpecM1 } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath, absPath, branchName, branchRef, refName } from '../core/values.ts';
-import { gitRun, refTarget } from '../git/git.ts';
-import { ownArcResidue, undispositionedResidueCheck } from '../host/residues.ts';
-import type { ClaimOutcome } from '../host/lock.ts';
-import { evaluateRevision, keepRevision, payloadOf } from '../commands/apply.ts';
-import { parseObligations, parseRulingSidecar, parseVision } from '../holistic/types.ts';
-import { advancesReasons } from '../holistic/vision.ts';
+import { type AbsPath,absPath,branchName,branchRef,refName } from '../core/values.ts';
+import type { SourceFile } from '../corpus/source.ts';
+import { gitRun,refTarget } from '../git/git.ts';
 import { rederive } from '../holistic/rederive.ts';
+import { parseObligations,parseVision } from '../holistic/types.ts';
+import { advancesReasons } from '../holistic/vision.ts';
+import type { ClaimOutcome } from '../host/lock.ts';
+import { ownArcResidue,undispositionedResidueCheck } from '../host/residues.ts';
 import { runDir as runDirOf } from '../input/cli.ts';
 import {
-  type InForce, type InputFiles, type RoutingBase, appendRevision, arcRolesOf, closeRevision, commitRevisionNow, keepCorpusFiles, keptPayload, openRevision, planInForce, readInputFiles,
-  recordPlan, revisionInForce, specBytesOf, specShaInForce,
+type InForce,type InputFiles,type RoutingBase,appendRevision,arcRolesOf,closeRevision,
+keepCorpusFiles,keptPayload,openRevision,planInForce,readInputFiles,
+recordPlan,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
-import { applyProposal } from '../input/classify.ts';
-import { keepOwner } from '../input/rebase.ts';
-import { CORPUS_VISION_FILE, type PlanM1, type PlanUnit, parsePlan, reservedUnitIdReason, visionFile } from '../input/plan.ts';
-import type { SourceFile } from '../corpus/source.ts';
-import { finishPendingAcks, successorOf } from '../chain.ts';
-import { FRESH_START, RESTART, holisticNeedsCorpus, phase0InputOf, phase0Rows } from '../phase0/rows.ts';
+import { CORPUS_VISION_FILE,type PlanM1,type PlanUnit,parsePlan,reservedUnitIdReason,visionFile } from '../input/plan.ts';
+import { FRESH_START,RESTART,holisticNeedsCorpus,phase0InputOf,phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
-import { cpuCapacity, overCapacity } from '../resources/pool.ts';
+import { cpuCapacity,overCapacity } from '../resources/pool.ts';
 import {
-  type RepoConfig, type ResolvedRouting, planStack, parseRepoConfig, resolveRouting, selectProfile, unsupportedSeats,
+type RepoConfig,type ResolvedRouting,
+parseRepoConfig,
+planStack,
+resolveRouting,selectProfile,unsupportedSeats,
 } from '../routing/layers.ts';
-import type { ArcRoleSet, ProfileName } from '../routing/types.ts';
-import { type Ruling, loadRulings, parseRulings } from '../spec/rulings.ts';
-import { SpecFileError, evidenceScopeConflicts, parseSpec } from '../spec/spec.ts';
+import type { ArcRoleSet,ProfileName } from '../routing/types.ts';
+import { type Ruling,loadRulings,parseRulings } from '../spec/rulings.ts';
+import { SpecFileError,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { laneRows } from './lanerows.ts';
+import { type SmokePark,type SmokeReport,type SmokeRouting,backendEnv,smoke,smokeOutages,smokeRejections } from './smoke.ts';
+import type { StartupCheck,StartupContext,StartupRejection } from './startup.ts';
 import { walkToolsCheck } from './walktools.ts';
-import { type SmokePark, type SmokeReport, type SmokeRouting, backendEnv, smoke, smokeOutages, smokeRejections } from './smoke.ts';
-import type { StartupCheck, StartupContext, StartupRejection } from './startup.ts';
 
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
 
@@ -292,11 +291,7 @@ export function revisionInputRows(files: InputFiles): Rejection<'plan-invalid'>[
       return null;
     }
   };
-  for (const [id, s] of files.sidecars) {
-    load(`rulings sidecar ${id}`, s.path, s.bytes, (v) => {
-      if (parseRulingSidecar(v).id !== id) throw new SchemaError(s.path, `the sidecar of ${id}`, v);
-    });
-  }
+
   if (files.obligations !== null) load('plan.holistic.obligations', files.obligations.path, files.obligations.bytes, parseObligations);
   const visionField = visionFile(files.plan)?.base === 'repo' ? CORPUS_VISION_FILE : 'plan.holistic.vision';
   const vision = files.vision === null ? null : load(visionField, files.vision.path, files.vision.bytes, parseVision);
@@ -420,12 +415,6 @@ export type StartInput = Readonly<{
    * through the apply rules.
    */
   respawn: Readonly<{ runDir: AbsPath; arc: ArcId }> | null;
-  /**
-   * `start --base` (deflake scope, 2026-10-23): the base the owner's files are rebased from onto the files in force, as an
-   * `apply --base` takes it (an `inputs export`'s manifest); null: the owner's files of their latest apply. A first start
-   * (no plan in force) takes none.
-   */
-  base: RevisionManifest | null;
 }>;
 
 export type StartChecks =
@@ -498,16 +487,9 @@ function inForceSource(runDir: AbsPath, view: JournalView | null): Source | null
  * rebase that does not hold (a conflict) refuses here, as `settlePlan` would. The files as they are (a fresh start's source) when the
  * arc has no plan in force or its log does not read.
  */
-function startSource(owner: InputFiles, base: RevisionManifest | null, runDir: AbsPath, view: JournalView | null): Source | Rejection<'plan-change-refused'> {
-  const inForce = view === null ? null : planInForce(runDir, view);
-  if (view === null || inForce === null) {
-    return base === null ? filesSource(owner) : { kind: 'plan-change-refused', reasons: [`start --base: arc ${owner.plan.arc} records no plan in force, so there is nothing to rebase onto; start without --base`] };
-  }
-  if (openRevision(view) !== null || committedCommand(view)) return inForceOf(runDir, view, inForce, owner);
-  const proposal = applyProposal({ runDir, view, inForce, revision: revisionInForce(runDir, inForce) }, owner, null, base, []);
-  if ('reasons' in proposal) return { kind: 'plan-change-refused', reasons: proposal.reasons };
-  const next = proposal.next;
-  return { plan: next.plan, specOf: (unit) => next.specs.get(unit.id)?.bytes ?? null, ledger: next.ledger.bytes, checked: next, owner };
+function startSource(owner: InputFiles, runDir: AbsPath, view: JournalView | null): Source {
+  const force = view === null ? null : planInForce(runDir, view);
+  return view === null || force === null ? filesSource(owner) : inForceOf(runDir, view, force, owner);
 }
 
 /** The arc's routing for `plan` under the start's profile, the repo config and the arc's role set. */
@@ -523,13 +505,12 @@ export function routingOf(profile: ProfileName, repo: AbsPath, plan: PlanM1, arc
  */
 export function settlePlan(
   journal: OpenJournal, context: StartupContext, files: InputFiles | null, env: Readonly<Record<string, string | undefined>>, corpusFiles: readonly SourceFile[] = [],
-  base: RevisionManifest | null = null,
 ): readonly Rejection<'plan-change-refused'>[] {
   // A start's own revision a crash left mid-commit (it has no docs step): finished from its payload first, exactly as
   // recovery would (src/recover/revision.ts), so the plan in force exists before anything reads it.
   const open = openRevision(journal.view);
   if (open !== null && open.expect.source.type === 'start') {
-    appendRevision(journal, open, keptPayload(context.runDir, open.expect.payloadSha256), null);
+    appendRevision(journal, context.runDir, open, keptPayload(context.runDir, open.expect.payloadSha256), null);
     closeRevision(journal, open.op, true);
   }
   const inForce = planInForce(context.runDir, journal.view);
@@ -544,10 +525,13 @@ export function settlePlan(
     if (reserved.length > 0) return [{ kind: 'plan-change-refused', reasons: reserved }];
     // The classifier's lane-evidence row, over every unit (group 1 already refused a spec that does not load).
     const evidence = files.plan.units.flatMap((u) => {
-      const file = files.specs.get(u.id);
-      if (file === undefined || file.bytes === null) throw new Error(`settlePlan: unit ${u.id}'s spec is absent, which plan-invalid refuses first`);
-      const spec = parseSpec(file.bytes, file.path);
-      return evidenceScopeConflicts(u.id, [...u.scope, ...spec.scope], spec);
+      const file = files.specs.get(u.id)!;
+      return evidenceScopeConflicts(u.id, u.systems, parseSpec(file.bytes!, file.path), {
+        repo: context.repo, at: referenceCommit(context.repo, files.plan), map: routingBase.config?.systemsMap ?? null,
+        protectedPaths: protectedPaths(files.corpus === null ? null : {
+          pin: { value: parseCorpusPin(JSON.parse(files.corpus.pin.bytes!.toString('utf8'))) }, guide: { bytes: files.corpus.guide.bytes! },
+        }),
+      });
     });
     if (evidence.length > 0) return [{ kind: 'plan-change-refused', reasons: evidence }];
     const dropped = obligationDropped(context, files);
@@ -560,32 +544,7 @@ export function settlePlan(
   if (openRevision(journal.view) !== null) return [];
   // A command whose revision is in force but which a crash cut short: recovery finishes it; the files are settled at the next start.
   if (committedCommand(journal.view)) return [];
-  // The owner's files rebased from `base` (their latest applied revision by default) onto the files in force: unchanged files are the plan in force.
-  const proposal = applyProposal({ runDir: context.runDir, view: journal.view, inForce, revision: revisionInForce(context.runDir, inForce) }, files, null, base, []);
-  if ('reasons' in proposal) return [{ kind: 'plan-change-refused', reasons: proposal.reasons }];
-  const rctx = { runDir: context.runDir, view: journal.view, hostDir: context.hostDir, planFile: context.planFile, routingBase, laneEnv: env };
-  const verdict = evaluateRevision(rctx, proposal.next, { type: 'start' });
-  switch (verdict.kind) {
-    case 'unchanged':
-      return [];
-    case 'accepted':
-      // A start runs no docs publication (it has no slot before the executor runs): a change needing one, a corpus
-      // arc's vision edit among them (dev.16: the vision files publish onto the arc), goes through an apply.
-      if (verdict.draft.publication !== null) {
-        return [{
-          kind: 'plan-change-refused',
-          reasons: [
-            'the changed files need a docs publication (their obligations or rulings render into .roadmap/, or their vision publishes onto the integration branch): start on the plan in force, then `roadmap apply` them (`--vision-edit` for a vision edit)',
-          ],
-        }];
-      }
-      keepCorpusFiles(context.runDir, corpusFiles);
-      keepRevision(context.runDir, verdict);
-      commitRevisionNow(journal, context.runDir, payloadOf(verdict.draft, { type: 'start' }, keepOwner(context.runDir, files, verdict.draft.manifest)), { type: 'arc' });
-      return [];
-    case 'rejected':
-      return [{ kind: 'plan-change-refused', reasons: verdict.reasons }];
-  }
+  return [];
 }
 
 /** Whether a `command.apply` is open whose revision is in force already (a `plan-applied` names its command). */
@@ -602,8 +561,27 @@ export function obligationDropped(context: StartupContext, files: InputFiles): r
   const shown = gitRun(context.repo, ['show', `${context.plan.baseline}:.roadmap/invariants.md`], { okCodes: [0, 128] });
   const baseline = shown.code === 0 ? shown.stdout : null;
   const next = files.obligations?.bytes === null || files.obligations === null ? null : parseObligations(JSON.parse(files.obligations.bytes.toString('utf8')));
-  const rulings = [...files.sidecars.values()].map((s) => parseRulingSidecar(JSON.parse(s.bytes.toString('utf8'))));
-  return rederive(baseline, next, rulings);
+  return rederive(baseline, next, {});
+}
+
+/** Refuse old run state before a journal reader or recovery can touch it. */
+export function runSchemaRows(dir: AbsPath): readonly Rejection<'schema-version'>[] {
+  for (const name of ['start.json', 'events.jsonl']) {
+    const path = absPath(join(dir, name));
+    if (!existsSync(path)) continue;
+    const line = readFileSync(path, 'utf8').split('\n').find((l) => l.trim() !== '');
+    if (line === undefined) continue;
+    let value: {v?: number};
+    try { value = JSON.parse(name === 'start.json' ? readFileSync(path, 'utf8') : line) as {v?: number}; }
+    catch (error) {
+      // The journal reader reports malformed event bytes as log-corrupt after the claim.
+      if (name === 'events.jsonl' && error instanceof SyntaxError) continue;
+      throw error;
+    }
+    if (typeof value.v === 'number' && value.v !== SCHEMA_VERSION) return [{ kind: 'schema-version', path, recorded: value.v, expected: SCHEMA_VERSION,
+      detail: `Run directory uses schema ${value.v}; this executor requires schema ${SCHEMA_VERSION}. Finish the arc with its original executor, or start a new arc; previous schemas are not adopted.` }];
+  }
+  return [];
 }
 
 export async function runChecks(input: StartInput): Promise<StartChecks> {
@@ -625,6 +603,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   let commonDir: AbsPath | undefined;
   const common = (): AbsPath => commonDir ??= gitCommonDir(input.repo);
   // 1. input
+  if (input.respawn !== null) { const schema = runSchemaRows(input.respawn.runDir); if (schema.length > 0) return refused(schema); }
   const inForce = input.respawn === null ? null : inForceSource(input.respawn.runDir, viewAt(input.respawn.runDir, input.respawn.arc));
   let source: Source;
   if (inForce !== null) source = inForce;
@@ -632,8 +611,9 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     const owner = ownerFiles(input.planFile, input.repo);
     if ('kind' in owner) return refused([...legacyRoadmapDir(input.repo), owner]);
     const ownerRunDir = runDirOf(common(), owner.plan.arc);
-    const started = startSource(owner, input.base, ownerRunDir, viewAt(ownerRunDir, owner.plan.arc));
-    if ('kind' in started) return refused([...legacyRoadmapDir(input.repo), started]);
+    const schema = runSchemaRows(ownerRunDir);
+    if (schema.length > 0) return refused(schema);
+    const started = startSource(owner, ownerRunDir, viewAt(ownerRunDir, owner.plan.arc));
     source = started;
   }
   const { plan } = source;
@@ -698,14 +678,14 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   if ('kind' in journal) return refused([journal], claim);
   const mode = containmentModeCheck(journal);
   if (mode.length > 0) return refused(mode, claim, journal);
-  const planRows = settlePlan(journal, context, source.owner, input.env, corpusFiles, input.base);
+  const planRows = settlePlan(journal, context, source.owner, input.env, corpusFiles);
   if (planRows.length > 0) return refused(planRows, claim, journal);
 
   return { kind: 'passed', context, routing: { profile, resolved }, claim, journal, respawn: inForce !== null };
 }
 
 /**
- * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force"): the input rows for the units whose
+ * The startup rows an apply re-runs over the new plan (SCHEMAS.md "Plan in force and CAS"): the input rows for the units whose
  * entry or spec changed (`scoped`), and the routing row when the routing changed. (The lane row is the apply core's,
  * `evaluateRevision`, so every revision runs it, not only an apply.)
  */

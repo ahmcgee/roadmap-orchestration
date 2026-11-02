@@ -1,6 +1,7 @@
+import { systemsMapInForce } from '../../../src/input/systems.ts';
 // One walkthrough trial end to end, through the production walk job, as the gate eval runs the production gate: a
 // holistic arc whose repository is the cell's product (product.ts) and whose plan has one milestone (fixture.ts) over one
-// unit, u1. u1 merges through the arc harness (fake plan-check, build and gate; its lanes, the product's own tests, run
+// unit, u1. u1 merges through the arc harness (fake pre-build, build and gate; its lanes, the product's own tests, run
 // for real), which makes the milestone's walk due; then `runWalk` (src/walk/walk.ts) runs walk-1 exactly as an arc does:
 // the capture, the detached checkout, the bring-up (src/walk/bringup.ts), the inputs, the acting-judge call
 // (dispatch.ts `callActingJudge`, the walkthrough seat, the repo config's walkthrough MCP servers substituted by
@@ -15,49 +16,49 @@
 // shell calls, subagents, token load, spend) and the harness's brakes, which kill the session: the token load over 3x
 // the cell's median so far (`runaway`), past 45 minutes (`runaway`), the trial's live spend at list price over
 // `--trial-cap` (`cap`; every walkthrough call of the trial counted).
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { type InvocationId, type JobId, arcId, invocationId } from '../../../src/core/ids.ts';
+import { cpSync,existsSync,mkdirSync,readdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { dirname,join } from 'node:path';
+import { type InvocationId,type JobId,arcId,invocationId } from '../../../src/core/ids.ts';
 import type { JsonValue } from '../../../src/core/json.ts';
 import { openJournal } from '../../../src/core/log.ts';
-import { STDOUT_FILE, type RunStart } from '../../../src/core/records.ts';
+import { STDOUT_FILE,type RunStart } from '../../../src/core/records.ts';
 import { atomicJson } from '../../../src/core/fsx.ts';
 import { SchemaError } from '../../../src/core/validate.ts';
-import { absPath, isoTimeOf } from '../../../src/core/values.ts';
+import { absPath,isoTimeOf } from '../../../src/core/values.ts';
 import { SCHEMA_VERSION } from '../../../src/core/version.ts';
 import { jobEvidenceRoot } from '../../../src/git/snapshot.ts';
 import { readClaude } from '../../../src/backends/claude.ts';
-import { readInputFiles, recordPlan, requirePlanInForce } from '../../../src/input/inforce.ts';
+import { readInputFiles,recordPlan,requirePlanInForce } from '../../../src/input/inforce.ts';
 import { milestonesOf } from '../../../src/input/plan.ts';
 import { invocationDir } from '../../../src/pipeline/invoke.ts';
 import { holisticInForce } from '../../../src/pipeline/stages.ts';
 import { runUnit } from '../../../src/pipeline/unit.ts';
 import { promptFor } from '../../../src/prompts/index.ts';
-import { type WalkthroughOutput, validateWalkthroughOutput } from '../../../src/prompts/schemas.ts';
-import { type RepoConfig, arcStack, resolveRouting } from '../../../src/routing/layers.ts';
+import { type WalkthroughOutput,experienceWalk } from '../../../src/prompts/schemas.ts';
+import { type RepoConfig,arcStack,resolveRouting } from '../../../src/routing/layers.ts';
 import { profileName } from '../../../src/routing/types.ts';
 import { runnerFiles } from '../../../src/runner/files.ts';
 import { runWalk } from '../../../src/walk/walk.ts';
 import { walkRefusals } from '../../../src/walk/report.ts';
 import type { ArcRun } from '../../../test/fixtures/unit-common.ts';
-import { type ArcDescriptor, contextFor, isGateCall, isPlanCheckCall, laneJson } from '../../../test/fixtures/unit-common.ts';
+import { type ArcDescriptor,contextFor,isGateCall,isPlanCheckCall,laneJson } from '../../../test/fixtures/unit-common.ts';
 import { arcFor } from '../../../test/fixtures/invoke-specs.ts';
 import { unitSteps } from '../../../test/fixtures/audit-common.ts';
 import { obligationsJson } from '../../../test/fixtures/brake-common.ts';
 import { admitAll } from '../../../test/fixtures/stage-common.ts';
-import { unitInForce, walkContext } from '../../../test/fixtures/walk-common.ts';
-import { makeRepo, revParse, tmpDir } from '../../../test/helpers/repo.ts';
-import { type Step, readCalls, writeScenario } from '../../../test/helpers/scenario.ts';
+import { unitInForce,walkContext } from '../../../test/fixtures/walk-common.ts';
+import { makeRepo,revParse,tmpDir } from '../../../test/helpers/repo.ts';
+import { type Step,readCalls,writeScenario } from '../../../test/helpers/scenario.ts';
 import { writeWitnessControl } from '../../../test/helpers/witness.ts';
-import { repositoryPaths, scanTranscript } from '../../m4a/transcript.ts';
+import { repositoryPaths,scanTranscript } from '../../m4a/transcript.ts';
 import type { CellSet } from '../gate/cells.ts';
-import { type Usage, parseEvents, readTranscript, sumUsage, toolCounts, unavailableCalls, usageOf } from '../transcript.ts';
-import { FLOW_PAGE, pagePath } from './families.ts';
+import { type Usage,parseEvents,readTranscript,sumUsage,toolCounts,unavailableCalls,usageOf } from '../transcript.ts';
+import { FLOW_PAGE,pagePath } from './families.ts';
 import {
-  ADVANCES, MILESTONE_UNIT, REFERENCE, RELEASE_NOTE, type SlotKey, UNIT_ACCEPTANCE, VISION_JSON, type WalkCell, type WalkFixture, type WalkKey,
-  buildWalkFixture, walkRepoConfig,
+ADVANCES,MILESTONE_UNIT,REFERENCE,RELEASE_NOTE,type SlotKey,UNIT_ACCEPTANCE,VISION_JSON,type WalkCell,type WalkFixture,type WalkKey,
+buildWalkFixture,walkRepoConfig,
 } from './fixture.ts';
-import { type WalkGraded, gradeWalk } from './grade.ts';
+import { type WalkGraded,gradeWalk } from './grade.ts';
 
 /**
  * Degenerate walkers, each knowing the key (what a cheating walker would know): `clean-report` reports every journey
@@ -127,10 +128,10 @@ const RULINGS = '# Rulings\n\nC-1 — Every ledgerly surface follows the design 
 /** The walk seat under the run's routing (the built-in seats with the walk roles in force, `--rebind` applied), as the arm names it. */
 export function walkSeat(config: RepoConfig | null): Readonly<{ arm: string }> {
   const r = resolveRouting({ ...arcStack('default', config, null), arcScope: 'corpus', arcRoles: 'm4b', milestones: true });
-  const t = r.table.walkthrough.arc;
+  const t = r.table.experienceVerdict.arc;
   if (t.backend !== 'claude') throw new Error(`the walkthrough seat bound to ${t.model}: walks run on Claude only (codex-judgment)`);
-  promptFor('walkthrough', t.model); // a rebind onto a model with no walkthrough prompt fails here, before any trial
-  const cls = r.classes.walkthrough.arc;
+  promptFor('experienceVerdict', t.model); // a rebind onto a model with no walkthrough prompt fails here, before any trial
+  const cls = r.classes.experienceVerdict.arc;
   return { arm: `walkthrough.arc ${cls}${r.bindings[cls] === 'repo-config' ? ' (rebound)' : ''} ${t.model}:${t.effort}` };
 }
 
@@ -239,10 +240,10 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
   const planDir = tmpDir('walk-plan');
   const lane = { id: 'unit', argv: ['node', '--test', 'test/*.test.js'] };
   const scope = ['CHANGELOG.md'];
-  writeFileSync(join(planDir, `${MILESTONE_UNIT}.json`), JSON.stringify({
+  writeFileSync(join(planDir, `${MILESTONE_UNIT}.json`), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: MILESTONE_UNIT, rev: 1, lanes: [{ ...laneJson(lane), state: 'active' }],
     acceptance: UNIT_ACCEPTANCE.map((clause, i) => ({ id: `A${i + 1}`, clause, failLoudIfUndelivered: true, state: 'active' })),
-    scope, resources: [], decisions: [], facts: [], cites: { contracts: [`${REFERENCE}/api.md`], rulings: ['C-1'] },
+    resources: [], decisions: [], facts: [], cites: { contracts: [`${REFERENCE}/api.md`], rulings: ['C-1'] },
   }));
   writeFileSync(join(planDir, 'rulings.md'), RULINGS);
   writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION_JSON));
@@ -255,8 +256,8 @@ export function setupMilestoneArc(f: Pick<WalkFixture, 'files' | 'milestone'>, c
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: revParse(repo, 'main'), worktreeRoot: tmpDir('walk-wt'),
     contracts: [`${REFERENCE}/api.md`], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Ship the milestone to its design reference.',
     suite: { lanes: [laneJson({ ...lane, id: 'suite' })] }, resources: [],
-    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', scope, resources: [] }],
-    holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: ['vision'], every: 100 } },
+    units: [{ id: MILESTONE_UNIT, spec: `${MILESTONE_UNIT}.json`, risk: 'med', review: 'always', systems: ['app'], resources: [] }],
+    holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' },
     milestones: [JSON.parse(JSON.stringify(f.milestone)) as JsonValue],
   }));
   const runDir = tmpDir('walk-run');
@@ -281,7 +282,7 @@ export type Brake = Readonly<{ rule: 'load' | 'cap' | 'deadline'; detail: string
 export type WatchedRole = 'walkthrough' | 'polishJudge';
 
 /** The `role` calls' spawn intents, in order. */
-export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === role);
+export const roleSpawns = (r: ArcRun, role: WatchedRole) => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'arc-backend' && i.expect.subject.role === 'experienceVerdict' && i.parent.type === 'job' && (role === 'walkthrough' ? String(i.parent.job).startsWith('walk-') : String(i.parent.job).startsWith('compare-')));
 const walkSpawns = (r: ArcRun) => roleSpawns(r, 'walkthrough');
 
 export function readStdout(r: ArcRun, inv: InvocationId): string {
@@ -346,7 +347,7 @@ export const filesUnder = (dir: string): readonly string[] =>
 function refusals(r: ArcRun, value: unknown): string {
   let output: WalkthroughOutput;
   try {
-    output = validateWalkthroughOutput(value);
+    output = experienceWalk(value);
   } catch (e) {
     if (e instanceof SchemaError) return `off its schema: ${e.message}`;
     throw e;
@@ -354,7 +355,7 @@ function refusals(r: ArcRun, value: unknown): string {
   const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
   const vision = holisticInForce(r.ctx).vision;
   if (vision === null) throw new Error('a walk trial without its vision in force');
-  return walkRefusals({ milestone: milestonesOf(plan)[0]!, plan, vision, evidenceDir: jobEvidenceRoot(r.ctx.runDir, JOB) }, output).join('; ');
+  return walkRefusals({ systemsMap: systemsMapInForce(r.journal.view.planApplied()), milestone: milestonesOf(plan)[0]!, plan, vision, evidenceDir: jobEvidenceRoot(r.ctx.runDir, JOB) }, output).join('; ');
 }
 
 const emptyMethod: WalkRow['method'] = { available: [], tools: {}, browserCalls: 0, shellCalls: 0, subagents: [], denials: 0, unavailable: [] };
@@ -395,7 +396,7 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
     return { stdout, events, usage: result === undefined ? null : usageOf(result) };
   });
   perCall.forEach((c, i) => writeFileSync(join(o.out, `walk-${i + 1}.jsonl`), c.stdout));
-  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, and dev.17 their plan-checks, so both are left out).
+  // The walk's acting-judge calls (dev.13: the units' gates act too, under bypassPermissions, and dev.17 their pre-builds, so both are left out).
   const calls = readCalls(d.scenarioPath).filter((c) => c.argv.includes('--strict-mcp-config') && c.argv.includes('bypassPermissions') && !isGateCall(c) && !isPlanCheckCall(c));
   writeFileSync(join(o.out, 'prompt.txt'), calls[0]?.stdin ?? '');
   writeFileSync(join(o.out, 'argv.json'), `${JSON.stringify(calls[0]?.argv ?? [], null, 2)}\n`);
@@ -411,7 +412,7 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
   const value = reading !== null && reading.output.kind === 'present' ? reading.output.value : null;
   if (value !== null) writeFileSync(join(o.out, 'answer.json'), `${JSON.stringify(value, null, 2)}\n`);
   const reported = ended?.kind === 'ended' && ended.outcome === 'reported';
-  const answer = reported && value !== null ? validateWalkthroughOutput(value) : null;
+  const answer = reported && value !== null ? experienceWalk(value) : null;
   const hits = scanTranscript(transcriptFile, [o.out, dirname(o.out), 'evals/roles', ...repositoryPaths()]);
   const brake = monitor.brake();
   const voided: WalkRow['void'] = brake !== null ? { reason: brake.rule === 'cap' ? 'cap' : 'runaway', detail: `${brake.rule}: ${brake.detail}` }
@@ -439,4 +440,3 @@ export async function runWalkTrial(o: Omit<WalkWorkerArgs, 'cell'> & Readonly<{ 
   writeFileSync(join(o.out, 'row.json'), `${JSON.stringify(row, null, 2)}\n`);
   return row;
 }
-

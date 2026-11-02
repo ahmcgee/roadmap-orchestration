@@ -2,26 +2,25 @@
 // Shared by the audit tests (test/audit.test.ts) and their crash child (audit-child.ts): a holistic arc (brake-common's
 // vision and fake witness lanes) whose plan sets `holistic.audit` (the cadence N, the required lens set L), the audit
 // context over the run's one arbiter, the scenario steps that take a unit to its merge, and log readers.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Fact } from '../../src/core/events.ts';
+import type { JsonValue } from '../../src/core/json.ts';
 import { readJournal } from '../../src/core/log.ts';
-import type { Clock } from '../../src/holistic/cadence.ts';
 import type { AuditContext } from '../../src/holistic/audit.ts';
+import type { Clock } from '../../src/holistic/cadence.ts';
+import { laneRevOf,parseObligations } from '../../src/holistic/types.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
-import { type TreePlan, witnessLaneArgv, writeWitnessControl } from '../helpers/witness.ts';
-import { laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { type HolisticArc, type HolisticOptions, ADVANCES, VISION, obligationsJson } from './brake-common.ts';
-import { publishArc, wire } from './publish-common.ts';
+import { type TreePlan,witnessLaneArgv,writeWitnessControl } from '../helpers/witness.ts';
+import { type HolisticArc,type HolisticOptions,ADVANCES,VISION,obligationsJson } from './brake-common.ts';
+import { publishArc,wire } from './publish-common.ts';
 import { planCheckStep } from './stage-common.ts';
-import { type ArcRun, codexStep, gateStep } from './unit-common.ts';
-import type { JsonValue } from '../../src/core/json.ts';
+import { type ArcRun,codexStep,gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
 export type AuditArcOptions = HolisticOptions & Readonly<{
-  audit: Readonly<{ every?: number; lenses?: readonly string[]; wallClockMin?: number }>;
   /** Arc lanes scripted by a control file of their own (lane id → its trees): they report only these tests. */
   ownControl?: Readonly<Record<string, Readonly<Record<string, TreePlan>>>>;
 }>;
@@ -36,9 +35,9 @@ function withOwnControls(file: Json, own: AuditArcOptions['ownControl']): Json {
     writeWitnessControl(control, { trees });
     return { ...l, argv: witnessLaneArgv('jsonl', tmpDir(`witness-lane-${String(l['id'])}`), control) };
   });
-  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { paths: [] } }).lanes.map((l) => [l.id as string, laneRevOf(l)]));
+  const revs = new Map(parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes, obligations: [], mapping: { systems: [] } }).lanes.map((l) => [l.id as string, laneRevOf(l)]));
   const obligations = (file['obligations'] as (Json & { proofJudgment: Json; witness: Json })[]).map((o) => ({
-    ...o, proofJudgment: { ...o.proofJudgment, laneRev: revs.get(String(o.witness['lane'])) },
+    ...o, proofJudgment: o.proofJudgment,
   }));
   return { ...file, lanes, obligations };
 }
@@ -52,7 +51,7 @@ export function auditArc(opts: AuditArcOptions): HolisticArc {
     writeFileSync(join(planDir, 'vision.json'), JSON.stringify(VISION));
     writeFileSync(join(planDir, 'obligations.json'), JSON.stringify(withOwnControls(obligationsJson(opts, control), opts.ownControl)));
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
-    writeFileSync(x.planPath, JSON.stringify({ ...plan, ...opts.planExtra, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: opts.audit } }));
+    writeFileSync(x.planPath, JSON.stringify({ ...plan, ...opts.planExtra, holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' } }));
     for (const u of opts.units ?? []) {
       if (u.obligations === undefined) continue;
       const spec = join(planDir, `${u.id}.json`);
@@ -74,7 +73,7 @@ export const moduleFiles = (name: string, op: string): Readonly<Record<string, s
   [`test/${name}.test.js`]: `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { ${name} } from '../src/${name}.js';\n\ntest('${name}', () => {\n  assert.equal(typeof ${name}(6, 3), 'number');\n});\n`,
 });
 
-/** The steps that take `unit` through plan-check, a build committing `files` and an approving gate. */
+/** The steps that take `unit` through pre-build, a build committing `files` and an approving gate. */
 export function unitSteps(unit: string, files: Readonly<Record<string, string>>, gate: Readonly<{ clusters?: readonly JsonValue[] | null }> = {}): readonly Step[] {
   return [
     { ...planCheckStep({ decision: 'approve' }), unit },
@@ -84,7 +83,7 @@ export function unitSteps(unit: string, files: Readonly<Record<string, string>>,
 }
 
 /** Every path a unit may touch maps to `obligations` (a unit then declares them). */
-export const mapped = (obligations: readonly string[]) => ['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations }));
+export const mapped = (obligations: readonly string[]) => ['app'].map((system) => ({ system, obligations }));
 
 /** The log's facts, read as `status` reads them. */
 export const factsOf = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));

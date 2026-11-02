@@ -1,0 +1,162 @@
+{
+  "standing": [
+    {
+      "id": "reserve-and-keep/418#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js acquireLock breaks only inside withGuard with a re-inspection; releaseLock removes the lock only if stillHeld (inode match).",
+        "test/store.test.js 'waiters starting together on one dead lock are never inside at once' runs 6 synchronised children over 8 rounds with an exclusive marker.",
+        "Mutation: replacing the guarded break with a plain unlink made that test fail, and only that test."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js pidIsGone returns false for an empty or pid-less lock and for EPERM; only ESRCH counts as gone. lockIsStale applies the 30s age rule.",
+        "test/store.test.js covers a backdated lock with a live pid and with no pid, live-lock contents '', 'not a pid' and pid 1, and takes the dead pid from an exited child (deadPid)."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js isHeld and hasEnd treat null like absent, compare via Date.parse instants, and stay held on NaN.",
+        "test/store.test.js has isHeld tests for null and absent, instants versus text, the exact end plus or minus 1ms, 'garbage', and a missing key.",
+        "The non-ISO strings Date.parse accepts are a separate note, not a failure of this item's cases."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:3",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js warnOfHoldsWithoutEnd emits one console.warn per load, ids only, with what to do next.",
+        "test/store.test.js 'a book held with no end warns once per load, by id, never by name' runs through a child with a marked name; the sibling test asserts no warning for a clean file or a held book with an end."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:4",
+      "disposition": "addressed",
+      "evidence": [
+        "refusal-shape and busy-shape are implemented in updateShelf and ShelfBusyError/SHELF_BUSY and recorded in docs/systems/store.md 'How to change the shelf'.",
+        "test/store.test.js covers a refusal and an unexpected throw (same error object, identical bytes, lock released), a corrupt file, busy without running change or touching the lock, and an async change holding the lock until it settles."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:5",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js saveShelf uses a pid plus uuid temp name, chmods to the existing mode, syncs, renames, and its cleanup cannot mask the original error.",
+        "test/store.test.js proves failure after the temp exists (directory target, EISDIR), the 0600 mode kept, and twenty writes without a collision.",
+        "Mutation: a pid-only temp name failed the twenty-writes test."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:6",
+      "disposition": "addressed",
+      "evidence": [
+        "The witness name matches exactly; it writes through updateShelf in a child and reads through loadShelf and raw concurrently, asserting more than 100 reads and more than 10 generations.",
+        "Mutation: an in-place saveShelf failed the T-27 witness in 31ms. Removing the lock failed the hammer and twenty-update tests.",
+        "The helper at test/helpers/store-child.js is outside npm's test/*.test.js glob. The store suite passed 3 times with all 16 cores saturated."
+      ]
+    },
+    {
+      "id": "reserve-and-keep/418#1:7",
+      "disposition": "addressed",
+      "evidence": [
+        "The diff does not touch src/pages.js.",
+        "isHeld treats undefined and null reservedBy as free; test/store.test.js 'isHeld is free with no reservedBy' covers both."
+      ]
+    }
+  ],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "src/store.js",
+      "hunk": {
+        "path": "src/store.js",
+        "line": 34
+      },
+      "defect": "contract-violation",
+      "contractRef": "spec decision isHeld-name-and-unreadable",
+      "text": "The active decision says an unparsable reservedUntil or an uncomparable `at` \"stays held and warns\". The unparsable end warns through loadShelf, but an uncomparable `at` is silent: isHeld returns true and nothing is logged. A later caller that passes a bad time would keep every dated reservation held forever, so T-34 lapses would never happen, with no signal to anyone. The test 'isHeld keeps a book whose end cannot be read, or cannot be compared' asserts only the held result, so the missing warning goes unnoticed. By reading, `at = null` also coerces to the epoch through new Date(null), so it holds silently as well, without being treated as uncomparable.",
+      "evidence": [
+        "src/store.js:34",
+        "test/store.test.js 'isHeld keeps a book whose end cannot be read, or cannot be compared, rather than free it'"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path  # calls isHeld(book, new Date('nonsense')) and isHeld(book, 'garbage') between two stderr markers",
+          "output": "--isHeld bad at (expect warn per decision)\ntrue true\n--end\n(no warning on stderr between the markers)"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "path": "src/store.js",
+      "hunk": {
+        "path": "src/store.js",
+        "line": 26
+      },
+      "defect": "incorrect-behaviour",
+      "contractRef": "D2; isHeld-name-and-unreadable",
+      "text": "endOf uses Date.parse, whose legacy fallback accepts non-ISO text and assumes year 2001. A hand-edited reservedUntil of '8 November' or 'Nov 8' therefore reads as long past: the book is free, with no warning. docs/systems/store.md says a typo stays held. The decision's word is 'unparsable', and these strings do parse, so this does not block; the keeper-command units also replace hand edits. A strict ISO-with-offset check before Date.parse would close it.",
+      "evidence": [
+        "src/store.js:26",
+        "docs/systems/store.md 'Reading a reservation'",
+        "docs/corpus/keeper.md:3"
+      ],
+      "experiments": [
+        {
+          "command": "node -e \"for (const s of ['8 November','Nov 8','2026-11-8T18:00:00+13:00']) console.log(s, Date.parse(s))\"",
+          "output": "8 November 1005177600000; Nov 8 1005177600000; 2026-11-8T18:00:00+13:00 NaN"
+        },
+        {
+          "command": "node /redacted/path  # isHeld({reservedBy:'A',reservedUntil:'8 November'}, new Date())",
+          "output": "lenient false false"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Make isHeld warn when `at` cannot be compared (for example new Date('nonsense') or 'garbage'), still returning held, as decision isHeld-name-and-unreadable requires. Name no reservedBy value in the warning (T-18). Treat `at = null` as uncomparable too, not as the epoch.",
+    "Extend the 'cannot be read, or cannot be compared' coverage in test/store.test.js to assert that the warning is emitted on stderr or via console.warn, that it omits the name, and that a valid `at` stays silent. Keep the existing assertions."
+  ],
+  "reasons": [
+    "A1 pass: updateShelf loads, changes and saves under the lock, and a refusal saves nothing. The W-1 witness failed against a mutated in-place writer, which fills the gap left by the inconclusive mutation smoke.",
+    "A2 pass: the temp name is unique and in the same directory, and failure leaves the old file whole with no stray. Tested by EISDIR and EACCES failures and by a pid-only-name mutation.",
+    "A3 pass: real child processes and twenty in-process updates lose nothing. Removing the lock fails both tests.",
+    "A4 pass: dead-pid and aged locks are broken, and a live lock gives ShelfBusyError with SHELF_BUSY after 5 seconds. A leftover guard also clears: about 2011ms when fresh, about 3ms when old, leaving no strays.",
+    "A5 pass on its own wording: isHeld is exported and b2-style holds warn once per load. Decision isHeld-name-and-unreadable is only partly delivered, because an uncomparable `at` does not warn. That is the one blocker.",
+    "A6 pass: docs/systems/store.md records the lock's protocol, the reason for it and the residual gaps.",
+    "Non-goals hold: no routes or pages, no dependency, no migration. The lane ledger shows no lanes ran, so I ran the suite locally: npm test passed 41 of 41, and the store suite stayed green on 6 repeat runs and 3 runs under full CPU load. The earlier 5-run loop printed no failure lines, but its filter also could not match the pass or fail totals, so it counts only as no ✖ seen."
+  ],
+  "premises": [
+    {
+      "claim": "The lock file is covered by .gitignore's *.tmp pattern, as D1 requires, because it is named <data file>.lock.tmp.",
+      "evidence": [
+        {
+          "path": ".gitignore",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "npm test's glob does not run the child helper as a test.",
+      "evidence": [
+        {
+          "path": "package.json",
+          "line": 9
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

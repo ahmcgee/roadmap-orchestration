@@ -1,13 +1,14 @@
+import { systemName } from '../src/core/ids.ts';
 // M2 records (SCHEMAS.md "M2"): round-trips of every new or changed record and the validators' refusals.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { describe, it } from 'node:test';
-import { type Envelope, type Event, type Fact, type LogRecord, parseEventLine, probeTargetKey, serializeEvent } from '../src/core/events.ts';
+import { describe,it } from 'node:test';
+import { type Envelope,type Event,type Fact,type LogRecord,parseEventLine,probeTargetKey,serializeEvent } from '../src/core/events.ts';
 import {
-  CPU_POOL, INTEGRATION_SLOT, arcId, commandId, compareResourceUnits, cpuToken, edgeId, invocationId, opId, opKey,
-  parseResourceUnit, planRev, resourceInstance, resourceName, resourceUnit, routingRev, sha, sha256, specRev, unitId,
+CPU_POOL,INTEGRATION_SLOT,arcId,commandId,compareResourceUnits,cpuToken,edgeId,invocationId,opId,opKey,
+parseResourceUnit,planRev,resourceInstance,resourceName,resourceUnit,routingRev,sha,sha256,specRev,unitId,
 } from '../src/core/ids.ts';
-import { commandBody, laneDef, residueKey } from '../src/core/records.ts';
+import { commandBody,laneDef,residueKey } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { isoTime } from '../src/core/values.ts';
 import { parsePlan } from '../src/input/plan.ts';
@@ -24,7 +25,7 @@ const rev = routingRev('0123456789abcdef');
 const at = isoTime('2026-09-30T12:00:00.000Z');
 
 function event(record: LogRecord, seq = 2): Event {
-  const env: Envelope = { v: 1, seq, prev: H, at, arc };
+  const env: Envelope = { v: 2, seq, prev: H, at, arc };
   return { ...env, ...record } as Event;
 }
 
@@ -114,11 +115,10 @@ describe('M2 event records', () => {
         kind: 'judgment-inputs', unit, stage: 'gate', attempt: 4, tip: A, head: A, specRev: specRev(2), specSha256: H, planRev: planRev(3), routingRev: rev,
         fingerprint: { unitCommit: A, specRev: 2, contractRevs: [], rulingRevs: [] },
       },
-      { kind: 'judgment-inputs', unit, stage: 'plan-check', attempt: 1, tip: A, head: null, specRev: specRev(1), specSha256: H, planRev: planRev(1), routingRev: rev },
+      { kind: 'judgment-inputs', unit, stage: 'pre-build', attempt: 1, tip: A, head: null, specRev: specRev(1), specSha256: H, planRev: planRev(1), routingRev: rev },
       { kind: 'edge-resolved', edge: 'e-top', command: cmd, evidence: 'the migration landed in #412' },
       { kind: 'run-only', command: cmd, units: ['a', 'b'] },
       { kind: 'run-only', command: cmd, units: null },
-      { kind: 'implementer-escalated', unit, attempt: 6, from: 'low', to: 'high', stalled: 5 },
       { kind: 'plan-applied', rev: 1, command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(1, null) },
       {
         kind: 'plan-applied', rev: 2, command: cmd, planSha256: H, specs: { u1: H, u2: H },
@@ -133,12 +133,10 @@ describe('M2 event records', () => {
     refusesLine(fact({ kind: 'probe', target: { type: 'host' }, covers: [4, 4], result: 'pass', nextProbeAt: null }), /ascending seqs/);
     refusesLine(fact({ kind: 'probe', target: { type: 'host' }, covers: [4], result: 'pass', nextProbeAt: at }), /null on a pass/);
     refusesLine(fact({ kind: 'probe', target: { type: 'host' }, covers: [4], result: 'fail', nextProbeAt: null }), /next probe time/);
-    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'plan-check', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /null for a plan-check/);
-    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /plan-check \| gate/);
+    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'pre-build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /null for a pre-build/);
+    refusesLine(fact({ kind: 'judgment-inputs', unit, stage: 'build', attempt: 1, tip: A, head: A, specRev: 1, specSha256: H, planRev: 1, routingRev: rev }), /pre-build \| gate/);
     refusesLine(fact({ kind: 'run-only', command: cmd, units: ['b', 'a'] }), /ascending/);
     refusesLine(fact({ kind: 'run-only', command: cmd, units: [] }), /non-empty/);
-    refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'high', to: 'high', stalled: 5 }), /below high/);
-    refusesLine(fact({ kind: 'implementer-escalated', unit, attempt: 6, from: 'low', to: 'high', stalled: 6 }), /a build attempt before 6/);
     refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(2, null), scheduling: 'dag' }), /absent after rev 1/);
     refusesLine(fact({ kind: 'plan-applied', rev: 2, command: null, planSha256: H, specs: { u1: H }, changes: [{ type: 'unit-reentered', unit: 'u1', reenters: 'u1', reset: false }], ...appliedFields(2, null) }), /other than the re-entering one/);
     assert.deepEqual(edgeId('e-top'), 'e-top');
@@ -174,23 +172,23 @@ describe('M2 plan fields', () => {
     schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'integration', baseline: A, worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
     architectureDoc: 'docs/arch.md', direction: 'Ship it.', suite: { lanes: [] }, resources: [],
   };
-  const u = (id: string, extra: object = {}) => ({ id, spec: `specs/${id}.json`, risk: 'med', scope: ['src/**'], resources: [], ...extra });
+  const u = (id: string, extra: object = {}) => ({ id, spec: `specs/${id}.json`, risk: 'med', systems: [systemName('app')], resources: [], ...extra });
 
   it('capacity, pools, origin, cpu, contingent edges, re-entry and cut parse; absent fields stay absent', () => {
     const plan = parsePlan({
       ...base, capacity: { cpu: 12 }, resources: [{ name: 'estate', probe: tool, teardown: tool, pool: { size: 2 } }],
       units: [
         u('base', { origin: 'planned', cpu: 2 }),
-        u('top', { after: ['base'], contingent: [{ id: 'e-top', condition: 'the API is live' }], cut: { reason: 'descoped', ruling: 'C-4' } }),
-        u('base2', { reenters: { unit: 'base', enterAt: 'verify', reset: { ruling: 'C-5' } }, origin: 'checkpoint' }),
+        u('top', { after: ['base'], contingent: [{ id: 'e-top', condition: 'the API is live' }], cut: { reason: 'descoped' } }),
+        u('base2', { reenters: { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, origin: 'repair' }),
       ],
     });
     assert.deepEqual(plan.capacity, { cpu: 12 });
     assert.deepEqual(plan.resources[0]?.pool, { size: 2 });
     assert.deepEqual(plan.units.map((x) => [x.origin, x.cpu, x.contingent, x.reenters, x.cut]), [
       ['planned', 2, [], undefined, undefined],
-      [undefined, undefined, [{ id: 'e-top', condition: 'the API is live' }], undefined, { reason: 'descoped', ruling: 'C-4' }],
-      ['checkpoint', undefined, [], { unit: 'base', enterAt: 'verify', reset: { ruling: 'C-5' } }, undefined],
+      [undefined, undefined, [{ id: 'e-top', condition: 'the API is live' }], undefined, { reason: 'descoped' }],
+      ['repair', undefined, [], { unit: 'base', enterAt: 'verify', reset: { reason: 'Retry with the revised contract' } }, undefined],
     ]);
     const plain = parsePlan({ ...base, units: [u('a')] });
     for (const k of ['capacity']) assert.equal(k in plain, false, k);
@@ -214,7 +212,7 @@ describe('M2 plan fields', () => {
 
 describe('ordering park records', () => {
   const parked = (ordering: unknown) => fact({
-    kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+    kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'escalate', class: 'park', chargeable: false,
     park: { class: 'operator', kind: 'design', ordering },
   });
   it('round-trips an explicit wait and its exact automatic wake; refuses missing, empty or duplicate blockers', () => {
@@ -227,8 +225,8 @@ describe('ordering park records', () => {
     refusesLine(fact({ kind: 'stage-outcome', unit, stage: 'candidate', attempt: 2, outcome: 'base-red', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'env', ordering: { blockers: ['u2'] } } }), /ordering/);
   });
-  it('an older park reads byte-for-byte as no ordering wait and warns once in a real reader process', () => {
-    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'plan-check', attempt: 2, outcome: 'infeasible', class: 'park', chargeable: false,
+  it('a park without optional ordering reads byte-for-byte with no wait or adoption warning', () => {
+    const old = serializeEvent(event(fact({ kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'escalate', class: 'park', chargeable: false,
       park: { class: 'operator', kind: 'design' } })));
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       import { parseEventLine, serializeEvent } from './src/core/events.ts';
@@ -241,6 +239,6 @@ describe('ordering park records', () => {
       }
     `, old], { encoding: 'utf8' });
     assert.equal(child.status, 0, child.stderr);
-    assert.equal((child.stderr.match(/upgrade default \(ordering\)/g) ?? []).length, 1);
+    assert.equal(child.stderr, '', 'optional ordering has no historical-adoption warning');
   });
 });

@@ -8,17 +8,17 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { type Sha, sha } from '../src/core/ids.ts';
+import { type Sha,sha } from '../src/core/ids.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
-import { type LanesDone, fastSuiteRoot, lanes, loadUnitSpec, planCheck } from '../src/pipeline/stages.ts';
-import { stageSuiteLanes, suiteStandIns } from '../src/pipeline/lanes.ts';
+import { stageSuiteLanes,suiteStandIns } from '../src/pipeline/lanes.ts';
+import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,preBuild } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
-import { git } from './helpers/repo.ts';
-import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import {
-  BUILD_REPORT, type LaneJson, SCENARIO_TIMEOUT_MS, type StageRun, U1, keptSpec, outcomeFacts, planCheckStep, setupUnit, spawnIntents, started,
+BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
 } from './fixtures/stage-common.ts';
+import { git } from './helpers/repo.ts';
+import { type CodexAct,type Expect,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const codexBuild = (acts: readonly CodexAct[], expect: Expect = {}): Step => ({ as: 'codex', expect, acts: [...acts, { type: 'emit', value: BUILD_REPORT }] });
@@ -28,7 +28,7 @@ const UNIT: LaneJson = { id: 'unit', argv: ['true'] };
 /** A suite lane identical to the spec's: its pass is the spec series', so it never runs at the lanes stage. */
 const SAME: LaneJson = { id: 'same', argv: ['true'] };
 /** An estate suite lane: the candidate's alone. */
-const E2E: LaneJson = { id: 'e2e', argv: ['false'], tier: 'estate' };
+const E2E: LaneJson = { id: 'e2e', argv: ['false'], cadence: 'candidate' };
 
 type LaneSubject = Readonly<{ lane: string; set: string; at: Sha; attempt: number }>;
 /** The lane spawns, in order: which lane, which set, at which commit, under which lanes attempt. */
@@ -64,15 +64,15 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
       codexBuild([{ type: 'commit', message: 'lint', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' } }], { argv: ['exec', 'resume'] }),
     ],
   });
-  started(await planCheck(run.ctx, run.unit));
+  started(await preBuild(run.ctx, run.unit));
   // build → quiesce → evidence → salvage → teardown → lanes, through the driver.
   while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
 
-  // The plan-check's call, then the build's.
+  // The pre-build's call, then the build's.
   const fresh = readCalls(run.scenario.path)[1];
   assert.ok(fresh !== undefined);
   // The builder is shown the resource-free suite lane it may use for targeted checks, as its exact command; never the identical or the estate one.
-  assert.match(fresh.stdin, /# Suite lanes[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
+  assert.match(fresh.stdin, /<suite_lanes>[\s\S]*- lint \(expects exit 0[^)]*\):\n {2}cd \S+ && sh -c /);
   assert.doesNotMatch(fresh.stdin, /- same \(|- e2e \(/);
 
   const red = run.journal.view.unit(U1).decided;
@@ -116,7 +116,7 @@ test('lanes.fast-suite-base-red: a fast suite lane red on the unit\'s base alone
   assert.ok(first.verification !== null, 'the gate\'s checkout is kept');
   assert.deepEqual(first.ledger.map((l) => [l.lane, l.verdict]), [['unit', 'pass']], 'the gate\'s ledger is the spec series');
   const fact = outcomeFacts(run).at(-1)!;
-  assert.ok(fact.kind === 'stage-outcome' && fact.outcome === 'base-red');
+  assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'base-red');
   assert.equal(fact.chargeable, false);
   assert.deepEqual(fact.detail, { kind: 'base-red', base: run.base, lanes: ['lint'], changedCheckout: false });
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { runGateTrial } from '../evals/roles/gate/arc.ts';
-import { DEV_CELLS, isCorpusCell } from '../evals/roles/gate/cells.ts';
+import { DEV_CELLS,isCorpusCell } from '../evals/roles/gate/cells.ts';
 import { buildFixture } from '../evals/roles/gate/fixture.ts';
 import { grade } from '../evals/roles/gate/grade.ts';
 import { readTranscript } from '../evals/roles/transcript.ts';
@@ -33,7 +33,7 @@ test('a clean corpus cell fails grading if a finding invents a violation of an u
   const cell = cells.find((c) => c.corpus === 'clean')!;
   const fx = buildFixture(cell, { seed: 'corpus-test', trial: 0, size: 150, scratch: tmpDir('roles-scratch') });
   const shown = { inlined: fx.key.changed.map((p) => repoPath(p)), notInlined: [] };
-  const answer = validateGateOutput({ decision: 'approve', findings: [{ severity: 'note', path: null, text: 'T-3 tariff band is missing.', contractRef: 'T-3', experiments: [], debt: null }],
-    directives: [], reasons: ['The export is acceptable.'], premises: [], unreviewed: [], clusters: null, rulings: [] });
+  const answer = validateGateOutput({rulings: [],  decision: 'approve', findings: [{evidence: ["fixture:1"],  severity: 'note', path: null, text: 'T-3 tariff band is missing.', contractRef: 'T-3', experiments: [], debt: null, defect: null, reraises: null, hunk: null }],
+    directives: [], reasons: ['The export is acceptable.'], premises: [], standing: [], clusters: null,  });
   assert.equal(grade(fx.key, shown, '', readTranscript([]), answer).verdict, 'false-positive');
 });

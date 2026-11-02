@@ -1,4 +1,4 @@
-// A milestone product's bring-up (dev.13, plan §2 steps 2–4 and 6; SCHEMAS.md "dev.13", "Bring-up semantics"): code owns
+// A milestone product's bring-up (dev.13, plan §2 steps 2–4 and 6; SCHEMAS.md "Milestones and bring-up"): code owns
 // the product's lifecycle. Every command runs with no shell, from the root of the checkout it brings up, as a contained
 // spawn (`proc.spawn{bring-up{milestone, step}}`, a command terminal of purpose `bring-up`) under the owner's parent (a
 // walk job), with the bring-up's `env` added to PATH and HOME:

@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // The M2 paid fixture, step 1: `node evals/m2/setup.ts <dir>` lays out a fresh fixture in `<dir>` (absent or
 // empty; anything else is refused, so a previous run is never half-reused). Hand-authored against SCHEMAS.md
 // ("Input contract", "spec.json M1 subset", "M2"):
@@ -9,7 +10,7 @@
 //   barriers/ empty: the lanes write `.reached` here, the driver `.release`
 //
 // Units (DAG, merged-only edges): `base`; `left` and `right` after it; `top` after both, plus the contingent edge
-// `e-top` the driver resolves once `left` merges; `urgent` (origin checkpoint, no deps), which the driver keeps
+// `e-top` the driver resolves once `left` merges; `urgent` (root repair origin, no deps), which the driver keeps
 // out with `run-only` until `right` is paused. `right` and `urgent` both edit the one line of src/registry.js,
 // so once `urgent` merges, `right` conflicts with integration; `right2` (`reentrySpec`, written by the driver)
 // re-enters it at verify and resolves the conflict.
@@ -20,11 +21,11 @@
 // `right` also has the `right-hold` barrier lane, after its edit commit.
 // Each unit's product is a one-function module and a test: every lane runs in seconds.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync,mkdirSync,readdirSync,writeFileSync } from 'node:fs';
+import { dirname,join,resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CPU_CAPACITY, EDGE, ESTATE_HOLD, ESTATE_ROUNDS, INTEGRATION, type Layout, MAIN, POOL, POOL_SIZE, REENTRY, RIGHT_HOLD, SHARED_FILE, UNITS, layout,
+CPU_CAPACITY,EDGE,ESTATE_HOLD,ESTATE_ROUNDS,INTEGRATION,type Layout,MAIN,POOL,POOL_SIZE,REENTRY,RIGHT_HOLD,SHARED_FILE,UNITS,layout,
 } from './layout.ts';
 
 export const ESTATE_SCRIPT = fileURLToPath(new URL('./estate.ts', import.meta.url));
@@ -85,7 +86,7 @@ const PRODUCT: Readonly<Record<string, string>> = {
   '.roadmap/contracts/one.md': CONTRACT,
   '.roadmap/constraints.md': RULINGS,
   '.roadmap/invariants.md': INVARIANTS,
-  '.roadmap/config.json': `${JSON.stringify({ routing: {} }, null, 2)}\n`,
+  '.roadmap/config.json': `${JSON.stringify({ routing: {}, systemsMap: { systems: { app: { paths: ['**'] } } } }, null, 2)}\n`,
 };
 
 const CONTRACT_PATH = '.roadmap/contracts/one.md';
@@ -114,7 +115,7 @@ const part = (unit: string, expr: string, imports: string): readonly unknown[] =
 const REGISTER_RIGHT = `Edit the one line of ${SHARED_FILE} in place so it reads exactly \`export const NAMES = ['core', 'right'];\` (${CONTRACT_PATH}, the registry; C-3).`;
 
 function specOf(l: Layout, unit: SpecUnit): unknown {
-  const common = { schema: 'roadmap/spec-m1', unit, rev: 1, scope: SCOPE, resources: [], decisions: [], cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2', 'C-3'] } };
+  const common = { intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], schema: 'roadmap/spec-m1', unit, rev: 1,  resources: [], decisions: [], cites: { contracts: [CONTRACT_PATH], rulings: ['C-1', 'C-2', 'C-3'] } };
   const facts = (text: string) => [{ id: 'F1', text, state: 'active' }];
   switch (unit) {
     case 'base':
@@ -163,7 +164,7 @@ function specOf(l: Layout, unit: SpecUnit): unknown {
 export function reentrySpec(l: Layout): unknown {
   return specOf(l, REENTRY);
 }
-export const reentryUnit = { id: REENTRY, spec: `${REENTRY}.json`, risk: 'med', scope: SCOPE, resources: [], after: ['base'], reenters: { unit: 'right', enterAt: 'verify' } } as const;
+export const reentryUnit = { id: REENTRY, spec: `${REENTRY}.json`, review: 'always', risk: 'med', systems: [systemName('app')], resources: [], after: ['base'], reenters: { unit: 'right', enterAt: 'verify' } } as const;
 
 function poolDecl(l: Layout) {
   const tool = (cmd: string) => ({ argv: [process.execPath, ESTATE_SCRIPT, cmd, l.estate], cwd: '.', env: PASS_PATH });
@@ -175,7 +176,7 @@ const PLAN_UNITS: Readonly<Record<(typeof UNITS)[number], object>> = {
   left: { after: ['base'] },
   right: { after: ['base'] },
   top: { after: ['left', 'right'], contingent: [{ id: EDGE, condition: 'left has merged and its left() is what top builds on' }] },
-  urgent: { origin: 'checkpoint' },
+  urgent: { origin: 'repair' },
 };
 
 // Isolated from the user's global and system git config, as in evals/m1/setup.ts.
@@ -230,7 +231,7 @@ export function setup(dir: string): void {
       }],
     },
     resources: [poolDecl(l)],
-    units: UNITS.map((id) => ({ id, spec: `${id}.json`, risk: 'med', scope: SCOPE, resources: [], ...PLAN_UNITS[id] })),
+    units: UNITS.map((id) => ({ id, spec: `${id}.json`, review: 'always', risk: 'med', systems: [systemName('app')], resources: [], ...PLAN_UNITS[id] })),
   }));
 }
 

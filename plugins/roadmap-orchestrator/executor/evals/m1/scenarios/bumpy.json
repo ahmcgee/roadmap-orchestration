@@ -1,44 +1,19 @@
 {
   "steps": [
     {
-      "role": "planCheck",
-      "answer": {
-        "decision": "redirect",
-        "reasons": [
-          "The spec leaves open who handles an empty slug; record it before the build."
-        ],
-        "patch": [
-          {
-            "op": "add",
-            "section": "decisions",
-            "item": {
-              "id": "D1",
-              "text": "slugify has no special case for an empty result; pageId owns the empty slug (contract one)."
-            }
-          }
-        ],
-        "risk": "med",
-        "notes": "",
-        "premises": [],
-        "visionConflict": [],
-        "scopeGrowth": [],
-        "staleLinks": []
-      }
-    },
-    {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one, C-1 and C-2."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "scopeGrowth": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       },
       "stdinContains": [
         "slugify has no special case for an empty result; pageId owns the empty slug (contract one)."
@@ -87,25 +62,25 @@
           "A1, A2 and A3 hold after the fix round."
         ],
         "premises": [],
-        "unreviewed": [],
         "clusters": null,
-        "rulings": []
+        "rulings": [],
+        "standing": []
       }
     },
     {
-      "role": "planCheck",
+      "role": "verifier",
       "answer": {
         "decision": "approve",
+        "ordering": null,
+        "findings": [],
+        "directives": [],
         "reasons": [
           "The spec is consistent with contract one, C-1 and C-2."
         ],
-        "patch": null,
-        "risk": "med",
-        "notes": "",
         "premises": [],
-        "visionConflict": [],
-        "scopeGrowth": [],
-        "staleLinks": []
+        "standing": [],
+        "clusters": null,
+        "rulings": []
       }
     },
     {
@@ -136,7 +111,10 @@
             "debt": null,
             "defect": "requirement-unmet",
             "reraises": null,
-            "hunk": null
+            "hunk": null,
+            "evidence": [
+              "fixture:1"
+            ]
           }
         ],
         "directives": [
@@ -146,9 +124,9 @@
           "B2 is not delivered."
         ],
         "premises": [],
-        "unreviewed": [],
         "clusters": null,
-        "rulings": []
+        "rulings": [],
+        "standing": []
       }
     },
     {
@@ -178,9 +156,9 @@
           "B1 to B4 hold after the revise round."
         ],
         "premises": [],
-        "unreviewed": [],
         "clusters": null,
-        "rulings": []
+        "rulings": [],
+        "standing": []
       },
       "stdinContains": [
         "Deliver B2: when slugify(title) is empty, pageId must use 'page' as the slug part (pageId('!!!', 3) is 'page-3'), and test it."

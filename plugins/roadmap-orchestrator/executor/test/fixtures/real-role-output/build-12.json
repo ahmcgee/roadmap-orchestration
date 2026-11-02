@@ -1,0 +1,52 @@
+{
+  "summary": "Most of the floor was already in place. I added test/access.test.js (6 tests) covering every page, gave the search form an accessible name, and added explicit wrapping rules for book and typed text. The full suite passes (83/83). A1 and A2 were checked in Chromium at 360x640. The hand lettering is not visible in this environment, because no --letter font is installed.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "access tests",
+      "argv": [
+        "node",
+        "--test",
+        "test/access.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "full suite",
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "mutation: remove h2 font-family, T-29 goes red (5 pass, 1 fail), then restored",
+      "argv": [
+        "node",
+        "--test",
+        "test/access.test.js"
+      ],
+      "exit": 1
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/pages.js",
+      "public/style.css",
+      "test/access.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "A1, browser check: Playwright Chromium at 360x640. Seven pages were loaded in a 360px frame: /, /?q=le+guin, /?q=zzzz, /reserve/b1, /reserve/b3, /reserve/b2 and /nowhere. Each had scrollWidth equal to clientWidth (360), so there was no sideways scroll, including the long URL in b1. The same pages also had no Reserve link, Back link, button or text input under 44px high.",
+    "A2, keyboard check: after three Tabs, focus was on the first Reserve link, \"Reserve The Left Hand of Darkness\". Its computed outline was solid 3px rgb(43,38,32), which is the ink colour. I did not tab through the whole form.",
+    "Hand lettering was NOT seen. The --letter stack declares Bradley Hand, Segoe Print, Comic Neue and cursive, but no font in it is installed here, so h1 and h2 render in a fallback serif. I did not claim V-11 and did not bundle or swap a font. Real phones were not checked.",
+    "The suite shows a recurring runtime message, \"no reservedUntil on b2: held until the keeper acts\". It comes from the shipped data/shelf.json, which has b2 reserved with no end date, and is not a failure.",
+    "The search form's accessible name comes from aria-label=\"Find a book by title or author\", not from aria-labelledby. test/search.test.js asserts the exact markup `<label for=\"q\">...</label>`, so I could not put an id on the label without breaking it.",
+    "The new CSS rule applies overflow-wrap:anywhere and min-width:0 to .book-meta, .book-title, .book-author, .refusal h2 and the text inputs.",
+    "test/access.test.js covers every page the review notes named. These are the shelf, search, no-match, form, M4, both M7 variants, M2, M3, the unknown path, M8, M6 (lock file) and the first-time M1 reached through a real POST and 303. Each page is checked for its expected status and title. T-29 reads the body, h1 and h2 rule blocks individually.",
+    "A1 and A2 have no repeating browser witness. The test pins what can be checked without a browser: the ink focus ring, 44px min-heights, no user-scalable, and the wrap rule."
+  ],
+  "final": true
+}

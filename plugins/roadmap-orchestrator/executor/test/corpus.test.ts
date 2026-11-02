@@ -102,7 +102,7 @@ const refusedProblems = (out: Awaited<ReturnType<typeof corpusPin>>): unknown =>
 
 /** Commits `.roadmap/invariants.md` publishing `pin`'s registry, as the previous arc's close-out would. */
 function publishRegistry(repo: string, pin: CorpusPin): void {
-  const obligations = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [], obligations: [], mapping: { paths: [] } });
+  const obligations = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [], obligations: [], mapping: { systems: [] } });
   writeFiles(repo, { '.roadmap/invariants.md': renderInvariants(obligations, [], registryOf(pin)) });
   commitAll(repo, 'publish');
 }
@@ -299,7 +299,7 @@ describe('the pin baseline (LR-A1-1)', () => {
 
 describe('the published registry block', () => {
   it('registry.block-round-trip: rendered after the obligations block, read back, absent when not rendered', () => {
-    const obligations = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [], obligations: [], mapping: { paths: [] } });
+    const obligations = parseObligations({ schema: 'roadmap/obligations-m3', cutLine: 'x', lanes: [], obligations: [], mapping: { systems: [] } });
     const registry = { highWater: 4, active: [{ id: ruleId('T-1'), textSha256: sha256('a'.repeat(64)) }], retired: [{ id: ruleId('T-3'), textSha256: sha256('b'.repeat(64)) }] };
     const text = renderInvariants(obligations, [], registry);
     assert.deepEqual(parseRulesRegistryBlock(text), registry);

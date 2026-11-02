@@ -1,3 +1,5 @@
+import { attemptSignals } from './attempts.ts';
+import { markers } from './surface.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
 // parked, held or stopped. The scheduler (src/schedule/scheduler.ts) runs one per unit in flight, as that
 // unit's task.
@@ -11,7 +13,7 @@
 // reconciled journal exactly as a live one would.
 //
 // Inside a stage, after recovery (src/recover/recover.ts) has closed what a dead executor left open: a
-// plan-check, build or gate attempt whose backend call ended with a result (or, for a build, was lost with
+// pre-build, build or gate attempt whose backend call ended with a result (or, for a build, was lost with
 // tree effects) but whose stage-outcome fact is missing (the fold's `open` attempt) is recorded from that
 // call, never dispatched again; a judgment's against its recorded `judgment-inputs` (`consumeJudgment`, F1).
 // Any other cut short attempt (no call yet, a lost call, a stage without one) runs again as a new,
@@ -24,15 +26,15 @@
 // the resume. An interrupted build is not restarted: its re-run is a `continue` round (rounds.ts) of the
 // interrupted attempt's invocation, read from the fold's `interrupted` fact. Before every stage the driver
 // asserts that none of the unit's invocations has a live workload, then asks its `gate`: an admission stage
-// (prepare, reproduce, plan-check, build, lanes, gate, candidate) waits there for the scheduler's admission, which may
+// (prepare, reproduce, pre-build, build, lanes, gate, candidate) waits there for the scheduler's admission, which may
 // end the task instead (a pause, a stop: the unit is left where the fold says, holding nothing); a chain
 // stage (quiesce → evidence → salvage → teardown after a build, ff → snapshot in a publication) is only
 // announced and runs whatever pause or drain says (F5). A re-entered unit starts at `prepare` (step 6). A
-// unit re-opened (`reopened`: no decided outcome) starts over at plan-check: after a park by `resume <unit>`,
+// unit re-opened (`reopened`: no decided outcome) starts over at pre-build: after a park by `resume <unit>`,
 // or in flight by the driver itself, on a spec revision an `apply` left pending, at the first boundary whose
-// next stage starts from a clean worktree (`reentryAllowed`). dev.17 (propagation): an in-flight unit past its plan-check
-// with stale links no plan-check of it has answered (`UnitState.staleRev`) re-opens the same way (`stale-reopened`), on
-// its spec in force, so its plan-check answers them.
+// next stage starts from a clean worktree (`reentryAllowed`). dev.17 (propagation): an in-flight unit past its pre-build
+// with stale links no pre-build of it has answered (`UnitState.staleRev`) re-opens the same way (`stale-reopened`), on
+// its spec in force, so its pre-build answers them.
 //
 // M3 (step A3): a command may set an entry outside the table (`UnitState.entry`), which runs before anything the
 // latest decision says: `steer <u>` a steer round (a fresh implementer session with the architect's brief, R11; the
@@ -40,7 +42,7 @@
 // its merged commit.
 //
 // M3 (step B3): a vacuity repair (its spec repairs an active vacuity finding with a mutant, reproduce.ts `specFacts`)
-// starts at `reproduce` instead of plan-check, and so does its re-open. Around every stage the driver writes the
+// starts at `reproduce` instead of pre-build, and so does its re-open. Around every stage the driver writes the
 // findings' moves the log calls for (`syncRepairs`: ownership by the repairing units, resolution by their publication,
 // code's dismissal of a mutant a reproduce killed). A candidate red on a surviving mutant gets its fix round from the
 // mutant's run (`mutantFix`).
@@ -50,67 +52,66 @@
 // witnesses (D1), smoke survivors (D2), or a witness check whose own checkout was left dirty. A resume round quotes why
 // the answer it follows was malformed (I3).
 //
-// Scope growth (2026-10-15): a fix round after a salvage that reverted the build's out-of-scope edits carries the executor's
-// directive naming them (`withReverted`). Field report 2026-10-24: one after a salvage the transient check refused names
+// A fix round after salvage reverted protected edits carries the executor's directive naming them (`withReverted`).
+// One after a salvage the transient check refused names
 // the committed paths it refuses (`salvageRefusalFix`).
 //
 // Needs-user content is produced here, never written: the scheduler writes it. A halt's item names its
 // evidence and says what `resume` does for it (`haltNeedsUser`).
 import { existsSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { ENV_INV, ENV_ROLE } from '../contain/session.ts';
+import { basename,join } from 'node:path';
 import { scan } from '../contain/proc.ts';
+import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import { JUDGMENT_STAGES, type OutcomeStage, type StageOutcomeFact, type TestRef, testRefKey } from '../core/events.ts';
-import { mutantSubjectDefault } from '../core/upgrade.ts';
+import { JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
+import { type OpId,type ResourceInstance,type Sha,type UnitId,invocationId } from '../core/ids.ts';
+import { mutantOf } from '../core/projections.ts';
+import { type NeedsUserContent,type NeedsUserReason,STDERR_FILE,STDOUT_FILE,type Stage } from '../core/records.ts';
+import { type EntryPoint,type UnitState,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { patternPath } from '../git/evidence.ts';
-import { candidateLaneDir, smokeLaneDir } from '../git/snapshot.ts';
-import type { RequiredWitness } from '../holistic/required.ts';
-import { DECISIONS_FILE, buildOutput } from '../prompts/schemas.ts';
-import { type InvocationId, type OpId, type ResourceInstance, type Sha, type UnitId, invocationId } from '../core/ids.ts';
-import { type EntryPoint, type UnitState, openAttempt } from '../core/state.ts';
-import { NO_PARK_FACTS } from '../park/table.ts';
-import { ADMISSION_STAGES } from '../schedule/types.ts';
-import { type NeedsUserReason, type NeedsUserContent, STDERR_FILE, STDOUT_FILE, type Stage } from '../core/records.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
-import { reentryRecommendation, reopenRecommendation, routingChangedRecommendation } from '../needsuser.ts';
-import { failuresText, laneFailures } from './failures.ts';
-import { capturedEvidence } from '../git/evidence.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
+import { capturedEvidence,patternPath } from '../git/evidence.ts';
+import { candidateLaneDir,smokeLaneDir } from '../git/snapshot.ts';
 import { standing } from '../git/worktree.ts';
+import type { RequiredWitness } from '../holistic/required.ts';
 import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { type NextStage, nextStage } from '../schedule/ready.ts';
-import { type Reservation, type StageHolder, heldReservation, holderUnits, resourceTable, sameHolder } from '../resources/reserve.ts';
+import { reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
+import { NO_PARK_FACTS } from '../park/table.ts';
+import { revertedPathsDirective } from '../prompts/directives.ts';
+import type { FixRound } from '../prompts/inputs.ts';
+import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
+import { worktreeRemoveOp } from '../recover/ops.ts';
+import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceTable,sameHolder } from '../resources/reserve.ts';
+import type { Role } from '../routing/types.ts';
+import { type NextStage,nextStage } from '../schedule/ready.ts';
+import { ADMISSION_STAGES } from '../schedule/types.ts';
 import {
-  type Cancelled, type StageContext, type StageParent, dispatchOf, evidenceRoot, isCancelled, runOp, unitBranch, unitWorktree, verificationWorktree, witnessWorktree, workDir,
+type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
 } from './dispatch.ts';
-import { consumeJudgment, gate, gateDirectives, unitTip } from './gate.ts';
-import { disputeDirective } from './review.ts';
+import { failuresText,laneFailures } from './failures.ts';
+import { consumeJudgment,gate,gateDirectives,gateFindingEvidence,unitTip } from './gate.ts';
 import {
-  batchMemberFix, candidate, candidateBrakeFix, candidateRefusalFix, candidateSeriesRoot, ff, latestCandidate, memberBatchCandidate, salvageRefusalFix, snapshot,
+batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot,
 } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { type LaneRecord, latestSpecSeries, presentCheckouts, removeCheckout, seriesDirty, seriesLedger, seriesTree, specSeriesRoot } from './lanes.ts';
-import type { FixRound } from '../prompts/inputs.ts';
+import { type LaneRecord,latestSpecSeries,presentCheckouts,removeCheckout,seriesDirty,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
+
 import { prepare } from './prepare.ts';
-import { mutantFix, reproduce, specFacts, syncRepairs } from './reproduce.ts';
+import { mutantFix,reproduce,specFacts,syncRepairs } from './reproduce.ts';
+import { disputeDirective } from './review.ts';
 import {
-  type DecidedRound, type RoundInput, candidateFixRound, failingEvidenceDirs, failingLaneDirectives, gateReviseRound, laneFixRound, smokeFixRound, steerBrief,
-  witnessCheckoutFixRound, witnessFixRound,
+type DecidedRound,type RoundInput,candidateFixRound,failingEvidenceDirs,failingLaneDirectives,gateReviseRound,laneFixRound,smokeFixRound,steerBrief,
+witnessCheckoutFixRound,witnessFixRound,
 } from './rounds.ts';
+
+
 import {
-  type BuildRun, type StageDone, at, build, buildRead, evidence, failedFacts, fastSuiteRoot, keptSpecPath, laneGlobs, lanes, loadUnitSpec,
-  nowInside, planCheck, planCheckAnswerOf, quiesce, readDecisions, record, recordedCall, salvage, salvageRejections, stillOutside, teardown,
+type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
+preBuild,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,teardown
 } from './stages.ts';
-import { poc } from './poc.ts';
-import { scaffold } from './scaffold.ts';
-import { finishSplit } from './split.ts';
-import { restoredPathsDirective, revertedPathsDirective } from '../prompts/directives.ts';
-import type { Role } from '../routing/types.ts';
+import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
-import { type Next, type Target, decidedBy } from './transitions.ts';
-import { worktreeRemoveOp } from '../recover/ops.ts';
 
 export type UnitResult =
   | Readonly<{ kind: 'merged' }>
@@ -125,10 +126,10 @@ export type Step = UnitResult | Readonly<{ kind: 'continue' }>;
 // Needs-user content
 
 /** The stages that make a backend call. */
-const CALL_STAGES: readonly OutcomeStage[] = ['plan-check', 'build', 'gate'];
-type CallStage = 'plan-check' | 'build' | 'gate';
+const CALL_STAGES: readonly OutcomeStage[] = ['pre-build', 'build', 'gate'];
+type CallStage = 'pre-build' | 'build' | 'gate';
 /** The role each call stage's backend call sits on. */
-const STAGE_ROLE = { 'plan-check': 'planCheck', build: 'build', gate: 'gate' } as const satisfies Readonly<Record<CallStage, Role>>;
+const STAGE_ROLE = { 'pre-build': 'verifier', build: 'build', gate: 'verifier' } as const satisfies Readonly<Record<CallStage, Role>>;
 
 /** Reasons that concern the arc rather than one unit: the base is broken, or someone else moved a ref. */
 const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-ref-move', 'usage-limit']);
@@ -136,7 +137,7 @@ const ARC_REASONS: ReadonlySet<NeedsUserReason> = new Set(['base-red', 'foreign-
 /**
  * What a halt's recommendation refers to (arc-1 feedback item 23): the deciding stage's backend call
  * (result.json, which holds a judgment's reasons and patch, and stdout; stdout and stderr of a lost call),
- * for a plan-check the redirect whose patch the unit's spec last took, a lanes or candidate attempt's
+ * for a pre-build the redirect whose patch the unit's spec last took, a lanes or candidate attempt's
  * evidence, a failed salvage's worktree, and the spec in force (its kept file, not the live one).
  */
 function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): readonly AbsPath[] {
@@ -148,14 +149,6 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): r
   const called = CALL_STAGES.includes(f.stage) ? recordedCall(ctx, parent) : null;
   if (called?.kind === 'result') out.push(absPath(join(called.invDir, 'result.json')), absPath(join(called.invDir, STDOUT_FILE)));
   if (called?.kind === 'lost') out.push(absPath(join(called.invDir, STDOUT_FILE)), absPath(join(called.invDir, STDERR_FILE)));
-  if (f.stage === 'plan-check') {
-    const view = ctx.journal.view;
-    const redirect = view.opsOf('spec.patch').flatMap((i) => {
-      const { by } = i.expect.patch;
-      return i.parent.type === 'stage' && i.parent.unit === unit.id && by.role === 'planCheck' && view.doneOf(i.op) !== null ? [by.inv] : [];
-    }).at(-1);
-    if (redirect !== undefined) out.push(absPath(join(invocationDir(ctx.runDir, redirect), 'result.json')));
-  }
   if (f.stage === 'lanes') out.push(specSeriesRoot(ctx.runDir, parent));
   if (f.stage === 'candidate') out.push(candidateSeriesRoot(ctx.runDir, parent));
   if (f.stage === 'salvage') out.push(unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id));
@@ -248,23 +241,24 @@ function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Reado
   const batch = memberBatchCandidate(view, at);
   if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
   // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-  const suite = seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', latestCandidate(ctx, unit.id).post.new, candidateSeriesRoot(ctx.runDir, at));
+  const root = candidateSeriesRoot(ctx.runDir, at);
+  const specRoot = absPath(join(root, '_spec'));
+  const head = latestCandidate(ctx, unit.id).post.new;
+  const suite = [...seriesLedger(ctx, at, loadUnitSpec(ctx, unit).spec.lanes, 'spec', head, specRoot), ...seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', head, root)];
   // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
   const survived = mutantFix(ctx, at);
   if (survived !== null) return { fix: survived, suite };
   const failing = suite.filter((l) => l.verdict !== 'pass');
   // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
-  if (failing.length === 0 && seriesDirty(view, candidateSeriesRoot(ctx.runDir, at)).length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
-  return { fix: { failingEvidenceDirs: (failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), directives: failingLaneDirectives(failing) }, suite };
-}
-
-/**
- * The cause of a red candidate attempt `at` in sentences, as its fix round would read it (the checkpoint's park
- * trigger): the suite lanes that were not green, then the fix round's directives (the obligations the brake graded red).
- */
-export function candidateRedCause(ctx: StageContext, unit: PlanUnit, at: StageParent): readonly string[] {
-  const { fix, suite } = candidateRed(ctx, unit, at);
-  return [...suite.filter((l) => l.verdict !== 'pass').map((l) => `Suite lane ${l.lane} ended ${l.verdict} on the candidate.`), ...fix.directives];
+  if (failing.length === 0 && [...seriesDirty(view, root), ...seriesDirty(view, specRoot)].length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
+  // This red suite was compared with a green tip-alone series before the candidate outcome was recorded.
+  const base = latestCandidate(ctx, unit.id).expect.integrationTip;
+  const evidence = absPath(join(evidenceRoot(ctx.runDir, at), 'base'));
+  return { fix: {
+    failingEvidenceDirs: [...(failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), evidence],
+    baseComparison: failing.map((lane) => ({lane: lane.lane, base, result: 'pass', evidence})),
+    directives: [...failingLaneDirectives(failing), `The candidate is red and the integration base ${base} is green. Base comparison evidence: ${evidence}.`],
+  }, suite };
 }
 
 /**
@@ -306,7 +300,7 @@ function smokeEvidence(ctx: StageContext, parent: StageParent): readonly AbsPath
   return ctx.journal.view.opsOf('proc.spawn').flatMap((i) => {
     const s = i.expect.subject;
     if (s.purpose !== 'mutant') return [];
-    const of = mutantSubjectDefault(s);
+    const of = mutantOf(s);
     if (of.type !== 'smoke' || of.unit !== parent.unit || !attempts.has(of.attempt)) return [];
     return [smokeLaneDir(ctx.runDir, of.unit, of.attempt, s.lane, basename(invocationDir(ctx.runDir, invocationId(i.op, i.ordinal))))];
   });
@@ -359,8 +353,10 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
     }
-    default:
-      return laneFixRound(series, dirty, tip);
+    default: {
+      const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
+      return laneFixRound(series, dirty, tip, compared);
+    }
   }
 }
 
@@ -390,7 +386,7 @@ function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, 
       const parent = specSeries();
       // dev.17: the gate's open ledger findings by id, and how to dispute one (src/pipeline/review.ts).
       const dispute = disputeDirective(ctx, unit.id, f.attempt);
-      const directives = [...gateDirectives(ctx, stageParent(f)), ...(dispute === null ? [] : [dispute])];
+      const directives = [...gateDirectives(ctx, stageParent(f)), ...gateFindingEvidence(ctx, stageParent(f)), ...(dispute === null ? [] : [dispute])];
       return gateReviseRound(directives, seriesLedger(ctx, parent, spec.lanes, 'spec', tip, specSeriesRoot(ctx.runDir, parent)), verificationOf(parent), tip);
     }
     case 'candidate': {
@@ -416,18 +412,14 @@ function roundInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { 
 }
 
 /**
- * Scope growth (2026-10-15, A): a fix round after a salvage that reverted out-of-scope edits tells the builder so (the paths
- * still outside the scope, and where their content is kept), so a needed path is reported, never silently lost. Plan
- * defects (2026-10-16): a fix round, or a reopen's fresh round, after a scope accept took some of those paths in tells the
- * builder to restore them from the kept content.
+ * A fix or fresh round names protected paths reverted by salvage and where their content is kept.
  */
 function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): DecidedRound {
   if (round.kind !== 'fix' && round.kind !== 'fresh') return round;
   const latest = salvageRejections(ctx, unit.id).at(-1);
   if (latest === undefined) return round;
-  const outside = round.kind === 'fix' ? stillOutside(ctx, unit.id, latest.paths) : [];
-  const inside = nowInside(ctx, unit.id, latest.paths);
-  const added = [...(outside.length === 0 ? [] : [revertedPathsDirective(outside, latest.dir)]), ...(inside.length === 0 ? [] : [restoredPathsDirective(inside, latest.dir)])];
+  const outside = latest.paths;
+  const added = [...(outside.length === 0 ? [] : [revertedPathsDirective(outside, latest.dir)])];
   if (added.length === 0) return round;
   return round.kind === 'fix'
     ? { ...round, fix: { ...round.fix, directives: [...round.fix.directives, ...added] } }
@@ -466,8 +458,8 @@ async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: St
       return prepare(ctx, unit);
     case 'reproduce':
       return reproduce(ctx, unit);
-    case 'plan-check':
-      return planCheck(ctx, unit);
+    case 'pre-build':
+      return preBuild(ctx, unit);
     case 'build':
       return build(ctx, unit, roundInput(ctx, unit, target.round, f));
     case 'quiesce':
@@ -488,10 +480,6 @@ async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: St
       return ff(ctx, unit);
     case 'snapshot':
       return snapshot(ctx, unit);
-    case 'scaffold':
-      return scaffold(ctx, unit);
-    case 'poc':
-      return poc(ctx, unit);
   }
 }
 
@@ -551,7 +539,7 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<OutcomeS
 
 /**
  * The outcome of a stage attempt a crash cut short after its backend call: the fold's open attempt (no
- * stage-outcome fact) at plan-check, build or gate whose call recovery has since closed with a result
+ * stage-outcome fact) at pre-build, build or gate whose call recovery has since closed with a result
  * (adopted, reconciled or redone). That result is consumed as the attempt's outcome, exactly as the live
  * stage would have read it; the call is never dispatched again (lead ruling 14a/14b: completed but
  * unrecorded is never treated as not started), and so is a build lost with tree effects (its work is
@@ -569,10 +557,11 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
   const entry = ctx.journal.view.unit(unit.id).entry;
   const decided = entry !== null || f === null ? null : decidedBy(f);
   if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
-  const target: Target = entry !== null ? entryTarget(entry) : decided === null ? { stage: 'plan-check' } : decided.target;
+  const initial: Target = open.stage === 'build' ? {stage: 'build', round: 'fresh'} : {stage: 'pre-build'};
+  const target: Target = entry !== null ? entryTarget(entry) : decided === null ? initial : decided.target;
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
   switch (target.stage) {
-    case 'plan-check':
+    case 'pre-build':
     case 'gate':
       // Against the attempt's recorded inputs (F1): a gate at the tip and head it judged, not the current ones.
       return consumeJudgment(ctx, unit, parent, called);
@@ -594,30 +583,8 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
  * at startup, right after recovery (lead ruling, 14c), and `step` calls it first, so it is recorded once.
  */
 export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
-  const split = await finishHeldSplit(ctx, unit);
-  if (split !== null) return split;
   const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
   return recorded === null ? null : after(ctx, unit, recorded);
-}
-
-/**
- * dev.17 (design pass): a unit held by its plan-check's `split` whose revision a crash kept from landing (the unit is still
- * held, not cut): the split judged again from the held attempt's recorded answer and committed (src/pipeline/split.ts
- * `finishSplit`), its needs-user when it no longer lands. Null for any other unit.
- */
-async function finishHeldSplit(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
-  const u = ctx.journal.view.unit(unit.id);
-  const held = u.interrupted;
-  if (u.status !== 'held' || held === null || held.stage !== 'plan-check' || held.outcome !== 'split') return null;
-  const parent: StageParent = { type: 'stage', unit: unit.id, stage: 'plan-check', attempt: held.attempt };
-  const called = recordedCall(ctx, parent);
-  const inputs = ctx.journal.view.judgmentInputs(unit.id, 'plan-check', held.attempt);
-  const out = planCheckAnswerOf(ctx, unit.id);
-  if (called === null || called.kind !== 'result' || inputs === null || out?.decision !== 'split') {
-    throw new Error(`unit ${unit.id}: held by a split at plan-check#${held.attempt} without its recorded split answer`);
-  }
-  const needsUser = await finishSplit(ctx, unit, { split: out.split, inv: called.inv, tip: inputs.tip }, parent);
-  return { kind: 'held', needsUser };
 }
 
 /**
@@ -656,23 +623,27 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   const u = ctx.journal.view.unit(unit.id);
   // M3 (B7): a repair batch's ff retired the unit with its gate's approval still its decision: only its retire is left.
   if (u.status === 'retired') {
-    await retire(ctx, unit);
+    if (unit.spike === undefined) await retire(ctx, unit);
     return { kind: 'merged' };
   }
   if (u.entry !== null) return after(ctx, unit, await runEntry(ctx, unit, u.entry));
   const f = u.decided;
   // Before a decision: a re-entry prepares first (its lineage not yet prepared), a vacuity repair reproduces its mutant
-  // (M3), anything else plan-checks.
+  // (M3), anything else pre-builds.
   if (f === null) {
-    const first = nextStage(u, specFacts(ctx)(unit).reproduces);
+    const first = nextStage(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review);
     if (first?.kind !== 'admission') throw new Error(`unit ${unit.id}: no first stage before a decision`);
-    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : await planCheck(ctx, unit));
+    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await build(ctx, unit, {kind: 'fresh'}) : await preBuild(ctx, unit));
   }
   const halted = haltResult(ctx, unit);
   if (halted !== null) return halted;
   const decided = decidedBy(f);
   switch (decided.kind) {
     case 'stage':
+      if (decided.target.stage === 'gate' && markers(ctx, unit, loadUnitSpec(ctx, unit).spec).some(m => m.marker === 'M3')) {
+        if (u.staleRev !== null) ctx.journal.fact({kind:'stale-reopened',unit:unit.id,rev:u.staleRev});
+        return after(ctx, unit, await preBuild(ctx, unit));
+      }
       return after(ctx, unit, await runStage(ctx, unit, decided.target, f));
     case 'park':
     case 'stop':
@@ -683,6 +654,12 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   }
 }
 
+/** The one owner item for a total-attempt cap, including a root-reactivated unit still over its cap. */
+function attemptCapResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' }>> {
+  const count = ctx.journal.view.attemptCounts(unit.id);
+  return { kind: 'parked', needsUser: { reason: 'attempt-cap', summary: `${unit.id}: ${count.builds} builds / ${count.judged} judged stages reached the total attempt cap; root intervention required`, blocking: true, options: [], subject: { type: 'unit', unit: unit.id }, recommendation: 'Revise, split, steer or cut the unit from the root.', evidence: [] } };
+}
+
 /**
  * The result of a unit its latest decision parked or stopped, with its needs-user content, read without
  * running anything; null for any other unit. The scheduler raises a restarted arc's due items from it.
@@ -690,6 +667,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
 export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResult, Readonly<{ kind: 'parked' | 'stopped' }>> | null {
   const u = ctx.journal.view.unit(unit.id);
   const f = u.decided;
+  if (u.status === 'park-pending' && ctx.journal.view.ciFacts().some((f) => f.kind === 'attempt-capped' && f.unit === unit.id)) return attemptCapResult(ctx, unit);
   // An entry a command set runs next, whatever the decision before it (M3).
   if (f === null || u.entry !== null) return null;
   const decided = decidedBy(f);
@@ -701,32 +679,28 @@ export function haltResult(ctx: StageContext, unit: PlanUnit): Extract<UnitResul
 /**
  * Whether a unit may re-open on a pending spec revision now: it is active, no attempt is open, an interrupted
  * one (if any) was a judgment (a build's would be continued), and its next stage starts from a clean unit
- * worktree (plan-check, lanes, gate, or a fresh or fix build), not inside the build → teardown chain, a resumed
+ * worktree (pre-build, lanes, gate, or a fresh or fix build), not inside the build → teardown chain, a resumed
  * build or publication.
  */
 export function reentryAllowed(u: UnitState): boolean {
   if (u.status !== 'active' || u.open !== null || u.entry !== null) return false;
-  // A held build continues its session; a held lanes attempt (a pause, a scope-growth hold) starts from a clean worktree.
+  // A held build continues its session; a held lanes attempt (a pause) starts from a clean worktree.
   if (u.interrupted !== null && !(JUDGMENT_STAGES as readonly Stage[]).includes(u.interrupted.stage) && u.interrupted.stage !== 'lanes') return false;
   if (u.decided === null) return true;
   const d = decidedBy(u.decided);
   if (d.kind !== 'stage') return false;
   const t = d.target;
-  return t.stage === 'plan-check' || t.stage === 'lanes' || t.stage === 'gate' || (t.stage === 'build' && (t.round === 'fresh' || t.round === 'fix'));
+  return t.stage === 'pre-build' || t.stage === 'lanes' || t.stage === 'gate' || (t.stage === 'build' && (t.round === 'fresh' || t.round === 'fix'));
 }
 
 /**
  * Re-opens an in-flight unit on its pending revision (an applied rev + 1 of its spec) when it may:
- * a `reopened` fact naming the apply that recorded it. The unit starts over at plan-check, keeping its
+ * a `reopened` fact naming the apply that recorded it. The unit starts over at pre-build, keeping its
  * branch, worktree, implementer session and counters, as a reopen after a park does.
  */
 function reopenIfDue(ctx: StageContext, unit: UnitId): void {
   const u = ctx.journal.view.unit(unit);
   const p = u.pendingRevision;
-  if (staleReopenDue(u)) {
-    ctx.journal.fact({ kind: 'stale-reopened', unit, rev: u.staleRev! });
-    return;
-  }
   if (p === null || !reopenDue(u)) return;
   // The classifier refuses a revision while an attempt is open, and no executor patch runs while one is
   // pending, so a pending revision is always the next rev.
@@ -734,26 +708,15 @@ function reopenIfDue(ctx: StageContext, unit: UnitId): void {
   ctx.journal.fact({ kind: 'reopened', unit, command: p.command, specRev: p.rev, specSha256: p.sha256 });
 }
 
-/**
- * dev.17 (propagation): whether an in-flight unit re-opens at plan-check on stale links no plan-check of it has answered
- * (`staleRev`): past its plan-check (one still ahead answers them), with no pending revision (whose re-open answers them),
- * at a boundary that allows a re-entry.
- */
-function staleReopenDue(u: UnitState): boolean {
-  if (u.staleRev === null || u.pendingRevision !== null || u.decided === null || !reentryAllowed(u)) return false;
-  const d = decidedBy(u.decided);
-  return d.kind === 'stage' && d.target.stage !== 'plan-check';
-}
-
-/** Whether the unit re-opens at this boundary: on a pending revision, or (dev.17) on unanswered stale links. */
-const reopenDue = (u: UnitState): boolean => (u.pendingRevision !== null && reentryAllowed(u)) || staleReopenDue(u);
+/** A root revision re-enters at a clean boundary; meaning-change review only annotates. */
+const reopenDue = (u: UnitState): boolean => u.pendingRevision !== null && reentryAllowed(u);
 
 /**
- * The stage the unit starts next: its first stage when it re-opens at this boundary (plan-check, or `reproduce` for a
+ * The stage the unit starts next: its first stage when it re-opens at this boundary (pre-build, or `reproduce` for a
  * vacuity repair: `reproduces`, src/pipeline/reproduce.ts `specFacts`), else its decided next stage (`nextStage`).
  */
-export const upcoming = (u: UnitState, reproduces: boolean): NextStage | null =>
-  (u.status === 'retired' ? null : reopenDue(u) ? { kind: 'admission', stage: reproduces ? 'reproduce' : 'plan-check' } : nextStage(u, reproduces));
+export const upcoming = (u: UnitState, reproduces: boolean, review = true): NextStage | null =>
+  (u.status === 'retired' ? null : reopenDue(u) ? { kind: 'admission', stage: reproduces ? 'reproduce' : review ? 'pre-build' : 'build' } : nextStage(u, reproduces, review));
 
 // ---------------------------------------------------------------------------------------------------
 // The loop
@@ -792,16 +755,24 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
 
 /**
  * Runs `unit` stage by stage until it is merged, parked, held or stopped. Before each stage the unit's
- * workload must be quiescent and `gate` is asked (a pending spec revision re-opens the unit at plan-check at
- * the first boundary that allows it, `reopenIfDue`, so the gate is asked for plan-check then). A gate that
+ * workload must be quiescent and `gate` is asked (a pending spec revision re-opens the unit at pre-build at
+ * the first boundary that allows it, `reopenIfDue`, so the gate is asked for pre-build then). A gate that
  * refuses leaves the unit where the fold says (`held`, no needs-user); the next call continues there. A merged,
  * parked or stopped unit starts no stage: its step only reads its result back (a merged unit's retire is
  * finished first).
  */
 export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
+    const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
+    const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
+    if (count.capped) return attemptCapResult(ctx, unit);
     const u = ctx.journal.view.unit(unit.id);
-    const next = upcoming(u, specFacts(ctx)(unit).reproduces);
+    const next = upcoming(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review);
+    if (unit.spike !== undefined && next?.stage === 'candidate') {
+      await retire(ctx, unit);
+      ctx.journal.fact({ kind: 'spike-completed', unit: unit.id });
+      return { kind: 'merged' };
+    }
     if (next !== null) {
       assertQuiescent(ctx, unit.id);
       if (!(await gate(next))) {

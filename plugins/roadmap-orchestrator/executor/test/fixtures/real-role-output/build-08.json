@@ -1,0 +1,14 @@
+{
+  "summary": "Started the slow dependency with Monitor; waiting for ready.txt before writing hello.txt and running the unit lane.",
+  "blockers": [],
+  "experiments": [],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "hello.txt"
+    ]
+  },
+  "tooBig": null,
+  "notes": [],
+  "final": false
+}

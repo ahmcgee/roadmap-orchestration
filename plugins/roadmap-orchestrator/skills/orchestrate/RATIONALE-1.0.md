@@ -1,393 +1,190 @@
 # Roadmap Orchestrator 1.0: rationale
 
-Why 1.0 is shaped the way it is. Nothing loads this file at runtime. `SKILL.md` tells the architect agent
-what to do; this file tells a maintainer why, so a change can be made without undoing a lesson that cost a
-week to learn. The binding design is `DESIGN-1.0.md` at the repo root, and the frozen shapes are in
-`executor/SCHEMAS.md`. The 0.x reasoning and its incident record (`RATIONALE.md`) live in git history at tag
-`v0.20.0`.
-
-Each section names the evidence it rests on and the decision it justifies, and is marked **[M1]** when the
-behaviour ships in the M1 build or **[M2]**, **[M3]** or **[M4]** when it is design intent for a later
-milestone (M4a is marked **[M4]**). Evidence citations: Obs = the arc-1 observations file, §3.n = the defect write-ups in
-`calibration-0.20.0.md`, D§ = `DESIGN-1.0.md`.
-
-## 0. The evidence base: arc 1
-
-0.16.0 through 0.20.0 drove one greenfield platform build from 2026-09-12 to 2026-09-25. The numbers
-(Obs §1, and queries over the arc's `.roadmap/` bundle):
-
-| Measure | Value |
-|---|---|
-| Waves | 39 |
-| Units merged / quarantined / pending | 74 / 24 / 10 |
-| Codex runs | 683 |
-| Courier-tier agent calls | 1,630 |
-| Upper-tier Claude calls | about 220: 99 Opus, 121 Fable; 61 gate rounds and 49 plan-checks among them |
-| Degradations logged | 53, of which 44 were host or supervision faults |
-| Orchestrator defects written up | 23 (§3.1 to §3.23), several recurring two to four times |
-
-Two findings shape everything below. First, the courier tier was the largest source of recorded failures,
-and no courier decision needed judgment (Obs §6). Second, the system was good at local quality and poor at
-holistic quality. Per-unit gates passed work that a whole-tree read later broke: one independent read after
-28 waves found five P1s, three P2s and an authority bypass, every one past its unit gate (Obs §3).
-
-The yardstick is the owner's: a run goes unattended for a week and converges on a documented target
-state (D§1). Wall-clock, not money, was arc 1's binding constraint (Obs §6).
-
-## 1. The executor owns processes [M1]
-
-**Evidence.** 0.x ran inside Claude Code Dynamic Workflows. That host has no shell and cannot background a
-process. Every wait is an agent turn with a budget, and a workflow resumes by position (D§5, Obs §2). So a
-model launched each Codex run and a model decided when it had finished. Its patience was wrong. Couriers
-reported healthy runs as "still in progress" at 11, 22, 23 and 40 minutes. The harness then reaped them,
-once discarding seven of eight green lanes, about 50 minutes of work, or it moved on while the builder was
-still writing. The architect committed a killed builder's leftovers by hand three times (Obs §4.1, §3.9,
-§3.15, §3.16). Meanwhile the late-arc progress came from the one place that could background and wait: the
-main session, running Codex under a Monitor (Obs §5).
-
-**Decision.** A plain Node process, launched detached under a supervisor, owns every subprocess, deadline,
-lock and evidence directory. One executor per single-UID host, claimed by `link()` on
-`/var/tmp/roadmap/host.lock`. The supervisor restarts it with backoff and stops at three crashes an hour
-with a needs-user. The architect's session keeps judgment and the command queue, and nothing else. The
-rule that falls out: nothing code can do exactly is done by a model (D§2).
-
-## 2. Couriers, not janitors, in its 1.0 form [M1]
-
-**Evidence.** 0.x §19 recorded the August 2026 ledger. The script handed the cheapest tier *goals*: "clean
-up leftover listeners", "make the checkout work". Every incident was that tier reaching for the biggest
-tool that satisfied the goal, `kill -9` of every node process or `rm -f` over untracked state. A "never do
-X" clause did not help. 0.13.0 answered with two rules: the cheap tier gets a closed command list the script
-composed, never a goal; and every wave-level brake lives in code, because waves 18 and 19 grew the plan for
-twelve hours after it drained while the only brake was prose in a triage prompt. Those rules held, but the
-couriers stayed, and arc 1 made 1,630 courier calls, the largest failure source, none needing judgment.
-
-**Decision.** The first half of §19 is gone because its subject is gone: no model runs a command on the
-executor's behalf. The second half is now the general rule. Brakes live in code, and a prompt carries a
-goal only where a model's judgment is the point: plan-check, build, gate. In M1 that means the chargeable
-bound (a unit's third design-class failure parks it), a dispatch pin that no redirect can widen or
-lower in risk, the transient check on every candidate, the approval fingerprint, and backend errors
-classified only from structured error events. A prompt may inform a brake. It never is one.
-
-## 3. Peer backends behind one process interface [M1]
-
-**Evidence.** Environment facts from Obs §2 and the ledgers. Codex exits 0 when its sandbox fails to
-start, so a smoke that runs no shell command passes on a host where every real run fails. A prompt passed
-as an argument hangs Codex on stdin; two 40-minute drafts were lost that way. Codex kills its children
-when its turn ends (§3.18). A grep over the event log read the orchestrator's own documentation, which a
-builder had printed, as a usage limit and halted a wave (§3.1). Log capture under umask 077 broke a
-fixture's chmod assertions (skill-feedback 0.18).
-
-**Decision.** `codex exec` and `claude -p` are ordinary processes behind one interface: prompt on stdin,
-declared environment, umask 022, JSON events out. Each invocation runs under a small runner that writes
-stdout and stderr to files, never pipes, so the executor can die and reattach. The runner waits for the
-workload to be empty, writes `exit.json`, and exits. Only then does the executor run the adapter, which is
-pure over those files and so can be re-run at recovery, and writes `result.json`. `outcome` and `usage` are
-separate fields: missing usage never invalidates a judgment. The arc-start smoke runs a real shell command
-and grades exit code and output. `claude -p` billing was verified subscription-covered on 2026-09-25 (D§2),
-which settled the 0.x worry that headless Claude could not host judgment.
-
-## 4. The write-ahead log is the only authority [M1]
-
-**Evidence.** Disk as the source of truth worked in arc 1: compaction, restarts, a host resize and a driver
-handoff were all recoverable (Obs §3). But 0.x reached disk through a model and a replay script. Role
-directories keyed on the wave number replayed stale results and halted a wave (§3.6). And arc 1 measured
-almost nothing: no per-call token counts for any Claude model, and per-lane timestamps in exactly one
-evidence file across the whole arc.
-
-**Decision.** `events.jsonl` is append-only, one canonical JSON line per record, each line carrying the
-sha256 of the line before it. A complete intent is durable before every act; a `done` records the verified
-postcondition. `state.json` is derived and never read for a decision. A torn final line is saved and
-discarded; any earlier corruption refuses start. Every operation kind has a reconciler that re-reads its
-postcondition, and a test crashes at every write-ahead boundary and asserts the exact replay. Counters are
-monotonic across retries and re-entry. Measurement is in the log from the first line: meter facts per
-invocation, lane start, end and exit.
-
-## 5. A DAG with resource locks instead of waves [M2; M1 ships the serial lifecycle]
-
-**Evidence.** Wave batching added little: with one estate lane at a time, units ran serially anyway (Obs
-§4.5). Of the merges the state tagged by wave, 43 came from one bulk adoption in wave 12. Wave boundaries
-were the only point where rulings, spec edits and sweeps could happen, so the architect acted outside the
-machine to keep waves alive (Obs §4.5, §5). On 4 vCPU, load reached 15 to 36. Lanes with fixed cluster and
-container names collided, and a killed lane stranded its clusters (§3.3, §3.4, §3.7, §3.12).
-
-**Decision.** A unit starts when its dependencies are merged and its stage's resources are acquirable.
-Resources are named or capacity, taken all-or-none in one global order. A reservation covers probe, cleanup,
-run and cleanup again, and releases only after confirmed cleanup. A failed teardown becomes a residue in
-the host index before anything is released, and `start` refuses until every residue is swept or
-dispositioned. M1 ships the reservation cycle, the occupancy probe, residues, `sweep` and the serial
-integration slot for one unit. DAG dispatch, capacity scheduling, aging and retryable parks are M2.
-
-## 6. Candidate-first merge and exact-head publication [M1]
-
-**Evidence.** 0.x merged and then tested, with a revert after publication. A merge report without the
-suite's exit status triggered a paid integration-fix call that discovered the suite had passed (Obs §4.1).
-Reviews diffed against the moved tip reported phantom 9,000-line reversals (§3.5). An adopted branch
-entered verify 18 commits behind integration, missing the dependency its edge existed for (§3.23).
-
-**Decision.** In the integration slot the executor makes a `--no-ff` candidate on the current tip, held on
-`refs/roadmap-run/<arc>/candidate/<unit>`. The transient check refuses paths outside the pinned scope and
-denylisted paths. Suite lanes run on the candidate. On green, integration fast-forwards to that exact
-commit, so the tested head is the published head. The approval fingerprint is recomputed against the tip
-before the fast-forward, and a mismatch re-gates. Every diff is `merge-base(tip, branch)..branch`,
-recomputed after any merge-in. Merged means second-parent reachable.
-
-## 7. Clean PRs [M1]
-
-**Evidence.** One integration pass carried 1,219 roadmap-file changes, and raw evidence buried the product
-in the diff (Obs §4.5).
-
-**Decision.** In-tree `.roadmap/` holds only the living docs a later arc reads: `contracts/`,
-`constraints.md`, `invariants.md`, `debt.md`, `config.json`. Plan, specs, ledgers and results are
-snapshotted one way to `refs/roadmap/<arc>` with a sha256 manifest. Raw evidence stays in the run dir and
-only its hashes reach the ref. A 0.x layout is refused at start, never converted.
-
-## 8. Roles, not models; prompts keyed per (role, model) [M1]
-
-**Evidence.** Models moved under arc 1 while it ran: 0.20.0 put Opus 5.5 into the low and medium frontier
-seats and removed Sonnet from gates. 0.x state counted spend by model name, so every model change rotted
-the records that cited it.
-
-**Decision.** Owner ruling, 2026-09-25: every record the executor writes names the role an actor filled and
-the `routingRev` in force, never a model id. Model ids appear only in routing configuration, which is
-revisioned, and in the argv of a per-invocation `launch.json`. The `state.no-model-ids` test enforces it.
-Prompts are code and are keyed by model, because a prompt tuned for one model is wrong for another. Each
-role's table is `Record<ModelId, Prompt>`, so adding a model fails compilation until every role has a
-prompt or a dated, reviewed `inheritsFrom`. Two profiles ship: `default`, and `claude-only`, which resolves
-no role to Codex and skips the Codex smoke.
-
-## 9. Independence is a clean context, not a different model [M1]
-
-**Evidence.** 0.x learned that coldness is epistemic: resume for fixing, never for judging. The early 1.0
-brief also proposed a brake requiring the gate's model family to differ from the implementer's. That brake
-could not hold under peer routing or a `claude-only` profile, and the distillation found it contradicted
-0.x's own layout, where the pre-gate reviewer shared the implementer's family.
-
-**Decision.** The owner's ruling, quoted from D§4: "A clean context, not a different model (owner,
-2026-09-25): every judgment role (plan-check, digest, gate, consult, lenses, checkpoint) runs in a fresh
-session under the judgment profile, inputs snapshotted by revision, no implementer transcript." And: "The
-same model may implement and judge." Code enforces it. Judgment and implementer session ids are distinct
-types, and only the implementer type can be resumed. Fix rounds do resume the build session, because fresh
-rounds in arc 1 surfaced one defect per round and continuous context is what worked late (Obs §4.3, §5).
-Codex judgment seats are unsupported until a read-only Codex judgment profile exists.
-
-## 10. No spend cap; usage limits park [M1]
-
-**Evidence.** About 220 upper-tier calls over 74 merged units: roughly three per merged unit, spent where
-work can be rejected, which Obs §6 calls the clearest return. Codex volume never constrained the arc.
-Outage classification by text misread both documentation and a "model at capacity" message as usage
-limits (§3.1).
-
-**Decision.** Meter every call by role and routing revision; brake on none of it (D§7, D5). A usage-limit error
-event marks that backend limited arc-wide. Running work finishes, stages needing it hold, one needs-user is
-raised, and nothing retries. `resume --backend` re-runs that backend's smoke before unparking. The 0.x
-rule survives: an outage is a human act to clear, and routing never fails over to hide it.
-
-## 11. Session containment and its narrowed guarantee [M1; cgroup mode experimental]
-
-**Evidence.** "Still running" was accepted while an orphan child kept editing the worktree (§3.16, wave 39).
-A strong build was killed at 3h42 by a signal nobody identified (§3.15). 0.x built a pidfile, exit-code-file
-and TERM-trap apparatus because processes went through a model's Bash tool.
-
-**Decision.** The runner is the controller and never a workload member. The workload is every process
-carrying `ROADMAP_INV=<inv>` in its environment or sharing the child's session. Kill stops members, rescans
-until the set is stable, then TERM, then KILL, then rescans until empty. No stage advances, no resource is
-released and no output is certified while the set is non-empty. The guarantee is stated narrowly in
-`status.host`: a descendant that calls `setsid()` and execs with a cleared environment escapes. The
-verification-tree assertion and the occupancy probe catch part of that; the rest is documented, not
-closed. cgroup mode would close it, but the development host's cgroup v2 is read-only, so cgroup mode is
-not selectable until a real-kernel test passes elsewhere. Its test reports NOT RUN, never pass.
-
-## 12. The holistic layer [M3]
-
-**Evidence.** Local good, holistic poor. The wave-33 audit found two P1s and two P2s that seven unit gates
-had passed. Drift appeared in four of six audits, and there were eight vacuity rows (D§2.5). A gate recorded
-an invariant "witnessed and held" when the witness injected its own checker. The wave-38 audit ran no
-tests. An alignment audit found 15 rulings contradicting the architecture document, and one hostname
-ruling broke cookie isolation (Obs §4.5).
-
-**Decision.** Obligations are every checkable claim extracted from the target-state document, approved by
-the owner. Each names a witness that emits per-test records; no record means `unwitnessed`, never passed.
-A `must-hold` obligation that goes red makes a candidate red, in code. Lenses report (frontier class, efficient since
-1.0.0-dev.10); a summit-class
-checkpoint then rules toward the target, not the original plan. Its authority is bounded by the delegation
-envelope: it may amend implementation contracts, respec, re-route or cut. The vision is the root record
-(owner ruling OR-V): the checkpoint may also weaken an obligation when it cites active vision clauses and
-evidence, reconciling silently and consulting the owner afterwards; every departure is a divergence with its
-preimage, and only owner-only acts (outside the sandbox, cost over $10, legal) go to the owner first. Bundles
-apply all-or-none against a revision vector, and a convergence bound (default 3) hands control back before
-the checkpoint can churn. 0.x invariant 8,
-"feedback never steers", becomes "feedback accumulates until a checkpoint; checkpoints steer". M1's
-approval fingerprint has no `obligationRevs` yet; M3 adds them.
-
-## 13. The eval ladder [M1]
-
-**Evidence.** 0.x kept its paid fixtures green by making issue-mode prompts byte-identical to file mode,
-and a paid run could not reach the host behaviour that actually failed in arc 1: reaps, residue, crashes.
-
-**Decision.** Four rungs, in order. `tsc --noEmit`. Unit and integrated tests with real processes, real git
-and fake backends behind PATH shims, including a crash at every write-ahead boundary; `crashPoint(label)` is
-the only test seam in production code. A targeted probe against the real CLIs, for pennies. The paid
-fixture, once per merged batch under both profiles. The paid fixture is integration evidence, not the hard
-assertion. One model-driven run cannot prove a recovery property; the deterministic tier can, because it
-chooses where to crash. The paid run shows the parts meet real models and lists what it did not exercise.
-
-## 14. What 1.0 dropped from 0.x
-
-- **Dynamic Workflows as host**, with its `.mjs` scripts, `persist.mjs` replay and position-based resume.
-- **The courier tier**, with closed command lists, `cd` guards, `STRICT`, `rc=` wrappers and the spec-write,
-  merge, dossier, census and `gh` couriers.
-- **Waves**, `maxWavesPerRun`, the 1000-call guard and wave-keyed directories. A contingent edge now holds
-  only its dependent.
-- **The three-tier boundary ladder**: Haiku census, Opus triage, Fable boundary, then root. Cadence audits
-  and the checkpoint replace it [M3].
-- **Verifier-as-agent.** The executor runs lanes verbatim and grades by exit code.
-- **Issue mode.** The outbound projection was dropped first; the inbound intake M4 built (`roadmap:bug` and
-  `roadmap:feedback` read at Phase 0 and checkpoints) was removed in 1.0.0-dev.21 (§17).
-- **The dual-driver protocol**, the post-publication revert, text-grep outage detection and the spend cap.
-
-What stays is the judgment that worked: frozen contracts, C-nn rulings, plan-checks that redirect,
-gates with rejection authority over scope and debt, and Phase 0 as the architect's highest-leverage act
-(§17).
-
-## 15. A failing lane keeps its ignored output [M1]
-
-**Evidence.** A lane runs in a checkout the executor deletes after the series. A script that writes its logs
-into a gitignored dir, with no `evidenceGlobs` for them, loses them there, and its fix round reads stdout and
-stderr alone. Nothing showed the gap: the ledger said nothing of files a lane wrote but no one kept.
-
-**Decision.** Every lane's gitignored writes are counted, and the gate's ledger names what was not kept and
-why. A lane that does not pass also gets its undeclared ignored output captured, since a failure is when the
-fix round needs it. The capture is capped, and it skips build output and key material by default, because
-the run dir must not fill with dependency trees or keep credentials. Declaring `evidenceGlobs` stays the
-contract. Since the evidence globs grade nothing, the architect may correct them on a unit in flight without
-a spec revision (`roadmap apply`).
-
-## 16. Plan edits go in through `apply` [M1]
-
-**Evidence.** Before 1.0.0-dev.4 the plan and specs were read from the files: once per start for the plan, at
-every stage for a spec. Changing the plan meant `stop` and `start`, and a stop kills live backends and lanes. A
-crash restart loaded whatever the files held by then, and a removed unit that still had an open intent threw in
-recovery, which crash-looped the supervisor. Nothing stopped an in-flight spec edit; a stage read it mid-unit.
-
-**Decision.** The plan in force is a fold of the log: `roadmap apply` hashes the files, and the executor, at the
-next stage boundary, re-checks them, classifies every change against what each unit has done, keeps the bytes
-by hash and records a new revision. A refused change refuses the whole apply with every reason. Stages load the
-spec bytes the log names, so an unapplied edit has no effect, also after a restart. A spec revision of an
-in-flight unit waits for a boundary where the unit can re-enter plan-check with its work intact. Nothing live
-is killed for an edit. DESIGN's `admit` and `patch-spec` are edit classes of `apply`, so there is one way to
-change what the executor runs (owner ruling 2026-09-29).
-
-## 17. A pinned corpus, Phase 0 in session, and chained arcs [M4]
-
-**Evidence.** M3 steered by one architecture document named by path. Nothing pinned it, nothing gave its claims
-ids, and an obligation pointed at a quoted anchor that any edit could break. Real targets are not one document:
-the owner's are a sprawl of numbered docs and ADRs that restate, contradict and outlive each other. Phase 0 had
-been the highest-leverage act in arc 1, yet it ran as prose the architect followed by hand, and its pack review
-went out to an external reviewer through templates the architect filled in. The yardstick asks for a week unattended, which no single arc fills; and an
-unattended week is only safe if the owner can see, in one place, everything decided since they last looked.
-
-**Decision.** Owner rulings OR-Q9 to Q22, recorded 2026-10-02/03 (DESIGN-1.0.md draft 9, §2.8 to §2.11):
-
-- **The corpus is the target, and readability comes first.** The root agent curates it in session through a
-  guide (`.roadmap/corpus.md`); code never edits it. Normative claims live in `rules` blocks as `T-n` ids, global
-  and never reused, so an obligation anchors at `{T-n, text hash}` instead of a quoted span, and a census says
-  for every rule whether the arc holds it, defers it or cannot test it. Curation runs in tiers: structural and
-  fact-currency edits are the agent's to make and report; a contradiction the vision resolves is resolved and
-  recorded as a reversible divergence; one the vision is silent on becomes a ranked question with a working
-  assumption, never a guess the owner cannot see.
-- **The executor reads only a pin.** `corpus pin` writes the files, rules and vision path by hash; `start` and
-  `apply` re-derive it and refuse drift, and the snapshot keeps every byte, so a judge's view of the target is
-  reproducible from the ref alone. The vision document lives in the corpus, and its confirmation is now checked
-  against the pinned bytes instead of stored on trust.
-- **Phase 0 is the agent's, checked by code.** The skill states each step's outcome and leaves the method to the
-  agent (subagent prescriptions withdrawn 2026-10-17); `phase0 check` runs
-  the same rows `start` runs, so a Phase 0 is green before it costs a start. The pack review became an executor
-  job on the frontier class with kept inputs, holding admission until a review matches the current pack.
-- **No issue intake.** M4 read trusted `roadmap:bug` and `roadmap:feedback` issues at Phase 0 and every
-  checkpoint and refused a repository anyone could open issues on (ruling L6). It saw no real use, and the owner
-  steers through `steer`, answers and the vision, so 1.0.0-dev.21 removed it with its policy check; the forge is the
-  PR path alone. Records an earlier executor wrote for issues are read and ignored.
-- **Chaining with a brake the owner sets.** Arcs run back to back as stacked branches and PRs. One code-rendered
-  brief, hashed whole, covers everything since the owner's last acknowledgement across the chain; K bounds how
-  many starts may pass without one, and only the owner changes K. The root agent never merges `main`; the owner
-  merges the stack with merge commits.
-- **Routing.** OR-Q17 and L3: the frontier and summit classes bind one model at different efforts, retroactively,
-  with no routing generations; an effort-only change of a build seat re-pins and resumes its session. 2026-10-15
-  (1.0.0-dev.10): a class binds a build triple and a Claude judgment triple; the efficient class judges low-risk
-  plan-checks and gates, the lenses and flow, because independence is a clean context and the cheaper Claude model is
-  capable there; the stronger classes stay where risk or an escalation is. 1.0.0-dev.17 (owner 2026-10-22, the
-  software-factory routing research: a strong planner and reviewer over a cheaper executor): frontier plan-checks and
-  gates every tier, the efficient class builds every tier, and a Claude build consults an Opus advisor at its own
-  decision points; the fix-round escalation to `build.high` (D4) is retired.
-- **Efficiency waits for M4b** (§19). M4a only measures stage timings; the root agent reports slowdowns as
-  observations and changes nothing that grades the work.
-
-## 18. Checks that run, admits that are classed, supervision that is logged [M4]
-
-**Evidence.** Paid runs 4 to 9 of the M4a fixture. Witness defects dominated the gate's work: 5 spec witnesses never
-written, 15 weak witnesses at the gate, 38 post-merge vacuity findings, 4 tests that read the real clock. The build
-prompt carried no witness ids, so a builder saw the tests it had to pass only as prose. Plan-check caught nothing
-material for frontier builders (one citation redirect in 11) and five real redirects for efficient ones. Run 9's
-checkpoints admitted a chain of three units that drifted into a vision clause outside the slice, each citing in-slice
-clauses only. In run 1 the root agent, unsure what it was allowed to touch, searched the filesystem for the fixture's
-own scripts.
-
-**Decision.**
-
-- **Executable before judged** (lead ruling LR-j). In a corpus arc every witness a unit must pass runs by exact test
-  id before the gate, and the builder can run the same check (`witness-check`); a missing id is a fix round, not a
-  gate finding. For a med or high-risk unit, mutation smoke reverts its production change and runs its witnesses
-  again: a witness that still passes did not need the change. One fix round, then the gate decides with the
-  survivors in view, because some behaviour truly predates the unit.
-- **Plan-check by builder class** (E). A frontier builder assesses the spec in its own session, as the build's first
-  structured output, before any edit, so an infeasible or riskier spec is routed before code exists. An efficient
-  builder keeps a plan-check, narrowed to adding witness items through the one spec patch channel. Run 10 measures
-  it against the runs 4 to 9 baseline; the template reverts on a safety regression. Removed in 1.0.0-dev.17: with every
-  build on the efficient class there is no frontier builder to assess in session, and every unit's plan-check is one
-  Opus call.
-- **Admit classes** (owner ruling OR-A1, lead ruling LR-k). Code, not the checkpoint, classes each admit from what it
-  touches: repair and oversight always pass; an opportunity outside the slice must cite its clauses, shows in the
-  brief, and is capped at one per arc with one follow-up repair; anything else becomes a corpus amendment for the
-  next Phase 0. A checkpoint can still widen an arc, but never silently.
-- **Clocks are spec guidance, not code** (R39). No product-agnostic clock seam exists, and faking time from outside
-  changes what a declared lane runs. The spec pins the product's own seam and adds a shifted-clock lane; the gate and
-  the reviews treat a real-clock test as a defect class.
-- **Supervision through levers, with a log** (owner ruling OR-A3). The root agent observes cheaply and acts through
-  the CLI's levers, never by patching the executor or its run dir. Each intervention is logged with the executor
-  change that would have made it unnecessary; the fixture counts them, so an executor that needs less supervision
-  scores better.
-
-## 19. The flow loop: constraints say where, control charts say when, code holds the ruler [M4]
-
-**Evidence.** Wall-clock, not money, bound arc 1 (Obs §6), and the M4a runs showed the same shape: the integration slot
-serialises every candidate, so the suite inside it sets the pace of the whole arc while the build stages wait. M4a gave
-the root agent timings and nothing to act with, so a slowdown became a check-in line. Two failure modes bracket any
-fix. Tuning wherever a number looks bad moves effort to stations that do not bind and adds variance. Optimising a
-measured number invites the cheapest way to move it: drop the slow test, loosen the lane, cheapen the judge
-(Goodhart). Arc 1's courier incidents (§2) showed that a prompt saying "never" does not stop the second.
-
-**Decision.** Plan `m4b-flow` rev 2 (DESIGN-1.0.md §10 "M4b Flow", decisions OR-Q1 to Q7):
-
-- **Theory of constraints says where.** Lead time is partitioned into disjoint stations (stage service, the waits in
-  front of them, the slot and its components). Code names the constraint, the largest wait or else the largest service.
-  A proposal must target the constraint or one of its components, and an elevate lever (more cpu, a bigger pool) waits
-  until an exploit or subordinate change on that target has a verdict, because elevating an unexploited constraint
-  buys capacity the arc never uses. (Superseded in dev.12, owner 2026-10-16: both are the flow role's method, stated in
-  its prompt; code keeps the fence, the givens and the cpu and floor checks.)
-- **Statistical process control says when.** One XmR chart on log lead time, seeded from earlier arcs on an equal host
-  and frozen for the arc. A point inside the limits is common-cause noise; acting on it is tampering. Only a special
-  cause, a constraint shift, a closed verdict or a floor of 10 merges triggers a run, behind a cooldown, with at most
-  one change judged at a time, so each verdict can be attributed to one cause.
-- **The Goodhart fence is code, not prose.** Each lever maps to a fixed set of plan paths, and the revision is asserted
-  against them (a violation is an executor bug). The ruler (obligations, witness lanes, arc lanes, audit, advances, the
-  vision, judgment routing, risk) is outside every lever. A suite-lane change may alter only the
-  `--test-concurrency` value in place, and it is applied only after a proof shows equal `(test, selected, outcome)`
-  records on both argvs. Verdicts carry guards (rework, first-run reds, obligations, cost) that turn an "improvement"
-  bought with quality into `worse`. A root-agent `apply` that touches the ruler mid-arc is reported to the owner as
-  `ruler-changed`, not blocked: the root agent may need it for convergence, and the owner sees it.
-- **The proposer never applies.** The flow role sees numbers, not the product. It proposes; the root agent, who holds
-  the vision and the corpus, accepts or rejects with a reason; code proves, applies under the fence and judges. Each
-  of the three can fail without the others failing with it. A `worse` verdict hands back the preimage and the root agent
-  reverts by `apply`, because a revert is a plan edit like any other and keeps one write path.
-- **T, I and OE are diagnostic.** Throughput, inventory and operating expense are reported and never targeted:
-  convergence on the vision is the goal, and an arc that merges faster by converging less is worse.
+Maintainer background for the command-center release, **1.0.0-dev.33**. Operating instructions live in SKILL.md;
+wire contracts live in executor/SCHEMAS.md. Historical designs and the old arc-1 record explain how the system arrived
+here, but do not override current code. This document explains the choices that remain.
+
+## 1. An executor owns exact work
+
+Long unattended runs fail when an interactive agent must remember which child, lock, checkout or test still exists.
+The executor owns these resources and records effects write-ahead. Runners outlive an executor crash, publish durable
+terminal files only after quiescence, and permit reattachment. Judgment belongs to models; lifecycle belongs to code.
+
+This has a deliberately narrow host contract: one executor per single-UID Linux host. Session containment stops ordinary
+workload descendants; it cannot promise containment of deliberate escape. Cgroup mode is experimental and depends on
+real delegated host support. Reporting the narrower guarantee is more useful than pretending unavailable isolation works.
+
+## 2. Recovery is replay of evidence
+
+An intent records the expected effect before it happens. Deterministic git identities, content hashes, exact refs and
+postcondition checks make the effect repeatable. Done/abort records close it. Immutable kept inputs and the journal,
+rather than current mutable files, decide what a resumed attempt means. Raw evidence stays out of product branches;
+verified allowlisted snapshots remain enough for later briefs and chain validation.
+
+Completed lane evidence needs its final writer marker. A crash halfway through capture is not a completed certificate,
+and missing metadata cannot be defaulted into proof. This matters both to sound reuse and to recovering the same git
+commit from captured report bytes.
+
+## 3. The root should make decisions
+
+The root already owns target interpretation and the owner conversation. Giving it a real compare-and-swap edit path
+lets it act directly without coordinating another autonomous plan author. Export captures a revision and file manifest;
+apply accepts edited files only when their bases are still current and takes newer untouched bytes. File-level conflict
+is predictable: unrelated files can proceed, overlapping edits refuse together. Edited specs automatically advance their
+revision, preventing silent mismatch between text and identity.
+
+Every edit carries a short reason. Frozen-contract checks, obligation proof, no-drop splits, dependency/milestone
+conservation and risk floors remain mechanical. Reasons give decisions provenance without adding another consistency
+judgment. The C-n ledger remains plain root-facing text because existing references/debt still use it; it has no authority
+to patch product contracts. Contract changes are normal units with gates.
+
+## 4. Responsibility is a system, not a file list
+
+A file fence encourages repetitive intervention whenever real implementation discovers a caller, test or generated file
+outside the guessed list. Units instead declare systems, intent and non-goals. The gate sees actual reach outside those
+systems and decides whether the change serves the unit. The root receives overlap advice during Phase 0.
+
+This does not discard exact protection: one protectedPaths definition guards roadmap and pinned corpus paths at every
+write boundary. Systems also drive lane impact and witness selection, while unmapped files select conservatively. Trait
+tags supply mechanical persistence/redaction review triggers without banning a capable builder from those units.
+
+## 5. Independent review is conditional
+
+A fresh context is the source of independence; a different vendor is not required. The verifier has pre-build, gate and
+diagnosis modes sharing one schema and method base. M1 persistent/redacts traits, M2 non-local proof and M3 changed
+meaning justify early annotation. Review findings become standing gate items and need evidence-backed dispositions.
+A failed annotation call does not hold an otherwise runnable unit.
+
+Builders ground before editing and can say the spec is wrong or too large. This uses the implementation context for
+questions it can actually answer. It does not let a builder waive its acceptance or split the plan. The root decides.
+Testing, persistence, redaction, cluster-proof, UI and performance methods are selected from real inputs; they do not
+require another agent to negotiate which method applies.
+
+## 6. Count work that did not earn a charge
+
+Chargeable failures undercount grinding: a unit can spend many builds on certification reds that are intentionally
+uncharged. Diagnosis therefore counts every build/lanes/gate attempt, including interruption and lineage history.
+The measured m5 calibration motivated 8 builds/20 judged attempts for diagnosis and twice those values for a hard stop.
+Those thresholds are fixed in code, separate from ordinary limits. A diagnosis adds a note and shifts the remaining mixed
+profile builds to Claude. Repeated steering cannot erase the cap and spend indefinitely.
+
+## 7. Certify at the right place
+
+Cheap local checks belong in development and unit certification. Expensive local checks belong on the current candidate
+tip, retaining delivering-unit attribution. Shared-resource/cross-system checks belong at batch/milestone boundaries.
+This reduces repetitive expensive runs without claiming an untested unit branch is the final merge result.
+
+Explicit lane inputs narrow reuse keys to actual tree inputs; systems are the fallback. Reuse still binds execution/
+environment identity and clean completed certificates. Repeated reds are compared at diffBase: red there is an upstream
+problem, green there is regression evidence for the fix round. Original failing and passing directories survive reuse.
+Observed execution evidence drives waste measurements.
+
+## 8. Evidence must witness a claim
+
+A test name proves nothing by itself. Required witnesses declare exact ids/files, run all of them, and distinguish
+missing/skipped/failed from pass. Proof judgments bind statement revision and ids/files, not lane revision: moving the
+same tests to a different lane is a re-witness, not weakening. Bounded mutation smoke checks that production removal can
+kill the test, while survivors and inconclusive runs remain explicit gate evidence.
+
+External proof cannot be reduced to matching a green phrase. The root attests to an external-class obligation with
+head-bound file/URL evidence. File hashes detect tampering; a moved integration head refuses stale submission. A red
+submission reopens the delivering lineage. Capture lanes likewise retain declared PNG states from a contained stack and
+repo script on a leased port, so related gates judge actual artifacts.
+
+## 9. Test the head that will be published
+
+Candidate-first merge preserves the exact-head invariant. Certification is performed on a candidate of the current
+integration tip and unit head. Publication checks that identity again before ff. A moved tip means retry, not permission
+to publish another tree. Repair batching amortizes the serial slot while retaining each member's evidence and memory.
+Document publication uses the same slot and can preempt uncharged; publication never precedes durable intent.
+
+## 10. Review both the experience and the campaign
+
+Unit gates cannot see every cross-unit interaction or the experience a user meets. Milestones define the smallest usable
+end-to-end surfaces, with design references, real bring-up and browser/shell journeys. One experience role walks them and
+judges polish comparisons. A break holds downstream work that would need rework; a deviation can improve alongside it.
+
+One fresh campaign audit at milestones, on root request and at the final boundary judges invariants, vacuity,
+interactions and cheap document drift together. Bounded attachments/chunks preserve coverage across failures. It reports
+findings and root requests rather than silently changing the target. P1 needs repair or evidence-backed dismissal. Root dismiss records counter-evidence and actor/routing provenance;
+audit requests leave that decision with the root. Code can also dismiss a mutant that does not reproduce.
+Only the root dispositions obligations. This keeps unattended work useful without allowing independent workers to move
+the goalposts.
+
+## 11. A command center needs useful summaries
+
+The root needs to know what happened and which action resolves it. Status is read-only and concurrent; its summary shows
+progress, spend/expectations, verdicts, captures, needs-user items and advisory waste. The caught total is an activity sum
+(lane reds, gate revisions, unique finding keys), not a claim of unique defects. Suite capture spawns are the current
+summary projection; gate evidence is the place to inspect related spec captures.
+
+Needs-user closure belongs to the successful subject action. An optionless item is resolved by fixing its cause; ack is
+reserved for offered options. This avoids a second bookkeeping action after every real intervention. Waste and executor
+revision notices inform without holding. Waste detection does not authorize automatic tuning of the plan.
+
+## 12. Memory should survive without becoming law
+
+A build's report and decisions explain why a commit exists. Salvage and candidate messages retain them from verified
+captured bytes, including when the builder committed everything itself. Recovery can reconstruct the same object rather
+than invent a fresh message from live files.
+
+System notes at docs/systems (configurable) preserve gotchas, seams and rigs. Build/gate get existing paths at the checkout
+commit and note edits are normal gated diffs. Normative claims remain in the corpus. Mixing these two authorities would
+make convenience notes a hidden second specification.
+
+## 13. Cost visibility is not a spend cap
+
+The owner's unattended objective calls for useful convergence, not parking at an arbitrary dollar boundary. Expectations
+are forecasts; usage limits are actual backend availability and require explicit resume. Codex token usage is preserved
+even when native cost is absent, with price-table estimates flagged. Standard-rate estimates cannot recover per-request
+long-context billing from aggregated CLI usage. Effective routing revisions record the actual fallback/profile used.
+
+Both profiles keep Claude judgments. Default retains eligible Codex builds to share subscription load; high risk, M2,
+design and diagnosis fallback use Claude. M1 and capture-only UI remain eligible. Claude-only provides the acceptance path
+for environments that need it, and a mid-arc profile change is an ordinary revision.
+
+## 14. Check-ins and bounded autonomy
+
+A canonical brief hashes the whole payload, uses the last acknowledged coverage vector and renders from that data alone.
+The root adds a short explanation and presents owner questions with working assumptions. Exact acknowledgement is
+replayable through a pending marker and bounds how many more arcs may start. It is not a generic runtime dismissal.
+
+Corpus windows, stable rule ids, the census, ranked questions and open-debt dispositions make the next arc deliberate.
+Estate compaction records explicit owner approval and applies through normal inputs. Foreign predecessors use baseline/
+previousHead without pretending a schema-1 runtime was adopted. Dev.33 is a one-off schema-2 breaking exception; future
+updates return to upgrade-in-place. The dev.32 refusal regression records that boundary.
+
+## Standing implementation decisions
+
+- **Roles, not models.** State records `{role,routingRev}`; only routing binds model ids. Prompts are explicit per
+  (role, model), with declared inheritance/unsupported pairs. `state.no-model-ids` guards the record boundary, so changing
+  a provider does not rewrite domain history or silently reuse an untested prompt.
+- **Peer backends through files.** Both CLIs run under the same runner/process interface. Launch, stdout/stderr, exit
+  and result files survive parent death; pipes alone would lose the evidence needed for adoption. Adapters are pure over
+  quiescent files and can rerun. Backend smoke actually asks for a real shell command, testing tool execution and parsing
+  rather than accepting a model's claim that the CLI works.
+- **DAG plus resource locks.** Independent units progress without sharing checkouts. All-or-none reservations prevent
+  partial acquisition deadlocks; reserved → running → cleaning → free ties release to cleanup. Failed cleanup leaves a
+  durable residue, withholding the instance until probing/sweep cleans or isolation dispositions it. Startup refuses
+  foreign residues so another arc cannot inherit an unaccounted workload.
+- **Clean PRs.** Product branches carry product changes and living `.roadmap/` documents. Runtime and raw evidence stay
+  outside the tree. `refs/roadmap/<arc>` carries allowlisted records with a SHA-256 manifest, preserving verified chain/
+  brief evidence without polluting product review.
+- **Failing output survives.** A red lane retains newly written/changed ignored output (bounded, with secret exclusions)
+  in its evidence. Otherwise the very report needed for a fix disappears when the disposable checkout is removed.
+- **Executable before judged.** `witness-check` checks exact ids, including missing/skipped tests, before a green-looking
+  suite becomes proof. Mutation smoke executes a bounded production-removal variant; survivors/inconclusive runs remain
+  visible. Reading test source is useful judgment, not evidence that the negative case fails.
+- **Clocks are spec guidance (R39).** Specs ask for product clock seams, shifted dates/time zones and injected timeouts.
+  The executor does not invent a universal fake clock for arbitrary products; doing so would conceal untested seams.
+- **Supervision through levers, with a log (OR-A3).** Actionable watch and a 30-minute heartbeat bound root attention.
+  Three-line notes keep the owner informed; supported commands retain provenance. The append-only operator log explains
+  self-initiated interventions and all arc-wide controls, including when a pause ended. The root never patches plugin/
+  runtime state: a defect is reported with evidence so repairs do not hide the failed experiment.
+- **An eval ladder.** Typed/free tests prove deterministic readers, real git/process behavior and crash replay at
+  `crashPoint(label[@unit]:n)` boundaries. Real CLI probes prove invocation/adaptation; role trials grade catches and
+  false blocks; paid fixtures test orchestration and independent M4a adjudication (with its forge-isolation canary).
+  Each tier proves a different claim; none licenses a week-long reliability claim by itself.
+
+A 0.x layout is refused, never converted. Dev.33 separately refuses schema 1; later schema-2 releases return to the
+standing upgrade-in-place rule.

@@ -1,4 +1,4 @@
-// Readiness, admission and rank (M2 plan "Readiness", "Admission", "Priority and aging"; SCHEMAS.md M2), pure
+// Readiness, admission and rank (M2 plan "Readiness", "Admission", "Priority and aging"; SCHEMAS.md "Scheduling"), pure
 // over the log's view and the plan in force. The scheduler asks `ready` which units to start tasks for, `admit`
 // (bound to the routing in force by `admitter`) at every admission boundary of every task, and `rankOf` for the
 // arbiter's waiter order.
@@ -10,7 +10,7 @@
 //
 // M3 (B3): two facts about a unit come from its spec in force, which only the pipeline reads (`SpecFacts`,
 // src/pipeline/reproduce.ts `specFacts`): whether it is a vacuity repair that reproduces its mutant first (its first
-// stage is `reproduce`, not plan-check), and the obligations it repairs, which exempt it from an active P1's
+// stage is `reproduce`, not pre-build), and the obligations it repairs, which exempt it from an active P1's
 // `finding-blocked` at candidate admission (G10). Repair units rank first (R6, `ORIGIN_RANK`).
 //
 // M4a rev 3: a unit's plan `priority` ranks first (F1b, R42, `compareRank`). Known defects (F4, R49): one predicate,
@@ -28,26 +28,26 @@
 // M4b rev 3 (RC-11): a unit whose run was starved, or red under host pressure with its rerun pending, stays active and
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
-import { type OutcomeStage, JUDGMENT_STAGES, type JudgmentStage, type ProbeTarget } from '../core/events.ts';
-import type { LaneId, ObligationId, UnitId } from '../core/ids.ts';
+import { JUDGMENT_STAGES,type JudgmentStage,type OutcomeStage,type ProbeTarget } from '../core/events.ts';
+import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { canonicalJson } from '../core/json.ts';
+import { type NeedsUserReason,obligationRevsOf } from '../core/records.ts';
+import { ENTRY_STAGE,type UnitState } from '../core/state.ts';
+import { p1Blocking } from '../holistic/findings.ts';
+import { type SpecLinks } from '../holistic/staleset.ts';
+import { pressureHoldWaits } from '../host/pressure.ts';
+import { lineageMembers } from '../input/lineage.ts';
+import { type KnownDefect,type PlanM1,type PlanUnit,knownDefectsOf,priorityOf } from '../input/plan.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { deflakeHold } from '../pipeline/deflake.ts';
-import type { JournalView } from '../core/interfaces.ts';
-import { type NeedsUserReason, obligationRevsOf } from '../core/records.ts';
-import { ENTRY_STAGE, type UnitState } from '../core/state.ts';
-import { p1Blocking } from '../holistic/findings.ts';
-import { pressureHoldWaits } from '../host/pressure.ts';
-import { type SpecLinks, propagationHolds } from '../holistic/staleset.ts';
-import { canonicalJson } from '../core/json.ts';
-import { lineageMembers } from '../input/envelope.ts';
-import { type KnownDefect, type PlanM1, type PlanUnit, knownDefectsOf, priorityOf } from '../input/plan.ts';
-import { judgmentSeat, decidedBy } from '../pipeline/transitions.ts';
-import type { Backend, JudgmentRole, RoutingTable } from '../routing/types.ts';
-import { milestoneEdges, milestonePassedSeq, milestoneWaits } from '../walk/node.ts';
+import { decidedBy,judgmentSeat } from '../pipeline/transitions.ts';
+import type { Backend,JudgmentRole,RoutingTable } from '../routing/types.ts';
+import { milestoneEdges,milestonePassedSeq,milestoneWaits } from '../walk/node.ts';
 import { effectiveDependency } from './graph.ts';
 import {
-  ADMISSION_STAGES, type Admission, type AdmissionConstraint, type AdmissionStage, type Admit, type AdmitInput, type ChainStage, type CommandScope,
-  PROMOTION_BYPASS, type Rank, compareRank,
+ADMISSION_STAGES,type Admission,type AdmissionConstraint,type AdmissionStage,type Admit,type AdmitInput,type ChainStage,type CommandScope,
+PROMOTION_BYPASS,type Rank,compareRank,
 } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
@@ -64,7 +64,7 @@ const isAdmissionStage = (s: OutcomeStage): s is AdmissionStage => (ADMISSION_ST
  * read only when one is pending (src/holistic/staleset.ts `propagationHolds`).
  */
 export type SpecFacts = Readonly<{
-  reproduces: boolean; repairs: ReadonlySet<ObligationId>;
+  review?: boolean; reproduces: boolean; repairs: ReadonlySet<ObligationId>;
   /** dev.17: its spec lanes, forces and witness lanes (src/pipeline/deflake.ts `specLaneIds`), read when a deflake edge may hold it. */
   lanes: () => ReadonlySet<LaneId>;
   links: () => SpecLinks;
@@ -73,14 +73,14 @@ export type SpecFactsOf = (unit: PlanUnit) => SpecFacts;
 
 /**
  * The stage a unit runs next, from its latest decided outcome: before one (or after a reopen) its first stage,
- * `reproduce` for a vacuity repair (`reproduces`, M3 B3), else plan-check; `prepare` for a re-entry that has not
+ * `reproduce` for a vacuity repair (`reproduces`, M3 B3), else pre-build; `prepare` for a re-entry that has not
  * prepared yet. null when the decision ends the unit's stages (a park, a stop or a retire). A chain stage runs
  * without admission (F5). M3: an entry a command set goes first (a steer's round is a build, a merge-in's lanes:
  * `ENTRY_STAGE`).
  */
-export function nextStage(u: UnitState, reproduces: boolean): NextStage | null {
+export function nextStage(u: UnitState, reproduces: boolean, review = true): NextStage | null {
   if (u.entry !== null) return { kind: 'admission', stage: ENTRY_STAGE[u.entry.kind] };
-  if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : reproduces ? 'reproduce' : 'plan-check' };
+  if (u.decided === null) return { kind: 'admission', stage: u.lineage !== null && !u.lineage.prepared ? 'prepare' : reproduces ? 'reproduce' : review ? 'pre-build' : 'build' };
   const d = decidedBy(u.decided);
   if (d.kind !== 'stage') return null;
   const s = d.target.stage;
@@ -90,7 +90,7 @@ export function nextStage(u: UnitState, reproduces: boolean): NextStage | null {
 // ---------------------------------------------------------------------------------------------------
 // Admission (A12, A17)
 
-const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'plan-check': 'planCheck', gate: 'gate' };
+const ROLE_OF: Readonly<Record<JudgmentStage, JudgmentRole>> = { 'pre-build': 'verifier', gate: 'verifier' };
 
 /** Open blocking items with these reasons hold every admission; so does any item whose subject is the host. */
 const ADMISSION_BLOCKING: readonly NeedsUserReason[] = ['recovery-required', 'log-corrupt', 'supervisor-crash-limit'];
@@ -105,8 +105,7 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
     const j = stage as JudgmentStage;
     return routing[ROLE_OF[j]][judgmentSeat({ ...u, risk: u.risk ?? unit.risk }, j)].backend;
   }
-  if (stage === 'build' || stage === 'poc') return routing.build[u.buildTier ?? unit.risk].backend;
-  if (stage === 'scaffold') return routing.scaffold[u.risk ?? unit.risk].backend;
+  if (stage === 'build') return routing.build[u.buildTier ?? unit.risk].backend;
   return null;
 }
 
@@ -118,7 +117,7 @@ function backendOf(routing: RoutingTable, u: UnitState, unit: PlanUnit, stage: A
 function breakerBlocks(target: ProbeTarget, stage: AdmissionStage, backend: Backend | null): boolean {
   switch (target.type) {
     case 'host':
-      return stage === 'build' || stage === 'lanes' || stage === 'reproduce' || stage === 'scaffold' || stage === 'poc';
+      return stage === 'build' || stage === 'lanes' || stage === 'reproduce';
     case 'backend':
       return target.backend === backend;
     case 'resource':
@@ -180,7 +179,6 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     const edge = deflakeHold(view, plan, systemsMapInForce(view.planApplied()), unit, () => specOf(unit).lanes());
     if (edge !== null) c.push(edge);
     // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
-    if (stage === 'gate') c.push(...propagationHolds(view, plan, unit, specOf(unit).links));
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
     for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
@@ -286,7 +284,7 @@ export function ready(input: ReadyInput): readonly ReadyUnit[] {
   for (const unit of plan.units.filter((u) => dependenciesMet(view, u, waits))) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
-    const next = nextStage(u, input.spec(unit).reproduces);
+    const next = nextStage(u, input.spec(unit).reproduces, input.spec(unit).review);
     if (next?.kind !== 'admission') continue;
     if (admit({ ...input, unit, stage: next.stage }).kind !== 'admit') continue;
     out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id) });

@@ -77,7 +77,7 @@ test('evals-m2.setup-valid: setup lays out a plan parsePlan accepts, specs the v
   const unit = (id: string) => plan.units.find((u) => u.id === id)!;
   assert.deepEqual(unit('top').after, ['left', 'right']);
   assert.deepEqual(unit('top').contingent.map((e) => e.id), [EDGE]);
-  assert.equal(unit('urgent').origin, 'checkpoint');
+  assert.equal(unit('urgent').origin, 'repair');
   assert.deepEqual(unit('urgent').after, []);
   const specs = new Map(plan.units.map((u) => [u.id, loadSpec(absPath(join(l.input, u.spec)))] as const));
   const barrier = (id: string) => specs.get(plan.units.find((u) => u.id === id)!.id)!.lanes.filter((x) => x.argv.includes(ESTATE_HOLD) || x.argv.includes(RIGHT_HOLD)).map((x) => x.id);

@@ -1,0 +1,132 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "defect": "contract-violation",
+      "path": "packages/wheat/src/vessel-export.ts",
+      "hunk": {
+        "path": "packages/wheat/src/vessel-export.ts",
+        "line": 2
+      },
+      "text": "vesselExport ignores the caller's id and always returns { vessel: 'anonymous' }. Corpus rule T-1 requires the supplied vessel id to be preserved verbatim in the vessel field, so A1 and obligation I-1 are not met.",
+      "evidence": [
+        "packages/wheat/src/vessel-export.ts:2",
+        "docs/corpus/0010_Exports.md:6 (T-1)"
+      ],
+      "contractRef": "T-1",
+      "experiments": [
+        {
+          "command": "node -e \"import('./packages/wheat/src/vessel-export.ts').then(m=>console.log(JSON.stringify(m.vesselExport({id:'oak',token:'private'}))))\"",
+          "output": "{\"vessel\":\"anonymous\"}"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "blocking",
+      "defect": "test-inadequate",
+      "path": "packages/wheat/test/vessel-export.test.ts",
+      "hunk": {
+        "path": "packages/wheat/test/vessel-export.test.ts",
+        "line": 4
+      },
+      "text": "The only test asserts that typeof vessel is 'string', so it passes with the hard-coded 'anonymous' value. The green unit lane therefore says nothing about T-1, and the test cannot witness I-1. Its name, 'export record shape', also describes shape rather than id preservation.",
+      "evidence": [
+        "packages/wheat/test/vessel-export.test.ts:4",
+        "Lane ledger: unit passes at this head while vesselExport returns 'anonymous' for id 'oak'",
+        "Executable checks: mutation smoke did not run, so nothing else exercised this test's strength"
+      ],
+      "contractRef": "T-1",
+      "experiments": [
+        {
+          "command": "node -e \"import('./packages/wheat/src/vessel-export.ts').then(m=>console.log(JSON.stringify(m.vesselExport({id:'oak',token:'private'}))))\"",
+          "output": "{\"vessel\":\"anonymous\"}"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "defect": null,
+      "path": "goldens/wheat.json",
+      "hunk": null,
+      "text": "A2 is met for the current source. The only golden delta is the added module entry for packages/wheat/src/vessel-export.ts, and the executor's regeneration came out byte-identical. The params string records the signature, so the golden must be regenerated with the tool if the signature changes during the fix.",
+      "evidence": [
+        "goldens/wheat.json module-level comparison of HEAD~1 and HEAD: only packages/wheat/src/vessel-export.ts added",
+        "Executable checks: goldens/** verified by regeneration"
+      ],
+      "contractRef": "contracts/api.md",
+      "experiments": [
+        {
+          "command": "node -e (parse goldens/wheat.json at HEAD~1 and HEAD, then compare modules by path)",
+          "output": "changed/added packages/wheat/src/vessel-export.ts {\"path\":\"packages/wheat/src/vessel-export.ts\",\"exports\":[{\"name\":\"vesselExport\",\"params\":\"input: { id: string; token: string }\",\"calls\":[]}]}"
+        }
+      ],
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "defect": null,
+      "path": null,
+      "hunk": null,
+      "text": "The spec cites ruling C-1, but its text is not in the supplied documents and a search of docs/, contracts/, ARCHITECTURE.md, README.md and the pinned corpus found no match. I did not grade the change against C-1. This does not affect the decision, because the T-1 failure blocks regardless.",
+      "evidence": [
+        "Spec Cites: ruling C-1",
+        "grep for C-1 in docs, contracts, ARCHITECTURE.md and README.md returned no matches; a corpus search for C-1, I-1 and vessel returned only the vessel lines in 0010_Exports.md"
+      ],
+      "contractRef": null,
+      "experiments": [],
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "Change packages/wheat/src/vesselExport so the returned vessel field is input.id, unchanged (T-1). Do not log or return the token (T-2).",
+    "Strengthen packages/wheat/test/vessel-export.test.ts: assert the exact returned value for at least two distinct ids, including one with case or whitespace that a normalizing implementation would change, so the constant 'anonymous' and similar wrong implementations fail. Keep a test the journey witness selects under the required name 'export'.",
+    "Add an assertion that the returned record does not contain the token, and that nothing is written to console output during the call, if that can be done without changing the function's shape.",
+    "Run node tools/gen-goldens.ts after the change and commit only what it produces. Do not hand-edit goldens or change anything unrelated."
+  ],
+  "reasons": [
+    "A1 not met: vesselExport has the requested signature and a test exists, but it returns the constant 'anonymous' instead of the caller's id, which violates T-1.",
+    "A2 met at this head: the regeneration is byte-identical and the only golden delta is the new module. Nothing else changed beyond the source, test and golden.",
+    "I-1 not satisfied: the required behaviour is absent, and the existing test passes without it, so the green lane and the witness presence check are not proof.",
+    "T-2 has no violation at this head: the function does no logging and does not use the token."
+  ],
+  "premises": [
+    {
+      "claim": "T-1 requires the caller's vessel id verbatim in the vessel field.",
+      "evidence": [
+        {
+          "path": "docs/corpus/0010_Exports.md",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "claim": "The implementation returns a hard-coded 'anonymous' and never reads input.id.",
+      "evidence": [
+        {
+          "path": "packages/wheat/src/vessel-export.ts",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The test only checks that the vessel field is a string.",
+      "evidence": [
+        {
+          "path": "packages/wheat/test/vessel-export.test.ts",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

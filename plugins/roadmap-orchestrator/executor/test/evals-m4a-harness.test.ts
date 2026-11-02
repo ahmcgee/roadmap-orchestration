@@ -8,26 +8,25 @@
 // evals-m4a.watch-absorbs-routine, evals-m4a.terminal-seq-and-post-run, evals-m4a.cost-deltas-and-unknowns.
 import assert from 'node:assert/strict';
 import { spawn as spawnProc } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { after,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { after, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { CRITERIA,LEVERS,type PressureArc,check,hostReleasedVerdict,interventionsOf,parseOperatorLog,pressureRecordedVerdict,profileVerdict } from '../evals/m4a/check.ts';
+import { type ArcForensics,LIMITS,arcForensics,drive,fixtureProcesses,initialPrompt,isWatchTail,killProcs,postRunOf,stopHeldArc } from '../evals/m4a/driver.ts';
+import { fakeArc,fakeHostDir } from '../evals/m4a/fake-root.ts';
+import { layout } from '../evals/m4a/layout.ts';
+import { costTotals,exportCosts,invocationCosts,rootCosts } from '../evals/m4a/transcript.ts';
 import type { Event } from '../src/core/events.ts';
 import { arcId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
-import { claimHost, readClaim, releaseHost } from '../src/host/lock.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
-import { type ArcForensics, LIMITS, arcForensics, drive, fixtureProcesses, initialPrompt, isWatchTail, killProcs, postRunOf, stopHeldArc } from '../evals/m4a/driver.ts';
-import { ActionableFilter, HEARTBEAT_MIN } from '../src/watch.ts';
-import { CRITERIA, LEVERS, type PressureArc, check, hostReleasedVerdict, interventionsOf, parseOperatorLog, pressureRecordedVerdict, profileVerdict } from '../evals/m4a/check.ts';
-import type { FlowInputs } from '../src/flow/types.ts';
-import { layout } from '../evals/m4a/layout.ts';
-import { costTotals, exportCosts, invocationCosts, rootCosts } from '../evals/m4a/transcript.ts';
-import { fakeArc, fakeHostDir } from '../evals/m4a/fake-root.ts';
+import { claimHost,readClaim,releaseHost } from '../src/host/lock.ts';
+import { ActionableFilter,HEARTBEAT_MIN } from '../src/watch.ts';
 import { runUntilExit } from './helpers/proc.ts';
-import { type RunScope, assertNoSurvivors, teardown, track } from './helpers/reap.ts';
-import { git, makeRepo, tmpDir } from './helpers/repo.ts';
+import { type RunScope,assertNoSurvivors,teardown,track } from './helpers/reap.ts';
+import { git,makeRepo,tmpDir } from './helpers/repo.ts';
 
 after(assertNoSurvivors);
 
@@ -135,22 +134,17 @@ test('evals-m4a.profile-criterion: every arc\'s first plan-applied is under the 
   assert.ok(!names.includes('interventions'), 'interventions is a metric, never a criterion');
 });
 
-/** An arc log for `pressure-recorded` from its records (cast, never parsed); its flow runs kept inputs at window pressure `window`. */
-function pressureArc(records: readonly object[], window: number | null = 0.6): PressureArc {
+/** An arc log for `pressure-recorded` from its records (cast, never parsed); its recorded lane executions. */
+function pressureArc(records: readonly object[]): PressureArc {
   // A minute between records: every lane run is long enough to carry a pressure, unless a record gives its own `at`.
-  const events = records.map((r, i) => ({ v: 1, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
-  return { arc: 'arc-p', events, flowInputs: () => ({ pressure: { now: null, threshold: 0.5, available: true, window, cpuInUse: 2, hostCpus: 8 } }) as unknown as FlowInputs };
+  const events = records.map((r, i) => ({ v: 2, seq: i + 1, prev: null, at: new Date(Date.parse('2026-10-09T10:00:00.000Z') + i * 60_000).toISOString(), arc: 'arc-p', ...r })) as unknown as Event[];
+  return { arc: 'arc-p', events };
 }
 const startRec = (pressure: 'available' | 'unavailable') => ({ type: 'fact', fact: { kind: 'executor-started', generation: 1, pressure } });
 const laneIntent = (op: string, purpose = 'lane') => ({ type: 'intent', kind: 'proc.spawn', op, parent: { type: 'stage' }, expect: { subject: { purpose } } });
 const laneDone = (op: string, pressure: number | null) => ({ type: 'done', kind: 'proc.spawn', op, outcome: { kind: 'result', summary: { type: 'command', verdict: 'pass' }, pressure } });
-const flowRun = (station: string) => [
-  { type: 'fact', fact: { kind: 'flow-started', job: 'flow-1', triggers: ['host-pressure'], inputsSha256: 'a'.repeat(64) } },
-  { type: 'fact', fact: { kind: 'flow-ended', job: 'flow-1', outcome: 'done', proposal: null, dropped: null, constraint: { code: { station, internal: true, component: null }, judged: null } } },
-];
-
-test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry pressure; host:cpu only at a saturated window; graded', () => {
-  const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3), ...flowRun('host:cpu')]);
+test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry pressure; graded', () => {
+  const good = pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', 0.04), laneIntent('o2', 'journey'), laneDone('o2', 0.3)]);
   assert.equal(pressureRecordedVerdict([good]).pass, true, pressureRecordedVerdict([good]).detail);
   // A run whose intent was under an earlier start, a run under a start without schedstat, and a short run record null legitimately.
   const adopted = pressureArc([
@@ -161,9 +155,6 @@ test('evals-m4a.pressure-criterion: long lane runs under a schedstat start carry
   const missing = pressureRecordedVerdict([pressureArc([startRec('available'), laneIntent('o1'), laneDone('o1', null)])]);
   assert.equal(missing.pass, false);
   assert.match(missing.detail, /o1's lane run has no pressure/);
-  const calm = pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('host:cpu')], 0.4)]);
-  assert.match(calm.detail, /flow-1 named host:cpu at window pressure 0.4/);
-  assert.equal(pressureRecordedVerdict([pressureArc([startRec('available'), ...flowRun('slot:integration')], null)]).pass, true, 'no host:cpu: no window read');
   assert.match(pressureRecordedVerdict([pressureArc([startRec('unavailable')])]).detail, /no executor start recorded schedstat available/);
   assert.ok(CRITERIA.map(([name]) => name).includes('pressure-recorded'));
 });
@@ -182,12 +173,14 @@ const entry = (n: number, lever: string, over: Partial<Record<string, string>> =
 test('evals-m4a.operator-log-metric: the log counts well-formed entries by lever, lists malformed ones, and a missing log is zero', () => {
   const good = parseOperatorLog(['# Skill feedback', '', 'free text is ignored', '', entry(1, 'apply'), entry(2, 'pause'), entry(3, 'apply'), entry(4, 'inputs export')].join('\n'));
   assert.deepEqual({ n: good.n, byLever: good.byLever, malformed: good.malformed }, { n: 4, byLever: { apply: 2, pause: 1, 'inputs export': 1 }, malformed: [] });
+  assert.equal(parseOperatorLog(entry(1, 'rule')).n, 0, 'retired ruling command is refused');
+  for (const lever of ['note', 'witness', 'dismiss']) assert.equal(parseOperatorLog(entry(1, lever)).n, 1);
   assert.ok(LEVERS.every((x) => parseOperatorLog(entry(1, x)).n === 1), 'every lever of the closed list parses');
 
   const bad = parseOperatorLog([
     entry(1, 'apply'),
     entry(2, 'patch-the-executor'),
-    entry(3, 'rule', { evidence: '' }),
+    entry(3, 'note', { evidence: '' }),
     '## OP-four sometime arc=a lever=rule\n- symptom: x',
     entry(1, 'stop'),
     entry(6, 'gc').replace('- outcome: it moved\n', ''),
@@ -325,24 +318,24 @@ const meter = (seq: number, inv: string, role: string, costUsd: number | null, s
 
 test('evals-m4a.cost-deltas-and-unknowns: per-invocation rows keep unknowns explicit, root rows are deltas of the cumulative total, post-run activity is totalled apart', () => {
   const events = [
-    spawn(10, 'a1/10', 'implementer'), meter(12, 'a1/10#1', 'implementer', 0.5),
-    spawn(20, 'a1/20', 'gate'), meter(22, 'a1/20#1', 'gate', null),
-    spawn(30, 'a1/30', 'implementer'), fact(32, 'usage-unavailable', { inv: 'a1/30#1', routingRev: 1, subject: { type: 'seat', role: 'implementer', tier: 'frontier', unit: 'u1', attempt: 1 }, reason: 'no-result' }),
-    spawn(40, 'a1/40', 'gate'),
-    spawn(50, 'a1/50', 'implementer'), meter(52, 'a1/50#1', 'implementer', 2),
-    meter(36, 'a1/36#1', 'lens', 0.25, { type: 'job', role: 'lens', tier: 'frontier', job: 'J-1', attempt: 1 }),
+    spawn(10, 'a1/10', 'build'), meter(12, 'a1/10#1', 'build', 0.5),
+    spawn(20, 'a1/20', 'verifier'), meter(22, 'a1/20#1', 'verifier', null),
+    spawn(30, 'a1/30', 'build'), fact(32, 'usage-unavailable', { inv: 'a1/30#1', routingRev: 1, subject: { type: 'seat', role: 'build', tier: 'frontier', unit: 'u1', attempt: 1 }, reason: 'no-result' }),
+    spawn(40, 'a1/40', 'verifier'),
+    spawn(50, 'a1/50', 'build'), meter(52, 'a1/50#1', 'build', 2),
+    meter(36, 'a1/36#1', 'campaignAudit', 0.25, { type: 'job', role: 'campaignAudit', tier: 'frontier', job: 'J-1', attempt: 1 }),
     // Not a backend call: never an invocation row.
     { type: 'intent' as const, seq: 60, op: 'a1/60', kind: 'proc.spawn', ordinal: 1, expect: { subject: { purpose: 'lane', unit: 'u1', lane: 'l', set: 'spec', at: 'x' }, launchSha256: 'x' } },
   ] as unknown as readonly Event[];
   const rows = invocationCosts('a1', events, 35);
   const brief = rows.map((r) => [r.inv, r.role, r.costUsd, r.unknown, r.postRun]);
   assert.deepEqual(brief, [
-    ['a1/10#1', 'implementer', 0.5, null, false],
-    ['a1/20#1', 'gate', null, 'the CLI reported no cost', false],
-    ['a1/30#1', 'implementer', null, 'usage unavailable: no-result', false],
-    ['a1/36#1', 'lens', 0.25, null, true],
-    ['a1/40#1', 'gate', null, 'no usage fact', true],
-    ['a1/50#1', 'implementer', 2, null, true],
+    ['a1/10#1', 'build', 0.5, null, false],
+    ['a1/20#1', 'verifier', null, 'the CLI reported no cost', false],
+    ['a1/30#1', 'build', null, 'usage unavailable: no-result', false],
+    ['a1/36#1', 'campaignAudit', 0.25, null, true],
+    ['a1/40#1', 'verifier', null, 'no usage fact', true],
+    ['a1/50#1', 'build', 2, null, true],
   ]);
 
   // The root: result events carry the cumulative total; turn 2 has none, turn 5 falls.

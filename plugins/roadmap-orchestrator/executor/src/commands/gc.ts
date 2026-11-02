@@ -1,4 +1,4 @@
-// `roadmap gc --repo <path> [--keep K] [--dry-run]` (DESIGN-1.0.md §2.3, §2.9 "Growth across arcs"; plan "Growth
+// `roadmap gc --repo <path> [--keep K] [--dry-run]` (DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Growth
 // controls", A20/H5, G6-G8): a CLI act under the host lock, not a queued command. It prunes the run dirs of this
 // repo's **sealed** arcs, then the host dir's old generation files and residue archives.
 //

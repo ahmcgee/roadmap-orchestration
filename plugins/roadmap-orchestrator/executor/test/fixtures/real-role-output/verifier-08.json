@@ -1,0 +1,156 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "docs/design/page/README.md",
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 35
+      },
+      "defect": "requirement-unmet",
+      "text": "The step 2 markup puts `required` on the name input and the form has no `novalidate`. A browser therefore blocks an empty submit before it reaches the server. The neighbour gets the browser's own bubble (\"Please fill out this field.\") and never sees M4, the wording A2 fixes for 'first name missing'. Only a spaces-only name would reach M4. The bubble is not in the street's words, does not say what to do next in V-12's terms, and bypasses the announcement design in section 3 (role=alert, aria-invalid, aria-describedby, the distinct title). J-3 and J-4 run in a browser, so a builder following this markup literally would never show M4 on the main path, and T-7's refusal would be replaced by a native tooltip.",
+      "evidence": [
+        "docs/design/page/README.md:34-35 specifies `required` on the input",
+        "docs/design/page/README.md:88-94 M4 is the status 400 refusal page, shown after submission",
+        "docs/design/page/README.md:93 only names spaces as a further way to count as missing"
+      ],
+      "experiments": [
+        {
+          "command": "chrome-headless-shell --no-sandbox --disable-gpu --dump-dom file://$D/t.html (the spec's form and input verbatim; script clicks the button with an empty field, then with three spaces, counting submit events)",
+          "output": "{\"submitEventsOnEmptyClick\":0,\"nativeMessage\":\"Please fill out this field.\",\"submitEventsAfterSpacesClick\":1}"
+        }
+      ],
+      "contractRef": "A2, V-12, T-7, J-3",
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "blocking",
+      "path": "docs/design/page/README.md",
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 100
+      },
+      "defect": "contract-violation",
+      "text": "The reference contradicts itself on where the M5 refusal sits. M5 says the search form 'stays above' the message. The rules for every refusal say it is 'the first thing in <main>, above the form or links'. The announcement section lists M2 to M6 as first in <main> and says to verify that 'the first landmark content is the refusal'. A role=search form above the message is itself a landmark that comes first, so a builder must break one of these rules. J-4 requires 'refusals are found first', and A3 asks this document to specify how a refusal is announced, so the floor has to be unambiguous for the no-match case.",
+      "evidence": [
+        "docs/design/page/README.md:100 'The search form stays above with {q} still in the box'",
+        "docs/design/page/README.md:112 'It is the first thing in <main>, above the form or links.'",
+        "docs/design/page/README.md:171-174 refusals M2 to M6 are first in <main>",
+        "docs/design/page/README.md:182 the verification step requires the refusal as first landmark content"
+      ],
+      "experiments": [],
+      "contractRef": "A3, J-4, T-19",
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "path": "docs/design/page/README.md",
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 107
+      },
+      "defect": null,
+      "text": "M6 promises 'the retry is one tap' and tells the neighbour to 'tap Reserve this book again', but nothing says the name they typed is put back in the field. If the field comes back empty, the retry produces the missing-name refusal instead. State that the name is re-rendered, escaped, as the input's value on M6.",
+      "evidence": [
+        "docs/design/page/README.md:105-108"
+      ],
+      "experiments": [],
+      "contractRef": "A2",
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "path": "docs/design/page/README.md",
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 162
+      },
+      "defect": null,
+      "text": "The wrapping rule covers `.book-meta` and 'any element showing a book's words'. It does not literally cover values the neighbour typed: {q} in the M5 heading and title, or {name} in the M1 heading. A long unbroken search term or name could still push the page sideways at 360px. Widen the rule to every echoed value.",
+      "evidence": [
+        "docs/design/page/README.md:98",
+        "docs/design/page/README.md:161-163"
+      ],
+      "experiments": [],
+      "contractRef": "A3",
+      "debt": null,
+      "reraises": null
+    },
+    {
+      "severity": "note",
+      "path": "docs/design/page/README.md",
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 20
+      },
+      "defect": null,
+      "text": "Step 1 says the heading, tagline and list 'stay as they are', and nothing places the collection window's days and hours that T-31 requires on the page. The spec's acceptance clauses do not ask for this, so it does not block. The later page unit will have no design placement for it, and the current tagline hard-codes the name and address that T-25 takes from settings.",
+      "evidence": [
+        "docs/design/page/README.md:20",
+        "src/pages.js:15-16",
+        "docs/corpus/keeper.md T-31"
+      ],
+      "experiments": [],
+      "contractRef": "T-31",
+      "debt": null,
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "In docs/design/page/README.md step 2, remove `required` from the name input, or add `novalidate` to the form and say why, so that an empty submit reaches the server and shows M4 as the refusal. Keep the rest of the input's markup.",
+    "In M5, resolve the contradiction with the rules for every refusal and the announcement section: put the 'No book matches' refusal first in <main>, with the search form (still holding {q}) and the 'Show the whole shelf' link after it. Make the step 1 wording and the search layout line consistent with that, or state a single explicit rule that all sections share.",
+    "While revising, also consider the notes: M6 re-renders the typed name as the input's value, the 360px wrapping rule covers echoed {q} and {name}, and the shelf page gets a place for the collection window (T-31). Change only docs/design/page/."
+  ],
+  "reasons": [
+    "A1 met: the three-step flow has URLs and forms, and the last step says where and by when (lines 12-16, 43-47, M1).",
+    "A2 not met in effect: all five refusals and the confirmation have exact wording, but the specified `required` attribute stops M4 being shown for an empty submit in a browser (confirmed in Chromium).",
+    "A3 partly met: labels, focus style, 44px targets, contrast and the 360px rule are specified, and the contrast figures recompute correctly. The refusal announcement contradicts itself for M5, because the search form sits above the message while the refusal must come first in <main>.",
+    "A4 met: section 4 keeps the existing paper, ink, rust and lettering from public/style.css, adds nothing to the palette, and describes the Reserve link and form in that language.",
+    "D1 and D2 honoured: 'Sunday at six (8 November)' is verbatim and 8 November 2026 is a Sunday. Non-goals respected: the diff touches only docs/design/page/README.md.",
+    "Standing obligations I-1 to I-6 are not disturbed, since no product code changed, and the document keeps T-1, T-2, T-16 and T-18."
+  ],
+  "premises": [
+    {
+      "claim": "The palette contrast figures in the reference are correct: computed ink 14.03, soft ink 5.27, rust 6.34, rule 1.44 on paper #fbf7ef.",
+      "evidence": [
+        {
+          "path": "public/style.css",
+          "line": 3
+        },
+        {
+          "path": "docs/design/page/README.md",
+          "line": 142
+        }
+      ]
+    },
+    {
+      "claim": "The existing page already has the lang attribute, viewport meta, single h1 and tagline with the address, and marks reserved books inside the soft-ink meta line, as the reference says.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 6
+        },
+        {
+          "path": "src/pages.js",
+          "line": 9
+        },
+        {
+          "path": "src/pages.js",
+          "line": 15
+        },
+        {
+          "path": "src/pages.js",
+          "line": 30
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

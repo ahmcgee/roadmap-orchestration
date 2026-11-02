@@ -6,11 +6,11 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { invocationId, opIdOf } from '../src/core/ids.ts';
-import { HOST_SIGNATURES_DEV6 } from '../src/core/upgrade.ts';
+import { invocationId,opIdOf } from '../src/core/ids.ts';
+
 import type { HostSample } from '../src/host/sample.ts';
-import { HOST_SIGNATURES, HOST_SIGNATURES_REV, SIGNATURE_TAIL_BYTES, matchSignatures, outputSignatures } from '../src/host/signatures.ts';
-import { type LaneHost, type RerunEnd, abortReason, afterRerun, classifyRed, failureSignature, redLane, waitForClearHost } from '../src/pipeline/redlane.ts';
+import { HOST_SIGNATURES,SIGNATURE_TAIL_BYTES,matchSignatures,outputSignatures } from '../src/host/signatures.ts';
+import { type LaneHost,type RerunEnd,abortReason,afterRerun,classifyRed,failureSignature,redLane,waitForClearHost } from '../src/pipeline/redlane.ts';
 import { tmpDir } from './helpers/repo.ts';
 
 const sample = (load1: number, memAvailableKb = 900_000): HostSample => ({ load1, cpus: 16, memTotalKb: 1_000_000, memAvailableKb });
@@ -80,19 +80,7 @@ test('redlane.classify: signature with busy-host evidence reruns after a clear h
   assert.throws(() => abortReason(odd.signal), /not pause or stop/);
 });
 
-test('signatures.new-entries: revision 2 adds etcd request timeouts, container kills and OOM kills; the frozen 1.0.0-dev.6 table knows none of them', () => {
-  assert.equal(HOST_SIGNATURES_REV, 2);
-  assert.deepEqual(matchSignatures('Error from server: etcdserver: request timed out'), ['etcd-request-timeout']);
-  assert.deepEqual(matchSignatures('Error response from daemon: Could not kill container 3f2a: permission denied'), ['container-kill']);
-  assert.deepEqual(matchSignatures('failed: could not kill the container'), ['container-kill']);
-  assert.deepEqual(matchSignatures('Last State: Terminated  Reason: OOMKilled'), ['oom-kill']);
-  assert.deepEqual(matchSignatures('kernel: Out of memory: Killed process 4242 (node)'), ['oom-kill']);
-  assert.deepEqual(matchSignatures('etcd cluster is healthy; the container was killed by the test on purpose'), []);
-  const dir = tmpDir('signatures-dev6');
-  writeFileSync(join(dir, 'stderr'), 'Reason: OOMKilled\nResource temporarily unavailable\n');
-  assert.deepEqual(outputSignatures([join(dir, 'stderr')], HOST_SIGNATURES_DEV6), ['eagain'], 'the dev.6 table reads only its own');
-  assert.deepEqual(outputSignatures([join(dir, 'stderr')]), ['eagain', 'oom-kill']);
-});
+
 
 test('redlane.failure-signature: the last stderr line (else stdout\'s) masked; specific only with a word outside the generic summary words; a repeat needs a clear host', () => {
   const sig = (stderr: string, stdout = '', exitCode: number | null = 1) => failureSignature({ verdict: 'fail', exitCode, stderr, stdout, checkout: '/wt/arc/u1.verify-3' });

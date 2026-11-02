@@ -337,6 +337,6 @@ test('roles.polish-caps: --trial-cap kills an overspending judge (void cap, its 
 test('roles.polish-seat: the arm is the polishJudge seat (frontier, Opus 5.5 medium); --rebind moves it through the repo config; a seat with no polishJudge prompt is refused', () => {
   assert.equal(polishSeat(null).arm, 'polishJudge.arc frontier claude-opus-5-5:medium');
   assert.equal(polishSeat(rebindConfig(['frontier=claude-opus-5-5:xhigh'])).arm, 'polishJudge.arc frontier (rebound) claude-opus-5-5:xhigh');
-  assert.throws(() => polishSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /polishJudge/);
+  assert.throws(() => polishSeat(rebindConfig(['frontier=claude-sonnet-5-5:high'])), /experienceVerdict/);
   assert.throws(() => polishSeat(rebindConfig(['frontier=gpt-5.6-sol:high'])), /Claude only|polishJudge|frontier/);
 });

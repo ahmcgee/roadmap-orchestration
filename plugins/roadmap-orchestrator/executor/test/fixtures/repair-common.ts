@@ -67,10 +67,10 @@ export const STRICT_LANE = { id: 'strict', argv: ['node', '--test', 'test/strict
 export const buildOf = (files: Readonly<Record<string, string>>, message = 'strengthen the witness'): Step =>
   codexStep([{ type: 'commit', message, files }], { argv: ['exec', '-C'] });
 
-export const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }];
+export const MAPPED = [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }];
 
 /**
- * A holistic arc whose only unit, `v1`, is a vacuity repair of F-1 (origin repair, declaring I-1): plan-check, a build
+ * A holistic arc whose only unit, `v1`, is a vacuity repair of F-1 (origin repair, declaring I-1): pre-build, a build
  * committing the strict test, gate, then `more` steps. Every tree's witness passes t1 unless a test scripts it.
  */
 export function vacuityArc(opts: Readonly<{ patch?: string; more?: readonly Step[] }> & Pick<HolisticOptions, 'planExtra' | 'laneExtra'> = {}): HolisticArc {

@@ -1,0 +1,193 @@
+{
+  "standing": [
+    {
+      "id": "reserve-and-keep/660#1:0",
+      "disposition": "addressed",
+      "evidence": [
+        "src/store.js:33 exports heldEnd; src/server.js:124 redirects to / unless the book is held with a readable end",
+        "test/reserve.test.js 'D1 the confirmation shows only for a hold with an end that can be read' covers absent, null and '8 November' ends; the seed-data test GETs /reserved/b2 and expects 303",
+        "Experiment /redacted/path a reservedUntil of '2026-02-31T00:00:00Z' on /reserved/bad gave 303, no crash"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:1",
+      "disposition": "addressed",
+      "evidence": [
+        "src/server.js:75-81 refuses by throwing Refusal, so updateShelf does not save (src/store.js:199-201)",
+        "test/reserve.test.js `unchanged` compares bytes, inode and mtime; the seed is compact JSON, so any re-save shows",
+        "The A9 test applies `unchanged` after a real POST, on the repeats, the refresh and the different-token refusal; the T-6 test applies it too"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:2",
+      "disposition": "addressed",
+      "evidence": [
+        "(a) src/server.js:88-89 and :78: a missing, empty or badly shaped token becomes null, and null never matches a claim; test 'A9 no token, or an unusable one' covers null, blank and absent claims",
+        "(b) src/server.js:78 matches only inside isHeld; test 'A9 a claim that has lapsed is not replayed'",
+        "(c) src/server.js:91 re-renders with the posted token; the T-7, A8 busy and A8 name tests assert tokenOf(page) === token",
+        "(d) TOKEN_SHAPE at src/server.js:15; the 65-character token test asserts it is not stored",
+        "(e) decision tokenless-post-reserves; src/server.js:101 mints a claim, and the test asserts a non-empty string claim",
+        "Same-moment repeats: test 'A9 a double tap' fires 6 concurrent same-token POSTs, all 303"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:3",
+      "disposition": "addressed",
+      "evidence": [
+        "docs/design/page/README.md diff: 303 to /reserved/<id>, the hidden token, `It's yours.` with no name, and new M7 and M8",
+        "src/pages.js confirmationPage and FORM_REFUSALS match that wording; decisions m1-heading-no-name and design-record-updated",
+        "One stale `{name}` remains in the small-screens section (README.md:193), reported as a note"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:4",
+      "disposition": "addressed",
+      "evidence": [
+        "test/reserve.test.js has named A8 tests: 404, 503 with a live-pid lock and Retry-After, name limits, declared and chunked oversize bodies, esc",
+        "Named A9 tests cover repeat and refresh, the double tap, tokenless POSTs and lapsed claims",
+        "The T-32 test pairs each POST with its own GET token, uses redirect:'manual', asserts [303, 409×19] and that the file holds the winner's name",
+        "test/floor.test.js flowPages covers /reserve/<held>, POST refusals and /reserved/<id>, asserting no holder name or claim token appears"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:5",
+      "disposition": "addressed",
+      "evidence": [
+        "src/pages.js bookItem uses isHeld(book, at); experiment /redacted/path printed 'nofield link true' for a book with no reservedBy field",
+        "src/server.js reads new Date(now()) per request (:95, :97, :117, :124, :133); test 'T-34 the default clock lapses a hold...' runs createApp({ dataPath }) with no injected clock",
+        "test 'the confirmation and the hold follow the settings passed to createApp' proves name, address and window under non-default settings, escaped"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:6",
+      "disposition": "addressed",
+      "evidence": [
+        "src/server.js:28-34 and :138 handle a malformed id; test 'A8 a form opened on a gone book, or a malformed id' covers GET and POST",
+        "src/server.js:75-81 orders gone, then held, then name; test 'A8 a book gone since the form opened' posts a blank and a 61-character name to a gone book and asserts 404 with no 'undefined'",
+        "Refusal carries only the kind and the book (src/server.js:65-71); test 'names and tokens stay out of everything the server logs' covers it"
+      ]
+    },
+    {
+      "id": "reserve-and-keep/660#1:7",
+      "disposition": "rebutted",
+      "evidence": [
+        "This item was for the root and did not hold the build; the spec decision d1-followed-unbound records that /reserved/<id> follows D1 as written",
+        "src/server.js:122-126 depends only on the book, as D1 says, so the behaviour conforms to the spec; the V-7 concern stays with the root and is restated as a note"
+      ]
+    }
+  ],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "evidence": [
+        "src/server.js:122-126",
+        "spec decision d1-followed-unbound",
+        "test/reserve.test.js T-34: /reserved/b3 shows for whoever holds the book"
+      ],
+      "severity": "note",
+      "path": "src/server.js",
+      "text": "For the root, still open by design (standing item reserve-and-keep/660#1:7): /reserved/<id> is not bound to the claim. After B's hold lapses and A reserves the book, B's old tab reloads to 'waiting for you' with A's deadline. This conforms to D1 and d1-followed-unbound. Closing it would need a D1 amendment.",
+      "contractRef": "spec D1; T-32",
+      "experiments": [],
+      "debt": {
+        "drag": "A stale confirmation can read as a promise of a book now held by someone else; any fix has to change D1."
+      },
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "src/server.js",
+        "line": 124
+      }
+    },
+    {
+      "evidence": [
+        "src/server.js:96",
+        "src/server.js:146-148",
+        "docs/design/page/README.md M6: 'Used when the books' file cannot be written at this moment'"
+      ],
+      "severity": "note",
+      "path": "src/server.js",
+      "text": "Only SHELF_BUSY gets M6. A write failure that is not lock contention (for example EACCES on the lock file) falls to the plain-text 500 from the existing catch-all, although M6's wording could be read as covering it. A8 asks only for the shelf-busy failure, nothing is saved, and no name reaches the log, so this does not block.",
+      "contractRef": "docs/design/page/README.md M6",
+      "experiments": [
+        {
+          "command": "node /redacted/path (data directory chmod 555, then POST /reserve/b1)",
+          "output": "Error: EACCES: permission denied, open '.../shelf.json.lock.tmp' ... readonly 500 text/plain; charset=utf-8 Something went wrong on our side. Try again in a minute."
+        }
+      ],
+      "debt": {
+        "drag": "A keeper's permissions problem shows neighbours a page outside the design's message set."
+      },
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "src/server.js",
+        "line": 105
+      }
+    },
+    {
+      "evidence": [
+        "docs/design/page/README.md:193",
+        "src/server.js:117",
+        "spec A9"
+      ],
+      "severity": "note",
+      "path": "docs/design/page/README.md",
+      "text": "Two small leftovers. README.md:193 still lists an echoed `{name}` in headings and titles, though the heading no longer has one and only the field value echoes it. Separately, a neighbour who goes Back after reserving and whose browser re-fetches GET /reserve/<id> sees M3, 'just taken', on their own book, because a GET carries no token. The design calls for M3 when the form is opened on a reserved book, and A9's mechanism covers POST repeats, so this conforms. It is still the nearest remaining edge of A9's stated aim.",
+      "contractRef": "spec A9",
+      "experiments": [],
+      "debt": {
+        "drag": "The stale phrase may mislead page-access; the Back path is an unwitnessed edge of A9's stated aim."
+      },
+      "defect": null,
+      "reraises": null,
+      "hunk": {
+        "path": "docs/design/page/README.md",
+        "line": 193
+      }
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "A1 met: Reserve links carry a visually hidden title, held books have none, and the form follows the design (T-4 test, src/pages.js bookItem and formPage).",
+    "A2 met: the confirmation names the book, address and hold end, worded from the stored reservedUntil, with no name (T-20 test and the settings test).",
+    "A3 met: one visible field plus the hidden token; the confirmation's only exit is the link back to the shelf (T-28 test).",
+    "A4 met: 409 M3 with a link back; bytes, inode and mtime are unchanged (T-6 test).",
+    "A5 met: blank, whitespace-only and format-only names get 400 and the same book's form, with nothing written (T-7 test).",
+    "A6 met: the check and write sit together inside updateShelf; twenty real HTTP POSTs give one 303 and nineteen 409, and the file holds the winner's name (T-32 test).",
+    "A7 met: createApp takes a now option read per request, the exact end still holds, end+1ms frees the book and it can be reserved again; T-18 and T-2 are asserted on the new pages, and the default clock is tested.",
+    "A8 met: 404 M2, 503 M6 with Retry-After, the 60-code-point limit, control characters refused, esc on every page, and 413 for both declared and chunked oversize bodies. Non-busy write failures are noted separately.",
+    "A9 met: the POST answers 303; a same-token repeat redirects with no write, including concurrently; a different token gets M3.",
+    "Non-goals respected: no settings file read, no client-side script, no search, no accounts. Touching store.js for heldEnd serves the intent and the spec records it (store-heldEnd-export).",
+    "The redaction path holds: names and claims are absent from pages and logs, and Refusal carries none. The persistence path holds: refusals throw before the save.",
+    "UI was reviewed from markup and CSS against the design record; no browser was available here, so nothing was rendered, and the tap-target, contrast and 360px rules were not measured.",
+    "The lane ledger shows no lanes; the executable checks report all 19 witnesses present and all mutation-smoke targets killed. My local `node --test test/` passed 68 of 68, on Node v26.13.0."
+  ],
+  "premises": [
+    {
+      "claim": "updateShelf saves unless change throws, so refusals by throw write nothing.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 200
+        }
+      ]
+    },
+    {
+      "claim": "isHeld keeps a book with a missing or unreadable end held, and heldEnd is what keeps such a book from getting a confirmation.",
+      "evidence": [
+        {
+          "path": "src/store.js",
+          "line": 33
+        },
+        {
+          "path": "src/server.js",
+          "line": 124
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

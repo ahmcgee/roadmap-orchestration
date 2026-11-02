@@ -1,0 +1,48 @@
+{
+  "summary": "Fixed R-15: test/access.test.js now renders the empty-shelf page through a second real server and runs the same A3 structure checks on it. No production change was needed. The full suite passes (84/84).",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "access tests with the new empty-shelf test",
+      "argv": [
+        "node",
+        "--test",
+        "test/access.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "mutation: src/pages.js empty-shelf <p> replaced with an <h4> and an unlabelled input; the new empty-shelf test fails (6 pass, 1 fail); pages.js then restored",
+      "argv": [
+        "node",
+        "--test",
+        "test/access.test.js"
+      ],
+      "exit": 1
+    },
+    {
+      "name": "full suite",
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "test/access.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "I moved the per-page markup assertions into a checkPage() helper. The existing every-page test calls it for each page, so those assertions are unchanged.",
+    "A start(dataPath) helper now spawns the server on a free port. The shared server uses it, and the new test uses it for a temporary file holding {\"books\":[]} so the other pages' data is untouched.",
+    "The new test checks status 200 and the title 'The Oak Street shelf'. It also checks the 'The shelf is empty right now.' message in <main>, and that the page has no book list and no refusal block, so a wrong branch cannot pass.",
+    "The mutation was the one described in the finding's evidence: a skipped heading level plus an unlabelled input in place of the empty-shelf paragraph. It turned only the new test red, and pages.js is restored with no diff.",
+    "I did not take up the second note, that rule() only sees the first rule for a selector. A later overriding rule would not turn T-29 or the A2 checks red. That is a limit of the regression guard and does not fail A4.",
+    "The A1/A2 browser findings from earlier rounds stand, and the gate's wider run (every page, keyboard walk) supersedes them. The hand lettering still cannot be seen in this environment's Chromium; I make no V-11 lettering claim."
+  ],
+  "final": true
+}

@@ -1,8 +1,8 @@
 // Hand-written validation primitives. Every boundary reader takes `unknown` and either returns the typed
 // value or throws a SchemaError naming the field path and the offending value. A reader is a plain
 // function `(value, path) => T`, so readers compose without a library.
-import { legacyIdOrder } from './upgrade.ts';
-import { SCHEMA_VERSION, type SchemaVersion } from './version.ts';
+
+import { SCHEMA_VERSION,type SchemaVersion } from './version.ts';
 
 declare const brand: unique symbol;
 /** A nominal subtype: a `Brand<string, 'Sha'>` is a string only the Sha constructor can produce. */
@@ -71,6 +71,13 @@ export const text: Read<string> = (value, path) => {
   return value;
 };
 
+/** Non-whitespace evidence or authorization supplied by the root. */
+export const nonBlank: Read<string> = (value, path) => {
+  const out = str(value, path);
+  if (out.trim() === '') throw new SchemaError(path, 'a non-empty evidence line', value);
+  return out;
+};
+
 export const bool: Read<boolean> = (value, path) => {
   if (typeof value !== 'boolean') throw new SchemaError(path, 'a boolean', value);
   return value;
@@ -118,21 +125,16 @@ export function arrayOf<T>(item: Read<T>, opts: { readonly nonEmpty?: boolean } 
 
 /**
  * An array whose elements are strictly ascending by `key` (sorted and unique), so equal sets serialise equally; `order`
- * says what the order is in the error. `legacyKey` (scaffolding, numbered-id lists only: `idsAscending` in ids.ts): a
- * list strictly ascending by it instead reads as written, with a warning (`legacyIdOrder`).
+ * says what the order is in the error.
  */
 export function sortedBy<T>(
-  item: Read<T>, key: (t: T) => string, opts: Readonly<{ nonEmpty?: boolean; order?: string; legacyKey?: (t: T) => string }> = {},
+  item: Read<T>, key: (t: T) => string, opts: Readonly<{ nonEmpty?: boolean; order?: string }> = {},
 ): Read<readonly T[]> {
   const read = arrayOf(item, opts.nonEmpty === true ? { nonEmpty: true } : {});
   return (value, path) => {
     const out = read(value, path);
     const bad = firstUnordered(out, key);
     if (bad === null) return out;
-    if (opts.legacyKey !== undefined && firstUnordered(out, opts.legacyKey) === null) {
-      legacyIdOrder(path);
-      return out;
-    }
     throw new SchemaError(`${path}[${bad}]`, `entries strictly ascending${opts.order === undefined ? '' : ` ${opts.order}`} (sorted, no duplicates)`, value);
   };
 }
@@ -204,3 +206,9 @@ export function tagged<const K extends string, T>(field: string, readers: { read
     return readers[tag](value, path);
   };
 }
+
+/** A finite fraction in [0, 1], used by pressure telemetry. */
+export const fraction: Read<number> = (value, path) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) throw new SchemaError(path, 'a fraction in [0, 1]', value);
+  return value;
+};

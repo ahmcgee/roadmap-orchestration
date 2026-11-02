@@ -38,12 +38,13 @@ The rungs:
    needs the devcontainer's Playwright MCP and Chromium, and `evals-m5-reflow`, the m5 check's reflow oracle on that Chromium) and `pressure`, which saturates the host on purpose). Both tiers keep runnable load within the host's cpus: a saturated host fails timing-bound tests, so a
    file that runs eight or more cells of real processes at once goes in the serial tier, never the parallel one.
 3. `node evals/probe.ts`: real CLIs, pennies
-3.5. Role evals (`evals/roles/`, `node evals/roles/run.ts <gate|walkthrough|polishJudge|scaffold> --set dev --n 3`, with `--cap`):
+3.5. Role evals (`evals/roles/`, `node evals/roles/run.ts <gate|verifier|pre-build|walkthrough|polishJudge|campaignAudit> --set dev --n 3`, with `--cap`):
    paid, path-triggered (`node
    evals/roles/triggers.ts <base>` names the roles a batch's changes trigger; none triggered, the rung is skipped), once per
    merged batch, never per worktree agent. The holdout set (untracked `evals/roles/holdout/`, `--set holdout --compare
    <dev summary.json>`) runs only at acceptance.
-   Estate compaction (`node evals/compaction/run.ts --set dev --n 3 --stage both --cap <usd>`) also runs at this rung
+   `gate` is the gate-mode alias for `verifier`; walkthrough/polishJudge exercise experienceVerdict. Diagnosis eval
+   awaits field-derived cases. Estate compaction (`node evals/compaction/run.ts --set dev --n 3 --stage both --cap <usd>`) also runs at this rung
    when `skills/estate-compaction/` or orchestrate's Phase 0 compaction text changes; the path trigger conservatively
    treats any orchestrate skill edit as triggering it. Its holdout is untracked and runs only at acceptance.
 4. The paid fixture (`evals/m1/`; `evals/m5/`, the UI end to end, when milestones, walks, design units or the demo
@@ -57,6 +58,10 @@ The one test seam in production code is `crashPoint(label)` in `src/core/crash.t
 fake-backend scripts behind PATH shims. Add no other test hooks to production code.
 
 ## Standing rules
+
+The command-center release **1.0.0-dev.33** was a one-off breaking exception to the upgrade-in-place rule below:
+the schema-2 cut refuses arcs started on dev.32 or earlier before claim/recovery; it does not adopt them. The rule
+itself remains the default for subsequent releases.
 
 - Claude-only routing is the first-class system. Design, probe and evaluate every feature for Claude backends first.
   Codex backend support stays, but keep it simple: a working, unpolished path is enough, and Codex never drives

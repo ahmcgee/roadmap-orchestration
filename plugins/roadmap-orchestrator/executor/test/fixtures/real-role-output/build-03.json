@@ -1,0 +1,26 @@
+{
+  "summary": "ready.txt appeared after the monitor finished. I wrote hello.txt (containing \"hello\") in the repo root, and the fast unit lane passed.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "unit",
+      "argv": [
+        "sh",
+        "-c",
+        "grep -q hello hello.txt"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "hello.txt (repo root)"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "ready.txt was created by the wait step and is untracked. The executor may want to exclude it from the commit."
+  ],
+  "final": true
+}

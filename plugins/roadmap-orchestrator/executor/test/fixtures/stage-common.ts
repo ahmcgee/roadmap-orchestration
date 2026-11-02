@@ -1,39 +1,41 @@
+import { readRepoConfig } from '../../src/preflight/checks.ts';
+import { systemName } from '../../src/core/ids.ts';
 // Shared by the stage, lane and dispatch tests: one unit `u1` of a fresh arc over a real git repo made from
 // test/fixtures/unit-repo (a small Node project whose `add` is deliberately wrong), a plan and spec whose
 // lanes are real commands, a resource `db` whose probe and teardown are res-tool.ts, and the fake backends
 // behind PATH shims. Also the scenario steps the fakes play and readers for what the run left behind.
-import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { cpSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { CommandContext } from '../../src/commands/apply.ts';
 import { sessionContainment } from '../../src/contain/session.ts';
-import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
-import { type Sha, type Sha256Hex, type UnitId, arcId, invocationId, sha, specRev, unitId } from '../../src/core/ids.ts';
+import type { Event,Fact,IntentOf } from '../../src/core/events.ts';
+import { atomicJson } from '../../src/core/fsx.ts';
+import { type Sha,type Sha256Hex,type UnitId,arcId,invocationId,sha,specRev,unitId } from '../../src/core/ids.ts';
 import type { Journal } from '../../src/core/interfaces.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import { type OpenJournal, openJournal } from '../../src/core/log.ts';
-import { atomicJson } from '../../src/core/fsx.ts';
-import { type LaunchFile, RUNNER_FILE_READERS, type RunStart } from '../../src/core/records.ts';
-import { type AbsPath, absPath, isoTimeOf } from '../../src/core/values.ts';
+import { type OpenJournal,openJournal } from '../../src/core/log.ts';
+import { type LaunchFile,RUNNER_FILE_READERS,type RunStart } from '../../src/core/records.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../../src/core/values.ts';
 import { SCHEMA_VERSION } from '../../src/core/version.ts';
 import { START_FILE } from '../../src/executor.ts';
 import { openHostDir } from '../../src/host/hostdir.ts';
-import { keepCorpusFiles, readInputFiles, recordPlan } from '../../src/input/inforce.ts';
-import { APPLY, phase0InputOf, phase0Rows } from '../../src/phase0/rows.ts';
-import { type PlanM1, type PlanUnit, parsePlan } from '../../src/input/plan.ts';
-import { type Cancelled, type Pinned, type StageContext, isCancelled } from '../../src/pipeline/dispatch.ts';
+import { readHostSample } from '../../src/host/sample.ts';
+import { keepCorpusFiles,readInputFiles,recordPlan } from '../../src/input/inforce.ts';
+import { type PlanM1,type PlanUnit,parsePlan } from '../../src/input/plan.ts';
+import { createProber } from '../../src/park/probe.ts';
+import { APPLY,phase0InputOf,phase0Rows } from '../../src/phase0/rows.ts';
+import { type Cancelled,type Pinned,type StageContext,isCancelled } from '../../src/pipeline/dispatch.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
 import { reserveNow } from '../../src/pipeline/lanes.ts';
-import { rankOf } from '../../src/schedule/ready.ts';
-import { type RepoConfig, parseRepoConfig, resolveRouting } from '../../src/routing/layers.ts';
-import type { ArcRoleSet, ProfileName, RiskTier } from '../../src/routing/types.ts';
-import { fixture } from '../helpers/proc.ts';
-import { git, makeRepo, revParse, tmpDir } from '../helpers/repo.ts';
-import { type ClaudeAct, type Expect, type Scenario, type Step, writeScenario } from '../helpers/scenario.ts';
-import { arcFor, events } from './invoke-specs.ts';
-import type { CommandContext } from '../../src/commands/apply.ts';
-import { readHostSample } from '../../src/host/sample.ts';
-import { createProber } from '../../src/park/probe.ts';
 import type { Gate } from '../../src/pipeline/unit.ts';
+import { type RepoConfig,parseRepoConfig,resolveRouting } from '../../src/routing/layers.ts';
+import type { ArcRoleSet,ProfileName,RiskTier } from '../../src/routing/types.ts';
+import { rankOf } from '../../src/schedule/ready.ts';
+import { fixture } from '../helpers/proc.ts';
+import { git,makeRepo,revParse,tmpDir } from '../helpers/repo.ts';
+import { type ClaudeAct,type Expect,type Scenario,type Step,writeScenario } from '../helpers/scenario.ts';
+import { arcFor,events } from './invoke-specs.ts';
 
 export const U1: UnitId = unitId('u1');
 /** The unit's kept spec at rev 1, as its first start recorded it: what a test pins a dispatch at. */
@@ -57,6 +59,10 @@ export type LaneJson = Readonly<{
   /** The dev.16 form (default `fast` when no cadence is given). */
   tier?: 'fast' | 'estate';
   /** dev.17: written instead of `tier` when given. */
+  cost?: 'cheap' | 'expensive';
+  placement?: 'local' | 'shared-resource' | 'cross-system';
+  kind?: 'capture';
+  capture?: { up: readonly string[]; script: readonly string[]; states: readonly string[]; port: string };
   cadence?: 'build' | 'unit' | 'candidate' | 'batch';
   resources?: readonly string[];
   evidenceGlobs?: readonly string[];
@@ -82,6 +88,7 @@ export type SetupOptions = Readonly<{
   risk?: RiskTier;
   /** The unit's declared resources (each is a res-tool resource). */
   resources?: readonly string[];
+  resourceDefs?: readonly JsonValue[];
   profile?: ProfileName;
   /** The repo's .gitignore; default `out/`. */
   gitignore?: string;
@@ -127,11 +134,14 @@ export type StageRun = Readonly<{
 function laneJson(l: LaneJson): Record<string, unknown> {
   return {
     id: l.id, argv: l.argv, cwd: l.cwd ?? '.', env: { set: l.env?.set ?? {}, pass: l.env?.pass ?? ['PATH'] }, expectedExit: l.expectedExit ?? 0,
-    ...(l.cadence === undefined ? { tier: l.tier ?? 'fast' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
+    ...(l.cadence === undefined ? { cadence: l.tier === 'estate' ? 'unit' : 'build' } : { cadence: l.cadence }), resources: l.resources ?? [], evidenceGlobs: l.evidenceGlobs ?? [],
     ...(l.evidenceExcludes === undefined ? {} : { evidenceExcludes: l.evidenceExcludes }), ...(l.inputs === undefined ? {} : { inputs: l.inputs }),
     ...(l.systems === undefined ? {} : { systems: l.systems }), ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
     ...(l.timeoutMin === undefined ? {} : { timeoutMin: l.timeoutMin }),
     ...(l.stochastic === undefined ? {} : { stochastic: l.stochastic }), ...(l.environment === undefined ? {} : { environment: l.environment }),
+    ...(l.cost === undefined ? {} : { cost: l.cost }),
+    ...(l.placement === undefined ? {} : { placement: l.placement }),
+    ...(l.kind === undefined ? {} : { kind: l.kind }), ...(l.capture === undefined ? {} : { capture: l.capture }),
     state: 'active',
   };
 }
@@ -139,7 +149,7 @@ function laneJson(l: LaneJson): Record<string, unknown> {
 /** A suite lane as plan.json writes it: a spec lane's shape without its item state. */
 function suiteLaneJson(l: LaneJson): Record<string, unknown> {
   const { state: _state, ...lane } = laneJson(l);
-  return lane;
+  return {...lane, cadence: l.cadence ?? (l.tier === 'estate' ? 'candidate' : 'build')};
 }
 
 /**
@@ -158,19 +168,20 @@ export function writeStart(runDir: AbsPath, repo: AbsPath, planPath: AbsPath, pr
 export function recordFirstPlan(
   journal: Journal, runDir: AbsPath, planPath: AbsPath, repo: AbsPath, profile: ProfileName = 'default', config: RepoConfig | null = null, arcRoles: ArcRoleSet = 'm4b',
 ): void {
+  config = { ...readRepoConfig(repo), ...config, ...((config?.systemsMap ?? readRepoConfig(repo)?.systemsMap) === undefined ? {} : { systemsMap: (config?.systemsMap ?? readRepoConfig(repo)?.systemsMap)! }) };
   writeStart(runDir, repo, planPath, profile);
   const files = readInputFiles(planPath, repo);
   if (files.corpus !== null) {
-    const rows = phase0Rows(phase0InputOf(files, null, null), APPLY);
+    const rows = phase0Rows(phase0InputOf(files, config ?? readRepoConfig(repo), null), APPLY);
     if (rows.rows.length > 0 || rows.opened === null) throw new Error(`the corpus arc's files are refused: ${JSON.stringify(rows.rows)}`);
     keepCorpusFiles(runDir, rows.opened.files);
   }
-  recordPlan(journal, runDir, files, [], { profile, config, arcRoles });
+  recordPlan(journal, runDir, files, [], { profile, config: config ?? readRepoConfig(repo), arcRoles });
 }
 
 /** Puts the run's input files as they are now in force as the next plan revision (an `apply` of, say, an edited ledger). */
 export function applyFilesNow(run: StageRun): void {
-  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: null, arcRoles: 'm4b' });
+  recordPlan(run.journal, run.runDir, readInputFiles(absPath(join(run.planDir, 'plan.json')), run.repo), [], { profile: 'default', config: run.ctx.routingBase.config, arcRoles: 'm4b' });
 }
 
 /** A unit driver's gate that admits every stage at once: one unit driven on its own, without the scheduler. */
@@ -210,11 +221,11 @@ export function setupUnit(opts: SetupOptions): StageRun {
 
   const planDir = tmpDir('stage-plan');
   const specPath = join(planDir, 'u1.json');
-  writeFileSync(specPath, JSON.stringify({
+  writeFileSync(specPath, JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
     schema: 'roadmap/spec-m1', unit: U1, rev: 1,
     lanes: (opts.lanes ?? [UNIT_LANE]).map(laneJson),
     acceptance: [{ id: 'A1', clause: 'add(1, 2) is 3', failLoudIfUndelivered: true, state: 'active' }],
-    scope: ['src/**', 'test/**'], resources: opts.resources ?? [], decisions: [], facts: [],
+     resources: opts.resources ?? [], decisions: [], facts: [],
     cites: { contracts: ['contracts/api.md'], rulings: ['C-1'] }, ...(opts.forces === undefined ? {} : { forces: opts.forces }),
   }));
   cpSync(RULINGS, join(planDir, 'rulings.md'));
@@ -227,7 +238,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
     schema: 'roadmap/plan-m1', arc, integrationBranch: 'main', baseline: base, worktreeRoot: tmpDir('stage-wt'),
     contracts: ['contracts/api.md'], rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'Keep it small.',
     suite: { lanes: (opts.suite ?? []).map(suiteLaneJson) }, resources: [{ name: DB, probe: tool('probe'), teardown: tool('teardown') }],
-    units: [{ id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', scope: ['src/**', 'test/**'], resources: opts.resources ?? [], ...opts.unit }],
+    units: [{ ...(opts.steps.some((s) => s.review) ? {review: 'always'} : {}), id: U1, spec: 'u1.json', risk: opts.risk ?? 'med', systems: Object.keys((opts.systemsMap as { systems: object } | undefined)?.systems ?? { app: true }).slice(0, 1).map((s) => systemName(s)), resources: opts.resources ?? [], ...opts.unit }],
     ...(opts.derived === undefined ? {} : { derived: opts.derived }),
     ...(opts.environments === undefined ? {} : { environments: opts.environments }),
     ...(opts.routing === undefined ? {} : { routing: opts.routing }),
@@ -238,7 +249,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
   const runDir = tmpDir('stage-run');
   const journal = openJournal(absPath(runDir), arcId(arc));
   // As a first start does: the files become the plan in force (rev 1), whose spec the stages load.
-  const config = opts.systemsMap === undefined ? null : parseRepoConfig({ systemsMap: opts.systemsMap });
+  const config = parseRepoConfig({ systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] }, lib: { paths: ['lib/**'] }, mul: { paths: ['src/mul.js'] }, div: { paths: ['src/div.js'] }, documentation: { paths: ['docs/**'] } } } });
   recordFirstPlan(journal, absPath(runDir), planPath, absPath(repo), opts.profile, config);
   const scenario = writeScenario(tmpDir('stage-scenario'), opts.steps);
   const routing = resolveRouting({ profile: opts.profile ?? 'default', classes: null, repoConfig: null, plan: plan.routing ?? null, unit: null });
@@ -262,7 +273,7 @@ export function setupUnit(opts: SetupOptions): StageRun {
 // Scenario steps
 
 export type PlanCheckAnswer = Readonly<{
-  decision: 'approve' | 'redirect' | 'split' | 'scaffold' | 'poc' | 'infeasible' | 'escalate';
+  decision: 'approve' | 'redirect' | 'split' | 'infeasible' | 'escalate';
   risk?: RiskTier;
   patch?: readonly JsonValue[];
   notes?: string;
@@ -282,45 +293,45 @@ export type PlanCheckAnswer = Readonly<{
   poc?: JsonValue;
 }>;
 
-/** A plan-check the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
+/** A pre-build the fake Claude answers: an acting judgment (dev.17: shell and web tools, fresh session, no resume). `expect` adds to that check. */
 /**
- * The plan-check's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
- * the fakes match a plan-check call by.
+ * The pre-build's `--tools` (dev.17: an acting judge with web search and fetch, src/backends/argv.ts `PLAN_CHECK_TOOLS`), as
+ * the fakes match a pre-build call by.
  */
-export const PLAN_CHECK_TOOLS_ARGV = ['--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent,WebSearch,WebFetch'] as const;
+export const PLAN_CHECK_TOOLS_ARGV = ['--tools', 'Read,Grep,Glob,Bash,Write,Edit,Agent'] as const;
 
 export function planCheckStep(a: PlanCheckAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
   // A judgment's fresh session persists (no --no-session-persistence) so its repair turn can resume it (dev.12: every role).
   const argv = ['-p', ...PLAN_CHECK_TOOLS_ARGV, '--permission-mode', 'bypassPermissions', '--session-id', ...(expect.argv ?? [])];
   return {
-    as: 'claude',
+    as: 'claude', review: true,
     expect: { ...expect, argv, argvLacks: ['--resume', '--no-session-persistence'] },
-    acts: [...before, { type: 'planCheck', value: planCheckAnswer(a) }],
+    acts: [...before, { type: 'emit', value: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: a.notes ? [a.notes] : ['Checked'], premises: [...(a.premises ?? [])], standing: [], clusters: null, rulings: []} }],
   };
 }
 
-/** A plan-check's answer as the fake emits it. */
+/** A pre-build's answer as the fake emits it. */
 export const planCheckAnswer = (a: PlanCheckAnswer): JsonValue =>
   ({
     decision: a.decision, ordering: a.ordering ?? null, reasons: ['C-1 holds'], patch: a.patch ?? null, risk: a.risk ?? 'med', notes: a.notes ?? '', premises: [...(a.premises ?? [])], visionConflict: [...(a.visionConflict ?? [])],
-    scopeGrowth: (a.scopeGrowth ?? []).map((g) => ({ patterns: [...g.patterns], reason: g.reason })), staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })),
+     staleLinks: (a.staleLinks ?? []).map((l) => ({ ...l })),
     // dev.17: an approve's design record defaults by the `planCheck` act (a module change of the scope's first pattern).
     ...(a.design === undefined ? {} : { design: a.design }), split: a.split ?? null, scaffold: a.scaffold ?? null, poc: a.poc ?? null,
   }) as JsonValue;
 
 /**
- * 2026-10-15: a plan-check's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
+ * 2026-10-15: a pre-build's repair turn: its session resumed (`--resume`) with the reasons its answer was refused, which
  * the stdin carries (`stdinContains` adds to the directive's opening).
  */
 export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly string[] = [], before: readonly ClaudeAct[] = []): Step {
   return {
     as: 'claude',
     expect: { argv: ['-p', ...PLAN_CHECK_TOOLS_ARGV, '--resume'], argvLacks: ['--session-id', '--no-session-persistence'], stdinContains: ['Your answer was refused: ', ...stdinContains] },
-    acts: [...before, { type: 'planCheck', value: planCheckAnswer(a) }],
+    acts: [...before, { type: 'emit', value: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: a.notes ? [a.notes] : ['Checked'], premises: [...(a.premises ?? [])], standing: [], clusters: null, rulings: []} }],
   };
 }
 
-export const BUILD_REPORT = { summary: 'Did the work.', changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final: true } as const;
+export const BUILD_REPORT = { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true } as const;
 
 /** Stdin-matching pattern for a failing lane's stdout/stderr dir of this run, as a fix round lists it. */
 export function laneEvidencePattern(run: StageRun, lane: string): string {
@@ -336,7 +347,7 @@ export function facts(run: StageRun): readonly Fact[] {
   return events(run.runDir).flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 }
 
-export const outcomeFacts = (run: StageRun) => facts(run).filter((f) => f.kind === 'stage-outcome');
+export const outcomeFacts = (run: StageRun) => facts(run).filter((f) => (f.kind === 'stage-outcome' && 'unit' in f));
 
 export function spawnIntents(run: StageRun): readonly (Event & IntentOf<'proc.spawn'>)[] {
   return events(run.runDir).filter((e): e is Event & IntentOf<'proc.spawn'> => e.type === 'intent' && e.kind === 'proc.spawn');

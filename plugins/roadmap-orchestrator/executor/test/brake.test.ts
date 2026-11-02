@@ -1,3 +1,4 @@
+import { systemName } from '../src/core/ids.ts';
 // M3 step B2: journey lanes in a unit's candidate and the held-claims brake (src/pipeline/integrate.ts, lanes.ts), over
 // real arcs (real git, real processes, fake backends, fake witness lanes scripted per tree). Named tests:
 // brake.must-hold-red, brake.base-red, brake.future-measured (future activation, the latch), brake.absent-future-witness, brake.split-repair, brake.known-regression-
@@ -28,7 +29,7 @@ import { type HolisticArc, candidateTree, holisticArc, obligationsJson, tipTree 
 import { closedAs, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import type { Step } from './helpers/scenario.ts';
-import { type ArcDescriptor, type ArcRun, U1, applyBody, codexStep, contextFor, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
+import { type ArcRun, U1, applyBody, codexStep, contextFor, syncInputs, gateStep, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -41,7 +42,7 @@ const latched = (r: ArcRun) => facts(r).flatMap((f) => (f.kind === 'obligation-l
 const raised = (r: ArcRun): readonly string[] => r.journal.view.opsOf('needsuser.raise').map((i) => i.expect.id);
 const steps = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })];
 /** Every in-scope path maps to I-1 (the spec must then declare it). */
-const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }] as const;
+const MAPPED = [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }] as const;
 
 /** Steps u1 to its approval, then scripts its candidate tree with `outcomes`. */
 async function approveThenScript(r: ArcRun, control: string, outcomes: Readonly<Record<string, 'pass' | 'fail'>>, unit = 'u1'): Promise<string> {
@@ -226,7 +227,7 @@ describe('known regressions (R4, G11)', () => {
   async function knownRegression(i2: readonly string[], candidate: Readonly<Record<string, 'pass' | 'fail'>>, tip: Readonly<Record<string, 'pass' | 'fail'>>, p1: readonly string[]): Promise<string> {
     const { d, control } = holisticArc({
       steps: [...steps, gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }],
-      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: i2 }], mapping: [...MAPPED, { pattern: 'lib/**', obligations: ['I-2'] }], trees: {},
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: i2 }], mapping: [...MAPPED, { system: 'lib', obligations: ['I-2'] }], trees: {},
     });
     scriptTree(control, tipTree(d), { outcomes: tip });
     const r = contextFor(d);
@@ -270,7 +271,7 @@ describe('impact mapping', () => {
   test('brake.unmapped-paths: a candidate touching a path no mapping pattern matches selects every must-hold obligation: both lanes run on its candidate, its approval binds both', T, async () => {
     const { d } = holisticArc({
       steps, obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
-      mapping: [{ pattern: 'lib/**', obligations: ['I-1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      mapping: [{ system: 'lib', obligations: ['I-1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
     });
     const r = contextFor(d);
     try {
@@ -289,17 +290,18 @@ describe('impact mapping', () => {
     const { d } = holisticArc({
       steps, units: [{ id: 'u1', obligations: ['I-1'] }],
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
-      mapping: [...MAPPED, { pattern: 'lib/**', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      mapping: [...MAPPED, { system: 'lib', obligations: ['I-2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
     });
     const r = contextFor(d);
     const w = wire(r);
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
       assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+      syncInputs(r);
       // The mapping no longer maps the unit's paths: they are unmapped now, selecting every must-hold obligation.
       const path = join(d.planPath, '..', 'obligations.json');
       const o = JSON.parse(readFileSync(path, 'utf8')) as { mapping: { paths: unknown[] } };
-      writeFileSync(path, JSON.stringify({ ...o, mapping: { paths: [{ pattern: 'lib/**', obligations: ['I-2'] }] } }));
+      writeFileSync(path, JSON.stringify({ ...o, mapping: { systems: [{ system: systemName('app'), obligations: ['I-2'] }] } }));
       const outcome = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.ctx.plan().arc, applyBody(d)));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
@@ -313,8 +315,8 @@ describe('impact mapping', () => {
     }
   });
 
-  test('fingerprint.judged-rev-change-regates: an obligation the gate judged changes revision (future → must-hold, rev 2) before ff: fingerprint-invalid; the unit, linking it, re-opens at plan-check to answer the stale link (dev.17 propagation), and the re-gate binds rev 2', T, async () => {
-    const answered = planCheckStep({ decision: 'approve', staleLinks: [{ link: 'requirement:I-1', outcome: 'confirmed', reason: 'mul holds I-1 as rev 2 states it' }] }, { stdinContains: ['<stale_links>', 'requirement:I-1'] });
+  test('fingerprint.judged-rev-change-regates: an obligation the gate judged changes revision (future → must-hold, rev 2) before ff: fingerprint-invalid; the unit, linking it, re-opens at pre-build to answer the stale link (dev.17 propagation), and the re-gate binds rev 2', T, async () => {
+    const answered = planCheckStep({ decision: 'approve' });
     const { d, control } = holisticArc({
       steps: [...steps, answered, codexStep([], { argv: ['exec', 'resume'] }), gateStep({ decision: 'approve' })], units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2' }],
       obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1', 'u2'], testIds: ['t1'] }], mapping: MAPPED, trees: { '*': { outcomes: { t1: 'pass' } } },
@@ -324,6 +326,7 @@ describe('impact mapping', () => {
     try {
       await stepUntil(r, 'u1', (f) => f.stage === 'gate' && f.outcome === 'approve');
       assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 1 }]);
+      syncInputs(r);
       const path = join(d.planPath, '..', 'obligations.json');
       const next = obligationsJson({ obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED }, control) as Readonly<{ obligations: readonly Readonly<{ proofJudgment: object }>[] }>;
       const i1 = next.obligations[0]!;
@@ -333,7 +336,7 @@ describe('impact mapping', () => {
       await stepUntil(r, 'u1', (f) => f.stage === 'ff');
       assert.equal(outcomes(d).at(-1), 'ff:fingerprint-invalid', outcomes(d).join(' '));
       assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' }, outcomes(d).join(' '));
-      assert.deepEqual(outcomes(d).filter((o) => o.startsWith('plan-check')), ['plan-check:approve', 'plan-check:approve'], 'the stale link re-opened it at plan-check once');
+      assert.deepEqual(outcomes(d).filter((o) => o.startsWith('pre-build')), ['pre-build:approve', 'pre-build:approve'], 'the stale link re-opened it at pre-build once');
       assert.deepEqual(r.journal.view.unit(U1).approval?.fingerprint.obligationRevs, [{ id: 'I-1', rev: 2 }], 'the re-gate binds the new revision');
     } finally {
       r.journal.close();
@@ -355,7 +358,7 @@ describe('the approval across a sibling\'s publication (paid m4b run 6)', () => 
     ],
     units: [{ id: 'u1' }, { id: 'u2', obligations: ['I-2'] }],
     obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', activation: 'future', deliveredBy: ['u2'], testIds: ['t2'] }],
-    mapping: [{ pattern: 'lib/**', obligations: ['I-1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+    mapping: [{ system: 'lib', obligations: ['I-1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
   });
 
   async function u1ApprovedThenU2Published(r: ArcRun): Promise<void> {

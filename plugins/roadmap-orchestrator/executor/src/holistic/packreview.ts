@@ -64,8 +64,8 @@ import { worktreeCreateOp } from '../recover/ops.ts';
 import { renderSpec } from '../spec/render.ts';
 import { parseSpec } from '../spec/spec.ts';
 import { removeCheckout, withCpu } from './audit.ts';
-import { interruptedCall } from './checkpoint.ts';
-import type { CheckpointContext } from './bundle.ts';
+import { interruptedCall } from '../pipeline/dispatch.ts';
+import type { RevisionContext } from './admission.ts';
 import { integrationHeadNow } from './cadence.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA, type PackFinding, type PackReviewInputs, parseObligations, parsePackReviewInputs, parseVision } from './types.ts';
 
@@ -86,7 +86,7 @@ export function admitted(view: JournalView): boolean {
 }
 
 /** The inputs a review would bind now, as `job`; null outside a corpus arc. */
-export function requiredInputs(ctx: CheckpointContext, job: JobId): PackReviewInputs | null {
+export function requiredInputs(ctx: RevisionContext, job: JobId): PackReviewInputs | null {
   const view = ctx.journal.view;
   const inForce = requirePlanInForce(ctx.runDir, view);
   if (inForce.plan.target !== 'corpus') return null;
@@ -102,7 +102,7 @@ export function requiredInputs(ctx: CheckpointContext, job: JobId): PackReviewIn
 }
 
 /** The pack review's current key, or null outside a corpus arc. */
-function currentKey(ctx: CheckpointContext): Sha256Hex | null {
+function currentKey(ctx: RevisionContext): Sha256Hex | null {
   const inputs = requiredInputs(ctx, ctx.journal.view.nextJobId('review'));
   return inputs === null ? null : packReviewKey(inputs);
 }
@@ -158,7 +158,7 @@ function blockingOf(view: JournalView, r: PackReviewState): readonly PreviousPac
 /** Whether an ended review calls for its blocking item: a blocking finding (its own or kept open), or no valid report at all. */
 const needsItem = (view: JournalView, r: PackReviewState): boolean => r.ended !== null && (r.ended.outcome === 'abandoned' || blockingOf(view, r).length > 0);
 
-export function packReviewStatus(ctx: CheckpointContext): PackReviewStatus {
+export function packReviewStatus(ctx: RevisionContext): PackReviewStatus {
   const view = ctx.journal.view;
   if (ctx.plan().target !== 'corpus' || admitted(view)) return { kind: 'none' };
   const reviews = view.holistic().packReviews;
@@ -177,13 +177,13 @@ export function packReviewStatus(ctx: CheckpointContext): PackReviewStatus {
 }
 
 /** Whether the pack review holds every admission now: running, due or held (K14, H9). */
-export function packReviewHolds(ctx: CheckpointContext): boolean {
+export function packReviewHolds(ctx: RevisionContext): boolean {
   const s = packReviewStatus(ctx).kind;
   return s === 'running' || s === 'due' || s === 'held';
 }
 
 /** Whether the pack review job has work: a review running or due (an item a crash left unraised is `settlePackReviews`'). */
-export function packReviewPending(ctx: CheckpointContext): boolean {
+export function packReviewPending(ctx: RevisionContext): boolean {
   const s = packReviewStatus(ctx).kind;
   return s === 'running' || s === 'due';
 }
@@ -200,14 +200,14 @@ export type PackReviewOutcome =
   | Readonly<{ kind: 'ended'; job: JobId; outcome: 'completed' | 'abandoned'; needsUser: NeedsUserId | null }>;
 
 /** Why a due review does not start now, or null. */
-function skip(ctx: CheckpointContext): 'backend-parked' | 'paused' | null {
+function skip(ctx: RevisionContext): 'backend-parked' | 'paused' | null {
   const view = ctx.journal.view;
   const control = view.control();
   if (control.stop !== null || control.pausedAll) return 'paused';
   return view.parkedBackends().includes(arcSeat(ctx, 'packReview').triple.backend) ? 'backend-parked' : null;
 }
 
-function kept(ctx: CheckpointContext, sha: Sha256Hex, ext: string): Buffer {
+function kept(ctx: RevisionContext, sha: Sha256Hex, ext: string): Buffer {
   const bytes = keptInput(ctx.runDir, sha, ext);
   if (bytes === null) throw new Error(`a pack review names ${ext} ${sha}, but ${inputPath(ctx.runDir, sha, ext)} is not kept`);
   return bytes;
@@ -215,7 +215,7 @@ function kept(ctx: CheckpointContext, sha: Sha256Hex, ext: string): Buffer {
 const json = (bytes: Buffer): unknown => JSON.parse(bytes.toString('utf8'));
 
 /** The kept inputs of a started review (K8): recovery and a resumed call read only these bytes. */
-export function keptPackInputs(ctx: CheckpointContext, r: PackReviewState): PackReviewInputs {
+export function keptPackInputs(ctx: RevisionContext, r: PackReviewState): PackReviewInputs {
   const inputs = parsePackReviewInputs(json(kept(ctx, r.started.inputsSha256, PACK_REVIEW_INPUT)));
   if (inputs.job !== r.started.job || packReviewKey(inputs) !== r.started.key) throw new Error(`${r.started.job}: its kept inputs do not match its pack-review-started fact`);
   return inputs;
@@ -239,7 +239,7 @@ export function packChanges(before: PackReviewInputs, after: PackReviewInputs): 
 }
 
 /** A review's delta (H3): null for a full review, else what changed since the review it follows and what is unresolved. */
-export function deltaOf(ctx: CheckpointContext, inputs: PackReviewInputs): PackReviewDelta | null {
+export function deltaOf(ctx: RevisionContext, inputs: PackReviewInputs): PackReviewDelta | null {
   const view = ctx.journal.view;
   const previous = previousReview(view, inputs.job);
   if (previous === null) return null;
@@ -247,7 +247,7 @@ export function deltaOf(ctx: CheckpointContext, inputs: PackReviewInputs): PackR
 }
 
 /** The prompt's inputs, rendered from the kept inputs (and the earlier reviews the log holds) alone. */
-function promptInputs(ctx: CheckpointContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): PackReviewPromptInputs {
+function promptInputs(ctx: RevisionContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): PackReviewPromptInputs {
   const plan = parsePlan(json(kept(ctx, inputs.planSha256, PLAN_INPUT)));
   const shaOf = new Map(inputs.specs.map((s) => [s.unit as string, s.sha256]));
   const changed = delta === null ? null : new Set(delta.changed);
@@ -296,7 +296,7 @@ type Asked =
  * Reads a call: an output, a failure (no valid report: malformed, or dispositions not matching `delta`), or an
  * interruption (its park or usage-limit item written).
  */
-function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome, delta: PackReviewDelta | null): Asked {
+function read(ctx: RevisionContext, job: JobId, called: BackendCallOutcome, delta: PackReviewDelta | null): Asked {
   if (called.kind === 'lost') return { kind: 'failed', detail: `${called.inv} was lost with its runner` };
   const v = verdictOf(ctx, jobParent(job), called);
   switch (v.kind) {
@@ -330,7 +330,7 @@ function read(ctx: CheckpointContext, job: JobId, called: BackendCallOutcome, de
  * answer off its schema or its dispositions takes the one judgment repair turn (dev.12, `repairTurnOf`): its own session
  * resumed with why, as the next attempt, whose answer is the job's (refused again, no valid report).
  */
-async function ask(ctx: CheckpointContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): Promise<Asked> {
+async function ask(ctx: RevisionContext, inputs: PackReviewInputs, delta: PackReviewDelta | null): Promise<Asked> {
   const { job } = inputs;
   /** The refused answer awaiting its repair turn, or null. */
   let refused: Readonly<{ inv: InvocationId; detail: string }> | null = null;
@@ -390,7 +390,7 @@ function itemContent(view: JournalView, r: PackReviewState, detail: string | nul
  * Raises the item of every ended review that calls for one and has none (once per job: a crash between the end and the
  * raise loses only `detail`, which the job that just ended passes for itself).
  */
-export function settlePackReviews(ctx: CheckpointContext, detail: Readonly<{ job: JobId; text: string }> | null = null): void {
+export function settlePackReviews(ctx: RevisionContext, detail: Readonly<{ job: JobId; text: string }> | null = null): void {
   const view = ctx.journal.view;
   for (const r of view.holistic().packReviews) {
     if (!needsItem(view, r) || packItemOf(view, r.started.job) !== null) continue;
@@ -399,7 +399,7 @@ export function settlePackReviews(ctx: CheckpointContext, detail: Readonly<{ job
 }
 
 /** Runs (or resumes) the pack review now due: see the header. `none` when nothing is due. */
-export async function runPackReview(ctx: CheckpointContext): Promise<PackReviewOutcome> {
+export async function runPackReview(ctx: RevisionContext): Promise<PackReviewOutcome> {
   settlePackReviews(ctx);
   const status = packReviewStatus(ctx);
   let r: PackReviewState;

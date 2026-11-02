@@ -12,28 +12,36 @@
 // both arms; the variant fields are read only through `targetDocuments` and `visionFile` (test target.no-direct-access).
 // `chain` (H7) names the previous arc of a chained start, fixed at revision 1.
 //
-// dev.13 (SCHEMAS.md "dev.13: milestone walkthroughs and design units"): `milestones` (absent: none; `milestonesOf`),
+// dev.13 (SCHEMAS.md "Milestones and bring-up"): `milestones` (absent: none; `milestonesOf`),
 // `limits.walkRounds` (absent: 3; `walkRoundsOf`), the unit origin `polish` with its `polish` field. The in-file milestone
 // refusals are here (`milestoneRefusals`); `milestones-need-holistic` is a Phase-0 row (src/phase0/rows.ts).
 import {
-  type ArcId, type EdgeId, type JourneyId, type KnownDefectId, type LaneId, type MilestoneId, type PlanRev, type PolishId, type ResourceName, type RulingId, type ServeName, type Sha,
-  type UnitId, type VisionClauseId, INTEGRATION_SLOT, arcId, edgeId, journeyId, knownDefectId, laneId, milestoneId, planRev, polishId, resourceName, rulingId, serveName, sha,
-  unitId, visionClauseId, idList,
+type ArcId,type EdgeId,
+INTEGRATION_SLOT,
+type JourneyId,type KnownDefectId,type LaneId,type MilestoneId,
+type PolishId,type ResourceName,type ServeName,type Sha,
+type SystemName,type UnitId,type VisionClauseId,
+arcId,edgeId,
+idList,
+journeyId,knownDefectId,laneId,milestoneId,
+polishId,resourceName,serveName,sha,
+systemName,unitId,visionClauseId
 } from '../core/ids.ts';
-import { type PropagationTarget, propagationTarget } from '../core/stale.ts';
 import {
-  BOUND_FIELDS, type Bounds, DEFAULT_BOUNDS, type FailureRef, failureRef, type KnownDefectMatch, type LaneDef, type LaneEnv, knownDefectMatch, laneDefOf, laneEnv,
+BOUND_FIELDS,type Bounds,DEFAULT_BOUNDS,type FailureRef,
+type KnownDefectMatch,type LaneDef,type LaneEnv,
+failureRef,
+knownDefectMatch,laneDefOf,laneEnv,
 } from '../core/records.ts';
-import { planCheckShapeDefault, environmentResourcesDefault } from '../core/upgrade.ts';
-import { type FlakyKey, flakyKey, flakyKeyOf } from '../core/flaky.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
-import { Fields, type Read, SchemaError, arrayOf, assertUnique, literal, nullable, object, oneOf, positive, sortedBy, str, stringMap, tagged } from '../core/validate.ts';
-import { type LensKind, LENS_KINDS } from '../holistic/types.ts';
+
+import { type FlakyKey,flakyKey,flakyKeyOf } from '../core/flaky.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
+import { Fields,type Read,SchemaError,arrayOf,assertUnique,literal,nullable,object,oneOf,positive,str,stringMap } from '../core/validate.ts';
 import {
-  type AbsPath, type BranchName, type PlanPath, type RepoPath, type RepoPattern, absPath, branchName, planPath, repoPath,
-  repoPattern,
+type AbsPath,type BranchName,type PlanPath,type RepoPath,type RepoPattern,absPath,branchName,planPath,repoPath,
+repoPattern,
 } from '../core/values.ts';
-import { type RiskTier, type RoutingLayer, riskTier, routingLayer } from '../routing/types.ts';
+import { type RiskTier,type RoutingLayer,riskTier,routingLayer } from '../routing/types.ts';
 
 export const PLAN_SCHEMA = 'roadmap/plan-m1';
 
@@ -53,7 +61,7 @@ export const PROBE_EXIT = { free: 0, ownLabel: 10, foreign: 11 } as const;
 export type ResourceDecl = Readonly<{ name: ResourceName; probe: ToolCommand; teardown: ToolCommand; pool?: Readonly<{ size: number }> }>;
 
 /**
- * dev.17 (SCHEMAS.md "dev.17: environments"): a costed environment a lane runs against (`LaneDef.environment`). On disk
+ * dev.17 (SCHEMAS.md "Environment lifecycle"): a costed environment a lane runs against (`LaneDef.environment`). On disk
  * `environments: {<name>: {up?, down?, probe, idleMinutes?, resources?}}`; `up`, `down` and `idleMinutes` come together or not at all.
  * With them the executor owns its lifecycle (src/resources/environments.ts): brought up lazily at a lane's first use, kept
  * up while lanes keep using it, brought down `idleMinutes` (a positive number, fractions allowed) after its last use.
@@ -73,7 +81,7 @@ export type EnvironmentDecl = Readonly<{ name: ResourceName; probe: ToolCommand;
  * requirement or contract change left stale (it carries `propagation`; src/holistic/propagation.ts), ranks with repairs.
  * Every origin but `planned` is milestone-exempt (src/walk/node.ts).
  */
-export const UNIT_ORIGINS = ['planned', 'checkpoint', 'repair', 'polish', 'deflake', 'propagation'] as const;
+export const UNIT_ORIGINS = ['planned', 'repair', 'polish', 'deflake'] as const;
 export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
 
 /**
@@ -83,7 +91,6 @@ export type UnitOrigin = (typeof UNIT_ORIGINS)[number];
 export type DeflakeOrigin = Readonly<{ keys: readonly FlakyKey[] }>;
 
 /** dev.17: what a `propagation` unit came from: the plan rev whose stale set named the change, and the changed target. */
-export type PropagationOrigin = Readonly<{ rev: PlanRev; target: PropagationTarget }>;
 
 /** dev.13: what a `polish` unit came from: the milestone it polishes and the walkthrough's proposal (`polish-proposed`). */
 export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId }>;
@@ -92,7 +99,7 @@ export type PolishOrigin = Readonly<{ milestone: MilestoneId; proposal: PolishId
 export type ContingentEdge = Readonly<{ id: EdgeId; condition: string }>;
 
 /** Where a re-entry's prepared worktree enters (M2): absent, the preparation decides from the merge. */
-export const REENTRY_POINTS = ['plan-check', 'build', 'verify'] as const;
+export const REENTRY_POINTS = ['pre-build', 'build', 'verify'] as const;
 export type ReentryPoint = (typeof REENTRY_POINTS)[number];
 /**
  * `reenters` (M2): this unit re-enters `unit`, which it supersedes; `reset` (with a ruling) resets its chargeable failures.
@@ -100,9 +107,9 @@ export type ReentryPoint = (typeof REENTRY_POINTS)[number];
  * re-entries applied before it carry none; the classifier requires it of every re-entry an apply adds whose lineage
  * recorded a failure.
  */
-export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ ruling: RulingId }>; fixes?: FailureRef }>;
+export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ reason: string }>; fixes?: FailureRef }>;
 /** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
-export type Cut = Readonly<{ reason: string; ruling?: RulingId }>;
+export type Cut = Readonly<{ reason: string }>;
 
 /**
  * M3 (`limits`): overrides of the built-in bounds (`DEFAULT_BOUNDS`), all positive. A unit's override its own;
@@ -113,7 +120,7 @@ export type UnitLimits = Readonly<{ [K in keyof Bounds]?: number }>;
  * The plan's limits: the units' bounds, the arc's convergence counter K (§2.8, default 3) and (dev.13) the walks per
  * milestone (`walkRounds`, default 3: round 1 and up to two polish or fix rounds).
  */
-export type ArcLimits = UnitLimits & Readonly<{ convergenceK?: number; walkRounds?: number; verification?: VerificationBudget }>;
+export type ArcLimits = UnitLimits & Readonly<{ walkRounds?: number; verification?: VerificationBudget }>;
 
 /**
  * dev.17 (flaky ledger): what a deflake unit's verification may cost, in lane-minutes (its runs times the lane's measured
@@ -124,7 +131,6 @@ export type VerificationBudget = Readonly<{ laneMinutes?: number; lanes?: Readon
 /** Defaults, unmeasured: re-derive once arcs have measured deflakes (BACKLOG). */
 export const DEFAULT_VERIFICATION_LANE_MINUTES = 30;
 export const BATCH_VERIFICATION_RUNS = 2;
-export const DEFAULT_CONVERGENCE_K = 3;
 export const DEFAULT_WALK_ROUNDS = 3;
 
 /**
@@ -139,27 +145,18 @@ export type Holistic = Readonly<{
   advances: readonly VisionClauseId[];
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
-  /** Retired milestones per steering checkpoint; absent: 2. */
-  checkpoint?: Readonly<{ everyMilestones?: number }>;
-  audit?: Readonly<{
-    /** Publications per cadence audit (D3); absent: 5. */
-    every?: number;
-    /** The required lens set L (H9), ascending; absent: all four. */
-    lenses?: readonly LensKind[];
-    /** The wall-clock trigger's period; absent: 360. */
-    wallClockMin?: number;
-  }>;
 }>;
 /** An `architecture-doc` plan's holistic block: the vision file (`roadmap/vision-m3`), relative to the plan's directory. */
 export type HolisticDoc = Holistic & Readonly<{ vision: PlanPath }>;
-export const DEFAULT_AUDIT = { every: 5, wallClockMin: 360 } as const;
-export const DEFAULT_CHECKPOINT = { everyMilestones: 2 } as const;
 
 export type PlanUnit = Readonly<{
   id: UnitId;
+  spike?: Readonly<{ question: string }>;
   spec: PlanPath;
   risk: RiskTier;
-  scope: readonly RepoPattern[];
+  /** The unit systems whose build memory is available to its roles. Required by the P2 cutover. */
+  systems: readonly SystemName[];
+  review?: 'always' | 'never';
   resources: readonly ResourceName[];
   /**
    * Units this one runs after (`after`, optional in the file, [] when absent): it is not dispatched while
@@ -185,7 +182,6 @@ export type PlanUnit = Readonly<{
   /** dev.17: present exactly on a `deflake` unit. */
   deflake?: DeflakeOrigin;
   /** dev.17: present exactly on a `propagation` unit. */
-  propagation?: PropagationOrigin;
 }>;
 
 export const UNIT_PRIORITIES = ['normal', 'high'] as const;
@@ -201,15 +197,7 @@ export const priorityOf = (unit: PlanUnit): UnitPriority => unit.priority ?? 'no
 export type KnownDefect = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId }>;
 
 /**
- * M4a rev 3 (E, R40) to dev.16: how plan-check ran, per builder class (`by-builder`) or for every unit alike (`uniform`).
- * Removed in dev.17 (every plan-check is one fresh call); a plan in force carrying it reads as uniform (`planCheckShapeDefault`).
- */
-const LEGACY_PLAN_CHECK_SHAPES = ['uniform', 'by-builder'] as const;
-
-/**
- * Plan defects (2026-10-16): files the build derives from others (a bundle from its sources). A unit whose scope covers a
- * source pattern takes the outputs into its effective scope (`derivedWidening`, src/input/derived.ts, pinned on its
- * dispatch record as `derived`), so salvage keeps, and the gate and candidate allow, a regenerated output.
+ * Files the build derives from others (a bundle from its sources), checked by regeneration.
  *
  * `regenerate` (dev.12): the generator, run from the repo root's `cwd` with no shell. A unit whose diff touches a source or
  * an output has it run at the lanes stage, in a clean checkout of its commit, and the outputs must come out byte-identical
@@ -269,6 +257,7 @@ export type Milestone = Readonly<{
   text: string;
   units: readonly UnitId[];
   design: MilestoneDesign;
+  lanes?: readonly LaneId[];
   references: readonly RepoPath[];
   bringUp: BringUp;
   journeys: readonly Journey[];
@@ -342,6 +331,7 @@ type PlanBase = Readonly<{
   routing?: RoutingLayer;
   /** M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. */
   capacity?: Readonly<{ cpu?: number }>;
+  expectations?: Readonly<{ arcUsd?: number; perMilestoneUsd?: number }>;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
   resources: readonly ResourceDecl[];
   units: readonly PlanUnit[];
@@ -349,6 +339,8 @@ type PlanBase = Readonly<{
   limits?: ArcLimits;
   /** M4a: a chained start's previous arc (absent: not chained). */
   chain?: PlanChain;
+  /** First arc after a release cut: the predecessor's product head without a snapshot of this schema. */
+  previousHead?: Sha;
   /** M4a rev 3 (F4): known defects, ids unique (absent: none, lasting; `knownDefectsOf`). */
   knownDefects?: readonly KnownDefect[];
   /** Plan defects (2026-10-16): derived files (absent: none, lasting; `derivedOf`). */
@@ -374,17 +366,8 @@ export function targetDocumentPaths(plan: PlanM1): readonly RepoPath[] {
   return t === null ? [] : t.digest === null ? [t.doc] : [t.doc, t.digest];
 }
 
-/**
- * The documents a ruling's contract ops may edit and a checkpoint's revision vector binds: the plan's contracts and the
- * architecture doc, ascending (never its digest; never a corpus file, R32).
- */
-export function contractOpDocuments(plan: PlanM1): readonly RepoPath[] {
-  const t = targetDocuments(plan);
-  return [...new Set([...plan.contracts, ...(t === null ? [] : [t.doc])])].sort();
-}
-
 /** The plan fields an apply's `plan-field` change compares (PLAN_FIELDS, src/core/events.ts); the target's read through its arm. */
-export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity';
+export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity' | 'expectations';
 export function planFieldValue(plan: PlanM1, field: PlanFieldName): unknown {
   switch (field) {
     case 'architectureDoc':
@@ -433,11 +416,10 @@ const verificationBudget: Read<VerificationBudget> = object((f) => {
   return { ...(laneMinutes === undefined ? {} : { laneMinutes }), ...(lanes === undefined ? {} : { lanes }) };
 });
 const arcLimits: Read<ArcLimits> = object((f) => {
-  const k = f.optional('convergenceK', positive);
   const walkRounds = f.optional('walkRounds', positive);
   const verification = f.optional('verification', verificationBudget);
   return {
-    ...limitsFields(f), ...(k === undefined ? {} : { convergenceK: k }), ...(walkRounds === undefined ? {} : { walkRounds }),
+    ...limitsFields(f), ...(walkRounds === undefined ? {} : { walkRounds }),
     ...(verification === undefined ? {} : { verification }),
   } as ArcLimits;
 });
@@ -449,21 +431,10 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
     throw new SchemaError(`${f.path}.vision`, withVision ? 'the vision file (an architecture-doc plan)' : 'absent (a corpus plan\'s vision is <repo>/.roadmap/vision.json)', vision);
   }
   const obligations = f.optional('obligations', (v, p) => planPath(v, p));
-  const checkpoint = f.optional('checkpoint', object((g) => {
-    const everyMilestones = g.optional('everyMilestones', positive);
-    return everyMilestones === undefined ? {} : { everyMilestones };
-  }));
-  const audit = f.optional('audit', object((g) => {
-    const every = g.optional('every', positive);
-    const lenses = g.optional('lenses', sortedBy(oneOf(LENS_KINDS), (l) => l, { nonEmpty: true }));
-    const wallClockMin = g.optional('wallClockMin', positive);
-    return { ...(every === undefined ? {} : { every }), ...(lenses === undefined ? {} : { lenses }), ...(wallClockMin === undefined ? {} : { wallClockMin }) };
-  }));
   return {
     ...(vision === undefined ? {} : { vision }),
-    advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true, legacyStringOrder: true })),
-    ...(obligations === undefined ? {} : { obligations }), ...(audit === undefined ? {} : { audit }),
-    ...(checkpoint === undefined ? {} : { checkpoint }) };
+    advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true })),
+    ...(obligations === undefined ? {} : { obligations }) };
 });
 
 /** A unit's bounds: the built-in ones, then the plan's `limits`, then the unit's own (M3). */
@@ -478,8 +449,6 @@ export function advancesOf(plan: PlanM1): readonly VisionClauseId[] {
   return plan.holistic.advances;
 }
 
-/** The arc's required lens set L (H9): `holistic.audit.lenses`, or all four. */
-export const lensSetOf = (h: Holistic): readonly LensKind[] => h.audit?.lenses ?? LENS_KINDS;
 
 const toolCommand: Read<ToolCommand> = object((f) => ({
   argv: f.get('argv', arrayOf(str, { nonEmpty: true })),
@@ -531,7 +500,7 @@ export const environmentsOf = (plan: Pick<PlanM1, 'environments'>): readonly Env
 /** Resources powered by an environment; absent on an earlier declaration, read without rewriting its bytes. */
 export function environmentResources(environment: EnvironmentDecl): readonly ResourceName[] {
   if (environment.resources !== undefined) return environment.resources;
-  return environmentResourcesDefault();
+  return [];
 }
 
 /** Every environment used by these resource names, ascending and unique (explicit environments included). */
@@ -542,11 +511,9 @@ export const resourceEnvironments = (plan: PlanM1, names: readonly ResourceName[
 export const environmentOf = (plan: Pick<PlanM1, 'environments'>, name: ResourceName): EnvironmentDecl | null =>
   environmentsOf(plan).find((e) => e.name === name) ?? null;
 
-const rulingR: Read<RulingId> = (v, p) => rulingId(v, p);
-
 const reentry: Read<Reentry> = object((f) => {
   const enterAt = f.optional('enterAt', oneOf(REENTRY_POINTS));
-  const reset = f.optional('reset', object((g) => ({ ruling: g.get('ruling', rulingR) })));
+  const reset = f.optional('reset', object((g) => ({ reason: g.get('reason', str) })));
   const fixes = f.optional('fixes', failureRef);
   return {
     unit: f.get('unit', (v, p) => unitId(v, p)), ...(enterAt === undefined ? {} : { enterAt }), ...(reset === undefined ? {} : { reset }), ...(fixes === undefined ? {} : { fixes }),
@@ -554,16 +521,19 @@ const reentry: Read<Reentry> = object((f) => {
 });
 
 const cut: Read<Cut> = object((f) => {
-  const ruling = f.optional('ruling', rulingR);
-  return { reason: f.get('reason', str), ...(ruling === undefined ? {} : { ruling }) };
+  return { reason: f.get('reason', str) };
 });
 
 const planUnit: Read<PlanUnit> = object((f) => {
+  const systems = f.get('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
+  if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
+  const review = f.optional('review', oneOf(['always', 'never'] as const));
   const out = {
     id: f.get('id', (v, p) => unitId(v, p)),
     spec: f.get('spec', (v, p) => planPath(v, p)),
     risk: f.get('risk', riskTier),
-    scope: f.get('scope', arrayOf((v, p) => repoPattern(v, p), { nonEmpty: true })),
+    ...(f.optional('spike', object((g) => ({ question: g.get('question', str) }))) === undefined ? {} : { spike: f.get('spike', object((g) => ({ question: g.get('question', str) }))) }),
+    ...(review === undefined ? {} : { review }),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
     after: f.optional('after', arrayOf((v, p) => unitId(v, p))) ?? [],
     contingent: f.optional('contingent', arrayOf(object((g) => ({ id: g.get('id', (v, p) => edgeId(v, p)), condition: g.get('condition', str) })))) ?? [],
@@ -579,19 +549,13 @@ const planUnit: Read<PlanUnit> = object((f) => {
   if ((origin === 'polish') !== (polish !== undefined)) throw new SchemaError(`${f.path}.polish`, origin === 'polish' ? 'the milestone and proposal of a polish unit' : 'absent (only a polish unit carries it)', polish);
   const deflake = f.optional('deflake', deflakeOrigin);
   if ((origin === 'deflake') !== (deflake !== undefined)) throw new SchemaError(`${f.path}.deflake`, origin === 'deflake' ? 'the flaky keys of a deflake unit' : 'absent (only a deflake unit carries it)', deflake);
-  const propagation = f.optional('propagation', object((g): PropagationOrigin => ({ rev: g.get('rev', (v, p) => planRev(v, p)), target: g.get('target', propagationTarget) })));
-  if ((origin === 'propagation') !== (propagation !== undefined)) {
-    throw new SchemaError(`${f.path}.propagation`, origin === 'propagation' ? 'the stale set and target of a propagation unit' : 'absent (only a propagation unit carries it)', propagation);
-  }
-  assertUnique(out.scope, (s) => s, `${f.path}.scope`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
   if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
   return {
-    ...out, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
+    ...out, systems, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
     ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
     ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
-    ...(propagation === undefined ? {} : { propagation }),
   };
 });
 
@@ -658,12 +622,14 @@ const milestone: Read<Milestone> = object((f) => {
     text: f.get('text', str),
     units: f.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
     design: f.get('design', milestoneDesign),
+    lanes: f.optional('lanes', arrayOf((v, p) => laneId(v, p))) ?? [],
     references: f.get('references', arrayOf((v, p) => repoPath(v, p))),
     bringUp: f.get('bringUp', bringUpR),
     journeys: f.get('journeys', arrayOf(journey)),
     resources: f.get('resources', arrayOf((v, p) => resourceName(v, p))),
   };
   assertUnique(out.units, (u) => u, `${f.path}.units`);
+  assertUnique(out.lanes ?? [], (l) => l, `${f.path}.lanes`);
   assertUnique(out.references, (r) => r, `${f.path}.references`);
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   return out;
@@ -684,6 +650,10 @@ export function milestoneRefusals(plan: PlanM1): readonly Readonly<{ path: strin
     m.units.forEach((u, j) => {
       if (!units.has(u)) out.push({ path: `${at}.units[${j}]`, expected: `a unit of the plan (milestone ${m.id})`, value: u });
     });
+    for (const id of m.lanes ?? []) {
+      const lane = plan.suite.lanes.find((l) => l.id === id);
+      if (lane === undefined) out.push({ path: `${at}.lanes`, expected: 'suite lane ids declared by the plan', value: id });
+    }
     const design = designUnitOf(m);
     if (design !== null) {
       const d = units.get(design);
@@ -768,13 +738,17 @@ export function parsePlan(value: unknown): PlanM1 {
       const cpu = g.optional('cpu', positive);
       return cpu === undefined ? {} : { cpu };
     }));
+    const expectations = f.optional('expectations', object((g) => {
+      const amount: Read<number> = (v, p) => { if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'finite non-negative USD', v); return v; };
+      const arcUsd = g.optional('arcUsd', amount); const perMilestoneUsd = g.optional('perMilestoneUsd', amount);
+      return { ...(arcUsd === undefined ? {} : { arcUsd }), ...(perMilestoneUsd === undefined ? {} : { perMilestoneUsd }) };
+    }));
     const target = planTarget(f);
     const limits = f.optional('limits', arcLimits);
+    const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
     const chain = f.optional('chain', object((g): PlanChain => ({ previousArc: g.get('previousArc', (v, p) => arcId(v, p)), previousHead: g.get('previousHead', (v, p) => sha(v, p)) })));
     const knownDefects = f.optional('knownDefects', arrayOf(knownDefect, { nonEmpty: true }));
-    // dev.17: a dev.16 plan's `planCheck.shape` is read and dropped (every plan-check is uniform now), warned.
-    const legacyPlanCheck = f.optional('planCheck', object((g) => ({ shape: g.get('shape', oneOf(LEGACY_PLAN_CHECK_SHAPES)) })));
-    if (legacyPlanCheck !== undefined) planCheckShapeDefault(legacyPlanCheck.shape);
+
     const derived = f.optional('derived', arrayOf(derivedFiles));
     const milestones = f.optional('milestones', arrayOf(milestone, { nonEmpty: true }));
     const environments = f.optional('environments', environmentsR);
@@ -789,17 +763,20 @@ export function parsePlan(value: unknown): PlanM1 {
       direction: f.get('direction', str),
       ...(routing === undefined ? {} : { routing }),
       ...(capacity === undefined ? {} : { capacity }),
+      ...(expectations === undefined ? {} : { expectations }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDefOf('suite'))) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),
       ...(limits === undefined ? {} : { limits }),
       ...(chain === undefined ? {} : { chain }),
+      ...(previousHead === undefined ? {} : { previousHead }),
       ...(knownDefects === undefined ? {} : { knownDefects }),
       ...(derived === undefined ? {} : { derived }),
       ...(milestones === undefined ? {} : { milestones }),
       ...(environments === undefined ? {} : { environments }),
       ...target,
     };
+    if (out.previousHead !== undefined && out.chain !== undefined) throw new SchemaError('plan.previousHead', 'a foreign predecessor only without plan.chain', out.previousHead);
     // dev.17: a batch lane runs at milestones, cadence audits and the close-out, which only the holistic layer has.
     out.suite.lanes.forEach((l, i) => {
       if (l.cadence === 'batch' && out.holistic === undefined) throw new SchemaError(`plan.suite.lanes[${i}].cadence`, 'build, unit or candidate outside a holistic arc (a batch lane runs at milestones, audits and the close-out)', l.cadence);

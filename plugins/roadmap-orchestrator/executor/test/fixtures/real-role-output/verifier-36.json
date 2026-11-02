@@ -1,0 +1,65 @@
+{
+  "standing": [],
+  "decision": "revise",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "blocking",
+      "path": "packages/acorn/src/sharp-index.ts",
+      "hunk": {
+        "path": "packages/acorn/src/sharp-index.ts",
+        "line": 18
+      },
+      "text": "The rename commit also changes the comparator in acornSharpIndexMargin from `a >= b` to `a > b`. When a === b the function now takes the scaleBy branch instead of the fitLength branch, so its result changes: (5,5) returned 99 before and returns 352 now. This breaks A1 ('behaviour is unchanged'), A2 ('Nothing else changes'), the contract's 'Renames keep behaviour', and the direction that sweeps stay mechanical. The unit lane and the golden check cannot detect it: goldens record only names, params and called helpers, and no test references this function.",
+      "evidence": [
+        "packages/acorn/src/sharp-index.ts:18",
+        "contracts/api.md: 'Renames keep behaviour'",
+        "tools/gen-goldens.ts:11-24: goldens record name, params and imported calls only, not comparators",
+        "grep for SharpIndexMargin matches only goldens/acorn.json and packages/acorn/src/sharp-index.ts; packages/acorn/test does not exist",
+        "Normalising acornBase/acornRoot across the packages/ diff leaves this one line as the only unpaired change"
+      ],
+      "contractRef": "contracts/api.md",
+      "experiments": [
+        {
+          "command": "Copied sharp-index.ts and acorn-base.ts from 7ae47f0 beside the tip's versions, then ran node /redacted/path, which compares every sharp-index export old vs new for a,b in [-50,50]",
+          "output": "{ tot: 30603, diffs: 101, ex: [ ['acornSharpIndexMargin',-50,-50,99,-3498], ['acornSharpIndexMargin',-49,-49,99,-3428], ... ] }\n0 0 99 2\n5 5 99 352\n7 7 99 492"
+        }
+      ],
+      "debt": null,
+      "defect": "contract-violation",
+      "reraises": null
+    }
+  ],
+  "directives": [
+    "In packages/acorn/src/sharp-index.ts:18, restore the comparator in acornSharpIndexMargin to `a >= b`, keeping only the acornBase to acornRoot rename in that function.",
+    "Rerun `node tools/gen-goldens.ts` and commit any resulting output; do not hand-edit goldens/. The comparator is not recorded in goldens, so no change to them is expected.",
+    "Confirm that after normalising acornBase/acornRoot, the packages/ diff against 7ae47f0 is empty."
+  ],
+  "reasons": [
+    "A1 not met: the rename is complete, with no `acornBase` left anywhere in the tree, but behaviour changed. acornSharpIndexMargin returns a different result whenever a === b, confirmed for all 101 equal pairs on the integer grid tested; no other sharp-index export differed.",
+    "A2 partly met: the executor's regeneration check shows goldens/ is byte-identical to the generator output, and the golden diff shown is the rename. 'Nothing else changes' is not met because of the comparator edit.",
+    "The unit lane passing is no evidence for this clause, because no test exercises acornSharpIndexMargin. Non-goal 'No unrelated changes' is also breached by the same line."
+  ],
+  "premises": [
+    {
+      "claim": "The comparator edit in acornSharpIndexMargin is the only change in packages/ not explained by the rename.",
+      "evidence": [
+        {
+          "path": "packages/acorn/src/sharp-index.ts",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "claim": "Goldens record called helpers but not comparators, so regenerating them cannot reveal this change.",
+      "evidence": [
+        {
+          "path": "tools/gen-goldens.ts",
+          "line": 11
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

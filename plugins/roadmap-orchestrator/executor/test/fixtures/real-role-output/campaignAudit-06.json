@@ -1,0 +1,64 @@
+{
+  "findings": [
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "The only witness for mul cannot be shown to exercise src/unit.js. The whole of test/unit.test.js is one line that calls assert.equal and mul, with no import or require of either. The checkout has no package.json, runner config or setup file that could inject them. Run directly as a file under Node, it should fail with a ReferenceError before any assertion runs, so it provides no executable evidence for the CONTRACT.md product claim. This is a witness defect, not a product defect. It comes from reading the files; the test was not run because no execution tool was available. Severity is P3 because the implementation itself matches the contract and an external harness outside this checkout could supply the globals.",
+      "cause": "mul witness execution: test file never imports mul or assert, so it is not bound to src/unit.js",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "Product code: src/unit.js line 1 returns a*b and touches no state, which matches both CONTRACT.md claims (signed product, no side effects) by inspection. No product defect found.",
+    "Assertion strength: if the witness were bound to src/unit.js, mul(-2,3)===-6 would reject an absolute-value mutant and mul(2,3)===6 would reject a+b. The assertion values are adequate; the gap is only that the file never binds to the code. This is reasoning, not a mutation run.",
+    "Execution limit: only Read, Glob and Grep were used, so neither the test nor any mutant was run. The reported failure mode follows from file contents and language semantics, not from an observed run.",
+    "Numeric boundaries not reported: a*b rounds beyond 2^53, overflows to Infinity and can return -0. CONTRACT.md states no numeric domain, there are no obligations, and no caller in the range depends on these cases, so there is no concrete evidence that this is a defect.",
+    "Vision: revision 1 lists no advanced clauses, no horizon clauses and no open questions, so no clause applies and none is cited. There are no obligations or prior findings to check.",
+    "Cross-unit and drift: the range has one source unit and no callers, so there are no seams to check. CONTRACT.md does not drift from src/unit.js."
+  ],
+  "premises": [
+    {
+      "claim": "mul is implemented as a*b with no state access or I/O.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The contract requires the signed mathematical product and no side effects.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The test file contains two assertions on one line and no import or require statements.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": []
+}

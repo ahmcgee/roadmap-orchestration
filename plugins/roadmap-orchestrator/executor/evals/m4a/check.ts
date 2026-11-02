@@ -22,7 +22,7 @@
 //   stacked-prs       PR 1 is arc 1's branch → main, PR 2 arc 2's branch → arc 1's; both bodies carry the merge-commit
 //                     line and PR 1's lists arc 1's amendments; origin's arc branches are at the completed heads and its
 //                     main at the seed commit
-//   config            `.roadmap/config.json` is exactly {chain: {k: 1}} at both completed heads
+//   config            `.roadmap/config.json` has exactly K = 1 and a valid systems map covering the units at both completed heads
 //   brief-acked-once  the bootstrap arc is the only acked start: no committed brief ack (the owner simulator
 //                     acknowledged no brief), and the chain's unacked starts are exactly arc 2
 //   no-model-ids      no model id in either run dir (launch inputs and captured backend output aside) or ref
@@ -31,25 +31,16 @@
 //                     cleared (`released`), and no arc of the product holds the host now
 //   profile           each arc's first `plan-applied` routingProvenance.profile is the report's profile (the one the
 //                     session was told to start every arc under)
-//   flow-constraint   (M4b, plant S) in arc 1 a flow run ended with code's constraint `slot:integration` and a
-//                     `suite:<lane>` largest component (`flow-ended.constraint.code`)
-//   flow-loop         over the chain: at least one `flow-started`, one `flow-decided` with a reason, one `flow-verdict`
-//                     that is not `inconclusive`
-//   flow-shard        over the chain: a `flow-applied` suite-lane argv change whose latest proof before it is `preserved`
-//                     and whose `flow-verdict` is `improved`
 //   ruler-intact      (plants S and G) at the chain's final completed head the check itself runs the plant lane's seed
 //                     argv (arc 1's first plan, driver.ts `plantLaneOf`) and each arc's last in-force argv of that lane,
 //                     each in a clean `git archive` export with the lane's env and the node-test witness reporter: equal
 //                     `(testId, selected, outcome)` multisets, the seed's non-empty with a pass, the soak test present
 //                     with `selected` unchanged; the arc lane running the soak file keeps arc 1's first `laneRev` in every
-//                     revision; no `flow-applied` changed a suite argv without a `preserved` proof; every `ruler-changed`
-//                     item is listed in the detail (never a failure by itself)
+//                     revision.
 //   pressure-recorded (M4b rev 3, RC-10) over the chain: every lane and journey run of at least twice
 //                     PRESSURE_MIN_WALL_MS (intent to done) whose result an executor started with schedstat `available`
 //                     closed (its intent and done under that one start) carries a non-null pressure (a shorter run's is
-//                     null by design), and some start was `available` (this host reports schedstat); every flow run that ended with
-//                     code's constraint `host:cpu` bound inputs whose window pressure is at or above the threshold
-//                     (consistency, the negative control)
+//                     null by design), and some start was `available` (this host reports schedstat).
 //
 // Also reported, never a criterion: `interventions` {n, byLever, malformed} from the architect's operator log
 // (`<fixture>/roadmap-inputs/skill-feedback.md`, SKILL.md "Supervising the executor"); a missing log is 0. The scrambled
@@ -59,40 +50,40 @@
 // sources, a mid-arc re-pin, debt promote, rewording a T-n,
 // the vision-silent stop. A mid-arc re-pin stays listed: the owner's P-1 answer is released at arc 1's completion and
 // lands mid-arc only when the root agent started arc 2 before the answer came (paid run 5), else in arc 2's Phase 0.
+import { parseRepoConfig } from '../../src/routing/layers.ts';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, relative, resolve } from 'node:path';
+import { basename,join,relative,resolve } from 'node:path';
 import { computeBrief } from '../../src/brief.ts';
-import { type ArcRef, amendmentsOf, arcsWithRefs, committedAcks, completedHeadOf, readArcRef, unackedStarts } from '../../src/chain.ts';
+import { type ArcRef,arcsWithRefs,committedAcks,completedHeadOf,readArcRef,unackedStarts } from '../../src/chain.ts';
 import { phase0Check } from '../../src/commands/phase0.ts';
-import type { Event, Fact } from '../../src/core/events.ts';
-import { type ArcId, type Sha256Hex, HOST_CPU_STATION } from '../../src/core/ids.ts';
-import { spawnPressureOf, startPressureOf } from '../../src/core/upgrade.ts';
-import { PRESSURE_MIN_WALL_MS, PRESSURE_SATURATED } from '../../src/host/pressure.ts';
+import type { Event,Fact } from '../../src/core/events.ts';
+import { type ArcId,type Sha256Hex } from '../../src/core/ids.ts';
+import { spawnPressureOf,startPressureOf } from '../../src/core/projections.ts';
 import type { LaneDef } from '../../src/core/records.ts';
-import { type FlowInputs, type FlowProposal, parseFlowInputs } from '../../src/flow/types.ts';
-import { collectWitness, witnessEnv } from '../../src/holistic/witness.ts';
-import { type ArcLaneDef, type Obligations, type WitnessTest, laneRevOf, parseObligations } from '../../src/holistic/types.ts';
-import { type PlanM1, parsePlan } from '../../src/input/plan.ts';
-import { readNeedsUser } from '../../src/needsuser.ts';
-import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { type HostLockClaim } from '../../src/core/records.ts';
+import { type AbsPath,absPath } from '../../src/core/values.ts';
 import { parseCorpusPin } from '../../src/corpus/types.ts';
 import { MERGE_COMMIT_LINE } from '../../src/forge/pr.ts';
-import { git, gitCommonDir } from '../../src/git/git.ts';
+import { git,gitCommonDir } from '../../src/git/git.ts';
 import { censusProblems } from '../../src/holistic/rederive.ts';
-import { CORPUS_FILE_INPUT, CORPUS_GUIDE_INPUT, CORPUS_INPUT, FLOW_INPUTS_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT } from '../../src/input/inforce.ts';
-import { runDir } from '../../src/input/cli.ts';
-import { parsePhase0Record } from '../../src/phase0/types.ts';
-import { type HostLockClaim } from '../../src/core/records.ts';
+import { type ArcLaneDef,type Obligations,type WitnessTest,laneRevOf,parseObligations } from '../../src/holistic/types.ts';
+import { collectWitness,witnessEnv } from '../../src/holistic/witness.ts';
 import { readClaim } from '../../src/host/lock.ts';
-import { MODEL_IDS, type ProfileName } from '../../src/routing/types.ts';
+import { PRESSURE_MIN_WALL_MS } from '../../src/host/pressure.ts';
+import { runDir } from '../../src/input/cli.ts';
+import { CORPUS_FILE_INPUT,CORPUS_GUIDE_INPUT,CORPUS_INPUT,OBLIGATIONS_INPUT,PACK_REVIEW_INPUT,PHASE0_INPUT,PLAN_INPUT } from '../../src/input/inforce.ts';
+import { type PlanM1,parsePlan } from '../../src/input/plan.ts';
+import { readNeedsUser } from '../../src/needsuser.ts';
+import { parsePhase0Record } from '../../src/phase0/types.ts';
+import { MODEL_IDS,type ProfileName } from '../../src/routing/types.ts';
 import { readStore } from '../../test/fakes/gh-store.ts';
-import { DENIED, type Released, type Report, UNSTAGED, plantLaneOf } from './driver.ts';
-import { type ArcView, defectVerdicts, readKey } from './key.ts';
-import { type Layout, MAIN, PLANT, layout } from './layout.ts';
+import { DENIED,type Released,type Report,UNSTAGED,plantLaneOf } from './driver.ts';
+import { type ArcView,defectVerdicts,readKey } from './key.ts';
+import { type Layout,MAIN,PLANT,layout } from './layout.ts';
 import { SEED_FILE } from './setup.ts';
-import { needles, scanTranscript } from './transcript.ts';
+import { needles,scanTranscript } from './transcript.ts';
 
 export const NOT_EXERCISED = [
   'other-repo and checkout corpus sources', 'a mid-arc re-pin', 'debt promote',
@@ -259,7 +250,6 @@ function stackedPrs(run: Run): Verdict {
   if (p2.length !== 1 || p2[0]!.baseRefName !== b1) problems.push(`arc 2's PRs: ${JSON.stringify(p2.map((p) => `${p.headRefName}→${p.baseRefName}`))}`);
   if (store.pulls.length !== 2) problems.push(`the forge holds ${store.pulls.length} PRs`);
   for (const p of [...p1, ...p2]) if (!p.body.includes(MERGE_COMMIT_LINE)) problems.push(`PR ${p.number}'s body lacks the merge-commit line`);
-  for (const a of amendmentsOf(one)) if (p1[0] !== undefined && !p1[0].body.includes(a.id)) problems.push(`PR 1's body does not list ${a.id}`);
   const tip = (branch: string) => git(absPath(run.l.origin), ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]).trim();
   for (const [ref, branch] of [[one, b1], [two, b2]] as const) {
     const head = completedHeadOf(ref)?.head;
@@ -267,7 +257,7 @@ function stackedPrs(run: Run): Verdict {
   }
   const seed = (JSON.parse(readFileSync(join(run.l.dir, SEED_FILE), 'utf8')) as { main: string }).main;
   if (tip(MAIN) !== seed) problems.push(`origin's main moved from ${seed} to ${tip(MAIN)}`);
-  return verdict(problems, `${b1} → main, ${b2} → ${b1}; ${amendmentsOf(one).length} amendments listed; origin main unchanged`);
+  return verdict(problems, `${b1} → main, ${b2} → ${b1}; origin main unchanged`);
 }
 
 function config(run: Run): Verdict {
@@ -279,9 +269,16 @@ function config(run: Run): Verdict {
       continue;
     }
     const text = git(run.product, ['show', `${head}:.roadmap/config.json`]);
-    if (JSON.stringify(JSON.parse(text)) !== JSON.stringify({ chain: { k: 1 } })) problems.push(`${ref.arc}'s config.json is ${text.trim()}`);
+    const value = JSON.parse(text) as Record<string, unknown>;
+    const parsed = parseRepoConfig(value);
+    const { systemsMap: _map, ...settings } = value;
+    if (JSON.stringify(settings) !== JSON.stringify({ chain: { k: 1 } }) || parsed.systemsMap === undefined) {
+      problems.push(`${ref.arc}'s config.json requires K = 1 and its systemsMap, with no other settings: ${text.trim()}`);
+      continue;
+    }
+    for (const unit of ref.plan.units) for (const system of unit.systems) if (!Object.hasOwn(parsed.systemsMap.systems, system)) problems.push(`${ref.arc}'s config.json does not declare unit ${unit.id}'s system ${system}`);
   }
-  return verdict(problems, '{"chain":{"k":1}} at both completed heads');
+  return verdict(problems, 'K = 1 and a valid systems map covering each unit at both completed heads; no other settings');
 }
 
 function briefAckedOnce(run: Run): Verdict {
@@ -370,74 +367,22 @@ function profile(run: Run): Verdict {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// M4b: the flow loop and the ruler (plan "Fixture … the two plants"), read by the frozen facts (SCHEMAS.md "M4b")
+// The fixture lane integrity checks, read from recorded plan revisions.
 
-/** One arc as the flow criteria read it: its facts in log order (with seq), and each plan revision's plan and obligations. */
-export type FlowArc = Readonly<{
+/** One arc's recorded plans and obligations for the fixture lane integrity check. */
+export type RulerArc = Readonly<{
   arc: string;
-  facts: readonly Readonly<{ seq: number; fact: Fact }>[];
   revisions: readonly Readonly<{ rev: number; plan: PlanM1; obligations: Obligations | null }>[];
 }>;
 
-export function flowArcOf(ref: ArcRef): FlowArc {
+export function rulerArcOf(ref: ArcRef): RulerArc {
   const facts = ref.events.flatMap((e) => (e.type === 'fact' ? [{ seq: e.seq, fact: e.fact }] : []));
   const revisions = facts.flatMap(({ fact: f }) => (f.kind !== 'plan-applied' ? [] : [{
     rev: f.rev as number,
     plan: parsePlan(JSON.parse(ref.input(f.planSha256, PLAN_INPUT).toString('utf8'))),
     obligations: f.obligationsSha256 === undefined ? null : parseObligations(JSON.parse(ref.input(f.obligationsSha256, OBLIGATIONS_INPUT).toString('utf8'))),
   }]));
-  return { arc: ref.arc, facts, revisions };
-}
-
-type FactOf<K extends Fact['kind']> = Extract<Fact, { kind: K }>;
-const factsOfKind = <K extends Fact['kind']>(a: FlowArc, kind: K): readonly (FactOf<K> & { seq: number })[] =>
-  a.facts.flatMap(({ seq, fact }) => (fact.kind === kind ? [{ ...(fact as FactOf<K>), seq }] : []));
-
-/** `flow-constraint`: in arc 1, a flow run ended with code's constraint the integration slot and a `suite:<lane>` component. */
-export function flowConstraintVerdict(one: FlowArc): Verdict {
-  const ended = factsOfKind(one, 'flow-ended');
-  const hit = ended.find((e) => e.constraint.code?.station === 'slot:integration' && (e.constraint.code.component ?? '').startsWith('suite:'));
-  const seen = ended.map((e) => `${e.job}: ${e.constraint.code === null ? 'none' : `${e.constraint.code.station}${e.constraint.code.component === null ? '' : `/${e.constraint.code.component}`}`}`);
-  if (hit === undefined) return { pass: false, detail: ended.length === 0 ? `${one.arc} ran no flow job` : `no run named the slot with a suite component (${seen.join('; ')})` };
-  return { pass: true, detail: `${hit.job}: slot:integration/${hit.constraint.code!.component}` };
-}
-
-/** `flow-loop`: over the chain, at least one flow run, one decision with a reason, and one conclusive verdict. */
-export function flowLoopVerdict(arcs: readonly FlowArc[]): Verdict {
-  const all = <K extends Fact['kind']>(kind: K) => arcs.flatMap((a) => factsOfKind(a, kind).map((f) => ({ arc: a.arc, f })));
-  const runs = all('flow-started');
-  const decided = all('flow-decided').filter((d) => d.f.reason.trim() !== '');
-  const verdicts = all('flow-verdict');
-  const conclusive = verdicts.filter((v) => v.f.verdict !== 'inconclusive');
-  const problems = [
-    ...(runs.length === 0 ? ['no flow run started'] : []),
-    ...(decided.length === 0 ? ['no proposal decided with a reason'] : []),
-    ...(conclusive.length === 0 ? [`no conclusive verdict (${verdicts.map((v) => `${v.f.proposal} ${v.f.verdict}`).join(', ') || 'none'})`] : []),
-  ];
-  return verdict(problems, `${runs.length} runs, ${decided.length} decisions (${decided.map((d) => `${d.f.proposal} ${d.f.decision}`).join(', ')}), verdicts ${verdicts.map((v) => `${v.f.proposal} ${v.f.verdict}`).join(', ')}`);
-}
-
-/** The proposal a run ended with, by id, across the chain. */
-function proposalOf(a: FlowArc, id: string): FlowProposal | null {
-  return factsOfKind(a, 'flow-ended').find((e) => e.proposal?.id === id)?.proposal ?? null;
-}
-/** The latest proof of `proposal` before seq `before`, or null. */
-const proofBefore = (a: FlowArc, proposal: string, before: number) => factsOfKind(a, 'flow-proof').filter((p) => p.proposal === proposal && p.seq < before).at(-1) ?? null;
-
-/** `flow-shard`: an applied suite-lane argv change whose proof was `preserved` and whose verdict is `improved`. */
-export function flowShardVerdict(arcs: readonly FlowArc[]): Verdict {
-  const seen: string[] = [];
-  for (const a of arcs) {
-    for (const applied of factsOfKind(a, 'flow-applied')) {
-      const p = proposalOf(a, applied.proposal);
-      if (p === null || p.action.lever !== 'suite-lane' || p.action.argv === undefined) continue;
-      const proof = proofBefore(a, applied.proposal, applied.seq);
-      const v = factsOfKind(a, 'flow-verdict').find((x) => x.proposal === applied.proposal);
-      seen.push(`${a.arc}/${applied.proposal}: proof ${proof?.outcome ?? 'none'}, verdict ${v?.verdict ?? 'none'}`);
-      if (proof?.outcome === 'preserved' && v?.verdict === 'improved') return { pass: true, detail: `${a.arc}/${applied.proposal}: ${p.action.lane} ${JSON.stringify(p.action.argv)}, proof preserved, verdict improved` };
-    }
-  }
-  return { pass: false, detail: seen.length === 0 ? 'no suite-lane argv change was applied' : seen.join('; ') };
+  return { arc: ref.arc, revisions };
 }
 
 /** The arc lanes that run the soak test file (plant G's deliberately slow witness lane). */
@@ -445,10 +390,9 @@ const soakLanes = (o: Obligations): readonly ArcLaneDef[] => o.lanes.filter((x) 
 
 /**
  * The record half of `ruler-intact`: the soak arc lane's `laneRev` is the one arc 1 started with in every revision of
- * every arc (a flow lever never touches an arc lane, RC-3); no `flow-applied` changed a suite argv without a `preserved`
- * proof before it.
+ * every arc.
  */
-export function rulerRecordProblems(arcs: readonly FlowArc[]): readonly string[] {
+export function rulerRecordProblems(arcs: readonly RulerArc[]): readonly string[] {
   const problems: string[] = [];
   const first = arcs[0]?.revisions[0]?.obligations ?? null;
   const seed = first === null ? [] : soakLanes(first);
@@ -462,19 +406,12 @@ export function rulerRecordProblems(arcs: readonly FlowArc[]): readonly string[]
       if (now.length === 0) problems.push(`${a.arc} rev ${r.rev}: no arc lane runs ${PLANT.soakFile}`);
       for (const x of changed) problems.push(`${a.arc} rev ${r.rev}: the soak lane ${x.id} has laneRev ${laneRevOf(x)}, not ${[...revs].join(', ')}`);
     }
-    for (const applied of factsOfKind(a, 'flow-applied')) {
-      const p = proposalOf(a, applied.proposal);
-      if (p === null) problems.push(`${a.arc}: ${applied.proposal} was applied but no run proposed it`);
-      else if (p.action.lever === 'suite-lane' && p.action.argv !== undefined && proofBefore(a, applied.proposal, applied.seq)?.outcome !== 'preserved') {
-        problems.push(`${a.arc}: ${applied.proposal} changed ${p.action.lane}'s argv without a preserved proof`);
-      }
-    }
   }
   return problems;
 }
 
 /** The suite argvs `ruler-intact` runs: the plant lane as arc 1 began (`seed`) and as each arc ended (`inForce`, deduplicated). */
-export function rulerArgvs(arcs: readonly FlowArc[]): Readonly<{ lane: LaneDef; inForce: readonly LaneDef[] }> | Readonly<{ problem: string }> {
+export function rulerArgvs(arcs: readonly RulerArc[]): Readonly<{ lane: LaneDef; inForce: readonly LaneDef[] }> | Readonly<{ problem: string }> {
   const firstPlan = arcs[0]?.revisions[0]?.plan;
   const lane = firstPlan === undefined ? null : plantLaneOf(firstPlan);
   if (lane === null) return { problem: `${arcs[0]?.arc ?? 'arc 1'}'s first plan has no plant lane (${PLANT.serial} over ${PLANT.selector})` };
@@ -537,35 +474,9 @@ function witnessRun(product: AbsPath, head: string, lane: LaneDef, argv: readonl
 /** One ruler run's cap: a serial run of the plant takes about 6 minutes on the paid host. */
 const RULER_RUN_MS = 30 * 60_000;
 
-/** Every `ruler-changed` item the chain raised (listed in the report, never a failure by itself). */
-function rulerChanged(run: Run): readonly string[] {
-  const common = gitCommonDir(run.product);
-  return run.arcs.flatMap((ref) => ref.events.flatMap((e) => {
-    if (e.type !== 'intent' || e.kind !== 'needsuser.raise') return [];
-    const item = readNeedsUser(runDir(common, ref.arc), e.expect.id);
-    return item?.reason === 'ruler-changed' ? [`${ref.arc}/${item.id}: ${item.summary}`] : [];
-  }));
-}
-
-function chainFlowArcs(run: Run): readonly FlowArc[] {
-  return [need(run.one, 'arc 1'), ...(run.two === null ? [] : [run.two])].map(flowArcOf);
-}
-
-function flowConstraint(run: Run): Verdict {
-  return flowConstraintVerdict(flowArcOf(need(run.one, 'arc 1')));
-}
-
-function flowLoop(run: Run): Verdict {
-  return flowLoopVerdict(chainFlowArcs(run));
-}
-
-function flowShard(run: Run): Verdict {
-  return flowShardVerdict(chainFlowArcs(run));
-}
-
 /** `ruler-intact` (see `rulerRecordProblems`, `triplesProblems`): at the chain's final completed head, run by the check itself. */
 function rulerIntact(run: Run): Verdict {
-  const arcs = chainFlowArcs(run);
+  const arcs = [need(run.one, 'arc 1'), ...(run.two === null ? [] : [run.two])].map(rulerArcOf);
   const problems = [...rulerRecordProblems(arcs)];
   const argvs = rulerArgvs(arcs);
   const last = run.two ?? need(run.one, 'arc 1');
@@ -577,34 +488,30 @@ function rulerIntact(run: Run): Verdict {
     const inForce = argvs.inForce.filter((x) => JSON.stringify(x.argv) !== JSON.stringify(argvs.lane.argv)).map((x) => witnessRun(run.product, head, x, x.argv));
     problems.push(...triplesProblems(seed, inForce));
   }
-  const changed = rulerChanged(run);
-  const listed = `ruler-changed items: ${changed.length === 0 ? 'none' : changed.join('; ')}`;
   return problems.length === 0
-    ? { pass: true, detail: `${'problem' in argvs ? '' : `${[argvs.lane.argv, ...argvs.inForce.map((x) => x.argv)].map((a) => JSON.stringify(a)).filter((a, i, all) => all.indexOf(a) === i).join(' = ')} at ${head}; `}soak lane unchanged; ${listed}` }
-    : { pass: false, detail: `${problems.join('; ')}; ${listed}` };
+    ? { pass: true, detail: `${'problem' in argvs ? '' : `${[argvs.lane.argv, ...argvs.inForce.map((x) => x.argv)].map((a) => JSON.stringify(a)).filter((a, i, all) => all.indexOf(a) === i).join(' = ')} at ${head}; `}soak lane unchanged` }
+    : { pass: false, detail: problems.join('; ') };
 }
 
 // ---------------------------------------------------------------------------------------------------
 // M4b rev 3: host pressure (plan "Rev 3", RC-10), read by the frozen records (SCHEMAS.md "Rev 3: host pressure")
 
-/** One arc as `pressure-recorded` reads it: its log and the flow inputs its runs kept. */
-export type PressureArc = Readonly<{ arc: string; events: readonly Event[]; flowInputs: (sha: Sha256Hex) => FlowInputs }>;
+/** One arc as `pressure-recorded` reads it: its execution log. */
+export type PressureArc = Readonly<{ arc: string; events: readonly Event[] }>;
 
 export function pressureArcOf(ref: ArcRef): PressureArc {
-  return { arc: ref.arc, events: ref.events, flowInputs: (sha) => parseFlowInputs(JSON.parse(ref.input(sha, FLOW_INPUTS_INPUT).toString('utf8'))) };
+  return { arc: ref.arc, events: ref.events };
 }
 
-/** `pressure-recorded` (check.ts header): long lane runs under a schedstat start carry pressure; a host:cpu constraint only at a saturated window. */
+/** `pressure-recorded` (check.ts header): long lane runs under a schedstat start carry pressure. */
 export function pressureRecordedVerdict(arcs: readonly PressureArc[]): Verdict {
   const problems: string[] = [];
   let available = 0;
   let runs = 0;
-  let hostCpu = 0;
   for (const a of arcs) {
     let start = 0;
     let psi = false;
     const lanes = new Map<string, Readonly<{ start: number; atMs: number }>>();
-    const inputs = new Map<string, Sha256Hex>();
     for (const e of a.events) {
       if (e.type === 'fact' && e.fact.kind === 'executor-started') {
         start++;
@@ -616,19 +523,11 @@ export function pressureRecordedVerdict(arcs: readonly PressureArc[]): Verdict {
         if (Date.parse(e.at) - lanes.get(e.op)!.atMs < 2 * PRESSURE_MIN_WALL_MS) continue;
         runs++;
         if (spawnPressureOf(e.outcome) === null) problems.push(`${a.arc}: ${e.op}'s lane run has no pressure`);
-      } else if (e.type === 'fact' && e.fact.kind === 'flow-started') {
-        inputs.set(e.fact.job, e.fact.inputsSha256);
-      } else if (e.type === 'fact' && e.fact.kind === 'flow-ended' && e.fact.constraint.code?.station === HOST_CPU_STATION) {
-        hostCpu++;
-        const sha = inputs.get(e.fact.job);
-        if (sha === undefined) throw new Error(`${a.arc}: ${e.fact.job} ended without a flow-started`);
-        const window = a.flowInputs(sha).pressure.window;
-        if (window === null || window < PRESSURE_SATURATED) problems.push(`${a.arc}: ${e.fact.job} named host:cpu at window pressure ${window ?? 'none'} (threshold ${PRESSURE_SATURATED})`);
       }
     }
   }
   if (available === 0) problems.push('no executor start recorded schedstat available: this host should report it');
-  return verdict(problems, `${runs} long lane runs under ${available} schedstat starts carry pressure; ${hostCpu} host:cpu constraints, each at a saturated window`);
+  return verdict(problems, `${runs} long lane runs under ${available} schedstat starts carry pressure`);
 }
 
 function pressureRecorded(run: Run): Verdict {
@@ -639,7 +538,11 @@ function pressureRecorded(run: Run): Verdict {
 // The interventions metric (OR-A3, A4): the architect's operator log, never a criterion
 
 /** The closed lever list of an operator-log entry (SKILL.md "Supervising the executor"). */
-export const LEVERS = ['pause', 'resume', 'resume --backend', 'ack', 'apply', 'rule', 'steer', 'reverse', 'merge-in', 'audit', 'close-admissions', 'flow', 'stop', 'start', 'resume-arc', 'gc', 'inputs export'] as const;
+export const LEVERS = [
+  'pause', 'resume', 'resume --backend', 'ack', 'apply', 'note', 'witness', 'dismiss', 'steer', 'reverse',
+  'sweep', 'resolve-edge', 'run-only', 'merge-in', 'audit', 'close-admissions', 'stop', 'start', 'resume-arc',
+  'gc', 'inputs export', 'demo up', 'demo down', 'demo hold', 'demo release',
+] as const;
 const ENTRY_FIELDS = ['symptom', 'evidence', 'outcome', 'executor change'] as const;
 const ENTRY_HEADING = /^## OP-(\d+) (\d{4}-\d{2}-\d{2}T\S+) arc=(\S+) lever=(.+?)\s*$/;
 
@@ -712,9 +615,6 @@ export const CRITERIA: readonly Grade[] = [
   ['snapshot-closure', snapshotClosure],
   ['host-released', hostReleased],
   ['profile', profile],
-  ['flow-constraint', flowConstraint],
-  ['flow-loop', flowLoop],
-  ['flow-shard', flowShard],
   ['ruler-intact', rulerIntact],
   ['pressure-recorded', pressureRecorded],
 ];

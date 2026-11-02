@@ -1,0 +1,77 @@
+{
+  "findings": [
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Vacuous witness, not a product defect. The whole of test/unit.test.js is one line that calls assert.equal and mul, but it never imports or defines either one. It therefore has no link to the mul exported by src/unit.js. The checkout has no package.json, runner config or setup file that could supply them. Run directly under Node, the file should stop with a ReferenceError before it reaches mul, so it gives no evidence for the CONTRACT.md product claim. This comes from reading the files; I had no execution tool and did not run it. A harness outside the checkout could inject these globals, but nothing in the supplied evidence shows one.",
+      "cause": "run unit test: test file never binds mul or assert to the implementation",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    },
+    {
+      "severity": "P3",
+      "obligation": null,
+      "visionClauses": [],
+      "claim": "Weak witness, not a product defect. CONTRACT.md promises a signed product, but the two assertions, mul(-2,3) and mul(2,3), only use a negative first operand. The plausible wrong implementation `return a*Math.abs(b);` gives -6 and 6, so it satisfies both assertions, yet it returns 6 for mul(2,-3) and -6 for mul(-2,-3), which violates the contract. Even with its bindings fixed, the test could not catch this error in handling the sign of b. I worked this out by arithmetic and did not execute it. The mutant field is null because the checkout defines no certification lane to name.",
+      "cause": "verify signed product: no assertion uses a negative second operand",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        },
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ],
+      "mutant": null
+    }
+  ],
+  "reasons": [
+    "No product defect found: by inspection, src/unit.js returns a*b with correct sign for ordinary numbers and has no side effects, which matches CONTRACT.md. Both findings concern the test witness.",
+    "Nothing was executed because this audit had only read and search tools. Results come from reading the checkout and from arithmetic. The checkout also has no package.json or runner config, so how the certification lane would run the test is missing environment evidence.",
+    "The vision lists no advanced clauses, horizon clauses or open questions, and there are no obligations, so the findings cite none. The judgement rests on CONTRACT.md and the method note.",
+    "Considered but not reported as a defect: CONTRACT.md states no numeric domain, and a*b uses IEEE-754 doubles. Results outside the safe-integer range can round; for example, the exact product of (2**53-1)*3 is odd and above 2**53, so a double cannot represent it. mul(-2,0) also returns -0. Nothing in the range shows callers or requirements that reach these inputs, so this is a possible contract clarification rather than a verified violation.",
+    "Document drift check: CONTRACT.md has one sentence and it matches src/unit.js. The range contains no other documents and no cross-unit seams beyond the test and the implementation."
+  ],
+  "premises": [
+    {
+      "claim": "The implementation is a single exported pure function, mul(a,b), that returns a*b.",
+      "evidence": [
+        {
+          "path": "src/unit.js",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The contract requires mul(a,b) to return the signed mathematical product with no side effects, and it states no numeric domain.",
+      "evidence": [
+        {
+          "path": "CONTRACT.md",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "claim": "The test file is one line holding two assertions, with no import or require statement.",
+      "evidence": [
+        {
+          "path": "test/unit.test.js",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "requests": []
+}

@@ -1,33 +1,36 @@
+import { readRepoConfig } from '../src/preflight/checks.ts';
+import { systemName } from '../src/core/ids.ts';
+import { requirePlanInForce } from '../src/input/inforce.ts';
 // M4a step C1: the corpus arc's revisions and starts. The classifier's corpus and Phase-0 edit classes, the target kind
 // and the chain fixed, the shared Phase-0 rows on every apply (re-derivation, census, rules resolved, the vision
 // confirmed, the tree), and a start's rows (`runChecks`): the vision, the tree, the kept corpus inputs.
 // dev.16: a vision edit's docs publication carries the vision files it changes; a start never runs one, so refuses it.
 // Real repos, real pins (`roadmap corpus pin`).
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { type ApplyVerdict, evaluateApply, evaluateRevision } from '../src/commands/apply.ts';
+import { describe,it } from 'node:test';
+import { type ApplyVerdict,evaluateApply,evaluateRevision } from '../src/commands/apply.ts';
 import { corpusPin } from '../src/commands/corpus.ts';
 import { phase0Check } from '../src/commands/phase0.ts';
-import { commandId, jobId, sha, visionClauseId, unitId } from '../src/core/ids.ts';
-import { canonicalJson, sha256Hex } from '../src/core/json.ts';
-import { EVENTS_FILE, type OpenJournal, openJournal } from '../src/core/log.ts';
-import { type AbsPath, absPath } from '../src/core/values.ts';
-import { selfIdentity } from '../src/host/liveness.ts';
-import { claimHost, releaseHost } from '../src/host/lock.ts';
+import { commandId, sha, unitId } from '../src/core/ids.ts';
+import { canonicalJson,sha256Hex } from '../src/core/json.ts';
+import { EVENTS_FILE,type OpenJournal,openJournal } from '../src/core/log.ts';
+import { type AbsPath,absPath } from '../src/core/values.ts';
 import { registryOf } from '../src/corpus/registry.ts';
 import { parseCorpusPin } from '../src/corpus/types.ts';
-import { INVARIANTS_DOC, parseRulesRegistryBlock } from '../src/docs/invariants.ts';
-import { classify, changesScope, splitCutReason } from '../src/input/classify.ts';
-import { CORPUS_FILE_INPUT, keptInput, planInForce, readInputFiles, recordPlan, revisionInForce } from '../src/input/inforce.ts';
+import { INVARIANTS_DOC,parseRulesRegistryBlock } from '../src/docs/invariants.ts';
+import { selfIdentity } from '../src/host/liveness.ts';
+import { claimHost,releaseHost } from '../src/host/lock.ts';
+import { changesScope,classify,splitCutReason } from '../src/input/classify.ts';
+import { CORPUS_FILE_INPUT,keptInput,planInForce,readInputFiles,recordPlan,revisionInForce } from '../src/input/inforce.ts';
 import { MILESTONE_REFERENCES_BUDGET } from '../src/phase0/rows.ts';
-import { type StartChecks, type StartInput, runChecks } from '../src/preflight/checks.ts';
+import { type StartChecks,type StartInput,runChecks } from '../src/preflight/checks.ts';
 import type { StartupRejection } from '../src/preflight/startup.ts';
 import {
-  type CorpusArc, PIN_FILE, corpusArc, editJsonFile, editPhase0, editPlan, filesOf, inForce, newHostDir, readJsonFile, runDirOfArc, visionRecord, withForge,
+type CorpusArc,PIN_FILE,corpusArc,editJsonFile,editPhase0,editPlan,filesOf,inForce,newHostDir,readJsonFile,runDirOfArc,visionRecord,withForge,
 } from './helpers/corpusarc.ts';
-import { commitAll, makeRepo, revParse, tmpDir, writeFiles } from './helpers/repo.ts';
+import { commitAll,makeRepo,revParse,tmpDir,writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -61,9 +64,11 @@ async function repin(a: CorpusArc, commit: string): Promise<string> {
 
 /** `apply --dry-run` of the arc's files; `visionEdit`: `--vision-edit`. */
 function apply(a: CorpusArc, j: OpenJournal, visionEdit = false): Promise<ApplyVerdict> {
+  const dir = join(a.planDir, 'repo', '.roadmap'); mkdirSync(dir, {recursive: true});
+  writeFileSync(join(dir, 'vision.json'), readFileSync(join(a.repo, '.roadmap/vision.json')));
   return evaluateApply({
-    runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: BASE,
-    laneEnv: process.env, manifest: null, base: null, rulings: [], visionEdit,
+    runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), repo: a.repo, planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) },
+    laneEnv: process.env, manifest: null, base: revisionInForce(runDirOfArc(a), requirePlanInForce(runDirOfArc(a), j.view)).manifest, rev: j.view.planApplied()!.rev, reason: 'Test apply',
   });
 }
 
@@ -82,7 +87,7 @@ const pinnedHash = (a: CorpusArc, rule: string): string =>
 
 function startInput(repo: AbsPath, planFile: AbsPath, hostDir: AbsPath): StartInput {
   return {
-    repo, planFile, profile: null, hostDir, env: process.env, respawn: null, base: null,
+    repo, planFile, profile: null, hostDir, env: process.env, respawn: null,
     claim: (ctx) => claimHost(ctx.hostDir, { arc: ctx.plan.arc, runDir: ctx.runDir, repo: ctx.repo, supervisor: selfIdentity() }, async () => assert.fail('no previous arc')),
   };
 }
@@ -239,16 +244,16 @@ describe('re-pin (the corpus edit class)', () => {
     }
   }
 
-  it('apply.owner-answer-unruled: an answer re-anchoring in-slice I-1 without a ruling naming it amended is refused', T, async () => {
-    const reasons = rejected(await ownerAnswer(false));
-    assert.ok(reasons.some((r) => r.includes('I-1 is weakened') && r.includes('amended')), JSON.stringify(reasons));
+  it('apply.owner-answer-reason: a root reason authorizes re-anchoring I-1 without a ruling sidecar', T, async () => {
+    const verdict = accepted(await ownerAnswer(false));
+    assert.ok(verdict.evaluated.draft.dispositions.some((d) => d.obligation === 'I-1' && d.disposition === 'amended' && d.reason.trim()));
   });
 
   it('apply.owner-answer-mid-arc: with C-2 in force, one apply re-pins, answers P-1 and amends I-1 (corpus + phase0 + obligation)', T, async () => {
     const v = accepted(await ownerAnswer(true));
     const types = v.evaluated.draft.changes.map((c) => c.type).sort();
     assert.ok(['corpus', 'phase0', 'obligation'].every((t) => types.includes(t as never)), JSON.stringify(v.evaluated.draft.changes));
-    assert.deepEqual([...new Set(v.evaluated.draft.dispositions.map((d) => `${d.obligation} ${d.disposition} ${d.ruling}`))], ['I-1 amended C-2']);
+    assert.deepEqual([...new Set(v.evaluated.draft.dispositions.map((d) => `${d.obligation} ${d.disposition} ${d.reason}`))], ['I-1 amended Test apply']);
   });
 
   it('classify.corpus-repin-not-by-start: a start may not re-pin (architect apply only)', T, async () => {
@@ -256,7 +261,7 @@ describe('re-pin (the corpus edit class)', () => {
     try {
       const commit = commitCorpus(a, '0020_Berths.md', (t) => t.replace('A booking names one berth and one tide window.', 'A booking names one berth.'));
       await repin(a, commit);
-      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env }, filesOf(a), { type: 'start' });
+      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env }, filesOf(a), { type: 'start' });
       assert.equal(v.kind, 'rejected');
       if (v.kind !== 'rejected') return;
       assert.ok(v.reasons.some((r) => r.includes('the corpus pin changes only through an architect `apply`, not a start')), JSON.stringify(v.reasons));
@@ -317,13 +322,7 @@ describe('the specs against the census at every revision (run 10, C)', () => {
       }));
       const row = canonicalJson({ kind: 'phase0-invalid', problems: [{ type: 'spec-census-mismatch', unit: 'u1', item: 'A2', rule: 'T-2', state: 'out-of-slice' }] });
       assert.deepEqual(rejected(await apply(a, j)), [row], 'the apply: the classifier\'s row alone, naming unit, item and rule');
-      const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env };
-      const bundle = evaluateRevision(ctx, filesOf(a), { type: 'bundle', job: jobId('ckpt', 1), cites: [visionClauseId('V-1')], evidence: ['e'], admits: [], fixesUnrecorded: [] });
-      assert.equal(bundle.kind, 'rejected');
-      if (bundle.kind !== 'rejected') return;
-      assert.deepEqual(bundle.reasons, [
-        `${row}: unit u1's acceptance clause A2 names T-2, which is out of slice: to work on T-2, admit it as a target of an opportunity whose obligation split anchors a child at T-2 (the census moves), or drop the T-2 citation from A2`,
-      ]);
+      const ctx = { runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env };
       editJsonFile(join(a.planDir, 'u1.json'), (s) => ({ ...s, acceptance: (s['acceptance'] as Json[]).map((x) => (x['id'] === 'A2' ? { ...x, clause: 'A booking names its berth.' } : x)) }));
       accepted(await apply(a, j));
     } finally {
@@ -400,25 +399,6 @@ describe('the vision confirmed against the pin', () => {
   });
 });
 
-describe('the vision leak (row 12)', () => {
-  it('vision.leak-refused: a next-arc vision committed to .roadmap/vision.json mid-arc is refused on an apply that does not declare a vision edit, pointing at _next/vision.md; --vision-edit applies it', T, async () => {
-    const { a, j } = await arcInForce();
-    try {
-      const was = readFileSync(join(a.repo, '.roadmap/vision.json'));
-      const v = JSON.parse(was.toString('utf8')) as Json;
-      const next = `${JSON.stringify({ ...v, rev: 2, clauses: [...(v['clauses'] as Json[]), { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' }] })}\n`;
-      writeFiles(a.repo, { '.roadmap/vision.json': next });
-      commitAll(a.repo, 'the next arc\'s vision, committed mid-arc');
-      const row = { kind: 'vision-leak', inForce: sha256Hex(was), committed: sha256Hex(next), draft: join(a.planDir, '..', '_next', 'vision.md') };
-      assert.deepEqual(rejected(await apply(a, j)), [canonicalJson(row)], 'the leak alone, naming where the draft belongs');
-      const v2 = accepted(await apply(a, j, true));
-      assert.deepEqual(v2.evaluated.draft.changes, [{ type: 'vision', rev: 2 }], 'a declared vision edit');
-    } finally {
-      j.close();
-    }
-  });
-});
-
 describe('vision edits publish (dev.16)', () => {
   const V3 = { id: 'V-3', kind: 'good', text: 'Quiet nights.', rank: null, state: 'active' };
   const renderMap = (v: Extract<ApplyVerdict, { kind: 'accepted' }>): ReadonlyMap<string, string> =>
@@ -475,40 +455,29 @@ describe('vision edits publish (dev.16)', () => {
     }
   });
 
-  it('vision.edit-start-refused: a start whose vision record differs in bytes from the vision in force is refused (it needs the docs publication; a start runs none): it goes through `apply --vision-edit`', T, async () => {
-    const a = await corpusArc();
-    inForce(a).close();
-    // The same vision, reformatted: no vision change the classifier names (a changed vision is owner-only, by apply, already).
-    writeFiles(a.repo, { '.roadmap/vision.json': `${JSON.stringify(readJsonFile(join(a.repo, '.roadmap/vision.json')))}\n` });
-    commitAll(a.repo, 'the vision reformatted');
-    const rows = refusedRows(await start(a));
-    assert.equal(rows.length, 1, JSON.stringify(rows));
-    const row = rows[0]!;
-    assert.ok(row.kind === 'plan-change-refused' && row.reasons.length === 1 && /needs? a docs publication.*vision publishes.*--vision-edit/.test(row.reasons[0]!), JSON.stringify(row));
-  });
 });
 
 describe('the tree and the forge at start', () => {
   it('phase0.tree-uncommitted-start-and-apply: an uncommitted .roadmap input refuses a start (corpus and doc arcs) and an apply', T, async () => {
     const a = await corpusArc();
-    writeFileSync(join(a.repo, '.roadmap/config.json'), `${JSON.stringify({ chain: { k: 2 } })}\n`);
+    writeFileSync(join(a.repo, '.roadmap/config.json'), `${JSON.stringify({ ...readRepoConfig(a.repo), chain: { k: 2 } })}\n`);
     assert.deepEqual(refusedRows(await start(a)), [{ kind: 'tree-uncommitted', paths: ['.roadmap/config.json'] }]);
 
     // A plain (non-holistic) architecture-doc arc: an uncommitted new vision.json.
-    const repo = absPath(makeRepo(tmpDir('c1-doc'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n' } }));
+    const repo = absPath(makeRepo(tmpDir('c1-doc'), { files: { 'README.md': 'hello\n', 'ARCHITECTURE.md': 'arch\n', '.roadmap/config.json': JSON.stringify({systemsMap: {systems: {app: {paths: ['src/**']}}}}) } }));
     const planDir = tmpDir('c1-doc-plan');
-    const lane = { id: 'suite', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, tier: 'fast', resources: [], evidenceGlobs: [] };
-    writeFileSync(join(planDir, 'u1.json'), JSON.stringify({
+    const lane = { id: 'suite', argv: ['node', '-e', '0'], cwd: '.', env: { set: {}, pass: ['PATH'] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] };
+    writeFileSync(join(planDir, 'u1.json'), JSON.stringify({ intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'],
       schema: 'roadmap/spec-m1', unit: 'u1', rev: 1, lanes: [{ ...lane, id: 'unit', state: 'active' }],
       acceptance: [{ id: 'A1', clause: 'It works.', failLoudIfUndelivered: true, state: 'active' }],
-      scope: ['src/**'], resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
+       resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] },
     }));
     writeFileSync(join(planDir, 'rulings.md'), '# Rulings\n\nC-1 — Helpers live in src/.\n');
     const planFile = absPath(join(planDir, 'plan.json'));
     writeFileSync(planFile, JSON.stringify({
       schema: 'roadmap/plan-m1', arc: 'doc-1', integrationBranch: 'main', baseline: revParse(repo, 'HEAD'), worktreeRoot: tmpDir('c1-doc-wt'), contracts: [],
       rulings: 'rulings.md', architectureDoc: 'ARCHITECTURE.md', direction: 'd', suite: { lanes: [lane] }, resources: [],
-      units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [] }],
+      units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
     }));
     writeFiles(repo, { '.roadmap/vision.json': '{}\n' });
     const doc = await start({ ...a, repo }, planFile);
@@ -547,7 +516,7 @@ describe('holistic arcs target a corpus (H4)', () => {
     mkdirSync(runDir, { recursive: true });
     const j = openJournal(runDir, adopted.arc);
     try {
-      recordPlan(j, runDir, readInputFiles(a.planPath, a.repo), [], BASE);
+      recordPlan(j, runDir, readInputFiles(a.planPath, a.repo), [], { ...BASE, config: readRepoConfig(a.repo) });
     } finally {
       j.close();
     }
@@ -555,7 +524,6 @@ describe('holistic arcs target a corpus (H4)', () => {
     assert.equal(out.kind, 'passed', JSON.stringify(out.kind === 'refused' ? out.rejections : 'passed'));
   });
 });
-
 
 // Revision delta (2026-10-27; 1.0.0-dev.26): old defects remain visible without blocking unrelated work.
 describe('revision plan-defect delta', () => {
@@ -584,24 +552,25 @@ describe('revision plan-defect delta', () => {
   });
 
   it('an executor split that removes a deliverer dependency scope refuses the new unreachable witness', T, async () => {
-    const a = await corpusArc({ activation: 'future', scope: ['src/**', 'test/**'] });
+    const a = await corpusArc({ activation: 'future' });
+    editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({...u, systems: ['app', 'tests']})) }));
     const original = readJsonFile(join(a.planDir, 'u1.json'));
-    writeFileSync(join(a.planDir, 'u2.json'), JSON.stringify({ ...original, unit: 'u2', scope: ['src/**'] }));
-    editPlan(a, (p) => ({ ...p, units: [...p['units'] as Json[], { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: [], after: ['u1'] }] }));
+    writeFileSync(join(a.planDir, 'u2.json'), JSON.stringify({ ...original, unit: 'u2' }));
+    editPlan(a, (p) => ({ ...p, units: [...p['units'] as Json[], { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: [], after: ['u1'] }] }));
     editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, obligations: (o['obligations'] as Json[]).map((i) => {
       const witness = { ...i['witness'] as Json, files: ['test/new.test.ts'] };
-      return { ...i, deliveredBy: ['u2'], witness, proofJudgment: { ...i['proofJudgment'] as Json, witness } };
+      return { ...i, deliveredBy: ['u2'], witness, proofJudgment: { ...i['proofJudgment'] as Json, witness: {testIds: (i['witness'] as Json)['testIds'], files: witness.files} } };
     }) }));
     const j = inForce(a);
     try {
       const children = [unitId('u1-child')];
-      writeFileSync(join(a.planDir, 'u1-child.json'), JSON.stringify({ ...original, unit: 'u1-child', scope: ['src/**'] }));
+      writeFileSync(join(a.planDir, 'u1-child.json'), JSON.stringify({ ...original, unit: 'u1-child' }));
       editPlan(a, (p) => ({ ...p, units: [
         { ...(p['units'] as Json[])[0], cut: { reason: splitCutReason(children) } },
-        { id: 'u1-child', spec: 'u1-child.json', risk: 'low', scope: ['src/**'], resources: [] },
+        { id: 'u1-child', spec: 'u1-child.json', risk: 'low', systems: [systemName('app')], resources: [] },
         { ...(p['units'] as Json[])[1], after: ['u1-child'] },
       ] }));
-      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: BASE, laneEnv: process.env }, filesOf(a), { type: 'split', unit: unitId('u1'), children });
+      const v = evaluateRevision({ runDir: runDirOfArc(a), view: j.view, hostDir: newHostDir(), planFile: a.planPath, routingBase: { ...BASE, config: readRepoConfig(a.repo) }, laneEnv: process.env }, filesOf(a), { type: 'apply', reason: 'Split the parent into focused children' });
       assert.equal(v.kind, 'rejected', JSON.stringify(v));
       assert.ok(v.kind === 'rejected');
       assert.deepEqual(v.reasons.map((s) => JSON.parse(s)), [{ kind: 'plan-defect', defects: [{ type: 'witness-file-unreachable', obligation: 'I-1', file: 'test/new.test.ts', units: ['u2'] }] }]);

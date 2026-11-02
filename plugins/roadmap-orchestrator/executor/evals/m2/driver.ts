@@ -327,8 +327,10 @@ function fire(l: Layout, c: Cli, run: readonly string[], d: Devices, s: Status):
     if (!d.mergeTree.conflict || !d.mergeTree.paths.includes(SHARED_FILE)) {
       return `urgent merged, but right's branch and integration do not conflict on ${SHARED_FILE}: ${JSON.stringify(d.mergeTree)}`;
     }
-    writeReentry(l);
-    d.reentry = submitted(cli(c, ['apply', ...run]));
+    const out = join(l.input, 'reentry-export');
+    const exported = JSON.parse(cli(c, ['inputs', 'export', '--out', out, ...run])) as {planRev: number};
+    writeReentry({...l, input: out, plan: join(out, basename(l.plan))});
+    d.reentry = submitted(cli(c, ['apply', '--from', out, '--rev', String(exported.planRev), '--reason', 'Re-enter right to resolve its conflict with integration', ...run]));
     return null;
   }
   if (d.unlimited === null && d.reentry !== null) {

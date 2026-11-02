@@ -1,0 +1,28 @@
+{
+  "summary": "Added src/slug.js (slugify: replace /[^A-Za-z0-9]+/g with '-', trim edge hyphens, then lowercase) and test/slug.test.js covering A1/A2 plus non-ASCII, digits, mixed runs, and empty-result (D1). The slug lane passes (4 tests).",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "slug lane",
+      "argv": [
+        "node",
+        "--test",
+        "test/slug.test.js"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/slug.js",
+      "test/slug.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Lowercasing happens after classification so U+212A and U+0130 stay separators; no /i flag.",
+    "pageId not added (out of scope)."
+  ],
+  "final": true
+}

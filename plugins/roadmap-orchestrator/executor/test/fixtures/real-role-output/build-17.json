@@ -1,0 +1,43 @@
+{
+  "summary": "Added server-side search to GET /?q=. Matching is case-insensitive substring on title or author, checked separately, on the trimmed term, with no RegExp, and it tolerates non-string or missing fields. The shelf page now has a labelled role=search GET form. Results show \"N book(s) match\" and a \"Show the whole shelf\" link, and keep Reserve links and reserved marks. A search with no match renders M5 (refusal first, then the form with q in the box and aria-describedby, then the link, no list). The term is escaped at every echo site. Added test/search.test.js with the two witnesses plus A3 escaping, the plausible-wrong-implementation checks, odd-field data and custom settings. Added a matching and a no-match search to floor.test.js flowPages. Outlined search button CSS added. Full suite 77/77 pass and witness-check passed. Not done: I did not run the server in a browser, so the 360px layout and the outlined button are unchecked visually.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "full node test suite",
+      "argv": [
+        "node",
+        "--test",
+        "test/*.test.js"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "witness-check",
+      "argv": [
+        "roadmap",
+        "witness-check",
+        "--lane-file",
+        "witness.json"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "src/pages.js",
+      "src/server.js",
+      "public/style.css",
+      "test/search.test.js",
+      "test/floor.test.js"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Quotes in titles/headings are emitted as &quot; because esc escapes quotes everywhere; tests match that form.",
+    "Results page title is 'Books matching \"{q}\"' (design names none); singular is '1 book matches'.",
+    "The collection-window line (I-21) is not built here; the form sits at the top of <main> so the line can go above it later.",
+    "Search tests start servers with createApp; the A3 hit case uses a temp shelf whose title holds the payload."
+  ],
+  "final": true
+}

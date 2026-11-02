@@ -1,7 +1,5 @@
-// `close-admissions` (M3 B7; DESIGN-1.0.md §2.10 `draining`): latches `draining` with `admissions-closed{command}`.
-// While draining, every automatic admission is closed at its single minting point: a checkpoint bundle that admits a
-// unit (a repair's included) becomes a non-blocking `bundle-request` (src/holistic/bundle.ts), and a P1 or P2 an audit
-// opens meanwhile raises a blocking `new-finding-draining` (src/holistic/findings.ts). Units already in the plan run on.
+// `close-admissions` (M3 B7; DESIGN-1.0.md §2.10 "Completion"): latches `draining` with `admissions-closed{command}`.
+// While draining, new P1/P2 findings raise blocking `new-finding-draining` items. Planned units run on.
 // Only an architect `apply` that adds a unit reopens admissions (the fold, src/core/state.ts). A mutation with no scope.
 //
 // Refused while already draining. The effect checks its postcondition first, so a re-run after a crash writes nothing

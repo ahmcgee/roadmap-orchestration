@@ -1,25 +1,29 @@
+import { systemName } from '../src/core/ids.ts';
 // Pools, `@cpu` tokens and the M2 holders (src/resources/{pool,reserve}.ts): all-or-none requests in lock order,
 // the instance binding persisted into residue recipes and replayed by a retry's reclaim, the over-capacity rows
 // and the legacy reading of a declared `cpu`, the publication holder.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe,it } from 'node:test';
 import {
-  INTEGRATION_SLOT, cpuToken, laneId, poolInstance, resourceName, unitId,
+INTEGRATION_SLOT,cpuToken,laneId,poolInstance,resourceName,unitId,
 } from '../src/core/ids.ts';
 import type { SpecM1 } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
-import { readResidues, undispositioned } from '../src/host/residues.ts';
-import { cpuCapacity, instanceEnv, instanceEnvVar, overCapacity, requestOf } from '../src/resources/pool.ts';
+import { readResidues,undispositioned } from '../src/host/residues.ts';
+import { cpuCapacity,instanceEnv,instanceEnvVar,overCapacity,requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
-  type PublicationHolder, type Reservation, type Refused, type RetryHolder, type StageHolder, cleanup, entryOf, heldReservation, reserve,
-  resourceTable, retryReclaim, run,
+type PublicationHolder,
+type Refused,
+type Reservation,
+type RetryHolder,type StageHolder,cleanup,entryOf,heldReservation,reserve,
+resourceTable,retryReclaim,run,
 } from '../src/resources/reserve.ts';
 import type { ResourceRequest } from '../src/schedule/types.ts';
-import { CPU, DB, ESTATE, QUEUE, newRun, openPoolRun, poolPlanFor } from './fixtures/pool-plan.ts';
-import { stageHolder, stageParent, transitions } from './fixtures/res-plan.ts';
+import { CPU,DB,ESTATE,QUEUE,newRun,openPoolRun,poolPlanFor } from './fixtures/pool-plan.ts';
+import { stageHolder,stageParent,transitions } from './fixtures/res-plan.ts';
 
 const T = { timeout: 60_000 };
 const req = (r: Partial<ResourceRequest>): ResourceRequest => ({ named: [], pools: [], cpu: 0, publication: false, ...r });
@@ -155,10 +159,10 @@ describe('res.over-capacity', () => {
     const r = newRun();
     const plan = poolPlanFor(r, {
       units: [
-        { id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [DB, ESTATE], cpu: 6 },
-        { id: 'u2', spec: 'u2.json', risk: 'low', scope: ['src/**'], resources: [] },
+        { id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [DB, ESTATE], cpu: 6 },
+        { id: 'u2', spec: 'u2.json', risk: 'low', systems: [systemName('app')], resources: [] },
       ],
-      suite: { lanes: [{ id: 'suite', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, tier: 'estate', resources: [], evidenceGlobs: [] }] },
+      suite: { lanes: [{ id: 'suite', argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'candidate', resources: [], evidenceGlobs: [] }] },
     });
     const specs = new Map([[unitId('u2'), spec([lane('big', 'build', 'active', 8), lane('parked', 'unit', 'deferred', 9), lane('ok', 'unit', 'active')])]]);
     assert.deepEqual(overCapacity(plan, { cpu: 4 }, specs), [

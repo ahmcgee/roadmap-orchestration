@@ -1,4 +1,4 @@
-// Proportional review records (dev.17; SCHEMAS.md "dev.17 records", "Proportional review"): the gate findings ledger, the
+// Proportional review records (dev.17; SCHEMAS.md "Role input and output contracts"): the gate findings ledger, the
 // approval's blob record, and the review a gate attempt was given (src/pipeline/review.ts wires them).
 import { type ReviewFindingId, type Sha, type SpecRev, type UnitId, reviewFindingId, sha, specRev, unitId } from './ids.ts';
 import { type Pin, movedPins } from './pins.ts';
@@ -38,7 +38,7 @@ export const approvalBlobs: Read<ApprovalBlobs> = object((f) => ({
 }));
 
 // ---------------------------------------------------------------------------------------------------
-// The review a gate attempt was given (dev.17 wiring; DESIGN-1.0.md §4 "Proportional review"), recorded on its
+// The review a gate attempt was given (dev.17 wiring; DESIGN-1.0.md §2.1 "Unit pipeline and review"), recorded on its
 // `judgment-inputs` so the rules its answer is held to follow from the log alone on replay and recovery.
 
 /** A builder's dispute of an open ledger finding (decisions.json `disputes`), put to the next gate, which rules once. */

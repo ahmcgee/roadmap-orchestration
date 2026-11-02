@@ -1,0 +1,26 @@
+{
+  "summary": "Created hello.txt in repo root containing \"hello\"; unit lane passes.",
+  "blockers": [],
+  "experiments": [
+    {
+      "name": "unit",
+      "argv": [
+        "sh",
+        "-c",
+        "grep -q hello hello.txt"
+      ],
+      "exit": 0
+    }
+  ],
+  "grounding": {
+    "specWrong": null,
+    "touches": [
+      "hello.txt (repo root)"
+    ]
+  },
+  "tooBig": null,
+  "notes": [
+    "Not committed; executor commits."
+  ],
+  "final": true
+}

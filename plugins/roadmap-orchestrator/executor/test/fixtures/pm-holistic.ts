@@ -1,53 +1,49 @@
+import { absPath } from '../../src/core/values.ts';
+import { release } from '../helpers/barrier.ts';
+import { submit } from './cm-common.ts';
+import { journalOf } from './exec-common.ts';
 // The holistic whole-pipeline scenario (M3 B8; test/serial/pipeline-matrix.test.ts): an exec-common arc made holistic on a
 // corpus target (M4a D0, corpus-target.ts: a fresh holistic start targets a corpus; obligations witnessed on a fake
 // `journey` arc lane, the required lens set L = {vision}) and run by the real supervised `roadmap start` through the
 // whole-pipeline harness (pm-common.ts), keyed per unit and per job.
 //
-// The story: the start's revision 1; the pack review `review-1` (no finding) before the first admission; the baseline witness job (A6) runs the journey lane on the baseline before any
-// admission; u1 (declaring I-1 must-hold and delivering I-2 future) walks its pipeline, its candidate running the
-// journey lane, and its ff latches I-2 (obligation-latched); the final audit `audit-1` (the journey lane, its vision
-// lens); the checkpoint `ckpt-1` applies a bundle (an arc-wide limits op: a revision committed through the fence,
-// its divergence facts and digest item); the drift audit `audit-2` of generation 2, noting a new gap F-1 (so its
-// checkpoint runs: an audit that found nothing new has none); the checkpoint `ckpt-2`, dismissing F-1, a bundle
-// whose one op (an admit serving no world clause) code converts (M4a rev 3, B: `unrelated`), so a no-op carrying its
-// conversion and its interpretation (H12: one divergence, no revision; the conversion's corpus amendment), which makes
-// generation 2 quiescent; the close-out docs publication `docs-1` (docs.commit, its lanes, the docs ff, docs-covered,
-// docs-published, its snapshot); then `arc-completed` and the terminal snapshot.
+// The story: review-1 admits the corpus pack, baseline-1 checks the journey witness, and u1 builds at high risk.
+// Root apply queues an arc-wide retry-limit edit while u1 is building; the build's split request exercises durable
+// owner-item publication. The journey lane proves I-2 at publication, audit-1 reviews the completed range, and
+// docs-1 publishes close-out before arc-completed and its terminal snapshot.
 //
-// u1 walks the M4a rev 3 corpus-arc stages (u1 at risk high): its plan-check (one fresh call; dev.17 removed the
+// u1 walks the M4a rev 3 corpus-arc stages (u1 at risk high): its pre-build (one fresh call; dev.17 removed the
 // in-session assessment), the fresh build (its answer reporting an experiment), the witness presence check (D1: I-2's t2 on the journey lane at the
 // salvage SHA, after the lane files for the build) and the mutation smoke (D2: the journey lane declares `testPaths`, so
 // the reverted production diff runs it on the mutant tree, scripted to fail t2: killed, green).
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Event, IntentRecord, Parent } from '../../src/core/events.ts';
-import { type InvocationId, type JobId, parseInvocationId } from '../../src/core/ids.ts';
+import type { Event,Parent } from '../../src/core/events.ts';
+import { type InvocationId,parseInvocationId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
-import { type JsonValue, canonicalJson } from '../../src/core/json.ts';
+import { canonicalJson } from '../../src/core/json.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
-import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, noteLensStep, packReviewStep } from '../helpers/holistic.ts';
-import { git, tmpDir } from '../helpers/repo.ts';
+import { lensStep,packReviewStep } from '../helpers/holistic.ts';
+import { git,tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
-import { ADVANCES, obligationsJson } from './brake-common.ts';
+import { ADVANCES,obligationsJson } from './brake-common.ts';
 import { corpusTarget } from './corpus-target.ts';
 import { inRevisionAt } from './pm-trace.ts';
 import type { ExecRun } from './exec-common.ts';
 import type { Scenario } from './pm-common.ts';
-import { BUILD_REPORT, planCheckStep } from './stage-common.ts';
-import { MUL, gateStep } from './unit-common.ts';
+import { BUILD_REPORT,planCheckStep } from './stage-common.ts';
+import { MUL,applyBody,syncInputs,gateStep,workDirPattern } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
-const MAPPED = ['src/**', 'test/**', 'contracts/**'].map((pattern) => ({ pattern, obligations: ['I-1', 'I-2'] }));
+const MAPPED = ['app'].map((system) => ({ system, obligations: ['I-1', 'I-2'] }));
 // Each witness declares its test file (a fresh start requires them, plan defects 2026-10-16): I-1's is in the baseline,
 // I-2's is the one u1 delivers inside its scope.
 const OBLIGATIONS = [
   { id: 'I-1', testIds: ['t1'], files: ['test/add.test.js'] }, { id: 'I-2', activation: 'future' as const, deliveredBy: ['u1'], testIds: ['t2'], files: ['test/mul.test.js'] },
 ];
-/** The applied bundle's one op: an arc-wide limit changed (material, no docs), citing V-1. */
-const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2 }], cites: ['V-1'], evidence: ['scripted evidence'] };
 
 /**
  * Makes the laid-out arc holistic on a corpus target (corpus-target.ts): obligations over a journey witness lane,
@@ -57,7 +53,7 @@ const LIMITS = { op: 'limits', unit: null, limits: [{ field: 'retries', value: 2
 function holistic(r: ExecRun): void {
   const control = join(tmpDir('pm-witness-control'), 'control.json');
   const obligations = obligationsJson({ obligations: OBLIGATIONS, mapping: MAPPED, laneExtra: { journey: { testPaths: ['test/**'] } } }, control);
-  corpusTarget(r, { obligations, advances: ADVANCES, audit: { lenses: ['vision'] } });
+  corpusTarget(r, { obligations, advances: ADVANCES });
   const baseline = git(r.repo, 'rev-parse', 'main^{tree}');
   const failsT2 = { outcomes: { t1: 'pass', t2: 'fail' } } as const;
   // The smoke's mutant: u1's salvage tree (the baseline plus MUL) with its production diff reverted, so MUL's test alone.
@@ -85,53 +81,48 @@ function treeWith(repo: string, rev: string, files: Readonly<Record<string, stri
 const keyed = (unit: string, steps: readonly Step[]): readonly Step[] => steps.map((s) => ({ ...s, unit }));
 
 /** The approving gate's note: a corpus arc banks it as debt after the approval (DEBT_BANK, `debt.after-approval`). */
-const GATE_NOTE = {
+const GATE_NOTE = {evidence: ["fixture:1"],
   severity: 'note', path: null, text: 'The mul helper has no overflow test.', contractRef: null, experiments: [], debt: { drag: 'Every caller of mul must guard overflow itself until it has one.' },
 } as const;
 
-/** u1's fresh build (dev.17: the efficient class at build.high, Codex under the default profile): mul committed; the answer reports an experiment (I3). */
+/** u1's high-risk Opus build commits mul and reports an experiment. */
 const IMPLEMENT: Step = {
-  as: 'codex', expect: { argv: ['exec', '-C'] },
+  as: 'claude', expect: {argv: ['--model', 'claude-opus-5-5']},
   acts: [
+    {type: 'barrier', name: 'root-apply', timeoutMs: 120_000},
     { type: 'commit', message: 'add mul', files: MUL },
-    { type: 'emit', value: { ...BUILD_REPORT, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
+    { type: 'emit', value: { ...BUILD_REPORT, tooBig: {estimate: 'Consider separating follow-up overflow coverage', suggestedChildren: ['overflow coverage']}, experiments: [{ name: 'mul by hand', argv: ['node', '-e', 'import("./src/mul.js")'], exit: 0 }] } },
   ],
 };
-
-/**
- * ckpt-2's one op: an admit citing only the purpose clause V-1 and delivering nothing (it declares the must-hold I-1, which
- * never counts as touched), so it touches no world clause: converted `unrelated`.
- */
-function asideAdmit(r: ExecRun): JsonValue {
-  const spec = JSON.parse(readFileSync(join(r.planPath, '..', 'u1.json'), 'utf8')) as Json;
-  return {
-    op: 'admit', unit: { id: 'aside', risk: 'med', scope: ['contracts/**', 'src/**', 'test/**'], after: [], origin: 'checkpoint' },
-    spec: admitSpecWire({ ...spec, unit: 'aside', rev: 1, obligations: ['I-1'] }), targets: [], cites: ['V-1'], evidence: ['scripted evidence'],
-  };
-}
 
 export const HOLISTIC: Scenario = {
   arc: () => ({}),
   prepare: holistic,
   steps: (r) => [
     packReviewStep('review-1'),
-    ...keyed('u1', [planCheckStep({ decision: 'approve', risk: 'high' }), IMPLEMENT, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
+    ...keyed('u1', [planCheckStep({ decision: 'approve', risk: 'high' }), {...IMPLEMENT, acts: [{type: 'writeToPrompt', pattern: workDirPattern(r), file: 'decisions.json', text: JSON.stringify({decisions: [{id: 'witnesses', text: 'Confirm multiplication through the named journey witness.'}]})}, ...IMPLEMENT.acts]}, gateStep({ decision: 'approve', findings: [GATE_NOTE] })]),
     lensStep('audit-1', 'vision'),
-    checkpointStep('ckpt-1', checkpointAnswer({ decision: 'bundle', ops: [LIMITS] })),
-    // audit-2 notes a new gap (F-1), so its checkpoint runs (an audit that found nothing new has none: checkpoint-skipped);
-    // ckpt-2 dismisses it, so nothing is left to bank at close-out.
-    noteLensStep('audit-2'),
-    checkpointStep('ckpt-2', checkpointAnswer({
-      decision: 'bundle', ops: [asideAdmit(r)], interpretations: [{ clauses: ['V-1'], situation: 'scripted situation', reading: 'scripted reading' }],
-      findingDispositions: [{ finding: 'F-1', disposition: 'dismissed', reason: 'scripted: the gap is not this slice\'s' }],
-    })),
+
   ],
-  hooks: () => [],
+  hooks: (r) => [{
+    name: 'root-revision', when: () => existsSync(join(r.scenarioDir, 'root-apply.reached')),
+    act: async () => {
+      syncInputs({d: r, ctx: {runDir: absPath(r.runDir)}, journal: journalOf(r)});
+      const plan = JSON.parse(readFileSync(r.planPath, 'utf8'));
+      writeFileSync(r.planPath, JSON.stringify({...plan, limits: {...plan.limits, retries: 4}}));
+      submit(r, applyBody(r));
+    },
+  }, {
+    // Keep the build blocked until the scheduler records the drain. Every recording and crash cell then has
+    // the same apply-queued fact and reaches the same next admission boundary before the revision lands.
+    name: 'release-root-apply', when: () => journalOf(r).events.some((e) => e.type === 'fact' && e.fact.kind === 'apply-queued'),
+    act: async () => release(r.scenarioDir, 'root-apply'),
+  }],
 };
 
 export const HOLISTIC_OUTCOMES = {
   u1: [
-    'plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
+    'pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve',
     'candidate:green', 'ff:published', 'snapshot:published',
   ],
 } as const;
@@ -157,6 +148,8 @@ export function ownerOf(view: JournalView, e: Event): string {
         return ofParent(view.latestIntent(p.op).parent);
       case 'arc':
         return 'arc';
+      case 'waste':
+        return `waste:${p.key}`;
     }
   };
   switch (e.type) {
@@ -168,11 +161,11 @@ export function ownerOf(view: JournalView, e: Event): string {
     case 'fact': {
       // A lane-reused or series-certified fact (M4a rev 3 N1) belongs to the stage or job whose series it records.
       if (e.fact.kind === 'lane-reused' || e.fact.kind === 'series-certified') return ofParent(e.fact.parent);
-      const f = e.fact as Readonly<{ kind: string; inv?: string; job?: unknown; pub?: unknown; for?: Readonly<{ type: string; job?: string }>; unit?: unknown; source?: Readonly<{ type: string; job?: string; command?: string }> }>;
+      const f = e.fact as Readonly<{ kind: string; command?: unknown; inv?: string; job?: unknown; pub?: unknown; for?: Readonly<{ type: string; job?: string }>; unit?: unknown; source?: Readonly<{ type: string; job?: string; command?: string }> }>;
       if (f.kind === 'meter' || f.kind === 'usage-unavailable') return ofParent(view.latestIntent(parseInvocationId(f.inv as InvocationId).op).parent);
       const job = typeof f.job === 'string' ? f.job : typeof f.pub === 'string' ? f.pub : f.for?.type === 'job' ? f.for.job : f.source?.type === 'bundle' ? f.source.job : undefined;
       if (job !== undefined) return `job:${job}`;
-      if (f.source?.type === 'command') return 'command';
+      if (f.source?.type === 'command' || f.kind === 'needs-user-acked' && typeof f.command === 'string') return 'command';
       return typeof f.unit === 'string' ? `unit:${f.unit}` : 'arc';
     }
   }
@@ -180,7 +173,7 @@ export function ownerOf(view: JournalView, e: Event): string {
 
 /**
  * The context of a log record, as the holistic row samples it: `unit` (a unit's own), `unit:journey` (a unit
- * candidate's arc lane), the job kind (`job:baseline`, `job:audit`, `job:ckpt`, `job:docs`: the id's prefix), or `arc`
+ * candidate's arc lane), the job kind (`job:baseline`, `job:audit`, `job:docs`: the id's prefix), or `arc`
  * (a command's records too).
  */
 export function contextOf(view: JournalView, e: Event): string {
@@ -194,19 +187,19 @@ export function contextOf(view: JournalView, e: Event): string {
 
 /**
  * The M3 facts whose append the holistic row crashes (each kind's first, at every log.append label), and the M4a ones of
- * the story (u1's smoke-ran, the checkpoints' corpus amendments).
+ * the story (u1's smoke-ran).
  */
 export const M3_FACTS: readonly string[] = [
-  'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'checkpoint-inputs', 'plan-applied', 'divergence', 'divergence-digest',
-  'bundle-decided', 'docs-covered', 'docs-published', 'arc-completed', 'debt-banked', 'smoke-ran', 'corpus-amendment',
+  'witnessed', 'obligation-latched', 'audit-started', 'audit-ended', 'plan-applied',
+  'docs-covered', 'docs-published', 'arc-completed', 'debt-banked', 'smoke-ran',
 ];
 
 /** Labels only the holistic layer reaches (the row crashes each at occurrence 1, and 2 where it repeats). */
-export const M3_ONLY = /^(audit|checkpoint|bundle|closeout|docs|latch|complete|debt)\./;
+export const M3_ONLY = /^(audit|closeout|docs|latch|complete|debt)\./;
 /**
  * Labels only a corpus arc's M4a rev 3 unit stages reach (the witness lane files and presence check, the mutation smoke and its mutant.apply): crashed as the M3-only ones, at 1 and 2.
  */
-export const REV3_ONLY = /^(plancheck|build|witnesscheck|smoke|mutant)\./;
+export const REV3_ONLY = /^(build|witnesscheck|smoke|mutant)\./;
 /** A log append's record is in flight at these labels (the crash leaves it out of the log). */
 export const IN_FLIGHT: readonly string[] = ['log.append.before-write', 'log.append.after-partial-write'];
 
@@ -261,6 +254,8 @@ export function sampleHolistic(record: string, snap: LogSnapshot): readonly Samp
     if (label.startsWith('log.append.')) {
       return e.type === 'fact' && M3_FACTS.includes(e.fact.kind) && !(e.fact.kind === 'plan-applied' && e.fact.source?.type === 'start') ? `fact ${e.fact.kind}` : null;
     }
+    // The checkpoint digest is gone; sample the builder's root split request at the same durable item boundaries.
+    if (label.startsWith('needsuser.raise.')) return 'root-request';
     const ctx = contextOf(snap.view, e);
     return ctx === 'unit' || (ctx === 'arc' && e.seq < firstJob) ? null : ctx;
   });
@@ -297,7 +292,6 @@ export function holisticRecords(snap: LogSnapshot): unknown {
     },
     audits: facts.flatMap((f) => (f.kind === 'audit-started' ? [f.job] : [])),
     ended: facts.flatMap((f) => (f.kind === 'audit-ended' ? [[f.job, f.outcome]] : [])),
-    checkpoints: facts.flatMap((f) => (f.kind === 'checkpoint-inputs' ? [f.job] : [])),
     divergences: facts.flatMap((f) => (f.kind === 'divergence' ? [[f.id, f.job]] : [])),
     terminal: snap.view.opsOf('snapshot.publish').filter((i) => i.parent.type === 'arc' && snap.view.doneOf(i.op) !== null).length,
     completion: snap.view.holistic().completion?.active ?? null,

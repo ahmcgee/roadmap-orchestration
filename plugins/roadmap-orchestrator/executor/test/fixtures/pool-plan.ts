@@ -1,3 +1,4 @@
+import { systemName } from '../../src/core/ids.ts';
 // Shared by the M2 resource tests (pools, @cpu, the arbiter, retry and publication holders) and pool-child.ts:
 // a plan declaring named resources (res-tool.ts over the state dir), an estate pool (test/fakes/estate.ts,
 // directory-backed instances) and an `@cpu` capacity, and a resource context over a fresh run.
@@ -48,7 +49,7 @@ export function poolPlanFor(run: ResRun, extra: Readonly<Record<string, unknown>
       ...[DB, QUEUE, CACHE].map((name: ResourceName) => ({ name, probe: named('probe', run.stateDir, name), teardown: named('teardown', run.stateDir, name) })),
       { name: ESTATE, pool: { size: ESTATE_SIZE }, probe: estate('probe', run.stateDir), teardown: estate('teardown', run.stateDir) },
     ],
-    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', scope: ['src/**'], resources: [DB, ESTATE] }],
+    units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [DB, ESTATE] }],
     ...extra,
   });
 }

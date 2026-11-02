@@ -13,7 +13,7 @@
 //              applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
 //              vision lens), whose checkpoint is skipped (nothing new since the settled ckpt-3), and audit-3 (final:
 //              both lenses of L) and ckpt-4 no-op.
-//   prevented  branch P, after paid run 3: tidy's plan-check twice answers `infeasible` with a V-2 vision conflict
+//   prevented  branch P, after paid run 3: tidy's pre-build twice answers `infeasible` with a V-2 vision conflict
 //              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
 //              vision lens), its checkpoint skipped (nothing new); report and the repair merge; audit-2 (final: both
@@ -24,30 +24,24 @@
 //              repair (repairing F-1) and leaves the P1 undispositioned. Then audit-2 (drift: the vision lens), its
 //              checkpoint skipped (nothing new); report and the repair merge; audit-3 (final: both lenses) and ckpt-3 no-op.
 //
-// M4b (branches R and L): once three units merged with the repair still to flow, the flow loop's first run (`flow-1`,
-// constraint-shift) is called once and answers noAction. The fake repair build waits at `fake/flow.hold` (FAKE_FLOW_HOLD)
-// until the driver saw that run end, so the call happens whatever the host's timing; branch P never has three merges with
-// a unit left, so it has no flow call.
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import type { ProfileName } from '../../src/routing/types.ts';
-import {
-  INVALID_OP, admitSpecWire, checkpointAnswer, jobRepairStep, checkpointStep, flowStep, lensStep, packReviewStep, twoOpBundleSecondInvalid,
-} from '../../test/helpers/holistic.ts';
+import { admitSpecWire, checkpointAnswer, checkpointStep, lensStep, packReviewStep } from '../../test/helpers/holistic.ts';
 import type { Step } from '../../test/helpers/scenario.ts';
-import { type M1Step, fakeSteps } from '../m1/scenario.ts';
-import { FAKE_CKPT_HOLD, FAKE_FLOW_HOLD } from './layout.ts';
-import { FILES, REPAIR_UNIT, filesOf, repairSpecText } from './setup.ts';
+import { type M1Step,fakeSteps } from '../m1/scenario.ts';
+import { FAKE_CKPT_HOLD } from './layout.ts';
+import { FILES,REPAIR_UNIT,filesOf,repairSpecText } from './setup.ts';
 
 /** How long a fake barrier waits for the driver (the driver's fake run timeout is shorter). */
 const HOLD_MS = 20 * 60_000;
 
-const planCheck = (reason: string): M1Step => ({
-  role: 'planCheck',
-  answer: { decision: 'approve', reasons: [reason], patch: null, risk: 'med', notes: '', premises: [], visionConflict: [], scopeGrowth: [], staleLinks: [] },
+const preBuild = (reason: string): M1Step => ({
+  role: 'verifier',
+  answer: {decision: 'approve', ordering: null, findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null, rulings: []},
 });
 const build = (message: string, files: Readonly<Record<string, string>>): M1Step => ({ role: 'build', round: 'fresh', acts: [{ type: 'commit', message, files }] });
-const gate = (reason: string): M1Step => ({ role: 'gate', answer: { decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], unreviewed: [], clusters: null, rulings: [] } });
+const gate = (reason: string): M1Step => ({ role: 'gate', answer: {rulings: [],  decision: 'approve', findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null,  } });
 
 /** The files of fake build `name` (evals/m3/files/units/<name>/), by repo path. */
 const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(join(FILES, 'units', name));
@@ -55,22 +49,22 @@ const unitFiles = (name: string): Readonly<Record<string, string>> => filesOf(jo
 /** The unit calls of branch R's story, by unit, in each unit's own order. */
 export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
   parse: [
-    planCheck('The spec is consistent with the ledger contract (ledger file) and C-1, C-2, C-4.'),
+    preBuild('The spec is consistent with the ledger contract (ledger file) and C-1, C-2, C-4.'),
     build('parse: parseLedger', unitFiles('parse')),
     gate('A1, A2 and A3 hold.'),
   ],
   tidy: [
-    planCheck('The spec is a one-line consistency change in src/cli.js; C-3 holds.'),
+    preBuild('The spec is a one-line consistency change in src/cli.js; C-3 holds.'),
     build('tidy: format prints through formatDisplay, as total does', unitFiles('tidy')),
     gate('A1 and A2 hold: format and total print through the same helper.'),
   ],
   report: [
-    planCheck('The spec is consistent with the ledger contract (commands) and C-1 to C-4.'),
+    preBuild('The spec is consistent with the ledger contract (commands) and C-1 to C-4.'),
     build('report: reconcile a month', { ...unitFiles('report'), ...unitFiles('report-on-tidy') }),
     gate('A1, A2 and A3 hold; unknown commands still exit 2.'),
   ],
   [REPAIR_UNIT.id]: [
-    planCheck('The repair restores I-2 within the unit\'s scope.'),
+    preBuild('The repair restores I-2 within the unit\'s scope.'),
     build('fix-rounding: formatDisplay rounds the cents half to even', unitFiles(REPAIR_UNIT.id)),
     gate('A1 and A2 hold.'),
   ],
@@ -78,7 +72,7 @@ export const UNIT_STORY: Readonly<Record<string, readonly M1Step[]>> = {
 
 /** The checkpoint's repair admit: origin repair, citing V-2, evidence naming the witness P1 (F-1, the first finding). */
 const ADMIT_REPAIR: JsonValue = {
-  op: 'admit', unit: { ...REPAIR_UNIT, scope: [...REPAIR_UNIT.scope], after: [...REPAIR_UNIT.after] }, spec: admitSpecWire(JSON.parse(repairSpecText()) as Record<string, unknown>), targets: [],
+  op: 'admit', unit: { ...REPAIR_UNIT, systems: [...REPAIR_UNIT.systems], after: [...REPAIR_UNIT.after] }, spec: admitSpecWire(JSON.parse(repairSpecText()) as Record<string, unknown>), targets: [],
   cites: ['V-2'], evidence: ['F-1: I-2 not held on the integration head since tidy routed `format` through formatDisplay, whose toFixed prints 0.125 as 0.13'],
 };
 const REPAIR_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR] });
@@ -87,28 +81,16 @@ const NO_OP = checkpointAnswer({ decision: 'no-op' });
 /** The corpus arc's pack review (M4a), before the first admission: no finding, so nothing holds admission. */
 const PACK_REVIEW = packReviewStep('review-1');
 
-const JOB_STEPS_R: readonly Step[] = [
-  PACK_REVIEW,
-  lensStep('audit-1', 'vision'),
-  lensStep('audit-1', 'invariants'),
-  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
-  jobRepairStep('ckpt-2', twoOpBundleSecondInvalid(ADMIT_REPAIR, INVALID_OP)),
-  checkpointStep('ckpt-3', REPAIR_BUNDLE),
-  lensStep('audit-2', 'vision'),
-  lensStep('audit-3', 'invariants'),
-  lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-4', NO_OP),
-];
+const JOB_STEPS_R: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')];
 
-/** tidy's plan-check in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
+/** tidy's pre-build in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
 const INFEASIBLE: M1Step = {
-  role: 'planCheck',
+  role: 'verifier',
   answer: {
     decision: 'infeasible', reasons: ['Routing `format` through formatDisplay breaks I-2: its toFixed prints 0.125 as 0.13; nothing within src/cli.js reconciles A1 with I-2.'],
     patch: null, risk: 'med', notes: 'Drop the unit, or re-scope a unit to src/display.js so formatDisplay rounds half to even.', premises: [],
     visionConflict: [{ clauses: ['V-2'], note: 'format through formatDisplay silently mis-rounds money (0.125 prints 0.13)' }],
-    scopeGrowth: [], staleLinks: [],
+     staleLinks: [],
   },
 };
 
@@ -120,17 +102,18 @@ export const UNIT_STORY_P: Readonly<Record<string, readonly M1Step[]>> = {
   [REPAIR_UNIT.id]: UNIT_STORY[REPAIR_UNIT.id]!,
 };
 
-/** Branch P's bundle: cut tidy, admit the repair (repairing the plan-check P3 F-1), as paid run 3's ckpt-2. */
-const CUT_TIDY: JsonValue = { op: 'cut', unit: 'tidy', reason: 'Its goal cannot be met within src/cli.js without breaking I-2.', cites: ['V-2'], evidence: ['F-1: plan-check found that format through formatDisplay prints 0.125 as 0.13'] };
+/** Branch P's bundle: cut tidy, admit the repair (repairing the pre-build P3 F-1), as paid run 3's ckpt-2. */
+const CUT_TIDY: JsonValue = { op: 'cut', unit: 'tidy', reason: 'Its goal cannot be met within src/cli.js without breaking I-2.', cites: ['V-2'], evidence: ['F-1: pre-build found that format through formatDisplay prints 0.125 as 0.13'] };
 const PREVENT_BUNDLE = checkpointAnswer({ decision: 'bundle', ops: [ADMIT_REPAIR, CUT_TIDY] });
 
 const JOB_STEPS_P: readonly Step[] = [
   PACK_REVIEW,
   checkpointStep('ckpt-1', PREVENT_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-1', 'vision'),
-  lensStep('audit-2', 'invariants'),
+  checkpointStep('ckpt-2', PREVENT_BUNDLE),
   lensStep('audit-2', 'vision'),
+  lensStep('audit-3', 'invariants'),
+  lensStep('audit-3', 'vision'),
   checkpointStep('ckpt-3', NO_OP),
 ];
 
@@ -148,17 +131,7 @@ const LATENT_P1 = {
   claim: '`format` renders formatAmount\'s cents through a binary Number and toFixed: `format 100000000000000.01` prints 100,000,000,000,000.02. The money witness only tests amounts below 11.',
 } as const;
 
-const JOB_STEPS_L: readonly Step[] = [
-  PACK_REVIEW,
-  lensStep('audit-1', 'vision'),
-  lensStep('audit-1', 'invariants', [LATENT_P1]),
-  checkpointStep('ckpt-1', REPAIR_BUNDLE, [{ type: 'barrier', name: FAKE_CKPT_HOLD, timeoutMs: HOLD_MS }]),
-  checkpointStep('ckpt-2', REPAIR_BUNDLE),
-  lensStep('audit-2', 'vision'),
-  lensStep('audit-3', 'invariants'),
-  lensStep('audit-3', 'vision'),
-  checkpointStep('ckpt-3', NO_OP),
-];
+const JOB_STEPS_L: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants', [LATENT_P1]), lensStep('audit-2', 'invariants')];
 
 export const STORIES = ['story', 'prevented', 'latent'] as const;
 export type StoryName = (typeof STORIES)[number];
@@ -169,21 +142,12 @@ export function storyName(value: string): StoryName {
   return found;
 }
 
-/** `story`'s unit calls with the repair's build held at the flow barrier until the flow run ended (branches R and L). */
-function flowHeld(story: Readonly<Record<string, readonly M1Step[]>>): Readonly<Record<string, readonly M1Step[]>> {
-  const repair = story[REPAIR_UNIT.id]!.map((s): M1Step => (s.role === 'build' ? { ...s, acts: [{ type: 'barrier', name: FAKE_FLOW_HOLD, timeoutMs: HOLD_MS }, ...s.acts] } : s));
-  return { ...story, [REPAIR_UNIT.id]: repair };
-}
-
-/** The flow loop's one run in branches R and L: no action. */
-const FLOW_RUN = flowStep('flow-1');
-
 /** The fake backend steps that play `story` under `profile`. */
 export function storySteps(story: StoryName, profile: ProfileName): readonly Step[] {
   const smoke = fakeSteps({ steps: [] }, profile);
   const [unitStory, jobs] = story === 'story'
-    ? [flowHeld(UNIT_STORY), [...JOB_STEPS_R, FLOW_RUN]]
-    : story === 'prevented' ? [UNIT_STORY_P, JOB_STEPS_P] : [flowHeld(UNIT_STORY_L), [...JOB_STEPS_L, FLOW_RUN]];
+    ? [UNIT_STORY, JOB_STEPS_R]
+    : story === 'prevented' ? [UNIT_STORY_P, JOB_STEPS_P] : [UNIT_STORY_L, JOB_STEPS_L];
   const units = Object.entries(unitStory).flatMap(([unit, steps]) => fakeSteps({ steps }, profile).slice(smoke.length).map((s): Step => ({ ...s, unit })));
   return [...smoke, ...units, ...jobs];
 }

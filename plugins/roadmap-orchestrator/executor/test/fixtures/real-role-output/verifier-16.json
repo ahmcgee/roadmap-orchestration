@@ -1,0 +1,188 @@
+{
+  "standing": [],
+  "decision": "approve",
+  "ordering": null,
+  "findings": [
+    {
+      "severity": "note",
+      "path": "test/search.test.js",
+      "text": "A3 says 'a test proves it' but has no witness: W-1 and W-2 cover only A1 and A2. The build must still add a named test. It has to use a payload that breaks out of an attribute, such as `\"><img src=x onerror=alert(1)>` plus a `'`, because q is echoed inside `value=\"...\"`. A `<script>` payload alone would pass even with a bad attribute escape. The test should cover every echo site: the results line, the M5 heading, the `<title>` and the input value. Assert the escaped form is present and that no raw `<img` appears. A bare /on[a-z]+=/ check is the wrong assertion, because esc leaves `onerror=` as harmless text.",
+      "contractRef": "A3",
+      "evidence": [
+        "src/pages.js:7 esc escapes & < > \" ' only, so `onerror=` survives as text",
+        "test/floor.test.js:96 the T-16 regex /\\son[a-z]+=/ would fail on an escaped payload, so keep that payload out of flowPages"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "test/search.test.js",
+      "text": "The W-1 skeleton only asks that a search finds by title or author. It should also reject the plausible wrong implementations. (1) Matching over the whole record or JSON: q=Priya must give M5, otherwise the search reveals who reserved a book (T-18), and `claim` tokens must not match either. (2) Searching condition, a non-goal: b1's seeded condition holds 'Bookplates', and q=bookplates must give M5. 'Coffee ring' is another check. (3) Concatenating fields: q='darkness ursula' must not match across title and author. (4) Building a RegExp from the term: q='(' must give M5 with status 200, not a 500, and q='.' must match only literal dots, for example 'J. L. Carr' and 'Ursula K. Le Guin', not the whole shelf. Also prove trimming and case with '  LE GUIN  ' finding exactly two books, via the form's `+` encoding. Prove q= and q=%20%20 show the whole shelf with no '0 books match' line. Prove b2 appears in a search marked reserved with no Reserve link, and that a free result keeps its link.",
+      "contractRef": "A1",
+      "evidence": [
+        "data/shelf.json:3 b1 condition contains Bookplates and Le_Guin",
+        "data/shelf.json:4 b2 reservedBy Priya, condition Like new",
+        "docs/design/page/README.md:31 reserved books still show in results"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "test/floor.test.js",
+      "text": "I-3 (T-18) and I-5 (T-16) are obligations of this unit, but their witnesses go through `flowPages()` and fixed paths, none of which is a search page. Without a change, both stay green without ever seeing a results page or an M5 page. Add a matching search and a no-match search to the pages those witnesses walk. Only add to them; keep the existing assertions.",
+      "contractRef": "I-3, I-5",
+      "evidence": [
+        "test/floor.test.js:40 flowPages has no ?q= path",
+        "test/floor.test.js:64 T-18 walks flowPages",
+        "test/floor.test.js:93 T-16 walks ['/','/nowhere'] and flowPages"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": "test-inadequate",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/pages.js",
+      "text": "Build the match to tolerate non-string fields. `loadShelf` does not validate book fields, and the corpus says the keeper hand-edits this file. Today `/` renders a numeric title and a missing author without failing, because esc calls String(). A naive `book.title.toLowerCase()` would make every search return a 500 while `/` stays fine. Use String(book.title ?? '') or similar, and cover it with a test.",
+      "contractRef": "A1",
+      "evidence": [
+        "src/store.js:62 loadShelf checks only the books array",
+        "src/pages.js:7 esc wraps String()",
+        "docs/corpus/keeper.md:3 the keeper edits data/shelf.json by hand"
+      ],
+      "experiments": [
+        {
+          "command": "node /redacted/path (createApp over books with title:1984 and no author field, GET /, then a naive filter)",
+          "output": "200 [ '<span class=\"book-title\">1984</span> <span class=\"book-author\">by George Orwell</span>', '<span class=\"book-title\">No Author Field</span> <span class=\"book-author\">by undefined</span>' ]\nnaive: k.title.toLowerCase is not a function"
+        }
+      ],
+      "debt": null,
+      "defect": "incorrect-behaviour",
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/pages.js",
+      "text": "Design details the spec leaves implicit but D1 pulls in. The form is `<form role=\"search\" method=\"get\" action=\"/\">`, with visible label 'Find a book by title or author', one text input named q and a button 'Search'. M5 counts as a refusal under the M2 to M8 rules: its title is `No match for \"{q}\"`, its heading and body come first in `<main>` in the refusal block, then the form with q still in the box, then the 'Show the whole shelf' link, and no books are listed. The explicit M5 order wins over the general line in the announcing section saying the back link follows directly. Tie the search input to the refusal with aria-describedby, as the markup rules ask. Do not add autofocus: that rule covers M4, M6 and M7 only. Results show the line `2 books match \"le guin\"` above the list plus the link. The design gives only the plural, so use '1 book matches' for one result. Results need their own `<title>`, because every page must have a distinct one and the design names none for results. Show the trimmed term, and leave the box empty for a blank search.",
+      "contractRef": "D1",
+      "evidence": [
+        "docs/design/page/README.md:28",
+        "docs/design/page/README.md:103",
+        "docs/design/page/README.md:142",
+        "docs/design/page/README.md:159",
+        "docs/design/page/README.md:208"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "public/style.css",
+      "text": "Existing field and button styles are scoped to `.slip`, and `.slip button` is rust-filled. The design makes the search button outlined (rust text on paper, 2px rust border) and keeps the Reserve form's button as the only filled shape. So reusing `class=\"slip\"` as it stands draws the search button wrongly. Share the field rule and add the outlined variant, keeping 44px targets, a 2px ink input border and max-width 100%. No sideways scrolling at 360px needs checking in the walkthrough with a long unbroken q. `body { overflow-wrap: anywhere }` already covers the echoed text.",
+      "contractRef": "D1",
+      "evidence": [
+        "public/style.css:121 .slip input",
+        "public/style.css:134 .slip button filled",
+        "public/style.css:17 overflow-wrap anywhere on body",
+        "docs/design/page/README.md:236"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    },
+    {
+      "severity": "note",
+      "path": "src/pages.js",
+      "text": "Scope guards. (1) Put the form in the shelf and no-match pages, not in `layout()`: existing tests require the confirmation and just-taken pages to have no form. (2) Every page function defaults `settings = DEFAULT_SETTINGS`, so a new no-match page or a missed argument silently shows the default name, breaking I-20 for a custom shelf. Pass settings through and prove it with createApp({ settings }). (3) I-21 is listed in the obligations, but it is `activation: future` and delivered by settings-file, and the window line is not rendered today. This unit does not need to build it. Keep the form positioned so the line can later go above `<main>` as the design describes.",
+      "contractRef": "I-20, I-21",
+      "evidence": [
+        "test/reserve.test.js:135",
+        "test/reserve.test.js:161",
+        "src/pages.js:46 the settings default",
+        "src/server.js:144 where the settings are passed to shelfPage",
+        ".roadmap/invariants.md:221 I-21 future, delivered by settings-file"
+      ],
+      "experiments": [],
+      "debt": null,
+      "defect": null,
+      "reraises": null,
+      "hunk": null
+    }
+  ],
+  "directives": [],
+  "reasons": [
+    "The spec's premises hold and the unit is small: one GET parameter on an existing route, rendered through the existing esc and bookItem. No premise is wrong and nothing needs a plan change. The notes tighten the witnesses and flag design details for the build. The baseline suite is green at this tip (68 pass)."
+  ],
+  "premises": [
+    {
+      "claim": "F1 holds: the seed has exactly two books by Ursula K. Le Guin, and no other title or author contains 'le guin'.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 3
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "claim": "Search needs no new route: GET / already parses the URL with URL, and searchParams tolerates malformed escapes without throwing (checked with `new URL` for %ZZ, %E0%A4%A and le+guin), so a bad q cannot reach the 500 path through parsing.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 142
+        },
+        {
+          "path": "src/server.js",
+          "line": 143
+        }
+      ]
+    },
+    {
+      "claim": "Reusing bookItem keeps Reserve links and reserved marks, and applies isHeld so a lapsed hold shows as free in results.",
+      "evidence": [
+        {
+          "path": "src/pages.js",
+          "line": 35
+        },
+        {
+          "path": "src/store.js",
+          "line": 38
+        }
+      ]
+    },
+    {
+      "claim": "test/search.test.js is already mapped to the page system and is picked up by the npm test glob.",
+      "evidence": [
+        {
+          "path": ".roadmap/config.json",
+          "line": 7
+        },
+        {
+          "path": "package.json",
+          "line": 8
+        }
+      ]
+    }
+  ],
+  "clusters": null,
+  "rulings": []
+}

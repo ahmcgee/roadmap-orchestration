@@ -1,9 +1,10 @@
+import { systemName } from '../../src/core/ids.ts';
 // Shared by the milestone walk tests (test/walk-job.test.ts) and their crash child (walk-child.ts): a holistic arc with one
 // milestone MS-1 over u1 (u2 descends from it, u3 is unrelated), a tiny fake product committed in the base repo (a node
 // http server and a CLI, its design reference under design/), the walk context over the run's one arbiter, and the
 // fake walkthrough's scripted answers (each validated by the frozen reader, so a fake never answers what the executor
 // could not have been given).
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
@@ -12,15 +13,15 @@ import type { UnitId } from '../../src/core/ids.ts';
 import { rankOf } from '../../src/schedule/ready.ts';
 import { validateWalkthroughOutput } from '../../src/prompts/schemas.ts';
 import type { WalkContext } from '../../src/walk/walk.ts';
-import { git, tmpDir } from '../helpers/repo.ts';
-import type { ClaudeAct, Step } from '../helpers/scenario.ts';
+import { git,tmpDir } from '../helpers/repo.ts';
+import type { ClaudeAct,Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
 import { admitSpecWire } from '../helpers/holistic.ts';
-import { BUILD_REPORT, type LaneJson, planCheckStep } from './stage-common.ts';
-import { ADVANCES, VISION, obligationsJson } from './brake-common.ts';
+import { BUILD_REPORT,type LaneJson } from './stage-common.ts';
+import { ADVANCES,VISION,obligationsJson } from './brake-common.ts';
 import { publishArc } from './publish-common.ts';
 import { wired } from './sched-m3-common.ts';
-import { type ArcDescriptor, type ArcRun, gateStep } from './unit-common.ts';
+import { type ArcDescriptor,type ArcRun,gateStep } from './unit-common.ts';
 
 type Json = Record<string, unknown>;
 
@@ -85,7 +86,7 @@ export function walkArc(opts: WalkArcOptions): ArcDescriptor {
   writeWitnessControl(control, { trees: { '*': { outcomes: { t1: 'pass' } } } });
   return publishArc({
     steps: opts.steps, units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }, { id: 'u3' }],
-    ...(opts.suite === undefined ? {} : { suite: opts.suite }), ...(opts.systemsMap === undefined ? {} : { systemsMap: opts.systemsMap }),
+    ...(opts.suite === undefined ? {} : { suite: opts.suite }), systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md', 'design/**', 'product/**'] } } },
   }, (x) => {
     for (const [path, text] of Object.entries(PRODUCT)) {
       mkdirSync(join(x.repo, path, '..'), { recursive: true });
@@ -99,7 +100,7 @@ export function walkArc(opts: WalkArcOptions): ArcDescriptor {
     const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
     writeFileSync(x.planPath, JSON.stringify({
       ...plan, baseline: git(x.repo, 'rev-parse', 'main'),
-      holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json', audit: { lenses: opts.auditLenses ?? ['vision'], every: 100 } },
+      holistic: { vision: 'vision.json', advances: ADVANCES, obligations: 'obligations.json' },
       milestones: [opts.milestone ?? milestoneJson()],
       ...(opts.walkRounds === undefined ? {} : { limits: { walkRounds: opts.walkRounds } }),
     }));
@@ -126,7 +127,7 @@ export const unitInForce = (r: ArcRun, id: string): PlanUnit => {
 export type WalkAnswerSpec = Readonly<{
   journeys?: readonly Readonly<{ journey: string; outcome: 'completed' | 'blocked'; evidence?: readonly string[] }>[];
   findings?: readonly Readonly<{ class: 'breaks' | 'deviates'; journey: string; claim: string; cause: string; against: JsonValue; paths?: readonly string[]; evidence?: readonly string[] }>[];
-  polish?: readonly Readonly<{ journey: string; text: string; unit: Readonly<{ id: string; scope: readonly string[]; spec: JsonValue }> }>[];
+  polish?: readonly Readonly<{ journey: string; text: string; unit: Readonly<{ id: string; systems: readonly string[]; spec: JsonValue }> }>[];
 }>;
 
 /** The file a fake walk keeps its fetch of J-1's entry in (relative to the evidence dir). */
@@ -141,7 +142,7 @@ export function walkAnswer(spec: WalkAnswerSpec = {}): JsonValue {
     findings: (spec.findings ?? []).map((f) => ({
       class: f.class, journey: f.journey, evidence: [...(f.evidence ?? [J1_EVIDENCE])], claim: f.claim, cause: f.cause, against: f.against, paths: [...(f.paths ?? [])],
     })),
-    polish: (spec.polish ?? []).map((p) => ({ journey: p.journey, evidence: [J1_EVIDENCE], text: p.text, unit: { id: p.unit.id, scope: [...p.unit.scope], spec: p.unit.spec } })),
+    polish: (spec.polish ?? []).map((p) => ({ journey: p.journey, evidence: [J1_EVIDENCE], text: p.text, unit: { id: p.unit.id, systems: p.unit.systems, spec: p.unit.spec } })),
     premises: [],
     reasons: ['scripted walk'],
   } as unknown as JsonValue;
@@ -178,16 +179,16 @@ export const SCOPE = ['design/**', 'product/**'];
 /** A polish proposal on J-1 whose unit is u1's spec renamed (its lanes), scope the reference and the product. */
 export function proposal(d: Readonly<{ planPath: string }>, id: string, text: string, extra: Json = {}) {
   const u1 = JSON.parse(readFileSync(join(d.planPath, '..', 'u1.json'), 'utf8')) as Json;
-  return { journey: 'J-1', text, unit: { id, scope: SCOPE, spec: admitSpecWire({ ...u1, unit: id, rev: 1, scope: SCOPE, ...extra }) } };
+  return { journey: 'J-1', text, unit: { id, systems: [systemName('app')], spec: admitSpecWire({ ...u1, unit: id, rev: 1, ...extra }) } };
 }
 
 /** The build of polish unit `unit` (risk high: the efficient class since dev.17, Codex under the default profile): it commits `files`. */
 export const polishBuild = (unit: string, files: Readonly<Record<string, string>>): Step => ({
-  as: 'codex', unit, expect: { argv: ['exec', '-C'] },
+  as: 'claude', unit, expect: {argv: ['--model', 'claude-opus-5-5']},
   acts: [{ type: 'commit', message: `polish ${unit}`, files }, { type: 'emit', value: BUILD_REPORT }],
 });
 export const polishSteps = (unit: string, files: Readonly<Record<string, string>>): readonly Step[] => [
-  { ...planCheckStep({ decision: 'approve', risk: 'high' }), unit }, polishBuild(unit, files), { ...gateStep({ decision: 'approve' }), unit },
+  polishBuild(unit, files), { ...gateStep({ decision: 'approve' }), unit },
 ];
 
 /** tw-keep's build: the greeting configured, and the reference says so. */

@@ -5,35 +5,35 @@
 // and MUTATION_SMOKE (labels witnesscheck.after-lane-files, witnesscheck.after-witnessed, smoke.after-patch-kept,
 // smoke.after-apply, smoke.after-witnessed, smoke.after-ran-before-outcome).
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
-import type { Fact, IntentOf } from '../src/core/events.ts';
-import { arcId, resourceName, unitId } from '../src/core/ids.ts';
+import { describe,test } from 'node:test';
+import type { Fact,IntentOf } from '../src/core/events.ts';
+import { arcId,resourceName,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
-import { managedEnv, startedCalls } from './fixtures/env-common.ts';
-import { idleEnvironments } from '../src/resources/environments.ts';
-import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
-import { step } from '../src/pipeline/unit.ts';
-import { unitTip } from '../src/pipeline/gate.ts';
-import { verificationWorktree } from '../src/pipeline/dispatch.ts';
-import { removeVerificationTree, seriesTree } from '../src/pipeline/lanes.ts';
-import { assertFired, writeTrigger } from './helpers/crash.ts';
-import { fixture, runFixture } from './helpers/proc.ts';
-import { barrierDir, reached, release } from './helpers/barrier.ts';
-import { git, tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
-import { type TreePlan, scriptTree } from './helpers/witness.ts';
-import { treeWith } from './fixtures/repair-common.ts';
 import { patchedTree } from '../src/git/mutant.ts';
-import { type ChecksArc, type ChecksOptions, checksArc, outcomeFacts } from './fixtures/checks-common.ts';
-import { SCENARIO_TIMEOUT_MS, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, MUL, codexStep, contextFor, gateStep, isGateCall, mulBuild, outcomes, stepUntil } from './fixtures/unit-common.ts';
+import { verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { unitTip } from '../src/pipeline/gate.ts';
+import { removeVerificationTree,seriesTree } from '../src/pipeline/lanes.ts';
+import { step } from '../src/pipeline/unit.ts';
+import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
+import { idleEnvironments } from '../src/resources/environments.ts';
+import { type ChecksArc,type ChecksOptions,checksArc,outcomeFacts } from './fixtures/checks-common.ts';
+import { managedEnv,startedCalls } from './fixtures/env-common.ts';
+import { treeWith } from './fixtures/repair-common.ts';
+import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil } from './fixtures/unit-common.ts';
+import { barrierDir,reached,release } from './helpers/barrier.ts';
+import { assertFired,writeTrigger } from './helpers/crash.ts';
+import { fixture,runFixture } from './helpers/proc.ts';
+import { git,tmpDir } from './helpers/repo.ts';
+import { readCalls } from './helpers/scenario.ts';
+import { type TreePlan,scriptTree } from './helpers/witness.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
-const PRE_LANES = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
+const PRE_LANES = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released'];
 const MERGED = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 const facts = (d: ArcDescriptor): readonly Fact[] => readJournal(absPath(d.runDir), arcId(d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
@@ -102,7 +102,7 @@ describe('D1 witness presence', () => {
       const u = r.journal.view.unit(unitId('u1'));
       assert.deepEqual([u.status, u.counters.chargeableFailures], ['park-pending', 0]);
       assert.equal(gateCalls(a.d).length, 0, 'the gate is not called');
-      assert.equal(readCalls(a.d.scenarioPath).length, 2, 'no fix round: plan-check and the build only');
+      assert.equal(readCalls(a.d.scenarioPath).length, 2, 'no fix round: pre-build and the build only');
     } finally {
       r.journal.close();
     }
@@ -275,7 +275,7 @@ describe('the build\'s witness checks (R56)', () => {
 const SMOKED: Omit<ChecksOptions, 'steps'> = { activation: 'future', deliveredBy: ['u1'], testPaths: ['test/**'] };
 /** The tree mutation smoke makes of a salvaged commit adding MUL: the tip with only mul's test (src/mul.js reverted). */
 const mutantTreeOf = (a: ChecksArc, files: Readonly<Record<string, string>> = { 'test/mul.test.js': MUL['test/mul.test.js'] }): string => treeWith(a.d.repo, 'main', files, null);
-const smokeRan = (d: ArcDescriptor) => facts(d).filter((f): f is Extract<Fact, { kind: 'smoke-ran' }> => f.kind === 'smoke-ran');
+const smokeRan = (d: ArcDescriptor) => facts(d).filter((f): f is Extract<Exclude<Fact, {kind: 'stage-outcome'; job: unknown}>, { kind: 'smoke-ran' }> => f.kind === 'smoke-ran');
 const smokeApplies = (d: ArcDescriptor) => readJournal(absPath(d.runDir), arcId(d.arc)).events.filter((e) => e.type === 'intent' && e.kind === 'mutant.apply');
 
 /** Lays out a smoked arc, scripts the mutant tree (`mutant`) over every other tree passing t1, and runs u1 to its lanes. */
@@ -354,7 +354,7 @@ describe('D2 mutation smoke', () => {
     // stage (no fast suite, stages.ts `fastSuite`, either).
     const estateSuite = (p: Record<string, unknown>): void => {
       const suite = p['suite'] as { lanes: Record<string, unknown>[] };
-      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, tier: 'estate' })) };
+      p['suite'] = { ...suite, lanes: suite.lanes.map((l) => ({ ...l, cadence: 'candidate' })) };
     };
     const { a, r } = await smoked([planCheckStep({ decision: 'approve' }), mulBuild(), NOOP_FIX, gateStep({ decision: 'approve' })], null, { noSpecLanes: true, plan: estateSuite });
     try {

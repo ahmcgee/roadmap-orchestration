@@ -1,3 +1,4 @@
+import { protectedPaths } from '../../src/input/protected.ts';
 // The M2 paid fixture, step 3: `node evals/m2/check.ts <dir>` grades a finished run (setup → driver) from the
 // log, the repo, the run and host dirs, the pool's instance dirs and report.json. Agent-facing output: one JSON
 // line `{pass, criteria[{name, pass, detail}], notExercised[], cannotShow[]}`, then the two lists as lines.
@@ -87,8 +88,8 @@ type Run = Readonly<{
 }>;
 
 const facts = (run: Run): readonly Fact[] => run.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly (Extract<Fact, { kind: K }> & { seq: number })[] =>
-  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind ? [{ ...(e.fact as Extract<Fact, { kind: K }>), seq: e.seq }] : []));
+const factsOf = <K extends Fact['kind']>(run: Run, kind: K): readonly (Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }> & { seq: number })[] =>
+  run.events.flatMap((e) => (e.type === 'fact' && e.fact.kind === kind && (kind !== 'stage-outcome' || 'unit' in e.fact) ? [{ ...(e.fact as Extract<Exclude<Fact, { stage: 'experience-verdict' | 'campaign-audit' }>, { kind: K }>), seq: e.seq }] : []));
 const transitions = (run: Run) => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'resource.transition' ? [e] : []));
 const spawnIntents = (run: Run) => run.events.flatMap((e) => (e.type === 'intent' && e.kind === 'proc.spawn' ? [e] : []));
 const outcomes = (run: Run) => factsOf(run, 'stage-outcome');
@@ -474,7 +475,7 @@ function diffProductOnly(run: Run): Verdict {
   // other path is under the transient rules, bounded by the union of the units' scopes.
   const published = (p: string): boolean => p.startsWith('.roadmap/') && (ROADMAP_DIR_ALLOWED as readonly string[]).includes(p.split('/')[1]!);
   const violations = transientViolations(
-    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), scope: { include: specs.flatMap((s) => s.scope), exclude: [] }},
+    { evidenceGlobs: specs.flatMap(laneEvidenceGlobs), protectedPaths: protectedPaths(null)},
     paths.filter((p) => !published(p)),
   );
   return { pass: violations.length === 0, detail: violations.length > 0 ? violations.map((v) => `${v.path} (${v.rule})`).join(', ') : `${paths.length} product paths: ${paths.join(', ')}` };
@@ -491,7 +492,7 @@ function snapshotVerifies(run: Run): Verdict {
   return { pass: v.manifest.highWater >= floor, detail: `${ref} at ${at}: high-water ${v.manifest.highWater}, last integration.ff done at seq ${floor}` };
 }
 
-const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['planCheck', 'gate']);
+const JUDGMENT_ROLES: ReadonlySet<string> = new Set(['verifier']);
 
 /** The role of a backend invocation (a unit's, an arc job's such as M4b's flow job, or a backend smoke), or null for commands. */
 function backendRole(i: IntentOf<'proc.spawn'>): string | null {

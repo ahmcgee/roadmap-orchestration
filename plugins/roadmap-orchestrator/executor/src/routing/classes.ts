@@ -1,4 +1,4 @@
-// The class catalogue (DESIGN-1.0.md §4, Routing profiles): the one place in code that binds a model to a
+// The class catalogue (DESIGN-1.0.md §3 "Routing and cost"): the one place in code that binds a model to a
 // seat. Seats name classes (profiles.ts, every routing layer); `resolveRouting` (layers.ts) binds each class
 // through the arc's profile here, unless the repo's `.roadmap/config.json` rebinds it (`routing.classes`).
 // A profile is a set of bindings: `default` puts the efficient class's builds on Codex, `claude-only` on Claude, so
@@ -8,7 +8,7 @@
 // A build class binds twice: the triple its build seats run on and the triple its judgment seats (every role but `build`)
 // run on. A judgment binding is a Claude triple by type: no read-only Codex judgment profile exists (R21). Owner
 // ruling 2026-10-15: the efficient class judges on Sonnet 5.5 at `high` in both profiles (it holds the low-risk
-// plan-check seats, the med gate, the lenses and the flow seat, profiles.ts); its builds stay Luna `medium` under `default`
+// pre-build seats, the med gate, the lenses and the flow seat, profiles.ts); its builds stay Luna `medium` under `default`
 // and Sonnet 5.5 `medium` under `claude-only`, Anthropic's starting point for agentic coding on Sonnet's recalibrated
 // levels (at `low` it may report a change done without running a check). frontier and summit bind one triple for both.
 //

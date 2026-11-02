@@ -1,0 +1,281 @@
+{
+  "findings": [
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "reserve-flow"
+      },
+      "claim": "reserve-flow D1 shows the confirmation at GET /reserved/<id> \"while the book is held\" and does not tie it to the form token or claim, so a neighbour whose hold has lapsed, or anyone else who opens that address, is shown the confirmation for a hold another neighbour now has, which cuts against V-7 (\"never promised to two neighbours at once\"), and no acceptance clause tests it.",
+      "evidence": [
+        {
+          "path": "/redacted/path",
+          "line": 73
+        },
+        {
+          "path": "/redacted/path",
+          "line": 59
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "obligation",
+        "id": "I-2"
+      },
+      "claim": "I-2's witness would pass with the reserved mark gone: floor.test.js checks the reserved book's list item against /reserved/i, and the fixture's title \"Marked Reserved Title\" always matches, so only the unlisted test at test/shelf.test.js line 33 catches a missing mark, and reserve-flow is the unit that changes this code.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 14
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 42
+        },
+        {
+          "path": "test/shelf.test.js",
+          "line": 33
+        },
+        {
+          "path": "src/pages.js",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "severity": "note",
+      "target": {
+        "type": "unit",
+        "id": "keeper-cli"
+      },
+      "claim": "keeper-cli D2 has list word a hold end with holdEndWords from the stored reservedUntil and design-keeper A3 has list show \"until when\", but b2 in the seed data has reservedBy and no reservedUntil, store-update A5 keeps such a book held, and no spec says what list prints for it or what holdEndWords does with a missing end, so the seed shelf's first list hits an undefined case.",
+      "evidence": [
+        {
+          "path": "/redacted/path",
+          "line": 89
+        },
+        {
+          "path": "/redacted/path",
+          "line": 27
+        },
+        {
+          "path": "/redacted/path",
+          "line": 39
+        },
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "dispositions": [
+    {
+      "job": "review-1",
+      "index": 0,
+      "disposition": "resolved"
+    },
+    {
+      "job": "review-1",
+      "index": 1,
+      "disposition": "resolved"
+    },
+    {
+      "job": "review-1",
+      "index": 2,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 3,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 4,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 5,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 6,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 7,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 8,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 9,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 10,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 11,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 12,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 13,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 14,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 15,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 16,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 17,
+      "disposition": "still-open"
+    },
+    {
+      "job": "review-1",
+      "index": 18,
+      "disposition": "still-open"
+    }
+  ],
+  "reasons": [
+    "Both earlier blocking findings are resolved, and this review adds no blocking finding, so no blocking finding holds the first admission.",
+    "review-1#0 is resolved: window-rule A3 now words a hold end from the stored instant alone, reserve-flow D2 words every confirmation from the stored reservedUntil, and keeper-cli D2 does the same for list without reading a settings file.",
+    "review-1#1 is resolved: the census now marks T-29 as obligation I-36, I-36 serves V-11, and page-access A4 and W-1 give it a witness that a lane can run against the served stylesheet.",
+    "I checked every census entry against its obligation's rule: all 36 active rules are present, each maps to the obligation anchored at it, and each obligation's statement restates its rule's text.",
+    "I checked each clause the slice advances against the serves lists: V-1, V-2, V-3, V-5 to V-13 are each served by at least one obligation, although V-10 is served only by I-5, which review-1#14 already covers.",
+    "I compared the rev 1 and rev 2 specs. The acceptance clauses of keeper-cli and settings-file did not change, keeper-cli D2 gained only the holdEndWords wording, and the only spec text change in page-access is A4 plus its witness.",
+    "The earlier findings on store-update, design-page, design-keeper, the plan and the Phase-0 record stay open because none of those files changed, and the changes to other specs do not settle them.",
+    "The earlier notes on keeper-cli, settings-file, reserve-flow and page-access stay open because their current text still has the gap: no clock seam for the command or the spawned server, no outcome for a missing SWAPSHELF_CONFIG file, the open flow decisions, the unconditional nextId default and no lane proof for V-10.",
+    "The date facts hold: 25 October 2026 and 8 November 2026 are Sundays, and TZ=Pacific/Kiritimati with TZ=Etc/GMT+12 does catch a UTC slip at any hour, as keeper-cli A2 claims.",
+    "The palette contrast figures in the specs hold on a recalculation from public/style.css: soft ink about 5.3:1 and rust about 6.3:1 on the paper colour.",
+    "I did not run the test suite or any product code, because this review is read-only."
+  ],
+  "premises": [
+    {
+      "claim": "The T-2 test's fixture title for the reserved book contains the word Reserved, and the test's positive check is a case-insensitive match for reserved on that book's list item.",
+      "evidence": [
+        {
+          "path": "test/floor.test.js",
+          "line": 14
+        },
+        {
+          "path": "test/floor.test.js",
+          "line": 42
+        }
+      ]
+    },
+    {
+      "claim": "Book b2 in the seed data has reservedBy Priya and no reservedUntil field.",
+      "evidence": [
+        {
+          "path": "data/shelf.json",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "claim": "The served stylesheet already defines the paper, ink, rust and hand-lettering values that page-access A4 keeps, and h1 and h2 use the lettering family.",
+      "evidence": [
+        {
+          "path": "public/style.css",
+          "line": 3
+        },
+        {
+          "path": "public/style.css",
+          "line": 4
+        },
+        {
+          "path": "public/style.css",
+          "line": 7
+        },
+        {
+          "path": "public/style.css",
+          "line": 8
+        },
+        {
+          "path": "public/style.css",
+          "line": 27
+        },
+        {
+          "path": "public/style.css",
+          "line": 43
+        }
+      ]
+    },
+    {
+      "claim": "createApp takes only dataPath today and the server entry point exposes no clock.",
+      "evidence": [
+        {
+          "path": "src/server.js",
+          "line": 15
+        },
+        {
+          "path": "src/server.js",
+          "line": 31
+        }
+      ]
+    },
+    {
+      "claim": "The keeper corpus states that the commands run on the box over ssh and that a settings change reaches the page when the server next starts.",
+      "evidence": [
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 13
+        },
+        {
+          "path": "docs/corpus/keeper.md",
+          "line": 33
+        }
+      ]
+    },
+    {
+      "claim": "The orchestrator config already sets chain.k to 1.",
+      "evidence": [
+        {
+          "path": ".roadmap/config.json",
+          "line": 2
+        }
+      ]
+    },
+    {
+      "claim": "The .gitignore covers *.tmp, as store-update D1 relies on for the lock file.",
+      "evidence": [
+        {
+          "path": ".gitignore",
+          "line": 2
+        }
+      ]
+    }
+  ]
+}

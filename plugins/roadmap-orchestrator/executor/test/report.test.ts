@@ -27,7 +27,7 @@ const LINGER_MS = 120_000;
 const INTERIM_WAIT_MS = REPORT_GRACE_MS + 5_000;
 const T = { timeout: REPORT_GRACE_MS + 60_000 };
 
-const report = (summary: string, final: boolean) => ({ summary, changedPaths: [], blockers: [], experiments: [], docsOnlySince: null, final });
+const report = (summary: string, final: boolean) => ({ summary, grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final });
 
 type Run = Readonly<{ exit: ExitFile; result: BackendResult; wallMs: number }>;
 
@@ -43,7 +43,7 @@ async function build(as: 'claude' | 'codex', acts: readonly Act[]): Promise<Run>
   const terminal: LaunchTerminal = as === 'claude'
     ? { ...base, session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(session) } }
     : { ...base, session: { backend: 'codex', mode: 'fresh' } };
-  const argv = as === 'claude' ? ['claude', '-p', '--session-id', session] : ['codex', 'exec', '--json', '-o', outputPath, '-'];
+  const argv = as === 'claude' ? ['claude', '-p', '--session-id', session] : ['codex', 'exec', '-m', 'gpt-5.6-luna', '--json', '-o', outputPath, '-'];
   const launch = prepareLaunch({ ...launchBase(inv, { argv, deadlineMs: 5 * 60_000 }), env: { PATH: `${scenario.binDir}:${process.env['PATH']}` }, terminal });
   const started = Date.now();
   const handle = startRunner(inv.invDir, launch);
@@ -71,14 +71,6 @@ describe('report: the final report ends the build', { concurrency: true }, () =>
   });
 
   for (const as of ['claude', 'codex'] as const) {
-    it(`report.${as}-legacy-lingers: an old lanesRun report still ends the build after the grace`, T, async () => {
-      const legacy = { ...report('legacy', true), lanesRun: [{ lane: 'old', exit: 0 }] };
-      const run = await build(as, [{ type: 'emit', value: legacy }, { type: 'hang', ms: LINGER_MS }]);
-      assert.equal(run.exit.cause, 'reported');
-      assert.deepEqual(run.result.outcome, { kind: 'success', value: legacy });
-      assert.deepEqual(buildOutput(legacy, 'build'), report('legacy', true));
-      assert.ok(run.wallMs >= REPORT_GRACE_MS && run.wallMs < REPORT_GRACE_MS + 20_000);
-    });
   }
 
   it('report.claude-descendant: a final result, the CLI exits, a descendant lives on → killed after the grace, cause reported', T, async () => {
@@ -123,11 +115,11 @@ describe('report: reading a reported build', () => {
     assert.equal(failed.type === 'backend' ? failed.outcome.kind : null, 'malformed');
   });
 
-  it('report.build-reader: an answer that is not final is not a report; one an earlier executor recorded reads as final', () => {
+  it('report.build-reader: an answer that is not final is not a report; one without final is refused', () => {
     assert.equal(buildOutput(report('s', true), 'build').final, true);
     assert.throws(() => buildOutput(report('s', false), 'build'), SchemaError);
     const { final: _, ...earlier } = report('s', true);
-    assert.equal(buildOutput(earlier, 'build').final, true);
+    assert.throws(() => buildOutput(earlier, 'build'), /final/);
     const schema = BUILD_SCHEMA as { required: string[]; properties: Record<string, { type: string }> };
     assert.equal(schema.properties['final']?.type, 'boolean');
     assert.ok(schema.required.includes('final'));

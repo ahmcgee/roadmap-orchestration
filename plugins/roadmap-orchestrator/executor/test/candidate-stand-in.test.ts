@@ -3,25 +3,25 @@
 // reporter env: its exit is the suite lane's verdict and its record the arc lane's observation, which the brake's journey
 // series reuses. Named tests: candidate.identical-suite-witness-one-run, candidate.different-env-two-runs.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, test } from 'node:test';
+import { describe,test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { witnessRecordPath } from '../src/pipeline/lanes.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
-import { tmpDir } from './helpers/repo.ts';
-import { approveBoth, batchArc, publish } from './fixtures/batch-common.ts';
+import { approveBoth,batchArc,publish } from './fixtures/batch-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
-import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, contextFor, gateStep, mulBuild, outcomes } from './fixtures/unit-common.ts';
+import { SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
+import { type ArcDescriptor,contextFor,gateStep,mulBuild,outcomes } from './fixtures/unit-common.ts';
+import { tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 type Json = Record<string, unknown>;
 
 /** Every in-scope path maps to I-1, so the candidate selects it and its arc lane `journey` runs. */
-const MAPPED = [{ pattern: 'src/**', obligations: ['I-1'] }, { pattern: 'test/**', obligations: ['I-1'] }, { pattern: 'contracts/**', obligations: ['I-1'] }] as const;
+const MAPPED = [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }] as const;
 
 /**
  * Makes the plan's suite the arc lane `journey` itself (as a suite lane), with `envSet` set on the copy. An estate lane, so
@@ -31,7 +31,7 @@ const suiteCopy = (envSet: Readonly<Record<string, string>>) => (x: ArcDescripto
   const planDir = join(x.planPath, '..');
   const arcLane = (JSON.parse(readFileSync(join(planDir, 'obligations.json'), 'utf8')) as { lanes: Json[] }).lanes[0]!;
   const { reporter: _r, ...def } = arcLane;
-  const suiteLane = { ...def, id: 'suite-journey', tier: 'estate', env: { set: envSet, pass: ['PATH'] } };
+  const suiteLane = { ...def, id: 'suite-journey', cadence: 'candidate', env: { set: envSet, pass: ['PATH'] } };
   const plan = JSON.parse(readFileSync(x.planPath, 'utf8')) as Json;
   writeFileSync(x.planPath, JSON.stringify({ ...plan, suite: { lanes: [suiteLane] } }));
 };

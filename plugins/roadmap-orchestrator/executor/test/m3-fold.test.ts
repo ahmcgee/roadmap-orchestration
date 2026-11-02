@@ -2,13 +2,13 @@
 // digests, draining, completion (A20), the holistic flag (A5), per-unit bounds (`limits`), job-owned residues (G4)
 // and a batch publication retiring its members (R7, H4).
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { type Event, type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { type UnitId, commandId, invocationId, jobId, opId, opKey, planRev, seatRev, sha, sha256, specRev, unitId } from '../src/core/ids.ts';
+import { describe,it } from 'node:test';
+import { type Event,type Fact,type LogRecord,prevHash,serializeEvent } from '../src/core/events.ts';
+import { type UnitId,commandId,invocationId,jobId,opId,opKey,planRev,seatRev,sha,sha256,specRev,unitId } from '../src/core/ids.ts';
 import { DEFAULT_BOUNDS } from '../src/core/records.ts';
-import { Fold, FoldInvariantError } from '../src/core/state.ts';
-import { isoTime, repoPattern } from '../src/core/values.ts';
-import { ARC, H, REV, U1, appliedFields, chain } from './fixtures/log-records.ts';
+import { Fold,FoldInvariantError } from '../src/core/state.ts';
+import { isoTime } from '../src/core/values.ts';
+import { ARC,H,REV,U1,appliedFields,chain } from './fixtures/log-records.ts';
 
 const U2 = unitId('u2');
 const CMD = commandId('cmd-0123456789abcdef');
@@ -30,26 +30,20 @@ const opened = (n: number, key = H, extra: object = {}): LogRecord => fact({
   source: { type: 'job', job: 'audit-1' }, gateHadPassed: false, ...extra,
 });
 const move = (n: number, to: object): LogRecord => fact({ kind: 'finding-transition', id: `F-${n}`, to });
-const auditStarted = (n: number, lenses: readonly string[] = ['invariants', 'vision']): LogRecord => fact({
-  kind: 'audit-started', job: `audit-${n}`, triggers: [{ type: 'cadence' }], generation: 1, lenses, integrationSha: A, planRev: 1, ledgerSha256: null,
+const auditStarted = (n: number, lenses: readonly string[] = ['invariants', 'vision']): LogRecord => fact({diffBudget: 24000,
+  kind: 'audit-started', job: `audit-${n}`, triggers: [{ type: 'final' }], generation: 1, lenses, integrationSha: A, planRev: 1, ledgerSha256: null,
   obligationsSha256: null, visionSha256: V, owners: [], priorFindings: [], highWater: 1,
 });
-const auditEnded = (n: number, covered: readonly object[] = [{ lens: 'invariants', from: B, to: A }], findings: readonly string[] = []): LogRecord => fact({
+const auditEnded = (n: number, covered: readonly object[] = [{ lens: 'invariants', from: B, to: A }], findings: readonly string[] = []): LogRecord => fact({refused: [],
   kind: 'audit-ended', job: `audit-${n}`, covered, findings, suppressed: 0, outcome: 'completed',
 });
-const ckptInputs = (n: number): LogRecord => fact({
-  kind: 'checkpoint-inputs', job: `ckpt-${n}`, trigger: { type: 'audit', job: 'audit-1' }, generation: 1,
-  vector: { plan: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, visionSha256: V, contracts: [] }, headSha: A, visionSha256: V, findings: [], observations: [],
-});
-const decided = (n: number): LogRecord => fact({ kind: 'bundle-decided', job: `ckpt-${n}`, outcome: { kind: 'no-op' } });
 const divergence = (n: number, job: string, index: number): LogRecord => fact({
   kind: 'divergence', id: `D-${n}`, index, job, type: 'interpretation', from: 'V-1', what: 'w', cites: ['V-1'], evidence: ['e'],
   preimage: { planRev: 1, specs: {}, obligationsSha256: null, ledgerSha256: null, contracts: [] }, compensation: { hint: 'h', kind: 'none' },
 });
-const digest = (seq: number, ids: readonly string[]): LogRecord => fact({ kind: 'divergence-digest', needsUser: `nu-${seq}`, ids });
 const dispatch = (unit: UnitId, bounds?: object): LogRecord => fact({
   kind: 'dispatch', record: {
-    unit, specRev: specRev(1), specSha256: H, scope: [repoPattern('src/**')], riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3',
+    unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: REV, implementerSeatRev: seatRev('fedcba9876543210'), at: AT, transientRules: 'm3',
     ...(bounds === undefined ? {} : { bounds }),
   },
 });
@@ -106,28 +100,14 @@ describe('fold: audits and checkpoints', () => {
     refuses([holisticPlan(1), auditStarted(1), auditEnded(1, [], ['F-9'])], 3, /finding F-9, which was never opened/);
     refuses([holisticPlan(1), auditEnded(1)], 2, /not running/);
   });
-
-  it('a checkpoint decides once: a bundle outcome, or the plan revision its bundle applied', () => {
-    const f = folded([holisticPlan(1), ckptInputs(1), decided(1), ckptInputs(2), holisticPlan(2, { command: null, source: { type: 'bundle', job: 'ckpt-2' } })]);
-    const [c1, c2] = f.holistic().checkpoints;
-    assert.deepEqual(c1?.decided, { kind: 'no-op' });
-    assert.deepEqual(c2?.decided, { kind: 'applied', planRev: 2 });
-    refuses([holisticPlan(1), ckptInputs(1), decided(1), decided(1)], 4, /no undecided checkpoint inputs/);
-    refuses([holisticPlan(1), ckptInputs(1), decided(1), holisticPlan(2, { command: null, source: { type: 'bundle', job: 'ckpt-1' } })], 4, /bundle ckpt-1, which has no undecided/);
-    refuses([holisticPlan(1), ckptInputs(2)], 2, /the next ckpt job is ckpt-1/);
-  });
 });
 
 describe('fold: divergences and digests (H11, H12)', () => {
-  it('divergences number in order, belong to a checkpoint job, once per (job, index); a digest binds recorded ids no earlier digest bound', () => {
-    const f = folded([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 1), digest(5, ['D-1']), divergence(3, 'ckpt-1', 2), digest(7, ['D-2', 'D-3'])]);
-    assert.deepEqual(f.holistic().digests.map((d) => d.ids), [['D-1'], ['D-2', 'D-3']]);
+  it('divergences number in order, once per (source job, index); a digest binds recorded ids no earlier digest bound', () => {
+    const f = folded([holisticPlan(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 1), divergence(3, 'ckpt-1', 2)]);
     assert.equal(f.nextDivergenceId(), 'D-4');
-    refuses([holisticPlan(1), ckptInputs(1), divergence(2, 'ckpt-1', 0)], 3, /the next divergence is D-1/);
-    refuses([holisticPlan(1), divergence(1, 'ckpt-1', 0)], 2, /no checkpoint job/);
-    refuses([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 0)], 4, /second divergence ckpt-1#0/);
-    refuses([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), digest(4, ['D-2'])], 4, /D-2, which was never recorded/);
-    refuses([holisticPlan(1), ckptInputs(1), divergence(1, 'ckpt-1', 0), digest(4, ['D-1']), digest(5, ['D-1'])], 5, /an earlier digest binds/);
+    refuses([holisticPlan(1), divergence(2, 'ckpt-1', 0)], 2, /the next divergence is D-1/);
+    refuses([holisticPlan(1), divergence(1, 'ckpt-1', 0), divergence(2, 'ckpt-1', 0)], 3, /second divergence ckpt-1#0/);
   });
 });
 

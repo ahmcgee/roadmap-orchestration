@@ -1,9 +1,15 @@
 // A host load sample (M2 flake reruns and host parks): /proc/loadavg and /proc/meminfo as a typed value, and
-// the busy / clear predicates over it; and (M4b) the host fingerprint each start records. The parsers are pure;
+// the busy / clear predicates over it; and the host fingerprint each start records. The parsers are pure;
 // readHostSample and readHostFingerprint are the impure edges.
 import { readFileSync } from 'node:fs';
 import { arch, availableParallelism, platform } from 'node:os';
-import type { HostFingerprint } from '../flow/types.ts';
+import { type Read, object, positive, str } from '../core/validate.ts';
+
+export type HostFingerprint = Readonly<{ platform: string; arch: string; cpus: number; memGiB: number }>;
+export const hostFingerprint: Read<HostFingerprint> = object((f) => ({
+  platform: f.get('platform', str), arch: f.get('arch', str), cpus: f.get('cpus', positive), memGiB: f.get('memGiB', positive),
+}));
+
 
 export type HostSample = Readonly<{ load1: number; cpus: number; memTotalKb: number; memAvailableKb: number }>;
 
@@ -44,7 +50,7 @@ export function readHostSample(): HostSample {
 }
 
 /**
- * The host's fingerprint (M4b, R11), read once per start into `executor-started.host`: the platform, the architecture,
+ * The host's fingerprint, read once per start into `executor-started.host`: the platform, the architecture,
  * the cpus a process may use and MemTotal in whole GiB (at least 1), so a reboot keeps it and a resized host changes it.
  */
 export function readHostFingerprint(): HostFingerprint {
@@ -54,4 +60,4 @@ export function readHostFingerprint(): HostFingerprint {
 
 export const isBusy = (s: HostSample): boolean => s.load1 / s.cpus >= BUSY_LOAD_PER_CPU || s.memAvailableKb < s.memTotalKb * BUSY_MEM_AVAILABLE_FRACTION;
 
-export const isClear = (s: HostSample): boolean => s.load1 / s.cpus < CLEAR_LOAD_PER_CPU;
+export const isClear = (s: HostSample): boolean => s.load1 / s.cpus < CLEAR_LOAD_PER_CPU && s.memAvailableKb >= s.memTotalKb * BUSY_MEM_AVAILABLE_FRACTION;

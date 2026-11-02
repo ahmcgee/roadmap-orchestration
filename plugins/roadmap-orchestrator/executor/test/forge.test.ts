@@ -1,3 +1,4 @@
+
 // M4a step A3: the forge module (src/forge/) and the host act `roadmap pr`, against the stateful fake `gh`
 // (test/fakes/fake-gh.ts, first on PATH) and local bare origins. Named tests: pr.stacked-bases, pr.body-merge-commits,
 // pr.retarget-and-squash-flag, pr.idempotent-rerun, pr.supersede-previous, push.lease, push.never-main.
@@ -6,7 +7,7 @@ import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { openPr } from '../src/commands/pr.ts';
-import { type ArcId, type Sha, amendmentIdOf, arcId, divergenceIdOf, ruleId, sha } from '../src/core/ids.ts';
+import { type ArcId, type Sha, arcId, sha } from '../src/core/ids.ts';
 import { openJournal } from '../src/core/log.ts';
 import { type AbsPath, absPath, branchName } from '../src/core/values.ts';
 import { MERGE_COMMIT_LINE } from '../src/forge/pr.ts';
@@ -70,12 +71,6 @@ async function sealArc(s: Stack, name: string, from: string, previous: Sealed | 
   const j = openJournal(runDir, arc);
   try {
     const applied = recordPlan(j, runDir, readInputFiles(absPath(planPath), absPath(s.repo)), [], BASE);
-    for (let n = 1; n <= amendments; n++) {
-      j.fact({
-        kind: 'corpus-amendment', id: amendmentIdOf(n), source: { type: 'divergence', divergence: divergenceIdOf(n) }, rules: [ruleId(`T-${n}`)],
-        proposal: `Tighten rule T-${n}.`, why: `divergence D-${n}`, evidence: [],
-      });
-    }
     j.fact({ kind: 'arc-completed', planRev: applied.rev, head, highWater: j.view.highWater(), units: [] });
     await runOp(j, snapshotPublishOp(s.repo), `snapshot:${arc}`, snapshotRequestOf({ view: j.view, runDir, identity: executorIdentity(), message: `roadmap ${arc}: terminal snapshot\n` }));
   } finally {
@@ -112,9 +107,6 @@ describe('pr', () => {
       const body1 = pullOf(s.forge, a1.branch).body;
       const body2 = pullOf(s.forge, a2.branch).body;
       for (const body of [body1, body2]) assert.ok(body.includes(MERGE_COMMIT_LINE), body);
-      assert.match(body1, /`arc-1\/M-1` \(T-1\): Tighten rule T-1\./);
-      assert.match(body1, /`arc-1\/M-2` \(T-2\)/);
-      assert.match(body2, /None\./);
       assert.match(body2, /Stacked on arc `arc-1`/);
     } finally {
       restorePath();

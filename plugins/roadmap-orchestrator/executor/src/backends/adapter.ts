@@ -12,21 +12,23 @@
 //
 // A Claude call's Read/Grep/Glob calls, and those the CLI refused, are written beside result.json as reads.json
 // (`ReadsFile`), by the same write-once rule; Codex writes none.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { durableWrite } from '../core/fsx.ts';
-import { earlierReaderResultDefault } from '../core/upgrade.ts';
-import { implementerSessionId, type ImplementerSessionId } from '../core/ids.ts';
+
+import { type ImplementerSessionId,implementerSessionId } from '../core/ids.ts';
 import type { AdapterInput } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import {
-  type BackendError, type BackendOutcome, type BackendResult, type BackendTerminal, type CancelFile, type ExitFile, type ReadsFile, type ToolRead,
-  type ResultFile, type Usage, RUNNER_FILE_READERS, STDERR_FILE, STDOUT_FILE, classifyCommand, classifyTerminal,
+type BackendError,type BackendOutcome,type BackendResult,type BackendTerminal,type CancelFile,type ExitFile,type ReadsFile,
+type ResultFile,
+type ToolRead,
+type Usage,RUNNER_FILE_READERS,STDERR_FILE,STDOUT_FILE,classifyCommand,classifyTerminal,
 } from '../core/records.ts';
-import { type AbsPath, absPath } from '../core/values.ts';
+import { type AbsPath,absPath } from '../core/values.ts';
 import { readClaude } from './claude.ts';
 import { readCodex } from './codex.ts';
-import { MalformedOutputError, ResultConflictError, UnsupportedSchemaError } from './errors.ts';
+import { MalformedOutputError,ResultConflictError,UnsupportedSchemaError } from './errors.ts';
 
 /** What one backend invocation reported, before schema validation and the precedence rule. */
 export type BackendReading = Readonly<{
@@ -86,7 +88,6 @@ export function schemaViolation(schema: unknown, value: unknown, at = '$'): stri
   }
   if (s['const'] !== undefined && canonicalJson(s['const']) !== canonicalJson(value)) return fail(`expected ${JSON.stringify(s['const'])}`);
   if (Array.isArray(s['enum']) && !s['enum'].some((e) => canonicalJson(e) === canonicalJson(value))) return fail('not in enum');
-  if (Array.isArray(s['anyOf']) && !s['anyOf'].some((sub) => schemaViolation(sub, value, at) === null)) return fail('matches no anyOf branch');
   if (typeof value === 'string') {
     if (typeof s['minLength'] === 'number' && [...value].length < s['minLength']) return fail(`shorter than ${s['minLength']}`);
     if (typeof s['maxLength'] === 'number' && [...value].length > s['maxLength']) return fail(`longer than ${s['maxLength']}`);
@@ -123,6 +124,8 @@ export function schemaViolation(schema: unknown, value: unknown, at = '$'): stri
       }
     }
   }
+  // Report shared required/type errors before trying the discriminated alternatives.
+  if (Array.isArray(s['anyOf']) && !s['anyOf'].some((sub) => schemaViolation(sub, value, at) === null)) return fail('matches no anyOf branch');
   return null;
 }
 
@@ -137,19 +140,12 @@ function readText(path: string): string | null {
  * Keep the launched schema strict for every other field and preserve schemas of adopted invocations.
  * The build reader still validates the legacy field's shape when consuming the report.
  */
-export function backendSchemaViolation(schema: unknown, value: unknown, role: BackendTerminal['role']): string | null {
-  if (role === 'build' && isObject(schema) && isObject(schema['properties'])
-    && !Object.hasOwn(schema['properties'], 'lanesRun') && isObject(value)) {
-    const { lanesRun: _legacy, ...report } = value;
-    return schemaViolation(schema, report);
-  }
-  return schemaViolation(schema, value);
-}
+export function backendSchemaViolation(schema: unknown, value: unknown, _role: BackendTerminal['role']): string | null { return schemaViolation(schema, value); }
 
-function read(terminal: BackendTerminal, stdoutPath: AbsPath): BackendReading {
+function read(terminal: BackendTerminal, stdoutPath: AbsPath, model: string): BackendReading {
   const backend = terminal.session.backend;
   try {
-    if (backend === 'codex') return readCodex(readText(stdoutPath) ?? '', readText(terminal.outputPath));
+    if (backend === 'codex') return readCodex(readText(stdoutPath) ?? '', readText(terminal.outputPath), model);
     // Claude's output file is its stdout (launch.json.terminal.outputPath names it).
     return readClaude(readText(terminal.outputPath) ?? '');
   } catch (error) {
@@ -193,7 +189,7 @@ function implementerSession(terminal: Extract<BackendTerminal, { role: 'build' }
  * the streamed share too would count it twice. A judgment's session is never resumed after a call without a result.
  */
 function implementerUsage(terminal: BackendTerminal, usage: Usage): Usage {
-  if (terminal.role !== 'build' || usage.kind !== 'unavailable' || usage.streamed === undefined) return usage;
+  if (terminal.session.backend !== 'claude' || terminal.role !== 'build' || usage.kind !== 'unavailable' || usage.streamed === undefined) return usage;
   return { kind: 'unavailable', reason: usage.reason };
 }
 
@@ -201,7 +197,8 @@ type Adapted = Readonly<{ result: ResultFile; reads: ReadsFile | null }>;
 
 function backendAdapted(input: AdapterInput, terminal: BackendTerminal): Adapted {
   const { launch, exit } = input;
-  const reading = read(terminal, input.stdoutPath);
+  const modelFlag = launch.argv.findIndex((a) => a === '--model' || a === '-m');
+  const reading = read(terminal, input.stdoutPath, modelFlag < 0 ? '' : launch.argv[modelFlag + 1]!);
   const bound = { v: launch.v, arc: launch.arc, op: launch.op, inv: launch.inv };
   const base = {
     ...bound, type: 'backend' as const,
@@ -289,10 +286,7 @@ export function writeResult(invDir: string): ResultFile {
   const path = join(invDir, 'result.json');
   const bytes = resultBytes(result);
   if (existsSync(path) && readFileSync(path, 'utf8') !== bytes) {
-    // Temporary scaffolding (upgrade.ts `earlierReaderResultDefault`): a dev.16 reader's result of these files.
-    const adopted = earlierReaderResultDefault(RUNNER_FILE_READERS['result.json'](JSON.parse(readFileSync(path, 'utf8')), path), result);
-    if (adopted === null) throw new ResultConflictError(path);
-    return adopted;
+    throw new ResultConflictError(path);
   }
   writeOnce(path, bytes);
   return result;

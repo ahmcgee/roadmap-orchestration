@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TestContext, after, test } from 'node:test';
-import type { Event, Fact, IntentOf } from '../../src/core/events.ts';
+import type { Event, IntentOf } from '../../src/core/events.ts';
 import { arcId, invocationId } from '../../src/core/ids.ts';
 import { canonicalJson } from '../../src/core/json.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -36,28 +36,22 @@ import { assertFired, writeTrigger } from '../helpers/crash.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import { readCalls } from '../helpers/scenario.ts';
 import { type Owner, assertNoSurvivors } from '../helpers/reap.ts';
-import {
-  ADMIT_CONVERSIONS, ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH,
-  PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells,
-} from '../matrix.ts';
+import { ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH, PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells } from '../matrix.ts';
 import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf, recoveryHoldsOf, withRecoveryHolds } from '../oracle.ts';
-import { LABEL_TRACE, NONE, R, appendTrace, inRevisionAt } from '../fixtures/pm-trace.ts';
+import { NONE, R, appendTrace, assertRevisionNoticeRecovery, inRevisionAt, traceAt } from '../fixtures/pm-trace.ts';
 import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from '../fixtures/exec-common.ts';
 import {
   HOLISTIC, HOLISTIC_OUTCOMES, type Sampled, capturesInsideRevisions, describeRecord, holisticProduct, holisticRecords, sampleHolistic,
 } from '../fixtures/pm-holistic.ts';
-import { type LogSnapshot, readJournal } from '../../src/core/log.ts';
+import { type LogSnapshot } from '../../src/core/log.ts';
 import {
   BUMPY, BUMPY_OUTCOMES, CANCEL, CANCEL_OUTCOMES, type Hook, MALFORMED, MALFORMED_CONSUMED, MALFORMED_OUTCOMES, type Recorded, STALE, STALE_LANE, STALE_OUTCOMES, STRAIGHT,
   STRAIGHT_OUTCOMES, type Scenario, blockedAt, buildRunner, callsMatchSteps, finalReason, layout, moveIntegration, readRecord, release, supervisedRun,
 } from '../fixtures/pm-common.ts';
 import { gone, kill, ownerOf, startCli, startLine, startedGenerations, stateOf, supervisorOf } from '../fixtures/sup-common.ts';
 import { planCheckStep } from '../fixtures/stage-common.ts';
-import { MUL, codexStep, contextFor, gateStep } from '../fixtures/unit-common.ts';
-import { checkpointCalls, overrunArc } from '../fixtures/pm-overrun.ts';
-import { forgeEnv } from '../fixtures/corpus-holistic.ts';
+import { MUL, codexStep, gateStep } from '../fixtures/unit-common.ts';
 import { FANOUT } from '../helpers/fanout.ts';
-import { runFixture } from '../helpers/proc.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
@@ -130,12 +124,15 @@ async function reference(t: Owner, name: string, s: Scenario, outcomes: Readonly
 // The recovery trace each crash point allows
 
 function traceFor(ref: Reference, label: string, occurrence: number): Trace {
+  // The start owns no command; later plan input captures belong to the root's open apply command.
+  if (label === 'plan.apply.after-inputs' && occurrence > 1) return R('reconciled');
   if (label.startsWith('log.append.')) {
     const e = ref.events.find((x) => x.seq === occurrence);
     if (e === undefined) throw new Error(`${ref.name}: no event at seq ${occurrence}`);
     return appendTrace(label, e, inRevisionAt(ref.events, e.seq));
   }
-  const t = LABEL_TRACE[label];
+  const notice = ref.events.filter((e) => e.type === 'intent' && e.kind === 'needsuser.raise')[occurrence - 1];
+  const t = traceAt(label, ref.events, notice?.seq ?? ref.events.length);
   if (t === undefined) throw new Error(`no recovery trace is declared for ${label}`);
   return t;
 }
@@ -209,6 +206,7 @@ async function holisticCell(t: Owner, ref: Reference, c: Sampled): Promise<void>
   assert.equal(crash.events.length, c.durable, `the log at the crash holds ${c.durable} records, as the recording did at ${c.label}#${c.occurrence}`);
   if (c.durable > 0) assert.equal(describeRecord(crash, crash.events.at(-1)!), describeRecord(refSnap, refSnap.events[c.durable - 1]!), 'the last record at the crash is the recording\'s');
   const end = journalOf(r);
+  assertRevisionNoticeRecovery(crash, end, c.label);
   assert.deepEqual(holisticRecords(end), holisticRecords(refSnap), 'the holistic layer\'s records as uncrashed');
   assert.deepEqual(capturesInsideRevisions(end.events), [], 'no input capture inside an open revision.commit (H2)');
 }
@@ -254,7 +252,7 @@ async function runnerDeath(t: Owner, ref: Reference): Promise<void> {
   assert.equal(readCalls(r.scenarioPath).filter((c) => c.as === 'codex' && c.step !== null).length, 2, 'the codex smoke and the one build');
   assertOracle(run, {
     integration: 'main', baseline: baselineOf(r), tree: ref.tree, units: { u1: 'merged' },
-    outcomes: { u1: ['plan-check:approve', 'build:lost-tree-effects', ...STRAIGHT_OUTCOMES.u1.slice(2)] }, needsUser: [], trace: UNCRASHED,
+    outcomes: { u1: ['pre-build:approve', 'build:lost-tree-effects', ...STRAIGHT_OUTCOMES.u1.slice(2)] }, needsUser: [], trace: UNCRASHED,
   });
 }
 
@@ -328,11 +326,11 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
   const started = Date.now();
   const [straight, bumpy, malformed, cancel, staleLane, holistic] = await Promise.all([
     reference(t, 'straight', STRAIGHT, STRAIGHT_OUTCOMES),
-    reference(t, 'bumpy', BUMPY, BUMPY_OUTCOMES),
+    reference(t, 'bumpy', BUMPY, BUMPY_OUTCOMES, { needsUser: ['waste-finding'] }),
     reference(t, 'malformed', MALFORMED, MALFORMED_OUTCOMES),
     reference(t, 'cancel', CANCEL, CANCEL_OUTCOMES),
     reference(t, 'stale', STALE_LANE, STALE_OUTCOMES),
-    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, { keyed: true, needsUser: ['divergence-digest'] }),
+    reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, {keyed: true, needsUser: ['split-proposal']}),
   ]);
 
   // Enumeration: each scenario's executor reached exactly its row's labels; the only other process that
@@ -348,17 +346,13 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
   assert.deepEqual([...holistic.recorded.others.keys()], ['supervisor.ts'], 'holistic: only the executor and the supervisor reach crash points');
   assert.deepEqual(holisticRecords(holistic.snap), {
     counts: {
-      'obligation-latched': 1, 'audit-started': 2, 'audit-ended': 2, 'checkpoint-inputs': 2, 'plan-applied': 2, divergence: 2, 'divergence-digest': 1,
-      'bundle-decided': 1, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1, 'debt-banked': 1, 'corpus-amendment': 2,
+      'obligation-latched': 1, 'audit-started': 1, 'audit-ended': 1, 'plan-applied': 2, 'docs-covered': 1, 'docs-published': 1, 'arc-completed': 1, 'debt-banked': 1,
     },
-    audits: ['audit-1', 'audit-2'], ended: [['audit-1', 'completed'], ['audit-2', 'completed']], checkpoints: ['ckpt-1', 'ckpt-2'],
-    smoke: { keys: 1, verdicts: [canonicalJson({ unit: 'u1', verdict: { killed: [{ lane: 'journey', testId: 't2' }], survived: [], inconclusive: [] } })] },
-    divergences: [['D-1', 'ckpt-1'], ['D-2', 'ckpt-2']], terminal: 1, completion: true,
+    audits: ['audit-1'], ended: [['audit-1', 'completed']],     smoke: { keys: 1, verdicts: [canonicalJson({ unit: 'u1', verdict: { killed: [{ lane: 'journey', testId: 't2' }], survived: [], inconclusive: [] } })] },
+    divergences: [], terminal: 1, completion: true,
   }, 'holistic: baseline, u1, audit-1, ckpt-1 applied, audit-2, ckpt-2 a no-op converting its admit, the close-out, arc-completed, the terminal snapshot');
   // u1's rev 3 corpus-arc path, and ckpt-2's conversion (B), as the story says.
   const holisticFacts = holistic.events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-  assert.deepEqual(holisticFacts.flatMap((f) => (f.kind === 'bundle-decided' ? [[f.job, f.outcome]] : [])), [['ckpt-2', { kind: 'no-op', conversions: [{ index: 0, unit: 'aside', reason: 'unrelated', opportunity: null }] }]]);
-  assert.deepEqual(holisticFacts.flatMap((f) => (f.kind === 'corpus-amendment' && f.source.type === 'admit' ? [f.source] : [])), [{ type: 'admit', job: 'ckpt-2', index: 0, reason: 'unrelated' }]);
   const holisticCells: readonly CellSpec[] = sampled.map((c) => ({
     name: `holistic ${boundaryOf(PIPELINE_HOLISTIC, c.label)} ${c.label}#${c.occurrence} (${c.why})`,
     run: (t) => holisticCell(t, holistic, c),
@@ -372,7 +366,7 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
   const spawnsM = invokeSpawns(malformed.events);
   assert.equal(spawnsM.length, malformed.recorded.executor.get('spawn.after-intent'), 'every invoke spawn reaches spawn.after-intent once');
   assert.equal(spawnsM.length, malformed.recorded.executor.get('spawn.after-result'), 'and settles live through spawn.after-result once');
-  const gateAt = spawnsM.findIndex((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'gate') + 1;
+  const gateAt = spawnsM.findIndex((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'verifier' && i.parent.type === 'stage' && i.parent.stage === 'gate') + 1;
   const stageAt = (ref: Reference, outcome: string): number => {
     const all = ref.outcomes['u1']!;
     assert.equal(ref.recorded.executor.get('unit.after-stage'), all.length - 1, 'unit.after-stage follows every stage but the last');
@@ -413,43 +407,3 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
 });
 
 // ---------------------------------------------------------------------------------------------------
-// The admit-conversions row's follow-up overrun (M4a rev 3, LR-k)
-
-/**
- * The overrun story (pm-overrun.ts) up to audit-3, then `ckpt-3` in a child crashed at `label`: at the crash the no-op
- * decision holds the conversion, and its settlement is cut short; a second child recovers and settles from the record
- * (no checkpoint call again, never classifying again): one amendment for the conversion, one debt item naming O-1.
- */
-async function overrunCell(label: string): Promise<void> {
-  const a = await overrunArc();
-  const trigger = writeTrigger(tmpDir('pm-overrun-trigger'), { label, occurrence: 1 });
-  const first = await runFixture('pm-overrun-child.ts', [JSON.stringify(a.d)], { env: forgeEnv(a, { ROADMAP_TEST_CRASH: trigger }), timeoutMs: 150_000 });
-  assert.equal(first.signal, 'SIGKILL', `killed at ${label}: code ${first.code}, stdout ${first.stdout}, stderr ${first.stderr}`);
-  assertFired(trigger);
-  const facts = (): readonly Fact[] => readJournal(absPath(a.d.runDir), arcId(a.d.arc)).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
-  const admitAmendments = () => facts().flatMap((f) => (f.kind === 'corpus-amendment' && f.source.type === 'admit' ? [f.source] : []));
-  const overrunDebt = () => facts().flatMap((f) => (f.kind === 'debt-banked' && f.bankReason === 'opportunity-overrun' ? [[f.source, f.opportunity]] : []));
-  const conversion = { index: 0, unit: 'fix2', reason: 'follow-up-overrun', opportunity: 'O-1' };
-  assert.deepEqual(facts().flatMap((f) => (f.kind === 'bundle-decided' ? [[f.job, f.outcome]] : [])), [['ckpt-3', { kind: 'no-op', conversions: [conversion] }]], 'the decision record holds the conversion');
-  assert.equal(admitAmendments().length, 1, 'killed after the conversion\'s amendment');
-  assert.equal(overrunDebt().length, label === 'bundle.after-overrun-debt' ? 1 : 0, 'and, at the debt label, after its debt item');
-
-  const second = await runFixture('pm-overrun-child.ts', [JSON.stringify(a.d)], { env: forgeEnv(a, { ROADMAP_TEST_CRASH: trigger }), timeoutMs: 150_000 });
-  assert.equal(second.code, 0, second.stderr);
-  assert.deepEqual(JSON.parse(second.stdout), { kind: 'none' }, 'nothing is due: ckpt-3 is decided');
-  assert.deepEqual(checkpointCalls(a), ['ckpt-1', 'ckpt-2', 'ckpt-3'], 'every checkpoint called once: the decided ckpt-3 never asked again');
-  assert.deepEqual(admitAmendments(), [{ type: 'admit', job: 'ckpt-3', index: 0, reason: 'follow-up-overrun' }], 'one amendment for the conversion');
-  assert.deepEqual(overrunDebt(), [[{ type: 'admit', job: 'ckpt-3', index: 0 }, 'O-1']], 'one debt item naming O-1');
-  const r = contextFor(a.d);
-  try {
-    assert.equal(r.journal.view.holistic().findings.find((f) => f.id === 'F-1')?.state, 'open', 'the repaired finding stays active (correctness never banks)');
-  } finally {
-    r.journal.close();
-  }
-}
-
-test('admit conversions: a follow-up overrun\'s settlement crashed at each of the row\'s labels settles once from its decision record', { concurrency: true, timeout: 20 * 60_000 }, async (t) => {
-  const labels = [...new Set(crashCells(ADMIT_CONVERSIONS).map((c) => c.label))].sort();
-  assert.deepEqual(labels, ['bundle.after-conversion-amendment', 'bundle.after-overrun-debt']);
-  await Promise.all(labels.map((label) => t.test(`${ADMIT_CONVERSIONS} B4 ${label}#1 (ckpt-3, follow-up overrun of O-1)`, { timeout: 600_000 }, () => overrunCell(label))));
-});

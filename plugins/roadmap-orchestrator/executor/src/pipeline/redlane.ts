@@ -1,4 +1,4 @@
-// The red-lane protocol (M2, A10; SCHEMAS.md "Lane dir"): what a lane that ran red (failed or stalled) means
+// The red-lane protocol (M2, A10; SCHEMAS.md "Lane dir and build handover"): what a lane that ran red (failed or stalled) means
 // before it counts against the unit. It applies to every lane series, spec and suite alike, and to journey series
 // (lanes.ts `runLaneSeries`, `runJourneySeries` call it for each red lane).
 //

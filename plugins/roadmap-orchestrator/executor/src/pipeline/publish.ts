@@ -1,4 +1,5 @@
-// The docs publication (M3 step A4; DESIGN-1.0.md §2.9, §9; plan "Commands", Docs publication; A7, A17, G12): a
+import { systemsMapInForce } from '../input/systems.ts';
+// The docs publication (M3 step A4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Commands", Docs publication; A7, A17, G12): a
 // revision's rendered `.roadmap/` documents, the vision files it changes (dev.16) and its contract ops, published through
 // the integration slot like a unit, so the tested head is the published head. It runs inside its revision's commit
 // (src/recover/revision.ts `commitRevision`, under the revision fence), reached through `DocsPublisher`:
@@ -60,48 +61,50 @@
 // evidence (`_dirty`) and refuses the certification, since the tree the lanes tested is not the commit that would publish.
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { IntentOf, Parent, PlanChange, RevisionPayload } from '../core/events.ts';
-import { type JobId, type ObligationId, type OpId, type Sha, type Sha256Hex, INTEGRATION_SLOT, compareIds, type RulingId } from '../core/ids.ts';
+import type { IntentOf,Parent,PlanChange,RevisionPayload } from '../core/events.ts';
+import { type JobId,type ObligationId,type OpId,type Sha,type Sha256Hex,INTEGRATION_SLOT,compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import { type AbsPath, type RepoPath, absPath, branchRef } from '../core/values.ts';
+import { cadenceAtOrBefore } from '../core/records.ts';
+import { type AbsPath,type RepoPath,absPath,branchRef } from '../core/values.ts';
 import { registryOf } from '../corpus/registry.ts';
-import { ledgerAfterArc, type UnitOfSource } from '../debt/render.ts';
+import { type UnitOfSource,ledgerAfterArc } from '../debt/render.ts';
 import type { DebtLedger } from '../debt/types.ts';
-import { CONSTRAINTS_DOC, renderConstraints } from '../docs/constraints.ts';
-import { DEBT_DOC, renderDebt } from '../docs/debt.ts';
+import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
 import { applyContractOps } from '../docs/contracts.ts';
-import { INVARIANTS_DOC, renderInvariants } from '../docs/invariants.ts';
-import { type DocsFile, changedPaths, docsWorktreeRequest, planDocs } from '../git/docs.ts';
+import { DEBT_DOC,renderDebt } from '../docs/debt.ts';
+import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
+import { type DocsFile,changedPaths,docsWorktreeRequest,planDocs } from '../git/docs.ts';
 import { capturedEvidence } from '../git/evidence.ts';
 import { planDocsFf } from '../git/ff.ts';
-import { gitRun, refTarget } from '../git/git.ts';
-import { jobEvidenceRoot, snapshotRequestOf } from '../git/snapshot.ts';
+import { gitRun,refTarget } from '../git/git.ts';
+import { jobEvidenceRoot,snapshotRequestOf } from '../git/snapshot.ts';
 import { docsTransientViolations } from '../git/transient.ts';
 import { standing } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
-import { brakesOn, obligationEffects } from '../holistic/table.ts';
-import { type ArcLaneDef, type Conversion, type Obligations, type RulingSidecar, isExempt, parseObligations, parseRulingSidecar } from '../holistic/types.ts';
+import { brakesOn,obligationEffects } from '../holistic/table.ts';
+import { type ArcLaneDef,type Obligations,isExempt,parseObligations } from '../holistic/types.ts';
 import {
-  OBLIGATIONS_INPUT, PLAN_INPUT, RENDER_INPUT, RULING_INPUT, keptInput, keptPayload, requirePlanInForce, revisionInForce,
+OBLIGATIONS_INPUT,
+RENDER_INPUT,
+keptInput,keptPayload,requirePlanInForce,revisionInForce
 } from '../input/inforce.ts';
-import { type PlanM1, contractOpDocuments, parsePlan } from '../input/plan.ts';
-import {
-  type DocsHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run,
-} from '../resources/reserve.ts';
-import { type DocsOutcome, type DocsPublisher } from '../recover/revision.ts';
-import { docsCommitOp, evidenceSnapshotOp, integrationFfOp, snapshotPublishOp, worktreeRemoveOp } from '../recover/ops.ts';
+import { type PlanM1 } from '../input/plan.ts';
+import { selectedLanes } from '../input/systems.ts';
+import { baselineDebtAt } from '../phase0/rows.ts';
+import { docsCommitOp,evidenceSnapshotOp,integrationFfOp,snapshotPublishOp,worktreeRemoveOp } from '../recover/ops.ts';
+import { type DocsOutcome,type DocsPublisher } from '../recover/revision.ts';
 import { spawnReconciler } from '../recover/spawn.ts';
+import {
+type DocsHolder,type Reservation,type ResourceContext,cleanup,entryOf,finishCleanup,heldReservation,holderUnits,resourceTable,run,
+} from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { type RulingContext, ledgerAfter, parseRulings, validateRuling } from '../spec/rulings.ts';
-import { baselineDebtAt, rulingCorpusOf } from '../phase0/rows.ts';
+import { parseRulings } from '../spec/rulings.ts';
+import { runOp,runPrepared } from './dispatch.ts';
 import { preemptCandidate } from './integrate.ts';
-import { type JourneySeries, arcJourneyLane, mapInForce, runJourneySeries, seriesOrder, suiteJourneyLane } from './lanes.ts';
-import { selectedLanes } from '../input/systems.ts';
-import { cadenceAtOrBefore } from '../core/records.ts';
-import { runOp, runPrepared } from './dispatch.ts';
+import { type JourneySeries,arcJourneyLane,mapInForce,runJourneySeries,seriesOrder,suiteJourneyLane } from './lanes.ts';
 import { executorIdentity } from './stages.ts';
 
 /** What a docs publication needs: the reservation cycle's context, the lanes' environment, the plan file, the arbiter. */
@@ -178,38 +181,7 @@ function textAt(repo: AbsPath, commit: Sha, path: RepoPath): string | null {
   return r.code === 0 ? r.stdout : null;
 }
 
-/** A path's blob at `commit`, or null when absent. */
-function blobAt(repo: AbsPath, commit: Sha, path: RepoPath): Sha | null {
-  const r = gitRun(repo, ['rev-parse', '--verify', '-q', `${commit}:${path}`], { okCodes: [0, 1, 128] });
-  return r.code === 0 ? (r.stdout.trim() as Sha) : null;
-}
-
 type Reader = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planFile: AbsPath; repo: AbsPath }>;
-
-/**
- * What `validateRuling` reads (A1) at the integration tip `tip`: the ledger, obligations and vision in force, the
- * tip's documents and blobs, the plan's contracts and architecture doc. Not the units: a ruling may apply to a unit
- * its own revision adds, so each caller names the units of the plan the ruling lands with (paid M4b run 3, OP-2: the
- * in-force plan's units refused a ruling for a unit the same apply or bundle added, at the docs publication though its
- * dry run accepted it). The `rule` command validates a sidecar against it, and a docs publication again under the slot.
- */
-export function rulingContextAt(ctx: Reader, tip: Sha): Omit<RulingContext, 'units'> {
-  const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
-  const revision = revisionInForce(ctx.runDir, inForce);
-  return {
-    ledger: parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force'),
-    inForce: {
-      head: tip, ledgerSha256: revision.ledger.sha256, obligationsSha256: revision.obligations?.sha256 ?? null, visionSha256: revision.vision?.sha256 ?? null,
-      ...(revision.corpus === null ? {} : { corpusSha256: revision.corpus.pin.sha256 }),
-    },
-    docAt: (path) => textAt(ctx.repo, tip, path),
-    blobAt: (path) => blobAt(ctx.repo, tip, path),
-    documents: contractOpDocuments(inForce.plan),
-    obligations: revision.obligations?.value ?? null,
-    vision: revision.vision?.value ?? null,
-    corpus: revision.corpus === null ? null : rulingCorpusOf(revision.corpus),
-  };
-}
 
 const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
   const bytes = keptInput(runDir, sha, ext);
@@ -217,23 +189,10 @@ const keptOr = (runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer => {
   return bytes;
 };
 
-/** The sidecars the payload lands: in its manifest and not in the revision in force (A2: the new ones), ascending by id. */
-function landedSidecars(ctx: Reader, payload: RevisionPayload): readonly RulingSidecar[] {
-  const inForce = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).manifest.rulings.sidecars;
-  return Object.entries(payload.manifest.rulings.sidecars)
-    .filter(([id]) => !Object.hasOwn(inForce, id))
-    .sort(([a], [b]) => compareIds(a as RulingId, b as RulingId))
-    .map(([, sha]) => parseRulingSidecar(JSON.parse(keptOr(ctx.runDir, sha, RULING_INPUT).toString('utf8'))));
-}
-
 // ---------------------------------------------------------------------------------------------------
 // Debt (M4a)
 
-/**
- * The unit a banked item belongs to (`ledgerAfterArc`): a gate note's own; a deferred finding's owner (the unit its
- * deferral minted it under); (M4a rev 3) a converted admit's unit, as its bundle's decision record names it. A finding or
- * conversion the log does not hold is a bug.
- */
+/** A gate note's unit or a deferred finding's owner; a missing finding is a journal error. */
 export function debtUnitOf(view: JournalView): UnitOfSource {
   return (source) => {
     switch (source.type) {
@@ -244,23 +203,8 @@ export function debtUnitOf(view: JournalView): UnitOfSource {
         if (finding === undefined) throw new Error(`debt banked from ${source.finding}, which the fold does not hold`);
         return finding.owner;
       }
-      case 'admit': {
-        const unit = conversionsOf(view, source.job).find((c) => c.index === source.index)?.unit;
-        if (unit === undefined) throw new Error(`debt banked from ${source.job} op ${source.index}, which its decision record does not convert`);
-        return unit;
-      }
     }
   };
-}
-
-/** The conversions a checkpoint's decision record holds (M4a rev 3, Q4): its applied revision's source, or its all-converted no-op. */
-export function conversionsOf(view: JournalView, job: JobId): readonly Conversion[] {
-  for (const i of view.opsOf('revision.commit')) {
-    const s = i.expect.source;
-    if (s.type === 'bundle' && s.job === job) return s.conversions ?? [];
-  }
-  const decided = view.holistic().checkpoints.find((c) => c.inputs.job === job)?.decided ?? null;
-  return decided?.kind === 'no-op' ? decided.conversions ?? [] : [];
 }
 
 /**
@@ -299,27 +243,9 @@ function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
   const renders: DocsFile[] = [
     ...publication.renders.map((r) => ({ path: r.path, bytes: keptOr(ctx.runDir, r.sha256, RENDER_INPUT) })), ...(debt === null ? [] : [debt]),
   ];
-  const landed = landedSidecars(ctx, payload);
-  const ops = landed.flatMap((s) => s.contractOps);
-  if (canonicalJson(ops) !== canonicalJson(publication.contractOps)) {
-    throw new Error(`revision ${payload.rev}: its publication's contract ops are not its new rulings' (${canonicalJson(publication.contractOps)} vs ${canonicalJson(ops)})`);
-  }
-  // The rulings land with the revision's own plan: its units are the ones a ruling may apply to.
-  const planBytes = keptOr(ctx.runDir, payload.manifest.planSha256, PLAN_INPUT);
-  const base = { ...rulingContextAt(ctx, tip), units: parsePlan(JSON.parse(planBytes.toString('utf8'))).units.map((u) => u.id) };
-  const reasons: string[] = [];
-  let ledgerText = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, ctx.journal.view)).ledger.bytes.toString('utf8');
-  const edited = new Map<RepoPath, string>();
-  const docAt = (path: RepoPath): string | null => edited.get(path) ?? base.docAt(path);
-  for (const s of landed) {
-    const why = validateRuling(s, { ...base, ledger: parseRulings(ledgerText, 'the rulings ledger') });
-    reasons.push(...why);
-    if (why.length === 0) ledgerText = ledgerAfter(ledgerText, s); // an invalid ruling never folds in (bundle.ts proposalOf)
-    const applied = applyContractOps(s.contractOps, s.id, docAt);
-    if ('reasons' in applied) reasons.push(...applied.reasons.map((r) => `${s.id} ${r}`));
-    else for (const e of applied.edits) edited.set(e.path, e.text);
-  }
-  if (reasons.length > 0) return { kind: 'refused', reasons };
+  const applied = applyContractOps(publication.contractOps, `revision-${payload.rev}`, (path) => textAt(ctx.repo, tip, path));
+  if ('reasons' in applied) return {kind: 'refused', reasons: applied.reasons};
+  const edited = new Map(applied.edits.map((e) => [e.path, e.text]));
   const contractPaths = [...edited.keys()].sort();
   return { kind: 'files', files: [...renders, ...contractPaths.map((path) => ({ path, bytes: Buffer.from(edited.get(path)!, 'utf8') }))], contractPaths };
 }
@@ -339,9 +265,9 @@ export const revisedObligations = (changes: readonly PlanChange[]): readonly Obl
 
 /** The docs candidate's selection: its contract ops' paths (never the renders) and the revised obligations. */
 export function docsSelection(
-  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
+  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>, systemsMap: import('../input/systems.ts').SystemsMap | null = null,
 ): readonly ObligationId[] {
-  return selectObligations({ obligations, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
+  return selectObligations({ obligations, systemsMap, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
 }
 
 /** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */
@@ -388,7 +314,7 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   if (violations.length > 0) return refuse(`its commit touches paths it does not publish: ${violations.map((v) => `${v.path} (${v.rule})`).join(', ')}`);
 
   const obligations = revisionObligations(ctx.runDir, payload);
-  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation))));
+  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)), systemsMapInForce(ctx.journal.view.planApplied())));
   // dev.17: the suite lanes up to `candidate` the commit's diff selects (a docs-only diff selects none but a lane listing
   // `docs`); a batch lane never runs in the merge path.
   const suiteLanes = seriesOrder(selectedLanes(mapInForce(ctx.journal.view), plan.suite.lanes.filter((l) => cadenceAtOrBefore(l.cadence, 'candidate')), changedPaths(ctx.repo, tip, next)));
@@ -441,6 +367,7 @@ function verdictReason(
   if (red !== undefined) return `suite lane ${red.lane} is ${red.verdict} on the docs candidate (evidence ${red.dir})`;
   if (obligations === null || selected.size === 0) return null;
   const records = new Map(series.runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
+  selected = new Set([...selected].filter((id) => !obligations.lanes.some((l) => l.witnessClass === 'external' && obligations.obligations.some((o) => o.id === id && o.witness?.lane === l.id))));
   const effects = obligationEffects({
     obligations: obligations.obligations, selected, latched, completing: new Set(),
     verdict: (_o, witness) => {
@@ -465,7 +392,7 @@ export function closeOutFiles(ctx: Reader, commit: Sha): readonly DocsFile[] {
   const revision = revisionInForce(ctx.runDir, requirePlanInForce(ctx.runDir, view));
   const latched = view.holistic().latched.map((l) => l.obligation);
   const ledger = parseRulings(revision.ledger.bytes.toString('utf8'), 'the rulings ledger in force');
-  const renders: DocsFile[] = [{ path: CONSTRAINTS_DOC, bytes: Buffer.from(renderConstraints(ledger, [...revision.sidecars.values()].map((x) => x.sidecar), 'close-out'), 'utf8') }];
+  const renders: DocsFile[] = [{ path: CONSTRAINTS_DOC, bytes: Buffer.from(renderConstraints(ledger, 'close-out'), 'utf8') }];
   if (revision.obligations !== null) {
     const registry = revision.corpus === null ? undefined : registryOf(revision.corpus.pin.value);
     renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(renderInvariants(revision.obligations.value, latched, registry), 'utf8') });

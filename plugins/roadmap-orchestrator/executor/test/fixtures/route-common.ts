@@ -39,9 +39,9 @@ export const editUnit = (d: ArcDescriptor, id: string, edit: (u: Json) => void):
   editPlan(d, (p) => edit(p.units.find((u) => u['id'] === id) ?? (() => { throw new Error(`no unit ${id}`); })()));
 
 /** Records the files as revision 1, as an M3 first start does (payload, `revision.commit`, `plan-applied` with provenance). */
-export function recordFirst(d: ArcDescriptor, base: RoutingBase = BASE): void {
+export function recordFirst(d: ArcDescriptor, base: RoutingBase = { ...BASE, config: d.config ?? null }): void {
   const j = openJournal(absPath(d.runDir), d.arc as never);
-  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], base);
+  recordPlan(j, absPath(d.runDir), readInputFiles(absPath(d.planPath), absPath(d.repo)), [], { ...base, config: { ...d.config, ...base.config, ...((base.config?.systemsMap ?? d.config?.systemsMap) === undefined ? {} : { systemsMap: (base.config?.systemsMap ?? d.config?.systemsMap)! }) } });
   j.close();
 }
 
@@ -59,18 +59,18 @@ export function followContext(r: ArcRun): StageContext {
 }
 
 /** The command context over `stage`, as the executor builds it: each unit's routing, the start's routing base. */
-export function commandsOf(r: ArcRun, stage: StageContext, base: RoutingBase = BASE): CommandContext {
+export function commandsOf(r: ArcRun, stage: StageContext, base: RoutingBase = stage.routingBase): CommandContext {
   return { ...commandContextFor(r, stage), routingBase: base, routing: (unit) => ({ profile: base.profile, resolved: stage.routing(unit) }) };
 }
 
 /** Submits one command and applies it, as the executor's loop does at a safe point. */
-export async function command(r: ArcRun, stage: StageContext, body: CommandBody, base: RoutingBase = BASE): Promise<CommandOutcome> {
+export async function command(r: ArcRun, stage: StageContext, body: CommandBody, base: RoutingBase = stage.routingBase): Promise<CommandOutcome> {
   const file = submitCommand(r.ctx.runDir, r.ctx.plan().arc, body);
   return applyCommand(commandsOf(r, stage, base), file);
 }
 
 /** `roadmap apply` of the files as they are now. */
-export const apply = (r: ArcRun, stage: StageContext, base: RoutingBase = BASE): Promise<CommandOutcome> => command(r, stage, applyBody(r.d), base);
+export const apply = (r: ArcRun, stage: StageContext, base: RoutingBase = stage.routingBase): Promise<CommandOutcome> => command(r, stage, applyBody(r.d), base);
 
 /** Unit `id` in the plan in force of `ctx`. */
 export function unitOf(ctx: StageContext, id: string): PlanUnit {

@@ -17,7 +17,7 @@ import type { IntentRecord } from '../src/core/events.ts';
 import { INTEGRATION_SLOT, arcId, invocationId, opKey, sha, sha256, specRev } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { needsUserRecord } from '../src/core/records.ts';
-import { absPath, isoTimeOf, repoPattern } from '../src/core/values.ts';
+import { absPath, isoTimeOf } from '../src/core/values.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { type RecoveryReport, recover } from '../src/recover/recover.ts';
@@ -48,7 +48,7 @@ after(assertNoSurvivors);
 const T = { timeout: 120_000 };
 const LONG = { timeout: 600_000 };
 const STAGE = { type: 'stage', unit: U1, stage: 'build', attempt: 1 } as const;
-const STRAIGHT = ['plan-check:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
+const STRAIGHT = ['pre-build:approve', 'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', 'candidate:green', 'ff:published', 'snapshot:published'];
 
 /** The recovery engine in this process over `d`'s journal. */
 async function recoverHere(d: ArcDescriptor): Promise<RecoveryReport> {
@@ -143,7 +143,7 @@ test('recover.park-raises-needs-user: a patch whose old spec is gone (not kept, 
     const opened = await openSpecPatch(r);
     op = opened.op;
     const spec = JSON.parse(readFileSync(opened.path, 'utf8')) as Record<string, unknown>;
-    writeFileSync(opened.path, JSON.stringify({ ...spec, scope: [repoPattern('elsewhere/**')] }));
+    writeFileSync(opened.path, JSON.stringify({ ...spec, intent: 'A different valid intent.' }));
     loseKeptOldSpec(r.journal.view.latestIntent(opened.op as never), d);
   } finally {
     r.journal.close();
@@ -262,7 +262,7 @@ const CAUSES = {
   // A spec patch whose old spec is gone (not kept, the file changed by someone else): park (the op stays open).
   park: { kind: 'spec.patch', disturb: (d: ArcDescriptor, i: IntentRecord) => {
     if (i.kind !== 'spec.patch') throw new Error('not a spec.patch');
-    writeFileSync(i.expect.path, JSON.stringify({ ...JSON.parse(readFileSync(i.expect.path, 'utf8')) as object, scope: ['elsewhere/**'] }));
+    writeFileSync(i.expect.path, JSON.stringify({ ...JSON.parse(readFileSync(i.expect.path, 'utf8')) as object, intent: 'A different valid intent.' }));
     loseKeptOldSpec(i, d);
   }, closure: 'open' },
   // The executor-owned candidate ref moved by someone else: abort.
@@ -312,14 +312,14 @@ async function adoptThenDrive(d: ArcDescriptor): Promise<void> {
 }
 
 /** The one backend spawn of `role`, its done and its stage attempt's outcome. */
-function soleCall(d: ArcDescriptor, role: 'planCheck' | 'build' | 'gate') {
+function soleCall(d: ArcDescriptor, role: 'build' | 'verifier', stage?: CallStage) {
   const { view, events } = readJournal(absPath(d.runDir), d.arc as never);
-  const spawns = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === role);
+  const spawns = view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === role && (stage === undefined || i.parent.type === 'stage' && i.parent.stage === stage));
   assert.equal(spawns.length, 1, `one ${role} invocation`);
   const spawn = spawns[0]!;
   const parent = spawn.parent;
   assert.ok(parent.type === 'stage');
-  const outcomesAt = events.flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === parent.stage && e.fact.attempt === parent.attempt ? [e.fact.outcome] : []));
+  const outcomesAt = events.flatMap((e) => (e.type === 'fact' && (e.fact.kind === 'stage-outcome' && 'unit' in e.fact) && e.fact.stage === parent.stage && e.fact.attempt === parent.attempt ? [e.fact.outcome] : []));
   return { spawn, done: view.doneOf(spawn.op), outcomesAt, view, events };
 }
 
@@ -336,11 +336,11 @@ test('recover.adopted-build-consumed: a build whose executor died mid-call is ad
 });
 
 describe('recover.adopted-judgment-consumed: a judgment whose executor died mid-call is adopted and consumed, never asked again', { concurrency: 2 }, () => {
-  for (const [stage, role] of [['plan-check', 'planCheck'], ['gate', 'gate']] as const) {
+  for (const [stage, role] of [['pre-build', 'verifier'], ['gate', 'verifier']] as const) {
     test(stage, T, async () => {
       const d = await strandedCall(stage as CallStage);
       await adoptThenDrive(d);
-      const { done, outcomesAt, view } = soleCall(d, role);
+      const { done, outcomesAt, view } = soleCall(d, role, stage);
       assert.ok(done?.kind === 'proc.spawn' && done.recoveredBy === 'adopted', JSON.stringify(done));
       assert.deepEqual(outcomesAt, ['approve'], 'the stranded attempt recorded the adopted approval');
       assert.deepEqual(outcomes(d), STRAIGHT);
@@ -431,7 +431,7 @@ describe(`matrix row ${ADVERSARIAL_LIVE_RUNNER}`, { concurrency: 3 }, () => {
 // ---------------------------------------------------------------------------------------------------
 // Adversarial: a cross-arc takeover that dies mid-adoption
 
-/** Arc A parked in a plan-check at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
+/** Arc A parked in a pre-build at barrier `check1`, then its supervisor and executor SIGKILLed: its runner lives. */
 async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: IntentRecord }>> {
   const a = setupExec(t, { steps: [...smokes(1), blockedCheck('check1')] });
   const line = startLine(await startCli(a));
@@ -441,7 +441,7 @@ async function strandedArc(t: Owner): Promise<Readonly<{ a: ExecRun; spawn: Inte
   await kill(supervisorOf(a));
   await kill(executor);
   const open = journalOf(a).view.openIntents().filter((i) => i.kind === 'proc.spawn');
-  assert.equal(open.length, 1, 'the plan-check spawn is open');
+  assert.equal(open.length, 1, 'the pre-build spawn is open');
   return { a, spawn: open[0]! };
 }
 

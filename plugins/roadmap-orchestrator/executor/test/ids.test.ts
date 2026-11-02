@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  type ImplementerSessionId, type JudgmentSessionId, type NumberedId, type RuleId, InvalidIdError, amendmentRef, amendmentRefKey, answerIds, canonicalIds,
+  type ImplementerSessionId, type JudgmentSessionId, type NumberedId, type RuleId, InvalidIdError, answerIds, canonicalIds,
   compareIds, idKey, idList, obligationId, ruleId, visionClauseId, arcId, clauseId, commandId, hostNeedsUserId,
   implementerSessionId, invocationDirName, invocationId, invocationIdOf, judgmentSessionId, laneId, needsUserId,
   needsUserIdForOp, opId, opIdOf, opKey, parseInvocationId, parseOpId, resourceName, routingRev, rulingId, sha, sha256,
@@ -121,19 +121,18 @@ describe('ids.numbered-order', () => {
     assert.throws(() => idList((v, p) => ruleId(v, p), { nonEmpty: true })([], 'rules'), /non-empty/);
   });
 
-  it('idList with legacyStringOrder reads a string-ordered list as written, warning once; a list in neither order is refused', () => {
-    const read = idList((v, p) => ruleId(v, p), { legacyStringOrder: true });
+  it('idList refuses historical string order without adoption defaults', () => {
+    const read = idList((v, p) => ruleId(v, p));
     const writes: string[] = [];
     const write = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk: string | Uint8Array): boolean => { writes.push(String(chunk)); return true; }) as typeof process.stderr.write;
     try {
-      assert.deepEqual(read(['T-10', 'T-9'], 'fact.rules'), ['T-10', 'T-9']);
-      assert.deepEqual(read(['T-100', 'T-20', 'T-3'], 'fact.rules'), ['T-100', 'T-20', 'T-3']);
+      assert.throws(() => read(['T-10', 'T-9'], 'fact.rules'), /strictly ascending/);
+      assert.throws(() => read(['T-100', 'T-20', 'T-3'], 'fact.rules'), /strictly ascending/);
     } finally {
       process.stderr.write = write;
     }
-    assert.equal(writes.length, 1, 'once per process');
-    assert.match(writes[0]!, /upgrade default \(ids\.string-order\): fact\.rules: a numbered-id list in string order/);
+    assert.deepEqual(writes, [], 'schema 2 has no adoption defaults');
     assert.deepEqual(read(['T-9', 'T-10'], 'fact.rules'), ['T-9', 'T-10'], 'canonical reads too');
     assert.throws(() => read(['T-9', 'T-10', 'T-2'], 'fact.rules'), /fact\.rules\[2\]/);
     assert.throws(() => read(['T-10', 'T-10'], 'fact.rules'), /fact\.rules\[1\]/);
@@ -143,10 +142,5 @@ describe('ids.numbered-order', () => {
     const read = answerIds((v, p) => ruleId(v, p));
     assert.deepEqual(read(['T-120', 'T-42', 'T-9'], 'answer.rules'), ['T-9', 'T-42', 'T-120']);
     assert.throws(() => read(['T-42', 'T-42'], 'answer.rules'), (err: unknown) => err instanceof SchemaError);
-  });
-
-  it('amendmentRefKey orders by arc, then by number', () => {
-    const refs = ['b/M-1', 'a/M-10', 'a/M-9'].map((r) => amendmentRef(r));
-    assert.deepEqual(refs.sort((x, y) => (amendmentRefKey(x) < amendmentRefKey(y) ? -1 : 1)), ['a/M-9', 'a/M-10', 'b/M-1']);
   });
 });

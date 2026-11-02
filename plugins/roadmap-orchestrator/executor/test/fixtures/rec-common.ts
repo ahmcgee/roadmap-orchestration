@@ -79,7 +79,7 @@ export function crashUnit(d: ArcDescriptor, label: string, occurrence = 1): Prom
 }
 
 /**
- * The straight scenario of u1: plan-check, the build that adds mul (writing decisions.json), the gate. The
+ * The straight scenario of u1: pre-build, the build that adds mul (writing decisions.json), the gate. The
  * build commits its work, or leaves it uncommitted for salvage to commit (`dirty`).
  */
 function straight(d: ArcDescriptor, opts: Readonly<{ unitAdd?: string; dirty?: boolean }> = {}): void {
@@ -107,7 +107,7 @@ const UNIT_CRASH: Partial<Record<RecKind, string>> = {
   'spec.patch': 'spec.patch.before-write',
 };
 /**
- * The occurrence of a unit crash label that leaves the op of its kind open, where it is not the first: plan-check's `@cpu`
+ * The occurrence of a unit crash label that leaves the op of its kind open, where it is not the first: pre-build's `@cpu`
  * and build each take four transitions (reserve, run, clean, release) before the lane reserves `db` with its `@cpu`, the open
  * reservation whose recovery tears `db` down.
  */
@@ -306,7 +306,7 @@ export const highWater = (d: ArcDescriptor): number => eventsOf(d).length;
 // ---------------------------------------------------------------------------------------------------
 // A backend call alive when its executor died
 
-export type CallStage = 'plan-check' | 'build' | 'gate';
+export type CallStage = 'pre-build' | 'build' | 'gate';
 export const BARRIER = 'stranded';
 
 /** u1's straight scenario, with the call at `stage` parked at barrier BARRIER (a build commits mul first). */
@@ -314,7 +314,7 @@ function strandedSteps(stage: CallStage): readonly Step[] {
   const wait = { type: 'barrier', name: BARRIER, timeoutMs: 120_000 } as const;
   const check = planCheckStep({ decision: 'approve' });
   return [
-    stage === 'plan-check' ? { ...check, acts: [wait, ...check.acts] } as Step : check,
+    stage === 'pre-build' ? { ...check, acts: [wait, ...check.acts] } as Step : check,
     stage === 'build' ? codexStep([{ type: 'commit', message: 'add mul', files: MUL }, wait], { argv: ['exec', '-C'] }) : mulBuild(),
     gateStep({ decision: 'approve' }, {}, stage === 'gate' ? [wait] : []),
   ];

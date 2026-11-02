@@ -1,4 +1,4 @@
-// `docs.commit` (M3 step A4; DESIGN-1.0.md §2.9, §9; plan "Docs publication"): in the integration slot, a docs
+// `docs.commit` (M3 step A4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Docs publication"): in the integration slot, a docs
 // publication's one commit on the integration tip T: the executor-rendered `.roadmap/` files, the vision files a
 // revision publishes (dev.16) and the contract ops' edited documents, held on the executor-owned ref
 // `refs/roadmap-run/<arc>/docs/<pub>`. Its lanes run on it and, on green, integration fast-forwards to exactly this
@@ -9,15 +9,15 @@
 // parents [T], identity, dates, message), so a redo makes the same id; act re-makes the commit and CASes the ref from
 // its recorded old (or absence). The detached docs checkout is a separate `worktree.create` op the caller runs once
 // this op is done (`docsWorktreeRequest`).
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { CommitInputs, IntentOf, OpOutcome } from '../core/events.ts';
-import { type ArcId, type JobId, type Sha, sha } from '../core/ids.ts';
-import type { GitSteps, IntentBody } from '../core/interfaces.ts';
-import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
-import { type Identity, commitTree, git, readTree, refTarget, updateRefCas, writeTreeFromIndex } from './git.ts';
+import type { CommitInputs,IntentOf,OpOutcome } from '../core/events.ts';
+import { type ArcId,type JobId,type Sha } from '../core/ids.ts';
+import type { GitSteps,IntentBody } from '../core/interfaces.ts';
+import { type AbsPath,type RefName,type RepoPath,absPath,refName,repoPath } from '../core/values.ts';
+import { type Identity,commitTree,git,readTree,refTarget,updateRefCas,writeTreeFromIndex } from './git.ts';
 import { parentsOf } from './mergein.ts';
 import type { WorktreeCreateRequest } from './worktree.ts';
 
@@ -124,9 +124,6 @@ function verify(repo: AbsPath, intent: IntentOf<'docs.commit'>): OpOutcome['docs
 export function docsWorktreeRequest(intent: IntentOf<'docs.commit'>): WorktreeCreateRequest {
   return { path: intent.expect.worktree, checkout: { type: 'detached', at: intent.post.new } };
 }
-
-/** The tree id of a commit: what a witness record's `treeSha` names (the fake witness lanes key on it too). */
-export const treeOf = (repo: AbsPath, commit: Sha): Sha => sha(git(repo, ['rev-parse', '--verify', `${commit}^{tree}`]).trim());
 
 /** The paths `a..b` adds, modifies or deletes, ascending. */
 export function changedPaths(repo: AbsPath, a: Sha, b: Sha): readonly RepoPath[] {
