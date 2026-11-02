@@ -1,4 +1,5 @@
 import { inputShaOf } from '../src/git/reusekey.ts';
+import { execFileSync } from 'node:child_process';
 import { systemsMapInForce } from '../src/input/systems.ts';
 // `roadmap status`'s M3 keys (src/status.ts; DESIGN-1.0.md §2.4, plan "`status` (additive)"), in process over holistic
 // arcs whose log is written directly (real repos, real run dirs, the real fold): the facts are the frozen M3 ones, so
@@ -205,7 +206,9 @@ describe('status M3', () => {
       witness(r, journey, tree, { t1: 'pass' }, '0123456789abcdef');
       assert.deepEqual(statusOf(r).nowTrue.map((o) => o.obligation), ['I-1'], 'held in the environment the executor recorded');
       // The executor now witnesses the lane in another environment (on another tree): the head's observation is foreign.
-      witness(r, journey, 'e'.repeat(40), { t1: 'pass' });
+      // A real tree other than the tip's (the empty tree): witnessed trees always exist in the repo.
+      const other = sha(execFileSync('git', ['hash-object', '-w', '-t', 'tree', '/dev/null'], { cwd: d.repo, encoding: 'utf8' }).trim());
+      witness(r, journey, other, { t1: 'pass' });
       const s = statusOf(r);
       assert.deepEqual(s.nowTrue, []);
       assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.verdict]), [['I-1', 'not-covered']]);
