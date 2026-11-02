@@ -1,7 +1,7 @@
 // M3 step B2: the baseline witness job (src/pipeline/baseline.ts, A6) and journey-series lane reuse (src/pipeline/lanes.ts),
 // over real arcs (real git, real processes, fake witness lanes scripted per tree). Named tests: baseline.held,
 // baseline.must-hold-not-held, baseline.future-vacuous, baseline.resume, baseline.rerun-after-revision,
-// baseline.not-holistic, lanes.reuse.
+// baseline.external-lane, baseline.not-holistic, lanes.reuse.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -133,6 +133,21 @@ describe('the baseline witness (A6)', () => {
         [{ type: 'job', job: 'baseline-1' }, join(root, 'baseline-1.checkout-2')],
       ], 'one certificate per series, each on its own checkout');
       assert.deepEqual(r.journal.view.openIntents(), []);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('baseline.external-lane: an obligation an external-class lane witnesses is neither run nor graded at baseline, so no baseline is owed for it', T, async () => {
+    const { r, ctx } = arc({
+      obligations: [{ id: 'I-1', testIds: ['ci'] }],
+      trees: {},
+      laneExtra: { journey: { witnessClass: 'external', inputs: ['src/**'] } },
+    });
+    try {
+      assert.equal(baselineDue(ctx), null);
+      assert.equal(spawnsOf(r, 'journey'), 0);
+      assert.deepEqual(r.journal.view.needsUser(), []);
     } finally {
       r.journal.close();
     }

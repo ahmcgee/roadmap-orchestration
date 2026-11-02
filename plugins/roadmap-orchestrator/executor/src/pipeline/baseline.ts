@@ -24,7 +24,7 @@ import type { NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, branchRef } from '../core/values.ts';
 import { revParse } from '../git/git.ts';
 import { verdictOf } from '../holistic/observe.ts';
-import { type Obligations, type WitnessRecord, isExempt, isMustHold, witnessRecord } from '../holistic/types.ts';
+import { type ArcLaneDef, type Obligations, type WitnessRecord, isExempt, isMustHold, witnessRecord } from '../holistic/types.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
@@ -65,11 +65,19 @@ function recordsOf(ctx: Reader, job: JobId, tree: Sha): ReadonlyMap<LaneId, Witn
   return out;
 }
 
-/** The problems over the records, in id order. */
+/**
+ * The arc lanes the baseline runs: every one but an external-class lane, which runs off the host and is attested only by
+ * its `external-witness` CI facts (src/holistic/external.ts), so the journey series skips it and the baseline neither
+ * waits for nor grades it.
+ */
+const localLanes = (obligations: Obligations): readonly ArcLaneDef[] => obligations.lanes.filter((l) => l.witnessClass !== 'external');
+
+/** The problems over the records, in id order. An obligation an external-class lane witnesses is not graded here. */
 export function baselineProblems(obligations: Obligations, records: ReadonlyMap<LaneId, WitnessRecord>, latched: ReadonlySet<ObligationId>): readonly BaselineProblem[] {
+  const local = new Set(localLanes(obligations).map((l) => l.id));
   const out: BaselineProblem[] = [];
   for (const o of obligations.obligations) {
-    if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
+    if (isExempt(o) || o.state.type === 'split' || o.witness === null || !local.has(o.witness.lane)) continue;
     const record = records.get(o.witness.lane);
     if (record === undefined) throw new Error(`baseline: obligation ${o.id}'s lane ${o.witness.lane} was not witnessed`);
     const verdict = verdictOf(record, o.witness);
@@ -92,7 +100,7 @@ function stateOf(ctx: Reader): State | null {
   const tree = revParse(ctx.repo, `${tip}^{tree}`);
   const job = latestBaseline(view) ?? view.nextJobId('baseline');
   const witnessed = recordsOf(ctx, job, tree);
-  return { job, obligations, tip, tree, missing: obligations.lanes.filter((l) => !witnessed.has(l.id)).map((l) => l.id) };
+  return { job, obligations, tip, tree, missing: localLanes(obligations).filter((l) => !witnessed.has(l.id)).map((l) => l.id) };
 }
 
 /**
