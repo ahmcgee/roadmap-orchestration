@@ -1323,7 +1323,8 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
 // through its stage's `acquire`; a job's first of every unit, `acquireFirst`), the occupancy probe, the run as a
 // `journey{lane, laneRev, at, owner}` spawn with the lane's env plus the owner label, the instance binding and a
 // witness run's reporter env (`witnessEnv`), evidence snapshots, cleanup. A red run goes through the red-lane protocol
-// (redlane.ts): the run whose verdict counts is the one recorded.
+// (redlane.ts): the run whose verdict counts is the one recorded. At baseline only, an expected red in an all-future,
+// unlatched lane skips the diagnostic rerun (`expectedRed`); host-signature handling still applies.
 //
 // Evidence is per execution and immutable: each run has its own dir, named by its kind, lane and invocation (a job's
 // `jobLaneDir`, a candidate's `candidateLaneDir`, src/git/snapshot.ts), holding its `output`, its declared `tree`
@@ -1335,7 +1336,8 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
 //
 // Lane reuse (§9): a witness lane whose observation on the tree already exists (all four keys equal, its record's
 // hash checked when it entered the store) is not run again; the series reads the kept record (`reuse` option; the
-// baseline job runs every lane afresh). Only an observation of a certified series is reused (R51, `certifiedRun`):
+// baseline job runs its missing lanes afresh, retaining its own equivalent-tree records in baseline.ts). Only an
+// observation of a certified series is reused (R51, `certifiedRun`):
 // after its lanes the series' checkout was clean and was removed, then `series-certified` was recorded.
 
 /**
@@ -1515,7 +1517,11 @@ type JourneyAttempt = Readonly<{ kind: 'ran'; ran: JourneyRan }> | Readonly<{ ki
  */
 export async function runJourneySeries(
   ctx: JourneyContext, owner: JourneyOwner, lanes: readonly JourneyLane[], checkout: WorktreeCreateRequest,
-  opts: Readonly<{ reuse: boolean; stop: (run: JourneyRun) => boolean }>,
+  opts: Readonly<{
+    reuse: boolean; stop: (run: JourneyRun) => boolean;
+    /** Baseline's all-future, unlatched lanes: record an expected red without a diagnostic rerun. */
+    expectedRed?: ReadonlySet<LaneId>;
+  }>,
 ): Promise<JourneySeries> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a journey series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const { at } = checkout.checkout;
@@ -1716,6 +1722,12 @@ export async function runJourneySeries(
       const red = first.ran;
       const cls = classifyRed(red.evidence, null);
       writeRedClass(red.dir, cls, failureOf(ctx.runDir, red.inv, red.verdict, red.exitCode, checkout.path).failure, owner.type === 'unit' ? owner.parent.unit : undefined);
+      if (cls.kind === 'diagnostic' && opts.expectedRed?.has(lane.def.id)) {
+        const result = counted(lane, red, false);
+        runs.push(result);
+        if (opts.stop(result)) break;
+        continue;
+      }
       const again = await redLane<JourneyRan, JourneyEnd>(cls, async () => {
         const next = await attempt(lane);
         if (next.kind === 'ended') return { kind: 'ended', end: next.end };
