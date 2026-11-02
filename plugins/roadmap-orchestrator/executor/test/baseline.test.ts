@@ -139,14 +139,14 @@ describe('the baseline witness (A6)', () => {
     }
   });
 
-  test('baseline.docs-paths: rendered docs and contracts preserve evidence; another roadmap path reruns every lane', T, async () => {
+  test('baseline.docs-paths: executor-rendered docs preserve evidence; any other path (a roadmap input, a contract document) reruns every lane', T, async () => {
     const { r, ctx } = arc({
       obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
       trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
     });
     try {
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
-      for (const path of ['.roadmap/constraints.md', '.roadmap/invariants.md', '.roadmap/debt.md', 'contracts/nested/new.md']) {
+      for (const path of ['.roadmap/constraints.md', '.roadmap/invariants.md', '.roadmap/debt.md']) {
         writeFiles(r.d.repo, { [path]: 'published docs\n' });
         commitAll(r.d.repo, `publish ${path}`);
         assert.equal(baselineDue(ctx), null, path);
@@ -157,6 +157,11 @@ describe('the baseline witness (A6)', () => {
       assert.equal(baselineDue(ctx), 'baseline-1');
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
       assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [2, 2]);
+      writeFiles(r.d.repo, { 'contracts/nested/new.md': 'a contract a ruling edited\n' });
+      commitAll(r.d.repo, 'edit a contract document');
+      assert.equal(baselineDue(ctx), 'baseline-1', 'a contract document may be a lane input');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [3, 3]);
     } finally {
       r.journal.close();
     }
