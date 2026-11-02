@@ -254,6 +254,22 @@ export function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly Need
   });
 }
 
+/** The canonical open-item list for status and watch: journal and file-only items, ascending id. */
+export type OpenItem = Readonly<{ id: NeedsUserId; reason: NeedsUserReason; blocking: boolean }>;
+export function openItems(runDir: AbsPath, view: JournalView): readonly OpenItem[] {
+  return [
+    ...openNeedsUser(view).filter((n) => readNeedsUserAck(runDir, n.id) === null)
+      .map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
+    ...fileNeedsUser(runDir, view).filter((r) => readNeedsUserAck(runDir, r.id) === null)
+      .map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
+  ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export type OpenBlockingDigest = readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason }>[];
+export function openBlockingDigest(runDir: AbsPath, view: JournalView): OpenBlockingDigest {
+  return openItems(runDir, view).filter((n) => n.blocking).map(({ id, reason }) => ({ id, reason }));
+}
+
 /** Every blocking needs-user no ack answers: the journal's and the file-only ones. */
 export function openBlockingItems(runDir: AbsPath, view: JournalView): readonly NeedsUserId[] {
   return [...openBlocking(view), ...fileNeedsUser(runDir, view).filter((r) => r.blocking).map((r) => r.id)];

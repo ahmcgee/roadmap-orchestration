@@ -58,6 +58,15 @@ describe('cli', () => {
     assert.throws(() => parseCommand(['status', '--actionable']), /unknown option --actionable/);
   });
 
+  it('watch --replace and --stop validate their modes', () => {
+    assert.deepEqual(parseCommand(['watch', '--actionable', '--replace']), { command: 'watch', actionable: { heartbeatMin: null, from: null }, replace: true, run: HOST });
+    assert.deepEqual(parseCommand(['watch', '--stop']), { command: 'watch', actionable: null, stop: true, run: HOST });
+    assert.throws(() => parseCommand(['watch', '--replace']), /--replace goes with --actionable/);
+    for (const flags of [['--actionable'], ['--replace'], ['--from', '0'], ['--heartbeat-min', '1']]) {
+      assert.throws(() => parseCommand(['watch', '--stop', ...flags]), CliError);
+    }
+  });
+
   it('pause <unit> | --all', () => {
     assert.deepEqual(parseCommand(['pause', 'u1']), { command: 'pause', target: { type: 'unit', unit: 'u1' }, run: HOST });
     assert.deepEqual(parseCommand(['pause', '--all', ...EXPLICIT]), { command: 'pause', target: { type: 'all' }, run: EXPLICIT_RUN });

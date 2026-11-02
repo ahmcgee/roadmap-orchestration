@@ -17,7 +17,7 @@
 <rect x="140" y="330" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="290.0" y="349.0" class="label" text-anchor="middle"><tspan x="290.0" dy="0">Phase 0</tspan><tspan x="290.0" dy="24">Rules, specs, obligations</tspan><tspan x="290.0" dy="24">Milestones; K-n curation</tspan><tspan x="290.0" dy="24">Debt: B-n → C-n → K-n</tspan></text>
 <rect x="540" y="330" width="340" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Watch and decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness · dismiss</tspan></text>
+<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Leased watch: digest → decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness · dismiss</tspan></text>
 <rect x="1050" y="330" width="330" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1215.0" y="373.0" class="label" text-anchor="middle"><tspan x="1215.0" dy="0">Present brief and demo</tspan><tspan x="1215.0" dy="24">Prepare PR; choose next slice</tspan></text>
 <polyline points="290,230 290,330" class="edge msg"/>
@@ -46,5 +46,5 @@
 <text x="1080" y="710" class="small" text-anchor="middle"><tspan x="1080" dy="0">findings return to root</tspan></text>
 <text x="630" y="885" class="small" text-anchor="middle"><tspan x="630" dy="0">Fix rounds retain findings, lane failures, base comparisons, notes and allowance/cap state.</tspan><tspan x="630" dy="20">Judgments start fresh; one invalid answer repairs in its own session. Directives require revise.</tspan><tspan x="630" dy="20">Schema rules + saved evidence; breaks require failed actions, interface rework or declared floors.</tspan></text>
 <rect x="60" y="940" width="1380" height="75" rx="4" fill="#fff" class="task"/>
-<text x="85" y="970" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="24">Watch: 30-minute heartbeat, at most 3 chat lines; operator log. Root never patches plugin/runtime. Ack only for offered options.</tspan></text>
+<text x="85" y="970" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="24">Watch: --replace / --stop; openBlocking on every wake; confirm supervision live. 30-minute heartbeat; at most 3 chat lines; operator log.</tspan></text>
 </svg>

@@ -95,8 +95,10 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    `dismiss F-n --counter-evidence "<line>"` records its evidence-backed decision, including for P1 findings.
 6. **Supervise from the command center.** The architect watches actionable events and reads `status --summary` for
    progress, spend versus expectations, milestone verdicts, caught counts and waste. Watch includes a fixed 30-minute
-   heartbeat; each wake gets at most three chat lines. Interventions and every arc-wide control go in the external
-   operator log. The root never patches the plugin or run directory. To change inputs, export the
+   heartbeat; each wake gets at most three chat lines. One actionable watch holds the arc’s lease: start or switch
+   versions with `watch --actionable --replace`, end with `watch --stop`, and confirm supervision is live in status.
+   Every transition and heartbeat repeats all open blocking items in `openBlocking`; act on each item on every wake.
+   Interventions and every arc-wide control go in the external operator log. The root never patches the plugin or run directory. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Successful subject

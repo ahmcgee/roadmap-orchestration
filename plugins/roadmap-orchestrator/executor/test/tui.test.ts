@@ -1567,3 +1567,24 @@ test('TUI timeout reds stay distinct from a deadline block and CPU bases preserv
     certification: { ...d.status.units[0]!.certification!, lanes: [{ ...lane, state: 'blocked' as const, verdict: 'process-fault' as const }] } }] } };
   assert.equal(certificationEntries(blocked)[0]!.state, 'blocked:deadline');
 });
+
+test('supervision stays on one header line and is red only for an active run with open blocking work and no live watcher', () => {
+  const d = observed();
+  for (const state of ['none', 'stale', 'live'] as const) {
+    for (const run of ['running', 'complete', 'refused'] as const) {
+      for (const blocking of [false, true]) {
+        const ui = new ViewState();
+        ui.accept({ ...d, status: { ...d.status,
+          supervision: state === 'none' ? { state } : { state, pid: process.pid, lastPollAt: new Date().toISOString(), executorVersion: '1.0.0-dev.38' },
+          run: { ...d.status.run, state: run }, needsUser: [{ id: 'nu-38' as never, reason: 'pack-review', blocking }],
+        } });
+        const rows = ui.renderFrame(120, 35, true);
+        const header = rows.filter((r) => plain(r).includes('SUPERVISION'));
+        assert.equal(header.length, 1);
+        assert.ok(plain(header[0]!).includes(state));
+        const red = state !== 'live' && run === 'running' && blocking;
+        assert.equal(header[0]!.some((part) => part.text === state && part.tone === 'fault'), red, `${state}/${run}/blocking=${blocking}`);
+      }
+    }
+  }
+});

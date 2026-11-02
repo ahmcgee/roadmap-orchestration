@@ -56,7 +56,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
   });
   const heartbeat = s?.run.heartbeatAt ? elapsed(now - Date.parse(s.run.heartbeatAt)) : 'unavailable';
   const execution = d ? executionSummary(d) : null;
-  const status = s ? line(ink('NOW ', 'muted'), ...badge(execution!.state === 'stopped' ? 'STOPPED' : execution!.state, execution!.state), ink('    EXECUTOR ', 'muted'), ...badge(s.run.owner.state), ink('    HEARTBEAT ', 'muted'), ink(heartbeat))
+  const status = s ? line(ink('NOW ', 'muted'), ...badge(execution!.state === 'stopped' ? 'STOPPED' : execution!.state, execution!.state), ink('    EXECUTOR ', 'muted'), ...badge(s.run.owner.state), ink('    SUPERVISION ', 'muted'), ink(s.supervision.state, s.supervision.state !== 'live' && !['complete', 'refused'].includes(s.run.state) && s.needsUser.some((n) => n.blocking) ? 'fault' : 'strong'), ink('    HEARTBEAT ', 'muted'), ink(heartbeat))
     : line(ink('Waiting for an executor snapshot', 'wait'));
   const merged = s?.units.filter((unit) => unit.state === 'merged').length ?? 0;
   const total = s?.units.length ?? 0;

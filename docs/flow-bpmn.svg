@@ -35,7 +35,7 @@
 <polyline points="540,398 540,460 335,460 335,420" class="edge"/>
 <text x="412" y="485" class="small" text-anchor="middle"><tspan x="412" dy="0">refusing rows: revise</tspan></text>
 <polyline points="875,370 990,370" class="edge"/>
-<text x="932" y="350" class="small" text-anchor="middle"><tspan x="932" dy="0">watch</tspan></text>
+<text x="932" y="350" class="small" text-anchor="middle"><tspan x="932" dy="0">leased watch</tspan><tspan x="932" dy="-18">openBlocking</tspan></text>
 <polyline points="1290,370 1372,370" class="edge"/>
 <text x="1380" y="316" class="small" text-anchor="middle"><tspan x="1380" dy="0">resolve subject</tspan></text>
 <path d="M1400 342L1428 370L1400 398L1372 370Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
@@ -149,5 +149,5 @@
 <polyline points="1815,1147 1855,1147 1855,535 1740,535 1740,420" class="edge msg"/>
 <text x="115" y="1538" class="small" text-anchor="start"><tspan x="115" dy="0">No-milestone arcs take requested/final audit and close-out directly. A spike retires its report; it never enters candidate publication.</tspan><tspan x="115" dy="20">Breaks: failed actions, interface rework or declared floors. Copy, visuals and diagnostics deviate.</tspan><tspan x="115" dy="20">Schemas encode supported constraints; descriptions state remaining rules. Evidence cites saved file paths; free replays guard the contract.</tspan></text>
 <rect x="60" y="1610" width="1800" height="80" rx="4" fill="#fff" class="task"/>
-<text x="85" y="1642" class="small" text-anchor="start"><tspan x="85" dy="0">Evidence and authority: journal + kept inputs; containment empty before reading results or releasing resources; protected paths stay guarded.</tspan><tspan x="85" dy="24">Watch: 30-minute heartbeat, at most 3 chat lines; log interventions and arc-wide controls. Root never patches plugin/runtime. Ack only for offered options.</tspan></text>
+<text x="85" y="1642" class="small" text-anchor="start"><tspan x="85" dy="0">Evidence and authority: journal + kept inputs; containment empty before reading results or releasing resources; protected paths stay guarded.</tspan><tspan x="85" dy="24">Watch: --replace / --stop; openBlocking on every wake; confirm supervision live. 30-minute heartbeat; at most 3 chat lines; operator log.</tspan></text>
 </svg>

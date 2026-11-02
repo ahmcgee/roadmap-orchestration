@@ -32,7 +32,9 @@
 // or newly parked (its `units` line); the run newly `held`, `blocked` or `draining`; the run reaching a terminal state
 // (`complete`, `refused`, `no-owner`; once per state). The heartbeat is `{"event":"heartbeat","everyMin":<n>}` every n
 // minutes (default HEARTBEAT_MIN, 30) whatever happened: the architect's organic check, no other polling. Owner lines,
-// acks, superseded lines and every other unit move are absorbed. The heartbeat carries the `seq` of the latest poll. A
+// acks, superseded lines and every other unit move are absorbed. The heartbeat carries the `seq` of the latest poll.
+// Every actionable transition and heartbeat also carries `openBlocking: [{id, reason}]`, ascending id: the
+// canonical status open-item list, restricted to blocking items. A missed wake is recovered by the next line. A
 // fresh process starts with nothing seen: it re-emits the open items and a terminal or constrained run; the first view
 // of an arc's units is its baseline (no unit wake).
 //
@@ -57,6 +59,7 @@ import { canonicalJson } from './core/json.ts';
 import { EVENTS_FILE,ObserverJournal,readJournal } from './core/log.ts';
 import type { AbsPath } from './core/values.ts';
 import { answerNames,commonDirOfRun,unappliedAnswers } from './answers.ts';
+import { claimWatch,EXIT_WATCH_BUSY,pollWatch,releaseWatch } from './watch-lease.ts';
 import { CliError } from './input/cli.ts';
 import { NEEDS_USER_DIR,readNeedsUser,readNeedsUserAck } from './needsuser.ts';
 import { SCHED_FILE } from './schedule/scheduler.ts';
@@ -191,28 +194,40 @@ export function cursorAt(runDir: AbsPath, arc: ArcId, seq: number): Cursor {
  * from a cursor (`--from`) when `from` is a seq.
  */
 export async function watchActionable(
-  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, heartbeatMin: number, from: number | null, emit: (line: string) => void, signal: AbortSignal,
-): Promise<void> {
+  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, heartbeatMin: number, from: number | null, emit: (line: string) => void, signal: AbortSignal, replace = false,
+): Promise<number> {
   const filter = new ActionableFilter(Date.now(), heartbeatMin);
   if (from !== null) filter.seed(arc, cursorAt(runDir, arc, from));
-  let seq = from ?? 0;
-  const pass = (line: string): void => {
-    seq = (JSON.parse(line) as { seq: number }).seq;
-    const out = filter.feed(arc, line);
-    if (out !== null) emit(out);
-  };
-  await watch(runDir, arc, hostDir, pass, signal, () => {
-    const beat = filter.heartbeat(Date.now());
-    if (beat !== null) emit(canonicalJson({ ...(JSON.parse(beat) as object), seq }));
-  });
+  const claim = await claimWatch(runDir, arc, replace);
+  if (claim.kind === 'busy') {
+    emit(canonicalJson({ event: 'watch-busy', ...claim.lease }));
+    return EXIT_WATCH_BUSY;
+  }
+  try {
+    let seq = from ?? 0;
+    let openBlocking: ReturnType<typeof unitStates>['openBlocking'] = [];
+    const pass = (line: string): void => {
+      const out = filter.feed(arc, line);
+      if (out !== null) emit(canonicalJson({ ...(JSON.parse(out) as object), openBlocking }));
+    };
+    await watch(runDir, arc, hostDir, pass, signal, () => {
+      pollWatch(runDir, claim.lease, seq);
+      const beat = filter.heartbeat(Date.now());
+      if (beat !== null) emit(canonicalJson({ ...(JSON.parse(beat) as object), seq, openBlocking }));
+    }, (view) => { seq = view.seq; openBlocking = view.openBlocking; });
+    return 0;
+  } finally {
+    releaseWatch(runDir, claim.lease);
+  }
 }
 
 /**
  * Polls until `signal` aborts; `out` receives each event line (without its newline), its `seq` the poll's. `afterPoll`
- * (`--actionable`'s heartbeat check) runs once after every poll.
+ * (`--actionable`'s lease renewal and heartbeat check) runs once after every poll; `beforePoll` receives the
+ * derived view before any transition, so every actionable line carries that poll's complete blocking digest.
  */
 export async function watch(
-  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, out: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {},
+  runDir: AbsPath, arc: ArcId, hostDir: AbsPath, out: (line: string) => void, signal: AbortSignal, afterPoll: () => void = () => {}, beforePoll: (view: ReturnType<typeof unitStates>) => void = () => {},
 ): Promise<void> {
   const journal = new ObserverJournal(runDir, arc);
   const seenItems = new Set<string>();
@@ -234,6 +249,7 @@ export async function watch(
       key = next;
       view = unitStates(runDir, arc, hostDir, journal.read());
     }
+    beforePoll(view);
     const seq = view.seq;
     const emit = (line: Record<string, unknown>): void => out(canonicalJson({ ...line, seq }));
     for (const id of view.superseded) {

@@ -85,9 +85,13 @@ A milestone runs its selected lanes after its units retire, then a fresh experie
 
 ## Supervision and intervention
 
-Keep an actionable watch outstanding while the arc runs, with its fixed **30-minute heartbeat**. On every wake, post
-at most **3 lines** in chat: what moved, what is next, anything odd. Read status and only evidence cited by the affected
-item; act when needed, then return to the same watch. The heartbeat is the organic check; do not add habitual polling. On wake, read `status --summary`, then full status and cited evidence for the affected subject. Use the log sequence in the watch result to continue without replaying old wakes. The summary reports progress, spend/expectations, milestone verdicts, caught counts, captures and waste. Its caught total is lane reds + gate revise outcomes + unique finding keys; it is an activity aggregate, not a count of independently verified defects. Capture entries list suite capture invocations; inspect gate evidence for spec captures.
+Keep one actionable watch per arc while it runs, with the fixed 30-minute heartbeat. Start or switch plugin versions
+with `watch --actionable --replace`; end supervision with `watch --stop`. Never kill a watch by process pattern.
+On every wake, read `openBlocking` and act on every item in it, including items repeated from earlier wakes. Read
+`status --summary`, then full status and cited evidence for each affected subject. Post at most 3 lines in chat:
+what moved, what is next, anything odd. Return to the same watch; use its sequence with `--from` when restarting.
+The heartbeat is the organic check; do not add habitual polling. Before ending a turn while the arc runs, confirm
+`status --summary` shows supervision live. The summary reports progress, spend/expectations, milestone verdicts, caught counts, captures and waste. Its caught total is lane reds + gate revise outcomes + unique finding keys; it is an activity aggregate, not a count of independently verified defects. Capture entries list suite capture invocations; inspect gate evidence for spec captures.
 
 Exercise the smallest action that resolves the cause:
 

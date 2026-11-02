@@ -50,6 +50,17 @@ import { type ContractPin,type Pinned,type RequirementPin,type SpecPin,UNPINNED,
 export type ProcIdentity = Readonly<{ pid: number; start: number }>;
 export const procIdentity: Read<ProcIdentity> = object((f) => ({ pid: f.get('pid', positive), start: f.get('start', nat) }));
 
+/** watch.lease.json: one actionable watcher, identified across PID reuse and host boots. */
+export type WatchLease = ProcIdentity & Readonly<{
+  v: SchemaVersion; bootId: BootId; executorVersion: string; arc: ArcId;
+  startedAt: IsoTime; lastPollAt: IsoTime; lastSeq: number;
+}>;
+export const watchLease: Read<WatchLease> = object((f) => ({
+  v: f.get('v', version), pid: f.get('pid', positive), start: f.get('start', nat),
+  bootId: f.get('bootId', bootId), executorVersion: f.get('executorVersion', text), arc: f.get('arc', arcId),
+  startedAt: f.get('startedAt', isoTime), lastPollAt: f.get('lastPollAt', isoTime), lastSeq: f.get('lastSeq', nat),
+}));
+
 /**
  * `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. `supersede` (paid M4b run 3):
  * a revision changed the plan or vision an in-flight checkpoint call was captured on (src/holistic/checkpoint.ts).
