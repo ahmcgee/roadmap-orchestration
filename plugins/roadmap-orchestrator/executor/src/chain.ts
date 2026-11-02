@@ -19,7 +19,7 @@ import { type RevisionManifest } from './core/records.ts';
 import { Fold } from './core/state.ts';
 import { type AbsPath, absPath } from './core/values.ts';
 import { git, gitCommonDir, refTarget } from './git/git.ts';
-import { snapshotRef, verifySnapshot } from './git/snapshot.ts';
+import { SNAPSHOT_MANIFEST, snapshotRef, verifySnapshot } from './git/snapshot.ts';
 import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT, planInForce } from './input/inforce.ts';
 import { type PlanM1, parsePlan } from './input/plan.ts';
 import { parseRevisionPayload } from './core/events.ts';
@@ -84,9 +84,30 @@ export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
   return { arc, commit, highWater: check.manifest.highWater, events, view: fold, plan, manifest, input };
 }
 
-/** Every arc with a snapshot ref, ascending by id (`refs/roadmap/demo` is the demo's, dev.13: no arc's). */
+// Schema-cut scaffolding (dev.36): an arc a schema-1 executor (dev.32 or earlier) wrote is not adopted, so the cross-arc
+// scans pass over it. Only `v: 1` is passed over; any other mismatch stays loud in the readers. Delete once no repo
+// carries a dev.32 run dir or snapshot.
+const schema1 = (json: string): boolean => (JSON.parse(json) as { v?: unknown }).v === 1;
+
+function schema1RunDir(dir: string): boolean {
+  const line = readFileSync(join(dir, EVENTS_FILE), 'utf8').split('\n', 1)[0]!;
+  try {
+    return line.trim() !== '' && schema1(line);
+  } catch (error) {
+    // A torn or malformed first line is the journal reader's to report (log-corrupt, with its offset).
+    if (error instanceof SyntaxError) return false;
+    throw error;
+  }
+}
+
+const schema1Ref = (repo: AbsPath, ref: string): boolean => schema1(git(repo, ['cat-file', 'blob', `${ref}:${SNAPSHOT_MANIFEST}`]));
+
+/**
+ * Every arc with a snapshot ref, ascending by id (`refs/roadmap/demo` is the demo's, dev.13: no arc's), except a schema-1
+ * one.
+ */
 export function arcsWithRefs(repo: AbsPath): readonly ArcId[] {
-  return git(repo, ['for-each-ref', '--format=%(refname)', 'refs/roadmap/']).split('\n').filter((l) => l !== '' && l !== DEMO_REF)
+  return git(repo, ['for-each-ref', '--format=%(refname)', 'refs/roadmap/']).split('\n').filter((l) => l !== '' && l !== DEMO_REF && !schema1Ref(repo, l))
     .map((r) => arcId(r.slice('refs/roadmap/'.length), r)).sort();
 }
 
@@ -181,7 +202,7 @@ export function successorOf(repo: AbsPath, arc: ArcId): ArcId | null {
   const read = new Set<ArcId>([arc]);
   for (const name of existsSync(runtime) ? readdirSync(runtime).sort() : []) {
     const next = arcId(name, runtime);
-    if (read.has(next) || !existsSync(join(runDir(common, next), EVENTS_FILE))) continue;
+    if (read.has(next) || !existsSync(join(runDir(common, next), EVENTS_FILE)) || schema1RunDir(runDir(common, next))) continue;
     read.add(next);
     const dir = runDir(common, next);
     if (planInForce(dir, readJournal(dir, next, firstPlanSeq(dir)).view)?.plan.chain?.previousArc === arc) return next;
