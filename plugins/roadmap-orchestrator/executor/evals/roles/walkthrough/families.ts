@@ -280,7 +280,7 @@ const W11: Family = {
         '    io.err(USAGE);',
         '    return 2;',
         '  }',
-        '  const command = COMMANDS[argv[0]];',
+        '  const command = Object.hasOwn(COMMANDS, argv[0]) ? COMMANDS[argv[0]] : undefined;',
         '  if (command === undefined) {',
         '    const near = closest(argv[0], Object.keys(COMMANDS));',
         '    throw new UsageError(`unknown command "${argv[0]}"; ${near === null ? \'run\' : `did you mean "${near}"? Run`} "ledgerly --help" for every command.`);',

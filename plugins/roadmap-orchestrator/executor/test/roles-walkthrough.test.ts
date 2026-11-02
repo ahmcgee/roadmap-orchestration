@@ -277,11 +277,29 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.equal(fail.status, 3, label);
         assert.equal(fail.stdout, '');
         assert.match(ok.stderr, at.command === 'import' ? /^Reading .*\nChecked \d+ rows\n$/ : /^Reading the ledger in var\/ledger\n\d+ entries for platform in /, `${label}: progress on stderr`);
+        if (at.command === 'import') {
+          for (const [text, fix] of [
+            ['team,vendor\n', /header must be/],
+            [`team,month,vendor,amount,note\nplatform,${month},Hetzner\n`, /add the missing fields/],
+            [`team,month,vendor,amount,note\nplatform,${month},Hetzner,1,note,extra\n`, /remove the extra commas/],
+          ] as const) {
+            writeFileSync(bad, text);
+            const malformed = cli(u, ['import', 'bad.csv', '--data', 'var/ledger']);
+            assert.equal(malformed.status, 3, label);
+            assert.equal(malformed.stdout, '');
+            assert.match(malformed.stderr, fix);
+            assert.match(malformed.stderr, /Nothing was imported/);
+          }
+          const directory = cli(u, ['import', 'samples', '--data', 'var/ledger']);
+          assert.equal(directory.status, 3, label);
+          assert.match(directory.stderr, /samples is a directory; pass a CSV file/);
+          assert.doesNotMatch(directory.stderr, /\n\s+at /);
+        }
       }
       return;
     }
     case 'W9': {
-      const create = async (entry: Record<string, string | number>): Promise<[Response, Record<string, unknown>]> => {
+      const create = async (entry: Record<string, unknown>): Promise<[Response, Record<string, unknown>]> => {
         const r = await fetch(`${u.base}/api/v1/entries`, {
           method: 'POST', headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}`, 'content-type': 'application/json' },
           body: JSON.stringify(entry),
@@ -293,7 +311,10 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
       const [ru, unknown] = await create({ team: 'platform', month, vendor: 'Hetzner', amount: '12.50', notes: 'runners', currency: 'EUR' });
       // A JSON number amount is refused (amounts are decimal strings, never floats), never recorded.
       const [rn, numeric] = await create({ team: 'platform', month, vendor: 'Hetzner', amount: 12.5 });
+      // JSON containers must not be coerced to ledger text.
+      const [rt, typed] = await create({ team: 'platform', month, vendor: { a: 1 }, amount: '12.50', note: ['x'] });
       if (plant) {
+        assert.equal(rt.status, 200, label);
         assert.equal(r.status, 200, label);
         assert.equal(typeof body['error'], 'string');
         assert.equal(ru.status, 200, label);
@@ -301,6 +322,9 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.equal(rn.status, 200, label);
         assert.match(String(numeric['error']), /Amount must be a decimal string/);
       } else {
+        assert.equal(rt.status, 422, label);
+        assert.equal(typed['type'], 'https://ledgerly.dev/problems/invalid-entry');
+        assert.deepEqual((typed['invalid_params'] as { name: string }[]).map((x) => x.name), ['vendor', 'note']);
         assert.equal(r.status, 422, label);
         assert.equal(r.headers.get('content-type'), 'application/problem+json');
         assert.equal(body['type'], 'https://ledgerly.dev/problems/invalid-entry');
@@ -320,6 +344,20 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
       assert.equal(r.status, 0, label);
       if (plant) assert.equal(r.stderr, '', `${label}: the unknown key passes in silence`);
       else assert.match(r.stderr, new RegExp(`^warning: edited\\.conf:${line}: unknown key "alerts_at" in \\[team\\.platform\\], ignored; did you mean "alert_at"\\?`), label);
+      // Ordinary hand-edit mistakes must not silently replace already configured values.
+      for (const [text, key, line] of [
+        ['currency = EUR\ncurrency = USD\n[team.platform]\nbudget = 100\n', 'currency', 2],
+        ['[team.platform]\nbudget = 100\nbudget = 200\n', 'budget', 3],
+      ] as const) {
+        writeFileSync(join(u.dir, 'duplicate.conf'), text);
+        const duplicate = cli(u, ['config', 'check', '--file', 'duplicate.conf']);
+        assert.equal(duplicate.status, 3, label);
+        assert.match(duplicate.stderr, new RegExp(`duplicate\\.conf:${line}: key "${key}" is defined twice; keep one`));
+      }
+      writeFileSync(join(u.dir, 'dashed.conf'), conf.replace('alerts_at', 'alert-at'));
+      const dashed = cli(u, ['config', 'check', '--file', 'dashed.conf']);
+      assert.equal(dashed.status, 0, label);
+      if (!plant) assert.match(dashed.stderr, /unknown key "alert-at".*did you mean "alert_at"/);
       return;
     }
     case 'W11': {
@@ -336,6 +374,13 @@ async function checkSlot(u: Up, s: SlotKey): Promise<void> {
         assert.equal(typo.status, 2);
         assert.equal(typo.stdout, '');
         assert.match(typo.stderr, /unknown command "reprot"; did you mean "report"\?/);
+        for (const name of ['constructor', 'toString', '__proto__']) {
+          const inherited = cli(u, [name]);
+          assert.equal(inherited.status, 2, label);
+          assert.equal(inherited.stdout, '');
+          assert.match(inherited.stderr, /unknown command/);
+          assert.doesNotMatch(inherited.stderr, /TypeError|\n\s+at /);
+        }
         const far = cli(u, ['xyz']);
         assert.equal(far.status, 2);
         assert.equal(far.stderr, 'ledgerly: unknown command "xyz"; run "ledgerly --help" for every command.\n', label);
@@ -434,6 +479,16 @@ test('roles.walk-plants: on every dev seed\'s running product, each slot does wh
       const strayBody = (await stray.json()) as { type: string; invalid_params: { name: string }[] };
       assert.equal(strayBody.type, 'https://ledgerly.dev/problems/invalid-query');
       assert.deepEqual(strayBody.invalid_params.map((x) => x.name), ['mnth', 'colour']);
+      const teamsQuery = await fetch(`${u.base}/api/v1/teams?foo=1&colour=red`, { headers: { ...CLOSE, authorization: `Bearer ${u.env['LEDGERLY_API_TOKEN']}` } });
+      assert.equal(teamsQuery.status, 400, `${cell.id}: unknown teams list parameters`);
+      assert.equal(teamsQuery.headers.get('content-type'), 'application/problem+json');
+      const teamsProblem = await teamsQuery.json() as { type: string; invalid_params: { name: string }[] };
+      assert.equal(teamsProblem.type, 'https://ledgerly.dev/problems/invalid-query');
+      assert.deepEqual(teamsProblem.invalid_params.map((x) => x.name), ['foo', 'colour']);
+      const repeated = cli(u, ['report', '--team', 'platform', '--team', u.f.data.teams[1]!.id, '--json', '--data', 'var/ledger']);
+      assert.equal(repeated.status, 2, `${cell.id}: repeated team option`);
+      assert.equal(repeated.stdout, '');
+      assert.match(repeated.stderr, /--team is given twice; keep one --team option/);
       for (const asset of ['/static/app.css', '/static/tokens.css', '/static/print.css', '/static/favicon.svg', '/favicon.ico']) assert.equal((await get(u, asset)).status, 200, asset);
       // The other two journeys' last steps go where they should.
       const w1 = u.f.slots.find((s) => s.family === 'W1')!;

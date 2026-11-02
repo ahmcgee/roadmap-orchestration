@@ -88,10 +88,10 @@ async function createEntry(req, res, url, { config, dir }) {
   // A field the API does not know is refused with the others, never dropped (design/api.md, "Errors").
   const unknown = Object.keys(body.value).filter((k) => !ENTRY_FIELDS.includes(k))
     .map((k) => ({ field: k, message: `${k} is not an entry field; send only team, month, vendor, amount and note.` }));
-  // Amounts are decimal strings, never JSON numbers (design/api.md, "Style"): a number amount is refused, not read.
-  const mistyped = body.value.amount === undefined || typeof body.value.amount === 'string' ? []
-    : [{ field: 'amount', message: 'Amount must be a decimal string, like "120.50", not a JSON number.' }];
-  const valid = checkEntry(body.value, config);
+  // API fields are strings; refuse other JSON types rather than coercing them into ledger text.
+  const mistyped = ENTRY_FIELDS.filter((field) => Object.hasOwn(body.value, field) && typeof body.value[field] !== 'string')
+    .map((field) => ({ field, message: field === 'amount' ? 'Amount must be a decimal string, like "120.50", not a JSON number.' : `${field} must be a string; send text, not a JSON object, array, number or null.` }));
+  const valid = checkEntry(Object.fromEntries(Object.entries(body.value).filter(([, value]) => typeof value === 'string')), config);
   const refused = [...mistyped, ...unknown];
   const checked = refused.length === 0 ? valid
     : { ok: false, errors: [...(valid.ok ? [] : valid.errors.filter((e) => !mistyped.some((m) => m.field === e.field))), ...refused] };
@@ -118,6 +118,8 @@ export async function api(req, res, url, ctx) {
     return problem(res, 401, 'unauthorized', 'Missing or wrong API token', 'Send the header Authorization: Bearer <token>, with the token the server was started with (LEDGERLY_API_TOKEN).', path);
   }
   if (path === '/api/v1/teams' && req.method === 'GET') {
+    const invalid = [...new Set(url.searchParams.keys())].map((name) => ({ name, reason: `${name} is not a teams list parameter; GET /api/v1/teams takes no parameters.` }));
+    if (invalid.length > 0) return problem(res, 400, 'invalid-query', 'The query is not valid', 'Remove the parameters listed in invalid_params and send the request again.', path, { invalid_params: invalid });
     return json(res, 200, { teams: ctx.config.teams.map((t) => ({ id: t.id, name: t.name, budget: plainAmount(t.budget), alert_at: t.alertAt })) });
   }
   if (path === '/api/v1/entries' && req.method === 'GET') return listEntries(res, url, ctx);

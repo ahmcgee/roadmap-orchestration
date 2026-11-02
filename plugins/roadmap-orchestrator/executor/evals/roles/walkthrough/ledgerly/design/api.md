@@ -7,7 +7,7 @@
 - Resources are plural nouns (`/entries`, `/teams`); ids are the ledger's (`e-0042`). Field names are `snake_case`.
 - Standard methods only: `GET /entries` lists, `GET /entries/<id>` reads, `POST /entries` creates. Entries are never
   changed or deleted through the API.
-- Amounts are decimal strings with two places (`"1200.00"`), never floats: a create sending a JSON number amount is
+- Entry fields are strings; `note` is optional. Amounts are decimal strings with two places (`"1200.00"`), never floats: a create sending a JSON number amount is
   refused as `invalid-entry`, naming `amount`. Months are `"YYYY-MM"`.
 - Lists are paginated with an opaque cursor: `limit` (1 to 100, default 20) and `page_token`; the response carries
   `next_page_token`, null on the last page. Filters: `team`, `month`.
@@ -27,8 +27,8 @@ switch on `type`, never on `detail`. Machine-readable specifics go in extension 
 bad field or parameter in `invalid_params`, `[{ "name", "reason" }]`, all of them in one response. Nothing sent is
 ignored: an entry body carrying a field the API does not know (anything but `team`, `month`, `vendor`, `amount` and
 `note`) is refused as `invalid-entry`, each unknown field named in `invalid_params` beside any wrong ones, and a list
-query carrying a parameter the list does not know (anything but `team`, `month`, `limit` and `page_token`) is refused
-as `invalid-query` the same way.
+query carrying a parameter the list does not know (`/entries` accepts `team`, `month`, `limit` and `page_token`;
+`/teams` takes no query parameters) is refused as `invalid-query` the same way.
 
 | `type` (under `https://ledgerly.dev/problems/`) | Status | When |
 |---|---|---|

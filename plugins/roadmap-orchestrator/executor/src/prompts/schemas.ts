@@ -284,13 +284,13 @@ export type GateOutput =
 
 const GATE_FINDING_FIELDS = {
   evidence: sDescribe(sArr(S_TEXT), 'Each finding requires at least one experiment or an evidence entry containing path:line (a colon followed by digits).'), severity: { ...sEnum(FINDING_SEVERITIES_DEV17) as object, description: 'An approve decision forbids blocking severity; use revise or escalate for blocking findings.' }, path: sNullable(S_STR), text: S_STR, contractRef: sNullable(S_STR), experiments: sArr(sObj({ command: S_STR, output: S_STR })),
-  debt: sNullable(sObj({ drag: S_STR })), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sDescribe(sNullable(S_REVIEW_ID), 'Must name a finding in this unit ledger. A settled finding may be raised as blocking again only if its anchor file blob changed.'), hunk: sNullable(sObj({ path: S_STR, line: S_LINE })),
+  debt: sDescribe(sNullable(sObj({ drag: S_STR })), 'Substantive drag on future work only, never test nitpicks or status remarks.'), defect: sNullable(sEnum(DEFECT_CATEGORIES)), reraises: sDescribe(sNullable(S_REVIEW_ID), 'Must name a finding in this unit ledger. A settled finding may be raised as blocking again only if its anchor file blob changed.'), hunk: sNullable(sObj({ path: S_STR, line: S_LINE })),
 } as const;
 const GATE_FIELDS = {
   standing: sDescribe(sArr(sObj({id: S_TEXT, disposition: sEnum(['addressed', 'rebutted']), evidence: sArr(S_TEXT, 1)})), 'Only supplied standing-item IDs, each at most once; approval requires an evidence-backed response to every standing item.'),
   decision: sEnum(GATE_DECISIONS),
   ordering: { anyOf: [sObj({ blockers: sUnique(sArr(S_SLUG, 1)) }), { type: 'null' }], description: 'Non-null only with decision escalate, solely because other units must merge first: name those unit IDs in blockers. Otherwise null. Code wakes the parked gate after all blockers merge.' },
-  findings: sArr(sObj(GATE_FINDING_FIELDS)),
+  findings: sDescribe(sArr(sObj(GATE_FINDING_FIELDS)), 'In pre-build mode, each finding becomes a standing item enforced by the gate until addressed or rebutted with evidence. Raise only a concrete defect in a plausible implementation, a spec/contract conflict, or a witness gap admitting a plausible wrong build; contrived adversarial mutants and optional extra assertions are not findings. Return an empty list for sound work.'),
   directives: { type: 'array', items: S_STR, description: 'Nonempty only with decision revise, which requires at least one directive. Must be empty for approve or escalate.' },
   reasons: sArr(S_STR, 1),
   premises: S_PREMISES,
@@ -563,7 +563,7 @@ const WALK_AGAINST_SCHEMAS = {
 const walkFindingSchema = (kind: WalkFindingClass): Schema => sObj({
   class: sDescribe(sEnum([kind]), kind === 'breaks'
     ? 'A defect whose later fix forces rework of dependents: an observed failure of the product action that prevents completing the journey, a wrong interface contract consumers build on, or a measured violation of an explicitly declared quality floor or active non-negotiable clause. Copy, visuals, diagnostics and stale docs against a correct interface do not block.'
-    : 'An observed gap against a design reference or active vision clause whose repair changes nothing dependents build on: copy, visuals, layout, help/error wording, CI/log diagnostics, stale docs against a correct interface, or a console error with working actions. Sanctioned variants and choices left open are not findings.'), journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'),
+    : 'An observed gap against a design reference or active vision clause whose repair changes nothing dependents build on: copy, visuals, layout, help/error wording, CI/log diagnostics, stale docs against a correct interface, or a console error with working actions. Sanctioned variants and choices left open are not findings.'), journey: sDescribe(sNumbered('J'), 'Must be a reported declared journey; the defect must occur within its setup and task, judged against its supplied references or active vision clauses. Extra edge cases outside the journeys are not findings.'),
   evidence: {...S_EVIDENCE as object, minItems: 1}, claim: S_STR, cause: S_STR,
   against: {anyOf: WALK_AGAINST[kind].map((type) => WALK_AGAINST_SCHEMAS[type]), description: 'Contract/design paths must lie inside a supplied milestone reference. Vision clauses must be active; a vision floor must be non-negotiable.'},
   paths: sUnique(sArr(S_REPO_PATH)),
@@ -571,7 +571,7 @@ const walkFindingSchema = (kind: WalkFindingClass): Schema => sObj({
 export const WALKTHROUGH_SCHEMA: Schema = sObj({
   final: S_FINAL,
   journeys: sDescribe(sArr(sObj({ journey: sNumbered('J'), outcome: sDescribe(sEnum(WALK_JOURNEY_OUTCOMES), 'A blocked journey requires at least one breaks finding for the same journey.'), evidence: S_EVIDENCE, note: S_STR }), 1), 'Report every supplied milestone journey exactly once, and no other journey.'),
-  findings: sArr({anyOf: WALK_FINDING_CLASSES.map(walkFindingSchema)}),
+  findings: sDescribe(sArr({anyOf: WALK_FINDING_CLASSES.map(walkFindingSchema)}), 'Observed defects within the declared journeys and their supplied references only. Sanctioned behavior, unspecified choices and edge cases outside the journeys are not findings; an empty list is valid.'),
   polish: sDescribe(sArr(sObj({ journey: sDescribe(sNumbered('J'), 'Must be a journey reported in journeys.'), evidence: {...S_EVIDENCE as object, minItems: 1}, text: S_STR, unit: sObj({ id: sDescribe(S_SLUG, 'A new unit ID, absent from the plan and unique among proposals.'), systems: sDescribe(sUnique(sArr(S_SLUG, 1)), 'Entries must be unique and cover every milestone reference through the supplied systems map.'), spec: sDescribe(S_FULL_SPEC, 'Must name this proposal unit ID and revision 1.') }) })), 'Each proposal must name a different new unit.'),
   premises: S_PREMISES,
   reasons: sArr(S_STR),

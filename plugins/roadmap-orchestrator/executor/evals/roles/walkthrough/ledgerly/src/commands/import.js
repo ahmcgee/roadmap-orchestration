@@ -24,6 +24,7 @@ function readText(path) {
     return readFileSync(path, 'utf8');
   } catch (e) {
     if (e.code === 'ENOENT') throw new InputError(`no file ${path}; check the path, relative to ${process.cwd()}`);
+    if (e.code === 'EISDIR') throw new InputError(`${path} is a directory; pass a CSV file, for example samples/2026-09.csv. Nothing was imported.`);
     throw e;
   }
 }

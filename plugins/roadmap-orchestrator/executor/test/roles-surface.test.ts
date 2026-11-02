@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {runInNewContext} from 'node:vm';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {DEV} from '../evals/roles/surface/dev.ts';
@@ -42,4 +43,23 @@ test('roles.live-surface-triggers: verifier gate/pre-build and campaign files tr
   }
   assert.ok(triggeredRoles(['src/prompts/campaignAudit/claude-opus-5-5.ts']).includes('campaignAudit'));
   assert.deepEqual(triggeredRoles(['src/prompts/walkthrough/deleted.ts', 'src/prompts/polishJudge/deleted.ts']), []);
+});
+
+test('roles.pre-build-defects: the sign proposal loses a supported sign and the secret proposal persists credentials before validation', () => {
+  const sign = DEV.find((cell) => cell.id === 'sign')!;
+  const mul = runInNewContext(`${sign.code.replace('export ', '')}; mul`) as (a: number, b: number) => number;
+  assert.equal(mul(2, 3), 6, 'the positive witness misses the defect');
+  assert.notEqual(mul(-2, 3), -6, 'the proposed implementation contradicts the signed contract');
+  const secret = DEV.find((cell) => cell.id === 'secret')!;
+  const events: string[] = [];
+  const authenticate = runInNewContext(`${secret.code.replace('export ', '')}; authenticate`, {
+    audit: { log: (token: string) => events.push(`persisted:${token}`) },
+    validate: () => { events.push('validated'); return false; },
+  }) as (token: string) => boolean;
+  assert.equal(authenticate('fixture-token'), false);
+  assert.deepEqual(events, ['persisted:fixture-token', 'validated']);
+  for (const cell of [sign, secret]) {
+    assert.equal(gradeSurface('pre-build', cell.defect, referenceAnswer('pre-build', false)), false);
+    assert.equal(gradeSurface('pre-build', cell.defect, referenceAnswer('pre-build', true)), true);
+  }
 });

@@ -8,7 +8,7 @@ export function parseCsv(text, file) {
   const lines = text.split(/\r?\n/);
   const header = lines[0].split(',').map((h) => h.trim()).join(',');
   if (header !== CSV_COLUMNS.join(',')) {
-    throw new InputError(`${file}:1: the header must be "${CSV_COLUMNS.join(',')}", got "${lines[0]}"`);
+    throw new InputError(`${file}:1: the header must be "${CSV_COLUMNS.join(',')}", got "${lines[0]}". Nothing was imported.`);
   }
   const rows = [];
   lines.slice(1).forEach((raw, i) => {
@@ -16,10 +16,10 @@ export function parseCsv(text, file) {
     if (raw.trim() === '') return;
     const cells = raw.split(',').map((c) => c.trim());
     if (cells.length !== CSV_COLUMNS.length) {
-      throw new InputError(`${file}:${line}: expected ${CSV_COLUMNS.length} fields (${CSV_COLUMNS.join(', ')}), got ${cells.length}; a note cannot contain a comma`);
+      throw new InputError(`${file}:${line}: expected ${CSV_COLUMNS.length} fields (${CSV_COLUMNS.join(', ')}), got ${cells.length}; ${cells.length < CSV_COLUMNS.length ? 'add the missing fields, keeping an empty note as a trailing comma' : 'fields cannot contain commas; remove the extra commas'}. Nothing was imported.`);
     }
     rows.push({ line, ...Object.fromEntries(CSV_COLUMNS.map((c, k) => [c, cells[k]])) });
   });
-  if (rows.length === 0) throw new InputError(`${file}: no entries after the header`);
+  if (rows.length === 0) throw new InputError(`${file}: no entries after the header; add an entry row. Nothing was imported.`);
   return rows;
 }
