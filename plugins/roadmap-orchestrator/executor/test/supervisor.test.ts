@@ -5,13 +5,14 @@
 // supervisor.crash-window-persisted, supervisor.ready-generation, supervisor.control-only-restart,
 // supervisor.heartbeat-stale.
 import assert from 'node:assert/strict';
-import { existsSync,mkdirSync,readFileSync,writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync,mkdirSync,readFileSync,readdirSync,renameSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after,describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pendingCommandIds,readCommand,readReceipt,terminalReceipt } from '../src/commands/queue.ts';
-import { isAlive } from '../src/contain/proc.ts';
-import { needsUserRecord } from '../src/core/records.ts';
+import { identityOf,isAlive,readBootId } from '../src/contain/proc.ts';
+import { type ProcIdentity,needsUserRecord } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { EXIT_REASON_FILE } from '../src/executor.ts';
 import { type ExecutorEndRecord,HEARTBEAT_STALE_MS,executorLogs,failedPath,readyPath } from '../src/supervisor.ts';
@@ -45,6 +46,140 @@ async function startPaused(r: ExecRun): Promise<number> {
   await idle(r, generation);
   return generation;
 }
+
+/** dev.32 host shapes, verified against release commit 7a94a4d6 (the tag is not in this checkout). */
+function legacyHostFiles(r: ExecRun, supervisor: ProcIdentity): Readonly<Record<string, unknown>> {
+  return {
+    'host.lock': { v: 1, nonce: '1'.repeat(32), generation: 7, bootId: readBootId(), supervisor, arc: r.arc, runDir: r.runDir, repo: r.repo },
+    'host.owner.json': { v: 1, nonce: '1'.repeat(32), generation: 7, executor: null },
+    'supervisor.state.json': { v: 1, generation: 7, crashes: Array.from({ length: 3 }, () => new Date().toISOString()), heartbeatStaleMs: HEARTBEAT_STALE_MS },
+  };
+}
+
+function seedHost(r: ExecRun, files: Readonly<Record<string, unknown>>): void {
+  for (const [name, record] of Object.entries(files)) writeFileSync(hostFile(r, name), JSON.stringify(record));
+}
+
+function supervisorErrors(r: ExecRun): string {
+  return readdirSync(r.hostDir).filter((n) => /^supervisor\.[0-9a-f]{16}\.err$/.test(n))
+    .map((n) => readFileSync(hostFile(r, n), 'utf8')).join('\n');
+}
+
+describe('supervisor.schema1-host', () => {
+  for (const name of ['host.lock', 'host.recovery.lock']) {
+    test(`a live dev.32 ${name} refuses cleanly before claiming or renaming`, T, async (t) => {
+      const r = setupExec(t, { steps: [] });
+      const holder = spawn('sleep', ['300'], { stdio: 'ignore' });
+      const exited = new Promise<void>((resolve) => holder.once('exit', () => resolve()));
+      assert.ok(holder.pid !== undefined);
+      const { pid, start } = identityOf(holder.pid);
+      try {
+        const files = { ...legacyHostFiles(r, { pid, start }) };
+        if (name === 'host.recovery.lock') {
+          delete files['host.lock'];
+          files[name] = { v: 1, bootId: readBootId(), holder: { pid, start }, nonce: '2'.repeat(32), at: new Date().toISOString() };
+        }
+        seedHost(r, files);
+        const exit = await startCli(r);
+        assert.equal(exit.code, 75, exit.stdout + exit.stderr);
+        const reason = reasonOf(exit);
+        assert.equal(reason.kind, 'refused');
+        const rejection = reason.kind === 'refused' ? reason.rejections[0] : assert.fail();
+        assert.equal(rejection?.kind, 'previous-schema-host-busy');
+        assert.ok(rejection?.kind === 'previous-schema-host-busy');
+        assert.equal(rejection.pid, pid);
+        assert.equal(rejection.path, hostFile(r, name));
+        assert.match(rejection.detail, /previous-schema executor owns the host.*own `roadmap stop`/);
+        for (const [file, record] of Object.entries(files)) assert.equal(readFileSync(hostFile(r, file), 'utf8'), JSON.stringify(record));
+        assert.equal(readdirSync(r.hostDir).some((n) => n.includes('.schema1')), false);
+        assert.equal(existsSync(hostFile(r, 'host.lock')), name === 'host.lock', 'no new v2 claim');
+        assert.equal(existsSync(hostFile(r, 'host.generation')), false, 'no generation issued');
+        assert.equal(supervisorErrors(r), '', 'no exception or rename notice');
+      } finally {
+        holder.kill('SIGKILL');
+        await exited;
+      }
+    });
+  }
+
+  test('a dead v1 claim, owner and crash window are renamed with notices and a real start succeeds', T, async (t) => {
+    const r = setupExec(t, { steps: smokes(1) });
+    const holder = spawn('sleep', ['300'], { stdio: 'ignore' });
+    const exited = new Promise<void>((resolve) => holder.once('exit', () => resolve()));
+    assert.ok(holder.pid !== undefined);
+    const { pid, start } = identityOf(holder.pid);
+    holder.kill('SIGKILL');
+    await exited;
+    const files = legacyHostFiles(r, { pid, start });
+    seedHost(r, files);
+    writeFileSync(hostFile(r, 'host.generation'), '7\n');
+    const generation = await startPaused(r);
+    assert.equal(generation, 8);
+    assert.equal(claimOf(r)?.v, 2);
+    assert.deepEqual(stateOf(r).crashes, [], 'the dev.32 crash window was retired');
+    const notices = supervisorErrors(r).trim().split('\n');
+    assert.equal(notices.length, Object.keys(files).length);
+    for (const [name, record] of Object.entries(files)) {
+      assert.equal(readFileSync(hostFile(r, `${name}.schema1`), 'utf8'), JSON.stringify(record));
+      assert.ok(notices.includes(`schema-1 host residue renamed: ${hostFile(r, name)} -> ${hostFile(r, `${name}.schema1`)}`));
+    }
+  });
+
+  test('a schema-1 crash window alone is renamed and start succeeds (atlas2 case 2)', T, async (t) => {
+    const r = setupExec(t, { steps: smokes(1) });
+    const name = 'supervisor.state.json';
+    const record = legacyHostFiles(r, { pid: 1, start: 0 })[name];
+    seedHost(r, { [name]: record });
+    const generation = await startPaused(r);
+    assert.equal(generation, 1);
+    assert.equal(readFileSync(hostFile(r, `${name}.schema1`), 'utf8'), JSON.stringify(record));
+    assert.deepEqual(stateOf(r).crashes, []);
+    assert.equal(supervisorErrors(r), `schema-1 host residue renamed: ${hostFile(r, name)} -> ${hostFile(r, `${name}.schema1`)}\n`);
+  });
+
+  test('schema-1 residue history refuses with exit 78 before claim and preserves every file', T, async (t) => {
+    const r = setupExec(t, { steps: [] });
+    const index = `${JSON.stringify({ v: 1, seq: 2, type: 'compacted', archive: 'residues.archive.1.01234567.jsonl' })}\n`;
+    const archive = `${JSON.stringify({ v: 1, seq: 1, type: 'residue' })}\n`;
+    writeFileSync(hostFile(r, 'residues.jsonl'), index);
+    writeFileSync(hostFile(r, 'residues.archive.1.01234567.jsonl'), archive);
+    seedHost(r, { 'supervisor.state.json': { v: 1 } });
+    const exit = await startCli(r);
+    assert.equal(exit.code, 78, exit.stdout + exit.stderr);
+    const reason = reasonOf(exit);
+    assert.ok(reason.kind === 'refused');
+    assert.equal(reason.rejections[0]?.kind, 'schema-version');
+    assert.match(exit.stdout, /dev\.32.*disposition/);
+    assert.equal(readFileSync(hostFile(r, 'residues.jsonl'), 'utf8'), index);
+    assert.equal(readFileSync(hostFile(r, 'residues.archive.1.01234567.jsonl'), 'utf8'), archive);
+    assert.equal(existsSync(hostFile(r, 'supervisor.state.json')), true);
+    assert.equal(readdirSync(r.hostDir).some((n) => n.includes('.schema1')), false);
+    assert.equal(existsSync(hostFile(r, 'host.lock')), false);
+    assert.equal(existsSync(hostFile(r, 'host.generation')), false);
+  });
+});
+
+test('supervisor.post-claim-throw: the dead v2 lock is taken over cleanly on the next start after the cause is removed', T, async (t) => {
+  const r = setupExec(t, { steps: smokes(1) });
+  await pausedFromTheStart(r);
+  seedHost(r, { 'supervisor.state.json': { v: 2, generation: 1, crashes: 'invalid', heartbeatStaleMs: HEARTBEAT_STALE_MS } });
+  const first = await startCli(r);
+  assert.equal(first.code, 70, first.stdout + first.stderr);
+  assert.equal(startLine(first).kind, 'failed');
+  assert.match(supervisorErrors(r), /SchemaError: supervisor\.state\.json\.crashes/);
+  const dead = claimOf(r);
+  assert.ok(dead !== null && !isAlive(dead.supervisor), 'the post-claim throw left a v2 claim of a dead pid');
+  assert.equal(ownerOf(r)?.executor, null);
+  assert.equal(existsSync(hostFile(r, 'host.recovery.lock')), false);
+  renameSync(hostFile(r, 'supervisor.state.json'), hostFile(r, 'supervisor.state.json.broken'));
+  const second = startLine(await startCli(r));
+  assert.equal(second.kind, 'ready');
+  const generation = second.generation as number;
+  assert.ok(generation > dead.generation);
+  await idle(r, generation);
+  assert.equal(claimOf(r)?.v, 2);
+  assert.notEqual(supervisorOf(r).pid, dead.supervisor.pid);
+});
 
 describe('supervisor.intentional-exit', () => {
   test('complete is not a crash: the executor exits first, then the lock is released, then the supervisor exits', T, async (t) => {

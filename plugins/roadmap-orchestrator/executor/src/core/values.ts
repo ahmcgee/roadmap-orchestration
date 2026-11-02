@@ -36,10 +36,31 @@ export type RepoPattern = Brand<string, 'RepoPattern'>;
 export const repoPattern = checked('RepoPattern', 'relative glob, no leading /, no .. segments', (s) =>
   s.length > 0 && !s.startsWith('/') && !s.includes('\0') && s.split('/').every((seg) => seg !== '..'));
 
+const GLOB_META = /[*?[\]{}()!+@\\]/;
+const PREFIXES = new Map<string, Readonly<{ glob: boolean; prefix: string }>>();
+
+/**
+ * What every path a pattern matches starts with, slashes collapsed as `matchesGlob` collapses them: a glob's literal
+ * directory prefix, or a plain pattern's whole text. `matchesGlob` compiles its pattern on every call, so a large systems
+ * map classifying a whole tree costs minutes; the prefix rules most pairs out without compiling.
+ */
+function prefixOf(p: string): Readonly<{ glob: boolean; prefix: string }> {
+  const known = PREFIXES.get(p);
+  if (known !== undefined) return known;
+  const meta = p.search(GLOB_META);
+  const head = (meta < 0 ? p : p.slice(0, meta)).replace(/\/+/g, '/');
+  const out = meta < 0 ? { glob: false, prefix: head } : { glob: true, prefix: head.slice(0, head.lastIndexOf('/') + 1) };
+  PREFIXES.set(p, out);
+  return out;
+}
+
 /** `pattern` as a glob, or as a directory prefix (`src` and `src/` both cover `src/a/b`). */
 export function matchesPattern(path: RepoPath, pattern: RepoPattern): boolean {
   const p = pattern.replace(/\/+$/, '');
-  return path === p || path.startsWith(`${p}/`) || matchesGlob(path, p) || matchesGlob(path, `${p}/**`);
+  if (path === p || path.startsWith(`${p}/`)) return true;
+  const { glob, prefix } = prefixOf(p);
+  if (!glob) return path === prefix || path.startsWith(`${prefix}/`);
+  return path.startsWith(prefix) && (matchesGlob(path, p) || matchesGlob(path, `${p}/**`));
 }
 
 // git check-ref-format rules, applied per component.

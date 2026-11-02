@@ -679,7 +679,8 @@ or settled ids remain history, never reusable authoring slots.
 
 ## Startup rejection table
 
-`src/preflight/startup.ts` owns the discriminated rows. All refuse with **78**, except live `host-busy` (**75**).
+`src/preflight/startup.ts` owns the discriminated rows. All refuse with **78**, except live `host-busy` and
+`previous-schema-host-busy` (**75**).
 Exit 78 writes `<runDir>/status.rejection.json:{v,at,rejections}` and `exit.reason.json`; no work is admitted.
 Schema compatibility is checked before host claim/recovery. Checks stop at the first refusing group, retaining every
 row in that group (`src/preflight/checks.ts`).
@@ -693,6 +694,7 @@ row in that group (`src/preflight/checks.ts`).
 | unsupported-routing | role/tier, layer, class, unit/null, why codex-judgment or no-prompt |
 | undispositioned-residue | residues[] not cleaned/isolated; own-arc residues proved by a readable journal are recoverable |
 | host-busy | holder owner/recovery, arc, generation, pid |
+| previous-schema-host-busy | Schema-1 holder: path, pid, detail (stop with its own executor) |
 | previous-arc-unreconciled | arc, invocations[]; durable host item |
 | recovery-holder-dead / owner-mismatch | pid / identity detail; no guessed takeover |
 | log-corrupt / containment-mode-changed | file/offset/detail / recorded and detected containment modes |
@@ -711,11 +713,18 @@ row in that group (`src/preflight/checks.ts`).
 `/var/tmp/roadmap/` (parameterized in tests) contains `host.lock`, `host.owner.json`, `host.generation`,
 `host.recovery.lock`, `handshake.<generation>`, `residues.jsonl` and its compaction archives,
 `supervisor.state.json`, `supervisor.ready.<generation>` / `supervisor.failed.<generation>`,
-`executor.<generation>.out`, `.err`, `.exit.json`, supervisor stdout/stderr logs and `demo.json`.
+`executor.<generation>.out`, `.err`, `.exit.json`, supervisor stdout/stderr logs, `exit.reason.json` and `demo.json`.
 Generation/owner identity guards stale files. Supervisor crash history survives restarts; three crashes/hour stop it.
 
+Temporary dev.32/schema-1 handling runs before the host claim: a live previous-schema lock/recovery holder (or
+owner executor) refuses startup with exit 75 and must be stopped with its own `roadmap stop`. With no live holder,
+schema-1 host records are renamed to `<name>.schema1` (numeric suffix on collision), with a notice per file.
+Schema-1 residue indexes and archives instead refuse with `schema-version` (exit 78), preserving disposition
+authority: use dev.32 to disposition residues and verify none remain before manually moving that history aside.
+Other unexpected versions still throw. Delete this scaffolding once no host carries dev.32 state.
+
 The arc run directory holds `events.jsonl`, immutable `inputs/`, `inv/`, needs-user/command records, `heartbeat.json`,
-`exit.reason.json`, `status.rejection.json` on refusal, `demo.desired.json` and derived `sched.json`.
+`status.rejection.json` on refusal, `demo.desired.json` and derived `sched.json`.
 `sched.json` exposes task states and arbiter queues; status trusts it only while its recorded executor owns the run.
 It is not journal authority. `src/host/hostdir.ts`, `src/supervisor.ts` and `src/schedule/scheduler.ts` own the layout.
 

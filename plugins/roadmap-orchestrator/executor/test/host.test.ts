@@ -15,6 +15,7 @@ import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { exitCodeFor } from '../src/preflight/startup.ts';
 import { HOST_LOCK, RECOVERY_LOCK, handshakePath, hostPath, openHostDir } from '../src/host/hostdir.ts';
 import { isAlive, selfIdentity } from '../src/host/liveness.ts';
+import { prepareLegacyHost } from '../src/host/legacy.ts';
 import { identityOf, readBootId, statOf } from '../src/contain/proc.ts';
 import {
   type ClaimOutcome, type ClaimRequest, type PreviousArcVerdict, HostLockMismatchError, claimHost, lastGeneration, readClaim,
@@ -98,6 +99,89 @@ describe('liveness', () => {
     await s.kill();
     assert.equal(statOf(s.identity.pid), null);
     assert.equal(isAlive(s.identity, boot), false);
+  });
+});
+
+describe('host.schema1-residue', () => {
+  it('uses boot and start time for old locks, archives all inert host records, and preserves collisions', async () => {
+    const dir = hostDir();
+    const s = sleeper();
+    try {
+      const old = { ...claimRecord({ supervisor: { ...s.identity, start: s.identity.start + 1 }, bootId: readBootId() }), v: 1 };
+      const files: Record<string, unknown> = {
+        'host.lock': old,
+        'host.recovery.lock': { v: 1, bootId: otherBoot(), holder: s.identity },
+        'host.owner.json': { v: 1, executor: null },
+        'supervisor.state.json': { v: 1 }, 'handshake.1': { v: 1 },
+        'supervisor.ready.1': { v: 1 }, 'supervisor.failed.2': { v: 1 },
+        'executor.1.exit.json': { v: 1 }, 'exit.reason.json': { v: 1 },
+        'heartbeat.json': { v: 1 }, 'demo.json': { v: 1 },
+      };
+      for (const [name, record] of Object.entries(files)) atomicJson(hostPath(dir, name), record);
+      writeFileSync(hostPath(dir, 'supervisor.state.json.schema1'), 'first archive');
+      writeFileSync(hostPath(dir, 'supervisor.state.json.schema1.1'), 'second archive');
+      writeFileSync(hostPath(dir, 'host.generation'), '12\n');
+      assert.equal(prepareLegacyHost(dir), null);
+      for (const [name, record] of Object.entries(files)) {
+        assert.equal(existsSync(hostPath(dir, name)), false, name);
+        const suffix = name === 'supervisor.state.json' ? '.schema1.2' : '.schema1';
+        assert.deepEqual(JSON.parse(readFileSync(hostPath(dir, `${name}${suffix}`), 'utf8')), record, name);
+      }
+      assert.equal(readFileSync(hostPath(dir, 'supervisor.state.json.schema1'), 'utf8'), 'first archive');
+      assert.equal(readFileSync(hostPath(dir, 'supervisor.state.json.schema1.1'), 'utf8'), 'second archive');
+      const got = claimed(await claimHost(dir, request(), neverCalled));
+      assert.equal(got.claim.generation, 13);
+    } finally {
+      await s.kill();
+    }
+  });
+
+  it('refuses an orphaned live schema-1 executor before renaming its owner', async () => {
+    const dir = hostDir();
+    const s = sleeper();
+    try {
+      atomicJson(hostPath(dir, 'host.owner.json'), { v: 1, executor: s.identity });
+      const rejection = prepareLegacyHost(dir);
+      assert.equal(rejection?.kind, 'previous-schema-host-busy');
+      assert.equal(exitCodeFor(rejection!), 75);
+      assert.equal(existsSync(hostPath(dir, 'host.owner.json.schema1')), false);
+    } finally {
+      await s.kill();
+    }
+  });
+
+  it('preserves schema-1 residue indexes and archives and refuses before any rename', () => {
+    for (const name of ['residues.jsonl', 'residues.archive.1.01234567.jsonl']) {
+      const dir = hostDir();
+      // Classification must not depend on the retired record body's shape, or on hash-chain validity.
+      const bytes = `${JSON.stringify({ v: 1, seq: 1, type: 'residue' })}\n`;
+      writeFileSync(hostPath(dir, name), bytes);
+      atomicJson(hostPath(dir, 'host.owner.json'), { v: 1, executor: null });
+      const rejection = prepareLegacyHost(dir);
+      assert.equal(rejection?.kind, 'schema-version');
+      assert.equal(exitCodeFor(rejection!), 78);
+      assert.match(rejection?.kind === 'schema-version' ? rejection.detail : '', /dev\.32.*disposition.*move residues\.jsonl/);
+      assert.equal(readFileSync(hostPath(dir, name), 'utf8'), bytes);
+      assert.equal(existsSync(hostPath(dir, 'host.owner.json')), true);
+      assert.equal(readdirSync(dir).some((n) => n.includes('.schema1')), false);
+    }
+  });
+
+  it('leaves current-schema bytes alone; unknown versions and malformed JSON stay loud before any rename', () => {
+    const dir = hostDir();
+    atomicJson(hostPath(dir, 'supervisor.state.json'), { v: 2 });
+    const before = readFileSync(hostPath(dir, 'supervisor.state.json'), 'utf8');
+    assert.equal(prepareLegacyHost(dir), null);
+    assert.equal(readFileSync(hostPath(dir, 'supervisor.state.json'), 'utf8'), before);
+    atomicJson(hostPath(dir, 'host.owner.json'), { v: 1, executor: null });
+    for (const v of [0, 3, '1', null]) {
+      atomicJson(hostPath(dir, 'supervisor.state.json'), { v });
+      assert.throws(() => prepareLegacyHost(dir), /supervisor\.state\.json\.v: expected 2/);
+      assert.equal(existsSync(hostPath(dir, 'host.owner.json')), true);
+    }
+    writeFileSync(hostPath(dir, 'supervisor.state.json'), '{');
+    assert.throws(() => prepareLegacyHost(dir), SyntaxError);
+    assert.equal(existsSync(hostPath(dir, 'host.owner.json')), true);
   });
 });
 
