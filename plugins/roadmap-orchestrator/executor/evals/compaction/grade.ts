@@ -73,7 +73,11 @@ function quoted(text: string, omitLossNotes = false): readonly string[] {
     sentence = (sentence + text.slice(end, m.index)).split(/[.!?]\s+|\n/).at(-1)!;
     const lossAt = [...sentence.matchAll(/\b(?:accept(?:ed)?(?:\s+(?:that|this|the))?\s+loss|gives? up)\b/gi)].at(-1)?.index ?? -1;
     const replacementAt = [...sentence.matchAll(/\b(?:replacement|(?:exact|my) wording)\s*:/gi)].at(-1)?.index ?? -1;
-    if (!omitLossNotes || lossAt <= replacementAt) words.push(m[1] ?? m[2]!);
+    // A rejected quote is not replacement wording. A later approval or explicit
+    // replacement clause can approve even the same quote on its next occurrence.
+    const rejectAt = [...sentence.matchAll(/\breject(?:ed)?\b/gi)].at(-1)?.index ?? -1;
+    const approveAt = [...sentence.matchAll(/\bapprov(?:e|ed)\b/gi)].at(-1)?.index ?? -1;
+    if (!omitLossNotes || (lossAt <= replacementAt && rejectAt <= Math.max(approveAt, replacementAt))) words.push(m[1] ?? m[2]!);
     end = m.index + m[0].length;
   }
   return words;
@@ -82,6 +86,13 @@ function replacementApproved(d: Decision, p: Proposal, line: string): boolean {
   if (/\bno replacement (?:entry )?needed\b/i.test(line)) return /^none\b/i.test(d.replacement);
   const ownerWording = quoted(line, true);
   const replacement = (proposalField(p, 'Replacement') ?? '').split('\n')[0]!;
+  // An explicitly approved unchanged target may be recorded by reference rather
+  // than by repeating its quoted text. Restated wording still needs comparison.
+  const unchangedTarget = /^([TICB]-[1-9]\d*),?\s+unchanged\s*:\s*["“]/i.exec(replacement)?.[1];
+  if (ownerWording.length === 0 && unchangedTarget
+    && new RegExp(`\\b${unchangedTarget},?\\s+unchanged\\b`, 'i').test(line)
+    && new RegExp(`^${unchangedTarget},?\\s+unchanged(?:[.;]|$)`, 'i').test(d.replacement)
+    && quoted(d.replacement).length === 0) return true;
   // A backticked ledger line is the replacement. JSON keys in a following
   // disposition example are not replacement wording.
   const ledgerLine = [...p.text.matchAll(/`(C-[1-9]\d* — [^`]+)`/g)]
