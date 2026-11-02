@@ -59,7 +59,7 @@ revisions feed bounded fix rounds. Judgments have fresh contexts, with durable c
 approval pins the commit, spec, contract/requirement and routing inputs that publication must still honor.
 
 The five recorded roles are build, verifier, packReview, experienceVerdict and campaignAudit. Verifier modes are
-pre-build, gate and diagnosis. Experience modes are walk and compare. Role/model prompt modules are explicit and
+pre-build, gate and diagnosis. Experience modes are walkthrough and polish. Role/model prompt modules are explicit and
 validated against strict output schemas. Shared testing, persistence, redaction, cluster-proof, UI and performance
 method modules are selected mechanically from role, traits, unit kind, markers and lane properties.
 
@@ -77,7 +77,9 @@ Conditional independent review uses:
 | M3 | Linked obligations edited/disposed/split, or cited pinned rule text changed/retired since review |
 | M4 | At least 8 builds or 20 judged build/lanes/gate attempts |
 
-`review:always|never` is the root override. External witness class alone does not trigger M2. Pre-build findings annotate; a failed annotation call does not hold a unit.
+`review:always|never` is the root override. External witness class alone does not trigger M2. Pre-build findings annotate; a failed annotation call does not hold a unit. Each finding becomes a standing item the
+gate enforces, so pre-build raises only a concrete defect in a plausible implementation, a spec/contract conflict or a
+witness gap admitting a plausible wrong build; sound work gets none.
 The gate requires each standing item addressed or rebutted with evidence. Diagnosis produces a kept build note and
 moves subsequent mixed-profile builds to Claude. Attempt counts include interrupted and uncharged work and follow
 re-entry lineage. At a boundary, 16 builds or 40 judged attempts hard-park with attempt-cap. These thresholds are fixed
@@ -187,7 +189,7 @@ Actionable watch wakes the architect on durable work/questions, death or timed c
 Summary is compact JSON: progress, spend/expectations, milestones, caught, verdicts, captures, needsUser, waste, demo and
 completion. Optional plan.expectations arcUsd/perMilestoneUsd are forecasts, never limits. Caught is lane-red count plus
 gate-revise count plus unique finding keys, with byLens classification; it is not independent-defect or cross-seat
-unique-catch attribution. Milestone spend includes member/re-entry/polish units and walk/compare jobs, not a complete
+unique-catch attribution. Milestone spend includes member/re-entry/polish units and walkthrough/polish jobs, not a complete
 allocation of all arc costs. Capture projection currently lists suite capture spawns, not all screenshots.
 
 Four evidence-based waste detectors advise on grinding, regressions green at base, low unique-catch lanes and repeated
@@ -286,7 +288,8 @@ each active rule obligation/out-of-slice/untestable/prod-only; specs cannot quie
 
 Phase-0 pack review verifies target-to-rule-to-census-to-spec-to-witness agreement and plan quality in a fresh context.
 Blocking pack findings hold initial admission until adjudicated; material pack revisions get delta review. Approved
-estate compaction decisions apply as normal validated corpus/obligation/ledger/debt edits, never special runtime writes.
+estate compaction decisions apply as normal validated corpus/obligation/ledger/debt edits, never special runtime writes;
+the `estate-compaction` skill owns the record and provenance format.
 
 ### 2.9 Git artifacts and clean PRs
 
@@ -320,8 +323,12 @@ quality floor, error voice and user/client tasks; later milestones extend the sa
 work. Reference text is bounded to 512 KiB. Browser tooling is installed/configured by the environment and handshake-checked.
 
 After units retire and selected lanes run, one experience verdict brings up the product and walks browser/shell journeys.
-A break is structural failure/floor violation that would force downstream rework; a deviation can be repaired alongside
-work. Bounded walk/polish rounds use before/after comparison in the same role, retaining independent context. Breaks hold
+A break is a defect whose later fix forces rework of dependents: a product action that fails so the journey cannot
+complete, a wrong interface contract consumers build on, or a measured violation of a declared floor. Everything else
+(copy, visuals, diagnostics, stale docs against a correct interface) deviates and never blocks. A journey's scope is
+what its steps and references specify, including documented entry points and their error paths; unrelated setups are
+out. Bounded walkthrough/polish rounds run in the same role with independent context; polish keeps a tweak only when
+the after is better for the journey on both instances and nothing on it got worse, so a tie drops. Breaks hold
 milestone dependents until settled. The demo keeper promotes settled milestones under code ownership; hold prevents
 promotion/restart until release. Status/brief show location, promoted head and rough edges.
 
