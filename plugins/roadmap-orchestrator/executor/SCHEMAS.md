@@ -372,9 +372,17 @@ unit before applying; note informs the next build without cancelling it. Resume 
 
 NeedsUserRecord `{v:2,id,arc,raisedAt,blocking,subject,reason,summary,recommendation,options,evidence}` has subject
 unit `{type:'unit',unit}`, arc, host or `{type:'findings',findings:FindingId[]}` (nonempty). A dismissal closes matching finding subjects only when every named finding is resolved or ruled. Options are `{id,label}`; evidence is absolute paths. Ack record is
-`{v:2,id,command,choice:string|null,at}`. Optionless items reject ack; successful subject actions close them. Offered choice
+`{v:2,id,command,choice:string|null,at}`. Optionless pack-review items accept ack with null choice; other optionless items reject ack. Successful subject actions close them. Offered choice
 must exist. Revision-notice and waste-finding are non-blocking. Subject closure preserves publication/recovery ordering
 instead of requiring a second bookkeeping command. A root apply that supplies repairs for every finding named by a finding-subject request closes that request without dismissing the findings; repair publication still settles them. Successful root actions can also close already-settled finding requests. The full current reason enum is emitted in the appendix.
+
+Pack-review admission scope is derived, with no new record or status fields. Admission waits for a running/due review
+to end. An open ended review holds unit targets and their transitive effective `after` dependents; non-unit blocking
+targets or abandonment hold arc-wide. One arc-subject item remains; its summary names targets and dependents count
+or arc-wide scope. Unit status uses `blocked` with `waitingFor.admission: [{type:"blocking-item",id,reason:"pack-review"}]`,
+including dependents with unmet dependencies. Arc `holds` includes `pack-review` for running/due reviews or arc-wide
+ended scope only. `packReview.state` remains `held` while scoped findings are open after unrelated admission. Ack or a
+superseding review releases the item (K14).
 
 ## Roles, routing and strict results
 

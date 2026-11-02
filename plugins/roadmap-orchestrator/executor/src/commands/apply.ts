@@ -282,7 +282,7 @@ function ack(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { ty
   const view = ctx.journal.view;
   const item = readNeedsUser(ctx.runDir, body.needsUser);
   if (item === null) return { kind: 'rejected', reason: `unknown needs-user ${body.needsUser}` };
-  if (item.options.length === 0) return { kind: 'rejected', reason: `needs-user ${body.needsUser} has no options; act on its subject to close it` };
+  if (item.options.length === 0 && item.reason !== 'pack-review') return { kind: 'rejected', reason: `needs-user ${body.needsUser} has no options; act on its subject to close it` };
   const closed = view.ackOf(body.needsUser);
   if (closed !== null && closed.command === null) return { kind: 'rejected', reason: `needs-user ${body.needsUser} was declined by the executor at the close-out (nobody answered it)` };
   const by = ackedBy(ctx, body.needsUser);

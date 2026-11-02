@@ -22,7 +22,7 @@
 <path d="M540 342L568 370L540 398L512 370Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="540" y="376" class="label" text-anchor="middle"><tspan x="540" dy="0">×</tspan></text>
 <rect x="615" y="320" width="260" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="745.0" y="363.0" class="label" text-anchor="middle"><tspan x="745.0" dy="0">Start: validate / claim / smoke</tspan><tspan x="745.0" dy="24">Adjudicate pack review</tspan></text>
+<text x="745.0" y="339" class="small" text-anchor="middle"><tspan x="745.0" dy="0">Start; wait for pack review end</tspan><tspan x="745.0" dy="21">Unit blocker: unit + dependents</tspan><tspan x="745.0" dy="21">Other blocker: arc-wide hold</tspan><tspan x="745.0" dy="21">Fix pack or ack item</tspan></text>
 <rect x="990" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1140.0" y="351.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Inspect subject and evidence</tspan><tspan x="1140.0" dy="24">Export → edit → CAS apply</tspan><tspan x="1140.0" dy="24">Steer / note / witness / dismiss</tspan></text>
 <rect x="1480" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>

@@ -25,7 +25,7 @@
 <polyline points="440,380 540,380" class="edge"/>
 <polyline points="880,380 1050,380" class="edge"/>
 <rect x="140" y="555" width="260" height="95" rx="10" fill="#f0f7ff" class="task"/>
-<text x="270.0" y="595.5" class="label" text-anchor="middle"><tspan x="270.0" dy="0">Validate and start</tspan><tspan x="270.0" dy="24">Fresh pack review</tspan></text>
+<text x="270.0" y="574" class="small" text-anchor="middle"><tspan x="270.0" dy="0">Start; wait for pack review end</tspan><tspan x="270.0" dy="19">Unit blocker: unit + dependents</tspan><tspan x="270.0" dy="19">Other blocker: arc-wide hold</tspan><tspan x="270.0" dy="19">Fix pack or ack item</tspan></text>
 <rect x="480" y="555" width="300" height="95" rx="10" fill="#f0f7ff" class="task"/>
 <text x="630.0" y="583.5" class="label" text-anchor="middle"><tspan x="630.0" dy="0">Conditional annotation</tspan><tspan x="630.0" dy="24">Grounded build</tspan><tspan x="630.0" dy="24">Evidence and certification</tspan></text>
 <rect x="880" y="555" width="300" height="95" rx="10" fill="#f0f7ff" class="task"/>

@@ -35,6 +35,7 @@ import { canonicalJson } from '../core/json.ts';
 import { type NeedsUserReason,obligationRevsOf } from '../core/records.ts';
 import { ENTRY_STAGE,type UnitState } from '../core/state.ts';
 import { p1Blocking } from '../holistic/findings.ts';
+import { packReviewHold } from '../holistic/packreview.ts';
 import { type SpecLinks } from '../holistic/staleset.ts';
 import { pressureHoldWaits } from '../host/pressure.ts';
 import { lineageMembers } from '../input/lineage.ts';
@@ -146,12 +147,17 @@ export function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlyS
  * drain and run-only hold per unit; a parked backend (any class) and a tripped breaker only for the stages
  * that need them; `base-red` and an active P1 over a selected obligation (M3, G10; `specOf` names the unit's repairs)
  * for candidates; a known defect active for the unit (M4a rev 3, F4) for its `prepare` after a lanes `known-defect`;
- * recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17); M4b rev 3 (RC-11): a
- * host-pressure hold (`UnitState.pressureHold`) until `pressureHoldWaits` releases it.
+ * recovery-required, log-corrupt, the supervisor crash limit and host items for every stage (A17); pack-review
+ * findings for their target scope; M4b rev 3 (RC-11): a host-pressure hold (`UnitState.pressureHold`) until `pressureHoldWaits` releases it.
  */
 export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
   return ({ view, plan, unit, stage, blocking, drains, tripped, pressure }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
+    const pack = packReviewHold(view, plan);
+    // An ended fact can precede its item's raise (a crash boundary); the scheduler settles items before admission.
+    if ((pack.kind === 'arc' || (pack.kind === 'units' && pack.units.has(unit.id))) && pack.needsUser !== null) {
+      c.push({ type: 'blocking-item', id: pack.needsUser, reason: 'pack-review' });
+    }
     const control = view.control();
     if (control.pausedAll) c.push({ type: 'paused', scope: 'arc' });
     if (control.pausedUnits.includes(unit.id)) c.push({ type: 'paused', scope: 'unit' });

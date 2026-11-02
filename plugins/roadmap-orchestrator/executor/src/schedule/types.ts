@@ -118,7 +118,7 @@ export type AdmissionConstraint =
   | Readonly<{ type: 'breaker'; target: ProbeTarget }>
   /** `base-red` blocks candidate admission. */
   | Readonly<{ type: 'base-red' }>
-  /** An open blocking item that holds all admission: recovery-required, log-corrupt, a host subject, the supervisor crash limit. */
+  /** An open item holding this admission: recovery-required, log-corrupt, host, supervisor crash limit, or pack-review scope. */
   | Readonly<{ type: 'blocking-item'; id: NeedsUserId; reason: NeedsUserReason }>
   /**
    * M3 (§2.8, G10): an active P1 over an obligation the candidate selects holds its candidate admission (a repair

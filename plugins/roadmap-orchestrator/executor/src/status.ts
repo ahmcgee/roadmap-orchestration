@@ -127,7 +127,7 @@ import type { RevisionContext } from './holistic/admission.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
 import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
 import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
-import { type PackReviewStatus,packItemOf,packReviewStatus } from './holistic/packreview.ts';
+import { type PackReviewStatus,packItemOf,packReviewHold,packReviewStatus } from './holistic/packreview.ts';
 import { type ArcLaneDef,type CensusEntry,type CensusState,type ClauseState,type Compensation,type DivergenceKind,type FindingLens,type FindingSeverity,type FindingStateName,type LensKind,type ObligationDef,type Obligations,type ObservationVerdict,type Vision,type VisionClauseKind,type VisionCoverage,type VisionQuestion,isExempt,isMustHold,observationKeyText } from './holistic/types.ts';
 import { visionCoverage } from './holistic/vision.ts';
 import { isAlive } from './host/liveness.ts';
@@ -742,6 +742,10 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   const { view, plan } = x;
   const item = x.blocking.find((b) => holdsUnit(b, unit.id));
   if (item !== undefined) return { state: 'blocked', waitingFor: waitFor({ admission: [{ type: 'blocking-item', id: item.id, reason: item.reason }] }) };
+  const pack = packReviewHold(view, plan);
+  if ((pack.kind === 'arc' || (pack.kind === 'units' && pack.units.has(unit.id))) && pack.needsUser !== null) {
+    return { state: 'blocked', waitingFor: waitFor({ admission: [{ type: 'blocking-item', id: pack.needsUser, reason: 'pack-review' }] }) };
+  }
   const deps = unit.after.map((d) => effectiveDependency(view, d)).filter((d) => view.unit(d).status !== 'retired');
   const edges = unit.contingent.filter((e) => view.edgeResolved(e.id) === null).map((e) => e.id);
   const milestones = deps.length > 0 ? [] : milestoneWaits(view, plan).get(unit.id) ?? [];
@@ -1350,7 +1354,7 @@ function logOf(runDir: AbsPath, d: Derived): LogView {
 // M4a: the corpus, census, amendments, debt, chain, timings and holds (DESIGN §2.4; plan "Brief and chain")
 
 export type PackReviewView = Readonly<{
-  /** `packReviewStatus` now: none (past the first admission), running, due, held or clear. */
+  /** `packReviewStatus` now: none (no review required or held), running, due, held (including scoped holds) or clear. */
   state: PackReviewStatus['kind'];
   /** In job order: each review's inputs key, its end (null while running), its findings by severity, its item and whether a later review superseded it (K14). */
   reviews: readonly Readonly<{

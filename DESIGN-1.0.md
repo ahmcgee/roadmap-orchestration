@@ -176,7 +176,7 @@ head refuses; failure reopens the delivering lineage. Resolve-edge, run-only, me
 readiness and lifecycle. Pause/resume/stop/sweep control execution without rewriting its state by hand.
 
 Needs-user items are durable and have unit/arc/host subjects. Successful actions close the subjects they resolve. Ack
-is permitted only when options are offered, and any supplied choice must be one of them. It is not a generic dismissal
+is permitted when options are offered or the item is a pack-review; any supplied choice must be offered. It is not a generic dismissal
 for optionless spec/evidence/backend items. Revision notices and waste findings are non-blocking.
 
 ### 2.4 Observation and owner check-ins
@@ -287,7 +287,13 @@ waived/deferred/retired states store those fields. Split parents have children a
 each active rule obligation/out-of-slice/untestable/prod-only; specs cannot quietly deliver an out-of-slice rule.
 
 Phase-0 pack review verifies target-to-rule-to-census-to-spec-to-witness agreement and plan quality in a fresh context.
-Blocking pack findings hold initial admission until adjudicated; material pack revisions get delta review. Approved
+Admission waits for the review to end. Its open blocking unit findings hold their targets and transitive dependents
+through effective `after` edges (lineage preparation included); contingent conditions retain their ordinary readiness
+checks. Any blocking obligation/census/rule/plan target, or an abandoned review, holds admission arc-wide. Scoped holds
+persist after unrelated units start. One arc-subject item names the held units and dependents count or the arc-wide
+scope; acknowledgement (even with no options) or a superseding review releases it (K14). Scheduler and status share
+one scope calculation; held units name the item in their blocking-item wait, and only arc-wide scope appears in arc
+`holds`. Material pack revisions before first admission get delta review. Approved
 estate compaction decisions apply as normal validated corpus/obligation/ledger/debt edits, never special runtime writes;
 the `estate-compaction` skill owns the record and provenance format.
 

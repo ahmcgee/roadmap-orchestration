@@ -26,18 +26,19 @@
 //   (`unresolvedAfter`: that review's findings and the ones it kept `still-open`, each by its origin `(job, index)`).
 //   Its answer dispositions each of them exactly once (`resolved | still-open | withdrawn`; a missing, extra or repeated
 //   one is a malformed report), recorded in `pack-review-ended{dispositions}`. A blocking finding kept `still-open` holds
-//   admission through the new review's item. All of it is derived from the log and the kept inputs, so a resumed review
-//   renders the same delta.
+//   admission in its target scope through the new review's item. All of it is derived from the log and the kept
+//   inputs, so a resumed review renders the same delta.
 // - **Hold** (K14, H9, R25), a pure function of the started and ended facts, the items and the current key: before the
 //   first admission, admission is held while a review is running or due, or while the latest ended review with the
-//   current key has an open item (src/needsuser.ts `supersededItems`: a later review's end supersedes every earlier
-//   review's item, which then holds nothing). An `apply` that fixes the pack makes a new key and so a superseding review; an ack
-//   releases. From the first admission on, no review runs and no key is required.
+//   current key has an open item. Unit targets hold themselves and their transitive effective `after` dependents;
+//   other targets (and abandoned reviews) hold arc-wide. Scoped holds persist after unrelated units start.
+//   `supersededItems`: a later review's end supersedes every earlier item's hold. An `apply` that fixes the pack makes
+//   a new key and so a superseding review; an ack releases. From the first admission on, no review runs and no key is required.
 import { freshJudgmentSession } from '../backends/argv.ts';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type InvocationId, type JobId, type NeedsUserId, type Sha256Hex, parseInvocationId, parseJobId, sha256 } from '../core/ids.ts';
+import { type InvocationId, type JobId, type NeedsUserId, type Sha256Hex, type UnitId, parseInvocationId, parseJobId, sha256 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Parent } from '../core/events.ts';
@@ -50,7 +51,8 @@ import {
   CORPUS_INPUT, OBLIGATIONS_INPUT, PACK_REVIEW_INPUT, PHASE0_INPUT, PLAN_INPUT, SPEC_INPUT, VISION_INPUT, inputPath, keepInput, keptInput, requirePlanInForce,
   revisionInForce, specShaInForce,
 } from '../input/inforce.ts';
-import { advancesOf, parsePlan } from '../input/plan.ts';
+import { type PlanM1, advancesOf, parsePlan } from '../input/plan.ts';
+import { effectiveDependency } from '../schedule/graph.ts';
 import { raiseNeedsUser, raisedFor, supersededItems } from '../needsuser.ts';
 import { type BackendCallOutcome, type JobParent, arcSeat, callArcRole, minutesMs, recordedArcCall, repairTurnOf, runOp, verdictOf } from '../pipeline/dispatch.ts';
 import { removeJobCheckouts } from '../pipeline/lanes.ts';
@@ -112,13 +114,13 @@ export const packItemOf = (view: JournalView, job: JobId): NeedsUserId | null =>
 
 /** What the pack review asks of the arc now. */
 export type PackReviewStatus =
-  /** Not a corpus arc, or past the first admission: no review runs and nothing is held. */
+  /** Not a corpus arc, or past the first admission with no open review item: no review runs. */
   | Readonly<{ kind: 'none' }>
   /** A review is running (started, not ended): it resumes. */
   | Readonly<{ kind: 'running'; job: JobId }>
   /** The current key differs from every started review's: a review is due. */
   | Readonly<{ kind: 'due' }>
-  /** The latest ended review with the current key has an open item (or one a crash left unraised). */
+  /** The latest ended review has an open item (or one a crash left unraised); before first admission its key matches. */
   | Readonly<{ kind: 'held'; job: JobId; needsUser: NeedsUserId | null }>
   /** A review with the current key ended and nothing of it is open. */
   | Readonly<{ kind: 'clear'; job: JobId }>;
@@ -158,9 +160,57 @@ function blockingOf(view: JournalView, r: PackReviewState): readonly PreviousPac
 /** Whether an ended review calls for its blocking item: a blocking finding (its own or kept open), or no valid report at all. */
 const needsItem = (view: JournalView, r: PackReviewState): boolean => r.ended !== null && (r.ended.outcome === 'abandoned' || blockingOf(view, r).length > 0);
 
+type PackHoldScope =
+  | Readonly<{ kind: 'arc' }>
+  | Readonly<{ kind: 'units'; targets: readonly UnitId[]; units: ReadonlySet<UnitId> }>;
+
+/** The one scope calculation, shared by admission, status and the item's summary. */
+function holdScope(view: JournalView, plan: PlanM1, r: PackReviewState): PackHoldScope {
+  const blocking = blockingOf(view, r);
+  if (r.ended?.outcome === 'abandoned' || blocking.some((p) => p.finding.target.type !== 'unit')) return { kind: 'arc' };
+  const targets = [...new Set(blocking.map((p) => {
+    const t = p.finding.target;
+    if (t.type !== 'unit') throw new Error(`${r.started.job}: non-unit target in a unit-scoped hold`);
+    return t.id;
+  }))].sort();
+  const units = new Set(targets.flatMap((id) => [id, effectiveDependency(view, id)]));
+  // Contingent edges carry conditions, not unit ids: their resolution never removes an `after` edge.
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const u of plan.units) {
+      if (!units.has(u.id) && u.after.some((d) => units.has(effectiveDependency(view, d)))) {
+        units.add(u.id);
+        changed = true;
+      }
+    }
+  }
+  return { kind: 'units', targets, units };
+}
+
+/** Latest ended review's open item (K14), including after unrelated units have started. */
+function heldReview(view: JournalView): PackReviewState | null {
+  const r = view.holistic().packReviews.filter((r) => r.ended !== null).at(-1);
+  if (r === undefined || !needsItem(view, r)) return null;
+  const item = packItemOf(view, r.started.job);
+  return item === null || (view.ackOf(item) === null && !supersededItems(view).has(item)) ? r : null;
+}
+
+/** Canonical ended-review admission hold. A crash may leave the item not yet raised; settlement precedes admission. */
+export function packReviewHold(view: JournalView, plan: PlanM1):
+  | Readonly<{ kind: 'none' }>
+  | (PackHoldScope & Readonly<{ needsUser: NeedsUserId | null }>) {
+  if (plan.target !== 'corpus') return { kind: 'none' };
+  const r = heldReview(view);
+  return r === null ? { kind: 'none' } : { ...holdScope(view, plan, r), needsUser: packItemOf(view, r.started.job) };
+}
+
 export function packReviewStatus(ctx: RevisionContext): PackReviewStatus {
   const view = ctx.journal.view;
-  if (ctx.plan().target !== 'corpus' || admitted(view)) return { kind: 'none' };
+  if (ctx.plan().target !== 'corpus') return { kind: 'none' };
+  if (admitted(view)) {
+    const held = heldReview(view);
+    return held === null ? { kind: 'none' } : { kind: 'held', job: held.started.job, needsUser: packItemOf(view, held.started.job) };
+  }
   const reviews = view.holistic().packReviews;
   const running = reviews.find((r) => r.ended === null);
   if (running !== undefined) return { kind: 'running', job: running.started.job };
@@ -176,10 +226,9 @@ export function packReviewStatus(ctx: RevisionContext): PackReviewStatus {
   return open ? { kind: 'held', job, needsUser: item } : { kind: 'clear', job };
 }
 
-/** Whether the pack review holds every admission now: running, due or held (K14, H9). */
+/** Whether the pack review holds every admission: running, due, or an arc-wide ended hold (K14, H9). */
 export function packReviewHolds(ctx: RevisionContext): boolean {
-  const s = packReviewStatus(ctx).kind;
-  return s === 'running' || s === 'due' || s === 'held';
+  return packReviewPending(ctx) || packReviewHold(ctx.journal.view, ctx.plan()).kind === 'arc';
 }
 
 /** Whether the pack review job has work: a review running or due (an item a crash left unraised is `settlePackReviews`'). */
@@ -367,19 +416,22 @@ async function ask(ctx: RevisionContext, inputs: PackReviewInputs, delta: PackRe
 }
 
 /** The blocking `pack-review` item of an ended review that calls for one (`needsItem`); `detail`: why no report was valid. */
-function itemContent(view: JournalView, r: PackReviewState, detail: string | null): NeedsUserContent {
+function itemContent(view: JournalView, plan: PlanM1, r: PackReviewState, detail: string | null): NeedsUserContent {
   const { job } = r.started;
   const ended = r.ended!;
   const blocking = blockingOf(view, r);
   const target = (f: PackFinding): string => (f.target.type === 'plan' ? 'the plan' : f.target.type === 'census' ? `census ${f.target.rule}` : `${f.target.type} ${f.target.id}`);
   const name = (p: PreviousPackFinding): string => (p.job === job ? `#${p.finding.index}` : `${p.job}#${p.finding.index}, still open`);
+  const scope = holdScope(view, plan, r);
+  const held = scope.kind === 'arc' ? 'Admission is held arc-wide'
+    : `Admission is held for units ${scope.targets.join(', ')} (+ ${scope.units.size - scope.targets.length} dependents)`;
   return {
     blocking: true,
     subject: { type: 'arc' },
     reason: 'pack-review',
     summary: ended.outcome === 'abandoned'
-      ? `The pack review ${job} gave no valid report${detail === null ? '' : ` (${detail})`}. No unit is admitted until the pack is reviewed or this item is acknowledged.`
-      : `The pack review ${job} reports ${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}: ${blocking.map((p) => `${name(p)} (${target(p.finding)}): ${p.finding.claim}`).join('; ')}. No unit is admitted until the pack is fixed or this item is acknowledged.`,
+      ? `The pack review ${job} gave no valid report${detail === null ? '' : ` (${detail})`}. ${held} until the pack is reviewed or this item is acknowledged.`
+      : `The pack review ${job} reports ${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'}: ${blocking.map((p) => `${name(p)} (${target(p.finding)}): ${p.finding.claim}`).join('; ')}. ${held} until the pack is fixed or this item is acknowledged.`,
     recommendation: 'Adjudicate each finding: fix the pack with `roadmap apply` (a new pack, so a new review supersedes this one), or acknowledge this item to admit units on the pack as it is.',
     options: [],
     evidence: [],
@@ -394,7 +446,7 @@ export function settlePackReviews(ctx: RevisionContext, detail: Readonly<{ job: 
   const view = ctx.journal.view;
   for (const r of view.holistic().packReviews) {
     if (!needsItem(view, r) || packItemOf(view, r.started.job) !== null) continue;
-    raiseNeedsUser(ctx.journal, ctx.runDir, itemContent(view, r, detail?.job === r.started.job ? detail.text : null), jobParent(r.started.job));
+    raiseNeedsUser(ctx.journal, ctx.runDir, itemContent(view, ctx.plan(), r, detail?.job === r.started.job ? detail.text : null), jobParent(r.started.job));
   }
 }
 

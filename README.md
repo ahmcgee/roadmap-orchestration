@@ -68,7 +68,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    K-n curation; debt resolutions link B-n and K-n in the plain C-n ledger. Phase 0 checks typed inputs, committed
    target bytes, proof reachability and readiness; system overlap, possible future-witness vacuity, spanning proof and design ordering advise judgment.
 2. **Start and review.** Startup validates the pack, claims the host and smokes its routed backends. A fresh pack
-   review checks it against the target and census. The architect adjudicates blocking findings. The supervisor
+   review checks it against the target and census and must end before admission. Blocking unit findings hold the named
+   units and their transitive dependents; other blocking targets hold the arc. The architect fixes the pack for a
+   superseding review or acknowledges the item, including when it offers no options. The supervisor
    restarts crashed executors; runners keep workloads and terminal evidence durable across recovery.
 3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations. A conditional
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
