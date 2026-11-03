@@ -337,21 +337,23 @@ export function unitMilestones(ctx: Pick<StageContext, 'plan' | 'repo'>, unit: U
 }
 
 /**
- * dev.13: the browser drive of a Claude build of `unit` in a milestone (a member or its design unit) with a `browser` journey:
- * the `walkthrough.mcp` servers (the repo config the arc started under; bootstrap refuses a `browser` journey without
- * them) and the `--mcp-config` text with `{evidence}` the build's evidence dir `evidenceDir`. Null on a Codex seat, or
- * when no such milestone has the unit.
+ * dev.13, broadened in dev.42: every Claude build gets the declared `walkthrough.mcp` servers, with `{evidence}` its
+ * evidence dir. Bring-ups are the plan-order union of membership, design ownership and the spec's repaired findings'
+ * origin milestones (`walkDraft`/`bringUpDraft` record `finding.milestone`), once each, whatever the journey type.
+ * Empty bring-ups are valid. Null without configured servers or on Codex (no MCP path). Bootstrap still refuses a
+ * browser journey without walkthrough.mcp; build tool access adds no refusal.
  */
 export function buildBrowser(
-  ctx: Pick<StageContext, 'plan' | 'routingBase'>, unit: UnitId, backend: Triple['backend'], evidenceDir: AbsPath,
+  ctx: Pick<StageContext, 'plan' | 'routingBase' | 'journal'>, spec: SpecM1, backend: Triple['backend'], evidenceDir: AbsPath,
 ): Readonly<{ input: BuildBrowser; mcpConfig: string }> | null {
   if (backend !== 'claude') return null;
-  const browser = milestonesOf(ctx.plan()).filter((m) => (m.units.includes(unit) || designUnitOf(m) === unit) && m.journeys.some((j) => j.via === 'browser'));
-  if (browser.length === 0) return null;
   const servers = ctx.routingBase.config?.walkthrough?.mcp;
-  if (servers === undefined) throw new Error(`${unit}: milestone ${browser[0]!.id} has a browser journey, but the repo config has no walkthrough.mcp (bootstrap refuses this: walk-tools-missing)`);
+  if (servers === undefined) return null;
+  const repairs = new Set<string>(specRepairs(spec));
+  const repairedMilestones = new Set(ctx.journal.view.holistic().findings.flatMap((f) => repairs.has(f.id) && f.milestone !== undefined ? [f.milestone] : []));
+  const milestones = milestonesOf(ctx.plan()).filter((m) => m.units.includes(spec.unit) || designUnitOf(m) === spec.unit || repairedMilestones.has(m.id));
   return {
-    input: { servers: Object.keys(servers), bringUps: browser.map((m) => ({ milestone: m.id, bringUp: m.bringUp })) },
+    input: { servers: Object.keys(servers), bringUps: milestones.map((m) => ({ milestone: m.id, bringUp: m.bringUp })) },
     mcpConfig: walkMcpConfig(servers, evidenceDir),
   };
 }
@@ -716,8 +718,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
 
   const lib = library(ctx, spec, tip);
   const milestones = unitMilestones(ctx, unit.id, tip);
-  // dev.13: a build in a milestone with a browser journey gets the walkthrough MCP servers, its screenshots in `work`.
-  const browser = buildBrowser(ctx, unit.id, dispatch.triple.backend, work);
+  // dev.42: every Claude build gets configured walkthrough MCP servers; bring-ups follow membership/design/repairs.
+  // Codex builds have no MCP path. Screenshots go in `work`.
+  const browser = buildBrowser(ctx, spec, dispatch.triple.backend, work);
   // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
   const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
   // Field feedback 2026-10-23 item 1: a call on a fresh session gets the handover (src/pipeline/handover.ts); a resumed one does not.

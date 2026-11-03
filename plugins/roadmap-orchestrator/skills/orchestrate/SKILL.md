@@ -34,7 +34,7 @@ Work on your own branch. The product needs committed `.roadmap/corpus.md`, `.roa
 - Use the `vision` skill to elicit and confirm the target world, then compile its record. Do not invent the owner's vision.
 - Ask for `chain.k`: how many arcs may start beyond the last acknowledged brief before waiting? Use 1 as the working assumption; changes require the owner.
 - Agree the first slice, including a world clause. Supply `systemsMap` in config: every unit names known systems. Tag persistent and redacting systems accurately.
-- For browser journeys configure `walkthrough.mcp` and install the declared tools in the devcontainer. Validate the actual connection with Phase 0 checks. The expected browser drive is the installed Playwright MCP with Chromium, HTTP pages, isolated sessions and evidence output.
+- For browser journeys configure `walkthrough.mcp` and install the declared tools in the devcontainer. Every Claude build receives the declared servers, including standalone repairs. Bring-ups come from its member/design milestones and the origin milestones of findings its spec `repairs` cites, once each in plan order; an empty list is valid. Without this config, builds get no servers and no new refusal. Codex builds have no MCP path; acting judges keep their own rules. Bootstrap still refuses browser journeys without this config. Validate the actual connection with Phase 0 checks. The expected browser drive is the installed Playwright MCP with Chromium, HTTP pages, isolated sessions and evidence output.
 
 Schema-2 runs start with this release. Runs started on dev.32 or earlier are refused before host claim/recovery. Finish them with their original executor; a new arc may use plan `baseline` and `previousHead` to describe a foreign predecessor without a schema-2 arc ref.
 
@@ -85,7 +85,7 @@ A milestone runs its selected lanes after its units retire, then a fresh experie
 
 ## Supervision and intervention
 
-Keep one actionable watch per arc while it runs, with the fixed 30-minute heartbeat. Start or switch plugin versions
+Keep one actionable watch per arc while it runs, with the fixed 30-minute heartbeat. It streams one line per wake and never exits on its own: run it unpiped or line-buffered, never through a tool that buffers until exit (`tail -c`, `head`, `sort`). Start or switch plugin versions
 with `watch --actionable --replace`; end supervision with `watch --stop`. Never kill a watch by process pattern.
 On every wake, read `openBlocking` and act on every item in it, including items repeated from earlier wakes. Read
 `status --summary`, then full status and cited evidence for each affected subject. Post at most 3 lines in chat:
@@ -103,7 +103,7 @@ Exercise the smallest action that resolves the cause:
 - **Resolve readiness:** resolve-edge with evidence; merge-in the current tip when needed; clear run-only after targeted work.
 - **Control execution:** pause/resume a unit or all; resume an unavailable backend explicitly; stop to quiesce the arc; sweep only after checking residue evidence.
 
-Successful subject actions close the relevant optionless needs-user items. **Ack is only for items with offered options**; use the offered option id. A plain ack is not a substitute for fixing a spec, supplying evidence or resuming a backend. Revision notices and waste findings are non-blocking. Inspect their evidence and resolve their subject as appropriate.
+Unit/host actions close their needs-user items. Arc items require a named `roadmap ack <needs-user-id>` after reading and resolving or explicitly accepting them; an apply or arc-wide resume leaves unrelated arc requests and notices open. Optionless arc and pack-review items accept ack; other optionless items require subject action. Supplied choices must be offered. A later baseline with no problems settles baseline items; a superseding review settles pack-review items. Finding requests close when all named findings settle or a root apply supplies all repairs. Owner requests require the actual owner decision within the session's authorization. Revision and waste notices are non-blocking; read their evidence and acknowledge each by id.
 
 Log every self-initiated intervention once in `<repo>/../roadmap-inputs/skill-feedback.md` (append-only): symptom,
 evidence, outcome, and the executor improvement that would remove the need. Routine Phase 0/start/PR/check-ins and
@@ -114,7 +114,7 @@ close-admissions gets an entry whoever requested it; record when it ended. Do no
 
 The canonical edit path is `inputs export` → edit the export → `apply --from <dir> --rev <export.planRev> --reason <line>` (optionally dry-run first). Leave `export.json` intact. An edited file must still equal its exported base in force; untouched files take the newest in-force bytes. All stale files are reported together. Re-export and reapply your intended edits if refused. Code automatically advances each edited existing spec's rev; do not manufacture revision histories.
 
-Apply reasons authorize intentional contract/obligation changes. Preserve frozen-contract checks, no-drop split text, proof judgments, citations and dependency conservation. Contract document behavior changes land through gate-reviewed units. The C-n ledger is plain root-facing text, exported with the pack; it does not patch product contracts. Existing wire fields such as `rulings`, `cites.rulings` and debt `resolve.ruling` still name this ledger.
+Apply reasons authorize intentional contract/obligation changes. Preserve frozen-contract checks, no-drop split text, proof judgments, citations and dependency conservation. Owner-managed `.roadmap/contracts/` docs are ordinary product source: units edit them in gate-reviewed diffs, and systemsMap contract consumers are re-gated. Other `.roadmap/` paths remain protected. The C-n ledger is plain root-facing text, exported with the pack; it does not patch product contracts. Existing wire fields such as `rulings`, `cites.rulings` and debt `resolve.ruling` still name this ledger.
 
 Apply queues at safe boundaries when necessary; read the durable receipt through applied or rejected. Changing arbitrary copies beside the original plan does nothing. Never hand-edit kept inputs, journal facts, receipts, needs-user files, integration refs or runtime state.
 

@@ -124,9 +124,9 @@ export type UnitMilestone =
 export type MilestonesInput = Readonly<{ of: readonly UnitMilestone[]; references: readonly DocText[]; binary: readonly RepoPath[] }>;
 
 /**
- * dev.13: a Claude build in a milestone (as a member or its design unit) with a `browser` journey: the `walkthrough.mcp`
- * servers its session has (by name; `{evidence}` is the build's evidence dir), and each such milestone's bring-up, so it
- * can bring the product up and look at its own work. Null otherwise, and always on a Codex seat (it gets no MCP config).
+ * dev.13, broadened in dev.42: every Claude build's declared `walkthrough.mcp` servers (by name; `{evidence}` is its
+ * evidence dir). Bring-ups list its member/design milestones and the origin milestones of findings its spec repairs,
+ * once each in plan order; empty is valid. Null without servers, and always on Codex (no MCP config).
  */
 export type BuildBrowser = Readonly<{ servers: readonly string[]; bringUps: readonly Readonly<{ milestone: MilestoneId; bringUp: BringUp }>[] }>;
 
@@ -160,7 +160,7 @@ export type BuildInputs = Readonly<{
   witnessChecks: readonly WitnessCheckCommand[];
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
-  /** dev.13: the browser drive and bring-ups of a build in a milestone with a `browser` journey; null otherwise. */
+  /** Configured Claude MCP servers and member/design/repair bring-ups (possibly empty); null without servers or on Codex. */
   browser: BuildBrowser | null;
   /**
    * dev.17 (proportional review): the salvage SHA of the unit's last lanes attempt that ended green, the tree a build's
@@ -607,11 +607,12 @@ function bringUpText(b: BringUp): string {
   ].join('\n');
 }
 
-/** dev.13: the `<browser>` block of a build in a milestone with a `browser` journey (empty otherwise). */
+/** The `<browser>` block whenever a Claude build has configured MCP servers, with optional milestone bring-ups. */
 export function buildBrowserText(b: BuildBrowser | null): string {
   if (b === null) return '';
   const bringUps = b.bringUps.map((x) => `${x.milestone}:\n${bringUpText(x.bringUp)}`);
-  return `\n\n<browser>\nThis session has the MCP server${b.servers.length === 1 ? '' : 's'} ${b.servers.join(', ')} (a browser drive), so you can bring the product up and look at and screenshot your own work; screenshots it saves land in the evidence directory. Each milestone's bring-up runs from the worktree root with its env, and {port:<name>} stands for a free port you choose:\n${bringUps.join('\n')}\nStop whatever you start before your final report.\n</browser>`;
+  const bringUp = bringUps.length === 0 ? 'No milestone bring-up supplied.' : `Milestone bring-ups run from the worktree root with their env; {port:<name>} is a free port you choose:\n${bringUps.join('\n')}`;
+  return `\n\n<browser>\nMCP servers: ${b.servers.join(', ')}. Use them to inspect and screenshot your work; screenshots go in the evidence directory.\n${bringUp}\nStop whatever you start before your final report.\n</browser>`;
 }
 
 export function bullets(items: readonly string[], empty: string): string {

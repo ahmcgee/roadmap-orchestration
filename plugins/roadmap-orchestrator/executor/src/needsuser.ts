@@ -81,7 +81,11 @@ export function raiseNeedsUser(journal: Journal, runDir: AbsPath, content: Needs
     deadlineAt: null,
     body: (op) => {
       id = needsUserIdForOp(op);
-      const record: NeedsUserRecord = { v: SCHEMA_VERSION, id, arc: journal.view.arc, raisedAt: isoTimeOf(new Date()), ...content };
+      const record: NeedsUserRecord = { v: SCHEMA_VERSION, id, arc: journal.view.arc, raisedAt: isoTimeOf(new Date()), ...content,
+        ...(subject.type === 'arc' && content.options.length === 0
+          ? { recommendation: `${content.recommendation} After reviewing and resolving or explicitly accepting this item, close it with \`roadmap ack ${id}\`.` }
+          : {}),
+      };
       const bytes = needsUserBytes(needsUserRecord(JSON.parse(needsUserBytes(record)), 'needs-user'));
       // Staged before the intent is appended, so the intent's hash always names bytes that exist. A body
       // whose intent never became durable leaves a staged `nu-<seq>` that the next intent (same seq)
@@ -141,7 +145,7 @@ export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Par
 
 /**
  * The items a later fact superseded. K14: the `pack-review` item each pack review raised (parent `job`), for every review
- * ended before the latest ended one. dev.13: the escalation of a walk abandoned on a failure (parent its walk job), once
+ * ended before the latest ended one. Baseline items settle through a later baseline-held fact naming them. dev.13: the escalation of a walk abandoned on a failure (parent its walk job), once
  * an apply edited its milestone's bring-up or journeys after it ended (`rewalkSeq`; src/walk/milestones.ts, the walk
  * abandonment brake starts afresh); likewise the escalation of a walk that failed bring-up (its round's walk is due again).
  */
@@ -155,10 +159,10 @@ export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
     if (started?.kind !== 'walk-started') throw new Error(`walk-ended of ${job}, which never started`);
     return view.rewalkSeq(started.milestone) > x.seq ? [job] : [];
   });
-  return new Set([...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
+  return new Set([...view.holistic().baselineHeld.flatMap((h) => h.items), ...[...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
     const id = raisedFor(view, { type: 'job', job });
     return id === null ? [] : [id];
-  }));
+  })]);
 }
 
 /**

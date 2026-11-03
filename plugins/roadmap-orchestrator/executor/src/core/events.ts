@@ -38,7 +38,7 @@ tokenUsage,
 usageUnavailableReason,
 } from './records.ts';
 
-import { type AuditTrigger,type ContractOp,type DivergenceDraft,type FindingEvidence,type FindingLens,type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type PackDisposition,type PackFinding,type PlanDefect,type WitnessPurpose,FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,contractOp,divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,packDisposition,packFinding,planDefect } from '../holistic/types.ts';
+import { type AuditTrigger,type DivergenceDraft,type FindingEvidence,type FindingLens,type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type PackDisposition,type PackFinding,type PlanDefect,type WitnessPurpose,FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,packDisposition,packFinding,planDefect } from '../holistic/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
 type ArcSeatRef,type Backend,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,routingProvenance,seatFields,unitSeatFields
@@ -282,7 +282,7 @@ export type OpExpect = {
   /** `blocking` is recorded so the fold alone knows which raised items hold the arc (terminal predicate). */
   'needsuser.raise': Readonly<{ id: NeedsUserId; path: AbsPath; blocking: boolean }>;
   'command.apply': Readonly<{ command: CommandId; commandSha256: Sha256Hex }>;
-  /** M3 (A4): the docs publication's commit of the rendered `.roadmap/` files and its contract ops on the tip, on `refs/roadmap-run/<arc>/docs/<pub>`. */
+  /** M3 (A4): the docs publication's commit of the rendered `.roadmap/` files on the tip, on `refs/roadmap-run/<arc>/docs/<pub>`. */
   'docs.commit': Readonly<{ ref: RefName; old: Sha | null; pub: JobId; integrationTip: Sha; worktree: AbsPath; commit: CommitInputs<readonly [Sha]> }>;
   /**
    * M3 (B3): a mutant (`inputs/<patchSha256>.patch`) applied in a detached worktree at `at`: a finding's, or (M4a rev 3) a
@@ -932,6 +932,8 @@ export type HolisticFact =
     kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned';
     refused: readonly LensRefusal[];
   }>
+  /** A later passing baseline settles exactly the named baseline items. */
+  | Readonly<{ kind: 'baseline-held'; job: JobId; items: readonly NeedsUserId[] }>
   /** A17, H8: a docs-only publication covers its own edge U→D by construction. */
   | Readonly<{ kind: 'docs-covered'; pub: JobId; from: Sha; to: Sha }>
   /** OR-V.6: `index` orders a job's divergences, so a rewrite after a crash is idempotent (H12). */
@@ -1175,8 +1177,7 @@ export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
  * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
  * its `revision.commit` intent before any docs `ff`. `plan-applied` is appended from it exactly, then its
  * divergences in order; recovery never reclassifies. `publication`: the files the docs publication commits (`renders`:
- * the rendered `.roadmap/` documents and, dev.16, the vision files the revision changes in the product repo) and its
- * contract ops, null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
+ * the rendered `.roadmap/` documents and, dev.16, the vision files the revision changes in the product repo), null when the revision changes no in-tree document. `owner` (apply rebase, 2026-10-16):
  * the owner's files a start or an `apply` was rebased from, when they differ from `manifest` (a merge, or `--ruling`
  * records landed): the default base of the owner's next apply (src/input/rebase.ts `ownerBase`). Absent: the manifest is
  * the owner's (every revision of an earlier release, whose write-back kept the owner's files at the manifest).
@@ -1190,7 +1191,7 @@ export type RevisionPayload = Readonly<{
   changes: readonly PlanChange[];
   dispositions: readonly Readonly<{ obligation: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>[];
   divergences: readonly DivergenceDraft[];
-  publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[]; contractOps: readonly ContractOp[] }> | null;
+  publication: Readonly<{ renders: readonly Readonly<{ path: RepoPath; sha256: Sha256Hex }>[] }> | null;
   routingProvenance: RoutingProvenance;
   /** dev.17: the repo config's systems map (src/input/systems.ts; null: none); absent on a payload a dev.16 executor kept. */
   systemsMap?: SystemsMap | null;
@@ -1761,10 +1762,15 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
       obligation: g.get('obligation', obligationR), disposition: g.get('disposition', oneOf(OBLIGATION_DISPOSITIONS)), reason: g.get('reason', str), rev: g.get('rev', positive),
     })))),
     divergences: f.get('divergences', arrayOf(divergenceDraft)),
-    publication: f.get('publication', nullable(object((g) => ({
-      renders: g.get('renders', sortedBy(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), sha256: h.get('sha256', sha256R) })), (r) => r.path)),
-      contractOps: g.get('contractOps', arrayOf(contractOp)),
-    })))),
+    publication: f.get('publication', nullable(object((g) => {
+      // dev.42 adoption of dev.41: schema-2 executors only ever wrote an empty contractOps array.
+      // Consume and discard that obsolete field at read time; never reinterpret historical edits.
+      g.optional('contractOps', (value, path) => {
+        if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty legacy contractOps array', value);
+        process.emitWarning(`${path}: ignoring legacy contractOps: [] from dev.41`, { code: 'ROADMAP_UPGRADE' });
+      });
+      return { renders: g.get('renders', sortedBy(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), sha256: h.get('sha256', sha256R) })), (r) => r.path)) };
+    }))),
     routingProvenance: f.get('routingProvenance', routingProvenance),
   };
   const systems = f.optional('systemsMap', nullable(systemsMap));
@@ -2086,6 +2092,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     }))));
     return { ...out, refused };
   }),
+  'baseline-held': object((f): Fact => ({ kind: f.get('kind', literal('baseline-held')), job: f.get('job', jobIdOfKind('baseline')), items: f.get('items', sortedBy((v, p) => needsUserId(v, p), (id) => id, { nonEmpty: true })) })),
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),

@@ -30,7 +30,7 @@ import { revParse } from '../git/git.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef, type Obligations, type WitnessRecord, isExempt, isMustHold, laneRevMatches, witnessRecord } from '../holistic/types.ts';
 import type { PlanM1 } from '../input/plan.ts';
-import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
+import { openNeedsUser, readNeedsUser, raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { type JourneyContext, type JourneyEnd, arcJourneyLane, jobSeriesCheckout, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
@@ -127,7 +127,13 @@ export function baselineDue(ctx: Reader): JobId | null {
   if (s.missing.length > 0) return s.job;
   const latched = new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation));
   const problems = baselineProblems(s.obligations, recordsOf(ctx, s.job, s.tree), latched);
+  if (problems.length === 0 && baselineItems(ctx).length > 0) return s.job;
   return problems.length > 0 && raisedFor(ctx.journal.view, jobParent(s.job)) === null ? s.job : null;
+}
+
+/** Baseline items alone may settle when a later baseline establishes the required state. */
+function baselineItems(ctx: Reader) {
+  return openNeedsUser(ctx.journal.view).filter((n) => readNeedsUser(ctx.runDir, n.id)?.reason === 'obligation-baseline').map((n) => n.id).sort();
 }
 
 function baselineNeedsUser(ctx: BaselineContext, job: JobId, tip: Sha, problems: readonly BaselineProblem[]): NeedsUserContent {
@@ -141,7 +147,8 @@ function baselineNeedsUser(ctx: BaselineContext, job: JobId, tip: Sha, problems:
       + `${notHeld.length === 0 ? '' : ` must-hold but not held: ${notHeld.join(', ')};`}${vacuous.length === 0 ? '' : ` future but already held (a vacuous witness): ${vacuous.join(', ')};`}`
       + ' no unit is admitted under holistic until this is resolved.',
     recommendation: 'Repair the base so each must-hold obligation holds (or rule a disposition naming it), and give each vacuous future obligation a witness that '
-      + 'fails until it is delivered (or make it must-hold) with `roadmap apply`, which closes this item. When the failure is not the product\'s (a host-contention timeout, with evidence), close it with `roadmap resume` instead. An optionless item refuses `ack`.',
+      + 'fails until it is delivered (or make it must-hold) with `roadmap apply`. A later baseline with no problems closes this item. '
+      + 'After reviewing the evidence and resolving or explicitly accepting the failure (including a host-contention timeout), explicitly acknowledge this item.',
     options: [],
     evidence: [jobEvidenceRoot(ctx.runDir, job)],
   };
@@ -169,7 +176,11 @@ export async function runBaseline(ctx: BaselineContext): Promise<BaselineOutcome
     if (series.end.kind !== 'ran') return { kind: 'incomplete', end: series.end };
   }
   const problems = baselineProblems(obligations, recordsOf(ctx, job, tree), latched);
-  if (problems.length === 0) return { kind: 'held' };
+  if (problems.length === 0) {
+    const items = baselineItems(ctx);
+    if (items.length > 0) ctx.journal.fact({ kind: 'baseline-held', job, items });
+    return { kind: 'held' };
+  }
   if (raisedFor(ctx.journal.view, jobParent(job)) === null) raiseNeedsUser(ctx.journal, ctx.runDir, baselineNeedsUser(ctx, job, tip, problems), jobParent(job));
   return { kind: 'raised', problems };
 }

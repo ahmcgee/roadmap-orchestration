@@ -74,7 +74,11 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    restarts crashed executors; runners keep workloads and terminal evidence durable across recovery.
 3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations. A conditional
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
-   specs first, implement, run targeted checks and report evidence. The executor quiesces workloads, captures evidence,
+   specs first, implement, run targeted checks and report evidence. Every Claude build gets the configured
+   `walkthrough.mcp` servers. Bring-ups list its member/design milestones and origin milestones of findings its spec
+   `repairs` cites, once each in plan order; empty is valid. Without the config, builds get no servers and no new
+   refusal. Codex builds have no MCP path; acting judges keep their own rules. Bootstrap still refuses browser
+   journeys without this config. The executor quiesces workloads, captures evidence,
    salvages changes and tears resources down before running full lanes and witnesses. A fresh gate judges the diff,
    actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
    revisions feed fix rounds with original evidence and base comparisons. Every judgment begins in a fresh named
@@ -103,8 +107,11 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Interventions and every arc-wide control go in the external operator log. The root never patches the plugin or run directory. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
-   unfinished unit into a directed round; note informs its next build without interruption. Successful subject
-   actions close their notices; dismissal closes settled finding requests and suppresses the same finding on unchanged code. Ack is only for offered options. External witnesses are explicit root attestations
+   unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
+   their notices. Arc items stay open until named with `ack <id>`; read and resolve or explicitly accept each one first.
+   A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests
+   close when their findings settle or a root apply supplies all named repairs. Dismissal suppresses the same finding
+   on unchanged code. Supplied ack choices must be offered. External witnesses are explicit root attestations
    with head-bound file/URL evidence. No output matching substitutes for proof.
 7. **Close out and check in.** Final audit, witnesses, batch lanes, document publication and snapshots settle before
    completion. The architect prepares the stacked PR, presents `brief` and the demo/rough edges, then acknowledges

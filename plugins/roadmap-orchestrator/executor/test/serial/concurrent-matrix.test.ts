@@ -611,7 +611,7 @@ const JOB_ROW_NAMES: readonly JobRow[] = ['audit', 'apply', 'batch', 'preempt'];
 const JOB_PEER: Readonly<Record<JobRow, HolisticPeer>> = { audit: 'jobs', apply: 'jobs', batch: 'batch', preempt: 'preempt' };
 /** The units whose build is live while the scenario's job steps. */
 const LIVE_BUILDS: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: [A, B], batch: [C], preempt: [] };
-/** The campaign request is answered by root apply; its recorded item remains part of the oracle. */
+/** The campaign request is answered by root apply and named ack; its recorded item remains part of the oracle. */
 const JOB_NEEDS_USER: Readonly<Record<HolisticPeer, readonly string[]>> = { jobs: ['owner-request'], batch: [], preempt: [] };
 const jobRowLabels = (row: JobRow): readonly string[] => [...new Set(crashCells(JOB_ROWS[row]).map((c) => c.label))].sort();
 const jobBoundaryOf = (row: JobRow, label: string): Boundary => crashCells(JOB_ROWS[row]).find((c) => c.label === label)!.boundary;
@@ -647,6 +647,7 @@ async function jobReference(t: Owner, peer: HolisticPeer): Promise<JobReference>
   assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, `${peer}: every step called once`);
   const units = Object.fromEntries(jobUnits(peer).map((u) => [u, 'merged' as const]));
   assertOracle(run, { integration: 'main', baseline: baselineOf(r), tree: ref.tree, units, outcomes: ref.outcomes, needsUser: JOB_NEEDS_USER[peer], trace: UNCRASHED });
+  assertJobRequestClosed(peer, snap);
   if (peer !== 'preempt') {
     // The stepping jobs ran while the peers' builds were live.
     const stepping = JOB_ROW_NAMES.filter((row) => JOB_PEER[row] === peer).map((row) => `job:${STEPPING[row as keyof typeof STEPPING]}`);
@@ -671,6 +672,18 @@ async function jobReference(t: Owner, peer: HolisticPeer): Promise<JobReference>
     assert.deepEqual([docsFfs(snap), commandsApplied(snap)], [1, 1], 'the rule applied once with one docs ff');
   }
   return ref;
+}
+
+/** Priority changes answer the request; only the subsequent named ack closes its arc item, including after recovery. */
+function assertJobRequestClosed(peer: HolisticPeer, snap: LogSnapshot): void {
+  if (peer !== 'jobs') return;
+  const [item] = snap.view.needsUser();
+  assert.ok(item?.ack?.command != null, 'the campaign request has a named acknowledgement');
+  const applied = snap.events.find((e) => e.type === 'fact' && e.fact.kind === 'plan-applied' && e.fact.rev === 2);
+  const acked = snap.events.filter((e) => e.type === 'fact' && e.fact.kind === 'needs-user-acked' && e.fact.id === item.id);
+  assert.equal(acked.length, 1, 'the request closes exactly once');
+  assert.ok(applied !== undefined && acked[0]!.seq > applied.seq, 'root acknowledges after changing priority');
+  assert.ok(applied.type === 'fact' && applied.fact.kind === 'plan-applied' && applied.fact.command !== item.ack.command, 'apply and ack are separate commands');
 }
 
 /** Each owner's recovered dones, as `kind:recoveredBy`. */
@@ -763,6 +776,7 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   const m = callsMatchSteps(r);
   assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: no completed call made twice');
   const end = journalOf(r);
+  assertJobRequestClosed(ref.peer, end);
   assertRevisionNoticeRecovery(crash, end, c.label);
   const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
   for (const u of jobUnits(ref.peer)) assertWorkloadsDisjoint(r, end, u);
@@ -785,7 +799,7 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   const label = c.label.startsWith('log.append.') ? appendTrace(c.label, cut, inRevisionAt(ref.snap.events, cut.seq) || inCommandAt(ref.snap.events, cut.seq)) : (row === 'batch' ? BATCH_TRACE[c.label] : undefined) ?? traceAt(c.label, ref.snap.events, c.seq);
   if (label === undefined) throw new Error(`no recovery trace is declared for ${c.label}`);
   const rootCommand = crash.view.openIntents().find((i) => i.kind === 'command.apply');
-  if (rootCommand !== undefined) assert.equal(end.view.doneOf(rootCommand.op)?.recoveredBy, 'reconciled', 'the open root apply reconciles its receipt and subject closure');
+  if (rootCommand !== undefined) assert.equal(end.view.doneOf(rootCommand.op)?.recoveredBy, 'reconciled', 'the open root command reconciles its receipt and effects');
   const by = recoveredByOwner(end);
   const jobBy = [...by].filter(([o]) => !o.startsWith('unit:')).flatMap(([, v]) => v.map((x) => x.split(':')[1]!));
   for (const v of jobBy) assert.ok((label.recoveredBy as readonly string[]).includes(v), `the job's op recovered ${v}; ${c.label} allows ${label.recoveredBy.join('|') || 'nothing'}: ${JSON.stringify([...by])}`);

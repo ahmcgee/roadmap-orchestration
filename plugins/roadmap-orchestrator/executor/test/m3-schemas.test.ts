@@ -72,6 +72,7 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
     integrationSha: A, planRev: 4, ledgerSha256: H, obligationsSha256: H2, visionSha256: H, owners: [{ unit: 'u1', head: B }], priorFindings: ['F-1'], highWater: 90, diffBudget: 24000,
   },
   'audit-ended': { kind: 'audit-ended', job: 'audit-1', refused: [], covered: [{ lens: 'invariants', from: B, to: A }], findings: ['F-1'], suppressed: 2, outcome: 'completed' },
+  'baseline-held': {kind: 'baseline-held', job: 'baseline-1', items: ['nu-1']},
   'docs-covered': { kind: 'docs-covered', pub: 'docs-1', from: A, to: B },
   divergence: { kind: 'divergence', id: 'D-1', index: 0, ...draft },
   noted: {kind: 'noted', unit: unitId('u1'), command: commandId('cmd-0000000000000001'), brief: sha256('a'.repeat(64))},
@@ -248,7 +249,7 @@ describe('M3 event records', () => {
       v: 2, source: { type: 'walk', job: 'walk-1' }, base: 4, rev: 5,
       manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H,  }, obligations: H2, vision: H },
       changes: planApplied.changes as readonly PlanChange[], dispositions: [{ obligation: 'I-2', disposition: 'amended', reason: 'Approved revision', rev: 5 }], divergences: [draft],
-      publication: { renders: [{ path: '.roadmap/invariants.md', sha256: H }], contractOps: [] }, routingProvenance: planApplied.routingProvenance,
+      publication: { renders: [{ path: '.roadmap/invariants.md', sha256: H }] }, routingProvenance: planApplied.routingProvenance,
     };
     assert.equal(canonicalJson(parseRevisionPayload(p)), canonicalJson(p));
     assert.throws(() => parseRevisionPayload({ ...p, rev: 6 }), /rev/);

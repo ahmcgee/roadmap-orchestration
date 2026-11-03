@@ -108,7 +108,8 @@ describe('argv', () => {
       [...resumed, '--add-dir', dirs[0], '--add-dir', dirs[1]],
     );
     assert.equal(exitCode('claude-implementer-resume'), '0');
-    // dev.13: a build in a milestone with a browser journey names its MCP config after --strict-mcp-config, as an acting judge does.
+    assert.ok(!backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } }).includes('--mcp-config'));
+    // dev.42: every Claude build with configured servers names its MCP config after --strict-mcp-config.
     const mcp = absPath('/run/inputs/0f.mcp.json');
     const strict = fresh.indexOf('--strict-mcp-config');
     assert.deepEqual(

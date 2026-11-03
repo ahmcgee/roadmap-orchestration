@@ -39,15 +39,17 @@ import { PLANT,SEED_SUITE_ARGV,layout } from '../../evals/m4a/layout.ts';
 import { CLOCK_FILE,FAKE_TICK_MS,PAID_TICK } from '../../evals/m4a/setup.ts';
 import { ANSWER_KEY,needles,toolTraffic } from '../../evals/m4a/transcript.ts';
 import { type ArcRef } from '../../src/chain.ts';
-import type { Event,Fact,Parent } from '../../src/core/events.ts';
+import { type Event,type Fact,type Parent,prevHash,serializeEvent } from '../../src/core/events.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
+import { Fold } from '../../src/core/state.ts';
 import { absPath } from '../../src/core/values.ts';
 import { parseDebtBlock } from '../../src/docs/debt.ts';
 import { parseObligations } from '../../src/holistic/types.ts';
 import { collectWitness,witnessEnv } from '../../src/holistic/witness.ts';
 import type { PlanM1 } from '../../src/input/plan.ts';
 import type { BriefPayload } from '../../src/phase0/types.ts';
+import { openNeedsUser,supersededItems } from '../../src/needsuser.ts';
 import { itemKey } from '../../src/watch.ts';
 import { type Exit,runUntilExit } from '../helpers/proc.ts';
 import { type RunScope,assertNoSurvivors,teardown,track } from '../helpers/reap.ts';
@@ -337,7 +339,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     assertEveryStepPlayed(story.dir, [1, 2]);
   });
 
-  test('evals-m4a.pack-review-hold: the repair apply closes review-1\'s item, and admission waits for review-2', () => {
+  test('evals-m4a.pack-review-hold: review-2 supersedes review-1\'s item after the repair apply, and admission waits for review-2', () => {
     const started = factsOf(arc1, 'pack-review-started');
     const ended = factsOf(arc1, 'pack-review-ended');
     assert.deepEqual(started.map((s) => s.job), ['review-1', 'review-2']);
@@ -350,8 +352,15 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
     const dispatch = factsOf(arc1, 'dispatch');
     assert.ok(dispatch.length > 0 && dispatch.every((d) => d.seq > ended[1]!.seq), 'nothing was admitted before review-2 ended');
     const closed = factsOf(arc1, 'needs-user-acked').filter((a) => a.id === item.id);
-    assert.deepEqual(closed.map((a) => [a.command, a.choice]), [[fix.command, null]], 'the repair apply closes exactly the original pack item');
-    assert.ok(closed[0]!.seq > fix.seq && closed[0]!.seq < started[1]!.seq, 'closure follows the repair and precedes review-2');
+    assert.deepEqual(closed, [], 'the repair apply does not acknowledge the pack item');
+    const beforeReview2 = arc1.filter((e) => e.seq < ended[1]!.seq);
+    const before = new Fold(arcId(fakeArc(story.dir, 1)));
+    for (const event of beforeReview2) before.apply(event, prevHash(Buffer.from(serializeEvent(event), 'utf8')));
+    assert.ok(openNeedsUser(before).some((n) => n.id === item.id), 'the item stays open through the repair and review-2 start');
+    const review2Ended = arc1.find((e) => e.seq === ended[1]!.seq)!;
+    before.apply(review2Ended, prevHash(Buffer.from(serializeEvent(review2Ended), 'utf8')));
+    assert.deepEqual([...supersededItems(before)], [item.id], 'review-2 supersedes exactly the original pack item when it ends');
+    assert.ok(!openNeedsUser(before).some((n) => n.id === item.id), 'the superseded item no longer blocks completion');
   });
 
   test('evals-m4a.amendments-debt: arc 1 banks the gate note and audit finding; arc 2 dispositions both, with no checkpoint amendments', () => {

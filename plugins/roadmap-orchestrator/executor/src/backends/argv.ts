@@ -149,7 +149,7 @@ export type BackendCall =
     /** The prompt module's standing instructions: `--append-system-prompt`. */
     system: string;
     /**
-     * dev.13: the `--mcp-config` file of a build in a milestone with a `browser` journey (the `walkthrough.mcp` servers,
+     * dev.13, broadened in dev.42: every Claude build's `--mcp-config` file when `walkthrough.mcp` is declared (the servers,
      * src/backends/mcp.ts `walkMcpConfig` with `{evidence}` the build's evidence dir, kept under the run dir's inputs), or
      * null for no server.
      */

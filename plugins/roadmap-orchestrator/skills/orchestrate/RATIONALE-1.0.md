@@ -118,9 +118,10 @@ progress, spend/expectations, verdicts, captures, needs-user items and advisory 
 (lane reds, gate revisions, unique finding keys), not a claim of unique defects. Suite capture spawns are the current
 summary projection; gate evidence is the place to inspect related spec captures.
 
-Needs-user closure belongs to the successful subject action. An optionless item is resolved by fixing its cause; ack is
-reserved for offered options. This avoids a second bookkeeping action after every real intervention. Waste and executor
-revision notices inform without holding. Waste detection does not authorize automatic tuning of the plan.
+Unit/host needs-user closure belongs to the successful subject action. Arc items require a named ack after review and
+resolution or explicit acceptance: incidental apply/resume commands must not hide unread requests or notices. Optionless
+arc items accept ack; named findings, superseding pack reviews and later held baselines retain their own settlements.
+Waste and executor revision notices inform without holding. Waste detection does not authorize automatic tuning of the plan.
 
 ## 12. Memory should survive without becoming law
 

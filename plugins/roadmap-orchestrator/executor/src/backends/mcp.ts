@@ -1,6 +1,6 @@
 // dev.13 (D1): the walkthrough MCP servers. The environment provides the browser drive: the repo config names stdio MCP
 // servers (`walkthrough.mcp`, src/routing/layers.ts), and the executor ships no browser code. Two uses:
-// - `walkMcpConfig`: the `--mcp-config` file an acting judge session gets (argv.ts `claude-acting-judge`), its `args` and
+// - `walkMcpConfig`: the `--mcp-config` file an acting judge or configured Claude build gets (argv.ts), its `args` and
 //   `env` values substituted (`WALK_SUBSTITUTIONS`): `{evidence}` the session's evidence dir, `{viewport}` `WALK_VIEWPORT`.
 // - `mcpHandshake`: the bootstrap check (Phase-0/start row `walk-tools-missing`, src/preflight/walktools.ts) that a
 //   configured server starts and connects, with no model call: code spawns it as Claude Code would (the command, its

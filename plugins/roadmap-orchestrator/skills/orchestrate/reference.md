@@ -26,7 +26,7 @@ Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 liv
 | `roadmap stop [--repo <path> --arc <arc>]` | Quiesce work and stop. |
 | `roadmap pause (<unit> | --all) [--repo <path> --arc <arc>]` | Pause one unit or the arc. |
 | `roadmap resume [<unit> | --backend claude|codex] [--repo <path> --arc <arc>]` | Resume a unit, explicitly unpark a backend, or resume all ordinary resumable work. |
-| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Items offering options and pack-review items may be acknowledged. Any supplied choice must be offered; omit it for an optionless pack-review item. |
+| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Name the item to close it. Arc-subject items and pack-review items accept optionless ack; unit/host items without options require subject action. Any supplied choice must be offered. |
 | `roadmap sweep [--resource <name>] [--repo <path> --arc <arc>]` | Re-probe/clean residual resources using declared protocol. |
 | `roadmap apply --from <dir> --rev <n> --reason <text> [--dry-run] [--repo <path> --arc <arc>]` | File-level CAS from a genuine export. Reason is a nonempty single line; N equals export.planRev. |
 | `roadmap resolve-edge <edge> --evidence <text> [--repo <path> --arc <arc>]` | Record a contingent condition met, with evidence. |
@@ -67,7 +67,7 @@ Root changes can add units, split, cut, re-enter, edit specs/obligations/vision/
 
 Commands are write-once queued files with accepted/queued/applied/rejected receipts. A queued apply waits for the relevant stage boundary. Read its final receipt before relying on a revision. Restart replays from durable command/revision provenance rather than resubmitting the action. Steer/note hash their brief at submission, so preserve its bytes until accepted and kept. Steer cannot revive a finished unit and does not reset attempt caps.
 
-Subjects close after the successful action that resolves them (unit/arc/host). An optionless pack-review item accepts `ack`; other optionless items require action on their subject. A blocking `obligation-baseline` item closes with the apply that repairs or rules it; when the failure is not the product's (e.g. a contention timeout), the arc-wide `roadmap resume` closes it. Any supplied choice must be offered; inspect their recommendation and evidence before deciding. Revision and waste notices do not hold execution. Owner-request items require the actual owner decision within the session's authorization.
+Unit- and host-subject items close after a successful action on that subject. Arc-subject items close only when named with `roadmap ack <needs-user-id>` or through their documented settlement: a later baseline with no problems settles `obligation-baseline` items; a superseding pack review settles `pack-review` items; editing an abandoned walk’s own milestone bring-up/journeys supersedes that walk escalation. Read the evidence and resolve or explicitly accept the item before ack; owner requests still require the actual owner decision within the session's authorization. An apply or arc-wide resume leaves unrelated arc items open, including waste, revision and dropped-apply notices. Finding-subject requests close when all their named findings settle, or a root apply supplies all their repairs. Optionless arc and pack-review items accept ack; other optionless items require action on their subject. Any supplied choice must be offered. Revision and waste notices do not hold execution.
 
 Pack review must end before first admission. Open blocking unit findings hold their targets and transitive dependents through effective `after` edges (including prepared lineage replacements); contingent conditions keep their ordinary readiness checks. Other blocking targets hold the arc. The one arc-subject item states scope; fix the pack for a superseding review or acknowledge it. Scoped holds persist while unrelated work runs. Status names the item on held units; arc `holds` includes pack-review only for arc-wide scope.
 
@@ -86,6 +86,8 @@ Exact types/readers are in `SCHEMAS.md` under the sections named here. The liter
 | Ledger | Plain C-n text named by plan.rulings, root-facing. Cites and debt resolution retain C-n references in their wire shapes. |
 
 A plan has exactly one target arm: `corpus` + `phase0` + `holistic` (vision in repo), or `architectureDoc` with optional architectureDigest and holistic vision file. A fresh holistic start requires corpus (`holistic-needs-corpus`), even though the parser retains the architecture-doc holistic shape. PlanPath values resolve relative to the plan directory; RepoPath values resolve in the product. WorktreeRoot is absolute. Use lower-case safe ids, SHA-1 commit ids and SHA-256 content hashes of the required length.
+
+The plain C-n ledger has no partial-supersede, scope or lifetime marks: for partial supersession, withdraw the old ruling by the new one and restate its surviving part with scope/lifetime in the text. For example, mark the old entry `C-1 — withdrawn by C-2` and restate the surviving rule as a fresh C-n entry whose prose names its scope and lifetime.
 
 Every unit requires a nonempty unique systems list, known in systemsMap. Origins are planned, repair, polish, deflake. A spike is a unit with `spike:{question}`; it keeps the normal build/gate safety checks but retires its report without a merge. Specs require nonempty intent and at least one nonGoal. Item states are active, struck or deferred; ids never disappear just because an item is no longer active. Cites retains `{contracts:[],rulings:[]}` even though seats receive no C-n ledger. Put the rule text relevant to the unit in its authored acceptance/facts rather than relying on discovery of a giant reference file.
 
@@ -115,7 +117,7 @@ Capture lanes have `kind: capture` and `capture:{up,script,states,port,portBase?
 
 ### Systems, memory and protected paths
 
-Config `systemsMap` declares `{systems:{name:{paths,tests?,dependsOn?,traits?}},shared?,contracts?,docs?}`. Traits are `persistent|redacts`. Shared entries map paths to dependents; contracts map path to consuming systems; docs declares a docs class. Every revision records the map it read. Unit systems describe responsibility and lane/witness impact, not an exclusive file write envelope. Actual reach beyond them goes to the gate together with actual/builder-reported traits. Overlap is advisory. Central protectedPaths guards `.roadmap/` and same-repo pinned corpus files at salvage/transient/recovery boundaries.
+Config `systemsMap` declares `{systems:{name:{paths,tests?,dependsOn?,traits?}},shared?,contracts?,docs?}`. Traits are `persistent|redacts`. Shared entries map paths to dependents; contracts map path to consuming systems; docs declares a docs class. Every revision records the map it read. Unit systems describe responsibility and lane/witness impact, not an exclusive file write envelope. Actual reach beyond them goes to the gate together with actual/builder-reported traits. Overlap is advisory. Central protectedPaths guards `.roadmap/` except `.roadmap/contracts/`, plus same-repo pinned corpus files at salvage/transient/recovery boundaries.
 
 `systemNotesDir` defaults to `docs/systems`; existing `<system>.md` paths from the checkout commit are supplied as `systemNotes` to build/gate. Notes carry gotchas, seams and rigs. They are non-normative; claims live in the corpus. Note edits merge through a normal unit diff. Salvage/candidate commit bodies contain summaries and decisions from verified captured evidence, including clean builds whose changes were already committed.
 
@@ -149,7 +151,7 @@ Milestone experience verdict runs bring-up and journeys, classifies breaks vs de
 
 Authoring directory (outside product): plan, specs, ledger, obligations, corpus pin and Phase-0 record. Changes after start do nothing until exported CAS apply. Keep future work, approved compaction records and operator notes outside product too.
 
-`.roadmap/` contains owner-managed config.json, corpus.md and vision.json; executor-rendered contracts/, constraints.md, invariants.md and debt.md. Other top-level entries are refused as a legacy layout. The rules registry is a `json roadmap-rules` block; debt is `json roadmap-debt`. Do not edit executor-rendered files.
+`.roadmap/` contains owner-managed config.json, corpus.md and vision.json; owner-managed contract docs in contracts/ that units edit in their own diffs; executor-rendered constraints.md, invariants.md and debt.md. Other top-level entries are refused as a legacy layout. The rules registry is a `json roadmap-rules` block; debt is `json roadmap-debt`. Do not edit executor-rendered files.
 
 Config accepts routing `{profile?,seats?,classes?}`, chain `{k}`, walkthrough `{mcp}`, systemsMap, systemNotesDir. Routing seat overrides name classes; class bindings alone contain backend/model/effort triples. Unknown fields refuse. Config edits must be committed and reach the arc through its revision checks.
 
@@ -168,7 +170,7 @@ T-13: Cancelling a booking frees its berth immediately.
 ```
 ````
 
-Walkthrough MCP config supplies installed stdio servers, with `{evidence}` and `{viewport}` substitutions. Example:
+Walkthrough MCP config supplies installed stdio servers, with `{evidence}` and `{viewport}` substitutions. Every Claude build gets these servers regardless of milestone membership. Its bring-ups list member/design milestones plus the origin milestones of findings its spec `repairs` cites, once each in plan order, regardless of journey type. An empty bring-up list still gets the servers. Without `walkthrough.mcp`, builds get no servers and no new refusal. Codex builds have no MCP path. Acting judges keep their own tool rules; bootstrap still refuses browser journeys without `walkthrough.mcp`. Example:
 
 ```json
 {"walkthrough":{"mcp":{"playwright":{"command":"playwright-mcp","args":["--headless","--isolated","--browser","chromium","--output-dir","{evidence}","--viewport-size","{viewport}"]}}}}

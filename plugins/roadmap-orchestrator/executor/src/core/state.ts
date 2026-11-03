@@ -417,6 +417,7 @@ export type HolisticFold = Readonly<{
   findings: readonly FindingState[];
   audits: readonly AuditState[];
   auditRequests: readonly (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[];
+  baselineHeld: readonly (Omit<FactOf<'baseline-held'>, 'kind'> & Seq)[];
   docsCovered: readonly (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[];
   docsPublished: readonly (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[];
   divergences: readonly (Omit<FactOf<'divergence'>, 'kind'> & Seq)[];
@@ -682,6 +683,7 @@ export class Fold implements JournalView {
   readonly #findings = new Map<FindingId, [FindingAt, ...FindingAt[]]>();
   readonly #audits: { started: AuditInputs & Seq; ended: AuditState['ended'] }[] = [];
   readonly #auditRequests: (Omit<FactOf<'audit-requested'>, 'kind'> & Seq)[] = [];
+  readonly #baselineHeld: (Omit<FactOf<'baseline-held'>, 'kind'> & Seq)[] = [];
   readonly #docsCovered: (Omit<FactOf<'docs-covered'>, 'kind'> & Seq)[] = [];
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
@@ -1438,6 +1440,13 @@ export class Fold implements JournalView {
         a.ended = { ...rest, seq };
         return;
       }
+      case 'baseline-held': {
+        for (const id of f.items) if (!this.#needsUser.has(id)) fail(`baseline-held names unraised item ${id}`);
+        this.#seeJob(f.job);
+        const { kind: _k, ...rest } = f;
+        this.#baselineHeld.push({ ...rest, seq });
+        return;
+      }
       case 'docs-covered': {
         if (f.from === f.to) fail(`docs-covered of ${f.pub} is an empty edge`);
         this.#seeJob(f.pub);
@@ -2053,6 +2062,7 @@ export class Fold implements JournalView {
       findings: [...this.#findings.values()].map((history) => history.at(-1)!.finding),
       audits: this.#audits.map((a) => ({ started: a.started, ended: a.ended })),
       auditRequests: this.#auditRequests,
+      baselineHeld: this.#baselineHeld,
       docsCovered: this.#docsCovered,
       docsPublished: this.#docsPublished,
       divergences: this.#divergences,

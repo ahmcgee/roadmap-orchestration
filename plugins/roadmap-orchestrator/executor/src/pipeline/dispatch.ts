@@ -391,7 +391,7 @@ function seated(ctx: StageContext, record: DispatchRecord): ImplementerDispatch 
 export type BackendRequest =
   | Readonly<{ kind: 'judgment'; dispatch: JudgmentDispatch; session: JudgmentSession; evidenceDirs: readonly AbsPath[] }>
   /**
-   * `mcpConfig` (dev.13): the `--mcp-config` text of a Claude build in a milestone with a `browser` journey
+   * `mcpConfig` (dev.13, broadened in dev.42): the `--mcp-config` text of any Claude build with walkthrough.mcp declared
    * (src/backends/mcp.ts `walkMcpConfig`), kept under the run dir's inputs like an acting judge's; null for none.
    */
   | Readonly<{ kind: 'implementer'; dispatch: ImplementerDispatch; session: ImplementerSession; evidenceDirs: readonly AbsPath[]; mcpConfig: string | null }>;

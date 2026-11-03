@@ -42,7 +42,7 @@
 //
 //   `chain.k` (M4a, OR-Q19, K10) is asked once at bootstrap and committed by the owner; the root agent never writes it.
 //   Absent: K unset (a chained start is refused `chain-invalid{k-unset}`).
-//   `walkthrough.mcp` (dev.13, D1): the MCP servers a walk session (and a build in a milestone with a `browser` journey)
+//   `walkthrough.mcp` (dev.13, broadened in dev.42): the MCP servers a walk session and every Claude build
 //   gets, passed as `--mcp-config` with `--strict-mcp-config`, so it gets exactly these. `{evidence}` and `{viewport}` in
 //   `args` and `env` values are substituted by code (`WALK_SUBSTITUTIONS`). Absent: no browser drive, so a `browser`
 //   journey is refused at bootstrap (Phase-0 row `walk-tools-missing`).

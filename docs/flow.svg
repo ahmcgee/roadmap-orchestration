@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1050" viewBox="0 0 1500 1050" role="img" aria-labelledby="title desc">
-<title id="title">An arc from target to evidence</title><desc id="desc">Owner, architect and executor responsibilities in the command-center flow. Root changes inputs by exported CAS; executable evidence gates publication and milestone review. Backend schemas have plain object roots and supported field constraints; property descriptions state remaining rules. Walk evidence entries are exact saved file paths. Free real-output replays guard schema/parser agreement. Walk breaks require failed product actions, interface repairs that rework dependents, or measured declared floor violations. Copy, visuals and diagnostics deviate; sanctioned choices are not findings.</desc>
+<title id="title">An arc from target to evidence</title><desc id="desc">Owner, architect and executor responsibilities in the command-center flow. Root changes inputs by exported CAS; executable evidence gates publication and milestone review. Backend schemas have plain object roots and supported field constraints; property descriptions state remaining rules. Walk evidence entries are exact saved file paths. Free real-output replays guard schema/parser agreement. Walk breaks require failed product actions, interface repairs that rework dependents, or measured declared floor violations. Copy, visuals and diagnostics deviate; sanctioned choices are not findings. Arc items require named ack; unit/host actions close their notices; finding, baseline and pack-review settlements remain. Every Claude build receives configured walkthrough MCP servers; member/design milestones and repaired findings’ origin milestones supply bring-ups once in plan order, possibly empty. Without configuration builds get no servers or new refusal. Codex builds have no MCP path; acting judges and bootstrap browser checks keep their rules.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#334155" stroke-width="1.6"/></marker></defs><style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b45} .title{font-size:30px;font-weight:700}.sub{font-size:17px;fill:#475569}.label{font-size:16px}.small{font-size:14px;fill:#475569}.task{stroke:#476581;stroke-width:1.6}.edge{fill:none;stroke:#334155;stroke-width:1.8;marker-end:url(#arrow)}.msg{stroke-dasharray:7 5}.pool{fill:#fff;stroke:#94a3b8;stroke-width:1.3}</style>
 <rect width="1500" height="1050" fill="#fff"/>
 <text x="60" y="55" class="title" text-anchor="start"><tspan x="60" dy="0">From target to tested product</tspan></text>
-<text x="60" y="88" class="sub" text-anchor="start"><tspan x="60" dy="0">Command center · schema 2 · 1.0.0-dev.33</tspan></text>
+<text x="60" y="88" class="sub" text-anchor="start"><tspan x="60" dy="0">Command center · schema 2 · 1.0.0-dev.42</tspan></text>
 <rect x="35" y="120" width="1430" height="140" class="pool"/><path d="M93 120V260" stroke="#94a3b8"/>
 <text transform="translate(69 190.0) rotate(-90)" text-anchor="middle" class="label">Owner</text>
 <rect x="35" y="285" width="1430" height="200" class="pool"/><path d="M93 285V485" stroke="#94a3b8"/>
@@ -17,7 +17,7 @@
 <rect x="140" y="330" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="290.0" y="349.0" class="label" text-anchor="middle"><tspan x="290.0" dy="0">Phase 0</tspan><tspan x="290.0" dy="24">Rules, specs, obligations</tspan><tspan x="290.0" dy="24">Milestones; K-n curation</tspan><tspan x="290.0" dy="24">Debt: B-n → C-n → K-n</tspan></text>
 <rect x="540" y="330" width="340" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Leased watch: digest → decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness · dismiss</tspan></text>
+<text x="710.0" y="361.0" class="label" text-anchor="middle"><tspan x="710.0" dy="0">Leased watch: digest → decide</tspan><tspan x="710.0" dy="24">Export → edit → CAS apply</tspan><tspan x="710.0" dy="24">Steer · note · witness · dismiss · ack id</tspan></text>
 <rect x="1050" y="330" width="330" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1215.0" y="373.0" class="label" text-anchor="middle"><tspan x="1215.0" dy="0">Present brief and demo</tspan><tspan x="1215.0" dy="24">Prepare PR; choose next slice</tspan></text>
 <polyline points="290,230 290,330" class="edge msg"/>
@@ -27,7 +27,7 @@
 <rect x="140" y="555" width="260" height="95" rx="10" fill="#f0f7ff" class="task"/>
 <text x="270.0" y="574" class="small" text-anchor="middle"><tspan x="270.0" dy="0">Start; wait for pack review end</tspan><tspan x="270.0" dy="19">Unit blocker: unit + dependents</tspan><tspan x="270.0" dy="19">Other blocker: arc-wide hold</tspan><tspan x="270.0" dy="19">Fix pack or ack item</tspan></text>
 <rect x="480" y="555" width="300" height="95" rx="10" fill="#f0f7ff" class="task"/>
-<text x="630.0" y="583.5" class="label" text-anchor="middle"><tspan x="630.0" dy="0">Conditional annotation</tspan><tspan x="630.0" dy="24">Grounded build</tspan><tspan x="630.0" dy="24">Evidence and certification</tspan></text>
+<text x="630.0" y="583.5" class="label" text-anchor="middle"><tspan x="630.0" dy="0">Conditional annotation</tspan><tspan x="630.0" dy="24">Build; configured Claude MCP</tspan><tspan x="630.0" dy="24">Evidence and certification</tspan></text>
 <rect x="880" y="555" width="300" height="95" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1030.0" y="583.5" class="label" text-anchor="middle"><tspan x="1030.0" dy="0">Fresh gate</tspan><tspan x="1030.0" dy="24">Candidate at current tip</tspan><tspan x="1030.0" dy="24">Publish exact tested head</tspan></text>
 <polyline points="290,430 290,555" class="edge msg"/>
@@ -45,6 +45,6 @@
 <polyline points="725,735 725,695 820,695 820,430" class="edge msg"/>
 <text x="1080" y="710" class="small" text-anchor="middle"><tspan x="1080" dy="0">findings return to root</tspan></text>
 <text x="630" y="885" class="small" text-anchor="middle"><tspan x="630" dy="0">Fix rounds retain findings, lane failures, base comparisons, notes and allowance/cap state.</tspan><tspan x="630" dy="20">Judgments start fresh; one invalid answer repairs in its own session. Directives require revise.</tspan><tspan x="630" dy="20">Schema rules + saved evidence; breaks require failed actions, interface rework or declared floors.</tspan></text>
-<rect x="60" y="940" width="1380" height="75" rx="4" fill="#fff" class="task"/>
-<text x="85" y="970" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="24">Watch: --replace / --stop; openBlocking on every wake; confirm supervision live. 30-minute heartbeat; at most 3 chat lines; operator log.</tspan></text>
+<rect x="60" y="940" width="1380" height="90" rx="4" fill="#fff" class="task"/>
+<text x="85" y="964" class="small" text-anchor="start"><tspan x="85" dy="0">Fixed diagnosis 8 builds / 20 judged attempts; hard stop 16 / 40. Expectations are forecasts, never spend caps.</tspan><tspan x="85" dy="22">Unit/host actions close notices. Arc items need named ack; findings, baselines and pack reviews have documented settlements.</tspan><tspan x="85" dy="22">Watch: --replace / --stop; openBlocking on every wake; confirm supervision live. 30-minute heartbeat; at most 3 chat lines; operator log.</tspan></text>
 </svg>

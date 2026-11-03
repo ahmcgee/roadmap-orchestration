@@ -198,8 +198,8 @@ test('publish.green-not-preempted: once a candidate is green its ff and snapshot
   }
 });
 
-test('docs.transient: a docs publication\'s diff is exactly its rendered files and its contract ops\' paths; a unit dispatched under dev.6 may not touch the in-tree .roadmap/', T, async () => {
-  // C-2 rewrites contracts/api.md, which u1 cites: its pre-build answers the stale link (dev.17 propagation).
+test('docs.transient: publication contains only renders; units cannot edit protected roadmap inputs', T, async () => {
+  // C-2 changes the plain ledger and its constraints rendering; product contract text stays in unit diffs.
   const answered = planCheckStep(
     { decision: 'approve' },
   );

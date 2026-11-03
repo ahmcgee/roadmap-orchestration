@@ -1,6 +1,5 @@
 // The executor's rendered documents. Baseline evidence survives changes confined to these paths. Vision files, other
-// product documentation and documents a ruling's contract ops edit (src/docs/contracts.ts: any product document, possibly
-// a lane input) are deliberately outside this list.
+// product documentation, including owner-managed .roadmap/contracts/, is deliberately outside this list.
 import type { RepoPath } from '../core/values.ts';
 import { CONSTRAINTS_DOC } from './constraints.ts';
 import { DEBT_DOC } from './debt.ts';

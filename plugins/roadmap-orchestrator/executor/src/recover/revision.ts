@@ -27,7 +27,7 @@ import { type Publication,appendRevision,beginRevision,closeRevision,keptPayload
 export type DocsOutcome =
   | Readonly<{ kind: 'published'; publication: Publication; settle: () => Promise<void> }>
   | Readonly<{ kind: 'refused'; reason: string }>;
-/** Publishes a revision's rendered `.roadmap/` files and contract ops (A4, src/pipeline/publish.ts) inside its open commit. */
+/** Publishes a revision's rendered `.roadmap/` files (A4, src/pipeline/publish.ts) inside its open commit. */
 export type DocsPublisher = (payload: RevisionPayload, commit: IntentOf<'revision.commit'>) => Promise<DocsOutcome>;
 
 /**

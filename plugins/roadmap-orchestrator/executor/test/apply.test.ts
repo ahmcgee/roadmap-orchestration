@@ -214,7 +214,7 @@ const ROWS: readonly Row[] = [
     expect: [
       /^unit u2 lane mul: evidenceGlobs entry `src\/add.js` covers tracked path `src\/add.js` of the unit's systems/,
       /^unit u2 lane mul: evidenceGlobs entry `test\/add.test.js` covers tracked path `test\/add.test.js` of the unit's systems/,
-      /^unit u3 lane mul: evidenceGlobs entry `\.roadmap\/\*\*` covers protectedPaths entry `\.roadmap`/,
+      /^unit u3 lane mul: evidenceGlobs entry `\.roadmap\/\*\*` covers protectedPaths entry `\.roadmap\/\{!\(contracts\),\.\*\}`/,
     ],
   },
   {

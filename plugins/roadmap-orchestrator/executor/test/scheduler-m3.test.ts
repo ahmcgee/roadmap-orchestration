@@ -307,7 +307,7 @@ describe('stop (B7 follow-up, lead ruling: control applies immediately)', () => 
 });
 
 describe('holistic jobs in the scheduler', () => {
-  test('sched.baseline-before-admission (A6): a must-hold obligation not held at the baseline raises a blocking obligation-baseline, and a refused optionless ack admits nothing; an arc resume closes the item', T, async () => {
+  test('sched.baseline-before-admission (A6): a must-hold obligation not held at the baseline raises a blocking obligation-baseline, an arc resume leaves it blocking until a named ack', T, async () => {
     const d = checkpointArc(unitSteps('u1', moduleFiles('mul', '*')), { trees: { '*': { outcomes: { t1: 'fail' } } } });
     const r = contextFor(d);
     const s = startHolistic(r);
@@ -318,12 +318,15 @@ describe('holistic jobs in the scheduler', () => {
       await sleep(3_000);
       assert.deepEqual(factsOf(r, 'stage-outcome'), [], 'no unit stage while the baseline item is open');
       assert.equal(r.journal.view.opsOf('proc.spawn').some((i) => i.expect.subject.purpose === 'backend'), false);
+      const resume = submit(r, {type: 'resume', target: {type: 'all'}});
+      await until(() => terminalReceipt(r.ctx.runDir, resume) !== null, WAIT_MS, 'arc resume receipt');
+      assert.equal(terminalReceipt(r.ctx.runDir, resume)?.state, 'applied');
+      assert.equal(r.journal.view.ackOf(item!), null);
+      assert.deepEqual(factsOf(r, 'stage-outcome'), [], 'resume admits nothing while the baseline item is open');
       const ack = submit(r, { type: 'ack', needsUser: item!, choice: null });
-      await until(() => terminalReceipt(r.ctx.runDir, ack) !== null, WAIT_MS, 'the optionless ack refusal');
-      assert.equal(terminalReceipt(r.ctx.runDir, ack)?.state, 'rejected');
-      assert.deepEqual(factsOf(r, 'stage-outcome'), [], 'the refused ack admits nothing');
-      submit(r, {type: 'resume', target: {type: 'all'}});
-      await until(() => factsOf(r, 'stage-outcome').some((f) => f.unit === 'u1'), WAIT_MS, 'u1 admitted after the arc resume');
+      await until(() => terminalReceipt(r.ctx.runDir, ack) !== null, WAIT_MS, 'the named acknowledgement');
+      assert.equal(terminalReceipt(r.ctx.runDir, ack)?.state, 'applied');
+      await until(() => factsOf(r, 'stage-outcome').some((f) => f.unit === 'u1'), WAIT_MS, 'u1 admitted after the named ack');
       assert.ok(factsOf(r, 'needs-user-acked')[0]!.seq < factsOf(r, 'stage-outcome')[0]!.seq);
     } finally {
       await stopAndClose(r, s);

@@ -194,7 +194,7 @@ Product config systemsMap:
 Systems cannot be empty; docs is reserved for the docs class. Shared/contract/dependency names must resolve. Each revision
 records the map read from config. Gate reach is actual paths beyond direct declared-system membership, plus reachTraits
 from actual diff/builder touches. It is neutral input, not an out-of-system write refusal. Phase 0 overlap is advisory.
-Central protectedPaths protects `.roadmap/` and pinned same-repo corpus files across salvage/transient/recovery.
+Central protectedPaths protects `.roadmap/` except `.roadmap/contracts/`, plus pinned same-repo corpus files across salvage/transient/recovery. Owner-managed contract docs are ordinary product source edited in unit diffs; systemsMap.contracts maps their paths to consuming systems for re-gating. Contracts are never executor-rendered.
 
 Config `systemNotesDir?:RepoPath` defaults to docs/systems. Build/gate inputs `systemNotes` are sorted existing
 `<system>.md` paths at the checkout commit, not note contents or new normative requirements. Notes edits use ordinary unit
@@ -1033,3 +1033,9 @@ Each history list retains the ten most recent items; unmet clauses are spec-boun
 `--bin-dir` chooses a writable PATH directory. It refuses unrelated existing commands. Refresh on plugin/container
 updates. The TUI reads retained runtime and captured document identities without making runtime writes or controlling
 admission. Closing it leaves the executor running; status/usage observation is bounded and read-only.
+
+### dev.42 publication adoption and item settlement
+
+RevisionPayload.publication is null or `{renders:{path,sha256}[]}`. New payloads omit contractOps. The temporary dev.41 reader accepts and discards a legacy `contractOps: []` with a ROADMAP_UPGRADE warning; nonempty arrays and other values fail loudly. Kept bytes and hashes are unchanged. Schema remains 2.
+
+Arc-subject needs-user items require a named `ack <id>` (optionless accepted). Unit/host subject actions still close their items. Finding requests retain settlement by named findings or a root revision supplying all repairs. Pack-review supersession remains. A later baseline with no problems emits `baseline-held{job:baseline-n,items:NeedsUserId[]}` (sorted, unique, nonempty) to settle exactly the open obligation-baseline items; replay folds this separately from acknowledgement. Apply/resume alone never closes unrelated arc items.
