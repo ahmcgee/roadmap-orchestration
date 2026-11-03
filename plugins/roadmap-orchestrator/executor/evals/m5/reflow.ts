@@ -10,6 +10,7 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { join } from 'node:path';
 
 export type Reflow =
@@ -115,6 +116,19 @@ class Cdp {
   }
 }
 
+/**
+ * A port free on loopback now, chosen here rather than by asking the product for an ephemeral `PORT=0`: a built product may
+ * rightly require a port from 1 to 65535 (a paid run's did), and the oracle must not depend on that choice.
+ */
+async function freePort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => { probe.once('error', reject); probe.listen(0, '127.0.0.1', () => resolve()); });
+  const address = probe.address();
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  if (address === null || typeof address === 'string') throw new Error(`free port probe: unexpected address ${String(address)}`);
+  return address.port;
+}
+
 /** Renders `/` of `product` at `sha` at 320 CSS px and measures its layout width. */
 export async function reflowAt(product: string, sha: string): Promise<Reflow> {
   const tree = mkdtempSync(join(tmpdir(), 'm5-reflow-tree-'));
@@ -127,7 +141,7 @@ export async function reflowAt(product: string, sha: string): Promise<Reflow> {
     const untar = spawnSync('tar', ['-x', '-C', tree], { input: archive.stdout, timeout: STEP_MS });
     if (untar.status !== 0) throw new Error(`tar -x into ${tree}: ${untar.error?.message ?? untar.stderr.toString('utf8')}`);
 
-    const server = start(process.execPath, ['src/server.js'], { cwd: tree, env: { PATH: process.env['PATH'], HOME: process.env['HOME'], PORT: '0' } }, /swapshelf listening on (http:\/\/\S+)/);
+    const server = start(process.execPath, ['src/server.js'], { cwd: tree, env: { PATH: process.env['PATH'], HOME: process.env['HOME'], PORT: String(await freePort()) } }, /swapshelf listening on (http:\/\/\S+)/);
     children.push(server.child);
     let base: string;
     try {
