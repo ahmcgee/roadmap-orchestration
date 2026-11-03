@@ -266,10 +266,12 @@ function obligationsOf(n: ArcNo, pin: Pin) {
 /** The marker notice's `slow` lane hangs on until it exists (golden.ts `SLOW_LANE`): outside every checkout. */
 export const slowMarker = (dir: string): string => join(layout(dir).fake, 'arc-2', `${SLOW_LANE.unit}.${SLOW_LANE.id}.marker`);
 
-/** Unit `u`'s spec: notice's carries the `slow` lane after its unit lane. */
+/** Unit `u`'s spec: notice carries `slow`; booking-slip also checks the booking's text confirmation. */
 function unitSpec(dir: string, u: (typeof UNITS)[number]) {
   const slow = u.id === SLOW_LANE.unit ? [specLane(SLOW_LANE.id, ['node', '-e', SLOW_LANE.script], { set: { [SLOW_LANE.markerEnv]: slowMarker(dir) }, pass: ['PATH'] })] : [];
-  return specOf(u, slow);
+  // Keep both booking receipts covered at the unit boundary; this extra real run also exercises low-unique-catch.
+  const confirmation = u.id === 'booking-slip' ? [{ ...specLane('confirm', ['node', '--test', 'journeys/confirm.journey.js']), cadence: 'unit' }] : [];
+  return specOf(u, [...slow, ...confirmation]);
 }
 
 type Ctx = Readonly<{ t: Turn; dir: string; state: State }>;
