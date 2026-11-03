@@ -256,6 +256,25 @@ describe('M3 event records', () => {
     assert.throws(() => parseRevisionPayload({ ...p, manifest: { planSha256: H, specs: { u1: H } } }), /rulings/);
   });
 
+  it('a dev.41 payload\'s empty legacy contractOps is discarded with one upgrade warning per process, however often it is read', () => {
+    const legacy = {
+      v: 2, source: { type: 'walk', job: 'walk-1' }, base: 4, rev: 5,
+      manifest: { planSha256: H, specs: { u1: H }, rulings: { ledgerSha256: H }, obligations: H2, vision: H },
+      changes: [], dispositions: [], divergences: [],
+      publication: { renders: [], contractOps: [] }, routingProvenance: planApplied.routingProvenance,
+    };
+    const seen: string[] = [];
+    const listen = (w: Error): void => { if (/legacy contractOps/.test(w.message)) seen.push(w.message); };
+    process.on('warning', listen);
+    for (let i = 0; i < 5; i++) assert.equal('contractOps' in (parseRevisionPayload(legacy).publication ?? {}), false);
+    // Warnings are delivered on a later tick: keep listening until then. The latch may already be set by an earlier read in
+    // this process (then none is seen); what must never happen is a repeat.
+    return new Promise<void>((resolve, reject) => setImmediate(() => {
+      process.off('warning', listen);
+      try { assert.ok(seen.length <= 1, `${seen.length} warnings`); resolve(); } catch (e) { reject(e); }
+    }));
+  });
+
   it('holders, parents, subjects and meter subjects of jobs; batch candidates; docs and batch ffs', () => {
     const transition = (holder: object): LogRecord => ({
       type: 'intent', op: opId(ARC, 2), kind: 'resource.transition', key: 'resources:x', parent: { type: 'job', job: 'audit-1' }, ordinal: 1, deadlineAt: null,

@@ -241,7 +241,7 @@ function startOf(run: Run): RunStart {
 async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, planFile: AbsPath, base: RevisionManifest, rev: number, reason: string): Promise<unknown> {
   const { view } = readJournal(run.runDir, run.arc);
   const verdict = await evaluateApply({
-    runDir: run.runDir, view, hostDir, repo: start.repo, planFile, routingBase: { profile: start.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
+    runDir: run.runDir, view, hostDir, repo: start.repo, planFile, routingBase: { profile: view.planApplied()!.routingProvenance.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
     laneEnv: process.env, manifest: null, base, rev, reason,
   });
   switch (verdict.kind) {

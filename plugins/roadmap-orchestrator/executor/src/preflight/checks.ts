@@ -73,12 +73,12 @@ type InForce,type InputFiles,type RoutingBase,appendRevision,arcRolesOf,closeRev
 keepCorpusFiles,keptPayload,openRevision,planInForce,readInputFiles,
 recordPlan,revisionInForce,specBytesOf,specShaInForce
 } from '../input/inforce.ts';
-import { CORPUS_VISION_FILE,type PlanM1,type PlanUnit,parsePlan,reservedUnitIdReason,visionFile } from '../input/plan.ts';
+import { CORPUS_VISION_FILE,type PlanM1,type PlanUnit,hasMilestones,parsePlan,reservedUnitIdReason,visionFile } from '../input/plan.ts';
 import { FRESH_START,RESTART,holisticNeedsCorpus,phase0InputOf,phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
 import { cpuCapacity,overCapacity } from '../resources/pool.ts';
 import {
-type RepoConfig,type ResolvedRouting,
+type RepoConfig,type ResolvedRouting,arcScopeOf,provenanceStack,
 parseRepoConfig,
 planStack,
 resolveRouting,selectProfile,unsupportedSeats,
@@ -90,6 +90,7 @@ import { isSchema1InvariantsBlock } from '../docs/invariants.ts';
 import { laneRows } from './lanerows.ts';
 import { type SmokePark,type SmokeReport,type SmokeRouting,backendEnv,smoke,smokeOutages,smokeRejections } from './smoke.ts';
 import type { StartupCheck,StartupContext,StartupRejection } from './startup.ts';
+import { profileConflict } from './profile.ts';
 import { walkToolsCheck } from './walktools.ts';
 
 type Rejection<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind: K }>;
@@ -349,7 +350,9 @@ export function committedRepoConfig(repo: AbsPath, commit: Sha): RepoConfig | nu
 
 /** The stack for this arc: the profile, the repo config's seats and class rebinds, the plan's layer (no per-unit layers in M1). */
 export function resolveArcRouting(context: StartupContext): ResolvedRouting {
-  return routingOf(context.profile, context.repo, context.plan, context.arcRoles);
+  return context.routingProvenance === undefined
+    ? routingOf(context.profile, context.repo, context.plan, context.arcRoles)
+    : resolveRouting(provenanceStack(context.routingProvenance, arcScopeOf(context.plan), null, hasMilestones(context.plan)));
 }
 
 export const routingCheck: StartupCheck<'unsupported-routing'> = {
@@ -399,7 +402,7 @@ async function residueCheck(context: StartupContext, view: JournalView | null): 
 export type StartInput = Readonly<{
   repo: AbsPath;
   planFile: AbsPath;
-  /** `start --profile`, or null to let `.roadmap/config.json` choose. */
+  /** `start --profile`, or null to retain recorded routing (repo config chooses only on first start). */
   profile: ProfileName | null;
   hostDir: AbsPath;
   /** The executor's environment: lane prerequisites resolve against it, and backends get `backendEnv(env)`. */
@@ -623,16 +626,20 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     source = started;
   }
   const { plan } = source;
+  const runDir = runDirOf(common(), plan.arc);
+  const view = viewAt(runDir, plan.arc);
+  const recorded = view?.planApplied()?.routingProvenance;
+  const conflict = profileConflict(input.profile, recorded?.profile ?? null);
+  if (conflict !== null) return refused([conflict]);
   let profile: ProfileName;
   try {
-    profile = selectProfile(input.profile, readRepoConfig(input.repo));
+    profile = recorded?.profile ?? plan.routing?.profile ?? selectProfile(input.profile, readRepoConfig(input.repo));
   } catch (error) {
     return refused([...legacyRoadmapDir(input.repo), schemaRejection(error)]);
   }
-  const runDir = runDirOf(common(), plan.arc);
-  const view = viewAt(runDir, plan.arc);
   const context: StartupContext = {
     repo: input.repo, planFile: input.planFile, plan, specOf: source.specOf, profile, arcRoles: arcRolesOf(view?.planApplied() ?? null), runDir, hostDir: input.hostDir,
+    ...(recorded === undefined ? {} : { routingProvenance: recorded }),
     ...(source.ledger === null ? {} : { ledger: source.ledger }),
   };
   const inputRows = [...legacyRoadmapDir(input.repo), ...(await planInvalidCheck.check(context)), ...(source.checked === null ? [] : revisionInputRows(source.checked))];

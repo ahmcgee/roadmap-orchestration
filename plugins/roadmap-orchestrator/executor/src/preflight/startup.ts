@@ -21,7 +21,7 @@ type ChainProblem,type CorpusProblem,type Phase0Problem,chainProblem,corpusProbl
 } from '../phase0/types.ts';
 import type { OverCapacity } from '../resources/pool.ts';
 import {
-type ArcRoleSet,type Backend,type ModelClass,type ProfileName,type RoutingLayerName,type SeatRef,backend,modelClass,profileName,seatFields,
+type ArcRoleSet,type Backend,type ModelClass,type ProfileName,type RoutingLayerName,type RoutingProvenance,type SeatRef,backend,modelClass,profileName,seatFields,
 } from '../routing/types.ts';
 
 /** EX_CONFIG: start refused; fixing the input or disposing the blocker is the user's move. */
@@ -49,6 +49,8 @@ export type StartupRejection =
   // Row: a seat resolving to an unsupported triple (including every Codex judgment triple). Names the seat,
   // the layer that chose its class and the class, never the model.
   | (Readonly<{ kind: 'unsupported-routing'; layer: RoutingLayerName; class: ModelClass; unit: UnitId | null; why: 'codex-judgment' | 'no-prompt' }> & SeatRef)
+  // Row: restart flags cannot change the profile recorded by a routing revision.
+  | Readonly<{ kind: 'profile-conflict'; requested: ProfileName; recorded: ProfileName; detail: string }>
   // Row: undispositioned host residue.
   | Readonly<{ kind: 'undispositioned-residue'; residues: readonly ResidueKey[] }>
   // Row: live host owner (or a live recovery-lock holder). Exit 75.
@@ -133,6 +135,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'worktree-root-unusable':
     case 'spec-lane-unrunnable':
     case 'unsupported-routing':
+    case 'profile-conflict':
     case 'undispositioned-residue':
     case 'previous-arc-unreconciled':
     case 'backend-smoke':
@@ -166,6 +169,8 @@ export type StartupContext = Readonly<{
   /** The bytes of a unit's spec as this start reads it (the file, or the plan in force's kept spec), or null when absent. */
   specOf: (unit: PlanUnit) => Buffer | null;
   profile: ProfileName;
+  /** Present on a restart: the same recorded routing that dispatch uses. */
+  routingProvenance?: RoutingProvenance;
   /** The arc's role set (M4b): `m4b` for a fresh arc, else what its revision 1 recorded (null: started on 1.0.0-dev.7). */
   arcRoles: ArcRoleSet | null;
   runDir: AbsPath;
@@ -261,6 +266,9 @@ export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionK
   })),
   'previous-arc-unreconciled': object((f): StartupRejection => ({
     kind: f.get('kind', literal('previous-arc-unreconciled')), arc: f.get('arc', arcId), invocations: f.get('invocations', arrayOf(invocationIdOf)),
+  })),
+  'profile-conflict': object((f) => ({
+    kind: f.get('kind', literal('profile-conflict')), requested: f.get('requested', profileName), recorded: f.get('recorded', profileName), detail: f.get('detail', str),
   })),
   'backend-smoke': object((f): StartupRejection => ({
     kind: f.get('kind', literal('backend-smoke')), profile: f.get('profile', profileName), backend: f.get('backend', backend),
