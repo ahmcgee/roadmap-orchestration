@@ -14,13 +14,13 @@
 // M3 (B7; the OR rulings), M4a and M4b: whether an item of a reason from M3 on blocks is fixed by its reason (`m3Blocking`),
 // and a raise that disagrees fails loud. A request naming only settled findings is informational: its decision already landed. Blocking: `obligation-baseline` (A6), `finding-p1-escalated`,
 // `new-finding-draining`, `steered`, `not-reproduced`, `owner-request` (A16: only the owner may act), `respec-second`
-// (OR-Q1), and M4a's `pack-review` (K14).
+// (OR-Q1), and M4a's `pack-review` (K14; it also accepts an optionless ack).
 // Non-blocking (`NON_BLOCKING_M3_REASONS`):
 // `revision-notice` and `waste-finding`. Blocking means the arc is not `complete` while the item is
 // open (§2.10); what an open item holds
-// back from admission is admission's (src/schedule/ready.ts) and, for `obligation-baseline` and `pack-review` (every
-// admission until it is answered), the scheduler's. A `pack-review` item a later pack
-// review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply
+// back from admission is admission's (src/schedule/ready.ts); the scheduler also holds every admission for an owed
+// baseline or a running/due pack review. Ended pack-review findings use their target scope in admission.
+// A `pack-review` item a later pack review's end superseded (K14), or the escalation of an abandoned walk whose milestone's bring-up or journeys an apply
 // then edited (dev.13), is open no more (`supersededItems`): it holds and blocks nothing.
 import { existsSync,readFileSync,readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -252,6 +252,22 @@ export function fileNeedsUser(runDir: AbsPath, view: JournalView): readonly Need
     if (record === null) throw new Error(`needs-user ${name} vanished while it was listed`);
     return view.ackOf(id) === null ? [record] : [];
   });
+}
+
+/** The canonical open-item list for status and watch: journal and file-only items, ascending id. */
+export type OpenItem = Readonly<{ id: NeedsUserId; reason: NeedsUserReason; blocking: boolean }>;
+export function openItems(runDir: AbsPath, view: JournalView): readonly OpenItem[] {
+  return [
+    ...openNeedsUser(view).filter((n) => readNeedsUserAck(runDir, n.id) === null)
+      .map((n) => ({ id: n.id, reason: recordOf(runDir, n.id).reason, blocking: n.blocking })),
+    ...fileNeedsUser(runDir, view).filter((r) => readNeedsUserAck(runDir, r.id) === null)
+      .map((r) => ({ id: r.id, reason: r.reason, blocking: r.blocking })),
+  ].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+export type OpenBlockingDigest = readonly Readonly<{ id: NeedsUserId; reason: NeedsUserReason }>[];
+export function openBlockingDigest(runDir: AbsPath, view: JournalView): OpenBlockingDigest {
+  return openItems(runDir, view).filter((n) => n.blocking).map(({ id, reason }) => ({ id, reason }));
 }
 
 /** Every blocking needs-user no ack answers: the journal's and the file-only ones. */

@@ -86,7 +86,8 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 //   - arc-wide (`arcHolds`): no unit is admitted to any stage (chains run on) while
 //       - baseline (A6): the baseline is owed or running, or its blocking `obligation-baseline` is open;
 //       - pack-review (M4a K14, H9): before the first admission, a pack review is running or due, or the latest ended
-//         review with the current key has an open blocking `pack-review` item (src/holistic/packreview.ts).
+//         review's open `pack-review` item has arc-wide scope. Unit findings hold only targets and transitive effective
+//         dependents through admission (src/holistic/packreview.ts `packReviewHold`, src/schedule/ready.ts).
 //   - batch (R7, B2): the candidate of an approved unit repairing a finding directly waits while another active
 //     unit repairs that finding directly and is not approved yet; once every such unit (at least two) waits at its
 //     candidate they publish as one batch. A red batch records `red` for each member its own selection attributes
@@ -413,7 +414,7 @@ export type ArcHold = (typeof ARC_HOLDS)[number];
 
 /**
  * The arc-wide holds of a holistic arc now: the baseline owed, running (`baselineRunning`) or its item open (A6); the pack
- * review running, due or held (K14, H9). Empty: none.
+ * review running, due or held arc-wide (K14, H9). Unit-scoped findings are admission constraints. Empty: none.
  */
 export function arcHolds(h: HolisticContexts, blocking: readonly BlockingItem[], baselineRunning: boolean): readonly ArcHold[] {
   const out = new Set<ArcHold>();

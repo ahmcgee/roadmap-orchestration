@@ -1,9 +1,10 @@
 // M3 step B2: the baseline witness job (src/pipeline/baseline.ts, A6) and journey-series lane reuse (src/pipeline/lanes.ts),
 // over real arcs (real git, real processes, fake witness lanes scripted per tree). Named tests: baseline.held,
 // baseline.must-hold-not-held, baseline.future-vacuous, baseline.resume, baseline.rerun-after-revision,
-// baseline.external-lane, baseline.not-holistic, lanes.reuse.
+// baseline.docs-only-apply, baseline.docs-paths, baseline.source-change, baseline.lane-revision, baseline.regrade,
+// baseline.expected-red-{future,must-hold,mixed}, baseline.external-lane, baseline.not-holistic, lanes.reuse.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
@@ -15,9 +16,10 @@ import { absPath } from '../src/core/values.ts';
 import { holisticInForce } from '../src/pipeline/stages.ts';
 import { type BaselineContext, baselineDue, runBaseline } from '../src/pipeline/baseline.ts';
 import { jobEvidenceRoot } from '../src/git/snapshot.ts';
-import { arcJourneyLane, runJourneySeries } from '../src/pipeline/lanes.ts';
+import { arcJourneyLane, runJourneySeries, witnessRecordPath } from '../src/pipeline/lanes.ts';
 import { baselineOwed } from '../src/schedule/scheduler.ts';
-import { git, tmpDir } from './helpers/repo.ts';
+import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
+import { scriptTree } from './helpers/witness.ts';
 import { type HolisticOptions, holisticArc, obligationsJson } from './fixtures/brake-common.ts';
 import { type Wired, publishArc, wire } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
@@ -28,6 +30,13 @@ type Json = Record<string, unknown>;
 
 const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journal.view.arc).events.flatMap((e) => (e.type === 'fact' ? [e.fact] : []));
 const spawnsOf = (r: ArcRun, lane: string): number => r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey' && i.expect.subject.lane === lane).length;
+type ObligationsJson = Json & { lanes: Json[]; obligations: Json[] };
+const readObligations = (r: ArcRun): ObligationsJson => JSON.parse(readFileSync(join(r.d.planPath, '..', 'obligations.json'), 'utf8')) as ObligationsJson;
+async function applyObligations(r: ArcRun, w: Wired, input: ObligationsJson): Promise<void> {
+  writeFileSync(join(r.d.planPath, '..', 'obligations.json'), JSON.stringify(input));
+  const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(r.d)));
+  assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+}
 
 function arc(opts: Omit<HolisticOptions, 'steps' | 'mapping'>): Readonly<{ r: ArcRun; ctx: BaselineContext; w: Wired; control: string }> {
   const { d, control } = holisticArc({ steps: [], mapping: [], ...opts });
@@ -110,7 +119,55 @@ describe('the baseline witness (A6)', () => {
     }
   });
 
-  test('baseline.rerun-after-revision: a revision adding a lane the job never witnessed, its docs publication moving the tip, re-runs every arc lane as the same job on a checkout of its own; each series certified once (paid M4b run 3 crashed on a second certificate)', T, async () => {
+  test('baseline.docs-only-apply: repeated docs publications move the tip without owing a baseline or spawning lanes again', T, async () => {
+    const { r, ctx, w } = arc({ obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass' } } } });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      for (const cutLine of ['revised pack', 'revised pack again']) {
+        const before = git(r.d.repo, 'rev-parse', 'main');
+        await applyObligations(r, w, { ...readObligations(r), cutLine });
+        const after = git(r.d.repo, 'rev-parse', 'main');
+        assert.notEqual(after, before, 'the docs publication moved the tip');
+        assert.equal(git(r.d.repo, 'diff', '--name-only', before, after), '.roadmap/invariants.md');
+        assert.equal(baselineDue(ctx), null);
+        assert.equal(baselineOwed(w.stage), null);
+        await assert.rejects(runBaseline(ctx), /no baseline is due/);
+        assert.equal(spawnsOf(r, 'journey'), 1, 'neither publication nor baseline reran the lane');
+      }
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('baseline.docs-paths: executor-rendered docs preserve evidence; any other path (a roadmap input, a contract document) reruns every lane', T, async () => {
+    const { r, ctx } = arc({
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+    });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      for (const path of ['.roadmap/constraints.md', '.roadmap/invariants.md', '.roadmap/debt.md']) {
+        writeFiles(r.d.repo, { [path]: 'published docs\n' });
+        commitAll(r.d.repo, `publish ${path}`);
+        assert.equal(baselineDue(ctx), null, path);
+        assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [1, 1]);
+      }
+      writeFiles(r.d.repo, { '.roadmap/vision.json': '{}\n' });
+      commitAll(r.d.repo, 'change vision outside rendered docs');
+      assert.equal(baselineDue(ctx), 'baseline-1');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [2, 2]);
+      writeFiles(r.d.repo, { 'contracts/nested/new.md': 'a contract a ruling edited\n' });
+      commitAll(r.d.repo, 'edit a contract document');
+      assert.equal(baselineDue(ctx), 'baseline-1', 'a contract document may be a lane input');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [3, 3]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('baseline.rerun-after-revision: a docs revision adding a lane runs only that lane as the same job on its own checkout; each series certified once (paid M4b run 3)', T, async () => {
     const { r, ctx, w, control } = arc({ obligations: [{ id: 'I-1', testIds: ['t1'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
     try {
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
@@ -118,25 +175,117 @@ describe('the baseline witness (A6)', () => {
       // Rev 2 adds lane `other` (I-2); its docs publication (docs-1) moves the tip.
       const before = git(r.d.repo, 'rev-parse', 'main');
       const obligations = [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }];
-      writeFileSync(join(r.d.planPath, '..', 'obligations.json'), JSON.stringify(obligationsJson({ obligations, mapping: [], lanes: ['journey', 'other'] }, control)));
-      const applied = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(r.d)));
-      assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+      const input = obligationsJson({ obligations, mapping: [], lanes: ['journey', 'other'] }, control) as ObligationsJson;
+      input.lanes[0] = readObligations(r).lanes[0]!; // Preserve journey's argv/rev; the fixture otherwise makes a new wrapper.
+      await applyObligations(r, w, input);
       assert.notEqual(git(r.d.repo, 'rev-parse', 'main'), before, 'the docs publication moved the tip');
       assert.equal(baselineOwed(w.stage), 'baseline-1', 'not done elsewhere: the tree it left lacks lane other');
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
       assert.equal(baselineDue(ctx), null);
       const ran = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey' && i.parent.type === 'job' && i.parent.job === 'baseline-1');
-      assert.deepEqual(ran.map((i) => i.expect.subject.purpose === 'journey' && i.expect.subject.lane), ['journey', 'journey', 'other'], 'every arc lane ran again on the new tip');
+      assert.deepEqual(ran.map((i) => i.expect.subject.purpose === 'journey' && i.expect.subject.lane), ['journey', 'other'], 'only the added lane ran on the new tip');
       const root = join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc);
       assert.deepEqual(facts(r).flatMap((f) => (f.kind === 'series-certified' && f.parent.type === 'job' && f.parent.job === 'baseline-1' ? [[f.parent, f.checkout]] : [])), [
         [{ type: 'job', job: 'baseline-1' }, join(root, 'baseline-1.checkout-1')],
         [{ type: 'job', job: 'baseline-1' }, join(root, 'baseline-1.checkout-2')],
       ], 'one certificate per series, each on its own checkout');
+      await applyObligations(r, w, { ...readObligations(r), cutLine: 'another pack revision' });
+      assert.equal(baselineDue(ctx), null, 'records on both earlier equivalent trees still count');
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [1, 2], 'only docs publication witnessed the newly added must-hold lane');
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
       r.journal.close();
     }
   });
+
+  test('baseline.source-change: a source change and docs revision make every lane run again', T, async () => {
+    const { r, ctx, w } = arc({
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+    });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      writeFiles(r.d.repo, { 'src/add.js': 'export const add = (a, b) => a + b;\n' });
+      commitAll(r.d.repo, 'change source on integration tip');
+      await applyObligations(r, w, { ...readObligations(r), cutLine: 'source and pack revision' });
+      assert.equal(baselineDue(ctx), 'baseline-1');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.equal(baselineDue(ctx), null);
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [2, 2]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('baseline.lane-revision: changing one lane definition reruns only that lane', T, async () => {
+    const { r, ctx, w } = arc({
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'], lane: 'other' }], lanes: ['journey', 'other'],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+    });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      const input = readObligations(r);
+      input.lanes[0]!['env'] = { set: { PACK_REV: '2' }, pass: ['PATH'] };
+      await applyObligations(r, w, input);
+      const before = [spawnsOf(r, 'journey'), spawnsOf(r, 'other')];
+      assert.equal(baselineDue(ctx), 'baseline-1');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      assert.equal(baselineDue(ctx), null);
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [before[0]! + 1, before[1]]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('baseline.regrade: a new future witness test id is graded against the job record without rerunning the lane', T, async () => {
+    const { r, ctx, w, control } = arc({
+      obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['missing'] }],
+      trees: { '*': { outcomes: { t1: 'pass' } } },
+    });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      const input = readObligations(r);
+      input.obligations[0]!['witness'] = { lane: 'journey', testIds: ['t1'] };
+      input.obligations[0]!['proofJudgment'] = { verdict: 'proves', obligationRev: 1, witness: { testIds: ['t1'] } };
+      scriptTree(control, '*', { outcomes: { t1: 'fail' } });
+      await applyObligations(r, w, input);
+      assert.equal(spawnsOf(r, 'journey'), 3, 'docs publication keeps the diagnostic rerun even for an all-future lane');
+      assert.equal(baselineDue(ctx), 'baseline-1', 'the retained record now reveals a vacuous witness');
+      assert.deepEqual(await runBaseline(ctx), { kind: 'raised', problems: [{ obligation: 'I-1', kind: 'vacuous', verdict: 'held' }] });
+      assert.equal(baselineDue(ctx), null);
+      assert.equal(spawnsOf(r, 'journey'), 3, 'baseline regrades its own older record, without spawning again');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  for (const kind of ['future', 'must-hold', 'mixed'] as const) {
+    test(`baseline.expected-red-${kind}: only an all-future lane skips the diagnostic rerun`, T, async () => {
+      const { r, ctx } = arc({
+        obligations: [
+          { id: 'I-1', activation: kind === 'must-hold' ? 'must-hold' : 'future', deliveredBy: ['u1'], testIds: ['t1'] },
+          ...(kind === 'mixed' ? [{ id: 'I-2', testIds: ['t1'] }] : []),
+        ],
+        trees: { '*': { outcomes: { t1: 'fail' } } },
+      });
+      try {
+        const out = await runBaseline(ctx);
+        assert.equal(out.kind, kind === 'future' ? 'held' : 'raised');
+        const count = kind === 'future' ? 1 : 2;
+        assert.equal(spawnsOf(r, 'journey'), count);
+        const witnessed = r.journal.view.holistic().witnessed;
+        assert.equal(witnessed.length, 1, 'only the counted red run is witnessed');
+        const record = JSON.parse(readFileSync(witnessRecordPath(r.ctx.runDir, witnessed[0]!), 'utf8')) as { records: { outcome: string }[] };
+        assert.deepEqual(record.records.map((t) => t.outcome), ['fail']);
+        const dirs = readdirSync(jobEvidenceRoot(r.ctx.runDir, jobId('baseline', 1)));
+        assert.equal(dirs.filter((d) => d.startsWith('arc-journey-')).length, count, 'one immutable evidence dir per execution');
+        assert.ok(!dirs.some((d) => d.includes('.rerun')), 'no legacy rerun directory');
+        assert.equal(baselineDue(ctx), null);
+      } finally {
+        r.journal.close();
+      }
+    });
+  }
 
   test('baseline.external-lane: an obligation an external-class lane witnesses is neither run nor graded at baseline, so no baseline is owed for it', T, async () => {
     const { r, ctx } = arc({

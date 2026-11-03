@@ -40,7 +40,10 @@ export type Command =
    * event; its `heartbeatMin` (`--heartbeat-min <n>`, only with `--actionable`) is null for the default (HEARTBEAT_MIN);
    * its `from` (`--from <seq>`, only with `--actionable`) the cursor a restarted stream starts at, null for none.
    */
-  | Readonly<{ command: 'watch'; actionable: Readonly<{ heartbeatMin: number | null; from: number | null }> | null; run: RunLocator }>
+  | Readonly<{ command: 'watch'; run: RunLocator } & (
+    | { actionable: null; stop?: true; replace?: never }
+    | { actionable: Readonly<{ heartbeatMin: number | null; from: number | null }>; replace?: true; stop?: never }
+  )>
   | Readonly<{ command: 'stop'; run: RunLocator }>
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
@@ -200,8 +203,10 @@ export function parseCommand(argv: readonly string[]): Command {
     case 'start':
       return { command: 'start', args: parseStartArgs(rest) };
     case 'watch': {
-      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', 'heartbeat-min': 'value', from: 'value' }, command);
+      const p = parseRest(rest, { ...LOCATOR, actionable: 'switch', replace: 'switch', stop: 'switch', 'heartbeat-min': 'value', from: 'value' }, command);
       positionals(p, command, 0);
+      if (p.flags.has('replace') && !p.flags.has('actionable')) throw new CliError('watch: --replace goes with --actionable');
+      if (p.flags.has('stop') && ['actionable', 'replace', 'heartbeat-min', 'from'].some((f) => p.flags.has(f))) throw new CliError('watch: --stop cannot be combined with stream options');
       const heartbeat = value(p, 'heartbeat-min');
       const from = value(p, 'from');
       if (heartbeat !== undefined && !p.flags.has('actionable')) throw new CliError('watch: --heartbeat-min goes with --actionable');
@@ -210,7 +215,10 @@ export function parseCommand(argv: readonly string[]): Command {
       const actionable = p.flags.has('actionable')
         ? { heartbeatMin: heartbeat === undefined ? null : positiveInt(command, '--heartbeat-min', heartbeat, 'minutes'), from: from === undefined ? null : Number(from) }
         : null;
-      return { command, actionable, run: locator(p, command) };
+      const run = locator(p, command);
+      return actionable === null
+        ? { command, actionable, run, ...(p.flags.has('stop') ? { stop: true } : {}) }
+        : { command, actionable, run, ...(p.flags.has('replace') ? { replace: true } : {}) };
     }
     case 'status': {
       const p = parseRest(rest, { ...LOCATOR, summary: 'switch' }, command);

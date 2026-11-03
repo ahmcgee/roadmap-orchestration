@@ -7,8 +7,9 @@
 // packreview.no-review-between-rule-and-apply (M4a rev 3, I2), and the
 // crash cells of the matrix row PACK_REVIEW_JOB.
 import assert from 'node:assert/strict';
-import { existsSync,readFileSync } from 'node:fs';
+import { existsSync,mkdirSync,readFileSync } from 'node:fs';
 import { basename,join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand } from '../src/commands/apply.ts';
@@ -16,7 +17,7 @@ import { terminalReceipt,submitCommand } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
 import { type NeedsUserId,jobId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { packReviewKey,packReviewPending,packReviewStatus,requiredInputs,runPackReview } from '../src/holistic/packreview.ts';
+import { packReviewHold,packReviewKey,packReviewPending,packReviewStatus,requiredInputs,runPackReview } from '../src/holistic/packreview.ts';
 import { PACK_REVIEW_INPUTS_SCHEMA,parsePackReviewInputs } from '../src/holistic/types.ts';
 import { PACK_REVIEW_INPUT } from '../src/input/inforce.ts';
 import { blockingItems,openBlocking,openNeedsUser,readNeedsUser,supersededItems } from '../src/needsuser.ts';
@@ -27,16 +28,17 @@ import { ActionableFilter,HEARTBEAT_MIN,watch } from '../src/watch.ts';
 import { applyPlanEdit,checkpointContext,factsOfKind } from './fixtures/checkpoint-common.ts';
 import { type CorpusHolisticArc,corpusHolisticArc,forgeEnv } from './fixtures/corpus-holistic.ts';
 import { until } from './fixtures/exec-common.ts';
-import { followContext,stepTo } from './fixtures/route-common.ts';
+import { editPlan,followContext,stepTo } from './fixtures/route-common.ts';
 import { startHolistic } from './fixtures/sched-m3-common.ts';
 import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcRun,contextFor } from './fixtures/unit-common.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { jobRepairStep,packReviewAnswer,packReviewStep,packTargetOf } from './helpers/holistic.ts';
-import { runFixture } from './helpers/proc.ts';
+import { runFixture,runUntilExit } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
 import { type Step,readCalls } from './helpers/scenario.ts';
 import { PACK_REVIEW_JOB,crashCells } from './matrix.ts';
+import { reached,release } from './helpers/barrier.ts';
 
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -52,6 +54,11 @@ const itemsOf = (r: ArcRun, reason: string): readonly NeedsUserId[] =>
 
 /** The corpus arc with `steps`, opened as a first start records it (`reopen`). */
 const arcWith = async (steps: readonly Step[]) => reopen(await corpusHolisticArc(steps));
+const scopedUnits = (x: ReturnType<typeof reopen>) => {
+  const hold = packReviewHold(x.r.journal.view, x.ctx.plan());
+  assert.notEqual(hold.kind, 'arc');
+  return hold.kind === 'units' ? hold.units : new Set();
+};
 
 test('packreview.key-excludes-job: the required-review key hashes the inputs without the job, so a later review can match it', () => {
   const inputs = parsePackReviewInputs({
@@ -65,8 +72,10 @@ test('packreview.key-excludes-job: the required-review key hashes the inputs wit
   }
 });
 
-test('packreview.holds-admission: the review runs first, before the baseline; its blocking finding holds every admission until acknowledged', T, async () => {
-  const a = await corpusHolisticArc([packReviewStep('review-1', BLOCKING), { ...planCheckStep({ decision: 'approve' }), unit: 'u1' }]);
+test('packreview.holds-admission: the review runs first, before the baseline; its blocking finding holds its target until acknowledged', T, async () => {
+  const fixture = await corpusHolisticArc([packReviewStep('review-1', BLOCKING), { ...planCheckStep({ decision: 'approve' }), unit: 'u1' }]);
+  const a = { ...fixture, d: { ...fixture.d, runDir: join(fixture.d.repo, '.git', 'roadmap-runtime', fixture.d.arc) } };
+  mkdirSync(a.d.runDir, { recursive: true });
   const r = contextFor(a.d);
   const s = startHolistic(r);
   try {
@@ -89,9 +98,11 @@ test('packreview.holds-admission: the review runs first, before the baseline; it
     const inputs = parsePackReviewInputs(JSON.parse(readFileSync(join(r.ctx.runDir, 'inputs', `${started!.inputsSha256}.${PACK_REVIEW_INPUT}`), 'utf8')));
     assert.equal(inputs.head, git(a.d.repo, 'rev-parse', 'main'));
     for (const tag of ['<vision>', '<plan>', '<specs>', '<obligations>', '<rules_index>', '<phase0>']) assert.ok(call.stdin.includes(tag), `the prompt holds ${tag}`);
-    const rejected = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item!, choice: null });
-    await until(() => terminalReceipt(r.ctx.runDir, rejected.id)?.state === 'rejected', WAIT_MS, 'optionless acknowledgement refused');
-    submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } });
+    assert.deepEqual(record.options, []);
+    const ack = await runUntilExit(process.execPath, [fileURLToPath(new URL('../bin/roadmap', import.meta.url)), 'ack', item!, '--repo', a.d.repo, '--arc', a.d.arc], { env: process.env, timeoutMs: WAIT_MS });
+    assert.equal(ack.code, 0, ack.stderr);
+    const command = JSON.parse(ack.stdout) as { command: Parameters<typeof terminalReceipt>[1] };
+    await until(() => terminalReceipt(r.ctx.runDir, command.command)?.state === 'applied', WAIT_MS, 'optionless acknowledgement applied');
     await until(() => facts().some((f) => (f.kind === 'stage-outcome' && 'unit' in f) && f.unit === 'u1'), WAIT_MS, 'u1 admitted after the ack');
   } finally {
     submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
@@ -99,6 +110,81 @@ test('packreview.holds-admission: the review runs first, before the baseline; it
     r.journal.close();
   }
 });
+
+test('packreview.unit-scope: target and transitive dependents wait with the item; unrelated work starts only after review ends; ack releases', T, async () => {
+  const a = await corpusHolisticArc([
+    packReviewStep('review-1', BLOCKING, [{ type: 'barrier', name: 'review', timeoutMs: WAIT_MS }]),
+    ...['u1', 'free'].map((unit) => ({ ...planCheckStep({ decision: 'approve' }, {}, [{ type: 'barrier', name: unit, timeoutMs: WAIT_MS }]), unit })),
+  ], { units: [{ id: 'u1' }, { id: 'u2', after: ['u1'] }, { id: 'u3', after: ['u2'] }, { id: 'free' }] });
+  editPlan(a.d, (plan) => {
+    const units = plan['units'] as Record<string, unknown>[];
+    units[1]!['contingent'] = [{ id: 'e-wait', condition: 'another external proof is available' }];
+    units[2]!['contingent'] = [{ id: 'e-proof', condition: 'external proof is available' }];
+  });
+  const r = contextFor(a.d);
+  const s = startHolistic(r);
+  try {
+    await reached(a.d.scenarioDir, 'review', WAIT_MS);
+    assert.ok(r.journal.view.plannedUnits().every((id) => r.journal.view.unit(id).counters.attempts === 0), 'running review holds all first admissions');
+    const resolved = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resolve-edge', edge: r.unit('u3').contingent[0]!.id, evidence: 'proof delivered' });
+    await until(() => terminalReceipt(r.ctx.runDir, resolved.id)?.state === 'applied', WAIT_MS, 'contingent edge resolved before the review ends');
+    release(a.d.scenarioDir, 'review');
+    await reached(a.d.scenarioDir, 'free', WAIT_MS);
+    const item = itemsOf(r, 'pack-review')[0]!;
+    assert.match(readNeedsUser(r.ctx.runDir, item)!.summary, /held for units u1 \(\+ 2 dependents\)/);
+    assert.deepEqual(packReviewStatus(s.h.revision), { kind: 'held', job: 'review-1', needsUser: item }, 'unrelated admission does not clear the scoped hold');
+    const hold = packReviewHold(r.journal.view, s.h.revision.plan());
+    assert.equal(hold.kind, 'units');
+    if (hold.kind !== 'units') throw new Error('expected a unit hold');
+    assert.deepEqual([...hold.units].sort(), ['u1', 'u2', 'u3']);
+    const snapshot = status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir);
+    assert.ok(!snapshot.holds.includes('pack-review'));
+    for (const id of ['u1', 'u2', 'u3']) {
+      assert.equal(r.journal.view.unit(r.unit(id).id).counters.attempts, 0, `${id} not admitted`);
+      const line = snapshot.units.find((u) => u.unit === id)!;
+      assert.equal(line.state, 'blocked');
+      assert.deepEqual(line.waitingFor?.admission, [{ type: 'blocking-item', id: item, reason: 'pack-review' }]);
+    }
+    const ack = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item, choice: null });
+    await until(() => terminalReceipt(r.ctx.runDir, ack.id)?.state === 'applied', WAIT_MS, 'scoped ack applied');
+    await reached(a.d.scenarioDir, 'u1', WAIT_MS);
+    assert.deepEqual(packReviewHold(r.journal.view, s.h.revision.plan()), { kind: 'none' });
+  } finally {
+    submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
+    await s.end;
+    r.journal.close();
+  }
+});
+
+for (const [name, findings] of [
+  ['plan', [{ severity: 'blocking', target: packTargetOf.plan() }]],
+  ['obligation', [{ severity: 'blocking', target: packTargetOf.obligation('I-1') }]],
+  ['census', [{ severity: 'blocking', target: packTargetOf.census('T-1') }]],
+  ['rule', [{ severity: 'blocking', target: packTargetOf.rule('T-1') }]],
+  ['mixed', [...BLOCKING, { severity: 'blocking', target: packTargetOf.plan() }]],
+] as const) {
+  test(`packreview.arc-scope-${name}: non-unit blocking findings hold every admission`, T, async () => {
+    const a = await corpusHolisticArc([packReviewStep('review-1', findings)], { units: [{ id: 'u1' }, { id: 'free' }] });
+    const r = contextFor(a.d);
+    const s = startHolistic(r);
+    try {
+      await until(() => itemsOf(r, 'pack-review').length > 0 && factsOfKind(r, 'witnessed').some((f) => f.for.type === 'job' && f.for.job === 'baseline-1'), WAIT_MS, 'the review item and baseline');
+      const item = itemsOf(r, 'pack-review')[0]!;
+      assert.deepEqual(packReviewHold(r.journal.view, s.h.revision.plan()), { kind: 'arc', needsUser: item });
+      assert.match(readNeedsUser(r.ctx.runDir, item)!.summary, /held arc-wide/);
+      const snapshot = status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir);
+      assert.ok(snapshot.holds.includes('pack-review'));
+      for (const u of snapshot.units) {
+        assert.equal(u.attempts, 0);
+        assert.deepEqual(u.waitingFor?.admission, [{ type: 'blocking-item', id: item, reason: 'pack-review' }]);
+      }
+    } finally {
+      submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
+      await s.end;
+      r.journal.close();
+    }
+  });
+}
 
 describe('the hold before the first admission (K14, H9)', () => {
   test('packreview.ack-releases: a completed review with a blocking finding holds admission; its acknowledgement releases it and no review runs again', T, async () => {
@@ -111,8 +197,10 @@ describe('the hold before the first admission (K14, H9)', () => {
       const [ended] = factsOfKind(x.r, 'pack-review-ended');
       assert.deepEqual(ended!.findings.map((f) => [f.index, f.severity, f.target]), [[0, 'blocking', { type: 'unit', id: 'u1' }], [1, 'note', { type: 'plan' }]]);
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'held', job: 'review-1', needsUser: out.needsUser });
-      assert.ok(x.holds().includes('pack-review'));
+      assert.ok(!x.holds().includes('pack-review'), 'a unit finding is not an arc-wide hold');
+      assert.deepEqual([...scopedUnits(x)], ['u1']);
       await x.ack(out.needsUser);
+      assert.deepEqual([...scopedUnits(x)], []);
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-1' });
       assert.ok(!x.holds().includes('pack-review'), 'the subject action releases');
       assert.equal(packReviewPending(x.ctx), false);
@@ -149,6 +237,7 @@ describe('the hold before the first admission (K14, H9)', () => {
     try {
       const first = await runPackReview(x.ctx);
       assert.ok(first.kind === 'ended' && first.needsUser !== null);
+      assert.deepEqual([...scopedUnits(x)], ['u1']);
       assert.deepEqual(openBlocking(x.r.journal.view), [first.needsUser]);
       await x.editPack('Berth booking with u1 scoped to the berth module.');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'due' });
@@ -158,6 +247,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.deepEqual(openBlocking(x.r.journal.view), [], 'and no longer open');
       assert.ok(x.r.journal.view.ackOf(first.needsUser) !== null, 'the root apply closed the arc subject');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-2' });
+      assert.deepEqual([...scopedUnits(x)], []);
       assert.ok(!x.holds().includes('pack-review'));
       // R-17 (paid M4a run 10): one predicate drops it wherever open items are listed: status, the brief, watch --actionable.
       const { runDir, hostDir } = x.r.ctx;
@@ -197,6 +287,25 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.ok(!x.holds().includes('pack-review'));
       assert.deepEqual(await runPackReview(x.ctx), { kind: 'none' });
       assert.deepEqual(reviewCalls(x.a), ['review-1']);
+    } finally {
+      x.r.journal.close();
+    }
+  });
+
+  test('packreview.supersede-without-ack: a later review end releases the scoped hold without acknowledging the earlier item', T, async () => {
+    const x = await arcWith([packReviewStep('review-1', BLOCKING), packReviewStep('review-2', [], [], RESOLVES_BLOCKING)]);
+    try {
+      const first = await runPackReview(x.ctx);
+      assert.ok(first.kind === 'ended' && first.needsUser !== null);
+      assert.deepEqual([...scopedUnits(x)], ['u1']);
+      // A new integration head changes the required key without a root command closing the arc subject.
+      git(x.a.d.repo, 'commit', '--allow-empty', '-m', 'new integration head');
+      assert.equal(packReviewStatus(x.ctx).kind, 'due');
+      assert.equal(x.r.journal.view.ackOf(first.needsUser), null);
+      assert.equal((await runPackReview(x.ctx)).kind, 'ended');
+      assert.equal(x.r.journal.view.ackOf(first.needsUser), null, 'supersession is not an acknowledgement');
+      assert.ok(supersededItems(x.r.journal.view).has(first.needsUser));
+      assert.deepEqual([...scopedUnits(x)], []);
     } finally {
       x.r.journal.close();
     }
@@ -258,6 +367,7 @@ test('packreview.delta-rereview-dispositions (H3): a re-review reads what change
     assert.deepEqual(factsOfKind(x.r, 'pack-review-ended')[1]!.dispositions, [{ job: 'review-1', index: 0, disposition: 'still-open' }, { job: 'review-1', index: 1, disposition: 'resolved' }]);
     assert.match(readNeedsUser(x.r.ctx.runDir, second.needsUser)!.summary, /review-1#0, still open \(unit u1\): u1 cannot be built/, 'the still-open blocking finding holds through the new item');
     assert.deepEqual(packReviewStatus(x.ctx), { kind: 'held', job: 'review-2', needsUser: second.needsUser });
+    assert.deepEqual([...scopedUnits(x)], ['u1'], 'a kept-open finding retains its unit scope');
 
     await x.editPack('Berth booking, a third draft.');
     const third = await runPackReview(x.ctx);
@@ -304,9 +414,7 @@ function reopen(a: CorpusHolisticArc) {
     holds: () => arcHolds(h, blockingItems(r.ctx.runDir, r.journal.view), false),
     ack: async (id: NeedsUserId) => {
       const out = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: id, choice: null }));
-      assert.equal(out.kind, 'rejected', JSON.stringify(out));
-      const resumed = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'resume', target: { type: 'all' } }));
-      assert.equal(resumed.kind, 'applied', JSON.stringify(resumed));
+      assert.equal(out.kind, 'applied', JSON.stringify(out));
     },
     editPack: (direction: string) => applyPlanEdit(r, w, (p) => {
       p['direction'] = direction;

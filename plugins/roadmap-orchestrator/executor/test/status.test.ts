@@ -80,6 +80,7 @@ describe('status.subset', () => {
     assert.ok(before_.host.log.foldMs >= 0);
     assert.deepEqual({ ...before_, host: { ...before_.host, log: { ...before_.host.log, foldMs: 0 } } }, {
       arc: r.arc,
+      supervision: { state: 'none' },
       run: { state: 'no-owner', owner: { state: 'none', generation: null, pid: null }, heartbeatAt: null },
       units: [],
       edges: [],
@@ -126,7 +127,7 @@ describe('status.subset', () => {
     assert.deepEqual(Object.keys(s).sort(), [
       'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
       'divergences', 'edges', 'findings', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
-      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'target', 'timings', 'units', 'vision', 'waived',
+      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));

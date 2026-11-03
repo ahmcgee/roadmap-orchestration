@@ -1567,3 +1567,37 @@ test('TUI timeout reds stay distinct from a deadline block and CPU bases preserv
     certification: { ...d.status.units[0]!.certification!, lanes: [{ ...lane, state: 'blocked' as const, verdict: 'process-fault' as const }] } }] } };
   assert.equal(certificationEntries(blocked)[0]!.state, 'blocked:deadline');
 });
+
+test('supervision stays on one header line and is red only for an active run with open blocking work and no live watcher', () => {
+  const d = observed();
+  for (const state of ['none', 'stale', 'live'] as const) {
+    for (const run of ['running', 'complete', 'refused'] as const) {
+      for (const blocking of [false, true]) {
+        const ui = new ViewState();
+        ui.accept({ ...d, status: { ...d.status,
+          supervision: state === 'none' ? { state } : { state, pid: process.pid, lastPollAt: new Date().toISOString(), executorVersion: '1.0.0-dev.38' },
+          run: { ...d.status.run, state: run }, needsUser: [{ id: 'nu-38' as never, reason: 'pack-review', blocking }],
+        } });
+        const rows = ui.renderFrame(120, 35, true);
+        const header = rows.filter((r) => plain(r).includes('SUPERVISION'));
+        assert.equal(header.length, 1);
+        assert.ok(plain(header[0]!).includes(state));
+        const red = state !== 'live' && run === 'running' && blocking;
+        assert.equal(header[0]!.some((part) => part.text === state && part.tone === 'fault'), red, `${state}/${run}/blocking=${blocking}`);
+      }
+    }
+  }
+});
+
+test('progress counts only units that can still merge: cut and superseded units leave the denominator and are shown beside it', () => {
+  const d = observed(); const ui = new ViewState();
+  const units = d.status.units.map((u) => u.unit);
+  d.milestoneUnits = { 'MS-1': units };
+  d.status = { ...d.status, milestones: [{ id: 'MS-1', state: 'running', passed: false, round: 1, walks: [], findings: [] }] as never,
+    units: d.status.units.map((u, i) => ({ ...u, state: i === 0 ? 'cut' : i === 1 ? 'superseded' : 'merged', ...(i === 1 ? { supersededBy: d.status.units[2]!.unit } : {}) })) };
+  ui.accept(d);
+  const frame = ui.render(120, 35, false).join('\n');
+  const live = units.length - 2;
+  assert.match(frame, new RegExp(`${live}/${live} merged · 2 cut/superseded`));
+  assert.match(graph(d, true).find((n) => n.id === 'MS-1')!.label, new RegExp(`${units.length - 1}/${units.length - 1} units merged`), 'the cut member leaves the milestone count; the superseded one counts as its replacement');
+});

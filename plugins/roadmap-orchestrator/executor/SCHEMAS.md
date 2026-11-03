@@ -372,9 +372,17 @@ unit before applying; note informs the next build without cancelling it. Resume 
 
 NeedsUserRecord `{v:2,id,arc,raisedAt,blocking,subject,reason,summary,recommendation,options,evidence}` has subject
 unit `{type:'unit',unit}`, arc, host or `{type:'findings',findings:FindingId[]}` (nonempty). A dismissal closes matching finding subjects only when every named finding is resolved or ruled. Options are `{id,label}`; evidence is absolute paths. Ack record is
-`{v:2,id,command,choice:string|null,at}`. Optionless items reject ack; successful subject actions close them. Offered choice
+`{v:2,id,command,choice:string|null,at}`. Optionless pack-review items accept ack with null choice; other optionless items reject ack. Successful subject actions close them. Offered choice
 must exist. Revision-notice and waste-finding are non-blocking. Subject closure preserves publication/recovery ordering
 instead of requiring a second bookkeeping command. A root apply that supplies repairs for every finding named by a finding-subject request closes that request without dismissing the findings; repair publication still settles them. Successful root actions can also close already-settled finding requests. The full current reason enum is emitted in the appendix.
+
+Pack-review admission scope is derived, with no new record or status fields. Admission waits for a running/due review
+to end. An open ended review holds unit targets and their transitive effective `after` dependents; non-unit blocking
+targets or abandonment hold arc-wide. One arc-subject item remains; its summary names targets and dependents count
+or arc-wide scope. Unit status uses `blocked` with `waitingFor.admission: [{type:"blocking-item",id,reason:"pack-review"}]`,
+including dependents with unmet dependencies. Arc `holds` includes `pack-review` for running/due reviews or arc-wide
+ended scope only. `packReview.state` remains `held` while scoped findings are open after unrelated admission. Ack or a
+superseding review releases the item (K14).
 
 ## Roles, routing and strict results
 
@@ -471,11 +479,26 @@ remains immutable. GC preserves needed verified snapshots while compacting eligi
 
 ## Status and brief projections
 
-Status is read-only without a lock. Summary fields: arc, state, planRev, progress `{total,merged,states,held,remaining}`,
+Status is read-only without a lock. Summary fields: arc, state, planRev, supervision, progress `{total,merged,states,held,remaining}`,
 spend `{costUsd,expectedUsd,differenceUsd,estimatedCalls,unavailableCalls}`, milestones, caught, verdicts, captures,
 needsUser, waste, demo, completion. Caught is laneReds + gateRevisions + uniqueFindings, with byLens counts of unique keys;
 not a cross-seat unique-defect metric. Milestone costs include members/re-entries/polish and walk/compare jobs, not all
 arc costs. Captures lists suite capture spawns only. Waste findings use observed duration/evidence and durable cause keys.
+
+Full status and summary both expose `supervision: {state:'live'|'stale'|'none',pid?,lastPollAt?,executorVersion?}`.
+`none` has no other fields; `live` and `stale` include all three. Liveness is the lease's PID/start identity on the
+recorded boot, not the age of lastPollAt. The TUI keeps supervision on one status line, red when it is not live,
+the run is neither complete nor refused, and at least one open blocking needs-user item exists.
+
+`watch --actionable` streams transition and heartbeat JSON lines. Every such line carries `seq` (the poll's log
+high-water) and `openBlocking: [{id:NeedsUserId,reason:NeedsUserReason}]`, ascending by id, empty when none. The digest
+and status needsUser share `src/needsuser.ts`'s canonical open-item list: journal and file-only items, not acknowledged
+(by journal or ack file), not superseded; only blocking items enter the digest. Each poll derives the digest before
+emitting any transition, and the heartbeat repeats it even with no transitions. Raw watch keeps its existing fields
+and takes no lease. A live holder refuses a second actionable watch with one `{event:'watch-busy',...WatchLease}`
+JSON line and exit 73. `--replace` requires `--actionable`; `--stop` excludes stream options and prints one
+`{event:'watch-stopped',state:'stopped'|'stale'|'none',pid?}` line, exit 0. Invalid options exit 64; unexpected I/O,
+validation or termination failures throw (CLI exit 1).
 
 BriefPayload `{schema:'roadmap/brief-m4',coverage,items,chain,answers,arcs}` is canonical and has no clock. BriefId is the
 first 16 hex of its SHA-256. Coverage entries are `{arc,snapshotCommit,highWater}`; Markdown derives only from the payload.
@@ -724,9 +747,25 @@ authority: use dev.32 to disposition residues and verify none remain before manu
 Other unexpected versions still throw. Delete this scaffolding once no host carries dev.32 state.
 
 The arc run directory holds `events.jsonl`, immutable `inputs/`, `inv/`, needs-user/command records, `heartbeat.json`,
-`status.rejection.json` on refusal, `demo.desired.json` and derived `sched.json`.
+`status.rejection.json` on refusal, `demo.desired.json`, `watch.lease.json` and derived `sched.json`.
 `sched.json` exposes task states and arbiter queues; status trusts it only while its recorded executor owns the run.
 It is not journal authority. `src/host/hostdir.ts`, `src/supervisor.ts` and `src/schedule/scheduler.ts` own the layout.
+
+### Actionable watch lease (`watch.lease.json`, `src/core/records.ts`)
+
+`WatchLease = {v:2,pid:positive,start:nat,bootId:BootId,executorVersion:string,arc:ArcId,
+startedAt:IsoTime,lastPollAt:IsoTime,lastSeq:nat}`. `pid,start` reuse ProcIdentity; bootId and host liveness reject
+PID reuse, zombies and previous boots. executorVersion is the executor package version. Initial lastSeq is 0;
+after each poll only lastPollAt and lastSeq change. Publication and renewal use atomic durable JSON replacement.
+The schema version stays 2; no lease in an older run defaults to supervision none.
+
+Claim and stop serialize on a short-lived Linux abstract Unix socket keyed by the canonical run-directory path,
+using Node built-ins. The kernel releases it on death, including SIGKILL; there is no persistent mutex record or
+runtime dependency. Live leases refuse without --replace, regardless of executorVersion. Dead holders are silently
+replaced. Replacement and stop signal only the recorded identity on the recorded boot, wait 10 seconds after
+SIGTERM, then SIGKILL and wait 2 seconds; a survivor is an error. Mutex contention is bounded at 17 seconds.
+Clean abort/SIGINT/SIGTERM removes only a matching pid/start lease; SIGKILL can leave a stale lease for takeover.
+Stop removes a stale lease too and succeeds when absent. Poll renewal fails loudly if a live watch lost its lease.
 
 ## Residues and reservation states
 

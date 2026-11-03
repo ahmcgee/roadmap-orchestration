@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { describe,it } from 'node:test';
 import { type Event,type Fact,type LogRecord,type ProbeTarget,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
-type CommandId,type NeedsUserId,type UnitId,commandId,edgeId,invocationId,knownDefectIdOf,laneId,needsUserId,opId,opKey,planRev,seatRev,sha,
-sha256,specRev,unitId,
+type CommandId,type NeedsUserId,type UnitId,commandId,edgeId,invocationId,jobId,knownDefectIdOf,laneId,needsUserId,opId,opKey,planRev,seatRev,sha,
+sha256,specRev,unitId,visionClauseId,
 } from '../src/core/ids.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
@@ -16,6 +16,7 @@ import { type RiskTier,routingLayer } from '../src/routing/types.ts';
 import { type ReadyInput,type SpecFactsOf,activeKnownDefects,admitter,knownDefectActive,rankOf,ready } from '../src/schedule/ready.ts';
 import { type AdmissionStage,type AdmitInput,type CommandScope,type Rank,PROMOTION_BYPASS,compareRank } from '../src/schedule/types.ts';
 import type { PressureTick } from '../src/host/pressure.ts';
+import { packReviewHold } from '../src/holistic/packreview.ts';
 import { ARC,H,REV,appliedFields,chain } from './fixtures/log-records.ts';
 
 /** The default profile with a plan seating build.high on frontier (Claude), so a med and a high unit build on different backends. */
@@ -119,6 +120,30 @@ const inputOf = (log: Log, plan: PlanM1, extras: Extras = {}): ReadyInput => ({
 });
 const readyOf = (log: Log, plan: PlanM1, extras: Extras = {}): readonly (readonly [UnitId, AdmissionStage])[] =>
   ready(inputOf(log, plan, extras)).map((r) => [r.unit.id, r.stage] as const);
+
+describe('pack-review dependency scope follows scheduler lineage preparation', () => {
+  for (const target of [A, unitId('a2')]) {
+    it(`target ${target}: effective dependencies move only after preparation`, () => {
+      const A2 = unitId('a2');
+      const log = new Log([A, B, C, D]);
+      log.add(dispatch(A), outcome(A, 'gate', 1, 'spec-wrong', 'park'));
+      log.plan([A, B, C, D, A2], [{ type: 'unit-added', unit: A2 }, { type: 'unit-reentered', unit: A2, reenters: A, reset: false }]);
+      const { architectureDoc: _doc, ...base } = planOf([]) as Extract<PlanM1, { target: 'architecture-doc' }>;
+      const plan: PlanM1 = { ...base, target: 'corpus', corpus: planPath('pin.json'), phase0: planPath('phase0.json'), holistic: { advances: [visionClauseId('V-1')] }, units: [unit(A), unit(B, { after: [A] }), unit(C, { after: [B] }), unit(D), unit(A2, { reenters: { unit: A } })] };
+      log.add(fact({ kind: 'pack-review-started', job: jobId('review', 1), planRev: 2, inputsSha256: H, key: H }));
+      log.add(fact({ kind: 'pack-review-ended', job: jobId('review', 1), outcome: 'completed', findings: [{ index: 0, severity: 'blocking', target: { type: 'unit', id: target }, claim: 'scope incomplete', evidence: [] }] }));
+      const held = () => {
+        const hold = packReviewHold(log.view(), plan);
+        assert.equal(hold.kind, 'units');
+        if (hold.kind !== 'units') throw new Error('expected unit scope');
+        return [...hold.units].sort();
+      };
+      assert.deepEqual(held(), target === A ? [A, B, C] : [A2]);
+      log.add(dispatch(A2), outcome(A2, 'prepare', 2, 'clean-verify', 'advance'));
+      assert.deepEqual(held(), target === A ? [A, A2, B, C] : [A2, B, C]);
+    });
+  }
+});
 
 // ---------------------------------------------------------------------------------------------------
 

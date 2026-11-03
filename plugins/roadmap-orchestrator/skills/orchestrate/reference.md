@@ -8,7 +8,7 @@ Use the currently loaded plugin's `executor/bin/roadmap`, not an arbitrary cache
 
 Commands below use `<path>` for a product repo, `<dir>` for an export, and quoted text as **one argv value**. Run commands default to the host's current arc. Their optional `--repo <path> --arc <arc>` locator is a pair; never give just one. Host acts have their own required locator. There is no `--run-dir` flag.
 
-Exit codes: 0 success, 2 CLI/argument error, 75 live host contention, 78 refused operation or failed validation. An accepted or queued command is not proof that its requested change applied: inspect the receipt. Startup rows and command refusals include the concrete reason and evidence.
+Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 live host contention, 78 refused operation or failed validation. An accepted or queued command is not proof that its requested change applied: inspect the receipt. Startup rows and command refusals include the concrete reason and evidence.
 
 ## CLI
 
@@ -21,11 +21,12 @@ Exit codes: 0 success, 2 CLI/argument error, 75 live host contention, 78 refused
 | `roadmap status [--summary] [--repo <path> --arc <arc>]` | Full JSON or compact owner JSON; read-only, no status lock. |
 | `roadmap tui [--repo <path> --arc <arc>]` | Read-only terminal observer. Use an interactive terminal. |
 | `roadmap watch [--repo <path> --arc <arc>]` | Stream events. |
-| `roadmap watch --actionable [--heartbeat-min <min>] [--from <seq>] [--repo <path> --arc <arc>]` | Wait for a new actionable event or timed check-in, return once. Continue from the returned sequence. |
+| `roadmap watch --actionable [--replace] [--heartbeat-min <min>] [--from <seq>] [--repo <path> --arc <arc>]` | Hold the arc’s watcher lease and stream actionable transitions and heartbeat check-ins. Use --replace to stop a live holder and take over, including across plugin versions. |
+| `roadmap watch --stop [--repo <path> --arc <arc>]` | Stop the lease holder and remove its lease; succeeds when none exists. |
 | `roadmap stop [--repo <path> --arc <arc>]` | Quiesce work and stop. |
 | `roadmap pause (<unit> | --all) [--repo <path> --arc <arc>]` | Pause one unit or the arc. |
 | `roadmap resume [<unit> | --backend claude|codex] [--repo <path> --arc <arc>]` | Resume a unit, explicitly unpark a backend, or resume all ordinary resumable work. |
-| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Only items offering options may be acknowledged. Use the offered option id. An omitted choice is recorded as null; optionless items still refuse. |
+| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Items offering options and pack-review items may be acknowledged. Any supplied choice must be offered; omit it for an optionless pack-review item. |
 | `roadmap sweep [--resource <name>] [--repo <path> --arc <arc>]` | Re-probe/clean residual resources using declared protocol. |
 | `roadmap apply --from <dir> --rev <n> --reason <text> [--dry-run] [--repo <path> --arc <arc>]` | File-level CAS from a genuine export. Reason is a nonempty single line; N equals export.planRev. |
 | `roadmap resolve-edge <edge> --evidence <text> [--repo <path> --arc <arc>]` | Record a contingent condition met, with evidence. |
@@ -66,7 +67,9 @@ Root changes can add units, split, cut, re-enter, edit specs/obligations/vision/
 
 Commands are write-once queued files with accepted/queued/applied/rejected receipts. A queued apply waits for the relevant stage boundary. Read its final receipt before relying on a revision. Restart replays from durable command/revision provenance rather than resubmitting the action. Steer/note hash their brief at submission, so preserve its bytes until accepted and kept. Steer cannot revive a finished unit and does not reset attempt caps.
 
-Subjects close after the successful action that resolves them (unit/arc/host). Optionless items cannot be silenced by ack. Items with options require an offered choice; inspect their recommendation and evidence before deciding. Revision and waste notices do not hold execution. Owner-request items require the actual owner decision within the session's authorization.
+Subjects close after the successful action that resolves them (unit/arc/host). An optionless pack-review item accepts `ack`; other optionless items require action on their subject. Any supplied choice must be offered; inspect their recommendation and evidence before deciding. Revision and waste notices do not hold execution. Owner-request items require the actual owner decision within the session's authorization.
+
+Pack review must end before first admission. Open blocking unit findings hold their targets and transitive dependents through effective `after` edges (including prepared lineage replacements); contingent conditions keep their ordinary readiness checks. Other blocking targets hold the arc. The one arc-subject item states scope; fix the pack for a superseding review or acknowledge it. Scoped holds persist while unrelated work runs. Status names the item on held units; arc `holds` includes pack-review only for arc-wide scope.
 
 ## Authoring inputs
 
@@ -173,24 +176,37 @@ Walkthrough MCP config supplies installed stdio servers, with `{evidence}` and `
 
 Use HTTP pages. Install tools and browser in the project's devcontainer; Phase 0 checks actual executable presence and MCP handshake.
 
-The run dir is `<git-common-dir>/roadmap-runtime/<arc>/`. It holds start.json, events.jsonl, kept inputs, command incoming/receipt files, needs-user records/acks, evidence, invocations and heartbeat. Invocation dirs contain launch/exit/result records and stdout/stderr; evidence includes lane records and completed host metadata. Host state at `/var/tmp/roadmap/` holds locks, owner handshake, residual resources and supervisor logs. Repo-wide `<git-common-dir>/roadmap/` holds ack/answer logs and cloned corpus sources.
+The run dir is `<git-common-dir>/roadmap-runtime/<arc>/`. It holds start.json, events.jsonl, kept inputs, command incoming/receipt files, needs-user records/acks, evidence, invocations, heartbeat and watch.lease.json. Invocation dirs contain launch/exit/result records and stdout/stderr; evidence includes lane records and completed host metadata. Host state at `/var/tmp/roadmap/` holds locks, owner handshake, residual resources and supervisor logs. Repo-wide `<git-common-dir>/roadmap/` holds ack/answer logs and cloned corpus sources.
 
 Only the executor writes runtime. The journal's intents/done/facts and immutable kept bytes are authoritative; refs/snapshots are verified projections. `refs/roadmap/<arc>` holds allowlisted records plus a hash manifest, not raw evidence. Product branches and candidate refs belong to the executor. Use your own work branch for corpus changes.
 
 ## Status, brief and watch
 
-Full status includes run/owner/heartbeat, revision and routing provenance, units with active invocations and lane progress, waits/resources, backend parks, spend by role/class/model, findings, obligation observations, census, timings, milestones, demo and completion. Read evidence named by an item before choosing an intervention. TUI observations do not acquire authority or alter the journal.
+Full status includes supervision, run/owner/heartbeat, revision and routing provenance, units with active invocations and lane progress, waits/resources, backend parks, spend by role/class/model, findings, obligation observations, census, timings, milestones, demo and completion. Read evidence named by an item before choosing an intervention. TUI observations do not acquire authority or alter the journal.
 
-Summary JSON fields are arc/state/planRev, progress, spend, milestones, caught, verdicts, captures, needsUser, waste, demo, completion. Spend separates estimated/unavailable calls, compares optional expectations and never stops work on USD. Milestone cost includes member/re-entry/polish units and walk/compare jobs; it is not an allocation of every arc-level cost. `caught.total = laneReds + gateRevisions + uniqueFindings`, with findings deduped by key and classified in byLens. It is not unique-catch attribution across seats. Captures currently lists suite capture spawn ids, not all retained screenshots.
+Summary JSON fields are arc/state/planRev, supervision, progress, spend, milestones, caught, verdicts, captures, needsUser, waste, demo, completion. Spend separates estimated/unavailable calls, compares optional expectations and never stops work on USD. Milestone cost includes member/re-entry/polish units and walk/compare jobs; it is not an allocation of every arc-level cost. `caught.total = laneReds + gateRevisions + uniqueFindings`, with findings deduped by key and classified in byLens. It is not unique-catch attribution across seats. Captures currently lists suite capture spawn ids, not all retained screenshots.
 
 Waste detectors report grinding, red-on-unit/green-on-base, low unique-catch lanes and repeated expensive suites from observed evidence. They raise replay-safe non-blocking items keyed by waste cause. They advise the root; no optimizer rewrites the plan.
 
 The brief hashes the whole canonical payload into briefId and renders Markdown from it. Delta coverage is the last committed acknowledgement's `{arc,snapshotCommit,highWater}` vector. It includes slice, decisions/departures, curation, corpus divergences, debt, ranked questions/assumptions, pack notes, census, timings, PR and demo. Brief acknowledgement records coverage, advances the chain bound, and does not clear optionless runtime items. It never acknowledges blocking items.
 
-Actionable watch wakes for durable needs-user changes, relevant unit/arc transitions, executor death and heartbeat check-ins. After waking, consume the cause, act, then watch again from its sequence. End the turn at an owner check-in. An observation terminal is optional, not the monitor.
+Actionable watch streams new open needs-user items, relevant unit/arc transitions and fixed heartbeat check-ins.
+Every transition and heartbeat carries `seq` and `openBlocking: [{id, reason}]`: all open blocking items, ascending
+id, excluding acknowledged and superseded items. Read the digest on every wake and act on every item in it; a repeated
+item can be a missed wake. Raw watch has no lease and streams all events.
 
-Keep actionable watch outstanding with the default 30-minute heartbeat. On every wake post at most 3 lines (progress,
-next step, oddities), read status and the affected item/cited evidence, act if needed and continue from the returned seq.
+Keep one actionable watch per arc with the default 30-minute heartbeat. Start or switch versions with
+`watch --actionable --replace`; end with `watch --stop`. Never kill a watch by process pattern. A live holder refuses
+another actionable watch with one `watch-busy` JSON line and exit 73; a dead holder is taken over silently. Replacement
+and stop use PID/start/boot identity, SIGTERM, a 10-second wait, then SIGKILL and a 2-second wait; failure to stop throws.
+`--stop` prints one `watch-stopped` line with state `stopped`, `stale` or `none` and optional pid, then exits 0.
+`--stop` cannot be combined with stream options; `--replace` requires `--actionable`.
+
+Full and summary status report `supervision: {state: 'live'|'stale'|'none', pid?, lastPollAt?, executorVersion?}`.
+Live means the lease holder is alive; stale means its lease remains after death; none means no lease. The TUI shows
+this on its status line, red when supervision is absent or stale, the run is active and a blocking item is open.
+Before ending a turn while the arc runs, confirm `status --summary` shows supervision live. On every wake post at most
+3 lines (progress, next step, oddities), read status and cited evidence, act and continue from the returned seq if restarting.
 The root never patches the plugin or run directory. On supervisor crash-limit, report the cited stderr error/stack to
 the owner and stop with reason owner; do not ack or restart around the defect.
 

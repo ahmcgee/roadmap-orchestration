@@ -56,14 +56,17 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
   });
   const heartbeat = s?.run.heartbeatAt ? elapsed(now - Date.parse(s.run.heartbeatAt)) : 'unavailable';
   const execution = d ? executionSummary(d) : null;
-  const status = s ? line(ink('NOW ', 'muted'), ...badge(execution!.state === 'stopped' ? 'STOPPED' : execution!.state, execution!.state), ink('    EXECUTOR ', 'muted'), ...badge(s.run.owner.state), ink('    HEARTBEAT ', 'muted'), ink(heartbeat))
+  const status = s ? line(ink('NOW ', 'muted'), ...badge(execution!.state === 'stopped' ? 'STOPPED' : execution!.state, execution!.state), ink('    EXECUTOR ', 'muted'), ...badge(s.run.owner.state), ink('    SUPERVISION ', 'muted'), ink(s.supervision.state, s.supervision.state !== 'live' && !['complete', 'refused'].includes(s.run.state) && s.needsUser.some((n) => n.blocking) ? 'fault' : 'strong'), ink('    HEARTBEAT ', 'muted'), ink(heartbeat))
     : line(ink('Waiting for an executor snapshot', 'wait'));
+  // Progress counts only units that can still merge: a cut unit never will, and a superseded one is counted as its
+  // replacement. The ended ones are shown beside it, so the arc's history stays visible without stalling the meter.
+  const ended = s?.units.filter((unit) => unit.state === 'cut' || unit.state === 'superseded').length ?? 0;
   const merged = s?.units.filter((unit) => unit.state === 'merged').length ?? 0;
-  const total = s?.units.length ?? 0;
+  const total = (s?.units.length ?? 0) - ended;
   const meterSize = columns >= 100 ? 16 : 8;
   const filled = total ? Math.floor(meterSize * merged / total) : 0;
   const progress = line(ink((ascii ? '#' : '━').repeat(filled), 'good'), ink((ascii ? '-' : '┄').repeat(meterSize - filled), 'border'),
-    ink(` ${merged}/${total} merged`, 'strong'), ink(dot, 'muted'), ink(execution?.counts ?? '0 agents · 0 commands', execution?.state === 'running' ? 'accent' : 'muted'), ...(s?.milestones.length ? [ink(`${dot}${columns >= 100 ? '' : 'MS '}${s.milestones.filter((m) => m.state === 'settled').length}/${s.milestones.length}${columns >= 100 ? ' milestones settled' : ''}`, 'muted')] : []), ink(`${dot}next `, 'muted'),
+    ink(` ${merged}/${total} merged`, 'strong'), ...(ended > 0 ? [ink(`${dot}${ended} cut/superseded`, 'muted')] : []), ink(dot, 'muted'), ink(execution?.counts ?? '0 agents · 0 commands', execution?.state === 'running' ? 'accent' : 'muted'), ...(s?.milestones.length ? [ink(`${dot}${columns >= 100 ? '' : 'MS '}${s.milestones.filter((m) => m.state === 'settled').length}/${s.milestones.length}${columns >= 100 ? ' milestones settled' : ''}`, 'muted')] : []), ink(`${dot}next `, 'muted'),
     ink(s?.milestones.find((m) => m.state !== 'settled')?.id ?? s?.target?.nextMilestone?.obligation ?? 'none'));
   const stoppedBanner = execution?.state === 'stopped' && !ui.error && !ui.notice;
   const banner = ui.error ? `! STALE since ${d?.at ?? 'startup'}: ${ui.error}` : ui.notice || execution?.detail || 'Waiting for snapshot';

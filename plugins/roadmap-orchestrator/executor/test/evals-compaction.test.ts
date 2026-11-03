@@ -214,6 +214,54 @@ test('compaction.stage-a: approved replacement survives a quoted loss correction
   }
 });
 
+test('compaction.stage-a: rejected quote before approval is not replacement wording', () => {
+  const wording = 'Every failed command prints its diagnostic to stderr, never stdout.';
+  const record = `## K-1 tighten\nItems: T-49 and I-49: diagnostic routing\nReplacement: T-49 and I-49: ${wording}\nGives up: nothing\nWhy: owner wording\nApproved: 2026-11-02\n`;
+  const batch = '6. tighten T-49 and I-49\nReplacement: T-49: "Every failed command prints its diagnostic to stderr, not stdout."';
+  for (const separator of ['. ', '; ', ', but ']) {
+    for (const rejected of ['"not stdout"', '“not stdout”']) {
+      const reply = `6: reject ${rejected}${separator}Approve the tighten with this exact T-49 wording: "${wording}" The prose line is fine.`;
+      assert.equal(gradeA(record, [{ batch, reply }], spec.key).criteria['fidelity']!.pass, true, reply);
+      assert.equal(gradeA(record.replace(wording, 'Errors go somewhere.'), [{ batch, reply }], spec.key).criteria['fidelity']!.pass, false, reply);
+    }
+  }
+});
+
+test('compaction.stage-a: a rejected quote subsequently approved as replacement still binds', () => {
+  const wording = 'Every failed command prints its diagnostic to stderr, never stdout.';
+  const record = `## K-1 tighten\nItems: T-49 and I-49: diagnostic routing\nReplacement: T-49 and I-49: ${wording}\nGives up: nothing\nWhy: owner wording\nApproved: 2026-11-02\n`;
+  const batch = '6. tighten T-49 and I-49\nReplacement: "Errors go somewhere."';
+  for (const separator of ['. ', '; ', ', but ']) {
+    const reply = `6: reject "${wording}"${separator}Approve the tighten with this exact T-49 wording: "${wording}"`;
+    assert.equal(gradeA(record, [{ batch, reply }], spec.key).criteria['fidelity']!.pass, true);
+    assert.equal(gradeA(record.replace(wording, 'Errors go somewhere.'), [{ batch, reply }], spec.key).criteria['fidelity']!.pass, false);
+  }
+});
+
+test('compaction.stage-a: approved unchanged target can be recorded by reference', () => {
+  const record = "## K-1 merge\nItems: T-27 and I-27: export date validation; T-41: all-command date validation\nReplacement: T-41 unchanged; T-27 and I-27 leave; I-41's witness must exercise export\nGives up: nothing\nWhy: duplicate date validation\nApproved: 2026-11-02\n";
+  const batch = '5. merge T-27 and I-27 into T-41\nReplacement: T-41, unchanged: "Every command refuses invalid dates before reading or writing records."';
+  const reply = '5: reject as bundled. Approve only merging T-27 and I-27 into T-41, with T-41 unchanged.';
+  assert.equal(gradeA(record, [{ batch, reply }], spec.key).criteria['fidelity']!.pass, true);
+  assert.equal(gradeA(record, [{ batch: batch.replace(', unchanged', ''), reply }], spec.key).criteria['fidelity']!.pass, false);
+  assert.equal(gradeA(record, [{ batch, reply: reply.replace(', with T-41 unchanged', '') }], spec.key).criteria['fidelity']!.pass, false);
+  assert.equal(gradeA(record, [{ batch, reply: reply.replace('with T-41 unchanged', 'with I-41 unchanged') }], spec.key).criteria['fidelity']!.pass, false);
+});
+
+test('compaction.stage-a: unchanged approval does not authorize changing target text', () => {
+  const batch = '5. merge T-27 and I-27 into T-41\nReplacement: T-41, unchanged: "Every command refuses invalid dates before reading or writing records."';
+  const reply = '5: reject as bundled. Approve only merging T-27 and I-27 into T-41, with T-41 unchanged.';
+  for (const replacement of [
+    'T-41: "Every command accepts invalid dates."',
+    'T-41 unchanged: "Every command accepts invalid dates."',
+    'T-41 unchanged; T-41: "Every command accepts invalid dates."',
+    'T-27 unchanged; T-41 leaves',
+  ]) {
+    const record = `## K-1 merge\nItems: T-27 and I-27: export date validation; T-41: all-command date validation\nReplacement: ${replacement}\nGives up: nothing\nWhy: duplicate date validation\nApproved: 2026-11-02\n`;
+    assert.equal(gradeA(record, [{ batch, reply }], spec.key).criteria['fidelity']!.pass, false, replacement);
+  }
+});
+
 test('compaction.stage-a: resolve renumbering preserves exact approval, item references and current decision provenance', () => {
   // Unedited record and owner exchanges from 2026-11-01T21-20-06-053Z-2827056/1/a.
   // architect-3 played back C-45/K-13 -> C-43/K-11 before appending B-11.

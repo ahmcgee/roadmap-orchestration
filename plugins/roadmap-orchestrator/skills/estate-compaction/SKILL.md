@@ -28,8 +28,10 @@ assuming every item reaches every call.
 
 ## Record
 
-Keep `<repo>/../roadmap-inputs/compaction.md` outside the product tree. Append approved decisions immediately;
-never edit the estate while surveying a running arc. There is no executor-reserved future-input directory.
+Keep `<repo>/../roadmap-inputs/compaction.md` outside the product tree. Append a decision as soon as the owner
+approves it as proposed. When the owner rejects or rewrites its action, items or wording, play back the revised decision
+with the owner's exact wording and append it only after the owner explicitly approves that playback. Never edit the
+estate while surveying a running arc. There is no executor-reserved future-input directory.
 
 ```markdown
 ## K-<n> <retire|merge|tighten|fold|resolve>

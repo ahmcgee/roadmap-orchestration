@@ -33,6 +33,7 @@ import { status } from '../status.ts';
 import { statusSummary } from '../status/summary.ts';
 import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 import { tui } from '../tui/main.ts';
+import { stopWatch } from '../watch-lease.ts';
 import { HEARTBEAT_MIN,watch,watchActionable } from '../watch.ts';
 import { type Run,locate } from './locate.ts';
 
@@ -93,11 +94,15 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
+      if (command.stop) {
+        process.stdout.write(`${canonicalJson(await stopWatch(run.runDir))}\n`);
+        return;
+      }
       const stop = new AbortController();
       for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => stop.abort());
       const emit = (line: string): void => void process.stdout.write(`${line}\n`);
       if (command.actionable === null) await watch(run.runDir, run.arc, hostDir, emit, stop.signal);
-      else await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, command.actionable.from, emit, stop.signal);
+      else process.exitCode = await watchActionable(run.runDir, run.arc, hostDir, command.actionable.heartbeatMin ?? HEARTBEAT_MIN, command.actionable.from, emit, stop.signal, command.replace);
       return;
     }
     case 'start': {

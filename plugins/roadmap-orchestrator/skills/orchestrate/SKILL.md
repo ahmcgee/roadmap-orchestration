@@ -69,7 +69,7 @@ The pack must establish:
 - **Milestones.** Mark the smallest end-to-end experiences. Give each its member units, a preceding design unit (or supplied design), references, bring-up, journeys, resources and selected integration lanes. Units should depend on their design unit. References define the interface, quality floor and error language for what the milestone exposes; later milestones extend that language. Keep reference directories to design text, within the 512 KiB text budget. Browser and shell journeys state the task and any step/time budget. Breaks hold dependent work; deviations can be repaired alongside it.
 - **Checks and resources.** Lane commands are exact argv/cwd/env, with evidence confined to outputs. Cheap local checks belong at build/unit cadence; expensive or explicitly whole-repo checks belong at candidate cadence. Shared-resource/cross-system checks use batch cadence and explicit milestone selection. Root-only resources must already be declared before later admissions; adding spike resources mid-arc requires owner resolution. A spike declares a question and resources: its gated report is the deliverable and its branch never merges.
 
-Run `phase0 check` against the authored plan until refusing rows are resolved. Evaluate system overlap, design ordering, derived regeneration and lane-similarity advisories. Review `vacuous-future-witness` (existing future-test files may already pass) and `spanning-proof` (multi-unit delivery lacks a spanning candidate/batch lane) advisories. Commit the product inputs that must match HEAD, start, and read pack-review findings. A blocking pack review offers explicit options; choose only after assessing its evidence. Revisions of a reviewed pack get delta review.
+Run `phase0 check` against the authored plan until refusing rows are resolved. Evaluate system overlap, design ordering, derived regeneration and lane-similarity advisories. Review `vacuous-future-witness` (existing future-test files may already pass) and `spanning-proof` (multi-unit delivery lacks a spanning candidate/batch lane) advisories. Commit the product inputs that must match HEAD, start, and read pack-review findings. Admission waits for review to end. Blocking unit findings hold those units and transitive dependents; other targets hold the arc. Read the item and evidence, then fix the pack for a superseding review or `ack` it (no option required). Pack revisions before first admission get delta review.
 
 ## Unit and milestone execution
 
@@ -85,9 +85,13 @@ A milestone runs its selected lanes after its units retire, then a fresh experie
 
 ## Supervision and intervention
 
-Keep an actionable watch outstanding while the arc runs, with its fixed **30-minute heartbeat**. On every wake, post
-at most **3 lines** in chat: what moved, what is next, anything odd. Read status and only evidence cited by the affected
-item; act when needed, then return to the same watch. The heartbeat is the organic check; do not add habitual polling. On wake, read `status --summary`, then full status and cited evidence for the affected subject. Use the log sequence in the watch result to continue without replaying old wakes. The summary reports progress, spend/expectations, milestone verdicts, caught counts, captures and waste. Its caught total is lane reds + gate revise outcomes + unique finding keys; it is an activity aggregate, not a count of independently verified defects. Capture entries list suite capture invocations; inspect gate evidence for spec captures.
+Keep one actionable watch per arc while it runs, with the fixed 30-minute heartbeat. Start or switch plugin versions
+with `watch --actionable --replace`; end supervision with `watch --stop`. Never kill a watch by process pattern.
+On every wake, read `openBlocking` and act on every item in it, including items repeated from earlier wakes. Read
+`status --summary`, then full status and cited evidence for each affected subject. Post at most 3 lines in chat:
+what moved, what is next, anything odd. Return to the same watch; use its sequence with `--from` when restarting.
+The heartbeat is the organic check; do not add habitual polling. Before ending a turn while the arc runs, confirm
+`status --summary` shows supervision live. The summary reports progress, spend/expectations, milestone verdicts, caught counts, captures and waste. Its caught total is lane reds + gate revise outcomes + unique finding keys; it is an activity aggregate, not a count of independently verified defects. Capture entries list suite capture invocations; inspect gate evidence for spec captures.
 
 Exercise the smallest action that resolves the cause:
 
