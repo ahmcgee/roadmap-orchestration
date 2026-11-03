@@ -1,10 +1,11 @@
 // Concurrent campaign audits and root decisions, repair batches and preempting docs publication.
 // The jobs story keeps u1/u2 in live build runners while campaign audit raises an owner request and
-// root apply changes scheduling priority without draining those builds, closing the request by subject.
+// root apply changes scheduling priority without draining those builds, then root acknowledges the request by id.
 import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LogSnapshot } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
+import { readNeedsUser } from '../../src/needsuser.ts';
 
 import { release } from '../helpers/barrier.ts';
 import { lensAnswer,lensStep,packReviewStep } from '../helpers/holistic.ts';
@@ -122,6 +123,12 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
       {...lensStep('audit-1', 'vision'), acts: [{type: 'emit', value: {...lensAnswer() as Record<string, import('../../src/core/json.ts').JsonValue>, requests: [{op: 'request', summary: 'Prioritize u1 before starting more work.', evidence: ['src/mul.js:1'], dismisses: null, counterEvidence: null}]}}]}, lensStep('audit-2', 'vision'),
     ]);
     const pinned = (u: string): boolean => existsSync(join(r.scenarioDir, `${u}.build.reached`));
+    const applied = (): boolean => journalOf(r).view.opsOf('command.apply').some((i) => journalOf(r).view.planAppliedBy(i.expect.command)?.rev === 2 && journalOf(r).view.doneOf(i.op) !== null);
+    const request = () => journalOf(r).view.needsUser().find((n) => readNeedsUser(absPath(r.runDir), n.id)?.reason === 'owner-request');
+    const acknowledged = (): boolean => {
+      const ack = request()?.ack;
+      return ack != null && journalOf(r).view.opsOf('command.apply').some((i) => i.expect.command === ack.command && journalOf(r).view.doneOf(i.op) !== null);
+    };
     const hooks: readonly Hook[] = [
       once('audit', () => pinned('u1') && pinned('u2'), () => submit(r, { type: 'audit' })),
       once('root-apply', () => factsNow(r, 'audit-ended').some((f) => f['job'] === 'audit-1') && !factsNow(r, 'plan-applied').some((f) => f['rev'] === 2), () => {
@@ -130,7 +137,8 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
         writeFileSync(r.planPath, JSON.stringify({...plan, units: (plan['units'] as Json[]).map((u) => u['id'] === 'u1' ? {...u, priority: 'high'} : u)}));
         submit(r, applyBody(r));
       }),
-      once('release-builds', () => journalOf(r).view.opsOf('command.apply').some((i) => journalOf(r).view.planAppliedBy(i.expect.command)?.rev === 2 && journalOf(r).view.doneOf(i.op) !== null) || restarted(r), () => {
+      once('root-ack', () => applied() && request() !== undefined, () => submit(r, { type: 'ack', needsUser: request()!.id, choice: null })),
+      once('release-builds', () => acknowledged() || restarted(r), () => {
         release(r.scenarioDir, 'u1.build');
         release(r.scenarioDir, 'u2.build');
       }),
@@ -199,7 +207,8 @@ export type JobRow = keyof typeof STEPPING | 'preempt';
 
 /**
  * A job row's cells: every label at its first occurrence whose record belongs to the stepping job (each log append at
- * each fact kind of the job's). The preempt row: from the preempting kill's intent on, the first occurrence of every
+ * each fact kind of the job's); the apply row includes the separate named ack's command boundaries too.
+ * The preempt row: from the preempting kill's intent on, the first occurrence of every
  * label whose record belongs to the docs publication or the rule's command, or is the kill (u1's), each log append at
  * each fact kind there.
  */
@@ -207,7 +216,10 @@ export function sampleJob(row: JobRow, record: string, snap: LogSnapshot): reado
   const source = snap.view.opsOf('revision.commit').find((i) => i.expect.rev === 2)?.expect.source;
   const applyOp = row === 'apply' && source?.type === 'command' ? snap.view.opsOf('command.apply').find((i) => i.expect.command === source.command) : undefined;
   const apply = applyOp === undefined ? null : snap.events.find((e) => e.type === 'intent' && e.op === applyOp.op);
-  const until = applyOp === undefined ? Infinity : snap.events.find((e) => e.type === 'done' && e.op === applyOp.op)?.seq ?? Infinity;
+  // Include the named ack as well as the priority apply: closure still has crash coverage on every append boundary.
+  const ack = snap.view.needsUser().find((n) => n.ack !== null)?.ack;
+  const ackOp = row === 'apply' && ack !== undefined ? snap.view.opsOf('command.apply').find((i) => i.expect.command === ack?.command) : undefined;
+  const until = applyOp === undefined ? Infinity : snap.events.find((e) => e.type === 'done' && e.op === (ackOp ?? applyOp).op)?.seq ?? Infinity;
   const request = row === 'apply' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'needsuser.raise' && e.parent.type === 'job' && e.parent.job === 'audit-1') : null;
   const from = row === 'apply' ? request?.seq ?? apply?.seq : row === 'preempt' ? snap.events.find((e) => e.type === 'intent' && e.kind === 'proc.kill' && e.expect.reason === 'preempt')?.seq : 0;
   if (from === undefined) throw new Error('the preempt recording has no preempting kill');
@@ -219,6 +231,7 @@ export function sampleJob(row: JobRow, record: string, snap: LogSnapshot): reado
   return sampleBy(record, snap, ({ label, e }) => {
     if (e.seq < from || e.seq >= until || !owned(ownerOf(snap.view, e), label)) return null;
     if (label.startsWith('log.append.')) return e.type === 'fact' && e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable' ? `fact ${e.fact.kind}` : null;
+    if (row === 'apply' && e.type !== 'fact' && e.op === ackOp?.op) return 'ack';
     return row;
   });
 }

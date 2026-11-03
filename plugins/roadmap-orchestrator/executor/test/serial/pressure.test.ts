@@ -1,8 +1,8 @@
 import { preBuild } from '../../src/pipeline/stages.ts';
 // M4b rev 3 (RC-11, step H2): charging under real host pressure, integrated (real processes, real git, fake backends,
-// this host's schedstat). CPU burners (4 × availableParallelism busy loops) saturate the host, so a cpu-bound launch
+// this host's schedstat). CPU burners (8 × availableParallelism busy loops) saturate the host, so a cpu-bound launch
 // waits for a cpu most of its time: its pressure (its own cpu wait, src/host/pressure.ts) is well above
-// PRESSURE_SATURATED (about 0.7 on a 16-cpu host; 2 × cpus gives about 0.5, too close to the threshold to test). The
+// PRESSURE_SATURATED (4 × cpus has measured 0.496 for the red lane on a 16-cpu host, below the 0.5 threshold). The
 // test keeps its own tick history of the host's cpu wait, one reading a second, as the scheduler does. Unit u1 runs
 // through the unit driver:
 //   1. its pre-build call (deadline: the unit's `limits.judgmentDeadlineMin` of 1 minute) spins on a cpu and is killed
@@ -50,7 +50,7 @@ const burners: ChildProcess[] = [];
 // between sessions first, so burners sharing the test's session would weigh as one group against the workload's own
 // (the runner starts every workload as a session leader) and leave it about half a cpu: not a saturated host.
 function startBurners(): void {
-  for (let i = 0; i < 4 * availableParallelism(); i++) burners.push(spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore', detached: true }));
+  for (let i = 0; i < 8 * availableParallelism(); i++) burners.push(spawn(process.execPath, ['-e', 'for (;;) {}'], { stdio: 'ignore', detached: true }));
 }
 function stopBurners(): void {
   for (const b of burners.splice(0)) b.kill('SIGKILL');
