@@ -93,7 +93,13 @@ export function startIntegrationPushes(ctx: Context): Readonly<{
       journal.fact({ kind: 'integration-push', branch, head, ...outcome, settles: success ? pushItems() : [] });
       crashPoint('integration-push.after-result');
       restoreNotices();
-    }).catch((error: unknown) => { fatal = error; });
+    }).catch((error: unknown) => {
+      // Expected git and network failures are results, not throws (push-worker.ts). Anything that reaches here is a defect
+      // (a journal or needs-user write failing): crash the executor at once so the supervisor restarts it and recovery
+      // retries, rather than pushes stopping silently until the arc ends.
+      fatal = error;
+      setImmediate(() => { throw error; });
+    });
   }
 
   const unsubscribe = journal.subscribe((event) => {
