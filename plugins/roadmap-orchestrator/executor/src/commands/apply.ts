@@ -22,7 +22,7 @@ import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
 import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
 import { gitRun } from '../git/git.ts';
 import { staleSetOf } from '../holistic/staleset.ts';
-import type { BusyAttempt,ContractOp,DivergenceDraft } from '../holistic/types.ts';
+import type { BusyAttempt,DivergenceDraft } from '../holistic/types.ts';
 import { type ResidueEntry,readResidues,recordDisposition,undispositioned } from '../host/residues.ts';
 import { type ApplyProposal,type NextInputs,type Proposer,applyProposal,busyText,classify } from '../input/classify.ts';
 import {
@@ -159,8 +159,8 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
   }
   if (command.body.type !== 'ack') {
     const b = command.body;
-    const subjects: NeedsUserContent['subject'][] = 'unit' in b ? [{type: 'unit', unit: b.unit}]
-      : 'target' in b && b.target.type === 'unit' ? [{type: 'unit', unit: b.target.unit}] : [{type: 'arc'}];
+    const subjects: Exclude<NeedsUserContent['subject'], {type: 'arc'}>[] = 'unit' in b ? [{type: 'unit', unit: b.unit}]
+      : 'target' in b && b.target.type === 'unit' ? [{type: 'unit', unit: b.target.unit}] : [];
     if (b.type === 'apply') {
       const fact = ctx.journal.view.planAppliedBy(id);
       for (const change of fact?.changes ?? []) {
@@ -282,7 +282,7 @@ function ack(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { ty
   const view = ctx.journal.view;
   const item = readNeedsUser(ctx.runDir, body.needsUser);
   if (item === null) return { kind: 'rejected', reason: `unknown needs-user ${body.needsUser}` };
-  if (item.options.length === 0 && item.reason !== 'pack-review') return { kind: 'rejected', reason: `needs-user ${body.needsUser} has no options; act on its subject to close it` };
+  if (item.options.length === 0 && item.subject.type !== 'arc' && item.reason !== 'pack-review') return { kind: 'rejected', reason: `needs-user ${body.needsUser} has no options; act on its subject to close it` };
   const closed = view.ackOf(body.needsUser);
   if (closed !== null && closed.command === null) return { kind: 'rejected', reason: `needs-user ${body.needsUser} was declined by the executor at the close-out (nobody answered it)` };
   const by = ackedBy(ctx, body.needsUser);
@@ -308,8 +308,8 @@ export function acknowledge(ctx: Pick<CommandContext, 'journal' | 'runDir'>, id:
   return [`needs-user/${item}.ack.json written by ${id}`, `needs-user ${item} acknowledged in the log`];
 }
 
-/** Every successful command acting on a subject closes all of its open items. */
-export function closeItemsFor(ctx: Pick<CommandContext, 'journal' | 'runDir'>, subject: NeedsUserContent['subject'], command: CommandId): readonly string[] {
+/** Successful unit/host actions and answered finding requests close their own subjects; arc items require named ack. */
+export function closeItemsFor(ctx: Pick<CommandContext, 'journal' | 'runDir'>, subject: Exclude<NeedsUserContent['subject'], {type: 'arc'}>, command: CommandId): readonly string[] {
   return openNeedsUser(ctx.journal.view).flatMap((n) => {
     const item = readNeedsUser(ctx.runDir, n.id);
     return item !== null && canonicalJson(item.subject) === canonicalJson(subject) ? acknowledge(ctx, command, n.id, null) : [];
@@ -578,12 +578,12 @@ export type RevisionVerdict =
     kind: 'accepted'; draft: RevisionDraft; next: InputFiles; scoped: readonly UnitId[]; routings: readonly ResolvedRouting[]; renders: readonly Render[];
   }>;
 
-type Publication = Readonly<{ renders: readonly Render[]; contractOps: readonly ContractOp[] }>;
+type Publication = Readonly<{ renders: readonly Render[] }>;
 
 /**
  * The docs publication a revision needs (A2): `constraints.md` when its rulings change, `invariants.md` when its obligations
- * do (§2.9), each only when its rendering changes; the vision files it changes (`visionRenders`); and the contract ops of
- * the sidecars it lands. Empty when there is nothing to publish; the reasons when a vision file cannot be published.
+ * do (§2.9), each only when its rendering changes; and the vision files it changes (`visionRenders`).
+ * Empty when there is nothing to publish; the reasons when a vision file cannot be published.
  */
 function publicationOf(
   view: JournalView, revision: RevisionInForce, inputs: NextInputs, proposal: InputFiles,
@@ -603,7 +603,7 @@ function publicationOf(
     const after = renderInvariants(inputs.obligations, latched, nextRegistry(inputs));
     if (after !== before) renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(after, 'utf8') });
   }
-  return { renders, contractOps: [] };
+  return { renders };
 }
 
 /**
@@ -684,14 +684,14 @@ export function evaluateRevision(
   const stale = staleSetOf({
     obligations: { before: revision.obligations?.value ?? null, after: verdict.inputs.obligations },
     vision: { before: revision.vision?.value ?? null, after: verdict.inputs.vision },
-    contracts: publication.contractOps.map((o) => o.path),
+    contracts: [],
     units: () => proposal.plan.units.filter((u) => u.cut === undefined && !['retired', 'cut', 'superseded'].includes(ctx.view.unit(u.id).status)).map((u) => ({ id: u.id, spec: specOf(u) })),
   });
   const draft: RevisionDraft = {
     v: SCHEMA_VERSION, base: inForce.rev, rev: planRev(inForce.rev + 1), manifest, changes: verdict.changes, dispositions: verdict.dispositions, divergences,
-    publication: publication.renders.length === 0 && publication.contractOps.length === 0
+    publication: publication.renders.length === 0
       ? null
-      : { renders: publication.renders.map((r) => ({ path: r.path, sha256: bytesSha256(r.bytes) })).sort((a, b) => (a.path < b.path ? -1 : 1)), contractOps: publication.contractOps },
+      : { renders: publication.renders.map((r) => ({ path: r.path, sha256: bytesSha256(r.bytes) })).sort((a, b) => (a.path < b.path ? -1 : 1)) },
     routingProvenance: routingProvenanceOf(ctx.routingBase, proposal.plan),
     systemsMap: ctx.routingBase.config?.systemsMap ?? null,
     ...(stale === null ? {} : { stale }),

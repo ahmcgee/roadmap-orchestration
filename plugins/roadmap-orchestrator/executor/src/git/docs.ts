@@ -1,6 +1,6 @@
 // `docs.commit` (M3 step A4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Docs publication"): in the integration slot, a docs
 // publication's one commit on the integration tip T: the executor-rendered `.roadmap/` files, the vision files a
-// revision publishes (dev.16) and the contract ops' edited documents, held on the executor-owned ref
+// revision publishes (dev.16), held on the executor-owned ref
 // `refs/roadmap-run/<arc>/docs/<pub>`. Its lanes run on it and, on green, integration fast-forwards to exactly this
 // commit (ff.ts, subject `docs{pub}`), so the tested head is the published head, as for a unit candidate.
 //
@@ -32,7 +32,7 @@ export const docsRef = (arc: ArcId, pub: JobId): RefName => refName(`refs/roadma
 
 /**
  * One file a docs publication writes: a rendered `.roadmap/` document, a published vision file, or a document its
- * contract ops edited.
+ * revision publishes.
  */
 export type DocsFile = Readonly<{ path: RepoPath; bytes: Buffer }>;
 

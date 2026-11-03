@@ -24,7 +24,7 @@
 <rect x="615" y="320" width="260" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="745.0" y="339" class="small" text-anchor="middle"><tspan x="745.0" dy="0">Start; wait for pack review end</tspan><tspan x="745.0" dy="21">Unit blocker: unit + dependents</tspan><tspan x="745.0" dy="21">Other blocker: arc-wide hold</tspan><tspan x="745.0" dy="21">Fix pack or ack item</tspan></text>
 <rect x="990" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="1140.0" y="351.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Inspect subject and evidence</tspan><tspan x="1140.0" dy="24">Export → edit → CAS apply</tspan><tspan x="1140.0" dy="24">Steer / note / witness / dismiss</tspan></text>
+<text x="1140.0" y="351.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Inspect subject and evidence</tspan><tspan x="1140.0" dy="24">Export → edit → CAS apply</tspan><tspan x="1140.0" dy="24">Act; ack arc item by id</tspan></text>
 <rect x="1480" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1630.0" y="351.0" class="label" text-anchor="middle"><tspan x="1630.0" dy="0">Present brief and demo</tspan><tspan x="1630.0" dy="24">Prepare stacked PR</tspan><tspan x="1630.0" dy="24">Check next-start bound</tspan></text>
 <circle cx="1820" cy="370" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
@@ -37,7 +37,7 @@
 <polyline points="875,370 990,370" class="edge"/>
 <text x="932" y="350" class="small" text-anchor="middle"><tspan x="932" dy="0">leased watch</tspan><tspan x="932" dy="-18">openBlocking</tspan></text>
 <polyline points="1290,370 1372,370" class="edge"/>
-<text x="1380" y="316" class="small" text-anchor="middle"><tspan x="1380" dy="0">resolve subject</tspan></text>
+<text x="1380" y="316" class="small" text-anchor="middle"><tspan x="1380" dy="0">act; ack arc item by id</tspan></text>
 <path d="M1400 342L1428 370L1400 398L1372 370Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="1400" y="376" class="label" text-anchor="middle"><tspan x="1400" dy="0">×</tspan></text>
 <polyline points="1428,370 1480,370" class="edge"/>
@@ -102,7 +102,7 @@
 <text x="460" y="964" class="small" text-anchor="middle"><tspan x="460" dy="0">approved spike: report only</tspan></text>
 <polyline points="1490,900 1405,900 1405,805 1200,805" class="edge"/>
 <text x="1415" y="837" class="small" text-anchor="middle"><tspan x="1415" dy="0">candidate red / moved tip</tspan></text>
-<text x="115" y="985" class="small" text-anchor="start"><tspan x="115" dy="0">Exception messages: specWrong / split proposal / attempt cap / failed evidence → root; successful subject action closes its items.</tspan></text>
+<text x="115" y="985" class="small" text-anchor="start"><tspan x="115" dy="0">Exception messages: specWrong / split proposal / attempt cap / failed evidence → root; unit/host actions close notices; arc items require named ack.</tspan></text>
 <polyline points="1140,652 1140,535 1140,420" class="edge msg"/>
 <text x="1250" y="548" class="small" text-anchor="middle"><tspan x="1250" dy="0">root intervention</tspan></text>
 <polyline points="990,390 950,390 950,535 960,535 960,630" class="edge msg"/>
@@ -147,7 +147,7 @@
 <text x="1180" y="1265" class="small" text-anchor="middle"><tspan x="1180" dy="0">audit again if owed</tspan></text>
 <polyline points="1140,1450 1140,1515 1835,1515 1835,535 1290,535 1290,400" class="edge msg"/>
 <polyline points="1815,1147 1855,1147 1855,535 1740,535 1740,420" class="edge msg"/>
-<text x="115" y="1538" class="small" text-anchor="start"><tspan x="115" dy="0">No-milestone arcs take requested/final audit and close-out directly. A spike retires its report; it never enters candidate publication.</tspan><tspan x="115" dy="20">Breaks: failed actions, interface rework or declared floors. Copy, visuals and diagnostics deviate.</tspan><tspan x="115" dy="20">Schemas encode supported constraints; descriptions state remaining rules. Evidence cites saved file paths; free replays guard the contract.</tspan></text>
+<text x="115" y="1538" class="small" text-anchor="start"><tspan x="115" dy="0">Settlements: named findings, later held baseline, superseding pack review. Other arc items need ack by id. A spike retires its report; it never enters candidate publication.</tspan><tspan x="115" dy="20">Breaks: failed actions, interface rework or declared floors. Copy, visuals and diagnostics deviate.</tspan><tspan x="115" dy="20">Schemas encode supported constraints; descriptions state remaining rules. Evidence cites saved file paths; free replays guard the contract.</tspan></text>
 <rect x="60" y="1610" width="1800" height="80" rx="4" fill="#fff" class="task"/>
 <text x="85" y="1642" class="small" text-anchor="start"><tspan x="85" dy="0">Evidence and authority: journal + kept inputs; containment empty before reading results or releasing resources; protected paths stay guarded.</tspan><tspan x="85" dy="24">Watch: --replace / --stop; openBlocking on every wake; confirm supervision live. 30-minute heartbeat; at most 3 chat lines; operator log.</tspan></text>
 </svg>

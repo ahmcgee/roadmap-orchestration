@@ -16,7 +16,7 @@ import { parseSpec } from '../src/spec/spec.ts';
 import { SCENARIO_TIMEOUT_MS, admitAll, planCheckStep } from './fixtures/stage-common.ts';
 import { appendSteps, contextFor, gateStep, mulBuild, setupArc } from './fixtures/unit-common.ts';
 import { check, corpusArc, editPlan, filesOf } from './helpers/corpusarc.ts';
-import { git, writeFiles } from './helpers/repo.ts';
+import { commitAll, git, writeFiles } from './helpers/repo.ts';
 import { readCalls } from './helpers/scenario.ts';
 
 const names = (...values: string[]) => values.map((s) => systemName(s));
@@ -63,26 +63,31 @@ test('salvage and transient share protected pinned paths; other product paths su
   const pin = parseCorpusPin(JSON.parse(corpus.pin.bytes.toString('utf8')));
   const boundary = protectedPaths({ pin: { value: pin }, guide: { bytes: corpus.guide.bytes } });
   const pinned = `docs/corpus/${pin.files[0]!.path}`;
-  writeFiles(arc.repo, { [pinned]: 'protected change\n', '.roadmap/extra.md': 'protected\n', 'docs/corpus/new.md': 'new protected file\n', 'outside/new.ts': 'product\n' });
+  writeFiles(arc.repo, { [pinned]: 'protected change\n', '.roadmap/extra.md': 'protected\n', '.roadmap/.hidden/file': 'protected\n', '.roadmap/other/.hidden/file': 'protected\n', '.roadmap/other/deeper/.secret': 'protected\n', '.roadmap/contracts-old/api.md': 'protected\n', '.roadmap/contracts/api.md': 'product contract\n', '.roadmap/contracts/nested/.hidden/file': 'product contract\n', '.roadmap/contracts/nested/new.md': 'new contract\n', 'docs/corpus/new.md': 'new protected file\n', 'outside/new.ts': 'product\n' });
   const classified = classifySalvage({ protectedPaths: boundary, excluded: [], rejectedRoot: absPath(join(arc.planDir, 'rejected')) }, arc.repo, revParse(arc.repo, 'HEAD'));
-  assert.deepEqual(classified.approved.map((p) => p.path), ['outside/new.ts']);
-  assert.deepEqual(classified.rejected.entries.map((p) => [p.path, p.reason]), [['.roadmap/extra.md', 'protected-path'], [pinned, 'protected-path'], ['docs/corpus/new.md', 'protected-path']].sort());
-  assert.deepEqual(transientViolations({ protectedPaths: boundary, evidenceGlobs: [] }, [repoPath(pinned), repoPath('docs/corpus/new.md'), repoPath('.roadmap/extra.md'), repoPath('outside/new.ts')]).map((p) => [p.path, p.rule]), classified.rejected.entries.map((p) => [p.path, p.reason]));
+  assert.deepEqual(classified.approved.map((p) => p.path), ['.roadmap/contracts/api.md', '.roadmap/contracts/nested/.hidden/file', '.roadmap/contracts/nested/new.md', 'outside/new.ts']);
+  assert.deepEqual(classified.rejected.entries.map((p) => [p.path, p.reason]), [['.roadmap/other/.hidden/file', 'protected-path'], ['.roadmap/other/deeper/.secret', 'protected-path'], ['.roadmap/.hidden/file', 'protected-path'], ['.roadmap/contracts-old/api.md', 'protected-path'], ['.roadmap/extra.md', 'protected-path'], [pinned, 'protected-path'], ['docs/corpus/new.md', 'protected-path']].sort());
+  assert.deepEqual(transientViolations({ protectedPaths: boundary, evidenceGlobs: [] }, [repoPath(pinned), repoPath('docs/corpus/new.md'), repoPath('.roadmap/other/.hidden/file'), repoPath('.roadmap/other/deeper/.secret'), repoPath('.roadmap/.hidden/file'), repoPath('.roadmap/contracts-old/api.md'), repoPath('.roadmap/extra.md'), repoPath('.roadmap/contracts/api.md'), repoPath('.roadmap/contracts/nested/.hidden/file'), repoPath('.roadmap/contracts/nested/new.md'), repoPath('outside/new.ts')]).map((p) => [p.path, p.rule]), classified.rejected.entries.map((p) => [p.path, p.reason]));
 });
 
 test('writes beyond unit systems merge and reach the gate with intent/nonGoals', { timeout: SCENARIO_TIMEOUT_MS }, async () => {
   const d = setupArc({ steps: [], units: [{ id: 'u1', systems: ['app'] }], systemsMap: { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**'], traits: ['persistent'] }, outside: { paths: ['outside/**'], traits: ['redacts'] } } } });
+  writeFiles(d.repo, {'.roadmap/contracts/api.md': '# Contract\nOriginal.\n'});
+  const baseline = commitAll(d.repo, 'owner-managed contract at baseline');
+  const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+  writeFileSync(d.planPath, JSON.stringify({...plan, baseline}));
   const specPath = join(d.planPath, '..', 'u1.json');
   const spec = JSON.parse(readFileSync(specPath, 'utf8'));
   spec.intent = 'Make multiplication correct.'; spec.nonGoals = ['Do not change addition.'];
   writeFileSync(specPath, JSON.stringify(spec));
-  appendSteps(d, [planCheckStep({ decision: 'approve' }), mulBuild({ 'outside/helper.js': 'export const helper = 1;\n' }), gateStep({ decision: 'approve' })]);
+  appendSteps(d, [planCheckStep({ decision: 'approve' }), mulBuild({ 'outside/helper.js': 'export const helper = 1;\n', '.roadmap/contracts/api.md': '# Contract\nUnit edited.\n' }), gateStep({ decision: 'approve' })]);
   const r = contextFor(d);
   try {
     assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+    assert.equal(git(d.repo, 'show', 'main:.roadmap/contracts/api.md'), '# Contract\nUnit edited.');
     assert.equal(git(d.repo, 'show', 'main:outside/helper.js'), 'export const helper = 1;');
     const gate = readCalls(d.scenarioPath).find((c) => c.stdin.includes('<reach>'))!;
-    assert.match(gate.stdin, /<reach>\n?- outside\/helper.js/);
+    assert.match(gate.stdin, /<reach>- \.roadmap\/contracts\/api.md\n- outside\/helper.js<\/reach>/);
     assert.match(gate.stdin, /<system_traits>- persistent<\/system_traits>/);
     assert.match(gate.stdin, /<reach_traits>- persistent\n- redacts<\/reach_traits>/);
     for (const call of readCalls(d.scenarioPath).filter((c) => c.as === 'codex' || c.stdin.includes('<reach>'))) {

@@ -1,3 +1,4 @@
+import { isProtectedPath } from '../input/protected.ts';
 import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,7 +78,7 @@ export class SalvageStateError extends Error {
 const matchesAny = (path: RepoPath, patterns: readonly RepoPattern[]): boolean => patterns.some((p) => matchesPattern(path, p));
 
 function rejectReason(rules: SalvageRules, path: RepoPath): RejectReason | null {
-  if (matchesAny(path, rules.protectedPaths)) return 'protected-path';
+  if (isProtectedPath(path, rules.protectedPaths)) return 'protected-path';
   if (matchesAny(path, rules.excluded)) return 'excluded';
   return null;
 }

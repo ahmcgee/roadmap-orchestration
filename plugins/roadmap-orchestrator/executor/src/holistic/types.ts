@@ -591,22 +591,11 @@ export type ImpactInput = Readonly<{
 }>;
 /** The selected obligations, ascending, split closure applied (H14: a selected child selects its parent and back). */
 export type SelectObligations = (input: ImpactInput) => readonly ObligationId[];
-/** An anchor-exact contract edit: the one match of `oldText` under `anchor` in `path` becomes `newText`. */
-export type ContractOp = Readonly<{ path: RepoPath; anchor: string; oldText: string; newText: string }>;
 /** Weakening dispositions (LR-c; "Obligations as a revisioned input"): `amended` covers a statement, docRef or activation change. */
 export const OBLIGATION_DISPOSITIONS = ['waived', 'deferred', 'retired', 'amended'] as const;
 export type ObligationDisposition = (typeof OBLIGATION_DISPOSITIONS)[number];
 
 const contractRevs = sortedBy(object((g) => ({ path: g.get('path', pathR), blob: g.get('blob', shaR) })), (e) => e.path);
-
-export const contractOp: Read<ContractOp> = object((f) => ({
-  path: f.get('path', pathR), anchor: f.get('anchor', str), oldText: f.get('oldText', str), newText: f.get('newText', text),
-}));
-
-
-
-
-
 
 // ---------------------------------------------------------------------------------------------------
 // Findings (§2.8; B3)

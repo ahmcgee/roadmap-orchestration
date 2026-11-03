@@ -15,6 +15,7 @@ import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { holisticInForce } from '../src/pipeline/stages.ts';
 import { type BaselineContext, baselineDue, runBaseline } from '../src/pipeline/baseline.ts';
+import { openNeedsUser, raiseNeedsUser } from '../src/needsuser.ts';
 import { jobEvidenceRoot } from '../src/git/snapshot.ts';
 import { arcJourneyLane, runJourneySeries, witnessRecordPath } from '../src/pipeline/lanes.ts';
 import { baselineOwed } from '../src/schedule/scheduler.ts';
@@ -157,7 +158,7 @@ describe('the baseline witness (A6)', () => {
       assert.equal(baselineDue(ctx), 'baseline-1');
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
       assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'other')], [2, 2]);
-      writeFiles(r.d.repo, { 'contracts/nested/new.md': 'a contract a ruling edited\n' });
+      writeFiles(r.d.repo, { '.roadmap/contracts/nested/new.md': 'an owner-managed contract a unit edited\n' });
       commitAll(r.d.repo, 'edit a contract document');
       assert.equal(baselineDue(ctx), 'baseline-1', 'a contract document may be a lane input');
       assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
@@ -336,4 +337,21 @@ describe('lane reuse (§9)', () => {
       r.journal.close();
     }
   });
+});
+
+test('baseline settles only baseline items after later held evidence; settlement survives journal replay', T, async () => {
+  const {r, ctx, control} = arc({obligations: [{id: 'I-1', testIds: ['t1']}], trees: {'*': {outcomes: {t1: 'fail'}}}});
+  try {
+    assert.equal((await runBaseline(ctx)).kind, 'raised');
+    const baseline = openNeedsUser(r.journal.view)[0]!.id;
+    const unrelated = raiseNeedsUser(r.journal, ctx.runDir, {blocking: true, subject: {type: 'arc'}, reason: 'owner-request', summary: 'Review a resource', recommendation: 'Owner decision', options: [], evidence: []}, {type: 'arc'});
+    scriptTree(control, '*', {outcomes: {t1: 'pass'}});
+    writeFiles(r.d.repo, {'src/baseline-repair.js': 'export const repaired = true;\n'});
+    commitAll(r.d.repo, 'repair baseline');
+    assert.deepEqual(await runBaseline(ctx), {kind: 'held'});
+    assert.deepEqual(openNeedsUser(r.journal.view).map((n) => n.id), [unrelated]);
+    assert.equal(r.journal.view.ackOf(baseline), null, 'settled by evidence, without pretending root acknowledgement');
+    assert.equal(baselineDue(ctx), null);
+    assert.deepEqual(readJournal(ctx.runDir, r.journal.view.arc).view.holistic().baselineHeld.map((h) => h.items), [[baseline]]);
+  } finally {r.journal.close();}
 });

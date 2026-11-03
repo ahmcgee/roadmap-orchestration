@@ -23,7 +23,7 @@ const MAP_JSON = {
     web: { paths: ['src/web/**'], tests: ['test/web/*.test.js'] },
   },
   shared: [{ paths: ['package-lock.json'], dependents: ['api', 'web'] }],
-  contracts: { 'docs/contracts/api.md': ['web'] },
+  contracts: { 'docs/contracts/api.md': ['web'], '.roadmap/contracts/api.md': ['api'] },
   docs: ['docs/**', '*.md'],
 };
 const MAP: SystemsMap = systemsMap(MAP_JSON, 'systemsMap');
@@ -80,6 +80,8 @@ describe('systems.path-class', () => {
     assert.equal(on(web, 'src/core/x.js'), false);
     assert.equal(on(web, 'package-lock.json'), true, 'a shared area');
     assert.equal(on(web, 'docs/contracts/api.md'), true, 'a consumed contract');
+    assert.equal(on(api, '.roadmap/contracts/api.md'), true, 'roadmap contract edits re-gate their consumers');
+    assert.equal(on(web, '.roadmap/contracts/api.md'), false, 'unrelated systems are not selected');
     assert.equal(on(api, 'scripts/x.sh'), true, 'unmapped: fail-safe');
     assert.equal(on(api, 'docs/guide.md'), false, 'docs-only');
     assert.equal(on(docs, 'docs/guide.md'), true);

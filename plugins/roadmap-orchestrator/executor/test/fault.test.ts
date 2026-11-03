@@ -150,7 +150,7 @@ test('fault.slot-crashes: a throw while the unit\'s publication holds the integr
   }
 });
 
-test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking item, its own state settled, the executor still running); it is due again only once a subject action closes the item', T, async () => {
+test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking item, its own state settled, the executor still running); it is due again only once a named ack closes the item', T, async () => {
   const marker = armedMarker();
   const { d } = holisticArc({
     steps: of('u1', [{ ...planCheckStep({ decision: 'approve' }), acts: [{ type: 'barrier', name: 'u1check', timeoutMs: 120_000 }] } as Step]),
@@ -183,10 +183,11 @@ test('fault.job: a throw inside the baseline job ends it faulted (a non-blocking
     assert.equal(journeys(), 1, 'the faulted job is not asked again while its item is open');
     assert.notEqual(baselineOwed(s.stage), null, 'the baseline is still owed');
 
-    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: raise.expect.id, choice: null }))).state, 'rejected');
-    assert.equal(jobFaultOpen(r.journal.view, r.ctx.runDir), true, 'a rejected ack releases nothing');
     assert.equal((await receiptOf(r, submit(r, { type: 'resume', target: {type: 'all'} }))).state, 'applied');
-    assert.equal(r.journal.view.ackOf(raise.expect.id) !== null, true, 'the arc subject action closes the fault item');
+    assert.equal(jobFaultOpen(r.journal.view, r.ctx.runDir), true, 'arc resume leaves the fault item open');
+    assert.equal(journeys(), 1, 'an unrelated arc command does not restart the faulted job');
+    assert.equal((await receiptOf(r, submit(r, { type: 'ack', needsUser: raise.expect.id, choice: null }))).state, 'applied');
+    assert.equal(r.journal.view.ackOf(raise.expect.id) !== null, true, 'the named ack closes the fault item');
     await until(() => baselineOwed(s.stage) === null, WAIT_MS, 'the baseline to run again and hold');
     assert.equal(journeys(), 2);
     await reached(d.scenarioDir, 'u1check', WAIT_MS);

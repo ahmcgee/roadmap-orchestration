@@ -1,20 +1,4 @@
-// Anchor-exact document references and contract ops (DESIGN-1.0.md §2.3 "Root commands and revisions"; M3 step A1). Pure: the
-// caller hands in the documents' text at the tip.
-//
-// An anchor names exactly one place in a document:
-//   `#<slug>`   a Markdown ATX heading whose slug (lowercase, punctuation dropped, spaces to `-`) is `<slug>`; its
-//               section runs to the next heading of the same or a higher level
-//   any other   a literal text that occurs on exactly one line; its section runs from that line to the next heading
-// Headings inside fenced code blocks are not headings. An anchor matching no place, or more than one, is refused.
-//
-// A contract op `{path, anchor, oldText, newText}` replaces the one occurrence of `oldText` in its anchor's section.
-// The ops of one ruling on one document must not replace overlapping text: each matched range `[at, at + oldText.length)`
-// is disjoint from every other (2026-10-15, arc feedback #3: two ops in one section are fine when their ranges are), so
-// their order cannot matter; they apply from the last range to the first. Every edited document's first line cites the
-// ruling: `<!-- revised by C-3, C-7 -->` (added, or extended).
-import type { RepoPath } from '../core/values.ts';
-import type { ContractOp } from '../holistic/types.ts';
-
+// Anchor-exact document references. Pure: callers supply document text at the tip.
 /** A region of a document as character offsets, `start` inclusive, `end` exclusive. */
 export type Section = Readonly<{ start: number; end: number }>;
 
@@ -59,59 +43,4 @@ export function anchorSection(doc: string, anchor: string): Section | string {
   const level = bySlug ? lines[at]!.heading!.level : 6;
   const next = lines.findIndex((l, i) => i > at && l.heading !== null && l.heading.level <= level);
   return { start: lines[at]!.start, end: next === -1 ? doc.length : lines[next]!.start };
-}
-
-const REVISED_BY = /^<!-- revised by (C-[0-9]+(?:, C-[0-9]+)*) -->\n/;
-
-/** The document with its first line citing `ruling` (the header added, or the ruling appended to it). */
-export function citeRuling(doc: string, ruling: string): string {
-  const m = REVISED_BY.exec(doc);
-  if (m === null) return `<!-- revised by ${ruling} -->\n${doc}`;
-  const ids = m[1]!.split(', ');
-  if (ids.includes(ruling)) return doc;
-  return `<!-- revised by ${[...ids, ruling].join(', ')} -->\n${doc.slice(m[0].length)}`;
-}
-
-export type ContractEdit = Readonly<{ path: RepoPath; text: string }>;
-
-/**
- * Applies one ruling's contract ops to the documents at the tip (`docAt`: a path's text, null when absent). Returns
- * the edited documents ascending by path, or every reason the ops are refused (all or none).
- */
-export function applyContractOps(
-  ops: readonly ContractOp[], ruling: string, docAt: (path: RepoPath) => string | null,
-): Readonly<{ edits: readonly ContractEdit[] }> | Readonly<{ reasons: readonly string[] }> {
-  const reasons: string[] = [];
-  const edits: ContractEdit[] = [];
-  for (const path of [...new Set(ops.map((o) => o.path))].sort()) {
-    const doc = docAt(path);
-    if (doc === null) {
-      reasons.push(`contract op on ${path}: no such document at the tip`);
-      continue;
-    }
-    const placed: { op: ContractOp; at: number }[] = [];
-    for (const op of ops.filter((o) => o.path === path)) {
-      const section = anchorSection(doc, op.anchor);
-      if (typeof section === 'string') {
-        reasons.push(`contract op on ${path}: ${section}`);
-        continue;
-      }
-      const body = doc.slice(section.start, section.end);
-      const first = body.indexOf(op.oldText);
-      if (first === -1 || body.indexOf(op.oldText, first + 1) !== -1) {
-        reasons.push(`contract op on ${path}: old text ${JSON.stringify(op.oldText)} occurs ${first === -1 ? 'nowhere' : 'more than once'} under anchor ${JSON.stringify(op.anchor)} (exactly once needed)`);
-        continue;
-      }
-      placed.push({ op, at: section.start + first });
-    }
-    placed.forEach((a, i) => placed.slice(i + 1).forEach((b) => {
-      if (a.at < b.at + b.op.oldText.length && b.at < a.at + a.op.oldText.length) {
-        reasons.push(`contract ops on ${path} overlap: the old text ${JSON.stringify(a.op.oldText)} under anchor ${JSON.stringify(a.op.anchor)} and ${JSON.stringify(b.op.oldText)} under ${JSON.stringify(b.op.anchor)} share characters`);
-      }
-    }));
-    if (reasons.length > 0) continue;
-    const text = [...placed].sort((a, b) => b.at - a.at).reduce((t, p) => t.slice(0, p.at) + p.op.newText + t.slice(p.at + p.op.oldText.length), doc);
-    edits.push({ path, text: citeRuling(text, ruling) });
-  }
-  return reasons.length > 0 ? { reasons } : { edits };
 }

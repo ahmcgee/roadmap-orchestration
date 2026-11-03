@@ -245,7 +245,7 @@ describe('the hold before the first admission (K14, H9)', () => {
       assert.deepEqual(second, { kind: 'ended', job: 'review-2', outcome: 'completed', needsUser: null });
       assert.deepEqual([...supersededItems(x.r.journal.view)], [first.needsUser], 'review-1\'s item is superseded');
       assert.deepEqual(openBlocking(x.r.journal.view), [], 'and no longer open');
-      assert.ok(x.r.journal.view.ackOf(first.needsUser) !== null, 'the root apply closed the arc subject');
+      assert.equal(x.r.journal.view.ackOf(first.needsUser), null, 'the superseding review settles the item without a root acknowledgement');
       assert.deepEqual(packReviewStatus(x.ctx), { kind: 'clear', job: 'review-2' });
       assert.deepEqual([...scopedUnits(x)], []);
       assert.ok(!x.holds().includes('pack-review'));
@@ -311,7 +311,7 @@ describe('the hold before the first admission (K14, H9)', () => {
     }
   });
 
-  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its subject action releases', T, async () => {
+  test('packreview.abandoned: a review that gives no valid report, its repair turn included, ends abandoned with a blocking item saying why; its named ack releases', T, async () => {
     const x = await arcWith([
       { as: 'claude', unit: 'review-1', expect: {}, acts: [{ type: 'emit', value: { findings: 'not a list' } }] },
       jobRepairStep('review-1', { findings: 'not a list' }, ['malformed report']),

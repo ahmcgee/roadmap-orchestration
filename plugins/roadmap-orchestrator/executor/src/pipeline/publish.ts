@@ -1,6 +1,5 @@
-import { systemsMapInForce } from '../input/systems.ts';
 // The docs publication (M3 step A4; DESIGN-1.0.md §2.9 "Git artifacts and clean PRs"; plan "Commands", Docs publication; A7, A17, G12): a
-// revision's rendered `.roadmap/` documents, the vision files it changes (dev.16) and its contract ops, published through
+// revision's rendered `.roadmap/` documents and the vision files it changes (dev.16), published through
 // the integration slot like a unit, so the tested head is the published head. It runs inside its revision's commit
 // (src/recover/revision.ts `commitRevision`, under the revision fence), reached through `DocsPublisher`:
 //
@@ -8,9 +7,7 @@ import { systemsMapInForce } from '../input/systems.ts';
 //              (`acquireFirst`, src/schedule/arbiter.ts). A unit candidate holding it before green is preempted
 //              (src/pipeline/integrate.ts `preemptCandidate`: `preempted`, uncharged); a green one's ff → snapshot
 //              chain completes first.
-//   files      each of the payload's renders (kept bytes: a rendered document, or a vision file) and each document the
-//              revision's new rulings' contract ops edit at the tip T, those rulings validated again at T (`validateRuling`,
-//              G21: their consistency is fresh).
+//   files      each payload render (kept bytes: a rendered document or a vision file), plus current debt.
 //   docs.commit on `refs/roadmap-run/<arc>/docs/<pub>`, parents [T] (src/git/docs.ts).
 //   transient  the commit's diff holds only those files (`docsTransientViolations`).
 //   lanes      in a detached checkout of the commit, under `job{pub}` (`runJourneySeries`, lanes.ts): the plan's suite, then the arc
@@ -24,8 +21,7 @@ import { systemsMapInForce } from '../input/systems.ts';
 //
 // Selection (G12; SCHEMAS "Choices made in M3 A4"): the renders are not changed paths: the executor renders them from
 // in-force records or publishes the vision in force, and as unmapped paths they would select every must-hold
-// obligation. A docs candidate selects the obligations its contract ops' paths touch (contracts, docRefs, witness files,
-// mapping; an unmapped contract path selects every must-hold, as for a unit), plus the obligations the revision adds,
+// obligation. A docs candidate selects the obligations the revision adds,
 // splits or re-witnesses, with the split closure. Witnesses are read against the revision's own obligations.
 //
 // Crash safety: recovery finds the publication a revision carried as the docs ff begun after its `revision.commit`
@@ -62,7 +58,7 @@ import { systemsMapInForce } from '../input/systems.ts';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf,Parent,PlanChange,RevisionPayload } from '../core/events.ts';
-import { type JobId,type ObligationId,type OpId,type Sha,type Sha256Hex,INTEGRATION_SLOT,compareIds } from '../core/ids.ts';
+import { type JobId,type ObligationId,type Sha,type Sha256Hex,INTEGRATION_SLOT,compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { cadenceAtOrBefore } from '../core/records.ts';
@@ -71,7 +67,6 @@ import { registryOf } from '../corpus/registry.ts';
 import { type UnitOfSource,ledgerAfterArc } from '../debt/render.ts';
 import type { DebtLedger } from '../debt/types.ts';
 import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
-import { applyContractOps } from '../docs/contracts.ts';
 import { DEBT_DOC,renderDebt } from '../docs/debt.ts';
 import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
 import { type DocsFile,changedPaths,docsWorktreeRequest,planDocs } from '../git/docs.ts';
@@ -88,7 +83,7 @@ import { type ArcLaneDef,type Obligations,isExempt,parseObligations } from '../h
 import {
 OBLIGATIONS_INPUT,
 RENDER_INPUT,
-keptInput,keptPayload,requirePlanInForce,revisionInForce
+keptInput,requirePlanInForce,revisionInForce
 } from '../input/inforce.ts';
 import { type PlanM1 } from '../input/plan.ts';
 import { selectedLanes } from '../input/systems.ts';
@@ -228,26 +223,12 @@ export function debtFile(ctx: Reader, commit: Sha): DocsFile | null {
   return textAt(ctx.repo, commit, DEBT_DOC) === text ? null : { path: DEBT_DOC, bytes: Buffer.from(text, 'utf8') };
 }
 
-type Files = Readonly<{ kind: 'files'; files: readonly DocsFile[]; contractPaths: readonly RepoPath[] }> | Readonly<{ kind: 'refused'; reasons: readonly string[] }>;
-
-/**
- * The docs commit's files at `tip`: every render (its kept bytes), a corpus arc's `debt.md` where `tip` holds
- * another rendering (`debtFile`), then every document the new rulings' contract ops edit, each ruling validated again at
- * `tip` first (its identity against the ledger with the earlier ones landed; its consistency against the revisions in
- * force).
- */
-function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): Files {
+/** Kept renders and the current debt rendering are the only publication files. */
+function docsFiles(ctx: Reader, payload: RevisionPayload, tip: Sha): readonly DocsFile[] {
   const publication = payload.publication;
   if (publication === null) throw new Error(`revision ${payload.rev} has no docs publication`);
   const debt = debtFile(ctx, tip);
-  const renders: DocsFile[] = [
-    ...publication.renders.map((r) => ({ path: r.path, bytes: keptOr(ctx.runDir, r.sha256, RENDER_INPUT) })), ...(debt === null ? [] : [debt]),
-  ];
-  const applied = applyContractOps(publication.contractOps, `revision-${payload.rev}`, (path) => textAt(ctx.repo, tip, path));
-  if ('reasons' in applied) return {kind: 'refused', reasons: applied.reasons};
-  const edited = new Map(applied.edits.map((e) => [e.path, e.text]));
-  const contractPaths = [...edited.keys()].sort();
-  return { kind: 'files', files: [...renders, ...contractPaths.map((path) => ({ path, bytes: Buffer.from(edited.get(path)!, 'utf8') }))], contractPaths };
+  return [...publication.renders.map((r) => ({ path: r.path, bytes: keptOr(ctx.runDir, r.sha256, RENDER_INPUT) })), ...(debt === null ? [] : [debt])];
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -263,11 +244,11 @@ function revisionObligations(runDir: AbsPath, payload: RevisionPayload): Obligat
 export const revisedObligations = (changes: readonly PlanChange[]): readonly ObligationId[] =>
   changes.flatMap((c) => (c.type === 'obligation' && (c.edit === 'added' || c.edit === 'split' || c.edit === 'witness') ? [c.id] : []));
 
-/** The docs candidate's selection: its contract ops' paths (never the renders) and the revised obligations. */
+/** The docs candidate selects revised obligations; product contract edits run through units. */
 export function docsSelection(
-  obligations: Obligations, contractPaths: readonly RepoPath[], changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>, systemsMap: import('../input/systems.ts').SystemsMap | null = null,
+  obligations: Obligations, changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
 ): readonly ObligationId[] {
-  return selectObligations({ obligations, systemsMap, units: [], closure: [], changedPaths: contractPaths, revised: revisedObligations(changes), latched });
+  return selectObligations({ obligations, systemsMap: null, units: [], closure: [], changedPaths: [], revised: revisedObligations(changes), latched });
 }
 
 /** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */
@@ -303,18 +284,17 @@ async function publishDocs(ctx: DocsContext, payload: RevisionPayload): Promise<
   const tip = refTarget(ctx.repo, integration);
   if (tip === null) throw new Error(`integration ${integration} does not exist`);
   const files = docsFiles(ctx, payload, tip);
-  if (files.kind === 'refused') return refuse(`its rulings do not land at ${tip}: ${files.reasons.join('; ')}`);
 
   const commit = await runOp(ctx.journal, docsCommitOp(ctx.repo), `docs:${pub}`, parent, planDocs(ctx.repo, {
-    arc: plan.arc, pub, tip, files: files.files, worktree: docsWorktree(plan, pub), identity: executorIdentity(),
+    arc: plan.arc, pub, tip, files: files, worktree: docsWorktree(plan, pub), identity: executorIdentity(),
     message: `roadmap ${plan.arc}: docs publication ${pub} (plan rev ${payload.rev})\n`,
   }));
   const next = commit.post.new;
-  const violations = docsTransientViolations(changedPaths(ctx.repo, tip, next), files.files.map((f) => f.path));
+  const violations = docsTransientViolations(changedPaths(ctx.repo, tip, next), files.map((f) => f.path));
   if (violations.length > 0) return refuse(`its commit touches paths it does not publish: ${violations.map((v) => `${v.path} (${v.rule})`).join(', ')}`);
 
   const obligations = revisionObligations(ctx.runDir, payload);
-  const selected = new Set(obligations === null ? [] : docsSelection(obligations, files.contractPaths, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)), systemsMapInForce(ctx.journal.view.planApplied())));
+  const selected = new Set(obligations === null ? [] : docsSelection(obligations, payload.changes, new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation))));
   // dev.17: the suite lanes up to `candidate` the commit's diff selects (a docs-only diff selects none but a lane listing
   // `docs`); a batch lane never runs in the merge path.
   const suiteLanes = seriesOrder(selectedLanes(mapInForce(ctx.journal.view), plan.suite.lanes.filter((l) => cadenceAtOrBefore(l.cadence, 'candidate')), changedPaths(ctx.repo, tip, next)));
@@ -505,18 +485,9 @@ export async function publishCloseOut(ctx: DocsContext): Promise<CloseOutOutcome
 const docsFfOf = (view: JournalView, pub: JobId): IntentOf<'integration.ff'> | undefined =>
   view.opsOf('integration.ff').find((i) => i.expect.subject?.type === 'docs' && i.expect.subject.pub === pub);
 
-/** The revision the publication `pub` carried: the latest `revision.commit` begun before its docs `ff`. */
-function payloadOfPub(view: JournalView, runDir: AbsPath, ff: IntentOf<'integration.ff'>): RevisionPayload {
-  const seq = (op: OpId): number => Number(op.slice(op.lastIndexOf('/') + 1));
-  const commit = view.opsOf('revision.commit').filter((i) => seq(i.op) < seq(ff.op)).at(-1);
-  if (commit === undefined) throw new Error(`docs ff ${ff.op} follows no revision.commit`);
-  return keptPayload(runDir, commit.expect.payloadSha256);
-}
-
 /**
  * After a published docs publication's activation, each step only where missing (recovery calls it again): a
- * docs-only publication's `docs-covered{pub, T → D}` (A17: no contract op, so its diff is confined to the rendered
- * `.roadmap/` files; a close-out's always), a close-out's `docs-published`, the snapshot of the run's records (the
+ * publication's `docs-covered{pub, T → D}` (A17: only kept renders and debt are published), a close-out's `docs-published`, the snapshot of the run's records (the
  * `plan-applied` included), then the slot released.
  */
 export async function finishDocs(ctx: ResourceContext, pub: JobId): Promise<void> {
@@ -526,8 +497,7 @@ export async function finishDocs(ctx: ResourceContext, pub: JobId): Promise<void
   if (ff === undefined || done === null || done.kind !== 'integration.ff' || done.outcome.kind !== 'published') throw new Error(`docs publication ${pub} did not publish`);
   // A close-out (A8) carries no revision: the plan in force never names its pub (it runs outside any revision).
   const closeOut = view.planApplied()?.publication?.pub !== pub;
-  const docsOnly = closeOut || payloadOfPub(view, ctx.runDir, ff).publication?.contractOps.length === 0;
-  if (docsOnly && !view.holistic().docsCovered.some((d) => d.pub === pub)) {
+  if (!view.holistic().docsCovered.some((d) => d.pub === pub)) {
     ctx.journal.fact({ kind: 'docs-covered', pub, from: ff.expect.old, to: ff.expect.new });
   }
   if (closeOut && !view.holistic().docsPublished.some((d) => d.pub === pub)) {

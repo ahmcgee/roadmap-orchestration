@@ -9,8 +9,8 @@
 //      spec it names at its recorded spec rev (the latest spec of that unit and rev the log named before P: a machine
 //      `spec.patch` advances a spec without a plan revision, so the plan manifest before P need not hold it); the
 //      obligations by their recorded hash. Each is touched where P's revision holds another. A ledger or contract
-//      preimage is refused: a ruling is withdrawn by superseding it and contract text is edited by a ruling's
-//      contract ops (`roadmap rule`).
+//      preimage is refused: a ruling is withdrawn by superseding it and contract text is edited through a
+//      gate-reviewed unit.
 //   4. Conflicts: a touched artifact a later revision changed again (the one in force is not P's) → rejected with
 //      every reason; the architect uses `apply`.
 //   5. The proposal: the revision in force with each touched artifact restored to its preimage's content, as a fresh
@@ -134,7 +134,7 @@ export async function reverse(ctx: CommandContext, id: CommandId, divergence: Di
   if (decided?.kind !== 'applied') return { kind: 'rejected', reason: `${divergence}'s checkpoint ${d.job} applied no revision: nothing to restore` };
   const refused: string[] = [];
   if (d.preimage.ledgerSha256 !== null) refused.push(`${divergence} touched the rulings ledger: a ruling is withdrawn by superseding it (\`roadmap rule\`)`);
-  if (d.preimage.contracts.length > 0) refused.push(`${divergence} touched contracts ${d.preimage.contracts.map((c) => c.path).join(', ')}: contract text is restored by a ruling's contract ops (\`roadmap rule\`)`);
+  if (d.preimage.contracts.length > 0) refused.push(`${divergence} touched contracts ${d.preimage.contracts.map((c) => c.path).join(', ')}: restore contract text through a gate-reviewed unit`);
   if (refused.length > 0) return { kind: 'rejected', reason: rejectedText(refused, 'reverse') };
 
   const events = readJournal(ctx.runDir, view.arc).events;

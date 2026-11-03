@@ -10,10 +10,10 @@ import { incomingPath,isControl,pollCommands,readCommand,readReceipt,receiptPath
 import { type IntentOf,probeTargetKey } from '../src/core/events.ts';
 import { type ArcId,type CommandId,arcId,invocationId,needsUserId,opId,opKey,sha,specRev,unitId } from '../src/core/ids.ts';
 import { type OpenJournal,openJournal } from '../src/core/log.ts';
-import type { CommandBody,CommandFile } from '../src/core/records.ts';
+import { NEEDS_USER_REASONS, type CommandBody,type CommandFile } from '../src/core/records.ts';
 import { absPath,isoTimeOf,refName } from '../src/core/values.ts';
 import { readResidues,recordResidue,undispositioned } from '../src/host/residues.ts';
-import { needsUserAckPath,openBlocking,raiseNeedsUser,readNeedsUserAck } from '../src/needsuser.ts';
+import { m3Blocking,needsUserAckPath,openBlocking,raiseNeedsUser,readNeedsUserAck } from '../src/needsuser.ts';
 import type { ProberHandle } from '../src/park/probe.ts';
 import { recover } from '../src/recover/recover.ts';
 import { requestOf } from '../src/resources/pool.ts';
@@ -615,7 +615,7 @@ test('closure-by-subject: one command closes every item for its unit and preserv
     assert.equal(journal.view.ackOf(other), null);
   } finally {journal.close();}
 });
-test('ack-with-options: items without choices require an action on their subject', async () => {
+test('ack-with-options: optionless unit items require subject action; offered choices are preserved', async () => {
   const {ctx, journal} = openCommandRun(newCmdRun());
   try {
     const noOptions = raise(ctx, true, []);
@@ -625,5 +625,17 @@ test('ack-with-options: items without choices require an action on their subject
     const offered = raise(ctx, true, [{id: 'keep', label: 'Keep'}]);
     assert.equal((await applyCommand(ctx, submit(ctx, {type: 'ack', needsUser: offered, choice: 'keep'}))).kind, 'applied');
     assert.equal(journal.view.ackOf(offered)?.choice, 'keep');
+  } finally {journal.close();}
+});
+
+test('every arc reason has a named close, including optionless historical items', async () => {
+  const {ctx, journal} = openCommandRun(newCmdRun());
+  try {
+    for (const reason of NEEDS_USER_REASONS) {
+      const id = raiseNeedsUser(journal, ctx.runDir, {blocking: m3Blocking(reason) ?? true, subject: {type: 'arc'}, reason, summary: reason, recommendation: 'Review the evidence', options: [], evidence: []}, {type: 'arc'});
+      const cmd = submit(ctx, {type: 'ack', needsUser: id, choice: null});
+      assert.equal((await applyCommand(ctx, cmd)).kind, 'applied', reason);
+      assert.equal(journal.view.ackOf(id)?.command, cmd.id, reason);
+    }
   } finally {journal.close();}
 });

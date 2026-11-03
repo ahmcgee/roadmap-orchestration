@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {readFileSync, writeFileSync} from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { applyCommand } from '../src/commands/apply.ts';
@@ -9,6 +10,7 @@ import { commandBody } from '../src/core/records.ts';
 import { openFinding, p1Blocking, isActive, findingMetrics } from '../src/holistic/findings.ts';
 import { raiseNeedsUser, openBlocking } from '../src/needsuser.ts';
 import { recover } from '../src/recover/recover.ts';
+import {setupArc, contextFor, commandContextFor, applyBody, syncInputs} from './fixtures/unit-common.ts';
 import { openCommandRun } from './fixtures/cmd-common.ts';
 import { newRun } from './fixtures/res-plan.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -118,5 +120,32 @@ test('root apply supplying a repair answers finding requests without dismissing 
     assert.equal(r.journal.view.ackOf(one)?.command, cmd.id);
     assert.equal(r.journal.view.ackOf(both), null, 'the revision supplies no repair for F-2');
     assert.ok(r.journal.view.holistic().findings.every(isActive), 'a root repair response does not dismiss either finding');
+  } finally {r.journal.close();}
+});
+
+test('unrelated apply and arc resume preserve blocking arc requests and waste notices; ack names exactly one', async () => {
+  const d = setupArc({steps: []});
+  const r = contextFor(d);
+  const ctx = commandContextFor(r);
+  try {
+    const request = raiseNeedsUser(r.journal, ctx.runDir, {blocking: true, subject: {type: 'arc'}, reason: 'owner-request', summary: 'Review the audit request', recommendation: 'Read evidence and decide', options: [], evidence: []}, {type: 'arc'});
+    const waste = raiseNeedsUser(r.journal, ctx.runDir, {blocking: false, subject: {type: 'arc'}, reason: 'waste-finding', summary: 'Repeated unnecessary work', recommendation: 'Read evidence', options: [], evidence: []}, {type: 'arc'});
+    syncInputs(r);
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+    writeFileSync(d.planPath, JSON.stringify({...plan, direction: 'An unrelated direction revision'}));
+    const apply = submitCommand(ctx.runDir, r.journal.view.arc, applyBody(d));
+    assert.equal((await applyCommand(ctx, apply)).kind, 'applied');
+    assert.ok(r.journal.view.planAppliedBy(apply.id), 'the apply actually revised the plan');
+    for (const id of [request, waste]) assert.equal(r.journal.view.ackOf(id), null);
+    const resume = submitCommand(ctx.runDir, r.journal.view.arc, {type: 'resume', target: {type: 'all'}});
+    assert.equal((await applyCommand(ctx, resume)).kind, 'applied');
+    for (const id of [request, waste]) assert.equal(r.journal.view.ackOf(id), null);
+    const ackRequest = submitCommand(ctx.runDir, r.journal.view.arc, {type: 'ack', needsUser: request, choice: null});
+    assert.equal((await applyCommand(ctx, ackRequest)).kind, 'applied');
+    assert.equal(r.journal.view.ackOf(request)?.command, ackRequest.id);
+    assert.equal(r.journal.view.ackOf(waste), null);
+    const ackWaste = submitCommand(ctx.runDir, r.journal.view.arc, {type: 'ack', needsUser: waste, choice: null});
+    assert.equal((await applyCommand(ctx, ackWaste)).kind, 'applied');
+    assert.equal(r.journal.view.ackOf(waste)?.command, ackWaste.id);
   } finally {r.journal.close();}
 });

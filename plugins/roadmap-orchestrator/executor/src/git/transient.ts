@@ -1,3 +1,4 @@
+import { isProtectedPath } from '../input/protected.ts';
 import type { LaneId, Sha } from '../core/ids.ts';
 import { type SpecM1 } from '../core/records.ts';
 import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern, repoPath } from '../core/values.ts';
@@ -28,10 +29,10 @@ export function unitDiffPaths(repo: AbsPath, tip: Sha, branch: Sha): readonly Re
 // Transient check
 
 export type TransientRule =
-  /** Under `.roadmap/`. */
+  /** A protected roadmap input or pinned corpus path. */
 
   | 'protected-path'
-  /** The docs check: a path that is neither a rendered `.roadmap/` file nor a contract op's path. */
+  /** The docs check: a path outside the files this publication renders. */
   | 'not-docs'
   /** A run dir (`roadmap-runtime/`, `.roadmap-runtime/`) or a scratch dir (`__preview/`, `__codex/`). */
   | 'run-state'
@@ -68,7 +69,7 @@ const INVOCATION_DIR = /^[1-9][0-9]*-[1-9][0-9]*$/;
 
 function violationOf(rules: TransientRules, path: RepoPath): TransientViolation | null {
   const segments = path.split('/');
-  if (rules.protectedPaths.some((p) => matchesPattern(path, p))) return { path, rule: 'protected-path' };
+  if (isProtectedPath(path, rules.protectedPaths)) return { path, rule: 'protected-path' };
   if (segments.some((s) => RUN_STATE_SEGMENTS.has(s))) return { path, rule: 'run-state' };
   if (segments[0] === 'evidence') return { path, rule: 'evidence' };
   const declared = rules.evidenceGlobs.find((g) => matchesPattern(path, g.glob));
@@ -89,7 +90,7 @@ export function transientViolations(rules: TransientRules, paths: readonly RepoP
 
 /**
  * The docs check (G17): a docs publication's diff paths may be only `allowed`, the files it publishes (its
- * renders, the vision files among them, and a corpus arc's `debt.md`) plus its contract ops' paths. Every other path
+ * renders, the vision files among them, and a corpus arc's `debt.md`). Every other path
  * is a `not-docs` violation, sorted by path.
  */
 export function docsTransientViolations(paths: readonly RepoPath[], allowed: readonly RepoPath[]): readonly TransientViolation[] {

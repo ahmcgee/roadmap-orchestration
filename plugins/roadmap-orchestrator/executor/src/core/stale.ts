@@ -10,8 +10,7 @@ import { type RepoPath,repoPath } from './values.ts';
 import { type Read,Fields,SchemaError,arrayOf,assertUnique,literal,object,positive,sortedBy,tagged } from './validate.ts';
 
 /**
- * What a revision changed that links name: a requirement whose normative rev rose (`from` → `to`), a contract a ruling's
- * contract ops rewrote, or a vision clause the owner edited or withdrew (at the vision's new `visionRev`).
+ * What a revision changed that links name: a requirement whose normative rev rose (`from` → `to`), a changed contract, or a vision clause the owner edited or withdrew (at the vision's new `visionRev`).
  */
 export type StaleTarget =
   | Readonly<{ type: 'requirement'; id: ObligationId; from: number; to: number }>

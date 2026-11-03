@@ -413,7 +413,7 @@ describe('vision edits publish (dev.16)', () => {
       commitAll(a.repo, 'vision rev 2');
       const out = accepted(await apply(a, j, true));
       assert.deepEqual([...renderMap(out)], [['.roadmap/vision.json', next]]);
-      assert.deepEqual(out.evaluated.draft.publication, { renders: [{ path: '.roadmap/vision.json', sha256: sha256Hex(next) }], contractOps: [] });
+      assert.deepEqual(out.evaluated.draft.publication, { renders: [{ path: '.roadmap/vision.json', sha256: sha256Hex(next) }] });
     } finally {
       j.close();
     }

@@ -56,7 +56,7 @@ export function candidateMergeOp(repo: AbsPath): GitOp<'candidate.merge', Candid
   return { ...candidateMergeSteps(repo), reconcile: reconcileCandidate(repo) };
 }
 
-/** M3 (A4): a docs publication's commit of its rendered files and contract ops on the tip. */
+/** M3 (A4): a docs publication's commit of its rendered files on the tip. */
 export function docsCommitOp(repo: AbsPath): GitOp<'docs.commit', DocsPlan> {
   return { ...docsCommitSteps(repo), reconcile: reconcileDocsCommit(repo) };
 }

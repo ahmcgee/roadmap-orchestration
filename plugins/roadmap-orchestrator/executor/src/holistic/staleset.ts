@@ -2,7 +2,7 @@
 // pure half: what a revision leaves stale. Boundary reopening gives unfinished units the revised inputs.
 //
 //   stale set     at every revision (the apply core, src/commands/apply.ts `evaluateRevision`): its targets are the
-//                 requirements whose normative rev rose, the contracts its landing rulings' contract ops rewrite, and the vision
+//                 requirements whose normative rev rose, any supplied changed contracts, and the vision
 //                 clauses the owner edited or withdrew. Transitively, by code: a changed vision clause reaches the active
 //                 obligations serving it that the revision did not revise (an `obligation` link, the checkpoint's to
 //                 reconcile); every unmerged unit's links to a changed requirement (pinned below its new rev, or unpinned), to an
@@ -26,7 +26,7 @@ import type { Obligations,Vision } from './types.ts';
 export type StaleInputs = Readonly<{
   obligations: Readonly<{ before: Obligations | null; after: Obligations | null }>;
   vision: Readonly<{ before: Vision | null; after: Vision | null }>;
-  /** The contracts the revision's landing rulings rewrite (their contract ops' paths). */
+  /** Changed contract paths, empty for schema-2 revisions (units edit product contracts). */
   contracts: readonly RepoPath[];
   /** Every unit neither merged, cut nor superseded, in plan order, with its spec after the revision (read only when a target changed). */
   units: () => readonly Readonly<{ id: UnitId; spec: SpecM1 }>[];
