@@ -1149,8 +1149,13 @@ export const knownDefectMatch: Read<KnownDefectMatch> = tagged<'lane' | 'output'
   output: object((g) => ({ type: g.get('type', literal('output')), lane: g.get('lane', (v, p) => laneId(v, p)), contains: g.get('contains', str) })),
 });
 
+/**
+ * An acceptance item. `failLoudIfUndelivered` (required for completion) defaults to true when omitted: the stricter reading,
+ * so leaving it out can never silently loosen what completion requires (field friction: authored applies refused for its
+ * absence). An explicit false still marks a best-effort item.
+ */
 function acceptanceFields(f: Fields): AcceptanceDef {
-  return { id: f.get('id', cid), clause: f.get('clause', str), failLoudIfUndelivered: f.get('failLoudIfUndelivered', bool) };
+  return { id: f.get('id', cid), clause: f.get('clause', str), failLoudIfUndelivered: f.optional('failLoudIfUndelivered', bool) ?? true };
 }
 function noteFields(f: Fields): NoteDef {
   return { id: f.get('id', cid), text: f.get('text', str) };
