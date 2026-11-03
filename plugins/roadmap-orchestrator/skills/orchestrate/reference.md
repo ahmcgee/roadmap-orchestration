@@ -26,7 +26,7 @@ Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 liv
 | `roadmap stop [--repo <path> --arc <arc>]` | Quiesce work and stop. |
 | `roadmap pause (<unit> | --all) [--repo <path> --arc <arc>]` | Pause one unit or the arc. |
 | `roadmap resume [<unit> | --backend claude|codex] [--repo <path> --arc <arc>]` | Resume a unit, explicitly unpark a backend, or resume all ordinary resumable work. |
-| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Items offering options and pack-review items may be acknowledged. Any supplied choice must be offered; omit it for an optionless pack-review item. |
+| `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Items offering options, pack-review items and obligation-baseline items may be acknowledged. Any supplied choice must be offered; omit it for an optionless pack-review or obligation-baseline item. |
 | `roadmap sweep [--resource <name>] [--repo <path> --arc <arc>]` | Re-probe/clean residual resources using declared protocol. |
 | `roadmap apply --from <dir> --rev <n> --reason <text> [--dry-run] [--repo <path> --arc <arc>]` | File-level CAS from a genuine export. Reason is a nonempty single line; N equals export.planRev. |
 | `roadmap resolve-edge <edge> --evidence <text> [--repo <path> --arc <arc>]` | Record a contingent condition met, with evidence. |
@@ -67,7 +67,7 @@ Root changes can add units, split, cut, re-enter, edit specs/obligations/vision/
 
 Commands are write-once queued files with accepted/queued/applied/rejected receipts. A queued apply waits for the relevant stage boundary. Read its final receipt before relying on a revision. Restart replays from durable command/revision provenance rather than resubmitting the action. Steer/note hash their brief at submission, so preserve its bytes until accepted and kept. Steer cannot revive a finished unit and does not reset attempt caps.
 
-Subjects close after the successful action that resolves them (unit/arc/host). An optionless pack-review item accepts `ack`; other optionless items require action on their subject. Any supplied choice must be offered; inspect their recommendation and evidence before deciding. Revision and waste notices do not hold execution. Owner-request items require the actual owner decision within the session's authorization.
+Subjects close after the successful action that resolves them (unit/arc/host). Optionless pack-review and obligation-baseline items accept `ack` (after the repair or ruling their recommendation names, or with evidence the failure was not the product's); other optionless items require action on their subject. Any supplied choice must be offered; inspect their recommendation and evidence before deciding. Revision and waste notices do not hold execution. Owner-request items require the actual owner decision within the session's authorization.
 
 Pack review must end before first admission. Open blocking unit findings hold their targets and transitive dependents through effective `after` edges (including prepared lineage replacements); contingent conditions keep their ordinary readiness checks. Other blocking targets hold the arc. The one arc-subject item states scope; fix the pack for a superseding review or acknowledge it. Scoped holds persist while unrelated work runs. Status names the item on held units; arc `holds` includes pack-review only for arc-wide scope.
 

@@ -9,7 +9,7 @@ import { exclusivePublish } from '../core/fsx.ts';
 import { type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,type UnitId,invocationId,opKey,parseResourceUnit,planRev,resourceInstance } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
-import type { CommandBody,CommandFile,NeedsUserAck,NeedsUserContent,ResidueKey,RevisionManifest,SpecM1,Stage } from '../core/records.ts';
+import type { CommandBody,CommandFile,NeedsUserAck,NeedsUserContent,NeedsUserReason,ResidueKey,RevisionManifest,SpecM1,Stage } from '../core/records.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,absPath,isoTimeOf,repoPath } from '../core/values.ts';
@@ -278,11 +278,17 @@ function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, 
   return { kind: 'applied', verified: [target.type === 'all' ? 'every unit paused' : `unit ${target.unit} paused`] };
 }
 
+/**
+ * The optionless items an ack closes: a pack review's (fix the pack or admit on it as it is) and an obligation baseline's (its
+ * recommendation: repair or rule, then acknowledge). Every other optionless item closes only by acting on its subject.
+ */
+const OPTIONLESS_ACK: readonly NeedsUserReason[] = ['pack-review', 'obligation-baseline'];
+
 function ack(ctx: CommandContext, id: CommandId, body: Extract<CommandBody, { type: 'ack' }>): Effect {
   const view = ctx.journal.view;
   const item = readNeedsUser(ctx.runDir, body.needsUser);
   if (item === null) return { kind: 'rejected', reason: `unknown needs-user ${body.needsUser}` };
-  if (item.options.length === 0 && item.reason !== 'pack-review') return { kind: 'rejected', reason: `needs-user ${body.needsUser} has no options; act on its subject to close it` };
+  if (item.options.length === 0 && !OPTIONLESS_ACK.includes(item.reason)) return { kind: 'rejected', reason: `needs-user ${body.needsUser} has no options; act on its subject to close it` };
   const closed = view.ackOf(body.needsUser);
   if (closed !== null && closed.command === null) return { kind: 'rejected', reason: `needs-user ${body.needsUser} was declined by the executor at the close-out (nobody answered it)` };
   const by = ackedBy(ctx, body.needsUser);

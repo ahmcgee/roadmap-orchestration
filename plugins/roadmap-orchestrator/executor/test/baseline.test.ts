@@ -66,8 +66,8 @@ describe('the baseline witness (A6)', () => {
     }
   });
 
-  test('baseline.must-hold-not-held: a must-hold obligation not held on the tip raises a blocking obligation-baseline, once', T, async () => {
-    const { r, ctx } = arc({ obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }], trees: { '*': { outcomes: { t1: 'fail', t2: 'pass' } } } });
+  test('baseline.must-hold-not-held: a must-hold obligation not held on the tip raises a blocking obligation-baseline, once; its optionless ack closes it', T, async () => {
+    const { r, ctx, w } = arc({ obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }], trees: { '*': { outcomes: { t1: 'fail', t2: 'pass' } } } });
     try {
       const out = await runBaseline(ctx);
       assert.deepEqual(out, { kind: 'raised', problems: [{ obligation: 'I-1', kind: 'not-held', verdict: 'not-held' }] });
@@ -79,6 +79,11 @@ describe('the baseline witness (A6)', () => {
       assert.deepEqual(record['evidence'], [jobEvidenceRoot(r.ctx.runDir, jobId('baseline', 1))]);
       assert.equal(baselineDue(ctx), null, 'raised once: the baseline is done');
       await assert.rejects(runBaseline(ctx), /no baseline is due/);
+      // Its recommendation ends 'then acknowledge this item': the optionless ack is accepted and closes it (field arc m6, nu-5373).
+      assert.deepEqual(record['options'], []);
+      const ack = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'ack', needsUser: item.id, choice: null }));
+      assert.equal(ack.kind, 'applied', JSON.stringify(ack));
+      assert.notEqual(r.journal.view.ackOf(item.id), null);
     } finally {
       r.journal.close();
     }
