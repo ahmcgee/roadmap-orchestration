@@ -85,7 +85,7 @@ A milestone runs its selected lanes after its units retire, then a fresh experie
 
 ## Supervision and intervention
 
-Keep one actionable watch per arc while it runs, with the fixed 30-minute heartbeat. Start or switch plugin versions
+Keep one actionable watch per arc while it runs, with the fixed 30-minute heartbeat. It streams one line per wake and never exits on its own: run it unpiped or line-buffered, never through a tool that buffers until exit (`tail -c`, `head`, `sort`). Start or switch plugin versions
 with `watch --actionable --replace`; end supervision with `watch --stop`. Never kill a watch by process pattern.
 On every wake, read `openBlocking` and act on every item in it, including items repeated from earlier wakes. Read
 `status --summary`, then full status and cited evidence for each affected subject. Post at most 3 lines in chat:
