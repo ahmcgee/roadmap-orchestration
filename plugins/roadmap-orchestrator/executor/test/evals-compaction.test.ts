@@ -285,6 +285,50 @@ test('compaction.stage-a: resolve renumbering preserves exact approval, item ref
   assert.equal(gradeA(record.replace('## K-11 resolve', '## K-11 retire'), saved, spec.key).criteria['fidelity']!.pass, false);
 });
 
+test('compaction.stage-a: placeholder allocations bind to recorded ids without changing wording or approval', () => {
+  const ledger = 'C-43 — B-11 resolved by compaction K-1: the product has no help footer; alignment is given up.';
+  const cases = [
+    { action: 'resolve', items: 'B-11: obsolete footer alignment', recorded: ledger,
+      proposed: ledger.replace('K-1:', 'K-?:') },
+    { action: 'resolve', items: 'B-11: obsolete footer alignment', recorded: ledger,
+      proposed: ledger.replace('C-43 —', 'C-? —') },
+    { action: 'resolve', items: 'B-11: obsolete footer alignment', recorded: ledger,
+      proposed: ledger.replace('C-43 —', 'C-? —').replace('K-1:', 'K-?:') },
+    { action: 'fold', items: 'C-4: unique booking identifiers', recorded: 'T-86: Each booking identifier is unique.',
+      proposed: 'T-?: Each booking identifier is unique.' },
+    { action: 'fold', items: 'C-4: unique booking identifiers', recorded: 'T-86: Each booking identifier is unique.',
+      proposed: 'T-90: Each booking identifier is unique.' },
+    { action: 'fold', items: 'C-4: unique booking identifiers', recorded: 'T-?: Each booking identifier is unique.',
+      proposed: 'T-90: Each booking identifier is unique.' },
+    { action: 'merge', items: 'I-3 and I-14: unique booking identifiers', recorded: 'I-61: Each booking identifier is unique.',
+      proposed: 'I-?: Each booking identifier is unique.' },
+  ];
+  for (const { action, items, recorded, proposed } of cases) {
+    const record = `## K-1 ${action}\nItems: ${items}\nReplacement: ${recorded}\nGives up: obsolete alignment or duplicate wording\nWhy: review\nApproved: 2026-11-03\n`;
+    // Quotes exercise replacement comparison for rules/obligations; ledger
+    // backticks exercise the plain ledger path without disposition JSON keys.
+    const replacement = recorded.startsWith('C-') ? `\`${proposed}\`` : `"${proposed}"`;
+    const batch = `7. ${action}\nItems: ${items}\nReplacement: ${replacement}`;
+    const check = (text: string, reply: string) => gradeA(text, [{ batch, reply }], spec.key).criteria['fidelity']!;
+    assert.equal(check(record, '7: approve as proposed').pass, true, proposed);
+    assert.equal(check(record, '7: reject').pass, false, proposed);
+    assert.equal(check(record, '').pass, false, proposed);
+    const changed = record.replace(recorded, recorded.replace('is unique', 'may repeat').replace('alignment is given up', 'alignment remains required'));
+    assert.notEqual(changed, record);
+    assert.equal(check(changed, '7: approve as proposed').pass, false, proposed);
+    // An owner can also quote a placeholder; an assigned owner id is exact.
+    if (proposed.includes('?')) assert.equal(check(record, `7: approve with exact wording: "${proposed}"`).pass, true, proposed);
+  }
+});
+
+test('compaction.stage-a: allocating a replacement never rebinds a quoted reference inside its wording', () => {
+  const record = '## K-1 resolve\nItems: B-11: obsolete footer alignment\nReplacement: C-43 — Keep "C-99: footer policy"; B-11 resolved by compaction K-1: obsolete.\nGives up: footer alignment\nWhy: obsolete\nApproved: 2026-11-03\n';
+  const batch = '7. resolve B-11\nReplacement: `C-? — Keep "C-99: footer policy"; B-11 resolved by compaction K-?: obsolete.`';
+  const saved = [{ batch, reply: '7: approve as proposed' }];
+  assert.equal(gradeA(record, saved, spec.key).criteria['fidelity']!.pass, true);
+  assert.equal(gradeA(record.replace('C-99: footer', 'C-43: footer'), saved, spec.key).criteria['fidelity']!.pass, false);
+});
+
 test('compaction.stage-a: schema-2 saved trials retain exact evidence; obsolete footer, closing survey and narrowed approvals are not failures', () => {
   for (const n of [1, 2]) {
     const dir = new URL(`fixtures/compaction-schema2-trials/${n}/`, import.meta.url);

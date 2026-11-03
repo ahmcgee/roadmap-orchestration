@@ -82,10 +82,30 @@ function quoted(text: string, omitLossNotes = false): readonly string[] {
   }
   return words;
 }
+/** Bind allocation slots, never referenced estate ids or the recorded evidence itself.
+ * Proposal numbering is provisional; concrete ids in an owner's exact wording remain binding.
+ * New rules, ledger entries and obligation families may receive ids after approval. */
+function replacementEvidence(d: Decision, p: Proposal, line: string) {
+  const target = /^([TCI]-(?:[1-9]\d*|\?))\s*(?:—|:)/.exec(d.replacement)?.[1];
+  const bind = (text: string, proposal: boolean): string => {
+    const id = proposal ? '(?:[1-9]\\d*|\\?)' : '\\?';
+    return text.replace(new RegExp(`^(["“]?)([TCI])-${id}(?=\\s*(?:—|:))`),
+      (whole, quote: string, kind: string) => {
+        const original = whole.slice(quote.length);
+        return target?.startsWith(`${kind}-`) && !d.ids.includes(target) && !d.ids.includes(original)
+          ? quote + target : whole;
+      }).replace(new RegExp(`\\bcompaction K-${id}(?=:)`, 'g'), `compaction ${d.id}`);
+  };
+  const replacement = bind((proposalField(p, 'Replacement') ?? '').split('\n')[0]!, true);
+  const ownerWording = quoted(line, true).map((text) => bind(text, false));
+  // Bind only the new entry's leading id; ids referenced inside its text stay exact.
+  const ledgerLine = [...p.text.matchAll(/`(C-(?:[1-9]\d*|\?) — [^`]+)`/g)]
+    .map((m) => bind(m[1]!, true)).find((text) => replacement.startsWith(text));
+  return { replacement, ownerWording, ledgerLine };
+}
 function replacementApproved(d: Decision, p: Proposal, line: string): boolean {
+  const { replacement, ownerWording, ledgerLine } = replacementEvidence(d, p, line);
   if (/\bno replacement (?:entry )?needed\b/i.test(line)) return /^none\b/i.test(d.replacement);
-  const ownerWording = quoted(line, true);
-  const replacement = (proposalField(p, 'Replacement') ?? '').split('\n')[0]!;
   // An explicitly approved unchanged target may be recorded by reference rather
   // than by repeating its quoted text. Restated wording still needs comparison.
   const unchangedTarget = /^([TICB]-[1-9]\d*),?\s+unchanged\s*:\s*["“]/i.exec(replacement)?.[1];
@@ -93,28 +113,13 @@ function replacementApproved(d: Decision, p: Proposal, line: string): boolean {
     && new RegExp(`\\b${unchangedTarget},?\\s+unchanged\\b`, 'i').test(line)
     && new RegExp(`^${unchangedTarget},?\\s+unchanged(?:[.;]|$)`, 'i').test(d.replacement)
     && quoted(d.replacement).length === 0) return true;
-  // A backticked ledger line is the replacement. JSON keys in a following
-  // disposition example are not replacement wording.
-  const ledgerLine = [...p.text.matchAll(/`(C-[1-9]\d* — [^`]+)`/g)]
-    .map((m) => m[1]!).find((text) => replacement.startsWith(text));
   // Only the replacement wording, not quoted explanations in its following notes.
   // "none. Its wording drifted to ..." quotes the removed item, not new text.
   const recordPlayback = /^[ \t]*(?:#{1,6}\s+)?K-[1-9]\d*\s/.test(p.text);
   // A record playback already supplies the complete field, often without quotes.
   const wording = ownerWording.length ? ownerWording : recordPlayback ? [replacement]
     : /^none\b/i.test(replacement) ? [] : ledgerLine ? [ledgerLine] : quoted(replacement);
-  return wording.every((q) => {
-    // Resolve ledger ids and their compaction provenance are assigned when the
-    // approved subset is numbered. Compare the exact approved statement while
-    // binding its provenance to this decision; never rewrite referenced B/C ids.
-    const recordedLedger = /^(C-[1-9]\d*) — /.exec(d.replacement);
-    const expected = ownerWording.length === 0 && d.action === 'resolve' && d.ids.every((id) => id.startsWith('B-'))
-      && recordedLedger && /^C-[1-9]\d* — /.test(q)
-      ? q.replace(/^C-[1-9]\d*(?= — )/, recordedLedger[1]!)
-        .replace(/\bcompaction K-[1-9]\d*(?=:)/g, `compaction ${d.id}`)
-      : q;
-    return normal(d.replacement).includes(normal(expected));
-  });
+  return wording.every((q) => normal(d.replacement).includes(normal(q)));
 }
 export function gradeA(record: string, exchanges: readonly Exchange[], key: Key): Grade {
   let decisions: readonly Decision[];
