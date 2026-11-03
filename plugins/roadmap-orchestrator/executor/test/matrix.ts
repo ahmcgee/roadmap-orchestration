@@ -90,6 +90,7 @@ export const DEFLAKE_REVISION = 'deflake revision (dev.17 flaky ledger: flake-re
 export const COMPARE_JOB = 'polish compare job (dev.13 agent D: compare-started under the fence, two bring-ups, the polish judge, tweak-judged, the polish-dropped cut)';
 export const DEMO_PROMOTE = 'demo promotion (dev.13 agent G: demo-promoted, then refs/roadmap/demo moved to it; the ref follows the facts)';
 export const TERMINAL_SNAPSHOT = 'close-out publication and arc completion (M3 B7, A8, A20, G8: close-out ff, docs-published, arc-completed, terminal snapshot)';
+export const INTEGRATION_PUSH = 'integration push to origin (1.0.0-dev.44: background publication after each integration.ff, its fact and notice)';
 export const EXECUTOR_FAULT = 'contained executor fault (1.0.0-dev.17: the task\'s leftovers settled, then the executor-fault park and its item)';
 export const SUPERVISOR_HOST = 'supervisor/host';
 export const RECOVERY_CRASH = 'crash during recovery';
@@ -1991,6 +1992,31 @@ export const MATRIX: readonly Row[] = [
         status: 'crash',
         labels: ['fault.after-park'],
         recovery: 'the executor-fault park durable, its item not raised: the restart replays the park (the stage never runs again), raises its non-blocking item once, and the other unit merges',
+      },
+    },
+  },
+  {
+    // dev.44: after a published integration.ff the executor pushes the head to origin off the scheduler thread
+    // (src/forge/integration-push.ts); recovery pushes the current head at startup (test/integration-push.test.ts).
+    row: INTEGRATION_PUSH,
+    test: 'test/integration-push.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['integration-push.after-ff'],
+        recovery: 'the ff durable, no push started: startup recovery pushes the current integration head; a remote already at it is a no-op',
+      },
+      B3: {
+        status: 'crash',
+        labels: ['integration-push.after-network'],
+        recovery: 'the remote accepted the push, no fact recorded: startup recovery finds the remote at the head and records up-to-date without a second push',
+      },
+      B4: { status: 'excluded', why: 'the outcome is one integration-push fact append: B3 is the state before it and journal.append covers it torn' },
+      B5: {
+        status: 'crash',
+        labels: ['integration-push.after-result'],
+        recovery: 'the failed fact durable, its notice not raised: recovery reconstructs the one notice for that episode, and a later successful push settles it by id',
       },
     },
   },
