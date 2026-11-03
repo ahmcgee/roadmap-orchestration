@@ -511,6 +511,10 @@ describe('prompts', () => {
       assert.ok(!mod.render({ ...SAMPLES.build[1], browser: null }).includes('<browser>'), `build/${model}: no browser block without the drive`);
       assert.ok(!mod.render(SAMPLES.build[0]).includes('<browser>'), `build/${model}`);
     }
+    const text = promptFor('build', 'claude-opus-5-5').render({ ...SAMPLES.build[1], browser: { servers: ['playwright'], bringUps: [] } });
+    assert.ok(text.includes('MCP servers: playwright.'));
+    assert.ok(text.includes('No milestone bring-up supplied.'));
+    assert.ok(!text.includes('Milestone bring-ups run'));
   });
 
   it('build prompts carry the unit policy, which overrides the repository\'s instruction files', () => {

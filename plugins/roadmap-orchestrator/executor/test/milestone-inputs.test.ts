@@ -1,11 +1,15 @@
 import { systemName } from '../src/core/ids.ts';
 // dev.13 prompt inputs (agent F): a milestone's design references reach the pre-build, build and gate of every unit it
-// lists, and of its design unit, as documents; a unit in no milestone gets none. A build in a milestone with a `browser`
-// journey gets the walkthrough MCP servers (`--mcp-config`, `{evidence}` its evidence dir); no other build does.
+// lists, and of its design unit, as documents; a unit in no milestone gets no references. Every Claude build gets
+// configured MCP servers, with bring-ups from membership, design ownership and repaired findings' origin milestones.
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { type Sha, sha, unitId } from '../src/core/ids.ts';
+import { type Sha, arcId, jobId, sha, unitId } from '../src/core/ids.ts';
+import { openJournal } from '../src/core/log.ts';
+import { specM1 } from '../src/core/records.ts';
+import { openFinding } from '../src/holistic/findings.ts';
+import { bringUpDraft } from '../src/walk/report.ts';
 import { absPath } from '../src/core/values.ts';
 import { type PlanM1, parsePlan } from '../src/input/plan.ts';
 import { buildBrowser, unitMilestones } from '../src/pipeline/stages.ts';
@@ -72,22 +76,53 @@ describe('milestone prompt inputs', () => {
     assert.deepEqual([fresh?.references, fresh?.binary], [[], []]);
   });
 
-  it('only a Claude build in a milestone with a browser journey gets the MCP servers, with {evidence} its evidence dir', () => {
-    const config = parseRepoConfig({ walkthrough: { mcp: { playwright: { command: 'playwright-mcp', args: ['--output-dir', '{evidence}', '--viewport-size', '{viewport}'] } } } });
-    const ctx = { plan: () => planOf([MS1, MS2]), routingBase: { profile: 'default', config, arcRoles: null } } as const;
-    const work = absPath(join('/run', 'work', 'u1-build-1'));
-    for (const u of ['u1', 'u2', 'd1']) {
-      const b = buildBrowser(ctx, unitId(u), 'claude', work);
-      assert.deepEqual(b?.input, { servers: ['playwright'], bringUps: [{ milestone: 'MS-1', bringUp: planOf([MS1]).milestones![0]!.bringUp }] }, u);
+  const config = parseRepoConfig({ walkthrough: { mcp: { playwright: { command: 'playwright-mcp', args: ['--output-dir', '{evidence}', '--viewport-size', '{viewport}'] } } } });
+  const work = absPath(join('/run', 'work', 'u1-build-1'));
+  const spec = (unit: string, repairs: string[] = []) => specM1({
+    schema: 'roadmap/spec-m1', unit, rev: 1, intent: 'Repair the product.', nonGoals: ['No unrelated changes.'],
+    lanes: [], acceptance: [{ id: 'A1', clause: 'The product works.', failLoudIfUndelivered: true, state: 'active' }],
+    resources: [], decisions: [], facts: [], cites: { contracts: [], rulings: [] }, ...(repairs.length === 0 ? {} : { repairs }),
+  }, '$');
+
+  it('every Claude build gets configured servers, with member/design bring-ups in plan order regardless of journey type', (t) => {
+    const journal = openJournal(absPath(tmpDir('build-browser')), arcId('arc-1'));
+    t.after(() => journal.close());
+    const plan = planOf([MS1, MS2]);
+    const ctx = { plan: () => plan, journal, routingBase: { profile: 'default', config, arcRoles: null } } as const;
+    for (const [u, ids] of [['u1', ['MS-1']], ['u2', ['MS-1', 'MS-2']], ['d1', ['MS-1']], ['loose', []]] as const) {
+      const b = buildBrowser(ctx, spec(u), 'claude', work);
+      assert.deepEqual(b?.input, { servers: ['playwright'], bringUps: plan.milestones!.filter((m) => ids.some((id) => id === m.id)).map((m) => ({ milestone: m.id, bringUp: m.bringUp })) }, u);
       assert.deepEqual(JSON.parse(b!.mcpConfig), {
         mcpServers: { playwright: { type: 'stdio', command: 'playwright-mcp', args: ['--output-dir', work, '--viewport-size', '1280x800'], env: {} } },
       });
     }
-    // MS-2's journeys are shell only: a unit only it lists would get no browser; a unit in none, and a Codex seat, get none.
-    assert.equal(buildBrowser({ ...ctx, plan: () => planOf([{ ...MS2, units: ['u1'] }]) }, unitId('u1'), 'claude', work), null);
-    assert.equal(buildBrowser(ctx, unitId('loose'), 'claude', work), null);
-    assert.equal(buildBrowser(ctx, unitId('u1'), 'codex', work), null);
-    // Bootstrap refuses a browser journey without walkthrough.mcp (walk-tools-missing), so a build meeting one fails loud.
-    assert.throws(() => buildBrowser({ ...ctx, routingBase: { ...ctx.routingBase, config: null } }, unitId('u1'), 'claude', work), /walkthrough\.mcp/);
+    const shellPlan = planOf([{ ...MS2, units: ['u1'] }]);
+    assert.deepEqual(buildBrowser({ ...ctx, plan: () => shellPlan }, spec('u1'), 'claude', work)?.input.bringUps,
+      [{ milestone: 'MS-2', bringUp: shellPlan.milestones![0]!.bringUp }]);
+    assert.deepEqual(buildBrowser({ ...ctx, plan: () => planOf([]) }, spec('loose'), 'claude', work)?.input, { servers: ['playwright'], bringUps: [] });
+    assert.equal(buildBrowser(ctx, spec('u1'), 'codex', work), null);
+    // No build-level refusal; bootstrap's browser-journey refusal is covered in walk-mcp.test.ts.
+    for (const config of [null, parseRepoConfig({})]) {
+      assert.equal(buildBrowser({ ...ctx, routingBase: { ...ctx.routingBase, config } }, spec('u1'), 'claude', work), null);
+    }
+  });
+
+  it("a standalone repair gets its walked finding's origin bring-up; membership and repeated findings deduplicate in plan order", (t) => {
+    const journal = openJournal(absPath(tmpDir('build-browser-repair')), arcId('arc-1'));
+    t.after(() => journal.close());
+    const plan = planOf([MS1, MS2]);
+    const [m1, m2] = plan.milestones!;
+    const job = jobId('walk', 1);
+    journal.fact({ kind: 'walk-started', job, milestone: m1!.id, round: 1, sha: plan.baseline, ports: {} });
+    const f1 = openFinding(journal, bringUpDraft(job, m1!, 'setup', 'failed', []));
+    const f2 = openFinding(journal, bringUpDraft(job, m1!, 'seed', 'failed', []));
+    assert.ok(f1.kind === 'opened' && f2.kind === 'opened');
+    journal.fact({ kind: 'walk-ended', job, outcome: 'bring-up-failed', findings: [f1.id, f2.id], proposals: [], dropped: [] });
+    const ctx = { plan: () => plan, journal, routingBase: { profile: 'default', config, arcRoles: null } } as const;
+    const refs = [f2.id, f1.id, 'I-1'];
+    assert.deepEqual(buildBrowser(ctx, spec('loose', refs), 'claude', work)?.input.bringUps, [{ milestone: m1!.id, bringUp: m1!.bringUp }]);
+    assert.deepEqual(buildBrowser(ctx, spec('u2', refs), 'claude', work)?.input.bringUps, [m1!, m2!].map((m) => ({ milestone: m.id, bringUp: m.bringUp })));
+    // An uncited finding supplies no bring-up.
+    assert.deepEqual(buildBrowser(ctx, spec('loose', ['I-1']), 'claude', work)?.input.bringUps, []);
   });
 });

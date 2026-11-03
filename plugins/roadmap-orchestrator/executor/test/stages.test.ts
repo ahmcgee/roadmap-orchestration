@@ -23,6 +23,7 @@ import { type BuildDone, type BuildRun, type LanesDone, build, evidence, lanes, 
 import type { Next } from '../src/pipeline/transitions.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { MODEL_IDS } from '../src/routing/types.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { reached } from './helpers/barrier.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
@@ -65,6 +66,43 @@ async function afterBuild(run: StageRun, b: BuildDone): Promise<Readonly<{ run: 
 }
 
 const codexBuild = (acts: readonly CodexAct[], expect: Expect = {}): Step => ({ as: 'codex', expect, acts: [...acts, { type: 'emit', value: BUILD_REPORT }] });
+
+for (const configured of [true, false]) {
+  test(`stages.build-browser: a standalone Claude build ${configured ? 'gets declared servers without a bring-up' : 'has no --mcp-config without declared servers'}`, T, async (t) => {
+    const d = setupArc({ steps: [{
+      as: 'claude',
+      expect: {
+        argv: ['--strict-mcp-config', ...(configured ? ['--mcp-config'] : [])],
+        argvLacks: configured ? [] : ['--mcp-config'],
+        stdinContains: configured ? ['MCP servers: playwright.', 'No milestone bring-up supplied.'] : [],
+      },
+      acts: [{ type: 'emit', value: BUILD_REPORT }],
+    }] });
+    const config = parseRepoConfig({
+      ...d.config, routing: { seats: { build: { med: 'frontier' } } },
+      ...(configured ? { walkthrough: { mcp: { playwright: { command: 'playwright-mcp', args: ['--output-dir', '{evidence}'] } } } } : {}),
+    });
+    const run = contextFor({ ...d, config });
+    t.after(() => run.journal.close());
+    assert.equal(started(await build(run.ctx, run.unit('u1'), { kind: 'fresh' })).outcome.kind, 'success');
+    assert.equal(seated(implementerDispatch(run.ctx, U1)).triple.backend, 'claude');
+    const calls = readCalls(d.scenarioPath);
+    assert.equal(calls.length, 1);
+    const call = calls[0]!;
+    assert.notEqual(call.step, null, 'the build argv and prompt matched');
+    const i = call.argv.indexOf('--mcp-config');
+    if (configured) {
+      assert.ok(i > call.argv.indexOf('--strict-mcp-config'));
+      const path = call.argv[i + 1]!;
+      assert.ok(path.startsWith(`${d.runDir}/inputs/`));
+      const mcp = JSON.parse(readFileSync(path, 'utf8'));
+      assert.equal(mcp.mcpServers.playwright.command, 'playwright-mcp');
+      assert.deepEqual(mcp.mcpServers.playwright.args, ['--output-dir', join(d.runDir, 'work', 'u1', '1-build')]);
+    } else {
+      assert.equal(i, -1);
+    }
+  });
+}
 
 test('stages.red-lane-fix-round: the resumed implementer reads the failing evidence dir, commits the fix, the next series is green', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([], { argv: ['exec', '-C'] })] });

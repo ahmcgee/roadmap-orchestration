@@ -170,7 +170,7 @@ T-13: Cancelling a booking frees its berth immediately.
 ```
 ````
 
-Walkthrough MCP config supplies installed stdio servers, with `{evidence}` and `{viewport}` substitutions. Example:
+Walkthrough MCP config supplies installed stdio servers, with `{evidence}` and `{viewport}` substitutions. Every Claude build gets these servers regardless of milestone membership. Its bring-ups list member/design milestones plus the origin milestones of findings its spec `repairs` cites, once each in plan order, regardless of journey type. An empty bring-up list still gets the servers. Without `walkthrough.mcp`, builds get no servers and no new refusal. Codex builds have no MCP path. Acting judges keep their own tool rules; bootstrap still refuses browser journeys without `walkthrough.mcp`. Example:
 
 ```json
 {"walkthrough":{"mcp":{"playwright":{"command":"playwright-mcp","args":["--headless","--isolated","--browser","chromium","--output-dir","{evidence}","--viewport-size","{viewport}"]}}}}
