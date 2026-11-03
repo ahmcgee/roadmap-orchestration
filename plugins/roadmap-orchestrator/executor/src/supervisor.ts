@@ -72,7 +72,8 @@ import { selfIdentity } from './host/liveness.ts';
 import { claimHost,releaseHost,renewClaim } from './host/lock.ts';
 import { createHandshake,publishOwner } from './host/owner.ts';
 import { runDir as runDirOf } from './input/cli.ts';
-import { gitCommonDir,legacyRoadmapDir,loadPlan } from './preflight/checks.ts';
+import { gitCommonDir,legacyRoadmapDir,loadPlan,runSchemaRows } from './preflight/checks.ts';
+import { profileConflict } from './preflight/profile.ts';
 import type { StartupRejection } from './preflight/startup.ts';
 import { reconcilePreviousArc } from './recover/recover.ts';
 import { type ProfileName,profileName } from './routing/types.ts';
@@ -299,7 +300,7 @@ async function superviseOne(args: SupervisorArgs, claim: HostLockClaim, controlO
   const env = { ...process.env };
   delete env[ROLE_ENV];
   const argv = executorArgv({
-    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: args.profile, controlOnly, respawn,
+    hostDir: dir, generation: claim.generation, nonce: claim.nonce, repo: args.repo, planFile: args.planFile, profile: respawn ? null : args.profile, controlOnly, respawn,
   });
   const oomBefore = readOomKills();
   const processStartedAt = Date.now();
@@ -404,6 +405,17 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
   // No arc, no run dir, no claim: the refusal the executor's own first check group would give.
   if ('kind' in plan) return refuse([...legacyRoadmapDir(args.repo), plan]);
   const runDir = runDirOf(gitCommonDir(args.repo), plan.arc);
+  // Refuse profile changes before claiming or reconciling anything. A corrupt log is
+  // reported by the executor's existing log-corrupt row; never infer routing from start.json.
+  const schema = runSchemaRows(runDir);
+  if (schema.length > 0) return refuse(schema);
+  try {
+    const recorded = readJournal(runDir, plan.arc).view.planApplied()?.routingProvenance.profile ?? null;
+    const conflict = profileConflict(args.profile, recorded);
+    if (conflict !== null) return refuse([conflict]);
+  } catch (error) {
+    if (!(error instanceof LogCorruptError)) throw error;
+  }
   const legacy = prepareLegacyHost(dir);
   if (legacy !== null) return refuse([legacy]);
   const claimed = await claimHost(dir, { arc: plan.arc, runDir, repo: args.repo, supervisor: selfIdentity() }, reconcilePreviousArc);

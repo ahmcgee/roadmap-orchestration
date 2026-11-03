@@ -18,7 +18,7 @@ export class CliError extends Error {
 }
 
 /**
- * `profile: null` when `--profile` is absent, so `selectProfile` can let `.roadmap/config.json` choose.
+ * `profile: null` when `--profile` is absent, so a restart retains recorded routing; on first start `selectProfile` lets repo config choose.
  * `waitMs`: how long `start` waits for readiness (`--wait <ms>`), null for the default (START_WAIT_MS).
  */
 export type StartArgs = Readonly<{ repo: string; plan: string; profile: ProfileName | null; waitMs: number | null }>;

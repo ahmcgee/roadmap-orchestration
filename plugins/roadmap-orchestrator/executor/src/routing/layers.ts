@@ -53,8 +53,8 @@
 //   build and judgment seats alike; a Codex one refuses any judgment seat in force that names the class. A binding's effort is one its
 //   model lists in models.ts: a Claude model low | medium | high | xhigh | max, a Codex model low | medium | high. Unknown
 //   keys are refused. `{"routing": {"profile": "claude-only"}}` is the one config line that selects the
-//   Claude-only profile. The profile is chosen by an explicit `start --profile`, else this file's
-//   `profile`, else `default`.
+//   Claude-only profile. On the first start, choose explicit `start --profile`, else this file's
+//   `profile`, else `default`. Restarts use the profile in the latest routing provenance.
 import { type RepoPath,repoPath } from '../core/values.ts';
 import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev,routingRev } from '../core/ids.ts';
@@ -136,7 +136,7 @@ export function parseRepoConfig(value: unknown): RepoConfig {
   return repoConfig(value, 'config');
 }
 
-/** An explicit `--profile` wins, then the repo config's `profile`, then `default`. */
+/** First start only: explicit `--profile`, then repo config, then `default`. */
 export function selectProfile(cli: ProfileName | null, config: RepoConfig | null): ProfileName {
   return cli ?? config?.routing?.profile ?? 'default';
 }

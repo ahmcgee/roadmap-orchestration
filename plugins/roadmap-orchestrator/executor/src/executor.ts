@@ -101,7 +101,7 @@ export const HANDSHAKE_TIMEOUT_MS = 30_000;
 export type ExecutorArgs = Readonly<{
   repo: AbsPath;
   planFile: AbsPath;
-  /** `start --profile`, or null to let `.roadmap/config.json` choose. */
+  /** `start --profile`, or null to retain recorded routing (repo config chooses only on first start). */
   profile: ProfileName | null;
   hostDir: AbsPath;
   /** The executor's environment: lanes resolve against it, backends get `backendEnv` of it. */
@@ -222,7 +222,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     return refuse(args, checks.rejections);
   }
 
-  const { context, journal, routing } = checks;
+  const { context, journal } = checks;
   const heartbeat = setInterval(() => writeHeartbeat(context.runDir, claim.generation), HEARTBEAT_MS);
   try {
     const rejection = join(context.runDir, REJECTION_FILE);
@@ -232,7 +232,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     writeHeartbeat(context.runDir, claim.generation);
     journal.fact({ kind: 'executor-started', generation: claim.generation, host: readHostFingerprint(), pressure: pressureAvailability() });
 
-    const x = contexts(args, context, routing.profile, journal);
+    const x = contexts(args, context, journal);
     const stopped = args.controlOnly ? await controlOnly(x) : null;
     if (stopped !== null) {
       writeExitReason(args.hostDir, claim, stopped.kind);
@@ -283,12 +283,12 @@ async function consumeRecovered(x: Exec): Promise<void> {
 
 /**
  * The contexts of a run. `plan()` is the plan in force (`planInForce`) and `routing(unit)` its resolution under
- * the start's profile and repo config, both read at each call, so an apply takes effect at the next one; each
+ * recorded routing provenance, both read at each call, so an apply takes effect at the next one; each
  * plan revision is parsed and resolved once (the one cache of the plan in force). The stage context's
  * `acquire` is the run's arbiter and its signal is never aborted: each unit's task gets its own
  * (src/schedule/scheduler.ts). The prober and the run's stop controller serve the commands too.
  */
-function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileName, journal: OpenJournal): Exec {
+function contexts(args: ExecutorArgs, context: StartupContext, journal: OpenJournal): Exec {
   const config = readRepoConfig(context.repo);
   // H7 (M3 steps A3, B7): each revision's routing resolves from the provenance its plan-applied recorded, per unit (its
   // layer on top), never from the repo config read again at a later start (lead ruling: one canonical source).
@@ -320,7 +320,10 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
   };
   const resources = { ...base, plan: () => inForce().plan };
   const arbiter = createArbiter(resources);
-  const routingBase = { profile, config, arcRoles: arcRolesOf(journal.view.planApplied()) };
+  const routingBase = {
+    get profile(): ProfileName { return journal.view.planApplied()!.routingProvenance.profile; },
+    config, arcRoles: arcRolesOf(journal.view.planApplied()),
+  };
   const stage: StageContext = {
     ...resources,
     planFile: context.planFile,
@@ -331,7 +334,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     rank: (unit) => rankOf(journal.view, inForce().plan, unit),
     signal: new AbortController().signal,
   };
-  const prober = createProber({ ...stage, profile, sample: readHostSample });
+  const prober = createProber({ ...stage, get profile() { return routingBase.profile; }, sample: readHostSample });
   const stop = new AbortController();
   const commands: CommandContext = {
     ...base,
@@ -341,7 +344,7 @@ function contexts(args: ExecutorArgs, context: StartupContext, profile: ProfileN
     routingBase,
     docs: docsPublisher({ ...resources, hostEnv: args.env, planFile: context.planFile, arbiter }),
     plan: () => inForce().plan,
-    routing: (unit) => ({ profile: inForce().plan.routing?.profile ?? profile, resolved: routing(unit) }),
+    routing: (unit) => ({ profile: routingBase.profile, resolved: routing(unit) }),
     probes: { prober, signal: stop.signal },
   };
   return { stage, commands, journal, arbiter, prober, stop };

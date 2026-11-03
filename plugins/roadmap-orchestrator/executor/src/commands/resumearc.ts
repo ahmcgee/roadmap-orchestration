@@ -1,7 +1,7 @@
 // `roadmap resume-arc --repo <repo>` (M4a rev 3, F9): a host act for a boot hook (reference.md: a devcontainer's
 // `postStartCommand`). Reads the host claim: no claim, a claim of another repo, an `alive` owner (`ownerState`), or a run
 // `refused` (status's run state) is `{resumed: false, reason}` (exit 0). A claim naming this repo whose owner is `dead`
-// relaunches its supervisor with start.json's plan file and profile (`launchSupervisor`, whose own refusals apply: an
+// relaunches its supervisor with start.json's plan file and the recorded routing profile (`launchSupervisor`, whose own refusals apply: an
 // unapplied plan edit fails loud there, a reopen after a later arc started is `arc-superseded`). A `complete` run
 // relaunches too (owner ruling 2026-10-16): a completed arc's supervisor releases the claim, so a claim on one is a
 // reopening start's (fix units added, `start` run again) that died before its revision invalidated the completion.
@@ -34,6 +34,6 @@ export async function resumeArc(args: ResumeArcArgs): Promise<ResumeArcOutcome> 
   const path = join(claim.runDir, START_FILE);
   if (!existsSync(path)) throw new CliError(`resume-arc: arc ${claim.arc} holds the host but never started (no ${path}); start it with roadmap start`);
   const start = runStart(readJson(path), path);
-  const outcome = await launchSupervisor({ hostDir: args.hostDir, repo: start.repo, planFile: start.planFile, profile: start.profile, heartbeatStaleMs: null }, process.env, START_WAIT_MS);
+  const outcome = await launchSupervisor({ hostDir: args.hostDir, repo: start.repo, planFile: start.planFile, profile: null, heartbeatStaleMs: null }, process.env, START_WAIT_MS);
   return outcome.code === EXIT_HOST_BUSY ? { resumed: false, reason: 'already-resumed' } : { resumed: true, line: outcome.line, code: outcome.code };
 }

@@ -836,7 +836,7 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
     for (const resolved of verdict.evaluated.routings) {
       const need = backendsOf(resolved).filter((b) => verdict.smoke.includes(b) && !smoked.has(b));
       if (need.length === 0) continue;
-      const report = await smokeBackends({ profile: ctx.routingBase.profile, resolved }, { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, need);
+      const report = await smokeBackends({ profile: verdict.evaluated.draft.routingProvenance.profile, resolved }, { journal: ctx.journal, runDir: ctx.runDir, hostEnv: ctx.hostEnv }, need);
       ctx.probes.signal.throwIfAborted();
       const failures = smokeRejections(report);
       if (failures.length > 0) return { kind: 'rejected', reason: rejectedText(failures.map(rowText)) };

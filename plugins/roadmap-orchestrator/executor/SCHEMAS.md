@@ -721,6 +721,7 @@ row in that group (`src/preflight/checks.ts`).
 | previous-arc-unreconciled | arc, invocations[]; durable host item |
 | recovery-holder-dead / owner-mismatch | pid / identity detail; no guessed takeover |
 | log-corrupt / containment-mode-changed | file/offset/detail / recorded and detected containment modes |
+| profile-conflict | requested profile, recorded profile, detail directing a routing apply; refuses restart before host claim |
 | backend-smoke | profile, backend, missing/failed, detail |
 | plan-invalid | Schema/path/branch/baseline/resource/cite/capacity problem |
 | plan-change-refused | reasons[] from the revision classifier |
