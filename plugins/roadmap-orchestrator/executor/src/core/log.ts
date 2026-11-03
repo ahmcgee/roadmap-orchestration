@@ -54,6 +54,8 @@ export class LogCorruptError extends Error {
 export interface OpenJournal extends Journal {
   /** The fold of everything appended so far. */
   derived(): DerivedState;
+  /** Observe durable appends; callbacks must not append synchronously. */
+  subscribe(listener: (event: Event) => void): () => void;
   close(): void;
 }
 
@@ -300,6 +302,7 @@ class FileJournal implements OpenJournal {
   readonly #path: AbsPath;
   readonly #fold: Fold;
   #fd: number | null;
+  readonly #listeners = new Set<(event: Event) => void>();
   /** Set while a body callback or an append runs: a body that appends would corrupt seq allocation. */
   #busy = false;
   /** Set when a write failed midway: the fold is ahead of the file, so this journal must not append again. */
@@ -317,6 +320,11 @@ class FileJournal implements OpenJournal {
 
   derived(): DerivedState {
     return this.#fold.derived();
+  }
+
+  subscribe(listener: (event: Event) => void): () => void {
+    this.#listeners.add(listener);
+    return () => { this.#listeners.delete(listener); };
   }
 
   close(): void {
@@ -397,6 +405,7 @@ class FileJournal implements OpenJournal {
     appendSync(this.#fd, bytes.subarray(half));
     this.#broken = false;
     crashPoint('log.append.after-fsync', unit);
+    for (const listener of this.#listeners) listener(event);
     return seq;
   }
 }

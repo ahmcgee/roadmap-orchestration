@@ -1706,10 +1706,12 @@ export const NEEDS_USER_REASONS = [
   // Deflake scope (2026-10-23), non-blocking: a deflake unit was not minted, its scope reaching a same-repo corpus (no lane systems
   // and no system holding the flaky tests' files); the item names the lane, the keys and what to declare.
   'revision-notice', 'waste-finding',
+  // dev.44: automatic origin publication failed or diverged. Informational; the arc continues.
+  'push-failed', 'push-diverged',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding',
+  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

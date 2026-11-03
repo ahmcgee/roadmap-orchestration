@@ -89,7 +89,15 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Walk and comparison evidence entries are exact saved file paths; explanations belong in report text.
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
 4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
-   retain unit attribution; only a green exact head is fast-forwarded. Snapshots and retirement follow. A spike
+   retain unit attribution; only a green exact head is fast-forwarded. Every successful integration fast-forward
+   (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
+   Pushes use an explicit lease and require the remote tip to be an ancestor; `main` is never pushed. Startup
+   retries the current head after a crash; an up-to-date remote is a no-op. Snapshots and retirement continue
+   during network work, bounded by `PUSH_TIMEOUT_MS` (five minutes per attempt). `push-failed` and `push-diverged`
+   are non-blocking arc notices, once per failure episode; later publication/startup retries, divergence only
+   probes until ancestry is safe (or the notice is acked by id), and a later successful push explicitly settles
+   the named notices. No `origin` records one quiet fact. The root no longer pushes arc branches by hand for CI;
+   `roadmap pr` still prepares the stacked PR and its push is a no-op when already current. A spike
    answers a declared question and retires its gated report without merging. Cheap local checks run early;
    expensive local checks run on candidates, with scarce shared/cross-system checks at batch/milestone boundaries.
 5. **Judge the experience and campaign.** Once milestone units retire, its selected lanes run and one experience

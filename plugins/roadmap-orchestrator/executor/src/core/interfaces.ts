@@ -40,6 +40,7 @@ export interface JournalView {
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
   ciFacts(): readonly CiFact[];
+  integrationPushes(): readonly Readonly<{ seq: number; fact: import('./events.ts').IntegrationPushFact }>[];
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }>;
 
   /** Intents with no matching done or abort, in log order. At most one per key. */

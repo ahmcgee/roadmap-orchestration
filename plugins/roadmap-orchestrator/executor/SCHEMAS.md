@@ -438,7 +438,7 @@ Live fact families:
 | Review | review-triggered/completed; gate round/findings-ledger/dispute facts |
 | Target | witnessed, obligation-latched, finding-opened/transition, audit-started/ended/requested, divergence |
 | Pack/debt | pack-review-started/ended, debt-banked |
-| Lifecycle | admissions-closed, docs-published/covered, arc-completed, executor-started, containment-mode, tail-discarded, needs-user-acked |
+| Lifecycle | integration-push, admissions-closed, docs-published/covered, arc-completed, executor-started, containment-mode, tail-discarded, needs-user-acked |
 | Experience/demo | walk/compare/polish/tweak and demo facts in WalkFact; tagged by durable job/milestone/round |
 | Flakes | flake-observed and ledger/code-edge state |
 
@@ -674,6 +674,7 @@ export const NEEDS_USER_REASONS = [
   'deflake-parked', 'flake-recurring',
   'apply-dropped',
   'revision-notice', 'waste-finding',
+  'push-failed', 'push-diverged',
 ] as const;
 ```
 
@@ -1040,3 +1041,37 @@ admission. Closing it leaves the executor running; status/usage observation is b
 RevisionPayload.publication is null or `{renders:{path,sha256}[]}`. New payloads omit contractOps. The temporary dev.41 reader accepts and discards a legacy `contractOps: []` with a ROADMAP_UPGRADE warning; nonempty arrays and other values fail loudly. Kept bytes and hashes are unchanged. Schema remains 2.
 
 Arc-subject needs-user items require a named `ack <id>` (optionless accepted). Unit/host subject actions still close their items. Finding requests retain settlement by named findings or a root revision supplying all repairs. Pack-review supersession remains. A later baseline with no problems emits `baseline-held{job:baseline-n,items:NeedsUserId[]}` (sorted, unique, nonempty) to settle exactly the open obligation-baseline items; replay folds this separately from acknowledgement. Apply/resume alone never closes unrelated arc items.
+
+
+### dev.44 automatic integration pushes
+
+Every durable `integration.ff` done record with outcome `published` queues publication to `origin`, including unit,
+repair-batch, docs-revision and close-out subjects. After recovery completes staged needs-user raises, the executor
+subscribes to new publications and queues the current integration ref, covering recovered fast-forwards. A worker inherits the user's environment and calls the
+same `forge/push.ts::pushBranch` as `roadmap pr`, outside the scheduler's stage and sealed local-git boundary (R22).
+Pushes are serial, each bounded by one `PUSH_TIMEOUT_MS` (300000 ms) deadline across its git operations. Normal exit
+joins queued workers before closing the single journal writer. A crash before enqueue, during git, or after remote
+acceptance is recovered by publishing the current head at startup or the next ff. Remote already at head is a no-op.
+
+New additive schema-2 fact (previous-release logs default to no push facts):
+
+```ts
+{kind:'integration-push', branch:BranchName, head:Sha,
+ result:'pushed'|'up-to-date'|'failed'|'diverged'|'no-origin',
+ error:string|null, settles:NeedsUserId[]}
+```
+
+`error` is nonempty only for `failed` / `diverged`, and names the git failure; the fact names the attempted head.
+Only `pushed` / `up-to-date` may carry `settles`: exactly the open push notices this success settles. Replay's
+`supersededItems` consumes those explicit ids; no acknowledgement or unrelated arc action is invented. A failed fact
+precedes its needs-user raise; startup reconstructs a missing notice if a crash separated them. Episodes are tracked
+from the first failure of each reason since the last successful result, including after an explicit ack, so repeating
+failures do not repeatedly raise the same notice. A new failure after success starts a new episode.
+
+`push-failed` (network, authentication or timeout) and `push-diverged` (remote tip not an ancestor) are fixed
+non-blocking reasons with arc subject and no options. The notice includes the error and head. The next ff or startup
+retries; a diverged remote receives no push attempts while ancestry probes continue on these triggers. A named ack
+can close the item but never bypasses the shared ancestry rule. The remote update uses an explicit force-with-lease
+on its observed tip *only after* verifying fast-forward ancestry; a race refuses, foreign history is never overwritten,
+and `main` is always refused. Absence of `origin` performs no network operation and records `no-origin` only once per
+arc across restarts, with no needs-user notice. `roadmap pr` retains its own canonical push, now usually up-to-date.
