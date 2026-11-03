@@ -59,6 +59,9 @@ refName,repoPath,repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
+/** dev.42 upgrade warning latch: the legacy contractOps notice prints once per process. */
+let legacyContractOpsWarned = false;
+
 // ---------------------------------------------------------------------------------------------------
 // Op kinds and their payloads
 
@@ -1767,7 +1770,11 @@ export const revisionPayload: Read<RevisionPayload> = object((f) => {
       // Consume and discard that obsolete field at read time; never reinterpret historical edits.
       g.optional('contractOps', (value, path) => {
         if (!Array.isArray(value) || value.length !== 0) throw new SchemaError(path, 'an empty legacy contractOps array', value);
-        process.emitWarning(`${path}: ignoring legacy contractOps: [] from dev.41`, { code: 'ROADMAP_UPGRADE' });
+        // Once per process: every replay re-reads the same old publications (field: a CLI printed it many times per command).
+        if (!legacyContractOpsWarned) {
+          legacyContractOpsWarned = true;
+          process.emitWarning(`${path}: ignoring legacy contractOps: [] from dev.41 (further occurrences are not repeated)`, { code: 'ROADMAP_UPGRADE' });
+        }
       });
       return { renders: g.get('renders', sortedBy(object((h) => ({ path: h.get('path', (v, p) => repoPath(v, p)), sha256: h.get('sha256', sha256R) })), (r) => r.path)) };
     }))),
