@@ -141,7 +141,7 @@ function baselineNeedsUser(ctx: BaselineContext, job: JobId, tip: Sha, problems:
       + `${notHeld.length === 0 ? '' : ` must-hold but not held: ${notHeld.join(', ')};`}${vacuous.length === 0 ? '' : ` future but already held (a vacuous witness): ${vacuous.join(', ')};`}`
       + ' no unit is admitted under holistic until this is resolved.',
     recommendation: 'Repair the base so each must-hold obligation holds (or rule a disposition naming it), and give each vacuous future obligation a witness that '
-      + 'fails until it is delivered (or make it must-hold) with `roadmap apply`; then acknowledge this item.',
+      + 'fails until it is delivered (or make it must-hold) with `roadmap apply`, which closes this item. When the failure is not the product\'s (a host-contention timeout, with evidence), close it with `roadmap resume` instead. An optionless item refuses `ack`.',
     options: [],
     evidence: [jobEvidenceRoot(ctx.runDir, job)],
   };
