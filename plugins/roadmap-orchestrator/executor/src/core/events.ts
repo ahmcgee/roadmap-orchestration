@@ -54,8 +54,8 @@ type Read,Fields,SchemaError,arrayOf,assertUnique,bool,int,literal,nat,nullable,
 version,
 } from './validate.ts';
 import {
-type AbsPath,type GitDate,type IsoTime,type RefName,type RepoPath,type RepoPattern,absPath,gitDate,isoTime,
-refName,repoPath,repoPattern,
+type AbsPath,type BranchName,type GitDate,type IsoTime,type RefName,type RepoPath,type RepoPattern,absPath,gitDate,isoTime,
+branchName,refName,repoPath,repoPattern,
 } from './values.ts';
 import type { SchemaVersion } from './version.ts';
 
@@ -724,7 +724,15 @@ export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
   | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
+/** Background publication to origin; successful outcomes explicitly settle the named notices (dev.44). */
+export type IntegrationPushFact = Readonly<{
+  kind: 'integration-push'; branch: BranchName; head: Sha;
+  result: 'pushed' | 'up-to-date' | 'failed' | 'diverged' | 'no-origin';
+  error: string | null; settles: readonly NeedsUserId[];
+}>;
+
 export type Fact =
+  | IntegrationPushFact
   | CiFact
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
   | Readonly<{ kind: 'containment-mode'; mode: ContainmentMode }>
@@ -2123,6 +2131,15 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
 };
 
 export const fact: Read<Fact> = tagged('kind', {
+  'integration-push': object((f): IntegrationPushFact => {
+    const out = { kind: f.get('kind', literal('integration-push')), branch: f.get('branch', branchName), head: f.get('head', shaR),
+      result: f.get('result', oneOf(['pushed', 'up-to-date', 'failed', 'diverged', 'no-origin'] as const)),
+      error: f.get('error', nullable(nonBlank)), settles: f.get('settles', arrayOf((v, p) => needsUserId(v, p))) };
+    const success = out.result === 'pushed' || out.result === 'up-to-date';
+    if ((out.result === 'failed' || out.result === 'diverged') !== (out.error !== null)) throw new SchemaError(f.path, 'an error only for failed or diverged pushes', out);
+    if (!success && out.settles.length > 0) throw new SchemaError(f.path, 'only a successful push settles notices', out);
+    return out;
+  }),
   'tail-discarded': object((f): Fact => ({ kind: f.get('kind', literal('tail-discarded')), offset: f.get('offset', nat), length: f.get('length', positive), sha256: f.get('sha256', sha256R) })),
   'containment-mode': object((f): Fact => ({ kind: f.get('kind', literal('containment-mode')), mode: f.get('mode', containmentMode) })),
   meter: object((f): Fact => {

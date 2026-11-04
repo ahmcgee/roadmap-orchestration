@@ -14,6 +14,7 @@ import type { Owner } from '../helpers/reap.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
+import { PIPELINE_EXCLUDED_LABELS } from '../matrix.ts';
 import { ADVANCES,obligationsJson } from './brake-common.ts';
 import { restarted,submit } from './cm-common.ts';
 import { corpusTarget } from './corpus-target.ts';
@@ -229,6 +230,7 @@ export function sampleJob(row: JobRow, record: string, snap: LogSnapshot): reado
     return owner.startsWith('job:docs-') || owner === 'command' || (label.startsWith('kill.') && owner === 'unit:u1');
   };
   return sampleBy(record, snap, ({ label, e }) => {
+    if (label in PIPELINE_EXCLUDED_LABELS) return null;
     if (e.seq < from || e.seq >= until || !owned(ownerOf(snap.view, e), label)) return null;
     if (label.startsWith('log.append.')) return e.type === 'fact' && e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable' ? `fact ${e.fact.kind}` : null;
     if (row === 'apply' && e.type !== 'fact' && e.op === ackOp?.op) return 'ack';

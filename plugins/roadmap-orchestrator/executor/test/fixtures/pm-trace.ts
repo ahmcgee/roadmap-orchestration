@@ -56,6 +56,8 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'candidate.act-end': R('reconciled'),
   'ff.act-start': R('redone'),
   'ff.act-end': R('reconciled'),
+  // The ff is durable; startup pushes the current head, with no ff op left to reconcile.
+  'integration-push.after-ff': NONE,
   'snapshot.act-start': R('redone'),
   'snapshot.after-commit-tree': R('redone'),
   'snapshot.act-end': R('reconciled'),
@@ -168,8 +170,10 @@ export function inCommandAt(events: readonly Event[], seq: number): boolean {
   return open.size > 0;
 }
 
-/** A notice inside a revision recovers its child raise and then reconciles its parent commit. */
+/** Context-sensitive recovery: a notice or published docs ff can leave its enclosing mutation open. */
 export function traceAt(label: string, events: readonly Event[], seq: number): Trace | undefined {
+  // A docs ff can leave its enclosing revision and root command open after the ff itself is done.
+  if (label === 'integration-push.after-ff' && (inRevisionAt(events, seq + 1) || inCommandAt(events, seq + 1))) return R('reconciled');
   if (label === 'plan.apply.after-inputs' && inCommandAt(events, seq + 1)) return R('reconciled');
   if (label === 'needsuser.raise.before-publish' && inRevisionAt(events, seq)) return R('redone', 'reconciled');
   return LABEL_TRACE[label];

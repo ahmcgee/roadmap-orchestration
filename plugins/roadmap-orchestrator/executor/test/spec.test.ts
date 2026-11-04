@@ -437,4 +437,12 @@ describe('lane evidence and systems', () => {
     for (const path of ['.roadmap', 'docs/pin.md', 'docs/corpus/**']) assert.ok(reasons.some((s) => s.includes(`protectedPaths entry \`${path}\``)), reasons.join('\n'));
     assert.ok(reasons.every((s) => !s.includes('entry `lib/**`') && !s.includes('entry `out/**`')));
   });
+  it('spec.acceptance-required-default: an acceptance item without failLoudIfUndelivered reads as required (true); an explicit false stays best-effort', () => {
+    const [first, ...rest] = RAW_SPEC.acceptance as readonly Record<string, unknown>[];
+    const { failLoudIfUndelivered: _omitted, ...bare } = first!;
+    const spec = specM1({ ...RAW_SPEC, acceptance: [bare, ...rest] }, 'spec');
+    assert.equal(spec.acceptance[0]!.failLoudIfUndelivered, true);
+    const relaxed = specM1({ ...RAW_SPEC, acceptance: [{ ...bare, failLoudIfUndelivered: false }, ...rest] }, 'spec');
+    assert.equal(relaxed.acceptance[0]!.failLoudIfUndelivered, false);
+  });
 });

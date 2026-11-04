@@ -60,6 +60,7 @@ type RunStart
 import { type Read,arrayOf,literal,object } from './core/validate.ts';
 import { type AbsPath,absPath,isoTimeOf,nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
+import { startIntegrationPushes } from './forge/integration-push.ts';
 import { hostPath,openHostDir } from './host/hostdir.ts';
 import { isAlive,selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
@@ -223,6 +224,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
   }
 
   const { context, journal } = checks;
+  let pushes: ReturnType<typeof startIntegrationPushes> | null = null;
   const heartbeat = setInterval(() => writeHeartbeat(context.runDir, claim.generation), HEARTBEAT_MS);
   try {
     const rejection = join(context.runDir, REJECTION_FILE);
@@ -240,17 +242,21 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     }
     // Recovery before the smoke: it closes a smoke spawn a crashed start left open, like any other spawn.
     await recover({ stage: x.stage, commands: x.commands });
+    // Recovery first completes any staged needs-user raise; background results must not race its replay.
+    pushes = startIntegrationPushes({ journal, repo: context.repo, runDir: context.runDir });
+    pushes.recover(x.stage.plan().integrationBranch);
     // M3 (B3): the findings' moves the recovered log calls for (ownership, a killed mutant's dismissal).
     syncRepairs(x.stage);
     await consumeRecovered(x);
     const smoked = await smokeCheck(checks, args.env);
     if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
     const reason = await schedule(x);
+    await pushes.drain();
     writeExitReason(args.hostDir, claim, reason.kind);
     return reason;
   } finally {
     clearInterval(heartbeat);
-    journal.close();
+    try { await pushes?.close(); } finally { journal.close(); }
   }
 }
 

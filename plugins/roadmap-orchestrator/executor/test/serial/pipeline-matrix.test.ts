@@ -4,7 +4,7 @@
 //
 // Each scenario runs once uncrashed with the recording mode (pm-record.ts): that run lists the labels its
 // executor reached and how often (the method of enumeration), must reach exactly the labels its matrix row
-// lists, and is the oracle's reference. Then every label is crashed at occurrence 1, and 2 where it repeats:
+// lists plus PIPELINE_EXCLUDED_LABELS, and is the oracle's reference. Then every crash-cell label is crashed at occurrence 1, and 2 where it repeats:
 // the executor SIGKILLs itself, the supervisor restarts it, and the arc must end as the uncrashed run did,
 // with the recovery trace the label allows. Also: the runner, the supervisor, and supervisor and executor
 // together killed from outside mid-build; and the adversarial rows (a malformed result, a cancellation, a
@@ -36,7 +36,7 @@ import { assertFired, writeTrigger } from '../helpers/crash.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
 import { readCalls } from '../helpers/scenario.ts';
 import { type Owner, assertNoSurvivors } from '../helpers/reap.ts';
-import { ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH, PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells } from '../matrix.ts';
+import { ADVERSARIAL_CANCEL, ADVERSARIAL_MALFORMED, ADVERSARIAL_STALE, type Boundary, PIPELINE_BUMPY, PIPELINE_EXCLUDED_LABELS, PIPELINE_HOLISTIC, PIPELINE_HOST_DEATH, PIPELINE_RUNNER_DEATH, PIPELINE_STRAIGHT, PIPELINE_SUPERVISOR_DEATH, SUPERVISOR_HOST, crashCells, killCells } from '../matrix.ts';
 import { type Expected, type OracleRun, type Trace, UNCRASHED, type UnitEnd, assertOracle, oracleRun, outcomesOf, recoveryHoldsOf, withRecoveryHolds } from '../oracle.ts';
 import { NONE, R, appendTrace, assertRevisionNoticeRecovery, inRevisionAt, traceAt } from '../fixtures/pm-trace.ts';
 import { type ExecRun, SMOKE_DEFAULT, hostFile, journalOf } from '../fixtures/exec-common.ts';
@@ -124,6 +124,11 @@ async function reference(t: Owner, name: string, s: Scenario, outcomes: Readonly
 // The recovery trace each crash point allows
 
 function traceFor(ref: Reference, label: string, occurrence: number): Trace {
+  if (label === 'integration-push.after-ff') {
+    const ff = ref.events.filter((e) => e.type === 'done' && e.kind === 'integration.ff' && e.outcome.kind === 'published')[occurrence - 1];
+    if (ff === undefined) throw new Error(`${ref.name}: no published ff at occurrence ${occurrence}`);
+    return traceAt(label, ref.events, ff.seq)!;
+  }
   // The start owns no command; later plan input captures belong to the root's open apply command.
   if (label === 'plan.apply.after-inputs' && occurrence > 1) return R('reconciled');
   if (label.startsWith('log.append.')) {
@@ -333,10 +338,10 @@ test('whole-pipeline crash matrix', { concurrency: FANOUT, timeout: 45 * 60_000 
     reference(t, 'holistic', HOLISTIC, HOLISTIC_OUTCOMES, {keyed: true, needsUser: ['split-proposal']}),
   ]);
 
-  // Enumeration: each scenario's executor reached exactly its row's labels; the only other process that
+  // Enumeration: each executor reached exactly its row's labels plus its justified exclusions; the only other process that
   // reached any is the supervisor, whose labels the supervisor/host row crashes.
   for (const [row, ref] of [[PIPELINE_STRAIGHT, straight], [PIPELINE_BUMPY, bumpy]] as const) {
-    assert.deepEqual([...ref.recorded.executor.keys()].sort(), rowLabels(row), `${ref.name}: the labels the executor reached are the row's`);
+    assert.deepEqual([...ref.recorded.executor.keys()].sort(), [...rowLabels(row), ...Object.keys(PIPELINE_EXCLUDED_LABELS)].sort(), `${ref.name}: the labels the executor reached are the row's plus its exclusions`);
     assert.deepEqual([...ref.recorded.others.keys()], ['supervisor.ts'], `${ref.name}: only the executor and the supervisor reach crash points`);
     assert.deepEqual([...ref.recorded.others.get('supervisor.ts')!].sort(), rowLabels(SUPERVISOR_HOST), `${ref.name}: the supervisor's labels are the supervisor/host row's`);
   }

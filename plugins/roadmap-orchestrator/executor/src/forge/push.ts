@@ -1,4 +1,6 @@
-// Pushing an arc's integration branch to `origin` (M4a, OR-Q19): a CLI act of `roadmap pr`, outside the executor (R22).
+// Pushing an arc's integration branch to `origin` (M4a, OR-Q19; dev.44 owner ruling): shared by `roadmap pr`
+// and the executor's background publication worker. R22's sealed local git remains in src/git/git.ts;
+// network publication uses this user-environment boundary after every durable integration.ff publication.
 // Unlike src/git/git.ts (the executor's sealed git), this runs with the user's environment, since a push needs their
 // credential helper or SSH agent.
 //
@@ -23,26 +25,31 @@ export class PushError extends Error {
   }
 }
 
+export class PushDivergedError extends PushError {
+  constructor(message: string) { super(message); this.name = 'PushDivergedError'; }
+}
+
 type Run = Readonly<{ status: number; stdout: string; stderr: string }>;
 
-function userGit(repo: AbsPath, args: readonly string[]): Run {
+function userGit(repo: AbsPath, args: readonly string[], deadline = Date.now() + PUSH_TIMEOUT_MS): Run {
+  if (Date.now() >= deadline) throw new PushError(`git ${args.join(' ')}: push timed out after ${PUSH_TIMEOUT_MS}ms`);
   const r = spawnSync('git', ['-C', repo, ...args], {
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }, encoding: 'utf8', timeout: PUSH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' }, encoding: 'utf8', killSignal: 'SIGKILL', timeout: Math.max(1, deadline - Date.now()), maxBuffer: 64 * 1024 * 1024,
   });
   if (r.error !== undefined) throw new PushError(`git ${args.join(' ')}: ${r.error.message}`);
   return { status: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 }
 
-function must(repo: AbsPath, args: readonly string[]): string {
-  const r = userGit(repo, args);
+function must(repo: AbsPath, args: readonly string[], deadline?: number): string {
+  const r = userGit(repo, args, deadline);
   if (r.status !== 0) throw new PushError(`git ${args.join(' ')} exited ${r.status}: ${r.stderr.trim()}`);
   return r.stdout;
 }
 
 /** The tip `origin` holds for `branch`, or null when it has none. */
-export function remoteTip(repo: AbsPath, branch: BranchName): Sha | null {
+export function remoteTip(repo: AbsPath, branch: BranchName, deadline?: number): Sha | null {
   const ref = `refs/heads/${branch}`;
-  const hit = must(repo, ['ls-remote', REMOTE, ref]).split('\n').map((l) => l.split('\t')).find(([, name]) => name === ref);
+  const hit = must(repo, ['ls-remote', REMOTE, ref], deadline).split('\n').map((l) => l.split('\t')).find(([, name]) => name === ref);
   return hit === undefined ? null : sha(hit[0] ?? '', `ls-remote ${REMOTE} ${ref}`);
 }
 
@@ -51,9 +58,9 @@ const refuseMain = (branch: BranchName): void => {
 };
 
 /** One push of `head` to `origin`'s `branch`, leased on `expected` (null: the branch must not exist there). */
-export function pushWithLease(repo: AbsPath, branch: BranchName, head: Sha, expected: Sha | null): void {
+export function pushWithLease(repo: AbsPath, branch: BranchName, head: Sha, expected: Sha | null, deadline?: number): void {
   refuseMain(branch);
-  must(repo, ['push', '--quiet', `--force-with-lease=refs/heads/${branch}:${expected ?? ''}`, REMOTE, `${head}:refs/heads/${branch}`]);
+  must(repo, ['push', '--quiet', `--force-with-lease=refs/heads/${branch}:${expected ?? ''}`, REMOTE, `${head}:refs/heads/${branch}`], deadline);
 }
 
 /**
@@ -65,8 +72,8 @@ export function inHistoryOnOrigin(repo: AbsPath, head: Sha, commit: Sha): boolea
   return isAncestor(repo, head, commit);
 }
 
-function isAncestor(repo: AbsPath, a: Sha, b: Sha): boolean {
-  const r = userGit(repo, ['merge-base', '--is-ancestor', a, b]);
+function isAncestor(repo: AbsPath, a: Sha, b: Sha, deadline?: number): boolean {
+  const r = userGit(repo, ['merge-base', '--is-ancestor', a, b], deadline);
   if (r.status !== 0 && r.status !== 1) throw new PushError(`git merge-base --is-ancestor ${a} ${b} exited ${r.status}: ${r.stderr.trim()}`);
   return r.status === 0;
 }
@@ -76,13 +83,19 @@ export type PushOutcome = Readonly<{ kind: 'pushed'; previous: Sha | null }> | R
 /** Brings `origin`'s `branch` to `head` by a leased fast-forward (or creation); refuses `main` and a diverged remote. */
 export function pushBranch(repo: AbsPath, branch: BranchName, head: Sha): PushOutcome {
   refuseMain(branch);
-  const tip = remoteTip(repo, branch);
+  const deadline = Date.now() + PUSH_TIMEOUT_MS;
+  const tip = remoteTip(repo, branch, deadline);
   if (tip === head) return { kind: 'up-to-date' };
   if (tip !== null) {
-    const known = userGit(repo, ['cat-file', '-e', `${tip}^{commit}`]).status === 0;
-    const ancestor = known && isAncestor(repo, tip, head);
-    if (!ancestor) throw new PushError(`${REMOTE}'s ${branch} is at ${tip}, which is not in the history of ${head}: refusing to overwrite it`);
+    const known = userGit(repo, ['cat-file', '-e', `${tip}^{commit}`], deadline).status === 0;
+    const ancestor = known && isAncestor(repo, tip, head, deadline);
+    if (!ancestor) throw new PushDivergedError(`${REMOTE}'s ${branch} is at ${tip}, which is not in the history of ${head}: refusing to overwrite it`);
   }
-  pushWithLease(repo, branch, head, tip);
+  pushWithLease(repo, branch, head, tip, deadline);
   return { kind: 'pushed', previous: tip };
+}
+
+/** Local configuration read only: absence of origin is quiet for automatic publication. */
+export function hasOrigin(repo: AbsPath): boolean {
+  return must(repo, ['remote']).split('\n').includes(REMOTE);
 }
