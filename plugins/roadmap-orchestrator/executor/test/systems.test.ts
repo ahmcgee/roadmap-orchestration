@@ -4,12 +4,13 @@ import { systemName } from '../src/core/ids.ts';
 // systems map's reader, a path's class, candidate selection, a lane's input and its reuse key over real git trees, leaf
 // test files, cadence and its dev.16 defaults, the dev.16 lane rev, and Phase-0 row 16.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe,it } from 'node:test';
 import { type LaneId,type SystemName,sha } from '../src/core/ids.ts';
 import { type LaneDef,cadenceAtOrBefore,laneDef,laneDefOf,specM1 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
-import { absPath,repoPath } from '../src/core/values.ts';
-import { inputShaOf,reuseKeyText } from '../src/git/reusekey.ts';
+import { absPath,repoPath,repoPattern } from '../src/core/values.ts';
+import { inputShaOf,reuseKeyText,treeOfCommit,withTreeListings } from '../src/git/reusekey.ts';
 import { laneRevMatches,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { type SystemsMap,laneInput,laneSelected,laneTestFiles,pathClass,systemsMap,systemsMapInForce,unknownLaneSystems } from '../src/input/systems.ts';
@@ -30,6 +31,30 @@ const MAP: SystemsMap = systemsMap(MAP_JSON, 'systemsMap');
 const p = (s: string) => repoPath(s);
 const names = (s: ReadonlySet<SystemName>): readonly string[] => [...s].sort();
 const withSystems = (...systems: string[]): Pick<LaneDef, 'systems'> => ({ systems: systems as SystemName[] });
+
+it('input and listing caches keep immutable trees distinct across history, patterns and map revisions', () => {
+  const repo = absPath(makeRepo(tmpDir('input-cache'), { files: { 'src/input.txt': 'initial', 'other.txt': 'initial' } }));
+  const input = { inputs: [repoPattern('src/input.txt')] };
+  const other = { inputs: [repoPattern('other.txt')] };
+  const expected = (tree: string, path: string) => sha(createHash('sha1').update(git(repo, 'ls-tree', '-r', '-z', '--full-tree', tree, '--', path)).digest('hex'));
+  // More trees than the retained listings: revisiting an evicted listing must still read the named tree.
+  const history = withTreeListings(() => Array.from({ length: 36 }, (_, n) => {
+    writeFiles(repo, { 'src/input.txt': `input ${n}`, 'other.txt': `other ${n}` });
+    const commit = sha(commitAll(repo, `tree ${n}`));
+    const tree = sha(git(repo, 'rev-parse', 'HEAD^{tree}'));
+    assert.equal(treeOfCommit(repo, commit), tree);
+    const key = expected(tree, 'src/input.txt');
+    assert.equal(inputShaOf(repo, tree, input, MAP), key);
+    return { commit, tree, key };
+  }));
+  for (const { commit, tree, key } of history.toReversed()) {
+    assert.equal(treeOfCommit(repo, commit), tree, 'moving HEAD never changes an old commit\'s tree');
+    assert.equal(inputShaOf(repo, tree, input, null), key);
+    assert.equal(inputShaOf(repo, tree, { ...input, ...withSystems('web') }, systemsMap(MAP_JSON, 'map')), key, 'explicit inputs override systems and map revisions');
+    assert.equal(inputShaOf(repo, tree, other, null), expected(tree, 'other.txt'), 'another pattern uses this tree\'s listing');
+  }
+  assert.equal(new Set(history.map((h) => h.key)).size, history.length, 'each changed input has its own hash');
+});
 
 describe('systems.map', () => {
   it('reads a map; every name it uses is declared, and docs is never a system', () => {

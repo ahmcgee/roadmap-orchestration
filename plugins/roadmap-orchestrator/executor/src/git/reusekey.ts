@@ -16,7 +16,7 @@ import { type EnvId, type LaneId, type LaneRev, type Sha, sha } from '../core/id
 import type { LaneDef } from '../core/records.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
 import { type SystemsMap, laneInput } from '../input/systems.ts';
-import { git } from './git.ts';
+import { git, revParse } from './git.ts';
 import { matchesPattern } from '../core/values.ts';
 
 export type ReuseKey = Readonly<{ lane: LaneId; laneRev: LaneRev; envId: EnvId; inputSha: Sha }>;
@@ -26,10 +26,24 @@ export const reuseKeyText = (k: ReuseKey): string => `${k.inputSha}/${k.lane}/${
 
 /**
  * `git ls-tree -r` of a tree, per entry: its raw line and its path. Trees are immutable, so a listing is kept, the
- * `LISTINGS_KEPT` latest only (a long arc lists a tree per candidate).
+ * `LISTINGS_KEPT` latest only between reads (a long arc lists a tree per candidate). A status computation retains
+ * its whole working set: walking more than 32 historical trees for each lane must not evict the next lane's listings.
  */
 const LISTINGS = new Map<Sha, readonly Readonly<{ line: string; path: RepoPath }>[]>();
 const LISTINGS_KEPT = 32;
+let listingReaders = 0;
+
+function trimListings(): void {
+  if (listingReaders > 0) return;
+  while (LISTINGS.size > LISTINGS_KEPT) LISTINGS.delete(LISTINGS.keys().next().value!);
+}
+
+/** Retain the canonical listings throughout a synchronous read, then restore the process's bounded working set. */
+export function withTreeListings<T>(read: () => T): T {
+  listingReaders++;
+  try { return read(); }
+  finally { listingReaders--; trimListings(); }
+}
 
 function listing(repo: AbsPath, tree: Sha): readonly Readonly<{ line: string; path: RepoPath }>[] {
   const known = LISTINGS.get(tree);
@@ -40,18 +54,34 @@ function listing(repo: AbsPath, tree: Sha): readonly Readonly<{ line: string; pa
     return { line, path: line.slice(tab + 1) as RepoPath };
   });
   LISTINGS.set(tree, out);
-  if (LISTINGS.size > LISTINGS_KEPT) LISTINGS.delete(LISTINGS.keys().next().value!);
+  trimListings();
   return out;
 }
 
 const INPUTS = new WeakMap<object, Map<string, Sha>>();
 const NO_MAP = {};
+const COMMIT_TREES = new Map<Sha, Sha>();
 
-/** The input of `lane` on `tree` (a tree id) under `map` (see the header), memoised per map, lane systems and tree. */
+/** A commit's tree is immutable, including when the branch that named the commit advances. */
+export function treeOfCommit(repo: AbsPath, commit: Sha): Sha {
+  const known = COMMIT_TREES.get(commit);
+  if (known !== undefined) return known;
+  const tree = revParse(repo, `${commit}^{tree}`);
+  COMMIT_TREES.set(commit, tree);
+  return tree;
+}
+
+/**
+ * The input of `lane` on `tree` (an immutable object id). Explicit patterns override systems and the map, so their
+ * hashes share one memo across plan revisions and callers (including external witnesses). Only implicit inputs
+ * depend on the map's identity and lane systems. The listing above is the one source for both kinds of input.
+ */
 export function inputShaOf(repo: AbsPath, tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>, map: SystemsMap | null): Sha {
-  const memo = INPUTS.get(map ?? NO_MAP) ?? new Map<string, Sha>();
-  INPUTS.set(map ?? NO_MAP, memo);
-  const at = `${tree}/${JSON.stringify([lane.systems ?? null, lane.inputs ?? null])}`;
+  if (map === null && lane.inputs === undefined) return tree;
+  const scope = lane.inputs === undefined ? map! : NO_MAP;
+  const memo = INPUTS.get(scope) ?? new Map<string, Sha>();
+  INPUTS.set(scope, memo);
+  const at = `${tree}/${JSON.stringify(lane.inputs === undefined ? lane.systems ?? null : lane.inputs)}`;
   const known = memo.get(at);
   if (known !== undefined) return known;
   let out = tree;

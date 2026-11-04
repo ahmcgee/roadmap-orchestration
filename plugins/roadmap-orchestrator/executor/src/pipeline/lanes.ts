@@ -100,7 +100,7 @@ import { type EvidenceManifest,FILES_DIR,capturedEvidence,manifestPath,namedPath
 import { isAncestor } from '../git/ff.ts';
 import { git,revParse,statusPorcelainV2Z } from '../git/git.ts';
 import { ignoredWrites,planIgnored } from '../git/ignored.ts';
-import { type ReuseKey,inputShaOf } from '../git/reusekey.ts';
+import { type ReuseKey,inputShaOf,treeOfCommit } from '../git/reusekey.ts';
 import { candidateLaneDir,jobEvidenceRoot,jobLaneDir,witnessDir } from '../git/snapshot.ts';
 import { type WorktreeCreateRequest,removedSince,standing } from '../git/worktree.ts';
 import { type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
@@ -498,7 +498,7 @@ export const mapInForce = (view: JournalView): SystemsMap | null => systemsMapIn
 
 /** `lane`'s input on commit `at` under the map in force (src/git/reusekey.ts). */
 export const laneInputAt = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, lane: LaneDef, at: Sha, systems?: LaneDef['systems']): Sha =>
-  inputShaOf(ctx.repo, revParse(ctx.repo, `${at}^{tree}`), { ...lane, ...(lane.systems !== undefined || systems === undefined ? {} : { systems }) }, mapInForce(ctx.journal.view));
+  inputShaOf(ctx.repo, treeOfCommit(ctx.repo, at), { ...lane, ...(lane.systems !== undefined || systems === undefined ? {} : { systems }) }, mapInForce(ctx.journal.view));
 
 /** What a run of a lane at a commit is reused by now: its identity, argv[0], and its input on the commit. */
 export type LaneNow = Readonly<{ identity: LaneIdentity; argv0: Argv0; inputSha: Sha; systems?: LaneDef['systems'] }>;

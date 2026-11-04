@@ -121,6 +121,7 @@ import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
 import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
 import { git,revParse } from './git/git.ts';
+import { withTreeListings } from './git/reusekey.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { RevisionContext } from './holistic/admission.ts';
@@ -1486,6 +1487,10 @@ function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitC
 }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
+  return withTreeListings(() => readStatus(runDir, arc, hostDir, snapshot));
+}
+
+function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
   const d = derive(runDir, arc, hostDir, snapshot);
   const { view, events, start, inForce } = d;
   const now = Date.now();
