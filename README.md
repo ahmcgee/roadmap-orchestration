@@ -76,7 +76,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
 3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations. A conditional
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
    specs first, implement, run targeted checks and report evidence. Every Claude build gets the configured
-   `walkthrough.mcp` servers. Bring-ups list its member/design milestones and origin milestones of findings its spec
+   `walkthrough.mcp` servers. A declared server unavailable at init raises a non-blocking `walkthrough-mcp` notice,
+   once per server/error signature; a later connected build or acting walk explicitly settles its named notices. Bring-ups list its member/design milestones and origin milestones of findings its spec
    `repairs` cites, once each in plan order; empty is valid. Without the config, builds get no servers and no new
    refusal. Codex builds have no MCP path; acting judges keep their own rules. Bootstrap still refuses browser
    journeys without this config. The executor quiesces workloads, captures evidence,
@@ -89,7 +90,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Walk and comparison evidence entries are exact saved file paths; explanations belong in report text.
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
 4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
-   retain unit attribution; only a green exact head is fast-forwarded. Every successful integration fast-forward
+   retain unit attribution; only a green exact head is fast-forwarded. Candidate reds durably name their cause,
+   grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. Every successful integration fast-forward
    (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
    Pushes use an explicit lease and require the remote tip to be an ancestor; `main` is never pushed. Startup
    retries the current head after a crash; an up-to-date remote is a no-op. Snapshots and retirement continue
@@ -144,7 +146,9 @@ through ordinary gated diffs; normative claims stay in the corpus. Commit bodies
 structured decisions, making later work and crash recovery intelligible.
 
 Certification allows three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that
-allowance. Gate revisions and candidate reds have separate bounds. Fresh build sessions with earlier lineage receive
+allowance. Gate revisions and candidate reds have separate bounds. Re-entry keeps lineage counters; `reenters.reset`
+with a reason clears chargeable failures while lifetime attempts and other counters remain. A re-entry must repair
+the recorded cause, such as a surviving mutant or dirty lane outputs. Fresh build sessions with earlier lineage receive
 a handover of diagnosis, findings, unmet clauses, witness failures, decisions and original evidence. Exact witness ids
 can be checked with `witness-check --lane-file` before requesting certification.
 

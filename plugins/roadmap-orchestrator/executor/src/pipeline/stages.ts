@@ -1,3 +1,4 @@
+import { candidateRed } from './candidate-red.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
 import { methodContext,runReview,diagnosisDue,diagnosed } from './surface.ts';
@@ -77,7 +78,7 @@ import { renderSpec } from '../spec/render.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 
 import { verifyRunsOf } from './deflake.ts';
-import { departures } from './design.ts';
+import { builderDecisions, decisionDeparture, departures } from './design.ts';
 import { type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,backendOf,cancelledNow,dispatchOf,enter,evidenceRoot,fastSuiteWorktree,implementerDispatch,isCancelled,nonEmpty,pinDispatch,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir } from './dispatch.ts';
 
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
@@ -121,6 +122,11 @@ export function record<S extends OutcomeStage>(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, kind: StageOutcomeKind<S>, needsUser: NeedsUserContent | null = null,
   facts: ParkFacts = NO_PARK_FACTS, cause?: HoldCause, detail?: StageOutcomeDetail,
 ): StageDone<S> {
+  if (parent.stage === 'candidate' && kind === 'red' && detail === undefined) {
+    const unit = ctx.plan().units.find((u) => u.id === parent.unit);
+    if (unit === undefined) throw new Error(`candidate red for unplanned unit ${parent.unit}`);
+    detail = candidateRed(ctx, unit, parent).detail;
+  }
   const outcome = { stage: parent.stage, kind } as Extract<StageOutcome, Readonly<{ stage: S }>>;
   const u = ctx.journal.view.unit(parent.unit);
   const next = transition(u, outcome);
@@ -902,7 +908,7 @@ export function readDecisions(file: AbsPath, spec: SpecM1): DecisionsFile | stri
  * The implementer's decisions.json, as captured by the snapshot, appended to the spec's decisions section
  * (lead ruling, step 12): one `spec.patch` by the executor, so the gate grades against every decision taken
  * and the new revision is part of the approval fingerprint. A new id is added, a decision restated with new
- * text replaces the active one, a decision restated verbatim is already there. A file that does not validate
+ * text replaces the active one only when its current text was last set by a builder. Other disagreements are departure notes; a decision restated verbatim is already there. A file that does not validate
  * (`readDecisions`, an entry naming an item that is not an active decision among its causes) reaches here only from a
  * build with no report to refuse (lost with tree effects) or one a previous release read (`buildRead` makes any other
  * malformed): it is not appended, and a stderr line names it.
@@ -922,10 +928,14 @@ async function appendDecisions(ctx: StageContext, unit: PlanUnit, run: BuildRun,
   const changed = git(run.worktree, ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=MD', diffBase(ctx.repo, integrationTip(ctx), revParse(run.worktree, 'HEAD'))])
     .split('\0').filter((p) => p !== '').map((p) => repoPath(p));
   const decisions = { decisions: [...(read?.decisions ?? []), ...departures(mapInForce(ctx.journal.view), spec.design, changed)] };
+  const owned = builderDecisions(ctx, unit.id, path);
   const ops = decisions.decisions.flatMap((d): SpecPatchOp[] => {
     const decided = spec.decisions.find((i) => i.id === d.id);
     if (decided === undefined) return [{ op: 'add', section: 'decisions', item: d }];
-    return decided.text === d.text ? [] : [{ op: 'replace', section: 'decisions', item: d }];
+    if (decided.text === d.text) return [];
+    if (owned.has(d.id)) return [{ op: 'replace', section: 'decisions', item: d }];
+    const departure = decisionDeparture(d.id, decided.text, d.text);
+    return spec.decisions.some((i) => i.id === departure.id) ? [] : [{op: 'add', section: 'decisions', item: departure}];
   });
   if (ops.length === 0) return;
   await machinePatch(ctx, unit.id, parent, { path, oldSha256: sha256, patch: { expectRev: spec.rev, by: { role: 'executor', inv: run.inv }, ops } });

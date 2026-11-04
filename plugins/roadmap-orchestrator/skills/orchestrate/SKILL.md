@@ -74,6 +74,7 @@ Run `phase0 check` against the authored plan until refusing rows are resolved. E
 ## Unit and milestone execution
 
 Normal work is prepare → conditional pre-build annotation → grounded build → evidence/salvage/teardown → executable certification → gate → candidate on current integration tip → exact-head publication → snapshot/retirement. Reproduction precedes repair builds where required. Build, lanes and gate repeat as needed within bounds. A gate's context is fresh; it judges reach against intent/nonGoals, executable evidence and outstanding review items.
+Re-entry keeps lineage counters. Set `reenters.reset: {reason}` when fresh charged rounds are warranted; it clears chargeable failures, while lifetime attempts and other counters remain.
 
 Every integration fast-forward (unit, repair batch, docs revision and close-out) queues a background push of the integration branch to `origin` using user credentials. It uses a lease, allows only fast-forwards and never pushes `main`. The root no longer pushes `arc/<arc>` by hand for CI or external witnesses. Network work does not hold a stage and is bounded to five minutes per attempt. Startup retries the current head after a crash; an already-current remote is a no-op. With no origin, the executor records one quiet fact.
 
@@ -139,3 +140,7 @@ The supervisor owns restart/backoff; containment emptiness precedes releasing re
 Close admissions when the intended slice is complete. Let final audit, selected witnesses, batch lanes, close-out document publication and snapshots settle. Distinguish a completed active arc from a sealed one; report outstanding findings and debt honestly. Prepare the stacked PR with `pr`, then present the brief and demo location/rough edges. Demo controls are up/down/hold/release; promotion never restarts a held demo.
 
 Use `chain status` before another start. Prepare the next baseline on your own checkout, preserving the previous head and allowed between-arc corpus/config/vision changes. Stop when the vision is silent or the acknowledged chain bound disallows another start. Lookup details belong in the reference.
+
+Candidate red parks retain the cause, RUN/REUSED grading records and original evidence. Read that diagnosis before revising the work.
+
+`walkthrough-mcp` is a non-blocking arc notice, once per declared server/error signature. Fix the named command in `walkthrough.mcp` for the unit worktree; a later connected Claude build or acting walk settles its notices, or acknowledge each by id after review.

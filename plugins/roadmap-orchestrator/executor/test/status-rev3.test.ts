@@ -120,6 +120,8 @@ describe('lane failures (F3)', () => {
 test('needsuser.reentry-text-prepare-creates-branch: a park recommends a re-entering unit whose prepare creates its branch at the parked tip, never by hand', () => {
   const text = reentryRecommendation(unitId('u3'), 'lanes', 2, 'roadmap/arc-1/u3');
   assert.match(text, /re-enters u3 \(`"reenters": \{"unit": "u3", "fixes": "u3\/lanes#2"\}`/);
+  assert.match(text, /reenters\.reset.*reason/s);
+  assert.match(text, /keeps.*counters/s);
   assert.match(text, /the new unit's prepare creates its branch roadmap\/<arc>\/<new id> at the tip of roadmap\/arc-1\/u3\. Never create that branch by hand\./);
   assert.doesNotMatch(text, /create that unit's branch/);
 });

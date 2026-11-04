@@ -1,3 +1,4 @@
+import { holisticInForce } from './stages.ts';
 import { externalVerdict } from '../holistic/external.ts';
 // Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): the
 // executor runs a series of lanes serially, verbatim, under their reservations, in a clean detached
@@ -1674,7 +1675,8 @@ export async function runJourneySeries(
   for (const lane of lanes) {
     if (lane.witness?.witnessClass === 'external') continue;
     if (store !== null && lane.witness !== null && !lane.suite) {
-      const o = reuse(store, arcLaneKey(ctx, treeSha, lane.witness, laneEnvId(ctx, lane.witness)));
+      const witnesses = holisticInForce(ctx).obligations?.obligations.flatMap((o) => o.witness?.lane === lane.def.id ? [o.witness] : []) ?? [];
+      const o = reuse(store, arcLaneKey(ctx, treeSha, lane.witness, laneEnvId(ctx, lane.witness)), witnesses);
       if (o !== null) {
         runs.push({ lane: lane.def.id, inv: null, verdict: null, flaky: false, dir: null, record: o.record });
         continue;

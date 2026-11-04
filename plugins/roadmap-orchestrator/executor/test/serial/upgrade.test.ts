@@ -17,8 +17,10 @@ import { tmpDir } from '../helpers/repo.ts';
 import { wire } from '../fixtures/publish-common.ts';
 import { type ArcDescriptor, contextFor, applyBody, syncInputs, setupArc } from '../fixtures/unit-common.ts';
 // Pin a real previous executor: it must write the state this release adopts.
-const PREVIOUS_RELEASE = '1.0.0-dev.41';
-const PREVIOUS_REF = '82887487052bba7235f16b73d0fd22d82b6d9b48';
+const PREVIOUS_RELEASE = '1.0.0-dev.44';
+const PREVIOUS_REF = '12d943594af72d5070668e40cbc758e5314e93ef';
+const LEGACY_PUBLICATION_RELEASE = '1.0.0-dev.41';
+const LEGACY_PUBLICATION_REF = '82887487052bba7235f16b73d0fd22d82b6d9b48';
 // Keep the one-off dev.33 schema-2 cut refusal as a separate regression.
 const PRE_SCHEMA_2_RELEASE = '1.0.0-dev.32';
 test('upgrade.previous-schema: startup refuses schema 1 loudly before claiming or recovering', async () => {
@@ -42,10 +44,10 @@ test('upgrade.previous-release: dev.41 publication state is read, recovered and 
   const relative = 'plugins/roadmap-orchestrator/executor';
   const sourceRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {cwd: import.meta.dirname, encoding: 'utf8'}).trim();
   const archive = join(root, 'previous.tar');
-  execFileSync('git', ['archive', '-o', archive, PREVIOUS_REF, relative], {cwd: sourceRoot});
+  execFileSync('git', ['archive', '-o', archive, LEGACY_PUBLICATION_REF, relative], {cwd: sourceRoot});
   execFileSync('tar', ['-xf', archive, '-C', root]);
   const previous = join(root, relative);
-  assert.equal(JSON.parse(readFileSync(join(previous, 'package.json'), 'utf8')).version, PREVIOUS_RELEASE);
+  assert.equal(JSON.parse(readFileSync(join(previous, 'package.json'), 'utf8')).version, LEGACY_PUBLICATION_RELEASE);
   const moduleUrl = (path: string) => pathToFileURL(join(previous, path)).href;
   const script = `
     import {publishArc, wire} from ${JSON.stringify(moduleUrl('test/fixtures/publish-common.ts'))};
@@ -94,5 +96,52 @@ test('upgrade.previous-release: dev.41 publication state is read, recovered and 
     assert.equal(r.journal.view.planApplied()!.rev, 3);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.ok(warnings.some((warning) => /ignoring legacy contractOps/.test(warning.message)), 'adoption logs its compatibility default');
+  } finally {process.off('warning', onWarning); r.journal.close();}
+});
+
+test('upgrade.dev44-candidate-red: real previous-release reds default their absent cause without rewriting the log', {timeout: 120_000}, async () => {
+  const root = tmpDir('dev44-executor');
+  const relative = 'plugins/roadmap-orchestrator/executor';
+  const archive = join(root, 'previous.tar');
+  execFileSync('git', ['archive', '-o', archive, PREVIOUS_REF, relative], {cwd: execFileSync('git', ['rev-parse', '--show-toplevel'], {cwd: import.meta.dirname, encoding: 'utf8'}).trim()});
+  execFileSync('tar', ['-xf', archive, '-C', root]);
+  const previous = join(root, relative);
+  assert.equal(JSON.parse(readFileSync(join(previous, 'package.json'), 'utf8')).version, PREVIOUS_RELEASE);
+  const url = (path: string) => pathToFileURL(join(previous, path)).href;
+  const script = `
+    import {holisticArc, tipTree, candidateTree} from ${JSON.stringify(url('test/fixtures/brake-common.ts'))};
+    import {contextFor, mulBuild, gateStep, stepUntil} from ${JSON.stringify(url('test/fixtures/unit-common.ts'))};
+    import {planCheckStep, admitAll} from ${JSON.stringify(url('test/fixtures/stage-common.ts'))};
+    import {runUnit} from ${JSON.stringify(url('src/pipeline/unit.ts'))};
+    import {scriptTree} from ${JSON.stringify(url('test/helpers/witness.ts'))};
+    const {d, control} = holisticArc({steps: [planCheckStep({decision:'approve'}), mulBuild(), gateStep({decision:'approve'})],
+      units: [{id:'u1', obligations:['I-1']}], obligations: [{id:'I-1', testIds:['t1']}],
+      mapping: [{system:'app', obligations:['I-1']}], trees: {}, planExtra: {limits: {chargeable: 1}}});
+    const r = contextFor(d);
+    try {
+      scriptTree(control, tipTree(d), {outcomes:{t1:'pass'}});
+      await stepUntil(r, 'u1', f => f.stage === 'gate' && f.outcome === 'approve');
+      scriptTree(control, candidateTree(d, 'u1'), {outcomes:{t1:'fail'}});
+      const result = await runUnit(r.ctx, r.unit('u1'), admitAll);
+      if (result.kind !== 'parked') throw new Error(JSON.stringify(result));
+      process.removeAllListeners('exit'); process.stdout.write(JSON.stringify(d));
+    } finally {r.journal.close();}
+  `;
+  const d = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], {encoding:'utf8', timeout:90_000, env:{...process.env, TMPDIR:root}})) as ArcDescriptor;
+  const path = join(d.runDir, 'events.jsonl');
+  const before = readFileSync(path);
+  const warnings: Error[] = [];
+  const onWarning = (w: Error) => warnings.push(w);
+  process.on('warning', onWarning);
+  const r = contextFor(d);
+  try {
+    const detail = r.journal.view.unit(r.unit('u1').id).decided!.detail;
+    assert.equal(detail?.kind, 'candidate-red');
+    if (detail?.kind !== 'candidate-red') throw new Error('missing compatibility default');
+    assert.equal(detail.path, 'legacy');
+    assert.deepEqual(detail.evidence, []);
+    assert.deepEqual(readFileSync(path), before);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.ok(warnings.some((w) => /defaulting legacy candidate red cause/.test(w.message)));
   } finally {process.off('warning', onWarning); r.journal.close();}
 });

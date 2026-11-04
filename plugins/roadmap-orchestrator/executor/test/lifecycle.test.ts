@@ -264,7 +264,7 @@ test('reroute.routing-changed-park: resume is rejected while the implementer sea
     const moved = rerouted(r, { build: { med: 'frontier' } });
     const s = await step(moved, r.unit('u1'));
     assert.ok(s.kind === 'parked' && s.needsUser.reason === 'routing-changed');
-    assert.match(s.needsUser.recommendation, /^Restore the routing of build\.med or re-enter the unit under a new id\./);
+    assert.match(s.needsUser.recommendation, /^Restore the routing of build\.med or re-enter the unit under a new id \(set `reenters\.reset` with a reason when fresh chargeable rounds are warranted; otherwise counters are inherited\)\./);
     const item = raiseParked(r, U1, s.needsUser);
     const pinned = r.journal.view.dispatchOf(U1)!;
 

@@ -1,3 +1,4 @@
+import { candidateRed } from './candidate-red.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
 // The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md "Git truth and backend invariants"):
 // candidate → suite lanes → ff-only publication → snapshot, so the tested head is the published head.
@@ -64,7 +65,7 @@ import { memoryMessage, salvageSummaries } from './memory.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
-import type { HoldCause, IntentOf, OpOutcome, Parent } from '../core/events.ts';
+import type { CandidateRedCause, HoldCause, IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type ResourceName, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
@@ -96,8 +97,8 @@ import type { ResourceRequest } from '../schedule/types.ts';
 import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
-  type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
-  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns,
+  type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
+  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns, witnessRecordPath,
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -153,6 +154,8 @@ type CandidateEnd = Readonly<{
   environment?: ResourceName;
   /** M4b rev 3 (RC-11): an `interrupted` suite under host pressure, starved or red with its rerun pending (starved.ts). */
   cause?: HoldCause;
+  /** The live journey census, before its removed checkout can lose the exact moved HEAD. */
+  checkout?: JourneyCheckout;
 }>;
 
 const ended = (kind: CandidateEnd['kind'], needsUser: NeedsUserContent | null = null): CandidateEnd => ({ kind, needsUser, failed: [] });
@@ -336,7 +339,8 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
   } finally {
     await preempt.close();
   }
-  const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause);
+  const detail = end.kind === 'red' ? candidateRed(ctx, unit, parent, end.checkout ?? null).detail : undefined;
+  const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause, detail);
   if (end.kind !== 'green') await releasePublication(ctx, held, parent);
   return done;
 }
@@ -594,7 +598,7 @@ async function heldClaims(ctx: StageContext, unit: PlanUnit, parent: StageParent
     case 'green':
       return ended('green');
     case 'red':
-      return ended('red');
+      return {...ended('red'), ...(onCandidate.checkout === null ? {} : {checkout: onCandidate.checkout})};
     case 'base-red':
       return ended('base-red', baseRedNeedsUser(ctx, parent, tip, withWitnessLanes(verdict.base, claims.obligations), [
         candidateSeriesRoot(ctx.runDir, parent), journeyRoot(ctx.runDir, parent),
@@ -606,7 +610,7 @@ async function heldClaims(ctx: StageContext, unit: PlanUnit, parent: StageParent
  * The fix round after a candidate whose suite was green and whose held claims were red (the brake): the obligations it
  * left red on the candidate (re-graded from the observations its journey lanes left), with the journey evidence.
  */
-export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: StageParent): FixRound {
+export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: StageParent): BrakeFix {
   const cand = latestCandidate(ctx, unit.id);
   return brakeFix(ctx, unit, cand, cand.expect.unitCommit, journeyRoot(ctx.runDir, parent));
 }
@@ -615,7 +619,7 @@ export function candidateBrakeFix(ctx: StageContext, unit: PlanUnit, parent: Sta
  * M3 (B7): the fix round of a member of a red repair batch the scheduler attributed to it (`red{attributable}`): the
  * obligations its own selection left red on the batch candidate, with the batch job's evidence.
  */
-export function batchMemberFix(ctx: StageContext, unit: PlanUnit, cand: IntentOf<'candidate.merge'>): FixRound {
+export function batchMemberFix(ctx: StageContext, unit: PlanUnit, cand: IntentOf<'candidate.merge'>): BrakeFix {
   const member = cand.expect.batch?.members.find((m) => m.unit === unit.id);
   if (member === undefined) throw new Error(`unit ${unit.id} is no member of the batch candidate ${cand.op}`);
   return brakeFix(ctx, unit, cand, member.unitCommit, jobEvidenceRoot(ctx.runDir, cand.expect.batch!.job));
@@ -634,23 +638,41 @@ export function memberBatchCandidate(view: JournalView, parent: StageParent): In
   return batch;
 }
 
+type BrakeFix = FixRound & Readonly<{causes: readonly CandidateRedCause[]}>;
+
 /** The fix round of a candidate `cand` whose held claims were red for `unit` (at its commit `head`), evidence under `root`. */
-function brakeFix(ctx: StageContext, unit: PlanUnit, cand: IntentOf<'candidate.merge'>, head: Sha, root: AbsPath): FixRound {
+function brakeFix(ctx: StageContext, unit: PlanUnit, cand: IntentOf<'candidate.merge'>, head: Sha, root: AbsPath): BrakeFix {
   const claims = unitClaims(ctx, unit, cand.expect.integrationTip, head);
   if (claims === null) throw new Error(`unit ${unit.id}: a red candidate with a green suite outside a holistic arc`);
   const runs = observedRuns(ctx, claims, cand.post.new);
+  const tipRuns = observedRuns(ctx, claims, cand.expect.integrationTip);
   const grade = gradeTree(claims, runs, claims.completing, claims.repairs, p1Obligations(ctx.journal.view));
   const byId = new Map(claims.obligations.obligations.map((o) => [o.id, o]));
+  const parent = cand.parent;
+  const same = canonicalJson(parent);
+  const own = new Set(ctx.journal.view.opsOf('proc.spawn').filter((i) => canonicalJson(i.parent) === same).map((i) => invocationId(i.op, i.ordinal)));
+  const witnesses = ctx.journal.view.holistic().witnessed.filter((w) => [...runs, ...tipRuns].some((r) => r.record?.inv === w.inv));
+  const checkouts = ctx.journal.view.opsOf('worktree.create').filter((i) => canonicalJson(i.parent) === same && i.expect.path.includes('journey') && !i.expect.path.includes('base-journey'));
+  const uncertified = checkouts.filter((i) => !ctx.journal.view.holistic().certificates.some((c) => c.checkout === i.expect.path && canonicalJson(c.parent) === same));
   const directives = [
+    ...[...runs.map((r) => ({...r, on: 'candidate'})), ...tipRuns.map((r) => ({...r, on: 'tip alone'}))].map((r) => `Lane ${r.lane} on ${r.on} ${r.record !== null && own.has(r.record.inv) ? 'RUN' : 'REUSED'}: ${r.record?.inv ?? 'no record'}; record ${witnesses.find((w) => w.inv === r.record?.inv) === undefined ? 'absent' : witnessRecordPath(ctx.runDir, witnesses.find((w) => w.inv === r.record?.inv)!)}.`),
+    ...uncertified.map((i) => `Dirty/moved checkout ${i.expect.path}: clean lane outputs and keep HEAD unchanged.`),
     ...grade.red.map((id) => {
       const o = byId.get(id)!;
       const tests = o.witness === null ? 'its split children' : `lane ${o.witness.lane}, tests ${o.witness.testIds.join(', ')}`;
-      return `Obligation ${id} must hold on the candidate and does not (${grade.effects.get(id) ?? 'red'}): "${o.statement}" (witness: ${tests}). Make it hold without weakening its witness.`;
+      return `${claims.repairs.has(id) ? 'Declared repair not held: ' : ''}Obligation ${id} must hold on the candidate and does not (${grade.effects.get(id) ?? 'red'}): "${o.statement}" (witness: ${tests}). Make it hold without weakening its witness.`;
     }),
     ...grade.unexplained.map((lane) => `Journey lane ${lane} ran red on the candidate with a failure no obligation explains; read its output and fix the regression.`),
     ...[...grade.background].map(([lane, tests]) => `Journey lane ${lane}: tests ${tests.join(', ')} fail on the candidate but not on the integration tip alone; the change regressed them.`),
   ];
-  return { failingEvidenceDirs: existsSync(root) ? [root] : [], directives: directives.length > 0 ? directives : ['The candidate\'s held claims were red; read the journey evidence and fix it.'] };
+  const causes: CandidateRedCause[] = [
+    ...(grade.red.some((id) => !claims.repairs.has(id)) ? ['held-claims brake' as const] : []),
+    ...(grade.red.some((id) => claims.repairs.has(id)) ? ['declared repair not held' as const] : []),
+    ...(grade.unexplained.length > 0 ? ['unexplained lane failures' as const] : []),
+    ...(grade.background.size > 0 ? ['background failures' as const] : []),
+    ...(uncertified.length > 0 ? ['dirty/moved checkout' as const] : []),
+  ];
+  return { causes, failingEvidenceDirs: [...(existsSync(root) ? [root] : []), ...witnesses.map((w) => witnessRecordPath(ctx.runDir, w))], directives: directives.length > 0 ? directives : ['The candidate\'s held claims were red; read the journey evidence and fix it.'] };
 }
 
 /** The claims' lanes as the observations on `commit`'s tree record them (a lane with none reads as not run). */

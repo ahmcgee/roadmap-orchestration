@@ -99,7 +99,7 @@ test('dispatch.routing-changed-parks: after a build, a change that moves the imp
   assert.equal(s.needsUser.reason, 'routing-changed');
   assert.deepEqual(s.needsUser.subject, { type: 'unit', unit: U1 });
   assert.match(s.needsUser.summary, /build\.med/);
-  assert.match(s.needsUser.recommendation, /^Restore the routing of build\.med or re-enter the unit under a new id\./);
+  assert.match(s.needsUser.recommendation, /^Restore the routing of build\.med or re-enter the unit under a new id \(set `reenters\.reset` with a reason when fresh chargeable rounds are warranted; otherwise counters are inherited\)\./);
   for (const m of MODEL_IDS) assert.doesNotMatch(JSON.stringify(s.needsUser), new RegExp(m.replace('.', '\\.')));
   assert.equal(dispatches(run).length, 1, 'nothing is re-pinned');
   const u = run.journal.view.unit(U1);

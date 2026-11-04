@@ -595,7 +595,14 @@ export const testRefKey = (t: TestRef): string => `${t.lane}\u0000${t.testId}`;
  * match releases the hold, src/schedule/ready.ts), build `infeasible` (the assessment's notes), lanes `base-red` (the diff base
  * the fast suite ran on alone, the fast suite lanes red there, whether they changed its checkout).
  */
+export const CANDIDATE_RED_CAUSES = ['suite red vs tip green', 'held-claims brake', 'declared repair not held', 'unexplained lane failures', 'dirty/moved checkout', 'background failures', 'mutant survivor', 'repair batch'] as const;
+export type CandidateRedCause = typeof CANDIDATE_RED_CAUSES[number];
+export type CandidateRedDetail = Readonly<{
+  kind: 'candidate-red'; path: 'legacy' | 'repair batch' | 'mutant survivor' | 'held-claims brake' | 'suite red vs tip green'; causes: readonly CandidateRedCause[]; summary: string; evidence: readonly AbsPath[]; directives: readonly string[];
+  baseComparison: readonly Readonly<{lane: LaneId; base: Sha; result: 'pass' | 'fail'; evidence: AbsPath}>[] | null;
+}>;
 export type StageOutcomeDetail =
+  | CandidateRedDetail
   | Readonly<{ kind: 'witnesses-missing'; missing: readonly TestRef[]; failed: readonly TestRef[] }>
   | Readonly<{ kind: 'smoke-survived'; obligations: readonly ObligationId[]; testIds: readonly TestRef[] }>
   | Readonly<{ kind: 'known-defect'; id: KnownDefectId; match: KnownDefectMatch }>
@@ -616,6 +623,7 @@ export type StageOutcomeDetail =
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect',
+  'candidate/red': 'candidate-red',
   'lanes/base-red': 'base-red',
   'lanes/plan-defect': 'plan-defect',
   'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',
@@ -644,6 +652,17 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   cause?: HoldCause;
   detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
+
+/** dev.44 compatibility: keep old canonical bytes intact; only the folded reading gets the missing diagnosis. */
+let legacyCandidateRedWarned = false;
+export function candidateRedDefault(f: StageOutcomeFact): StageOutcomeFact {
+  if (f.stage !== 'candidate' || f.outcome !== 'red' || f.detail !== undefined) return f;
+  if (!legacyCandidateRedWarned) {
+    process.emitWarning('defaulting legacy candidate red cause from dev.44 (further occurrences are not repeated)', {code: 'ROADMAP_UPGRADE'});
+    legacyCandidateRedWarned = true;
+  }
+  return {...f, detail: {kind: 'candidate-red', path: 'legacy', causes: [], summary: 'Legacy candidate red: cause was not recorded', evidence: [], directives: [], baseComparison: null}};
+}
 
 /** Arc jobs share the efficacy feed without participating in the unit state machine. */
 export type JobStageOutcomeFact = Readonly<{
@@ -731,7 +750,15 @@ export type IntegrationPushFact = Readonly<{
   error: string | null; settles: readonly NeedsUserId[];
 }>;
 
+/** dev.45: init-time availability of a declared walkthrough server, with named notice settlement. */
+export type WalkMcpFact = Readonly<{
+  kind: 'walkthrough-mcp'; inv: InvocationId; server: string; command: readonly string[];
+  connection: Readonly<{type: 'connected'; settles: readonly NeedsUserId[]}>
+    | Readonly<{type: 'unavailable'; status: string; error: string | null; signature: Sha256Hex; notice: NeedsUserId}>;
+}>;
+
 export type Fact =
+  | WalkMcpFact
   | IntegrationPushFact
   | CiFact
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
@@ -1821,6 +1848,10 @@ const parkRecord: Read<ParkRecord> = tagged('class', {
 });
 
 const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
+  'candidate-red': object((f): CandidateRedDetail => ({ kind: f.get('kind', literal('candidate-red')), path: f.get('path', oneOf(['legacy', 'repair batch', 'mutant survivor', 'held-claims brake', 'suite red vs tip green'] as const)), summary: f.get('summary', str), causes: f.get('causes', arrayOf(oneOf(CANDIDATE_RED_CAUSES))),
+    evidence: f.get('evidence', arrayOf(absR)), directives: f.get('directives', arrayOf(str)),
+    baseComparison: f.get('baseComparison', nullable(arrayOf(object((g) => ({lane: g.get('lane', laneR), base: g.get('base', shaR), result: g.get('result', oneOf(['pass', 'fail'] as const)), evidence: g.get('evidence', absR)}))))),
+  })),
   'witnesses-missing': object((f): StageOutcomeDetail => {
     const out = { kind: f.get('kind', literal('witnesses-missing')), missing: f.get('missing', testRefs()), failed: f.get('failed', testRefs()) };
     if (out.missing.length + out.failed.length === 0) throw new SchemaError(f.path, 'a missing or failed witness', out);
@@ -2131,6 +2162,16 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
 };
 
 export const fact: Read<Fact> = tagged('kind', {
+  'walkthrough-mcp': object((f): WalkMcpFact => ({kind: f.get('kind', literal('walkthrough-mcp')), inv: f.get('inv', invR), server: f.get('server', nonBlank), command: f.get('command', arrayOf(str, {nonEmpty: true})),
+    connection: f.get('connection', tagged<'connected' | 'unavailable', WalkMcpFact['connection']>('type', {
+      connected: object((g) => ({type: g.get('type', literal('connected')), settles: g.get('settles', arrayOf((v,p) => needsUserId(v,p)))})),
+      unavailable: object((g) => {
+        const status = g.get('status', nonBlank);
+        if (status === 'connected') throw new SchemaError(g.path, 'an unavailable MCP status', status);
+        return {type: g.get('type', literal('unavailable')), status, error: g.get('error', nullable(str)), signature: g.get('signature', sha256R), notice: g.get('notice', (v,p) => needsUserId(v,p))};
+      }),
+    })),
+  })),
   'integration-push': object((f): IntegrationPushFact => {
     const out = { kind: f.get('kind', literal('integration-push')), branch: f.get('branch', branchName), head: f.get('head', shaR),
       result: f.get('result', oneOf(['pushed', 'up-to-date', 'failed', 'diverged', 'no-origin'] as const)),
@@ -2305,8 +2346,9 @@ export const fact: Read<Fact> = tagged('kind', {
     const park = f.optional('park', parkRecord);
     const cause = f.optional('cause', holdCause);
     const detail = f.optional('detail', stageOutcomeDetail);
+    const legacyRed = s === 'candidate' && out.outcome === 'red' && detail === undefined;
     const wants = (DETAILED_OUTCOMES as Readonly<Record<string, StageOutcomeDetail['kind']>>)[`${s}/${out.outcome}`];
-    if (detail?.kind !== wants) throw new SchemaError(`${f.path}.detail`, wants === undefined ? 'absent (this outcome carries no detail)' : `a ${wants} detail`, detail);
+    if (!legacyRed && detail?.kind !== wants) throw new SchemaError(`${f.path}.detail`, wants === undefined ? 'absent (this outcome carries no detail)' : `a ${wants} detail`, detail);
     if (park !== undefined && out.class !== 'park') throw new SchemaError(`${f.path}.park`, 'absent unless the class is park', park);
     if (cause !== undefined && out.class !== 'hold') throw new SchemaError(`${f.path}.cause`, 'absent unless the class is hold', cause);
     // The chargeable bound is a design park: the unit needs a spec revision or a re-entry.

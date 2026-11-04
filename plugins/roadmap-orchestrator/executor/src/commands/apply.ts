@@ -1,3 +1,4 @@
+import { candidateReentryChange } from '../pipeline/candidate-red.ts';
 // Durable command effects, receipts and subject closure. Apply uses file CAS against an exported revision.
 // The frozen contract classifier and revision fence are shared with executor-built revisions.
 import { join } from 'node:path';
@@ -334,7 +335,8 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
   if (!(JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)) {
     return {
       kind: 'rejected',
-      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, a design park no revision re-opens there; re-enter it: a new unit with \`reenters: {unit: ${unitId}, fixes: ${unitId}/${f.stage}#${f.attempt}}\` that changes what that park ran under, then \`roadmap apply\``,
+      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, a design park no revision re-opens there; re-enter it: a new unit with \`reenters: {unit: ${unitId}, fixes: ${unitId}/${f.stage}#${f.attempt}}\` that changes what that park ran under, then \`roadmap apply\`. Re-entry keeps counters; set \`reenters.reset: {reason}\` when fresh chargeable rounds are warranted.`
+        + (f.detail?.kind === 'candidate-red' ? ` ${candidateReentryChange(f.detail)}` : ''),
     };
   }
   const known = u.spec;
@@ -815,7 +817,7 @@ export function applyWarnings(view: JournalView, plan: PlanM1, changes: readonly
     if (failures + 1 < bound) continue;
     out.push(`warning: ${c.unit} re-enters ${c.reenters} with ${failures} chargeable failures of its bound ${bound} and no reset: its next charged failure `
       + '(a red lane series, a gate revise) parks it for you instead of a fix round, so a gate\'s directives reach the builder only through you; '
-      + 'when the re-entry answers a known cause, cite a ruling as `reenters.reset` to start it at 0');
+      + 'when the re-entry answers a known cause, cite a ruling as `reenters.reset: {reason}` to start it at 0');
   }
   return out;
 }

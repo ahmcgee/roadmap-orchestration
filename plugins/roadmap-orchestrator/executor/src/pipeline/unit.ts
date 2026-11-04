@@ -1,3 +1,4 @@
+import { candidateRed, candidateReentryChange } from './candidate-red.ts';
 import { attemptSignals } from './attempts.ts';
 import { markers } from './surface.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
@@ -79,7 +80,6 @@ import type { PlanUnit } from '../input/plan.ts';
 import { reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
 import { revertedPathsDirective } from '../prompts/directives.ts';
-import type { FixRound } from '../prompts/inputs.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
 import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceTable,sameHolder } from '../resources/reserve.ts';
@@ -92,16 +92,16 @@ type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCanc
 import { failuresText,laneFailures } from './failures.ts';
 import { consumeJudgment,gate,gateDirectives,gateFindingEvidence,unitTip } from './gate.ts';
 import {
-batchMemberFix,candidate,candidateBrakeFix,candidateRefusalFix,candidateSeriesRoot,ff,latestCandidate,memberBatchCandidate,salvageRefusalFix,snapshot,
+candidate,candidateRefusalFix,candidateSeriesRoot,ff,salvageRefusalFix,snapshot,
 } from './integrate.ts';
 import { invocationDir } from './invoke.ts';
-import { type LaneRecord,latestSpecSeries,presentCheckouts,removeCheckout,seriesDirty,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
+import { latestSpecSeries,presentCheckouts,removeCheckout,seriesDirty,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
 
 import { prepare } from './prepare.ts';
-import { mutantFix,reproduce,specFacts,syncRepairs } from './reproduce.ts';
+import { reproduce,specFacts,syncRepairs } from './reproduce.ts';
 import { disputeDirective } from './review.ts';
 import {
-type DecidedRound,type RoundInput,candidateFixRound,failingEvidenceDirs,failingLaneDirectives,gateReviseRound,laneFixRound,smokeFixRound,steerBrief,
+type DecidedRound,type RoundInput,candidateFixRound,gateReviseRound,laneFixRound,smokeFixRound,steerBrief,
 witnessCheckoutFixRound,witnessFixRound,
 } from './rounds.ts';
 
@@ -151,6 +151,7 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): r
   if (called?.kind === 'lost') out.push(absPath(join(called.invDir, STDOUT_FILE)), absPath(join(called.invDir, STDERR_FILE)));
   if (f.stage === 'lanes') out.push(specSeriesRoot(ctx.runDir, parent));
   if (f.stage === 'candidate') out.push(candidateSeriesRoot(ctx.runDir, parent));
+  if (f.detail?.kind === 'candidate-red') out.push(...f.detail.evidence);
   if (f.stage === 'salvage') out.push(unitWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id));
   out.push(keptSpecPath(ctx, unit));
   return [...new Set(out)].filter((p) => existsSync(p));
@@ -196,10 +197,11 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       `Unit ${unit.id}: ${summary} (spec ${path} at rev ${spec.rev}).`,
       ...(exceeded === null ? [] : [`The ${STAGE_ROLE[f.stage as CallStage]} call ${exceeded.inv} outgrew the model's context window: its prompt was ${exceeded.promptBytes} bytes.`]),
       ...(faulted === null ? [] : [`The executor threw: ${faulted.stack}`]),
+      ...(f.detail?.kind === 'candidate-red' ? [f.detail.summary] : []),
       ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
     ]
       .filter((x) => x !== '').join(' '),
-    recommendation,
+    recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : recommendation,
     options: [],
     evidence: haltEvidence(ctx, unit, f),
   };
@@ -232,33 +234,6 @@ function buildRunOf(ctx: StageContext, unit: PlanUnit): BuildRun {
     workDir: workDir(ctx.runDir, parent),
     reservation: heldBy(ctx, { type: 'stage', unit: unit.id, stage: 'build', attempt: parent.attempt }),
   };
-}
-
-/** Why candidate attempt `at` (an outcome `red`) was red, as its fix round reads it: the fix, and the suite's ledger. */
-function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent): Readonly<{ fix: FixRound; suite: readonly LaneRecord[] }> {
-  const view = ctx.journal.view;
-  // M3 (B7): a member of a repair batch red on its own selection: the batch candidate's evidence.
-  const batch = memberBatchCandidate(view, at);
-  if (batch !== null) return { fix: batchMemberFix(ctx, unit, batch), suite: [] };
-  // Red on the candidate, green on the tip alone: the suite's failing lanes are the evidence.
-  const root = candidateSeriesRoot(ctx.runDir, at);
-  const specRoot = absPath(join(root, '_spec'));
-  const head = latestCandidate(ctx, unit.id).post.new;
-  const suite = [...seriesLedger(ctx, at, loadUnitSpec(ctx, unit).spec.lanes, 'spec', head, specRoot), ...seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', head, root)];
-  // M3 (B3): a vacuity repair's candidate that did not kill its mutant (the suite and the brake green).
-  const survived = mutantFix(ctx, at);
-  if (survived !== null) return { fix: survived, suite };
-  const failing = suite.filter((l) => l.verdict !== 'pass');
-  // M3: a green suite with red held claims (the brake): the obligations and journey lanes left red.
-  if (failing.length === 0 && [...seriesDirty(view, root), ...seriesDirty(view, specRoot)].length === 0) return { fix: candidateBrakeFix(ctx, unit, at), suite };
-  // This red suite was compared with a green tip-alone series before the candidate outcome was recorded.
-  const base = latestCandidate(ctx, unit.id).expect.integrationTip;
-  const evidence = absPath(join(evidenceRoot(ctx.runDir, at), 'base'));
-  return { fix: {
-    failingEvidenceDirs: [...(failing.length > 0 ? failing : suite).flatMap(failingEvidenceDirs), evidence],
-    baseComparison: failing.map((lane) => ({lane: lane.lane, base, result: 'pass', evidence})),
-    directives: [...failingLaneDirectives(failing), `The candidate is red and the integration base ${base} is green. Base comparison evidence: ${evidence}.`],
-  }, suite };
 }
 
 /**

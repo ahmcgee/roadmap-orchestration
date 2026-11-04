@@ -159,7 +159,7 @@ export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
     if (started?.kind !== 'walk-started') throw new Error(`walk-ended of ${job}, which never started`);
     return view.rewalkSeq(started.milestone) > x.seq ? [job] : [];
   });
-  return new Set([...view.integrationPushes().flatMap((p) => p.fact.settles), ...view.holistic().baselineHeld.flatMap((h) => h.items), ...[...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
+  return new Set([...view.walkMcp().flatMap((w) => w.connection.type === 'connected' ? w.connection.settles : []), ...view.integrationPushes().flatMap((p) => p.fact.settles), ...view.holistic().baselineHeld.flatMap((h) => h.items), ...[...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
     const id = raisedFor(view, { type: 'job', job });
     return id === null ? [] : [id];
   })]);
@@ -210,7 +210,7 @@ export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecR
  * to the same backend and model it was pinned on (commands/apply.ts), so that is what the item recommends.
  */
 export function routingChangedRecommendation(unit: UnitId, floor: RiskTier): string {
-  return `Restore the routing of build.${floor} or re-enter the unit under a new id. Once build.${floor} resolves to the same backend `
+  return `Restore the routing of build.${floor} or re-enter the unit under a new id (set \`reenters.reset\` with a reason when fresh chargeable rounds are warranted; otherwise counters are inherited). Once build.${floor} resolves to the same backend `
     + `and model the unit was dispatched on (its effort may differ), \`roadmap resume ${unit}\` re-pins it under the routing in force and `
     + 're-enters it at the stage it parked at, no spec edit needed. Or acknowledge this item to leave the unit parked.';
 }
@@ -224,7 +224,8 @@ export function reentryRecommendation(unit: UnitId, stage: Exclude<Stage, 'retir
   const fixes = failureRefOf({ type: 'outcome', unit, stage, attempt });
   return `Read the evidence. A park at ${stage} is final: \`roadmap resume ${unit}\` does not re-open it. To re-run the work, `
     + `add a unit with a new id to the plan that re-enters ${unit} (\`"reenters": {"unit": "${unit}", "fixes": "${fixes}"}\`, its fixed spec, the same scope; `
-    + `\`fixes\` names this park or one of the unit's lane failures in \`roadmap status\`, and the re-entry must change what that failure ran under), `
+    + `\`fixes\` names this park or one of the unit's lane failures in \`roadmap status\`, and the re-entry must change what that failure ran under). `
+    + 'It keeps lineage counters. When fresh charged rounds are warranted, add `reenters.reset` as {"reason": "what changed to justify fresh rounds"}; this clears chargeable failures while lifetime attempts and other counters remain. Then '
     + `acknowledge this item, then \`roadmap apply\` the revised plan: the new unit's prepare creates its branch roadmap/<arc>/<new id> at the `
     + `tip of ${branch}. Never create that branch by hand. Or acknowledge this item to leave the unit parked.`;
 }

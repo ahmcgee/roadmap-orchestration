@@ -223,3 +223,21 @@ export function readClaude(stdout: string): BackendReading {
     : { kind: 'absent', why: 'no structured_output in the result' };
   return { sessionId, output, usage, backendErrors, stopReason, access: { reads, denied } };
 }
+
+export type ClaudeMcpStatus = Readonly<{name: string; status: string; error: string | null}>;
+
+/** Init availability only; no init/MCP census yet is unknown, including a stream cut before init. */
+export function readClaudeMcp(stdout: string): readonly ClaudeMcpStatus[] | null {
+  const init = jsonLines(stdout, 'stdout').find((e) => e['type'] === 'system' && e['subtype'] === 'init');
+  if (init === undefined || init['mcp_servers'] === undefined) return null;
+  const servers = init['mcp_servers'];
+  if (!Array.isArray(servers)) throw new MalformedOutputError('stdout', 'init mcp_servers is not an array');
+  const seen = new Set<string>();
+  return servers.map((raw: unknown) => {
+    if (typeof raw !== 'object' || raw === null) throw new MalformedOutputError('stdout', 'invalid MCP server entry');
+    const s = raw as Record<string, unknown>;
+    if (typeof s['name'] !== 'string' || typeof s['status'] !== 'string' || s['name'] === '' || s['status'] === '' || seen.has(s['name'])) throw new MalformedOutputError('stdout', 'invalid or repeated MCP server name/status');
+    seen.add(s['name']);
+    return {name:s['name'], status:s['status'], error:s['error'] === undefined || s['error'] === null ? null : typeof s['error'] === 'string' ? s['error'] : JSON.stringify(s['error'])};
+  });
+}

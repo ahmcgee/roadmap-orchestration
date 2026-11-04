@@ -40,6 +40,7 @@ export interface JournalView {
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
   ciFacts(): readonly CiFact[];
+  walkMcp(): readonly import('./events.ts').WalkMcpFact[];
   integrationPushes(): readonly Readonly<{ seq: number; fact: import('./events.ts').IntegrationPushFact }>[];
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }>;
 

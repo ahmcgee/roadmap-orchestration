@@ -97,8 +97,8 @@ resources; it retires the gated report without candidate publication. Later spik
 refused and escalated to an owner request. Reserved new unit ids include batch-n, jobs and mutants.
 
 Root splits conserve parent text, systems, obligations, dependencies and milestone ownership; deflake cannot split.
-Re-entry must identify a recorded failure where required and does not silently clear lineage counters. Cuts and reset
-carry reasons. All structural/runtime restrictions are applied again by the classifier, not only the parser.
+Re-entry must identify a recorded failure where required and keeps lineage counters. `reenters.reset: {reason}` clears
+only chargeable failures; lifetime attempts and other counters remain. Cuts and reset carry reasons. All structural/runtime restrictions are applied again by the classifier, not only the parser.
 
 ### Specs and design
 
@@ -1075,3 +1075,28 @@ can close the item but never bypasses the shared ancestry rule. The remote updat
 on its observed tip *only after* verifying fast-forward ancestry; a race refuses, foreign history is never overwritten,
 and `main` is always refused. Absence of `origin` performs no network operation and records `no-origin` only once per
 arc across restarts, with no needs-user notice. `roadmap pr` retains its own canonical push, now usually up-to-date.
+
+### dev.45 candidate-red detail
+
+`candidate/red` stage outcomes carry `detail {kind: "candidate-red", path, causes, summary, evidence, directives, baseComparison}`.
+`path` is `suite red vs tip green`, `held-claims brake`, `mutant survivor`, or `repair batch`. The summary/directives name
+red obligations and declared repairs, unexplained/background lane failures, dirty/moved checkouts, mutant findings,
+and RUN/REUSED grading invocations with record/evidence paths. Fix rounds and bounded parks read this same diagnosis.
+`baseComparison` is a lane/base/result/evidence array or null. Older reds default at read time to `path: "legacy"`, empty causes,
+an explicit unavailable-cause summary, empty evidence/directives and null comparison, with `ROADMAP_UPGRADE`; kept bytes stay unchanged.
+
+Journey reuse additionally requires every current witness test id on the lane to be present in the certified record. Missing IDs force execution; covered records remain reusable across obligation evidence refreshes. Files and normative revision retain their existing input/proof checks; a revision alone does not invalidate a record covering the current IDs.
+
+Builder decisions use existing spec.patch and kept-spec history to establish the last text author. Builders may replace their own current text. Root/other-authored text survives repeats; differing proposals become stable `departure.<hash>` decisions through the existing departure channel. No provenance field or runtime migration is added.
+
+### dev.45 walkthrough MCP availability
+
+`walkthrough-mcp` facts retain `inv`, `server`, configured `command` argv and `connection`: either
+`{type: "unavailable", status, error: string|null, signature: sha256, notice: needsUserId}` or
+`{type: "connected", settles: needsUserId[]}`. Each invocation/server is recorded once, from Claude stream-json init.
+Unavailable statuses (including a server missing from an explicit census) raise a non-blocking arc notice with reason
+`walkthrough-mcp`, deduplicated arc-wide by server and hash of status/error. The notice names command, status and stdout
+evidence and recommends fixing walkthrough.mcp for the worktree. Builds continue. A later connected configured Claude
+build or acting walk explicitly settles that server's open notice IDs; unrelated applies/resumes do not. Named ack remains
+available. No declared MCP config or no init census produces no availability fact or notice. Monitoring and spawn recovery
+share the same idempotent inspection. Old logs need no new fields; the new fact collection starts empty.
