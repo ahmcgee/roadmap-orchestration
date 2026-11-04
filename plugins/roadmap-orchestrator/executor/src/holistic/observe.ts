@@ -76,11 +76,20 @@ export function observationStore(observations: Iterable<Observation>): Observati
 }
 
 /** The reusable observation for a reuse key: all four keys equal (the hash was checked when it entered the store), else null. */
-export const reuse = (store: ObservationStore, key: ReuseKey): Observation | null => store.get(reuseKeyText(key)) ?? null;
+export function reuse(store: ObservationStore, key: ReuseKey, witnesses: readonly WitnessRef[] = []): Observation | null {
+  const observation = store.get(reuseKeyText(key)) ?? null;
+  if (observation === null) return null;
+  const ids = new Set(observation.record.records.map((r) => r.testId));
+  for (const witness of witnesses) {
+    if (witness.lane !== key.lane) throw new Error(`witness on ${witness.lane} used for lane ${key.lane}`);
+    if (!witness.testIds.every((id) => ids.has(id))) return null;
+  }
+  return observation;
+}
 
 /** An obligation's verdict on a reuse key: null when nothing is observed there (missing, stale, or never run). */
 export function observedVerdict(store: ObservationStore, key: ReuseKey, witness: WitnessRef): ObservationVerdict | null {
   if (witness.lane !== key.lane) throw new Error(`a witness on lane ${witness.lane} read on ${reuseKeyText(key)}`);
-  const o = reuse(store, key);
+  const o = reuse(store, key, [witness]);
   return o === null ? null : verdictOf(o.record, witness);
 }

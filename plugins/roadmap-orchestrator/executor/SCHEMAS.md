@@ -1084,3 +1084,5 @@ red obligations and declared repairs, unexplained/background lane failures, dirt
 and RUN/REUSED grading invocations with record/evidence paths. Fix rounds and bounded parks read this same diagnosis.
 `baseComparison` is a lane/base/result/evidence array or null. Older reds default at read time to `path: "legacy"`, empty causes,
 an explicit unavailable-cause summary, empty evidence/directives and null comparison, with `ROADMAP_UPGRADE`; kept bytes stay unchanged.
+
+Journey reuse additionally requires every current witness test id on the lane to be present in the certified record. Missing IDs force execution; covered records remain reusable across obligation evidence refreshes. Files and normative revision retain their existing input/proof checks; a revision alone does not invalidate a record covering the current IDs.
