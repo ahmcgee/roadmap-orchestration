@@ -26,7 +26,6 @@ export type Certification = Readonly<{
     state: 'queued' | 'running' | 'red' | 'green' | 'reused' | 'blocked'; verdict: CommandVerdict | null;
     flaky: boolean; inv: InvocationId | null; holds: readonly ResourceUnit[] }> [];
 }>;
-const same = (a: Parent, b: Parent): boolean => canonicalJson(a) === canonicalJson(b);
 
 /** Match each launch to the reservation actually held at its journal position, never today's cost estimate. */
 export function workRuns(ctx: Pick<StageContext, 'journal' | 'runDir'>, events: readonly Event[]): readonly WorkRun[] {
@@ -78,14 +77,20 @@ export function certification(ctx: StageContext, unit: PlanUnit, events: readonl
     { set: 'spec' as const, lanes: seriesOrder(laneOrder(spec), reds.spec), root: specSeriesRoot(ctx.runDir, parent) },
     { set: 'suite' as const, lanes: seriesOrder(fastSuiteLanes(ctx, spec, at), reds.suite), root: fastSuiteRoot(ctx.runDir, parent, 'suite') },
   ];
+  // This attempt's lane spawns, selected once: a cheap unit/stage pre-filter before the canonical parent comparison, and runs
+  // by invocation. Filtering every spawn of the arc per lane made status O(units x lanes x spawns) (field arc: 76 s).
+  const key = canonicalJson(parent);
+  const attemptSpawns = view.opsOf('proc.spawn').filter((s) => s.parent.type === 'stage' && s.parent.unit === unit.id && s.parent.stage === 'lanes'
+    && s.expect.subject.purpose === 'lane' && canonicalJson(s.parent) === key);
+  const runsByInv = new Map(runs.map((r) => [r.inv, r] as const));
   return { ...empty, attempt: parent.attempt, lanes: groups.flatMap(({ set, lanes, root }) => lanes.map((lane) => {
-    const spawns = view.opsOf('proc.spawn').filter((s) => same(s.parent, parent) && s.expect.subject.purpose === 'lane' && s.expect.subject.set === set && s.expect.subject.at === at && s.expect.subject.lane === lane.id);
+    const spawns = attemptSpawns.filter((s) => s.expect.subject.purpose === 'lane' && s.expect.subject.set === set && s.expect.subject.at === at && s.expect.subject.lane === lane.id);
     const last = spawns.at(-1);
     const live = last !== undefined && view.doneOf(last.op) === null;
     // Reading the aggregate before settlement would falsely turn an unfinished run into a process fault.
     const record = live ? null : laneSummaryIn(ctx, parent, lane, set, at, root);
     const inv = live ? invocationId(last.op, last.ordinal) : record?.inv ?? null;
-    const run = runs.find((r) => r.inv === inv);
+    const run = inv === null ? undefined : runsByInv.get(inv);
     const verdict = record?.verdict ?? null;
     return { id: lane.id, set, redFirst: reds[set].has(lane.id),
       state: live ? 'running' as const : record?.reused ? 'reused' as const : verdict === 'pass' && !record?.flaky ? 'green' as const
