@@ -139,3 +139,5 @@ The supervisor owns restart/backoff; containment emptiness precedes releasing re
 Close admissions when the intended slice is complete. Let final audit, selected witnesses, batch lanes, close-out document publication and snapshots settle. Distinguish a completed active arc from a sealed one; report outstanding findings and debt honestly. Prepare the stacked PR with `pr`, then present the brief and demo location/rough edges. Demo controls are up/down/hold/release; promotion never restarts a held demo.
 
 Use `chain status` before another start. Prepare the next baseline on your own checkout, preserving the previous head and allowed between-arc corpus/config/vision changes. Stop when the vision is silent or the acknowledged chain bound disallows another start. Lookup details belong in the reference.
+
+Candidate red parks retain the cause, RUN/REUSED grading records and original evidence. Read that diagnosis before revising the work.

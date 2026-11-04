@@ -1,3 +1,4 @@
+import { candidateRedDefault } from './events.ts';
 // The fold: the one derivation of run state from the event log. Everything the executor knows about ops,
 // units, spend and needs-user comes from folding events.jsonl in order. `state.json` exists only in
 // the snapshot tree, derived from that snapshot's log prefix, and is never read back for a decision.
@@ -948,7 +949,8 @@ export class Fold implements JournalView {
     }
   }
 
-  #fact(f: Fact, fail: (detail: string) => never, at: Readonly<{ seq: number; at: IsoTime }>): void {
+  #fact(raw: Fact, fail: (detail: string) => never, at: Readonly<{ seq: number; at: IsoTime }>): void {
+    const f = raw.kind === 'stage-outcome' && 'unit' in raw ? candidateRedDefault(raw) : raw;
     switch (f.kind) {
       case 'external-witness':
         this.#ciFacts.push(f);

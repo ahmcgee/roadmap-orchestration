@@ -1,3 +1,4 @@
+import { candidateRed } from './candidate-red.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
 import { methodContext,runReview,diagnosisDue,diagnosed } from './surface.ts';
@@ -121,6 +122,11 @@ export function record<S extends OutcomeStage>(
   ctx: StageContext, parent: StageParent & Readonly<{ stage: S }>, kind: StageOutcomeKind<S>, needsUser: NeedsUserContent | null = null,
   facts: ParkFacts = NO_PARK_FACTS, cause?: HoldCause, detail?: StageOutcomeDetail,
 ): StageDone<S> {
+  if (parent.stage === 'candidate' && kind === 'red' && detail === undefined) {
+    const unit = ctx.plan().units.find((u) => u.id === parent.unit);
+    if (unit === undefined) throw new Error(`candidate red for unplanned unit ${parent.unit}`);
+    detail = candidateRed(ctx, unit, parent).detail;
+  }
   const outcome = { stage: parent.stage, kind } as Extract<StageOutcome, Readonly<{ stage: S }>>;
   const u = ctx.journal.view.unit(parent.unit);
   const next = transition(u, outcome);

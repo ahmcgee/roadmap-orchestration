@@ -75,10 +75,37 @@ describe('the held-claims brake', () => {
       const decided = r.journal.view.unit(U1).decided!;
       const fix = candidateBrakeFix(r.ctx, r.unit('u1'), { type: 'stage', unit: U1, stage: 'candidate', attempt: decided.attempt });
       assert.match(fix.directives.join('\n'), /Obligation I-1 must hold on the candidate/);
-      assert.equal(fix.failingEvidenceDirs.length, 1);
+      assert.equal(fix.failingEvidenceDirs.length, 3);
     } finally {
       r.journal.close();
     }
+  });
+
+  for (const reused of [false, true]) test(`candidate.red-cause-park-${reused ? 'reused' : 'run'}: park keeps the brake cause and grading provenance`, T, async () => {
+    const { d, control } = holisticArc({ steps, units: [{ id: 'u1', obligations: ['I-1'] }],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }], mapping: MAPPED, trees: {}, planExtra: { limits: { chargeable: 1 } } });
+    scriptTree(control, tipTree(d), { outcomes: { t1: 'pass' } });
+    const r = contextFor(d);
+    try {
+      await approveThenScript(r, control, { t1: 'fail' });
+      if (reused) {
+        const { runJourneySeries, arcJourneyLane, laneRuntime } = await import('../src/pipeline/lanes.ts');
+        const { holisticInForce } = await import('../src/pipeline/stages.ts');
+        const { sha } = await import('../src/core/ids.ts');
+        const lane = holisticInForce(r.ctx).obligations!.lanes[0]!;
+        const parent = r.journal.view.unit(U1).decided!;
+        await runJourneySeries(r.ctx, { type: 'unit', parent: { type: 'stage', unit: U1, stage: 'gate', attempt: parent.attempt }, rt: laneRuntime(r.ctx, U1) }, [arcJourneyLane(lane)],
+          { path: absPath(join(d.runDir, 'certified')), checkout: { type: 'detached', at: sha(git(d.repo, 'rev-parse', `roadmap/${d.arc}/u1`)) } }, { reuse: false, stop: () => false });
+      }
+      const result = await runUnit(r.ctx, r.unit('u1'), admitAll);
+      assert.equal(result.kind, 'parked');
+      if (result.kind !== 'parked') throw new Error(JSON.stringify(result));
+      assert.match(result.needsUser.summary, /held-claims brake.*I-1/s);
+      assert.match(result.needsUser.summary, reused ? /REUSED/ : /RUN/);
+      assert.ok(result.needsUser.evidence.some((p) => p.endsWith('witness.json')));
+      const detail = r.journal.view.unit(U1).decided!.detail;
+      assert.equal(detail?.kind, 'candidate-red');
+    } finally { r.journal.close(); }
   });
 
   test('brake.base-red: the same obligation not held on the tip alone either: base-red (uncharged)', T, async () => {

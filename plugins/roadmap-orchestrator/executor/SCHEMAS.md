@@ -1075,3 +1075,12 @@ can close the item but never bypasses the shared ancestry rule. The remote updat
 on its observed tip *only after* verifying fast-forward ancestry; a race refuses, foreign history is never overwritten,
 and `main` is always refused. Absence of `origin` performs no network operation and records `no-origin` only once per
 arc across restarts, with no needs-user notice. `roadmap pr` retains its own canonical push, now usually up-to-date.
+
+### dev.45 candidate-red detail
+
+`candidate/red` stage outcomes carry `detail {kind: "candidate-red", path, causes, summary, evidence, directives, baseComparison}`.
+`path` is `suite red vs tip green`, `held-claims brake`, `mutant survivor`, or `repair batch`. The summary/directives name
+red obligations and declared repairs, unexplained/background lane failures, dirty/moved checkouts, mutant findings,
+and RUN/REUSED grading invocations with record/evidence paths. Fix rounds and bounded parks read this same diagnosis.
+`baseComparison` is a lane/base/result/evidence array or null. Older reds default at read time to `path: "legacy"`, empty causes,
+an explicit unavailable-cause summary, empty evidence/directives and null comparison, with `ROADMAP_UPGRADE`; kept bytes stay unchanged.

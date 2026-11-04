@@ -89,7 +89,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Walk and comparison evidence entries are exact saved file paths; explanations belong in report text.
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
 4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
-   retain unit attribution; only a green exact head is fast-forwarded. Every successful integration fast-forward
+   retain unit attribution; only a green exact head is fast-forwarded. Candidate reds durably name their cause,
+   grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. Every successful integration fast-forward
    (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
    Pushes use an explicit lease and require the remote tip to be an ancestor; `main` is never pushed. Startup
    retries the current head after a crash; an up-to-date remote is a no-op. Snapshots and retirement continue
