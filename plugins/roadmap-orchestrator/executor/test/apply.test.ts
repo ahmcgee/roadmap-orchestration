@@ -967,7 +967,7 @@ for (const c of BOUND_CASES) {
       if (!c.warns) assert.deepEqual(warnings, []);
       else {
         assert.equal(warnings.length, 1, JSON.stringify(receipt.verified));
-        assert.match(warnings[0]!, /^warning: u4 re-enters u1 with 2 chargeable failures of its bound 3 and no reset: its next charged failure .*parks it for you instead of a fix round.*`reenters\.reset`/);
+        assert.match(warnings[0]!, /^warning: u4 re-enters u1 with 2 chargeable failures of its bound 3 and no reset: its next charged failure .*parks it for you instead of a fix round.*`reenters\.reset[:`]/);
       }
     } finally {
       r.journal.close();
