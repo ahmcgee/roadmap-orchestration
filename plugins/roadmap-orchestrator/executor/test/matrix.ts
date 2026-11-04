@@ -144,10 +144,16 @@ export const FIXTURE_WITNESSES_MISSING = 'fixture: lanes witnesses-missing → f
 export const FIXTURE_SMOKE_SURVIVED = 'fixture: lanes smoke-survived → one charged fix round → the gate with the survivor (allowance reused by key)';
 export const FIXTURE_KNOWN_DEFECT = 'fixture: lanes known-defect (uncharged) → prepare held under known-defect{id, fixUnit} → released by the fixer\'s merge → merges';
 
+/** Background push results have no stage attribution in these pipeline fixtures without origin. */
+export const PIPELINE_EXCLUDED_LABELS: Readonly<Record<string, string>> = {
+  'integration-push.after-network': 'without origin this is only a no-origin result, asynchronously interleaved with unrelated stages; the INTEGRATION_PUSH B3 cell crashes after real remote acceptance',
+  'integration-push.after-result': 'without origin this is the one quiet no-origin fact; the INTEGRATION_PUSH B5 cell crashes a failed result and checks notice reconstruction and settlement',
+};
+
 /**
  * The executor's crash points a supervised one-unit run passes through, by boundary (the whole-pipeline
  * rows). The test enumerates them from a recording run (test/fixtures/pm-record.ts) and requires exactly
- * these. Not here: runner.* (occurrences count per process and every runner is its own process, so
+ * these plus PIPELINE_EXCLUDED_LABELS. Not here: runner.* (occurrences count per process and every runner is its own process, so
  * occurrence 1 always lands in the first runner, the startup smoke's: the proc.spawn and runner-death rows
  * crash them) and sup.* (the supervisor's, crashed by the supervisor/host row on the same one-unit arc).
  */
@@ -156,7 +162,7 @@ const PIPELINE_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B2: [
     'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
     'salvage.act-start', 'candidate.act-start', 'ff.act-start', 'snapshot.act-start', 'spec.patch.before-write', 'recover.before-op',
-    'revision.commit.after-intent',
+    'revision.commit.after-intent', 'integration-push.after-ff',
   ],
   B3: [
     'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'salvage.after-copy-out',
@@ -193,7 +199,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
   B1: ['log.append.before-write', 'log.append.after-partial-write'],
   B2: [
     'command.apply.queued', 'command.apply.before-effect', 'log.append.after-fsync', 'spawn.after-intent', 'resource.after-intent', 'worktree.create.act-start', 'worktree.remove.act-start', 'evidence.act-start',
-    'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'docs.act-start', 'packreview.after-started', 'witnesscheck.after-lane-files', 'smoke.after-patch-kept', 'mutant.act-start',
+    'ff.act-start', 'snapshot.act-start', 'revision.commit.after-intent', 'needsuser.raise.before-publish', 'audit.after-started', 'docs.act-start', 'packreview.after-started', 'witnesscheck.after-lane-files', 'smoke.after-patch-kept', 'mutant.act-start', 'integration-push.after-ff',
   ],
   B3: [
     'launch.after-launch-json', 'launch.after-spawn', 'worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy', 'snapshot.after-commit-tree',
@@ -214,7 +220,7 @@ const HOLISTIC_LABELS: Readonly<Record<Boundary, readonly string[]>> = {
 
 const HOLISTIC_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the M3 fact (a witness, the latch, an audit\'s start or end, root plan-applied, docs-covered, docs-published, arc-completed) or the rev 3 one (smoke-ran) is absent after the restart, a torn line discarded once: the job or the unit\'s stage resumes and writes it once (a capture from the same inputs, a smoke run again within its allowance), the arc ends as uncrashed',
-  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, campaign-audit or pack-review call, evidence, docs commit, docs ff, snapshot, the root revision and owner item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); the arc ends as uncrashed',
+  B2: 'the job\'s open op (its slot or lane reservation, checkout, lane, campaign-audit or pack-review call, evidence, docs commit, docs ff, snapshot, the root revision and owner item) is closed as its reconciler says (a spawn lost, the rest redone or reconciled), or a capture fact (pack-review-started included) is durable with nothing run: the job resumes as the same job from its recorded inputs, every backend call made once; an unpublished close-out is abandoned and runs again as the next docs publication; the build\'s witness lane files published with no call made: the restarted build publishes the same bytes and calls once; the smoke\'s patch kept or its mutant.apply open: redone, the lanes attempt run again (one more smoke execution, within the allowance); a published ff with no push enqueued is recovered by the startup push of the current head; the arc ends as uncrashed',
   B3: 'inside the job\'s op: its reconciler finishes or redoes it (a live lane adopted, the same SHAs), a lens read resumes at the next lens, a close-out ff published is finished (docs-covered, docs-published, the snapshot, the slot released); a mutant checkout made, its patch not applied: removed and redone; the arc ends as uncrashed',
   B4: 'the op\'s postcondition holds (reconciled); a read call (the pack review\'s included) or a root revision is consumed from the record (never asked again), its aftermath written only where missing (the review ended once; a gate note banked once after its approval); a frontier dispatch pinned, its in-session outcome unwritten: the next attempt finds the pin; a smoke\'s mutant lanes witnessed, its run unrecorded: run again within the allowance; one plan-applied and one owner item; the arc ends as uncrashed',
   B5: 'nothing is open: the job, the close-out or the completion runs on from its facts (no second latch, audit-ended, docs-published or arc-completed; the terminal snapshot published by the restart); a witness check\'s certified observation reused, never run twice; a smoke-ran read back by its key (no second execution), or a mutant applied with its lanes not run: run again within the allowance; the arc ends as uncrashed',
@@ -228,7 +234,7 @@ function pipelineCells(extra: Readonly<Partial<Record<Boundary, readonly string[
 
 const PIPELINE_RECOVERY: Readonly<Record<Boundary, string>> = {
   B1: 'the torn or unwritten record is absent after the restart (a torn line is discarded with one tail-discarded fact); a lost done leaves its op open for its reconciler, a lost intent never began; the arc ends as uncrashed',
-  B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once; the start\'s revision.commit is finished from its kept payload, reconciled); the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
+  B2: 'the supervisor restarts the executor; the open op is redone (a spawn with no runner is closed lost and its stage runs again, the call made once; the start\'s revision.commit is finished from its kept payload, reconciled); a published ff with no push enqueued is recovered by the startup push of the current head; the arc ends as uncrashed: same stage outcomes, tree, one publication per unit, one usage fact per invocation',
   B3: 'the reconciler finishes or redoes the op from its postcondition (a live runner adopted, an exited one re-adapted); the same SHAs; no backend call twice; a start cut short between keeping the plan\'s bytes and its plan-applied fact records revision 1 on the respawn; the arc ends as uncrashed',
   B4: 'the postcondition holds: the op closes reconciled (a spawn with exit.json re-adapted, redone), its result consumed, never dispatched again; the start\'s revision.commit with its plan-applied written closes reconciled, no second fact; the arc ends as uncrashed',
   B5: 'nothing is open for recovery: a stage cut short after its last op runs again as a new attempt (a completed backend call is consumed, not re-run); the arc ends as uncrashed',
@@ -1141,10 +1147,10 @@ export const MATRIX: readonly Row[] = [
     cells: jobCells([
       'resource.after-intent', 'resource.after-done', 'candidate.act-start', 'candidate.after-commit-tree', 'candidate.act-end', 'batch.after-candidate',
       ...JOB_OPS.filter((l) => !l.startsWith('resource.')), 'evidence.after-partial-copy', ...LOG_APPENDS, 'ff.act-start', 'ff.act-end', 'snapshot.act-start',
-      'snapshot.after-commit-tree', 'snapshot.act-end', 'lanes.after-census-before-certified',
+      'snapshot.after-commit-tree', 'snapshot.act-end', 'lanes.after-census-before-certified', 'integration-push.after-ff',
     ], {
       B1: 'a batch lane\'s witness lost: the lane runs again and witnesses once more',
-      B2: 'the batch\'s slot reserve, chained candidate.merge, checkout, lane or batch ff durable, not acted: closed (the ff unpublished at T: a batch CAS is never redone), the batch holder abandoned and batch-1 run again as its next attempt, published once',
+      B2: 'the batch\'s slot reserve, chained candidate.merge, checkout, lane or batch ff durable, not acted: closed (the ff unpublished at T: a batch CAS is never redone), the batch holder abandoned and batch-1 run again as its next attempt, published once; after a durable published ff, startup pushes the current head and the batch finishes from its records',
       B3: 'inside the chain\'s act, a checkout or a lane: redone to the same commits, or adopted; the batch published once',
       B4: 'the candidate made (abandoned, run again), or the batch ff moved integration with no done (reconciled published, finishBatch writes the snapshot and releases); both members retired by the one ff',
       B5: 'nothing open (a clean lane census with no series-certified: the series uncertified, its lanes run again): the batch goes on from its records',
@@ -1176,10 +1182,10 @@ export const MATRIX: readonly Row[] = [
       'launch.after-spawn', 'spawn.after-runner-exit', 'spawn.after-result', 'spawn.after-usage', 'spawn.after-done', 'evidence.act-start',
       'evidence.after-partial-copy', 'evidence.act-end', 'worktree.remove.act-start', 'worktree.remove.inside', 'docs.after-lanes', 'ff.act-start', 'ff.act-end',
       'revision.commit.after-docs', ...LOG_APPENDS, 'revision.commit.after-fact', 'snapshot.act-start', 'snapshot.after-commit-tree', 'snapshot.act-end',
-      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt', 'lanes.after-census-before-certified',
+      'docs.after-snapshot', 'command.apply.after-effect', 'command.apply.after-receipt', 'lanes.after-census-before-certified', 'integration-push.after-ff',
     ], {
       B1: 'the rule\'s plan-applied lost inside its revision.commit: finished from its payload (reconciled) with the docs ff it published',
-      B2: 'the preempt kill or the publication\'s op open: the kill finished, the candidate\'s slot released, the lane closed; an unpublished docs holder abandoned and the rule re-evaluated and published once',
+      B2: 'the preempt kill or the publication\'s op open: the kill finished, the candidate\'s slot released, the lane closed; an unpublished docs holder abandoned and the rule re-evaluated and published once; after a durable published ff, the revision and command reconcile and startup pushes the current head',
       B3: 'inside the kill (cancel written) or the docs commit or a lane: finished or redone; the rule publishes once',
       B4: 'the kill quiesced, the docs committed or published, the revision\'s fact or the receipt written: reconciled, nothing twice',
       B5: 'the kill or the snapshot done: the publication finishes and releases the slot',

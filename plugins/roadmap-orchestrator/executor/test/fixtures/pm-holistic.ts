@@ -28,6 +28,7 @@ import { lensStep,packReviewStep } from '../helpers/holistic.ts';
 import { git,tmpDir } from '../helpers/repo.ts';
 import type { Step } from '../helpers/scenario.ts';
 import { writeWitnessControl } from '../helpers/witness.ts';
+import { PIPELINE_EXCLUDED_LABELS } from '../matrix.ts';
 import { ADVANCES,obligationsJson } from './brake-common.ts';
 import { corpusTarget } from './corpus-target.ts';
 import { inRevisionAt } from './pm-trace.ts';
@@ -250,6 +251,7 @@ export function sampleBy(record: string, snap: LogSnapshot, pick: (x: Reached) =
 export function sampleHolistic(record: string, snap: LogSnapshot): readonly Sampled[] {
   const firstJob = snap.events.find((e) => contextOf(snap.view, e).startsWith('job:'))?.seq ?? Infinity;
   return sampleBy(record, snap, ({ label, occurrence, e }) => {
+    if (label in PIPELINE_EXCLUDED_LABELS) return null;
     if (M3_ONLY.test(label) || REV3_ONLY.test(label)) return occurrence <= 2 ? `#${occurrence}` : null;
     if (label.startsWith('log.append.')) {
       return e.type === 'fact' && M3_FACTS.includes(e.fact.kind) && !(e.fact.kind === 'plan-applied' && e.fact.source?.type === 'start') ? `fact ${e.fact.kind}` : null;
