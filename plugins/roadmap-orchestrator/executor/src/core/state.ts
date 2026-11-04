@@ -720,6 +720,25 @@ export class Fold implements JournalView {
   readonly #approvals = new Map<UnitId, ReviewApproval>();
   readonly #greenLanes = new Map<UnitId, number>();
 
+  // Derived membership indexes are rebuilt by every replay, including observer reset/open.
+  readonly #laneReuseKeys = new Set<string>();
+  readonly #certificateKeys = new Set<string>();
+  readonly #debtById = new Map<string, BankedDebt>();
+  readonly #debtByKey = new Map<string, BankedDebt>();
+  readonly #debtBySource = new Map<string, BankedDebt>();
+  readonly #jobOutcomeKeys = new Set<string>();
+  readonly #walkMcpKeys = new Set<string>();
+  readonly #smokeRunKeys = new Set<string>();
+  readonly #passedMilestones = new Set<MilestoneId>();
+  readonly #endedWalks = new Set<JobId>();
+  readonly #judgedTweaks = new Set<UnitId>();
+  readonly #proposedPolish = new Set<PolishId>();
+  readonly #refusedPolish = new Set<PolishId>();
+  #activeCompare: Readonly<{ job: JobId; unit: UnitId }> | null = null;
+  readonly #flakeReds = new Set<InvocationId>();
+  readonly #staleRevs = new Set<number>();
+  readonly #divergenceKeys = new Set<string>();
+
   constructor(arc: ArcId) {
     this.arc = arc;
   }
@@ -1042,7 +1061,9 @@ export class Fold implements JournalView {
       }
       case 'stage-outcome': {
         if (!('unit' in f)) {
-          if (this.#stageJobOutcomes.some((v) => v.job === f.job && v.stage === f.stage)) fail(`second arc verdict for ${f.job}`);
+          const key = canonicalJson([f.job, f.stage]);
+          if (this.#jobOutcomeKeys.has(key)) fail(`second arc verdict for ${f.job}`);
+          this.#jobOutcomeKeys.add(key);
           this.#stageJobOutcomes.push(f);
           break;
         }
@@ -1179,10 +1200,13 @@ export class Fold implements JournalView {
       case 'containment-mode':
         this.#containmentMode = f.mode;
         return;
-      case 'walkthrough-mcp':
-        if (this.#walkMcp.some((w) => w.inv === f.inv && w.server === f.server)) fail(`second MCP init for ${f.inv} ${f.server}`);
+      case 'walkthrough-mcp': {
+        const key = canonicalJson([f.inv, f.server]);
+        if (this.#walkMcpKeys.has(key)) fail(`second MCP init for ${f.inv} ${f.server}`);
+        this.#walkMcpKeys.add(key);
         this.#walkMcp.push(f);
         return;
+      }
       case 'integration-push':
         this.#integrationPushes.push({ seq: at.seq, fact: f });
         return;
@@ -1221,22 +1245,29 @@ export class Fold implements JournalView {
         return;
       // Debt, intake and pack reviews.
       case 'debt-banked': {
-        const same = this.#debt.find((d) => d.id === f.id || d.key === f.key || canonicalJson(d.source) === canonicalJson(f.source));
+        const source = canonicalJson(f.source);
+        // Preserve the first matching record in log order, even when different fields collide.
+        const same = [this.#debtById.get(f.id), this.#debtByKey.get(f.key), this.#debtBySource.get(source)]
+          .filter((d): d is BankedDebt => d !== undefined).sort((a, b) => a.seq - b.seq)[0];
         if (same !== undefined) fail(`debt ${f.id} banked again: ${same.id} (seq ${same.seq}) has its id, key or source (banking is idempotent per source)`);
-        this.#debt.push({ ...f, seq: at.seq });
+        const debt = { ...f, seq: at.seq };
+        this.#debt.push(debt);
+        this.#debtById.set(f.id, debt);
+        this.#debtByKey.set(f.key, debt);
+        this.#debtBySource.set(source, debt);
         return;
       }
       case 'pack-review-started': {
-        const running = this.#packReviews.find((r) => r.ended === null);
-        if (running !== undefined) fail(`pack review ${f.job} started while ${running.started.job} is running (one at a time)`);
+        const running = this.#packReviews.at(-1);
+        if (running !== undefined && running.ended === null) fail(`pack review ${f.job} started while ${running.started.job} is running (one at a time)`);
         this.#openJob(f.job, fail);
         const { kind: _k, ...rest } = f;
         this.#packReviews.push({ started: { ...rest, seq: at.seq }, ended: null });
         return;
       }
       case 'pack-review-ended': {
-        const r = this.#packReviews.find((x) => x.started.job === f.job);
-        if (r === undefined || r.ended !== null) return fail(`pack-review-ended of ${f.job}, which is not running`);
+        const r = this.#packReviews.at(-1);
+        if (r === undefined || r.started.job !== f.job || r.ended !== null) return fail(`pack-review-ended of ${f.job}, which is not running`);
         const { kind: _k, ...rest } = f;
         r.ended = { ...rest, seq: at.seq };
         return;
@@ -1244,26 +1275,29 @@ export class Fold implements JournalView {
       // M4a rev 3: lane reuse and series certificates (N1), smoke runs (N3), cross-lens corroboration (N5).
       case 'lane-reused': {
         // dev.17: one per series (parent, set, commit) and lane; a fact before dev.17 names a spec series.
-        const keyOf = (r: Readonly<{ parent: unknown; lane: string; set?: string; at?: string }>): string => canonicalJson({ parent: r.parent, lane: r.lane, set: r.set ?? 'spec', at: r.at ?? null });
-        const key = keyOf(f);
-        if (this.#laneReuses.some((r) => keyOf(r) === key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
+        const key = canonicalJson({ parent: f.parent, lane: f.lane, set: f.set ?? 'spec', at: f.at ?? null });
+        if (this.#laneReuseKeys.has(key)) fail(`a second lane-reused of ${f.lane} under ${canonicalJson(f.parent)}`);
         const { op, ordinal } = parseInvocationId(f.from.inv);
         const entry = this.#ops.get(op);
         if (entry === undefined || ordinal > entry.latest.ordinal) fail(`lane-reused from ${f.from.inv}, which no intent opened`);
         const { kind: _k, ...rest } = f;
+        this.#laneReuseKeys.add(key);
         this.#laneReuses.push({ ...rest, seq: at.seq });
         return;
       }
       case 'series-certified': {
         const key = canonicalJson({ parent: f.parent, checkout: f.checkout });
-        if (this.#certificates.some((c) => canonicalJson({ parent: c.parent, checkout: c.checkout }) === key)) fail(`a second series-certified of ${f.checkout} under ${canonicalJson(f.parent)}`);
+        if (this.#certificateKeys.has(key)) fail(`a second series-certified of ${f.checkout} under ${canonicalJson(f.parent)}`);
         const { kind: _k, ...rest } = f;
+        this.#certificateKeys.add(key);
         this.#certificates.push({ ...rest, seq: at.seq });
         return;
       }
       case 'smoke-ran': {
-        if (this.#smokeRuns.some((r) => r.unit === f.unit && r.attempt === f.attempt)) fail(`a second smoke-ran of ${f.unit} attempt ${f.attempt}`);
+        const key = canonicalJson([f.unit, f.attempt]);
+        if (this.#smokeRunKeys.has(key)) fail(`a second smoke-ran of ${f.unit} attempt ${f.attempt}`);
         const { kind: _k, ...rest } = f;
+        this.#smokeRunKeys.add(key);
         this.#smokeRuns.push({ ...rest, seq: at.seq });
         return;
       }
@@ -1278,6 +1312,7 @@ export class Fold implements JournalView {
       case 'polish-proposed': {
         if (f.id !== this.nextPolishId()) fail(`polish-proposed ${f.id}; the next polish id is ${this.nextPolishId()}`);
         if (!this.#walkOpen(f.job)) fail(`polish-proposed ${f.id} of ${f.job}, which is not a started, unended walk`);
+        this.#proposedPolish.add(f.id);
         this.#openWalks.get(f.job)!.push(f.id);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
@@ -1286,36 +1321,43 @@ export class Fold implements JournalView {
         if (!this.#walkOpen(f.job)) fail(`walk-ended of ${f.job}, which is not a started, unended walk`);
         const proposed = this.#openWalks.get(f.job)!;
         if (proposed.join(',') !== f.proposals.join(',')) fail(`walk-ended of ${f.job} names proposals ${f.proposals.join(', ')}; it proposed ${proposed.join(', ')}`);
+        this.#endedWalks.add(f.job);
         this.#openWalks.delete(f.job);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
       case 'milestone-passed':
-        if (this.#walkFacts.some((x) => x.fact.kind === 'milestone-passed' && x.fact.milestone === f.milestone)) fail(`a second milestone-passed of ${f.milestone}`);
-        if (!this.#walkFacts.some((x) => x.fact.kind === 'walk-ended' && x.fact.job === f.job)) fail(`milestone-passed by ${f.job}, which has not ended`);
+        if (this.#passedMilestones.has(f.milestone)) fail(`a second milestone-passed of ${f.milestone}`);
+        if (!this.#endedWalks.has(f.job)) fail(`milestone-passed by ${f.job}, which has not ended`);
+        this.#passedMilestones.add(f.milestone);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'tweak-judged':
-        if (this.#walkFacts.some((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === f.unit)) fail(`a second tweak-judged of ${f.unit}`);
+        if (this.#judgedTweaks.has(f.unit)) fail(`a second tweak-judged of ${f.unit}`);
+        this.#judgedTweaks.add(f.unit);
+        if (this.#activeCompare?.unit === f.unit) this.#activeCompare = null;
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       // Agent D: a refusal names a recorded proposal, once; a compare opens its job, one open at a time, on a unit not yet
       // judged; `compare-abandoned` closes an open compare (a `tweak-judged` of its unit closes it too).
       case 'polish-refused':
-        if (!this.#walkFacts.some((x) => x.fact.kind === 'polish-proposed' && x.fact.id === f.proposal)) fail(`polish-refused of ${f.proposal}, which no walk proposed`);
-        if (this.#walkFacts.some((x) => x.fact.kind === 'polish-refused' && x.fact.proposal === f.proposal)) fail(`a second polish-refused of ${f.proposal}`);
+        if (!this.#proposedPolish.has(f.proposal)) fail(`polish-refused of ${f.proposal}, which no walk proposed`);
+        if (this.#refusedPolish.has(f.proposal)) fail(`a second polish-refused of ${f.proposal}`);
+        this.#refusedPolish.add(f.proposal);
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'compare-started': {
-        const open = this.#openCompare();
+        const open = this.#activeCompare?.job ?? null;
         if (open !== null) fail(`compare-started ${f.job} while ${open} is open`);
-        if (this.#walkFacts.some((x) => x.fact.kind === 'tweak-judged' && x.fact.unit === f.unit)) fail(`compare-started ${f.job} of ${f.unit}, already judged`);
+        if (this.#judgedTweaks.has(f.unit)) fail(`compare-started ${f.job} of ${f.unit}, already judged`);
         this.#openJob(f.job, fail);
+        this.#activeCompare = { job: f.job, unit: f.unit };
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
       case 'compare-abandoned':
-        if (this.#openCompare() !== f.job) fail(`compare-abandoned of ${f.job}, which is not the open compare`);
+        if (this.#activeCompare?.job !== f.job) fail(`compare-abandoned of ${f.job}, which is not the open compare`);
+        this.#activeCompare = null;
         this.#walkFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'demo-promoted':
@@ -1325,12 +1367,13 @@ export class Fold implements JournalView {
         return;
       case 'flake-observed': {
         // dev.17: one per red run (its diagnostic rerun the green); the red and the green are runs this log opened.
-        if (this.#flakes.some((x) => x.fact.event.red === f.event.red)) fail(`a second flake-observed of red run ${f.event.red}`);
+        if (this.#flakeReds.has(f.event.red)) fail(`a second flake-observed of red run ${f.event.red}`);
         for (const inv of [f.event.red, f.event.green]) {
           const { op, ordinal } = parseInvocationId(inv);
           const entry = this.#ops.get(op);
           if (entry === undefined || ordinal > entry.latest.ordinal) fail(`flake-observed names ${inv}, which no intent opened`);
         }
+        this.#flakeReds.add(f.event.red);
         this.#flakes.push({ seq: at.seq, at: at.at, fact: f });
         return;
       }
@@ -1338,12 +1381,13 @@ export class Fold implements JournalView {
       // once per plan rev and a refusal once per (rev, target); a stale re-open sends its unit back to pre-build. What the
       // facts mean for units is read from `propagationFacts` (src/holistic/propagation.ts).
       case 'stale-set':
-        if (this.#propagationFacts.some((x) => x.fact.kind === 'stale-set' && x.fact.rev === f.rev)) fail(`a second stale-set of plan rev ${f.rev}`);
+        if (this.#staleRevs.has(f.rev)) fail(`a second stale-set of plan rev ${f.rev}`);
         if (this.#planApplied?.rev !== f.rev) fail(`stale-set of plan rev ${f.rev}, which is not the plan in force (rev ${this.#planApplied?.rev ?? 'none'})`);
         for (const l of f.links) {
           const u = 'unit' in l ? this.#units.get(l.unit) : undefined;
           if (u !== undefined) this.#setUnitState(u, { ...u.state, staleRev: f.rev });
         }
+        this.#staleRevs.add(f.rev);
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'stale-reopened':
@@ -1359,17 +1403,6 @@ export class Fold implements JournalView {
   #seeJob(job: JobId): void {
     const { kind, n } = parseJobId(job);
     if (n > (this.#jobs.get(kind) ?? 0)) this.#jobs.set(kind, n);
-  }
-
-  /** The compare job started and not yet closed (by its unit's `tweak-judged` or its `compare-abandoned`), or null. */
-  #openCompare(): JobId | null {
-    const facts = this.#walkFacts.map((x) => x.fact);
-    for (const x of facts) {
-      if (x.kind !== 'compare-started') continue;
-      const closed = facts.some((y) => (y.kind === 'compare-abandoned' && y.job === x.job) || (y.kind === 'tweak-judged' && y.unit === x.unit));
-      if (!closed) return x.job;
-    }
-    return null;
   }
 
   /** A walk job started and not yet ended. */
@@ -1435,16 +1468,16 @@ export class Fold implements JournalView {
         return;
       }
       case 'audit-started': {
-        const open = this.#audits.find((a) => a.ended === null);
-        if (open !== undefined) fail(`audit ${f.job} started while ${open.started.job} is running (one audit at a time)`);
+        const open = this.#audits.at(-1);
+        if (open !== undefined && open.ended === null) fail(`audit ${f.job} started while ${open.started.job} is running (one audit at a time)`);
         this.#openJob(f.job, fail);
         const { kind: _k, ...rest } = f;
         this.#audits.push({ started: { ...rest, seq }, ended: null });
         return;
       }
       case 'audit-ended': {
-        const a = this.#audits.find((x) => x.started.job === f.job);
-        if (a === undefined || a.ended !== null) return fail(`audit-ended of ${f.job}, which is not running`);
+        const a = this.#audits.at(-1);
+        if (a === undefined || a.started.job !== f.job || a.ended !== null) return fail(`audit-ended of ${f.job}, which is not running`);
         for (const c of f.covered) if (!a.started.lenses.includes(c.lens)) fail(`audit ${f.job} covers lens ${c.lens}, which it did not run`);
         for (const id of f.findings) if (!this.#findings.has(id)) fail(`audit ${f.job} names finding ${id}, which was never opened`);
         const { kind: _k, job: _j, ...rest } = f;
@@ -1468,8 +1501,10 @@ export class Fold implements JournalView {
       case 'divergence': {
         const next = this.nextDivergenceId();
         if (f.id !== next) fail(`divergence ${f.id}; the next divergence is ${next}`);
-        if (this.#divergences.some((d) => d.job === f.job && d.index === f.index)) fail(`a second divergence ${f.job}#${f.index}`);
+        const key = canonicalJson([f.job, f.index]);
+        if (this.#divergenceKeys.has(key)) fail(`a second divergence ${f.job}#${f.index}`);
         const { kind: _k, ...rest } = f;
+        this.#divergenceKeys.add(key);
         this.#divergences.push({ ...rest, seq });
         return;
       }
@@ -2047,7 +2082,7 @@ export class Fold implements JournalView {
   }
 
   nextPolishId(): PolishId {
-    return polishIdOf(this.#walkFacts.filter((x) => x.fact.kind === 'polish-proposed').length + 1);
+    return polishIdOf(this.#proposedPolish.size + 1);
   }
 
   findingsAt(seq: number): readonly FindingState[] {
