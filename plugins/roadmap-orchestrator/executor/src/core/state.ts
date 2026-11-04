@@ -22,12 +22,12 @@ prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
 import { CounterRegressionError } from './fsx.ts';
 import { type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,type MilestoneId,type NeedsUserId,type ObligationId,type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,type ReviewFindingId,type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,reviewFindingIdOf } from './ids.ts';
-import type { ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,WalkFactAt } from './interfaces.ts';
+import type { ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,SpecHistoryEntry,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
 import type { ApprovalBlobs,FindingsLedgerEntry } from './review.ts';
 import { type SessionCharge,addCharged } from './usage.ts';
-import type { IsoTime } from './values.ts';
+import type { AbsPath,IsoTime } from './values.ts';
 import { type SchemaVersion,SCHEMA_VERSION } from './version.ts';
 
 export class FoldInvariantError extends Error {
@@ -650,6 +650,8 @@ export class Fold implements JournalView {
   #containmentMode: ContainmentMode | null = null;
   #planApplied: PlanAppliedFact | null = null;
   readonly #plannedUnits = new Set<UnitId>();
+  readonly #planSpecs = new Map<UnitId, SpecHistoryEntry[]>();
+  readonly #patchedSpecs = new Map<AbsPath, SpecHistoryEntry[]>();
   readonly #appliedBy = new Map<CommandId, PlanAppliedFact>();
   readonly #queuedApplies = new Map<CommandId, ApplyQueued>();
   readonly #tail: TailDiscarded[] = [];
@@ -920,6 +922,11 @@ export class Fold implements JournalView {
     this.#close(entry, { type: 'done', record: r });
     for (const [res, status] of moved) this.#resources.set(res, { status, pending: null });
     if (intent.kind === 'resource.transition') this.#residuesAfter(intent, at, fail);
+    if (intent.kind === 'spec.patch') {
+      const history = this.#patchedSpecs.get(intent.expect.path) ?? [];
+      history.push({ seq, hash: intent.post.newSha256, by: intent.expect.patch.by });
+      this.#patchedSpecs.set(intent.expect.path, history);
+    }
     if (intent.kind === 'needsuser.raise') this.#needsUser.set(intent.expect.id, { blocking: intent.expect.blocking });
     // A unit's publication is its ff stage's; an ff under another parent (the git primitives' own tests) publishes no unit.
     // M3: a batch's `ff` publishes and retires every member at once (R7, H4); a docs `ff` publishes no unit.
@@ -1621,6 +1628,9 @@ export class Fold implements JournalView {
     this.#planApplied = f;
     if (f.command !== null) this.#appliedBy.set(f.command, f);
     for (const unit of Object.keys(f.specs) as UnitId[]) {
+      const history = this.#planSpecs.get(unit) ?? [];
+      history.push({ seq, hash: f.specs[unit]!, by: null });
+      this.#planSpecs.set(unit, history);
       this.#plannedUnits.add(unit);
       if (!this.#addedSeqs.has(unit)) this.#addedSeqs.set(unit, seq);
     }
@@ -1980,6 +1990,10 @@ export class Fold implements JournalView {
 
   planApplied(): PlanAppliedFact | null {
     return this.#planApplied;
+  }
+
+  specHistory(unit: UnitId, path: AbsPath): readonly SpecHistoryEntry[] {
+    return [...(this.#planSpecs.get(unit) ?? []), ...(this.#patchedSpecs.get(path) ?? [])].sort((a, b) => a.seq - b.seq);
   }
 
   planAppliedBy(command: CommandId): PlanAppliedFact | null {

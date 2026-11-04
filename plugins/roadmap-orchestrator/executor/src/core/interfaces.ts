@@ -12,7 +12,7 @@ PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
 import type { ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId } from './ids.ts';
 import type {
 CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,RunnerFileMap,
-RunnerFileName
+RunnerFileName,SpecPatchBy
 } from './records.ts';
 import type { ApplyQueued,BackendParkState,EdgeResolvedState,FindingState,HolisticFold,ProbeState,ResidueState,ResourceEntry,ReviewFold,UnitState } from './state.ts';
 import type { SessionCharge } from './usage.ts';
@@ -113,6 +113,8 @@ export interface JournalView {
   containmentMode(): ContainmentMode | null;
   /** The latest `plan-applied` fact: the plan in force (src/input/inforce.ts), or null before one. */
   planApplied(): PlanAppliedFact | null;
+  /** Kept specs from this unit's plans and completed patches of path, in durable event order. */
+  specHistory(unit: UnitId, path: AbsPath): readonly SpecHistoryEntry[];
   /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
   planAppliedBy(command: CommandId): PlanAppliedFact | null;
   /** dev.17: the `apply-queued` fact of `command` (its seq and the units it waits on), or null when it was never queued. */
@@ -165,6 +167,8 @@ export interface JournalView {
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[];
   propagationFacts(): readonly PropagationFactAt[];
 }
+
+export type SpecHistoryEntry = Readonly<{ seq: number; hash: Sha256Hex; by: SpecPatchBy | null }>;
 
 export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
