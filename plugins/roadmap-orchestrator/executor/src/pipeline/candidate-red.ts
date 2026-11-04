@@ -60,3 +60,20 @@ export function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent,
   }, suite, 'suite red vs tip green');
 }
 
+
+/** A re-entry must change the recorded cause as well as consider resetting its inherited chargeable count. */
+export function candidateReentryChange(detail: CandidateRedDetail): string {
+  const change: Readonly<Record<CandidateRedCause, string>> = {
+    'suite red vs tip green': 'repair the named failing suite/spec checks against the green integration tip',
+    'held-claims brake': 'make the named obligations hold on the candidate without weakening their current witnesses',
+    'declared repair not held': 'make every named declared repair hold, including its split children',
+    'unexplained lane failures': 'fix the unexplained journey failures in the named lane outputs',
+    'dirty/moved checkout': 'clean lane outputs and keep checkout HEAD unchanged',
+    'background failures': 'fix the regression in the named background tests',
+    'mutant survivor': 'strengthen the witness so the named surviving mutant fails',
+    'repair batch': 'repair the named obligations on the repair-batch candidate',
+  };
+  return detail.path === 'legacy'
+    ? 'The previous release recorded no cause: inspect its original candidate evidence before choosing what to change.'
+    : `For this ${detail.path}, the re-entry must ${detail.causes.map((cause) => change[cause]).join('; ')}. Resetting counters alone cannot fix this red.`;
+}

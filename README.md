@@ -145,7 +145,9 @@ through ordinary gated diffs; normative claims stay in the corpus. Commit bodies
 structured decisions, making later work and crash recovery intelligible.
 
 Certification allows three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that
-allowance. Gate revisions and candidate reds have separate bounds. Fresh build sessions with earlier lineage receive
+allowance. Gate revisions and candidate reds have separate bounds. Re-entry keeps lineage counters; `reenters.reset`
+with a reason clears chargeable failures while lifetime attempts and other counters remain. A re-entry must repair
+the recorded cause, such as a surviving mutant or dirty lane outputs. Fresh build sessions with earlier lineage receive
 a handover of diagnosis, findings, unmet clauses, witness failures, decisions and original evidence. Exact witness ids
 can be checked with `witness-check --lane-file` before requesting certification.
 

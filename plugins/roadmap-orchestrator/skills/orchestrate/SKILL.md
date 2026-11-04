@@ -74,6 +74,7 @@ Run `phase0 check` against the authored plan until refusing rows are resolved. E
 ## Unit and milestone execution
 
 Normal work is prepare → conditional pre-build annotation → grounded build → evidence/salvage/teardown → executable certification → gate → candidate on current integration tip → exact-head publication → snapshot/retirement. Reproduction precedes repair builds where required. Build, lanes and gate repeat as needed within bounds. A gate's context is fresh; it judges reach against intent/nonGoals, executable evidence and outstanding review items.
+Re-entry keeps lineage counters. Set `reenters.reset: {reason}` when fresh charged rounds are warranted; it clears chargeable failures, while lifetime attempts and other counters remain.
 
 Every integration fast-forward (unit, repair batch, docs revision and close-out) queues a background push of the integration branch to `origin` using user credentials. It uses a lease, allows only fast-forwards and never pushes `main`. The root no longer pushes `arc/<arc>` by hand for CI or external witnesses. Network work does not hold a stage and is bounded to five minutes per attempt. Startup retries the current head after a crash; an already-current remote is a no-op. With no origin, the executor records one quiet fact.
 

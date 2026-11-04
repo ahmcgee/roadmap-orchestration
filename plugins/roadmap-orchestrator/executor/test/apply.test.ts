@@ -956,9 +956,11 @@ for (const c of BOUND_CASES) {
       for (let i = 1; i <= c.failures; i++) r.journal.fact({ kind: 'stage-outcome', unit: U1, stage: 'gate', attempt: i, outcome: 'revise', class: 'revise', chargeable: true } as Fact);
       decide(r, 'u1', 'gate', 'escalate', 'park');
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, c.failures);
+      const inherited = r.journal.view.unit(U1).counters;
       reenter('u4', 'u1', {}, { fixes: `u1/gate#${c.failures + 1}`, ...(c.reset ? { reset: { reason: 'Reset the counters' } } : {}) })(d);
       const { id, outcome } = await command(r, applyBody(d));
       assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+      assert.deepEqual(r.journal.view.unit(unitId('u4')).counters, {...inherited, chargeableFailures: c.reset ? 0 : c.failures}, 'reset clears only chargeable failures; all other lineage counters remain');
       const receipt = readReceipt(r.ctx.runDir, commandId(id), 'applied');
       assert.ok(receipt?.state === 'applied');
       const warnings = receipt.verified.filter((l) => l.startsWith('warning:'));

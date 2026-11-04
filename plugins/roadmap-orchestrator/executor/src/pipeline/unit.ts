@@ -1,4 +1,4 @@
-import { candidateRed } from './candidate-red.ts';
+import { candidateRed, candidateReentryChange } from './candidate-red.ts';
 import { attemptSignals } from './attempts.ts';
 import { markers } from './surface.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
@@ -201,7 +201,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
     ]
       .filter((x) => x !== '').join(' '),
-    recommendation,
+    recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : recommendation,
     options: [],
     evidence: haltEvidence(ctx, unit, f),
   };

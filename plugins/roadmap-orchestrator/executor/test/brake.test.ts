@@ -102,6 +102,8 @@ describe('the held-claims brake', () => {
       if (result.kind !== 'parked') throw new Error(JSON.stringify(result));
       assert.match(result.needsUser.summary, /held-claims brake.*I-1/s);
       assert.match(result.needsUser.summary, reused ? /REUSED/ : /RUN/);
+      assert.match(result.needsUser.recommendation, /reenters\.reset.*reason/s);
+      assert.match(result.needsUser.recommendation, /held-claims brake.*make.*obligations/s);
       assert.ok(result.needsUser.evidence.some((p) => p.endsWith('witness.json')));
       const detail = r.journal.view.unit(U1).decided!.detail;
       assert.equal(detail?.kind, 'candidate-red');

@@ -97,8 +97,8 @@ resources; it retires the gated report without candidate publication. Later spik
 refused and escalated to an owner request. Reserved new unit ids include batch-n, jobs and mutants.
 
 Root splits conserve parent text, systems, obligations, dependencies and milestone ownership; deflake cannot split.
-Re-entry must identify a recorded failure where required and does not silently clear lineage counters. Cuts and reset
-carry reasons. All structural/runtime restrictions are applied again by the classifier, not only the parser.
+Re-entry must identify a recorded failure where required and keeps lineage counters. `reenters.reset: {reason}` clears
+only chargeable failures; lifetime attempts and other counters remain. Cuts and reset carry reasons. All structural/runtime restrictions are applied again by the classifier, not only the parser.
 
 ### Specs and design
 
