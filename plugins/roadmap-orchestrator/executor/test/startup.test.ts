@@ -9,6 +9,7 @@ const unit = unitId('u1');
 
 // One sample per member; the mapped type makes a new member fail compilation until it has a sample here.
 const SAMPLES: { readonly [K in StartupRejectionKind]: Extract<StartupRejection, { kind: K }> } = {
+  'seat-pinning-unavailable': { kind: 'seat-pinning-unavailable', program: 'taskset', detail: 'install util-linux' },
   'legacy-roadmap-dir': { kind: 'legacy-roadmap-dir', path: absPath('/r/.roadmap'), unexpected: ['state.json'] },
   'worktree-root-unusable': { kind: 'worktree-root-unusable', path: absPath('/tmp/wt'), problem: 'tmpfs', detail: 'tmpfs' },
   'spec-lane-unrunnable': { kind: 'spec-lane-unrunnable', unit, lane: laneId('L1'), problem: { type: 'env-missing', name: 'KUBECONFIG' } },

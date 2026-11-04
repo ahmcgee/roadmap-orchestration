@@ -1,3 +1,4 @@
+import { tasksetPath } from '../contain/affinity.ts';
 import { parseCorpusPin } from '../corpus/types.ts';
 import { referenceCommit } from '../phase0/rows.ts';
 import { protectedPaths } from '../input/protected.ts';
@@ -673,6 +674,7 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
     routingRows = [schemaRejection(error)];
   }
   const environment = [
+    ...seatPinningRows(context, input.env),
     ...(await worktreeRootCheck.check(context)),
     ...(await specLaneCheck(input.env).check(context)),
     ...(await walkToolsCheck(input.env, readRepoConfig(input.repo)).check(context)),
@@ -724,4 +726,12 @@ export async function smokeCheck(
   if (refused.length > 0) return { kind: 'refused', rejections: refused };
   for (const p of parked) passed.journal.fact({ kind: 'backend-park', backend: p.backend, class: p.class, inv: p.inv });
   return { kind: 'passed', smoke: report, parked };
+}
+
+/** No pinning prerequisite for a host running only commands/smokes. Every plan unit can dispatch an agent seat. */
+export function seatPinningRows(context: Pick<StartupContext, 'plan'>, env: Readonly<Record<string, string | undefined>>): readonly Rejection<'seat-pinning-unavailable'>[] {
+  const needsPinning = context.plan.units.length > 0 || context.plan.holistic !== undefined || hasMilestones(context.plan);
+  return needsPinning && tasksetPath(env) === null
+    ? [{ kind: 'seat-pinning-unavailable', program: 'taskset', detail: 'Agent seats require taskset (util-linux) on the executor PATH to pin their reserved CPUs.' }]
+    : [];
 }

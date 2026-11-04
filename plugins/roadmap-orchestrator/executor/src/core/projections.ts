@@ -19,3 +19,13 @@ export const spawnCpuKeyOf = (s: Readonly<{cpuKey?: Sha256Hex}>): Sha256Hex | nu
 export const reservationCpuBasisOf = (s: Readonly<{cpuBasis?: CpuBasis}>): CpuBasis | null => s.cpuBasis ?? null;
 export const reservationTokenWaitOf = (s: Readonly<{tokenWaitMs?: number}>): number | null => s.tokenWaitMs ?? null;
 export const mutantOf = (s: Readonly<{of: MutantOf}> | Readonly<{finding: FindingId}>): MutantOf => { if (!('of' in s)) throw new Error('mutant subject must name of'); return s.of; };
+
+/** dev.47 adoption: preserve serialized hashes, default affinity only when read by runtime consumers. */
+let legacyAffinityWarned = false;
+export function pinnedCoresOf(record: Readonly<{ pinnedCores?: readonly number[] | null }>): readonly number[] | null {
+  if (record.pinnedCores === undefined && !legacyAffinityWarned) {
+    process.stderr.write('roadmap: dev.47 launch/exit record has no pinnedCores; defaulting to inherited affinity (null)\n');
+    legacyAffinityWarned = true;
+  }
+  return record.pinnedCores ?? null;
+}

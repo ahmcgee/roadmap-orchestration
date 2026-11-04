@@ -49,7 +49,7 @@ export function cpuSummary(work: WorkRun): string {
   const reserved = work.reservedCpu === null ? 'unavailable' : `${work.reservedCpu} (${basis?.kind ?? 'legacy basis unavailable'}${basis && basis.kind !== 'explicit' ? `, ${basis.samples} samples` : ''})`;
   const m = work.measured;
   const measured = m === null ? 'pending/unavailable' : m.wallMs === 0 ? 'no wall time' : `${(m.runMs / m.wallMs).toFixed(2)} cores used, ${((m.runMs + m.waitMs) / m.wallMs).toFixed(2)} demanded`;
-  return `CPU ${reserved} reserved / ${measured} · token wait ${work.tokenWaitMs === null ? 'unavailable' : (work.tokenWaitMs / 1000).toFixed(1) + 's'}`;
+  return `CPU ${reserved} reserved${work.pinnedCores === null ? '' : ` · pinned cores ${work.pinnedCores.join(',')}`} / ${measured} · token wait ${work.tokenWaitMs === null ? 'unavailable' : (work.tokenWaitMs / 1000).toFixed(1) + 's'}`;
 }
 
 /** Ordered lane rows are status projections, including lanes which have not spawned an invocation yet. */

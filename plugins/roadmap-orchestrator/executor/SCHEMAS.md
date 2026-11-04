@@ -713,6 +713,7 @@ row in that group (`src/preflight/checks.ts`).
 |---|---|
 | legacy-roadmap-dir | Unexpected entries in a 0.x layout: path, unexpected[]; never convert it |
 | schema-version | Runtime version mismatch: path, recorded, expected, detail |
+| seat-pinning-unavailable | program `taskset`, detail; seat-bearing hosts require util-linux on executor PATH (exit 78, before host claim) |
 | worktree-root-unusable | path, problem tmpfs or not-writable, detail |
 | spec-lane-unrunnable | unit/null + lane + problem, or resource + probe/teardown/up/down + problem; unresolved argv0, missing env, invalid lane/environment use |
 | unsupported-routing | role/tier, layer, class, unit/null, why codex-judgment or no-prompt |
@@ -966,14 +967,31 @@ kept before spawning. Adapters read only quiescent files and write deterministic
 LaunchFile = InvocationBinding & {
  argv:string[]; cwd:AbsPath; env:Record<string,string>; stdinPath:AbsPath|null;
  deadlineAt:IsoTime; stallMs:number|null; graceMs:number; containment:'session'|'cgroup';
- test:{crash:AbsPath}|null; terminal:LaunchTerminal;
+ test:{crash:AbsPath}|null; terminal:LaunchTerminal; pinnedCores?:number[]|null;
 };
 ExitFile = InvocationBinding & {
  child:{type:'exited',code:number}|{type:'signalled',signal:string}|{type:'spawn-failed',error:string};
  cause:'exited'|'deadline'|'timeout'|'stall'|'cancel'|'recovery-kill'|'reported';
  endedAt:IsoTime; quiescedAt:IsoTime; cpu?:{wallMs:number,runMs:number,waitMs:number}|null;
+ pinnedCores?:number[]|null;
 };
 ```
+
+`pinnedCores` (dev.48) is the strictly ascending, nonempty list of zero-based reserved CPU ids, or null
+for inherited affinity. New launch/exit records always write it; exit copies launch, including spawn failures.
+A missing dev.47 field defaults to null at read time with a once-per-process warning; parsing preserves absence
+so existing launch hashes and recovery still match. No schema bump. JSON status work rows expose `pinnedCores`
+for build/seat/lane runs, and the TUI shows pinned core ids.
+
+Only `proc.spawn` purposes `backend` and `arc-backend` are seats (acting verifier/experience judges and walks
+included). Invoke reads the matching stage/job holder's reserved/running CPU units and maps `@cpu#N` to core
+`N-1`, validating against `os.availableParallelism()` and the calling thread's `/proc/thread-self/status` mask.
+The shared `spawnWorkload` validates again and wraps the workload argv (including a containment shim) with
+`taskset -c <list>`; descendants inherit affinity, while the runner stays on its inherited mask. Seats without
+CPU reservations keep inherited affinity and take no invented tokens. Normal seat paths reserve CPU; a verifier
+repair while consuming a recovered pre-build call can run after recovery released its stage reservation.
+Lanes, journeys, mutants, probes, teardowns, bring-up/environment commands and backend smokes retain inherited affinity. This is inherited
+Linux affinity, not a security boundary against a workload explicitly resetting its own affinity.
 
 LaunchTerminal is command `{type,purpose,expectedExit,timeoutMin?}` or backend
 `{type,purpose,role,routingRev,schemaPath,outputPath,session}`. TimeoutMin is lane-only. Claude sessions have backend,

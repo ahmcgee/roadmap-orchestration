@@ -25,7 +25,7 @@ import { recordResidue } from '../src/host/residues.ts';
 import { runDir } from '../src/input/cli.ts';
 import { readInputFiles } from '../src/input/inforce.ts';
 import { resolveArgv0 } from '../src/preflight/argv0.ts';
-import { type StartChecks,type StartInput,gitCommonDir,runChecks,smokeCheck } from '../src/preflight/checks.ts';
+import { type StartChecks,type StartInput,gitCommonDir,runChecks,seatPinningRows,smokeCheck } from '../src/preflight/checks.ts';
 import type { SmokeReport } from '../src/preflight/smoke.ts';
 import { type StartupRejection,type StartupRejectionKind,exitCodeFor,startupRejection } from '../src/preflight/startup.ts';
 import { commitRevision } from '../src/recover/revision.ts';
@@ -329,6 +329,23 @@ describe('startup.rejections', () => {
     if (result.kind !== 'passed') return;
     result.journal.close();
     releaseHost(s.hostDir, result.claim);
+  });
+
+  it('seat-pinning-unavailable: missing taskset refuses startup before claiming the host (78)', T, async () => {
+    const s = setup();
+    symlinkSync(process.execPath, join(s.binDir, 'node'));
+    const start = input(s);
+    const checked = await runChecks({ ...start, env: { ...start.env, PATH: s.binDir }, claim: async () => assert.fail('preflight must refuse before host claim') });
+    assert.equal(checked.kind, 'refused');
+    if (checked.kind !== 'refused') throw new Error('startup should refuse');
+    const [row] = refusedWith(checked, 'seat-pinning-unavailable', 78);
+    assert.equal(row?.kind, 'seat-pinning-unavailable');
+    assert.deepEqual(startupRejection(JSON.parse(JSON.stringify(row)), 'row'), row);
+    const { holistic: _holistic, milestones: _milestones, ...base } = readInputFiles(s.planFile, s.repo).plan;
+    assert.equal(base.target, 'architecture-doc');
+    if (base.target !== 'architecture-doc') throw new Error('expected architecture target');
+    const plan = { ...base, units: [] };
+    assert.deepEqual(seatPinningRows({ plan }, { PATH: s.binDir }), [], 'command-only hosts do not require taskset');
   });
 
   it('worktree-root-unusable: tmpfs, and not writable (78)', T, async () => {

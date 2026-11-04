@@ -30,6 +30,7 @@ export const EXIT_REFUSED = 78;
 export const EXIT_HOST_BUSY = 75;
 
 export type StartupRejection =
+  | Readonly<{ kind: 'seat-pinning-unavailable'; program: 'taskset'; detail: string }>
   // Row: in-tree .roadmap/ holding anything beyond the 1.0 set (a 0.x layout).
   | Readonly<{ kind: 'legacy-roadmap-dir'; path: AbsPath; unexpected: readonly string[] }>
   // Row: worktreeRoot on tmpfs, or not writable.
@@ -131,6 +132,7 @@ export function exitCodeFor(rejection: StartupRejection): typeof EXIT_REFUSED | 
     case 'host-busy':
     case 'previous-schema-host-busy':
       return EXIT_HOST_BUSY;
+    case 'seat-pinning-unavailable':
     case 'legacy-roadmap-dir':
     case 'worktree-root-unusable':
     case 'spec-lane-unrunnable':
@@ -247,6 +249,7 @@ const planProblem: Read<Row<'plan-invalid'>['problem']> = tagged('type', {
 });
 
 export const startupRejection: Read<StartupRejection> = tagged<StartupRejectionKind, StartupRejection>('kind', {
+  'seat-pinning-unavailable': object((f): StartupRejection => ({ kind: f.get('kind', literal('seat-pinning-unavailable')), program: f.get('program', literal('taskset')), detail: f.get('detail', str) })),
   'legacy-roadmap-dir': object((f): StartupRejection => ({ kind: f.get('kind', literal('legacy-roadmap-dir')), path: f.get('path', abs), unexpected: f.get('unexpected', arrayOf(str)) })),
   'worktree-root-unusable': object((f): StartupRejection => ({
     kind: f.get('kind', literal('worktree-root-unusable')), path: f.get('path', abs), problem: f.get('problem', oneOf(['tmpfs', 'not-writable'] as const)), detail: f.get('detail', str),
