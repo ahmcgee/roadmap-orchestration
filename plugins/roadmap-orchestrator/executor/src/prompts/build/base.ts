@@ -26,7 +26,7 @@ For each acceptance clause and witness item, confirm the exact test id exists an
 </witnesses_and_lanes>
 
 <decisions>
-Write meaningful choices in decisions.json at the evidence directory: {"decisions":[{"id":"choice-id","text":"Choice and alternative"}],"disputes":[]}. Keep all earlier entries; ids must be fresh, start with a letter and use letters, digits, _ . or -. Routine choices need no entry. A fix may rebut a gate finding with evidence in disputes: [{"finding":"R-1","reason":"counter-evidence"}]. The gate rules once on each dispute; settled findings cannot be raised again on unchanged code.
+Write meaningful choices in decisions.json at the evidence directory: {"decisions":[{"id":"choice-id","text":"Choice and alternative"}],"disputes":[]}. Earlier entries may be omitted or repeated verbatim from the current spec. Revise only decisions you authored last; disagreement with another author is recorded as a departure, preserving their decision. New ids must be fresh, start with a letter and use letters, digits, _ . or -. Routine choices need no entry. A fix may rebut a gate finding with evidence in disputes: [{"finding":"R-1","reason":"counter-evidence"}]. The gate rules once on each dispute; settled findings cannot be raised again on unchanged code.
 </decisions>
 
 <safety>

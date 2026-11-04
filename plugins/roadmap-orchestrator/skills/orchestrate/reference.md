@@ -267,3 +267,5 @@ At completion let final witnesses/audit, batch lanes, close-out documents and sn
 Candidate red parks retain the cause, RUN/REUSED grading records and original evidence. Read that diagnosis before revising the work.
 
 Certified journey reuse must cover all current witness test IDs; changed IDs absent from the record rerun the lane. Candidate diagnoses say RUN or REUSED and point to the original record.
+
+Builders add decisions and may revise text they authored last. Root-edited decisions remain authoritative; differing builder proposals are retained as departure notes for the gate.

@@ -1086,3 +1086,5 @@ and RUN/REUSED grading invocations with record/evidence paths. Fix rounds and bo
 an explicit unavailable-cause summary, empty evidence/directives and null comparison, with `ROADMAP_UPGRADE`; kept bytes stay unchanged.
 
 Journey reuse additionally requires every current witness test id on the lane to be present in the certified record. Missing IDs force execution; covered records remain reusable across obligation evidence refreshes. Files and normative revision retain their existing input/proof checks; a revision alone does not invalidate a record covering the current IDs.
+
+Builder decisions use existing spec.patch and kept-spec history to establish the last text author. Builders may replace their own current text. Root/other-authored text survives repeats; differing proposals become stable `departure.<hash>` decisions through the existing departure channel. No provenance field or runtime migration is added.
