@@ -1513,7 +1513,7 @@ test('certification projection shows ordered lanes, allowance, held estate and C
   const u = d.status.units[0]!;
   const inv = 'cert-run' as never;
   const work = { inv, cause: null, parent: { type: 'stage' as const, unit: u.unit, stage: 'lanes' as const, attempt: 2 }, kind: 'lane' as const,
-    lane: 'infra' as never, reservedCpu: 2, cpuBasis: { kind: 'calibrated' as const, key: sha256('1'.repeat(64)), value: 2, samples: 7 },
+    lane: 'infra' as never, pinnedCores: null, reservedCpu: 2, cpuBasis: { kind: 'calibrated' as const, key: sha256('1'.repeat(64)), value: 2, samples: 7 },
     measured: { wallMs: 1000, runMs: 900, waitMs: 200 }, tokenWaitMs: 3500, resources: ['db', 'cloud'] as never[] };
   d.status = { ...d.status, units: [{ ...u, stage: 'lanes', state: 'running', work: [work], certification: { used: 2, allowance: 3, left: 1, attempt: 2,
     lanes: [
@@ -1555,7 +1555,7 @@ test('TUI timeout reds stay distinct from a deadline block and CPU bases preserv
   const { certificationEntries, cpuSummary } = await import('../src/tui/execution.ts');
   const d = observed(); const u = d.status.units[0]!;
   const work = { inv: 'timeout-run' as never, cause: 'timeout' as const, parent: { type: 'stage' as const, unit: u.unit, stage: 'lanes' as const, attempt: 1 },
-    kind: 'lane' as const, lane: 'slow' as never, reservedCpu: 4, cpuBasis: { kind: 'explicit' as const, value: 4 }, measured: null, tokenWaitMs: null, resources: [] };
+    kind: 'lane' as const, lane: 'slow' as never, pinnedCores: null, reservedCpu: 4, cpuBasis: { kind: 'explicit' as const, value: 4 }, measured: null, tokenWaitMs: null, resources: [] };
   const lane = { id: 'slow' as never, set: 'spec' as const, redFirst: false, state: 'red' as const, verdict: 'timeout' as const, flaky: false, inv: work.inv, holds: [] };
   d.status = { ...d.status, units: [{ ...u, stage: 'lanes', work: [work], certification: { used: 1, allowance: 3, left: 2, attempt: 1, lanes: [lane] } }] };
   assert.equal(certificationEntries(d)[0]!.state, 'red:timeout');
@@ -1563,6 +1563,7 @@ test('TUI timeout reds stay distinct from a deadline block and CPU bases preserv
   assert.match(cpuSummary(work), /4 \(explicit\).*pending\/unavailable.*token wait unavailable/);
   assert.match(cpuSummary({ ...work, cpuBasis: { kind: 'default', value: 4, key: sha256('a'.repeat(64)), samples: 2 } }), /default, 2 samples/);
   assert.match(cpuSummary({ ...work, cpuBasis: null }), /legacy basis unavailable/);
+  assert.match(cpuSummary({ ...work, pinnedCores: [2, 3] }), /pinned cores 2,3/);
   const blocked = { ...d, status: { ...d.status, units: [{ ...d.status.units[0]!, work: [{ ...work, cause: 'deadline' as const }],
     certification: { ...d.status.units[0]!.certification!, lanes: [{ ...lane, state: 'blocked' as const, verdict: 'process-fault' as const }] } }] } };
   assert.equal(certificationEntries(blocked)[0]!.state, 'blocked:deadline');

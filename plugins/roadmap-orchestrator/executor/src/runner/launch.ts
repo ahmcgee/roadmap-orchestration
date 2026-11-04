@@ -28,7 +28,7 @@ const POLL_MS = 100;
 /** Completes a launch record: the crash trigger in the executor's environment, if any, rides into test.crash. */
 export function prepareLaunch(base: Omit<LaunchFile, 'test'>): LaunchFile {
   const crash = crashTriggerFromEnv();
-  return { ...base, test: crash === undefined ? null : { crash: absPath(crash, 'ROADMAP_TEST_CRASH') } };
+  return { pinnedCores: null, ...base, test: crash === undefined ? null : { crash: absPath(crash, 'ROADMAP_TEST_CRASH') } };
 }
 
 /** The hash the proc.spawn intent records: sha256 over the exact bytes launch.json is written with. */

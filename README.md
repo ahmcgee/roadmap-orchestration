@@ -73,7 +73,10 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    superseding review or acknowledges the item, including when it offers no options. The supervisor
    restarts crashed executors; runners keep workloads and terminal evidence durable across recovery.
    Restarts retain the arc’s recorded routing profile. A conflicting `start --profile` refuses; change profiles through a routing apply.
-3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations. A conditional
+3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations.
+   Agent seats and their descendants inherit affinity pinned to their reserved cores (`@cpu#N` → core `N-1`);
+   seats without CPU reservations retain inherited affinity. Lanes, journeys and mutants remain accounted,
+   with unchanged affinity. Startup requires util-linux `taskset` when seats need pinning. A conditional
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
    specs first, implement, run targeted checks and report evidence. Every Claude build gets the configured
    `walkthrough.mcp` servers. A declared server unavailable at init raises a non-blocking `walkthrough-mcp` notice,

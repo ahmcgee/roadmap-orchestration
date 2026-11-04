@@ -8,6 +8,8 @@
 // Not contained: a descendant that calls setsid() and execs with a cleared environment. That hole is the
 // documented narrowed guarantee (the contain.escape-* tests pin it), not a bug to patch here. A descendant
 // that leaves the session and turns non-dumpable (its environ becomes unreadable) is the same hole.
+import { tasksetPath, validatePinnedCores } from './affinity.ts';
+import { pinnedCoresOf } from '../core/projections.ts';
 import { spawn } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
 import { join } from 'node:path';
@@ -98,6 +100,13 @@ export async function killSet(find: () => readonly ProcIdentity[], graceMs: numb
  * entry shim.
  */
 export function spawnWorkload(argv: readonly string[], launch: LaunchFile, invDir: AbsPath): Promise<SpawnedWorkload> {
+  const cores = pinnedCoresOf(launch);
+  if (cores !== null) {
+    validatePinnedCores(cores);
+    const taskset = tasksetPath(process.env);
+    if (taskset === null) throw new Error('seat CPU pinning requires taskset (util-linux)');
+    argv = [taskset, '-c', cores.join(','), ...argv];
+  }
   const stdin = openSync(launch.stdinPath ?? '/dev/null', 'r');
   const stdout = openSync(join(invDir, STDOUT_FILE), 'wx');
   const stderr = openSync(join(invDir, STDERR_FILE), 'wx');

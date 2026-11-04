@@ -3,7 +3,7 @@ import type { CpuBasis } from './core/cpu.ts';
 import type { Event,Parent } from './core/events.ts';
 import { invocationId,parseResourceUnit,type InvocationId,type LaneId,type ResourceUnit } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { exitCpuOf,reservationCpuBasisOf,reservationTokenWaitOf } from './core/projections.ts';
+import { exitCpuOf,pinnedCoresOf,reservationCpuBasisOf,reservationTokenWaitOf } from './core/projections.ts';
 import type { CommandVerdict,ExitCause,LaunchCpu } from './core/records.ts';
 import { boundsOfRecord,isRed } from './core/records.ts';
 import type { PlanUnit } from './input/plan.ts';
@@ -16,7 +16,8 @@ import { fastSuiteLanes,fastSuiteRoot,loadUnitSpec,previousLaneReds } from './pi
 import { runnerFiles } from './runner/files.ts';
 
 export type WorkRun = Readonly<{
-  inv: InvocationId; cause: ExitCause | null; parent: Parent; kind: 'build' | 'lane'; lane: LaneId | null;
+  inv: InvocationId; cause: ExitCause | null; parent: Parent; kind: 'build' | 'lane' | 'seat'; lane: LaneId | null;
+  pinnedCores: readonly number[] | null;
   reservedCpu: number | null; cpuBasis: CpuBasis | null; measured: LaunchCpu | null;
   tokenWaitMs: number | null; resources: readonly ResourceUnit[];
 }>;
@@ -44,11 +45,15 @@ export function workRuns(ctx: Pick<StageContext, 'journal' | 'runDir'>, events: 
     if (e.kind !== 'proc.spawn') continue;
     const s = e.expect.subject;
     const build = s.purpose === 'backend' && s.role === 'build';
-    if (!build && !['lane', 'journey', 'proof', 'mutant'].includes(s.purpose)) continue;
+    const seat = s.purpose === 'backend' || s.purpose === 'arc-backend';
+    if (!seat && !['lane', 'journey', 'proof', 'mutant'].includes(s.purpose)) continue;
     const inv = invocationId(e.op, e.ordinal);
-    const exit = runnerFiles(invocationDir(ctx.runDir, inv), inv).read('exit.json');
+    const files = runnerFiles(invocationDir(ctx.runDir, inv), inv);
+    const exit = files.read('exit.json');
+    const launch = files.read('launch.json');
     const reservation = held.get(key);
-    rows.push({ inv, cause: exit?.cause ?? null, parent: e.parent, kind: build ? 'build' : 'lane', lane: 'lane' in s ? s.lane : null,
+    rows.push({ inv, cause: exit?.cause ?? null, parent: e.parent, kind: build ? 'build' : seat ? 'seat' : 'lane', lane: 'lane' in s ? s.lane : null,
+      pinnedCores: launch === null ? null : pinnedCoresOf(launch),
       reservedCpu: reservation ? reservation.resources.filter((r) => parseResourceUnit(r).type === 'cpu').length : null,
       cpuBasis: reservation?.basis ?? null, measured: exit === null ? null : exitCpuOf(exit),
       tokenWaitMs: reservation?.wait ?? null, resources: reservation?.resources ?? [] });

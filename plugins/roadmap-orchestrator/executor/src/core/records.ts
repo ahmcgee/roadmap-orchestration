@@ -220,6 +220,8 @@ export type LaunchFile = InvocationBinding & Readonly<{
   containment: ContainmentMode;
   test: Readonly<{ crash: AbsPath }> | null;
   terminal: LaunchTerminal;
+  /** dev.48: reserved physical CPU ids; null keeps inherited affinity. Absent on dev.47 records. */
+  pinnedCores?: readonly number[] | null;
 }>;
 
 const judgmentSession: Read<JudgmentSession> = object((f) => ({
@@ -287,8 +289,21 @@ const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
 export const MIN_GRACE_MS = 1_000;
 const graceMs = int(MIN_GRACE_MS, Number.MAX_SAFE_INTEGER);
 
+const pinnedCores: Read<readonly number[]> = (value, path) => {
+  const cores = arrayOf(nat, { nonEmpty: true })(value, path);
+  if (cores.some((core, i) => i > 0 && core <= cores[i - 1]!)) throw new SchemaError(path, 'strictly ascending CPU ids', value);
+  return cores;
+};
+
+// Preserve absent fields in parsed records: launchSha256 still binds the original dev.47 bytes.
+function affinityFields(f: Fields): { pinnedCores?: readonly number[] | null } {
+  const cores = f.optional('pinnedCores', nullable(pinnedCores));
+  return cores === undefined ? {} : { pinnedCores: cores };
+}
+
 export const launchFile: Read<LaunchFile> = object((f) => ({
   ...binding(f),
+  ...affinityFields(f),
   argv: f.get('argv', argv),
   cwd: f.get('cwd', abs),
   env: f.get('env', declaredEnv),
@@ -345,7 +360,7 @@ const launchCpu: Read<LaunchCpu> = object((f) => ({ wallMs: f.get('wallMs', nat)
  * the workload's cpu time, null on a host without schedstat; absent from an earlier runner's file, read as null
  * (`exitCpuOf`, src/core/upgrade.ts).
  */
-export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime; cpu?: LaunchCpu | null }>;
+export type ExitFile = InvocationBinding & Readonly<{ child: ChildEnd; cause: ExitCause; endedAt: IsoTime; quiescedAt: IsoTime; cpu?: LaunchCpu | null; pinnedCores?: readonly number[] | null }>;
 
 const childEnd: Read<ChildEnd> = tagged('type', {
   exited: object((f): ChildEnd => ({ type: f.get('type', literal('exited')), code: f.get('code', exitCode) })),
@@ -363,6 +378,7 @@ const childEnd: Read<ChildEnd> = tagged('type', {
 export const exitFile: Read<ExitFile> = object((f) => {
   let out: ExitFile = {
     ...binding(f),
+    ...affinityFields(f),
     child: f.get('child', childEnd),
     cause: f.get('cause', oneOf(EXIT_CAUSES)),
     endedAt: f.get('endedAt', time),

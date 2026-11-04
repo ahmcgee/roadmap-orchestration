@@ -1,3 +1,4 @@
+import { pinnedCoresOf } from '../core/projections.ts';
 // The runner: `node src/entry/runner.ts <invDir>`, launched detached by launch.ts. It is the invocation's
 // controller and never a workload member (ROADMAP_ROLE=runner). It owns the workload from spawn to
 // quiescence on its own, so a dead executor cannot leave a workload past its deadline:
@@ -124,7 +125,7 @@ export async function runnerMain(): Promise<void> {
   const spawned = await containment.launch(launch, invDir);
   if (spawned.kind === 'spawn-failed') {
     const at = now();
-    files.write('exit.json', { ...binding, child: { type: 'spawn-failed', error: spawned.error }, cause: 'exited', endedAt: at, quiescedAt: at, cpu: cpu?.total(0) ?? null });
+    files.write('exit.json', { ...binding, child: { type: 'spawn-failed', error: spawned.error }, cause: 'exited', endedAt: at, quiescedAt: at, pinnedCores: pinnedCoresOf(launch), cpu: cpu?.total(0) ?? null });
     crashPoint('runner.after-exit-json');
     return;
   }
@@ -167,7 +168,7 @@ export async function runnerMain(): Promise<void> {
     await sleep(QUIESCE_POLL_MS);
   }
 
-  const exit: ExitFile = { ...binding, child: end, cause, endedAt: at, quiescedAt: now(), cpu: cpu?.total(Date.now() - spawnedAt) ?? null };
+  const exit: ExitFile = { ...binding, child: end, cause, endedAt: at, quiescedAt: now(), pinnedCores: pinnedCoresOf(launch), cpu: cpu?.total(Date.now() - spawnedAt) ?? null };
   files.write('exit.json', exit);
   crashPoint('runner.after-exit-json');
 }

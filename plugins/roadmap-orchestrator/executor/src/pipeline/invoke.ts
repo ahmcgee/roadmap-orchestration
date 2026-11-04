@@ -1,3 +1,4 @@
+import { seatPinnedCores } from '../contain/affinity.ts';
 import { inspectMcpInit, mcpInitInspector } from './mcp-notices.ts';
 // The `proc.spawn` and `proc.kill` operations over the journal (plan "Runner and containment", R13-R15).
 //
@@ -94,7 +95,9 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
   const body = (op: OpId, inv: InvocationId, deadlineAt: IsoTime): IntentBody<'proc.spawn'> => {
     const content = spec.launch(invocationDir(spec.runDir, inv));
     assertPairing(spec.subject, content.terminal);
-    launch = prepareLaunch({ v: SCHEMA_VERSION, arc: parseOpId(op).arc, op, inv, ...content, deadlineAt, containment: containment.mode });
+    const parent = spec.origin.type === 'new' ? spec.origin.parent : spawnIntent(journal.view, spec.origin.op).parent;
+    const pinnedCores = seatPinnedCores(journal.view, spec.subject, parent);
+    launch = prepareLaunch({ v: SCHEMA_VERSION, arc: parseOpId(op).arc, op, inv, ...content, pinnedCores, deadlineAt, containment: containment.mode });
     return { expect: { subject: spec.subject, launchSha256: launchSha256(launch), ...(spec.cpuKey === undefined ? {} : { cpuKey: spec.cpuKey }) }, post: null };
   };
   const { origin } = spec;

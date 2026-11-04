@@ -135,7 +135,11 @@ Phase 0 refuses schema/plan-invalid, uncommitted inputs, invalid chains (with co
 
 ### Resources, environments and derived output
 
-Tool commands are `{argv,cwd,env}`. Resource declarations have name, probe, teardown and optional pool size. Probe exits: 0 free, 10 owned label, 11 foreign/unlabelled; others are faults. Pool slots bind `RESOURCE_INSTANCE_<NAME>`. Code reserves atomically with CPU before work and tears down before release; leftovers block their resource. Environments have probe and optional up/down/idleMinutes as a group, plus resources they power. Declare identity, lifecycle and labeling correctly before start. New spike resources in a later apply produce a refusal and owner request.
+Tool commands are `{argv,cwd,env}`. Resource declarations have name, probe, teardown and optional pool size. Probe exits: 0 free, 10 owned label, 11 foreign/unlabelled; others are faults. Pool slots bind `RESOURCE_INSTANCE_<NAME>`. Code reserves atomically with CPU before work and tears down before release; leftovers block their resource.
+
+Agent seats (`backend` and `arc-backend`, including acting judges and walks) are pinned to their held `@cpu` cores: `@cpu#N` maps to core `N-1`, inherited by CLI/tool descendants. Lanes, journeys and mutants are accounted, not pinned. A seat holding no `@cpu` keeps inherited affinity; no reservation is invented. Startup rejects a missing util-linux `taskset` when seats need pinning. A reserved core outside `os.availableParallelism()` or the process affinity mask fails loudly. Launch/exit records and status expose `pinnedCores` (null means inherited affinity).
+
+Environments have probe and optional up/down/idleMinutes as a group, plus resources they power. Declare identity, lifecycle and labeling correctly before start. New spike resources in a later apply produce a refusal and owner request.
 
 Derived entries hold sources, outputs and optional regenerate command. The lanes stage regenerates a touched entry in a clean checkout and compares output bytes. They grant no file exclusion. Evidence globs name disposable outputs; they cannot cover tracked unit-system files or protected paths. Ignored-output capture excludes secrets unless explicitly declared evidence.
 
