@@ -76,7 +76,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
 3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations. A conditional
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
    specs first, implement, run targeted checks and report evidence. Every Claude build gets the configured
-   `walkthrough.mcp` servers. Bring-ups list its member/design milestones and origin milestones of findings its spec
+   `walkthrough.mcp` servers. A declared server unavailable at init raises a non-blocking `walkthrough-mcp` notice,
+   once per server/error signature; a later connected build or acting walk explicitly settles its named notices. Bring-ups list its member/design milestones and origin milestones of findings its spec
    `repairs` cites, once each in plan order; empty is valid. Without the config, builds get no servers and no new
    refusal. Codex builds have no MCP path; acting judges keep their own rules. Bootstrap still refuses browser
    journeys without this config. The executor quiesces workloads, captures evidence,

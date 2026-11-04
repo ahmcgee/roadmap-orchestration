@@ -1088,3 +1088,15 @@ an explicit unavailable-cause summary, empty evidence/directives and null compar
 Journey reuse additionally requires every current witness test id on the lane to be present in the certified record. Missing IDs force execution; covered records remain reusable across obligation evidence refreshes. Files and normative revision retain their existing input/proof checks; a revision alone does not invalidate a record covering the current IDs.
 
 Builder decisions use existing spec.patch and kept-spec history to establish the last text author. Builders may replace their own current text. Root/other-authored text survives repeats; differing proposals become stable `departure.<hash>` decisions through the existing departure channel. No provenance field or runtime migration is added.
+
+### dev.45 walkthrough MCP availability
+
+`walkthrough-mcp` facts retain `inv`, `server`, configured `command` argv and `connection`: either
+`{type: "unavailable", status, error: string|null, signature: sha256, notice: needsUserId}` or
+`{type: "connected", settles: needsUserId[]}`. Each invocation/server is recorded once, from Claude stream-json init.
+Unavailable statuses (including a server missing from an explicit census) raise a non-blocking arc notice with reason
+`walkthrough-mcp`, deduplicated arc-wide by server and hash of status/error. The notice names command, status and stdout
+evidence and recommends fixing walkthrough.mcp for the worktree. Builds continue. A later connected configured Claude
+build or acting walk explicitly settles that server's open notice IDs; unrelated applies/resumes do not. Named ack remains
+available. No declared MCP config or no init census produces no availability fact or notice. Monitoring and spawn recovery
+share the same idempotent inspection. Old logs need no new fields; the new fact collection starts empty.

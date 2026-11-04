@@ -697,6 +697,7 @@ export class Fold implements JournalView {
   // Milestone job outcomes
   readonly #stageJobOutcomes: import('./events.ts').JobStageOutcomeFact[] = [];
   readonly #ciFacts: CiFact[] = [];
+  readonly #walkMcp: import('./events.ts').WalkMcpFact[] = [];
   readonly #integrationPushes: { seq: number; fact: import('./events.ts').IntegrationPushFact }[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
@@ -1177,6 +1178,10 @@ export class Fold implements JournalView {
       }
       case 'containment-mode':
         this.#containmentMode = f.mode;
+        return;
+      case 'walkthrough-mcp':
+        if (this.#walkMcp.some((w) => w.inv === f.inv && w.server === f.server)) fail(`second MCP init for ${f.inv} ${f.server}`);
+        this.#walkMcp.push(f);
         return;
       case 'integration-push':
         this.#integrationPushes.push({ seq: at.seq, fact: f });
@@ -2005,6 +2010,7 @@ export class Fold implements JournalView {
   stageJobOutcomes(): readonly import('./events.ts').JobStageOutcomeFact[] { return this.#stageJobOutcomes; }
 
   ciFacts(): readonly CiFact[] { return this.#ciFacts; }
+  walkMcp(): readonly import('./events.ts').WalkMcpFact[] { return this.#walkMcp; }
   integrationPushes(): readonly Readonly<{ seq: number; fact: import('./events.ts').IntegrationPushFact }>[] { return this.#integrationPushes; }
 
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }> {

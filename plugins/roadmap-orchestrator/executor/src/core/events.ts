@@ -750,7 +750,15 @@ export type IntegrationPushFact = Readonly<{
   error: string | null; settles: readonly NeedsUserId[];
 }>;
 
+/** dev.45: init-time availability of a declared walkthrough server, with named notice settlement. */
+export type WalkMcpFact = Readonly<{
+  kind: 'walkthrough-mcp'; inv: InvocationId; server: string; command: readonly string[];
+  connection: Readonly<{type: 'connected'; settles: readonly NeedsUserId[]}>
+    | Readonly<{type: 'unavailable'; status: string; error: string | null; signature: Sha256Hex; notice: NeedsUserId}>;
+}>;
+
 export type Fact =
+  | WalkMcpFact
   | IntegrationPushFact
   | CiFact
   | Readonly<{ kind: 'tail-discarded'; offset: number; length: number; sha256: Sha256Hex }>
@@ -2154,6 +2162,16 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
 };
 
 export const fact: Read<Fact> = tagged('kind', {
+  'walkthrough-mcp': object((f): WalkMcpFact => ({kind: f.get('kind', literal('walkthrough-mcp')), inv: f.get('inv', invR), server: f.get('server', nonBlank), command: f.get('command', arrayOf(str, {nonEmpty: true})),
+    connection: f.get('connection', tagged<'connected' | 'unavailable', WalkMcpFact['connection']>('type', {
+      connected: object((g) => ({type: g.get('type', literal('connected')), settles: g.get('settles', arrayOf((v,p) => needsUserId(v,p)))})),
+      unavailable: object((g) => {
+        const status = g.get('status', nonBlank);
+        if (status === 'connected') throw new SchemaError(g.path, 'an unavailable MCP status', status);
+        return {type: g.get('type', literal('unavailable')), status, error: g.get('error', nullable(str)), signature: g.get('signature', sha256R), notice: g.get('notice', (v,p) => needsUserId(v,p))};
+      }),
+    })),
+  })),
   'integration-push': object((f): IntegrationPushFact => {
     const out = { kind: f.get('kind', literal('integration-push')), branch: f.get('branch', branchName), head: f.get('head', shaR),
       result: f.get('result', oneOf(['pushed', 'up-to-date', 'failed', 'diverged', 'no-origin'] as const)),

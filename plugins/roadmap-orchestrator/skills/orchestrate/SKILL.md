@@ -142,3 +142,5 @@ Close admissions when the intended slice is complete. Let final audit, selected 
 Use `chain status` before another start. Prepare the next baseline on your own checkout, preserving the previous head and allowed between-arc corpus/config/vision changes. Stop when the vision is silent or the acknowledged chain bound disallows another start. Lookup details belong in the reference.
 
 Candidate red parks retain the cause, RUN/REUSED grading records and original evidence. Read that diagnosis before revising the work.
+
+`walkthrough-mcp` is a non-blocking arc notice, once per declared server/error signature. Fix the named command in `walkthrough.mcp` for the unit worktree; a later connected Claude build or acting walk settles its notices, or acknowledge each by id after review.

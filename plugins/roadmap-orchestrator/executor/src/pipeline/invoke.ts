@@ -1,3 +1,4 @@
+import { inspectMcpInit } from './mcp-notices.ts';
 // The `proc.spawn` and `proc.kill` operations over the journal (plan "Runner and containment", R13-R15).
 //
 // proc.spawn, on the normal path:
@@ -105,7 +106,11 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
   crashPoint('spawn.after-intent', unit);
 
   const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch, unit);
-  await awaitRunner(handle);
+  const mcpContext = {journal, runDir:spec.runDir};
+  const runningLaunch = launch;
+  const mcpTimer = setInterval(() => { if (inspectMcpInit(mcpContext, runningLaunch)) clearInterval(mcpTimer); }, 250);
+  try { await awaitRunner(handle); } finally { clearInterval(mcpTimer); }
+  inspectMcpInit(mcpContext, runningLaunch);
   crashPoint('spawn.after-runner-exit', unit);
   const settled = await settle({ journal, containment, runDir: spec.runDir }, spawnIntent(journal.view, durable.op), { type: 'live' });
   return settled.outcome;
@@ -143,6 +148,11 @@ export async function settle(ctx: ProcContext, intent: IntentOf<'proc.spawn'>, m
   const target: KillTarget = { inv, scope: mode.type === 'recovered' ? 'op' : 'invocation', reason: 'recovery' };
   if (!quiescent(ctx, target)) await killWorkload(ctx, target);
 
+  const mcpLaunch = files.read('launch.json');
+  if (mcpLaunch !== null) {
+    if (launchSha256(mcpLaunch) !== intent.expect.launchSha256) throw new Error(`${dir}/launch.json does not hash to the intent's launchSha256 ${intent.expect.launchSha256}`);
+    inspectMcpInit(ctx, mcpLaunch);
+  }
   const resultPath = join(dir, 'result.json');
   const hadResult = files.read('result.json') !== null;
   const exit = files.read('exit.json');

@@ -269,3 +269,5 @@ Candidate red parks retain the cause, RUN/REUSED grading records and original ev
 Certified journey reuse must cover all current witness test IDs; changed IDs absent from the record rerun the lane. Candidate diagnoses say RUN or REUSED and point to the original record.
 
 Builders add decisions and may revise text they authored last. Root-edited decisions remain authoritative; differing builder proposals are retained as departure notes for the gate.
+
+`walkthrough-mcp` is a non-blocking arc notice, once per declared server/error signature. Fix the named command in `walkthrough.mcp` for the unit worktree; a later connected Claude build or acting walk settles its notices, or acknowledge each by id after review.

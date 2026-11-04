@@ -159,7 +159,7 @@ export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
     if (started?.kind !== 'walk-started') throw new Error(`walk-ended of ${job}, which never started`);
     return view.rewalkSeq(started.milestone) > x.seq ? [job] : [];
   });
-  return new Set([...view.integrationPushes().flatMap((p) => p.fact.settles), ...view.holistic().baselineHeld.flatMap((h) => h.items), ...[...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
+  return new Set([...view.walkMcp().flatMap((w) => w.connection.type === 'connected' ? w.connection.settles : []), ...view.integrationPushes().flatMap((p) => p.fact.settles), ...view.holistic().baselineHeld.flatMap((h) => h.items), ...[...ended.map((r) => r.started.job), ...rewalked].flatMap((job) => {
     const id = raisedFor(view, { type: 'job', job });
     return id === null ? [] : [id];
   })]);
