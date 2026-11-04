@@ -1,4 +1,4 @@
-import { inspectMcpInit } from './mcp-notices.ts';
+import { inspectMcpInit, mcpInitInspector } from './mcp-notices.ts';
 // The `proc.spawn` and `proc.kill` operations over the journal (plan "Runner and containment", R13-R15).
 //
 // proc.spawn, on the normal path:
@@ -107,10 +107,10 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
 
   const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch, unit);
   const mcpContext = {journal, runDir:spec.runDir};
-  const runningLaunch = launch;
-  const mcpTimer = setInterval(() => { if (inspectMcpInit(mcpContext, runningLaunch)) clearInterval(mcpTimer); }, 250);
+  const inspectInit = mcpInitInspector(mcpContext, launch);
+  const mcpTimer = setInterval(() => { if (inspectInit()) clearInterval(mcpTimer); }, 250);
   try { await awaitRunner(handle); } finally { clearInterval(mcpTimer); }
-  inspectMcpInit(mcpContext, runningLaunch);
+  inspectInit();
   crashPoint('spawn.after-runner-exit', unit);
   const settled = await settle({ journal, containment, runDir: spec.runDir }, spawnIntent(journal.view, durable.op), { type: 'live' });
   return settled.outcome;

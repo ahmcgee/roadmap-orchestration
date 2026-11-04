@@ -63,8 +63,10 @@ export function summarize(s: Status, events: readonly Event[], plan: PlanM1 | nu
 }
 
 export function statusSummary(runDir: AbsPath, arc: ArcId, hostDir: AbsPath) {
-  const s = status(runDir, arc, hostDir);
-  const { view, events } = readJournal(runDir, arc, s.host.log.events);
+  // One read and fold, shared with status() (it accepts the snapshot), so the summary costs no more than status itself.
+  const log = readJournal(runDir, arc);
+  const s = status(runDir, arc, hostDir, log);
+  const { view, events } = log;
   const applied = view.planApplied();
   const bytes = applied === null ? null : keptInput(runDir, applied.planSha256, PLAN_INPUT);
   if (applied !== null && bytes === null) throw new Error(`Missing plan ${applied.planSha256}`);

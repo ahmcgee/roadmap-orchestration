@@ -1,4 +1,3 @@
-import { readJournal } from '../core/log.ts';
 import { parseUnitSpec, specBytesOf } from '../input/inforce.ts';
 import { type DesignChange, type DesignRecord, type FailureMode, type TestItemRef, designSize } from '../core/design.ts';
 import { type ClauseId, type LaneId, type ObligationId, type Sha, type SystemName, type UnitId, clauseId, invocationId, sha } from '../core/ids.ts';
@@ -6,7 +5,7 @@ import { sha256Hex } from '../core/json.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type LaneDef, type SpecM1, specForces, specWitnesses } from '../core/records.ts';
 import type { ContractPin, FilePin, RequirementPin } from '../core/pins.ts';
-import { type RepoPath, type RepoPattern, matchesPattern } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, matchesPattern } from '../core/values.ts';
 import { gitRun } from '../git/git.ts';
 import type { Obligations } from '../holistic/types.ts';
 import { laneUnreachable } from '../holistic/witnessfiles.ts';
@@ -241,10 +240,12 @@ export function departures(map: SystemsMap | null, record: DesignRecord | undefi
   });
 }
 
+type BuilderDecisionContext = Readonly<{runDir: AbsPath; journal: Readonly<{view: Pick<JournalView, 'spawnsOfUnit' | 'specHistory'>}>}>;
+
 /** Decisions whose current text was last set by this unit's builder, derived from kept specs and completed patches.
  * Revisions copying unchanged text preserve its author; a root text edit takes ownership. No new runtime metadata.
  */
-export function builderDecisions(ctx: StageContext, unit: UnitId, path: import('../core/values.ts').AbsPath): ReadonlySet<ClauseId> {
+export function builderDecisions(ctx: BuilderDecisionContext, unit: UnitId, path: AbsPath): ReadonlySet<ClauseId> {
   const current = new Map<ClauseId, {text: string; builder: boolean}>();
   const read = (hash: import('../core/ids.ts').Sha256Hex, builder: boolean): void => {
     const spec = parseUnitSpec(specBytesOf(ctx.runDir, hash), path, unit);
@@ -256,18 +257,8 @@ export function builderDecisions(ctx: StageContext, unit: UnitId, path: import('
     }
   };
   const builds = new Set(ctx.journal.view.spawnsOfUnit(unit, 'build').map((i) => invocationId(i.op, i.ordinal)));
-  for (const event of readJournal(ctx.runDir, ctx.journal.view.arc).events) {
-    if (event.type === 'fact' && event.fact.kind === 'plan-applied') {
-      const hash = event.fact.specs[unit];
-      if (hash !== undefined) read(hash, false);
-    }
-    if (event.type === 'done' && event.kind === 'spec.patch') {
-      const patch = ctx.journal.view.latestIntent(event.op);
-      if (patch.kind !== 'spec.patch') throw new Error(`${event.op}: spec.patch done without its intent`);
-      if (patch.expect.path !== path) continue;
-      const by = patch.expect.patch.by;
-      read(patch.post.newSha256, by.role === 'executor' && builds.has(by.inv));
-    }
+  for (const entry of ctx.journal.view.specHistory(unit, path)) {
+    read(entry.hash, entry.by?.role === 'executor' && builds.has(entry.by.inv));
   }
   return new Set([...current].filter(([, value]) => value.builder).map(([id]) => id));
 }

@@ -226,10 +226,20 @@ export function readClaude(stdout: string): BackendReading {
 
 export type ClaudeMcpStatus = Readonly<{name: string; status: string; error: string | null}>;
 
-/** Init availability only; no init/MCP census yet is unknown, including a stream cut before init. */
-export function readClaudeMcp(stdout: string): readonly ClaudeMcpStatus[] | null {
-  const init = jsonLines(stdout, 'stdout').find((e) => e['type'] === 'system' && e['subtype'] === 'init');
-  if (init === undefined || init['mcp_servers'] === undefined) return null;
+export type ClaudeMcpInit = Readonly<{ servers: readonly ClaudeMcpStatus[] | null }>;
+
+/** Read only through the first complete init line. A missing census is unknown, but init is consumed. */
+export function readClaudeMcp(stdout: string): ClaudeMcpInit | null {
+  for (let start = 0, nl = stdout.indexOf('\n'); nl !== -1; nl = stdout.indexOf('\n', start)) {
+    const [event] = jsonLines(stdout.slice(start, nl + 1), 'stdout');
+    start = nl + 1;
+    if (event?.['type'] === 'system' && event['subtype'] === 'init') return { servers: mcpServersOf(event) };
+  }
+  return null;
+}
+
+function mcpServersOf(init: StreamEvent): readonly ClaudeMcpStatus[] | null {
+  if (init['mcp_servers'] === undefined) return null;
   const servers = init['mcp_servers'];
   if (!Array.isArray(servers)) throw new MalformedOutputError('stdout', 'init mcp_servers is not an array');
   const seen = new Set<string>();
