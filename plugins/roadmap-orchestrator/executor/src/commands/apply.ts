@@ -162,8 +162,10 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
   }
   if (command.body.type !== 'ack') {
     const b = command.body;
+    // Actions close the subjects they resolve (DESIGN-1.0). A pause resolves nothing; `resume --all` only lifts the
+    // arc-wide pause; `resume <unit>` resolves its items only once the unit has left its park.
     const subjects: Exclude<NeedsUserContent['subject'], {type: 'arc'}>[] = 'unit' in b ? [{type: 'unit', unit: b.unit}]
-      : 'target' in b && b.target.type === 'unit' ? [{type: 'unit', unit: b.target.unit}] : [];
+      : b.type === 'resume' && b.target.type === 'unit' && ctx.journal.view.unit(b.target.unit).status !== 'park-pending' ? [{type: 'unit', unit: b.target.unit}] : [];
     if (b.type === 'apply') {
       const fact = ctx.journal.view.planAppliedBy(id);
       for (const change of fact?.changes ?? []) {
@@ -171,7 +173,6 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
         if (change.type === 'unit-reentered') subjects.push({type: 'unit', unit: change.reenters});
       }
     }
-    if ('target' in b && b.target.type === 'all') subjects.push(...ctx.plan().units.map((u) => ({type: 'unit' as const, unit: u.id})));
     if (b.type === 'sweep' || (b.type === 'resume' && b.target.type === 'backend')) subjects.push({type: 'host'});
     if (b.type === 'witness' || b.type === 'dismiss') subjects.splice(0, subjects.length);
     const findingItems = openNeedsUser(ctx.journal.view).flatMap((n) => {

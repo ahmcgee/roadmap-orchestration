@@ -608,11 +608,21 @@ test('closure-by-subject: one command closes every item for its unit and preserv
   try {
     const first = raise(ctx, true, []), second = raise(ctx, false, []);
     const other = raiseNeedsUser(journal, ctx.runDir, {blocking: false, subject: {type: 'arc'}, reason: 'lane-blocked', summary: 'arc item', recommendation: 'review', options: [], evidence: []}, {type: 'arc'});
-    const cmd = submit(ctx, {type: 'pause', target: {type: 'unit', unit: UNIT}});
+    const cmd = submit(ctx, {type: 'resume', target: {type: 'unit', unit: UNIT}});
     assert.equal((await applyCommand(ctx, cmd)).kind, 'applied');
     assert.equal(journal.view.ackOf(first)?.command, cmd.id);
     assert.equal(journal.view.ackOf(second)?.command, cmd.id);
     assert.equal(journal.view.ackOf(other), null);
+  } finally {journal.close();}
+});
+test('closure-by-subject.pause-resolves-nothing: a unit pause and pause --all leave every needs-user open; resume --all only lifts the pause', async () => {
+  const {ctx, journal} = openCommandRun(newCmdRun());
+  try {
+    const item = raise(ctx, true, []);
+    for (const body of [{type: 'pause', target: {type: 'unit', unit: UNIT}}, {type: 'pause', target: {type: 'all'}}, {type: 'resume', target: {type: 'all'}}] as const) {
+      assert.equal((await applyCommand(ctx, submit(ctx, body))).kind, 'applied', JSON.stringify(body));
+      assert.equal(journal.view.ackOf(item), null, JSON.stringify(body));
+    }
   } finally {journal.close();}
 });
 test('ack-with-options: optionless unit items require subject action; offered choices are preserved', async () => {
