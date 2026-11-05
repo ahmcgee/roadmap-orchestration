@@ -98,6 +98,30 @@ test('ci attempts: all uncharged attempts count; plan-check excluded; M4 at 8/20
   assert.deepEqual(await runUnit(stages.ctx, stages.unit, admitAll), replayed, 'a root-reactivated unit over its cap still returns a park, never null');
 });
 
+test('ci recovery: an uncertified red series does not turn its retry into a repeated failure', T, async (t) => {
+  const run = setupUnit({ steps: [], lanes: [{ id: 'check', argv: ['sh', '-c', 'echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1'] }] });
+  t.after(() => run.journal.close());
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+  const fact = run.journal.fact.bind(run.journal);
+  const crash = new Error('crashed before series-certified');
+  run.journal.fact = (f) => {
+    if (f.kind === 'series-certified') throw crash;
+    return fact(f);
+  };
+  try { await assert.rejects(lanes(run.ctx, run.unit, run.base), (error) => error === crash); }
+  finally { run.journal.fact = fact; }
+  const abandoned = run.journal.view.unit(U1).open!;
+  fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
+  fact({ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: abandoned.attempt, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'recovery' } });
+  assert.equal(run.journal.view.opsOf('proc.spawn').length, 2, 'both red runs finished before the crash');
+  const retried = started(await lanes(run.ctx, run.unit, run.base));
+  assert.equal(retried.outcome.kind, 'red', 'the retry still asks for its first fix round');
+  assert.equal(run.journal.view.opsOf('proc.spawn').length, 4, 'the retry gets its own diagnostic, without a base comparison');
+  assert.equal(retried.ledger[0]!.repeat, null);
+  assert.ok(retried.fix?.kind === 'fix');
+  assert.ok(!run.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared'));
+});
+
 for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (${baseGreen ? 'green charges regression' : 'red follows base-red'})`, T, async () => {
   const command = baseGreen ? 'if grep -q BROKEN src/add.js; then echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1; fi' : 'echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1';
   const run = setupUnit({ steps: [], lanes: [{ id: 'check', argv: ['sh', '-c', command] }] });

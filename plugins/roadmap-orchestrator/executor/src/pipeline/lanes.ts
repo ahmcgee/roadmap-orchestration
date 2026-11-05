@@ -767,7 +767,7 @@ export function passedOnInput(ctx: StageContext, lane: LaneDef, now: LaneNow): b
 
 /**
  * The unit's earlier red this red run of spec lane `lane` repeats (F2, R53), or null: the latest earlier red execution
- * of the lane, with no pass of it since, confirmed and not flaky (its persisted class a diagnostic whose rerun stayed
+ * of the lane, with no pass of it since, certified, confirmed and not flaky (its persisted class a diagnostic whose rerun stayed
  * red, or itself a repeat), with the same failure signature, and its spawn's lane rev and environment equal to `now`'s.
  * The caller passes only a specific signature; the host's state is `classifyRed`'s.
  */
@@ -779,6 +779,9 @@ function repeatOf(ctx: StageContext, parent: StageParent, lane: LaneDef, now: La
     if (e.reused || r.verdict === 'pass') return null;
     if (!isRed(r.verdict)) continue;
     if (r.flaky) return null;
+    // A crash can leave both red runs and their class durable before the series' clean census is certified.
+    // Retrying that unfinished series is not a repeated failure after a fix round.
+    if (!certifiedRun(ctx, r.inv)) return null;
     const red = readRedClass(r.evidenceDir);
     const confirmed = red !== null && ((red.class.kind === 'diagnostic' && r.diagnostic !== null) || red.class.kind === 'repeat');
     if (!confirmed || red.failure !== failure) return null;
