@@ -55,9 +55,10 @@ test('merge.base-red: the suite is red on the candidate and on T alone; the unit
     assert.notEqual(suites[0], tip);
     assert.equal(suites[1], suites[0], 'the candidate\'s red lane was rerun on the candidate');
     assert.deepEqual(suites.slice(2), [tip, tip], 'the second suite series tested T alone, its red lane rerun');
-    for (const suffix of ['candidate', 'base']) {
-      assert.ok(!existsSync(join(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, `u1.${suffix}-9`)), `the ${suffix} checkout is removed`);
-    }
+    const candidateTrees = r.journal.view.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.stage === 'candidate');
+    assert.ok(candidateTrees.some((i) => i.expect.path.endsWith('/.candidate.verify') && existsSync(i.expect.path)), 'the arc candidate cache survives a base-red park');
+    const bases = candidateTrees.filter((i) => i.expect.path.includes('.base-'));
+    assert.ok(bases.length > 0 && bases.every((i) => !existsSync(i.expect.path)), 'diagnostic base checkouts are still removed');
     assert.equal(resourceTable(r.journal.view).get(resourceName('integration-slot'))?.status.state, 'free', 'the slot is released');
   } finally {
     r.journal.close();

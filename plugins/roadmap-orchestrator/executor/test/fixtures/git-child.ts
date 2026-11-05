@@ -34,7 +34,7 @@ switch (s['op']) {
     break;
   }
   case 'create':
-    await runOp(journal, worktreeCreateOp(absPath(str('repo'))), 'worktree:unit', { path: absPath(str('path')), checkout: s['checkout'] as WorktreeCheckout });
+    await runOp(journal, worktreeCreateOp(absPath(str('repo'))), 'worktree:unit', { path: absPath(str('path')), checkout: s['checkout'] as WorktreeCheckout, ...(s['reset'] === true ? { reset: true as const } : {}) });
     break;
   case 'remove': {
     const captured = capturedEvidence(journal.view, opIdOf(str('evidence')));

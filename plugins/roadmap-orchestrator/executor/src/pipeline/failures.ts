@@ -83,6 +83,8 @@ function classified(parent: StageParent, lane: LaneId, cls: RedClass | null, rer
     case undefined:
       // Red, and a crash before its class was written: no rerun ran.
       return out('red', null);
+    case 'no-rerun':
+      return out('red', null);
     case 'repeat':
       return out('repeat', null);
     case 'diagnostic':

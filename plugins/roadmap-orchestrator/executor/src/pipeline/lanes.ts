@@ -97,12 +97,13 @@ isRed,
 } from '../core/records.ts';
 import { type AbsPath,type IsoTime,type RepoPath,type RepoPattern,absPath,branchRef,isoTimeOf,repoPath,repoPattern } from '../core/values.ts';
 import { type EvidenceManifest,FILES_DIR,capturedEvidence,manifestPath,namedPathGlobs,patternPath,readManifest } from '../git/evidence.ts';
+import { diffBase } from '../git/transient.ts';
 import { isAncestor } from '../git/ff.ts';
 import { git,revParse,statusPorcelainV2Z } from '../git/git.ts';
 import { ignoredWrites,planIgnored } from '../git/ignored.ts';
 import { type ReuseKey,inputShaOf,treeOfCommit } from '../git/reusekey.ts';
 import { candidateLaneDir,jobEvidenceRoot,jobLaneDir,witnessDir } from '../git/snapshot.ts';
-import { type WorktreeCreateRequest,removedSince,standing } from '../git/worktree.ts';
+import { type WorktreeCreateRequest,WorktreeRecoveryError,permissionResidue,removedSince,standing } from '../git/worktree.ts';
 import { type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef,type ObligationDef,type Obligations,type WitnessRecord,isExempt,laneRevOf } from '../holistic/types.ts';
 import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,envIdOf,hostIdentity,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
@@ -128,7 +129,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { Acquire,Rank,ResourceRequest } from '../schedule/types.ts';
 import { CPU_COST } from '../schedule/types.ts';
 import { flakeOf,observeFlake } from './deflake.ts';
-import { type StageContext,type StageParent,evidenceRoot,runOp,verificationWorktree } from './dispatch.ts';
+import { type StageContext,type StageParent,candidateVerificationWorktree,evidenceRoot,matchesVerificationPath,runOp,verificationWorktree } from './dispatch.ts';
 import { invocationDir,invoke } from './invoke.ts';
 import {
 type FailureSignature,type LaneCancel,type LaneHost,type RedClass,type RedEvidence,type RepeatOf,classifyRed,failureSignature,hostWasBusy,
@@ -456,6 +457,8 @@ function countedRerun(first: LaneVerdict, rerun: LaneVerdict | null, cls: RedCla
       return { rerun: forgiven, flaky: rerun.verdict === 'pass' };
     case 'signature-without-evidence':
       throw new Error(`lane ${first.lane} was rerun after a signature without host evidence (${first.inv})`);
+    case 'no-rerun':
+      throw new Error(`lane ${first.lane} was rerun after a no-rerun decision (${first.inv})`);
     case 'repeat':
       throw new Error(`lane ${first.lane} was rerun after a repeat of ${cls.inv} (${first.inv})`);
   }
@@ -470,6 +473,12 @@ function laneRecord(first: LaneRun, rerun: LaneRun | null, forgiven = false): La
   };
   if (rerun === null) return { ...first, ...base };
   return counted.rerun ? { ...rerun, ...base, voided: first } : { ...first, ...base, diagnostic: rerun };
+}
+
+/** Literal patterns opt deterministic errors out of diagnostic reruns; host signatures still win. */
+function deterministicFailure(runDir: AbsPath, inv: InvocationId, lane: LaneDef): boolean {
+  const dir = invocationDir(runDir, inv);
+  return (lane.noRerunPatterns ?? []).some((p) => outputTail(join(dir, STDERR_FILE)).includes(p) || outputTail(join(dir, STDOUT_FILE)).includes(p));
 }
 
 /** A red run's failure signature (redlane.ts `failureSignature`) from its output files, its checkout masked. */
@@ -905,6 +914,12 @@ export function seriesEntry(ctx: ResourceContext, lanes: readonly LaneDef[]): Re
   return first === undefined ? null : laneRequest(ctx, first);
 }
 
+/** Stable unit series and arc candidate series; temporary diagnostic checkouts keep their original lifecycle. */
+function retainedCheckout(ctx: StageContext, unit: UnitId, path: AbsPath): boolean {
+  const { worktreeRoot, arc } = ctx.plan();
+  return path === verificationWorktree(worktreeRoot, arc, unit) || path === candidateVerificationWorktree(worktreeRoot, arc);
+}
+
 /**
  * Runs `lanes` (in series order) one at a time, each under its reservation, in the detached checkout
  * `checkout` names, created just before the first lane that runs, keeping evidence under `root`. A spec series
@@ -927,7 +942,32 @@ export async function runLaneSeries(
   }
   if (witnesses.size > 0 && (set !== 'suite' || parent.stage !== 'candidate')) throw new Error(`series ${parent.unit} ${parent.stage}#${parent.attempt}: only a candidate's suite runs lanes as arc lanes`);
   const { path } = checkout;
+  if (retainedCheckout(ctx, parent.unit, path)) {
+    checkout = { ...checkout, reset: true };
+  }
   const { at } = checkout.checkout;
+  const prepareCheckout = async (): Promise<void> => {
+    try {
+      if (checkout.reset) {
+        // A permission park releases the slot. A candidate already queued for it must not reset the older op's inputs.
+        const pending = ctx.journal.view.openIntents().find((i) => (i.kind === 'worktree.create' || i.kind === 'worktree.remove')
+          ? i.expect.path === path : i.kind === 'evidence.snapshot' && i.expect.source === path);
+        if (pending !== undefined) throw new WorktreeRecoveryError(path, `Checkout ${path} still has ${pending.kind} ${pending.op} awaiting recovery. Restore the named residue's permissions and restart to settle it before another series.`);
+        if (existsSync(path) && !ctx.journal.view.opsOf('worktree.create').some((i) => i.expect.path === path && standing(ctx.journal.view, i))) throw new Error(`stable checkout ${path} has no standing journal create`);
+      }
+      if (checkout.reset && existsSync(path)) {
+        const previous = ctx.journal.view.opsOf('worktree.create').filter((i) => i.expect.path === path && standing(ctx.journal.view, i)).at(-1);
+        if (previous?.parent.type === 'stage' && !ctx.journal.view.opsOf('evidence.snapshot').some((i) => canonicalJson(i.parent) === canonicalJson(previous.parent) && ctx.journal.view.doneOf(i.op) !== null)) {
+          const dirty = dirtySnapshot(path);
+          await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
+            source: path, globs: [...new Set([...dirty.globs, ...lanes.flatMap((l) => l.evidenceGlobs)])].sort(), notRegular: dirty.notRegular,
+            dest: absPath(join(evidenceRoot(ctx.runDir, previous.parent), '_leftover')),
+          });
+        }
+      }
+      await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
+    } catch (error) { throw permissionResidue(path, error) ?? error; }
+  };
   const holder: StageHolder = { type: 'stage', unit: parent.unit, stage: parent.stage, attempt: parent.attempt };
   const ledger: LaneRecord[] = [];
   // Written by each run (`attempt`): the series' last done evidence snapshot.
@@ -976,7 +1016,7 @@ export async function runLaneSeries(
       held = run(ctx, reserved, parent);
     }
     try {
-      if (last.evidence === null) await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
+      if (last.evidence === null) await prepareCheckout();
       const ran = await runLane(ctx, parent, lane, set, path, at, laneDir(root, lane, which), held?.resources ?? [], rt.sampleHost, identity, witnesses.get(lane.id) ?? null, files, verifyRuns);
       last.evidence = ran.evidence;
       if (held !== null) {
@@ -1077,7 +1117,10 @@ export async function runLaneSeries(
     const red = first.ran.record;
     const failure = failureOf(ctx.runDir, red.inv, red.verdict, red.exitCode, path);
     const repeat = set === 'spec' && failure.specific ? repeatOf(ctx, parent, lane, identity, failure.failure) : null;
-    const cls = classifyRed(evidenceOf(red), repeat);
+    const baseRed = ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === parent.unit
+      && f.lane === lane.id && f.result === 'fail' && f.base === diffBase(ctx.repo, revParse(ctx.repo, branchRef(ctx.plan().integrationBranch)), at));
+    const deterministic = red.verdict === 'fail' && deterministicFailure(ctx.runDir, red.inv, lane);
+    const cls = classifyRed(evidenceOf(red), repeat, baseRed ? 'base-red' : deterministic ? 'deterministic' : null);
     writeRedClass(red.evidenceDir, cls, failure.failure, parent.unit);
     const rerun: { ran: Ran | null } = { ran: null };
     const result = await redLane<Ran, SeriesEnd>(cls, async () => {
@@ -1097,9 +1140,10 @@ export async function runLaneSeries(
       && observeFlake(ctx, { type: 'unit', unit: parent.unit }, lane.id, set, flakeOn(ctx, parent, at), { tree: now.inputSha, env: identity.envId, failing: [], red: red.inv, green: again.inv });
     const record = laneRecord(red, again, forgiven);
     ledger.push(record);
-    if ((result.kind === 'reran' && result.verdict.kind !== 'blocked') || result.kind === 'repeat') witnessCounted(lane, record);
+    if ((result.kind === 'reran' && result.verdict.kind !== 'blocked') || result.kind === 'repeat' || result.kind === 'no-rerun') witnessCounted(lane, record);
     if ((result.kind === 'reran' && result.verdict.kind === 'pass') || forgiven) continue;
     switch (result.kind) {
+      case 'no-rerun':
       case 'repeat':
         end = { kind: 'red', lane: record };
         break;
@@ -1123,7 +1167,7 @@ export async function runLaneSeries(
     // No lane ran: every lane reused (F1a, Q3), or the spec declares none (a repair unit's, paid M4a run 11). The gate
     // still reads a checkout of the commit, made and certified as any series'. `_reused` cannot collide with a lane id,
     // which starts with a letter.
-    await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, checkout);
+    await prepareCheckout();
     last.evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
       source: path, globs: [], dest: absPath(join(root, '_reused')),
     })).op;
@@ -1169,25 +1213,30 @@ export async function removeCheckout(
   const view = ctx.journal.view;
   const { path } = created.expect;
   const series = created.parent;
-  let evidence = view.opsOf('evidence.snapshot').filter((i) => sameParent(i.parent, series) && view.doneOf(i.op) !== null).at(-1)?.op;
-  if (evidence === undefined) {
-    const dirty = dirtySnapshot(path);
-    const globs = [...new Set<RepoPattern>([...dirty.globs, ...laneGlobs])].sort();
-    evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
-      source: path, globs, notRegular: dirty.notRegular, dest: absPath(join(evidenceRoot(ctx.runDir, series), '_leftover')),
-    })).op;
-  }
-  await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, { path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  try {
+    let evidence = view.opsOf('evidence.snapshot').filter((i) => sameParent(i.parent, series) && view.doneOf(i.op) !== null).at(-1)?.op;
+    if (evidence === undefined) {
+      const dirty = dirtySnapshot(path);
+      const globs = [...new Set<RepoPattern>([...dirty.globs, ...laneGlobs])].sort();
+      evidence = (await runOp(ctx.journal, evidenceSnapshotOp, `evidence:${parent.unit}`, parent, {
+        source: path, globs, notRegular: dirty.notRegular, dest: absPath(join(evidenceRoot(ctx.runDir, series), '_leftover')),
+      })).op;
+    }
+    await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, { path, evidence: capturedEvidence(ctx.journal.view, evidence) });
+  } catch (error) { throw permissionResidue(path, error) ?? error; }
 }
+
 
 /** The unit's verification checkouts still present: created (done) by one of its stage attempts and not removed. */
 export function presentCheckouts(view: JournalView, unit: UnitId): readonly IntentOf<'worktree.create'>[] {
   return view.opsOf('worktree.create').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit && i.expect.checkout.type === 'detached'
-    && standing(view, i));
+    && !i.expect.path.endsWith('/.candidate.verify') && standing(view, i)
+    && !view.opsOf('worktree.create').some((later) => later.expect.path === i.expect.path && parseOpId(later.op).seq > parseOpId(i.op).seq && standing(view, later)));
 }
 
 /** `worktree.remove` of a series checkout, citing the series' last done evidence snapshot. */
 export async function removeVerificationTree(ctx: StageContext, tree: VerificationTree, parent: StageParent): Promise<void> {
+  if (retainedCheckout(ctx, parent.unit, tree.path)) return;
   const evidence = capturedEvidence(ctx.journal.view, tree.evidence);
   await runOp(ctx.journal, worktreeRemoveOp(ctx.repo), `worktree:${parent.unit}:verify`, parent, { path: tree.path, evidence });
 }
@@ -1215,7 +1264,7 @@ export function latestSpecSeries(ctx: Readonly<{ journal: Readonly<{ view: Journ
   for (const r of view.holistic().laneReuses) if ((r.set ?? 'spec') === 'spec') see(r.seq, r.parent);
   for (const i of view.opsOf('worktree.create')) {
     const p = i.parent;
-    if (p.type === 'stage' && p.stage === 'lanes' && i.expect.path === verificationWorktree(worktreeRoot, arc, p.unit, p.attempt)) see(parseOpId(i.op).seq, p);
+    if (p.type === 'stage' && p.stage === 'lanes' && matchesVerificationPath(i.expect.path, verificationWorktree(worktreeRoot, arc, p.unit), p.attempt)) see(parseOpId(i.op).seq, p);
   }
   return latest.parent;
 }
@@ -1319,10 +1368,12 @@ export function laneSummaryIn(ctx: StageContext, parent: StageParent, lane: Lane
  */
 export function seriesTree(view: JournalView, parent: StageParent, path: AbsPath): VerificationTree | null {
   const of = (i: Readonly<{ parent: IntentOf<'proc.spawn'>['parent']; op: OpId }>): boolean => sameParent(i.parent, parent) && view.doneOf(i.op) !== null;
-  const created = view.opsOf('worktree.create').filter((i) => of(i) && i.expect.path === path).at(-1);
+  const created = view.opsOf('worktree.create').filter((i) => of(i) && matchesVerificationPath(i.expect.path, path, parent.attempt)).at(-1);
   if (created === undefined) return null;
   if (created.expect.checkout.type !== 'detached') throw new Error(`series ${parent.unit} ${parent.stage}#${parent.attempt} created a branch checkout`);
+  path = created.expect.path;
   if (removedSince(view, path, created.op)) return null;
+  if (view.opsOf('worktree.create').some((i) => i.expect.path === path && parseOpId(i.op).seq > parseOpId(created.op).seq && view.doneOf(i.op) !== null)) return null;
   const evidence = view.opsOf('evidence.snapshot').filter(of).at(-1);
   if (evidence === undefined) throw new Error(`the checkout ${path} of series ${parent.unit} ${parent.stage}#${parent.attempt} has no done evidence snapshot`);
   return { path, at: created.expect.checkout.at, evidence: evidence.op };
@@ -1742,7 +1793,7 @@ export async function runJourneySeries(
       // Red: its class persisted first (a journey lane has no repeat class: its runs carry no reuse identity), then the
       // red-lane protocol, with at most one rerun under its own reservation.
       const red = first.ran;
-      const cls = classifyRed(red.evidence, null);
+      const cls = classifyRed(red.evidence, null, red.verdict === 'fail' && deterministicFailure(ctx.runDir, red.inv, lane.def) ? 'deterministic' : null);
       writeRedClass(red.dir, cls, failureOf(ctx.runDir, red.inv, red.verdict, red.exitCode, checkout.path).failure, owner.type === 'unit' ? owner.parent.unit : undefined);
       if (cls.kind === 'diagnostic' && opts.expectedRed?.has(lane.def.id)) {
         const result = counted(lane, red, false);
@@ -1757,6 +1808,12 @@ export async function runJourneySeries(
         if (none !== null) return { kind: 'ended', end: none };
         return { kind: 'ran', run: next.ran, verdict: { red: isRed(next.ran.verdict), evidence: next.ran.evidence } };
       }, { sample: sampleHost, signal });
+      if (again.kind === 'no-rerun') {
+        const result = counted(lane, red, false);
+        runs.push(result);
+        if (opts.stop(result)) break;
+        continue;
+      }
       if (again.kind === 'repeat') throw new Error(`journey lane ${lane.def.id}: a repeat class without a repeat`);
       if (again.kind === 'ended') {
         end = again.end;

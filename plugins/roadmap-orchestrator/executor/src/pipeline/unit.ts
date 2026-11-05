@@ -1,3 +1,6 @@
+import { raiseNeedsUser } from '../needsuser.ts';
+import { WorktreeRecoveryError } from '../git/worktree.ts';
+import { settleHolders } from '../recover/resource.ts';
 import { candidateRed, candidateReentryChange } from './candidate-red.ts';
 import { attemptSignals } from './attempts.ts';
 import { markers } from './surface.ts';
@@ -747,7 +750,7 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
  * parked or stopped unit starts no stage: its step only reads its result back (a merged unit's retire is
  * finished first).
  */
-export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
+async function runUnitSteps(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
     const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
     const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
@@ -770,5 +773,30 @@ export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Pr
     const s = await step(ctx, unit);
     if (s.kind !== 'continue') return s;
     crashPoint('unit.after-stage', unit.id);
+  }
+}
+
+/** Permission residue is an operator park, including removal during retirement. Leave the intent recoverable. */
+export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
+  try { return await runUnitSteps(ctx, unit, gate); }
+  catch (error) {
+    if (!(error instanceof WorktreeRecoveryError)) throw error;
+    await settleHolders(ctx, (h) => (h.type === 'stage' || h.type === 'publication') && h.unit === unit.id);
+    const needsUser: NeedsUserContent = {
+      blocking: true, subject: { type: 'arc' }, reason: 'recovery-required',
+      summary: `Unit ${unit.id} parked on checkout residue. ${error.message}`,
+      recommendation: `Restore ownership and write/search permission on the named paths, for example sudo chown -R $(id -u):$(id -g) '${error.path.replaceAll("'", "'\\''")}'. Then restart the executor to reconcile any open worktree operation, acknowledge this item, and resume the unit if parked.`,
+      options: [], evidence: [],
+    };
+    const open = ctx.journal.view.unit(unit.id).open;
+    if (open?.stage === 'prepare' || open?.stage === 'lanes' || open?.stage === 'candidate') {
+      const parent = { type: 'stage', unit: unit.id, stage: open.stage, attempt: open.attempt } as const;
+      raiseNeedsUser(ctx.journal, ctx.runDir, needsUser, parent);
+      record(ctx, parent, 'occupied');
+      return { kind: 'parked', needsUser };
+    }
+    // Retirement has no outcome stage. Preserve its open removal and block admissions until recovery can finish it.
+    raiseNeedsUser(ctx.journal, ctx.runDir, needsUser, { type: 'arc' });
+    return { kind: 'held', needsUser: null };
   }
 }

@@ -15,7 +15,7 @@ import { absPath } from '../src/core/values.ts';
 import { patchedTree } from '../src/git/mutant.ts';
 import { verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { unitTip } from '../src/pipeline/gate.ts';
-import { removeVerificationTree,seriesTree } from '../src/pipeline/lanes.ts';
+import { removeCheckout,seriesTree } from '../src/pipeline/lanes.ts';
 import { step } from '../src/pipeline/unit.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import { idleEnvironments } from '../src/resources/environments.ts';
@@ -243,7 +243,7 @@ describe('D1 witness presence', () => {
 
 /** The checkout a `worktree.create` of `path` made (dev.13: the gate's own is made at the verification checkout's commit). */
 function checkoutOf(r: ArcRun, path: string): unknown {
-  const created = r.journal.view.opsOf('worktree.create').find((i) => i.expect.path === path);
+  const created = r.journal.view.opsOf('worktree.create').filter((i) => i.expect.path === path).at(-1);
   assert.ok(created !== undefined, `no worktree.create of ${path}`);
   return created.expect.checkout;
 }
@@ -367,7 +367,7 @@ describe('D2 mutation smoke', () => {
       // dev.13: the gate's own checkout is made at the commit of lanes attempt `last`'s own checkout.
       assert.deepEqual(checkoutOf(r, gateCalls(a.d)[0]!.cwd), checkoutOf(r, verifyOf(r, last)), `the gate judges lanes attempt ${last}'s checkout: ${gateCalls(a.d)[0]!.cwd}`);
       const certified = facts(a.d).filter((f) => f.kind === 'series-certified' && f.parent.type === 'stage' && f.parent.attempt === last).map((f) => f.kind === 'series-certified' && f.checkout);
-      assert.ok(certified.some((c) => typeof c === 'string' && c.endsWith(`/u1.verify-${last}`)), 'the empty spec series certified its checkout');
+      assert.ok(certified.some((c) => c === verifyOf(r, last)), 'the empty spec series certified its checkout');
     } finally {
       r.journal.close();
     }
@@ -380,7 +380,8 @@ describe('D2 mutation smoke', () => {
       assert.equal(green.outcome, 'green');
       const parent = { type: 'stage', unit: green.unit, stage: 'lanes', attempt: green.attempt } as const;
       const tree = seriesTree(r.journal.view, parent, verificationWorktree(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, green.unit, green.attempt))!;
-      await removeVerificationTree(r.ctx, tree, parent);
+      const created = r.journal.view.opsOf('worktree.create').filter((i) => i.expect.path === tree.path).at(-1)!;
+      await removeCheckout(r.ctx, created, parent, []);
       await step(r.ctx, r.unit('u1'));
       const gate = outcomeFacts(a.d).at(-1)!;
       assert.deepEqual([gate.stage, gate.outcome, gate.class, gate.chargeable], ['gate', 'unverified', 'advance', false]);

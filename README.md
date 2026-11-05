@@ -83,7 +83,10 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    journeys without this config. The executor quiesces workloads, captures evidence,
    salvages changes and tears resources down before running full lanes and witnesses. A fresh gate judges the diff,
    actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
-   revisions feed fix rounds with original evidence and base comparisons. Every judgment begins in a fresh named
+   revisions feed fix rounds with original evidence and base comparisons. A spec lane red on its diff base
+   raises an arc notice with a known-defect apply fragment; the root names its fix unit. That lane gets no
+   further fix round: the gate continues, while candidate publication waits for the notice to be resolved.
+   Verification checkouts keep stable paths and ignored caches between series. Every judgment begins in a fresh named
    session; one invalid answer may be repaired in that same session, schema and checkout. Verifier directives
    accompany only a revise decision, including in annotation modes. Backend schemas use plain object roots
    and encode supported field constraints; property descriptions state remaining semantic rules.

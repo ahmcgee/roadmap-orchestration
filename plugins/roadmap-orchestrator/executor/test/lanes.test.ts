@@ -10,7 +10,7 @@ import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { readInputFiles,recordPlan } from '../src/input/inforce.ts';
-import { pinDispatch,unitBranch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch,unitBranch,verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { fingerprintAt } from '../src/pipeline/gate.ts';
 import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
 import { LANE_STALL_MS,type LaneRecord,seriesDirty,seriesLedger,specSeriesRoot } from '../src/pipeline/lanes.ts';
@@ -113,9 +113,11 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
   assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
-  // The dirty checkout is never kept; what the lane wrote is snapshotted first (ignored output is not dirt).
+  // No gate binding is offered for the dirty checkout; its stable path and caches survive until reset or retirement.
   assert.equal(done.verification, null);
-  assert.ok(!worktreeList(run.repo).some((w) => w.path.includes('.verify-')));
+  const stable = verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1);
+  assert.ok(worktreeList(run.repo).some((w) => w.path === stable));
+  assert.equal(readFileSync(join(stable, 'out/x'), 'utf8'), 'ignored\n');
   const snapshots = intents(run.runDir, 'evidence.snapshot');
   const dirty = snapshots.find((s) => s.kind === 'evidence.snapshot' && s.expect.dest.endsWith('/_dirty'));
   assert.ok(dirty !== undefined && dirty.kind === 'evidence.snapshot');
@@ -124,7 +126,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
   assert.deepEqual(manifest.manifest.files.map((f) => f.path), ['src/stray.txt', 'src/w[1]*.txt']);
   assert.ok(dirty.parent.type === 'stage');
   assert.deepEqual(seriesDirty(run.journal.view, specSeriesRoot(run.runDir, dirty.parent)), ['src/stray.txt', 'src/w[1]*.txt'], 'read back as paths');
-  assert.ok(intents(run.runDir, 'worktree.remove').length === 1);
+  assert.equal(intents(run.runDir, 'worktree.remove').length, 0, 'stable checkout removal waits for retirement');
   // The fix round names the dirt.
   assert.ok(done.fix !== null && done.fix.kind === 'fix');
   assert.match(done.fix.fix.directives.join('\n'), /src\/stray\.txt/);
@@ -143,7 +145,7 @@ test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane run
   assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
 });
 
-test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the checkout and charges nothing; its result.json records cancelled{pause}', T, async () => {
+test('lanes.interrupted-holds: a pause mid-lane holds the unit, keeps the stable checkout and charges nothing; its result.json records cancelled{pause}', T, async () => {
   const mark = join(tmpDir('lanes-mark'), 'running');
   const sleeper: LaneJson = { id: 'sleeper', argv: ['sh', '-c', `touch "${mark}"; sleep 60`] };
   const held = laneRun([sleeper]);
@@ -161,6 +163,7 @@ test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the chec
   assert.ok(result?.type === 'command' && result.verdict === 'cancelled', `one shape with a backend call's cancel: ${JSON.stringify(result)}`);
   assert.equal(result.reason, 'pause');
   assert.deepEqual(done.ledger.map((l) => l.verdict), ['cancelled']);
+  assert.ok(existsSync(verificationWorktree(held.ctx.plan().worktreeRoot, held.ctx.plan().arc, U1)));
   const u = held.journal.view.unit(U1);
   assert.equal(u.status, 'held');
   assert.equal(u.counters.chargeableFailures, 0);

@@ -462,6 +462,8 @@ export const MATRIX: readonly Row[] = [
     // Scenarios (test/fixtures/git-child.ts): create a unit worktree on a new branch; snapshot three
     // evidence files; remove the worktree after its snapshot. Hand-made partial worktree states (inside
     // `git worktree add`, which a crashPoint cannot reach) are the named test worktree.partial-add.
+    // Stable reset reuses create labels: act-start before checkout, add.inside between checkout and clean;
+    // worktree.test.ts crashes both with tracked dirt, untracked files and ignored caches.
     row: WORKTREE_EVIDENCE,
     test: 'test/worktree.test.ts, test/evidence.test.ts',
     cells: {
@@ -474,7 +476,7 @@ export const MATRIX: readonly Row[] = [
       B3: {
         status: 'crash',
         labels: ['worktree.add.inside', 'worktree.remove.inside', 'evidence.after-partial-copy'],
-        recovery: 'git worktree add/remove returned: postcondition holds → done recoveredBy reconciled; a partial copy has no manifest → redo fills the gaps, done recoveredBy redone',
+        recovery: 'git worktree add/remove returned: postcondition holds → done recoveredBy reconciled; reset between checkout and clean → redo if untracked dirt remains; a partial copy has no manifest → redo fills the gaps, done recoveredBy redone',
       },
       B4: {
         status: 'crash',

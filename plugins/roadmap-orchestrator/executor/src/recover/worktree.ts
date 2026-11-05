@@ -17,7 +17,7 @@ import type { Disposition, JournalView, Reconciler } from '../core/interfaces.ts
 import type { AbsPath } from '../core/values.ts';
 import { readCapturedEvidence } from '../git/evidence.ts';
 import { refTarget, statusPorcelainV2Z, worktreeList, worktreePrune, worktreeRemove } from '../git/git.ts';
-import { inspectWorktree, worktreeGone } from '../git/worktree.ts';
+import { inspectResetTarget, inspectWorktree, worktreeGone } from '../git/worktree.ts';
 
 type Outcome<K extends 'worktree.create' | 'worktree.remove'> = Promise<Extract<Disposition<K>, { kind: 'done' | 'redo' | 'park' }>>;
 
@@ -43,6 +43,11 @@ export function reconcileWorktreeCreate(repo: AbsPath): Reconciler<'worktree.cre
     if (inspection.kind === 'ready') return { kind: 'done', outcome: { kind: 'created', head: inspection.head } };
 
     const park = (why: string) => ({ kind: 'park' as const, detail: `worktree.create ${path}: ${inspection.problem}; ${why}` });
+    if (intent.expect.reset && existsSync(path)) {
+      if (view.openIntents().some((i) => i.op !== intent.op && worktreeOf(i) === path)) return park('a later open intent acts in this path');
+      const target = inspectResetTarget(repo, path);
+      return target.kind === 'ready' ? { kind: 'redo' } : park(target.problem);
+    }
     if (checkout.type === 'branch') {
       const at = refTarget(repo, checkout.branch);
       const ours = at === checkout.at || (at === null && checkout.createBranch);

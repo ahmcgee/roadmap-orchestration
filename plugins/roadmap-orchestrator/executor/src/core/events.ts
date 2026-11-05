@@ -229,7 +229,7 @@ export type WorktreeCheckout =
 
 /** Recorded inputs and preconditions, per kind. Git kinds record every input of the object they create. */
 export type OpExpect = {
-  'worktree.create': Readonly<{ path: AbsPath; checkout: WorktreeCheckout }>;
+  'worktree.create': Readonly<{ path: AbsPath; checkout: WorktreeCheckout; reset?: true }>;
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
@@ -1495,7 +1495,12 @@ type OpSchema<K extends OpKind> = Readonly<{
 
 export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
   'worktree.create': {
-    expect: object((f) => ({ path: f.get('path', absR), checkout: f.get('checkout', worktreeCheckout) })),
+    expect: object((f) => {
+      const reset = f.optional('reset', literal(true));
+      const checkout = f.get('checkout', worktreeCheckout);
+      if (reset && checkout.type !== 'detached') throw new SchemaError(`${f.path}.reset`, 'detached checkout', checkout);
+      return { path: f.get('path', absR), checkout, ...(reset === undefined ? {} : { reset }) };
+    }),
     post: nothing,
     outcome: object((f) => ({ kind: f.get('kind', literal('created')), head: f.get('head', shaR) })),
   },

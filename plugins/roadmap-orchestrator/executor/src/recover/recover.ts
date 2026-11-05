@@ -1,3 +1,4 @@
+import { permissionResidue } from '../git/worktree.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
 // The first recovery pass (plan "Recovery on `roadmap start`"): every intent a dead executor left open is
 // closed by its kind's reconciler before anything is dispatched. Order:
@@ -159,14 +160,30 @@ async function raiseOnce(ctx: RecoveryContext, intent: IntentRecord, detail: str
 async function apply<K extends StepKind>(ctx: RecoveryContext, record: IntentRecord, op: Redoable<K>): Promise<DispositionKind> {
   const { journal, repo } = ctx.stage;
   const intent = record as IntentOf<K>;
-  const d = await op.reconcile(intent, journal.view);
+  let d: Disposition<K>;
+  try { d = await op.reconcile(intent, journal.view); }
+  catch (error) {
+    if (record.kind !== 'worktree.create' && record.kind !== 'worktree.remove') throw error;
+    const residue = permissionResidue(record.expect.path, error);
+    if (residue === null) throw error;
+    await raiseOnce(ctx, record, residue.message);
+    return 'park';
+  }
   switch (d.kind) {
     case 'done':
       journal.done(intent.op, intent.kind, d.outcome, 'reconciled');
       break;
     case 'redo':
-      await op.act(intent);
-      journal.done(intent.op, intent.kind, await op.verify(intent), 'redone');
+      try {
+        await op.act(intent);
+        journal.done(intent.op, intent.kind, await op.verify(intent), 'redone');
+      } catch (error) {
+        if (record.kind !== 'worktree.create' && record.kind !== 'worktree.remove') throw error;
+        const residue = permissionResidue(record.expect.path, error);
+        if (residue === null) throw error;
+        await raiseOnce(ctx, record, residue.message);
+        return 'park';
+      }
       break;
     case 'abort':
       await raiseOnce(ctx, record, d.detail);

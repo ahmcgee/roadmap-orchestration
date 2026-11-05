@@ -245,3 +245,14 @@ describe('crash row: prepare known-defect', () => {
     assert.equal(calls.length, 6, 'no backend call twice');
   });
 });
+
+test('known defect masked output offer matches numbers and checkout paths in later lane output', T, async () => {
+  const d = defectArc({ type: 'output', lane: 'mul', contains: '<checkout>/src/problem.go:<n>: G<n> unchecked error' },
+    of('u1', [planCheckStep({ decision: 'approve' }), mulBuild()]),
+    { lanes: [{ id: 'mul', argv: ['sh', '-c', 'echo "$PWD/src/problem.go:98: G104 unchecked error"; exit 1'] }] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitted(r, 'u1')), { kind: 'held', needsUser: null });
+    assertHeld(r);
+  } finally { r.journal.close(); }
+});

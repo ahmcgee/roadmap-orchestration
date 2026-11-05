@@ -8,7 +8,7 @@ import type { CommandVerdict,ExitCause,LaunchCpu } from './core/records.ts';
 import { boundsOfRecord,isRed } from './core/records.ts';
 import type { PlanUnit } from './input/plan.ts';
 import type { StageContext,StageParent } from './pipeline/dispatch.ts';
-import { verificationWorktree } from './pipeline/dispatch.ts';
+import { matchesVerificationPath,verificationWorktree } from './pipeline/dispatch.ts';
 import { unitTip } from './pipeline/gate.ts';
 import { invocationDir } from './pipeline/invoke.ts';
 import { laneOrder,laneSpawns,laneSummaryIn,seriesOrder,specSeriesRoot } from './pipeline/lanes.ts';
@@ -66,7 +66,7 @@ export function certification(ctx: StageContext, unit: PlanUnit, events: readonl
   const attempt = queuedAttempt ?? (state.open?.stage === 'lanes' ? state.open.attempt : view.completedLanes(unit.id));
   if (attempt === null) return empty;
   const parent: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
-  const checkout = view.opsOf('worktree.create').find((i) => i.expect.path === verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, attempt));
+  const checkout = view.opsOf('worktree.create').filter((i) => canonicalJson(i.parent) === canonicalJson(parent) && matchesVerificationPath(i.expect.path, verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id), attempt)).at(-1);
   if (!checkout && queuedAttempt === undefined && state.open?.stage !== 'lanes') return { ...empty, attempt };
   const at = checkout?.expect.checkout.type === 'detached' ? checkout.expect.checkout.at : unitTip(ctx, unit.id);
   const { spec } = loadUnitSpec(ctx, unit);

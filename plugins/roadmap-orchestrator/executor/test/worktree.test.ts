@@ -2,14 +2,14 @@
 // real git, crash cells in a child process killed at crashPoints, hand-made partial states for what a
 // crashPoint cannot reach (the inside of `git worktree add`).
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { before, describe, it } from 'node:test';
+import { before, describe, it, test } from 'node:test';
 import type { WorktreeCheckout } from '../src/core/events.ts';
 import { type OpId, opKey, sha } from '../src/core/ids.ts';
 import { capturedEvidence } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { type WorktreeRemoveRequest, inspectWorktree, worktreeGone } from '../src/git/worktree.ts';
+import { type WorktreeRemoveRequest, WorktreePermissionError, inspectWorktree, worktreeGone } from '../src/git/worktree.ts';
 import { type AbsPath, absPath, refName, repoPattern } from '../src/core/values.ts';
 import { baseRepo, cloneRepo, crashChild, openArc, recoverOp, runOp } from './fixtures/git-common.ts';
 import { git, tmpDir, writeFiles } from './helpers/repo.ts';
@@ -205,4 +205,100 @@ describe(`matrix row ${WORKTREE_EVIDENCE}: worktree cells`, () => {
       assertOutcome(s);
     });
   }
+});
+
+describe('stable checkout resets through worktree.create', () => {
+  it('preserves ignored caches and unchanged mtimes while resetting tracked dirt and cleaning untracked files', async () => {
+    const s = setup();
+    const journal = openArc(s.runDir);
+    const checkout = { type: 'detached', at: sha(s.main) } as const;
+    const first = await runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout, reset: true });
+    assert.equal(first.expect.reset, undefined, 'a stable address still starts with an ordinary fresh add');
+    const mtime = statSync(join(s.path, 'src/b.ts')).mtimeMs;
+    writeFiles(s.path, { 'src/a.ts': 'dirty', 'untracked/file': 'junk', 'cached.log': 'expensive cache' });
+    git(s.path, 'add', 'src/a.ts');
+    writeFiles(s.repo, { 'src/c.ts': 'changed commit' });
+    git(s.repo, 'add', '.'); git(s.repo, 'commit', '-qm', 'next series');
+    const next = sha(git(s.repo, 'rev-parse', 'HEAD'));
+    const intent = await runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout: { type: 'detached', at: next }, reset: true });
+    assert.equal(intent.expect.reset, true);
+    assert.equal(git(s.path, 'rev-parse', 'HEAD'), next);
+    assert.equal(git(s.path, 'status', '--porcelain'), '');
+    assert.equal(readFileSync(join(s.path, 'cached.log'), 'utf8'), 'expensive cache');
+    assert.equal(existsSync(join(s.path, 'untracked')), false);
+    assert.equal(statSync(join(s.path, 'src/b.ts')).mtimeMs, mtime);
+    assert.equal(readFileSync(join(s.path, 'src/a.ts'), 'utf8'), 'export const a = 1;\n');
+    journal.close();
+  });
+
+  for (const label of ['worktree.create.act-start', 'worktree.add.inside']) it(`reset recovers a crash at ${label}, keeping ignored caches`, async () => {
+    const s = setup();
+    let journal = openArc(s.runDir);
+    const checkout = { type: 'detached', at: sha(s.main) } as const;
+    await runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout });
+    writeFiles(s.path, { 'src/a.ts': 'dirty', 'untracked/file': 'junk', 'cached.log': 'cache' });
+    journal.close();
+    assert.equal(await crashChild({ op: 'create', repo: s.repo, runDir: s.runDir, path: s.path, checkout, reset: true }, label, 1), true);
+    journal = openArc(s.runDir);
+    const recovered = await recoverOp(journal, worktreeCreateOp(s.repo));
+    assert.equal(recovered.kind, 'closed');
+    assert.equal(journal.view.openIntents().length, 0);
+    assert.equal(git(s.path, 'status', '--porcelain'), '');
+    assert.equal(readFileSync(join(s.path, 'cached.log'), 'utf8'), 'cache');
+    journal.close();
+  });
+
+  it('real git permission residue on clean and remove is actionable, with the journal intent left open', async () => {
+    const s = setup();
+    const journal = openArc(s.runDir);
+    const checkout = { type: 'detached', at: sha(s.main) } as const;
+    await runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout });
+    writeFiles(s.path, { 'locked/file': 'lane created as another user' });
+    chmodSync(join(s.path, 'locked'), 0o555);
+    try {
+      await assert.rejects(runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout, reset: true }), (error: unknown) => {
+        assert.ok(error instanceof WorktreePermissionError);
+        assert.match(error.message, /locked\/file/);
+        assert.match(error.message, /sudo chown -R/);
+        return true;
+      });
+      assert.equal(journal.view.openIntents().length, 1);
+    } finally { chmodSync(join(s.path, 'locked'), 0o755); journal.close(); }
+  });
+});
+
+test('worktree checkout and removal permission errors name residue and ownership repair', async () => {
+  const s = setup();
+  const journal = openArc(s.runDir);
+  const checkout = { type: 'detached', at: sha(s.main) } as const;
+  await runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout });
+  writeFiles(s.repo, { 'src/a.ts': 'next version' });
+  git(s.repo, 'add', '.'); git(s.repo, 'commit', '-qm', 'next');
+  const next = sha(git(s.repo, 'rev-parse', 'HEAD'));
+  chmodSync(join(s.path, 'src'), 0o555);
+  try {
+    await assert.rejects(runOp(journal, worktreeCreateOp(s.repo), 'worktree:verify', { path: s.path, checkout: { type: 'detached', at: next }, reset: true }), WorktreePermissionError);
+    for (const i of journal.view.openIntents()) journal.abort(i.op, 'fault', 'test proceeds to removal permission case');
+    const evidence = await runOp(journal, evidenceSnapshotOp, 'evidence:verify', { source: s.path, globs: [], dest: absPath(join(s.runDir, 'evidence')) });
+    await assert.rejects(runOp(journal, worktreeRemoveOp(s.repo), 'worktree:verify', { path: s.path, evidence: capturedEvidence(journal.view, evidence.op) }), (error: unknown) => {
+      assert.ok(error instanceof WorktreePermissionError);
+      assert.ok(error.message.includes(s.path));
+      assert.match(error.message, /sudo chown -R/);
+      return true;
+    });
+  } finally { if (existsSync(join(s.path, 'src'))) chmodSync(join(s.path, 'src'), 0o755); journal.close(); }
+});
+
+test('a reset-capable first add recovers an empty partial checkout using the original create protocol', async () => {
+  const s = setup();
+  const journal = openArc(s.runDir);
+  const op = worktreeCreateOp(s.repo);
+  const body = await op.prepare({ path: s.path, checkout: { type: 'detached', at: sha(s.main) }, reset: true });
+  journal.begin({ kind: 'worktree.create', key: opKey('worktree:verify'), parent: { type: 'arc' }, deadlineAt: null, body: () => body });
+  mkdirSync(s.path);
+  const recovered = await recoverOp(journal, op);
+  assert.equal(recovered.kind, 'closed');
+  assert.equal(git(s.path, 'rev-parse', 'HEAD'), s.main);
+  assert.equal(git(s.path, 'status', '--porcelain'), '');
+  journal.close();
 });
