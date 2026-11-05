@@ -11,7 +11,7 @@ import type { StageContext,StageParent } from './pipeline/dispatch.ts';
 import { verificationWorktree } from './pipeline/dispatch.ts';
 import { unitTip } from './pipeline/gate.ts';
 import { invocationDir } from './pipeline/invoke.ts';
-import { laneOrder,laneSummaryIn,seriesOrder,specSeriesRoot } from './pipeline/lanes.ts';
+import { laneOrder,laneSpawns,laneSummaryIn,seriesOrder,specSeriesRoot } from './pipeline/lanes.ts';
 import { fastSuiteLanes,fastSuiteRoot,loadUnitSpec,previousLaneReds } from './pipeline/stages.ts';
 import { runnerFiles } from './runner/files.ts';
 
@@ -77,14 +77,10 @@ export function certification(ctx: StageContext, unit: PlanUnit, events: readonl
     { set: 'spec' as const, lanes: seriesOrder(laneOrder(spec), reds.spec), root: specSeriesRoot(ctx.runDir, parent) },
     { set: 'suite' as const, lanes: seriesOrder(fastSuiteLanes(ctx, spec, at), reds.suite), root: fastSuiteRoot(ctx.runDir, parent, 'suite') },
   ];
-  // This attempt's lane spawns, selected once: a cheap unit/stage pre-filter before the canonical parent comparison, and runs
-  // by invocation. Filtering every spawn of the arc per lane made status O(units x lanes x spawns) (field arc: 76 s).
-  const key = canonicalJson(parent);
-  const attemptSpawns = view.opsOf('proc.spawn').filter((s) => s.parent.type === 'stage' && s.parent.unit === unit.id && s.parent.stage === 'lanes'
-    && s.expect.subject.purpose === 'lane' && canonicalJson(s.parent) === key);
+  // laneSpawns reads the journal's canonical parent index, shared with the summary and executor lane readers.
   const runsByInv = new Map(runs.map((r) => [r.inv, r] as const));
   return { ...empty, attempt: parent.attempt, lanes: groups.flatMap(({ set, lanes, root }) => lanes.map((lane) => {
-    const spawns = attemptSpawns.filter((s) => s.expect.subject.purpose === 'lane' && s.expect.subject.set === set && s.expect.subject.at === at && s.expect.subject.lane === lane.id);
+    const spawns = laneSpawns(view, parent, lane.id, at, set);
     const last = spawns.at(-1);
     const live = last !== undefined && view.doneOf(last.op) === null;
     // Reading the aggregate before settlement would falsely turn an unfinished run into a process fault.

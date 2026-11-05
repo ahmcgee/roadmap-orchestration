@@ -100,7 +100,7 @@ import { type EvidenceManifest,FILES_DIR,capturedEvidence,manifestPath,namedPath
 import { isAncestor } from '../git/ff.ts';
 import { git,revParse,statusPorcelainV2Z } from '../git/git.ts';
 import { ignoredWrites,planIgnored } from '../git/ignored.ts';
-import { type ReuseKey,inputShaOf } from '../git/reusekey.ts';
+import { type ReuseKey,inputShaOf,treeOfCommit } from '../git/reusekey.ts';
 import { candidateLaneDir,jobEvidenceRoot,jobLaneDir,witnessDir } from '../git/snapshot.ts';
 import { type WorktreeCreateRequest,removedSince,standing } from '../git/worktree.ts';
 import { type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
@@ -498,7 +498,7 @@ export const mapInForce = (view: JournalView): SystemsMap | null => systemsMapIn
 
 /** `lane`'s input on commit `at` under the map in force (src/git/reusekey.ts). */
 export const laneInputAt = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, lane: LaneDef, at: Sha, systems?: LaneDef['systems']): Sha =>
-  inputShaOf(ctx.repo, revParse(ctx.repo, `${at}^{tree}`), { ...lane, ...(lane.systems !== undefined || systems === undefined ? {} : { systems }) }, mapInForce(ctx.journal.view));
+  inputShaOf(ctx.repo, treeOfCommit(ctx.repo, at), { ...lane, ...(lane.systems !== undefined || systems === undefined ? {} : { systems }) }, mapInForce(ctx.journal.view));
 
 /** What a run of a lane at a commit is reused by now: its identity, argv[0], and its input on the commit. */
 export type LaneNow = Readonly<{ identity: LaneIdentity; argv0: Argv0; inputSha: Sha; systems?: LaneDef['systems'] }>;
@@ -553,10 +553,10 @@ const stageParentOf = (p: Parent): StageParent => {
 };
 
 /** The `set` lane spawns of lane `lane` in series `parent` at `at` (the first run, then its rerun or a stochastic lane's runs). */
-function laneSpawns(view: JournalView, parent: StageParent, lane: LaneId, at: Sha, set: LaneSet = 'spec'): readonly IntentOf<'proc.spawn'>[] {
-  return view.opsOf('proc.spawn').filter((i) => {
+export function laneSpawns(view: JournalView, parent: StageParent, lane: LaneId, at: Sha, set: LaneSet = 'spec'): readonly IntentOf<'proc.spawn'>[] {
+  return view.opsOfParent('proc.spawn', parent).filter((i) => {
     const s = i.expect.subject;
-    return s.purpose === 'lane' && s.set === set && s.lane === lane && s.at === at && sameParent(i.parent, parent);
+    return s.purpose === 'lane' && s.set === set && s.lane === lane && s.at === at;
   });
 }
 
@@ -1231,9 +1231,9 @@ export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: read
     return lane;
   };
   const runs = new Map<LaneId, IntentOf<'proc.spawn'>[]>();
-  for (const intent of ctx.journal.view.opsOf('proc.spawn')) {
+  for (const intent of ctx.journal.view.opsOfParent('proc.spawn', parent)) {
     const s = intent.expect.subject;
-    if (s.purpose !== 'lane' || s.set !== set || s.at !== at || !sameParent(intent.parent, parent)) continue;
+    if (s.purpose !== 'lane' || s.set !== set || s.at !== at) continue;
     runs.set(s.lane, [...(runs.get(s.lane) ?? []), intent]);
   }
   const ran = [...runs].map(([id, spawns]) => ({ seq: parseOpId(spawns[0]!.op).seq, record: spawnRecord(ctx, parent, defOf(id, spawns[0]!.op), spawns, root) }));
@@ -1248,10 +1248,7 @@ export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: read
  * of one lane (the gate's regenerate checks, gate.ts) is not refused for a lane a revision has since dropped from the plan.
  */
 export function laneRecordIn(ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, at: Sha, root: AbsPath): LaneRecord | null {
-  const spawns = ctx.journal.view.opsOf('proc.spawn').filter((i) => {
-    const s = i.expect.subject;
-    return s.purpose === 'lane' && s.set === set && s.at === at && s.lane === lane.id && sameParent(i.parent, parent);
-  });
+  const spawns = laneSpawns(ctx.journal.view, parent, lane.id, at, set);
   if (spawns.length > 0) return spawnRecord(ctx, parent, lane, spawns, root);
   const reused = ctx.journal.view.holistic().laneReuses.find((r) => r.lane === lane.id && sameParent(r.parent, parent) && (r.set ?? 'spec') === set && (r.at ?? at) === at);
   return reused === undefined ? null : reusedRecord(ctx, reused.from, lane);
