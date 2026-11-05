@@ -104,7 +104,7 @@ for (const configured of [true, false]) {
   });
 }
 
-test('stages.red-lane-fix-round: the resumed implementer reads the failing evidence dir, commits the fix, the next series is green', T, async () => {
+test('stages.red-lane-fix-round: the resumed implementer reads both red runs\' evidence in order, commits the fix, the next series is green', T, async () => {
   const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' }), codexBuild([], { argv: ['exec', '-C'] })] });
   // The fix step matches the run's own evidence dir, so it is added once setupUnit has made the run dir.
   appendStep(run, {
@@ -112,6 +112,7 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
     expect: { argv: ['exec', 'resume'] },
     acts: [
       { type: 'readFromPrompt', pattern: laneEvidencePattern(run, 'unit'), file: 'stdout', contains: 'ADD-MARKER' },
+      { type: 'readFromPrompt', pattern: laneEvidencePattern(run, 'unit\\.rerun'), file: 'stdout', contains: 'ADD-MARKER' },
       { type: 'commit', message: 'fix add', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' } },
       { type: 'emit', value: BUILD_REPORT },
     ],
@@ -124,8 +125,11 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
   assert.equal(red.verification, null, 'the failed series\' checkout is removed');
   assert.ok(red.fix !== null && red.fix.kind === 'fix');
   const failing = red.fix.fix.failingEvidenceDirs;
-  assert.deepEqual(failing, [join(red.ledger[0]!.evidenceDir, 'output', 'files')]);
-  assert.match(readFileSync(join(failing[0]!, 'stdout'), 'utf8'), /ADD-MARKER/);
+  const record = red.ledger[0]!;
+  assert.ok(record.diagnostic !== null);
+  assert.deepEqual([record.verdict, record.diagnostic.verdict], ['fail', 'fail']);
+  assert.deepEqual(failing, [join(record.evidenceDir, 'output', 'files'), join(record.diagnostic.evidenceDir, 'output', 'files')]);
+  for (const dir of failing) assert.match(readFileSync(join(dir, 'stdout'), 'utf8'), /ADD-MARKER/);
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
 
@@ -144,7 +148,7 @@ test('stages.red-lane-fix-round: the resumed implementer reads the failing evide
   assert.equal(resumed.argv[2], '00000000-0000-4000-8000-000000000001', 'the fix resumes the fresh build\'s thread');
   assert.equal(resumed.cwd, worktreeOf(run));
   assert.equal(fresh.cwd, worktreeOf(run));
-  assert.ok(resumed.stdin.includes(failing[0]!), 'the failing evidence dir is in the resumed prompt');
+  assert.ok(resumed.stdin.indexOf(failing[0]!) >= 0 && resumed.stdin.indexOf(failing[1]!) > resumed.stdin.indexOf(failing[0]!), 'both evidence dirs are in the resumed prompt in execution order');
   // The fix round's deadline is the measured series plus the edit allowance, not the fresh build's.
   const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
   const deadline = (i: (typeof builds)[number]) => new Date(launchOf(run, i).deadlineAt).getTime() - new Date(i.at).getTime();
