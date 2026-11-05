@@ -45,6 +45,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 
 import { type Clock,cadence,integrationHeadNow } from './cadence.ts';
 import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
+import { externalAttestation,externalVerdict } from './external.ts';
 import { type FindingDraft,admitMutant,isActive,openFinding,witnessFindingDraft } from './findings.ts';
 import { chunkEnd,LENS_DIFF_BUDGET } from './lensdiff.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
@@ -348,9 +349,22 @@ function witnessDrafts(ctx: StageContext, s: Started, r: Recorded, records: Read
   if (r.obligations === null) return [];
   // Latched as of the audit's capture: a latch landing while the audit runs belongs to a later head.
   const latched = new Set(ctx.journal.view.holistic().latched.filter((l) => l.seq <= s.highWater).map((l) => l.obligation));
+  const lanes = new Map(r.obligations.lanes.map((l) => [l.id, l]));
+  const tree = revParse(ctx.repo, `${s.integrationSha}^{tree}`);
   return r.obligations.obligations.flatMap((o): FindingDraft[] => {
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) return [];
     if (!isMustHold(o, latched)) return [];
+    const lane = lanes.get(o.witness.lane);
+    if (lane?.witnessClass === 'external') {
+      // CI-only lanes are skipped by the journey series; no attestation is unknown, never a failed witness.
+      if (externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o) !== 'not-held') return [];
+      const attestation = externalAttestation(ctx.repo, ctx.journal.view, tree, lane, o)!;
+      return [witnessFindingDraft({
+        obligation: o.id, serves: o.serves, job: s.job, gateHadPassed,
+        claim: `${o.id} is not held on ${s.integrationSha}: its external witness ${lane.id} has an attested failure at these inputs (${attestation.command}). Evidence: ${attestation.evidence}.`,
+        evidence: [{ path: attestation.evidence, blob: null }, { path: join(ctx.runDir, 'events.jsonl'), blob: null }],
+      })];
+    }
     const record = records.get(o.witness.lane);
     if (record === undefined) throw new Error(`${s.job}: obligation ${o.id}'s lane ${o.witness.lane} has no record on ${s.integrationSha}`);
     if (witnessVerdict(record, o.witness) !== 'not-held') return [];
@@ -578,7 +592,11 @@ export async function rewitnessP1s(ctx: AuditContext, job: JobId): Promise<reado
     path: jobSeriesCheckout(ctx, job, 'rewitness'), checkout: { type: 'detached', at: head },
   }, { reuse: true, stop: () => false });
   const records = new Map(series.runs.flatMap((x) => (x.record === null ? [] : [[x.lane, x.record] as const])));
+  const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
+  const tree = revParse(ctx.repo, `${head}^{tree}`);
   return defs.map(({ finding, o }) => {
+    const lane = lanes.get(o.witness!.lane);
+    if (lane?.witnessClass === 'external') return { finding, obligation: o.id, head, verdict: externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o) };
     const record = records.get(o.witness!.lane);
     return { finding, obligation: o.id, head, verdict: record === undefined ? null : witnessVerdict(record, o.witness!) };
   });
