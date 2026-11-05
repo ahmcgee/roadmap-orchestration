@@ -160,7 +160,8 @@ deflake units. Stochastic k-of-n lanes follow their declared rule instead. Order
 merge. Managed environments start lazily, stay up while used and stop when idle; failed up/probe parks retryably rather
 than counting as a red test. CPU reservations calibrate from completed runs; judgments and one workload can progress
 under the host-pressure brake. Startup refuses foreign residues until cleaned or isolated, allowing proven own-arc
-residues to recover.
+residues to recover. Checkout permission residue parks only its unit. Restore ownership or remove the
+checkout, then `roadmap resume <unit>` reconciles its unfinished cleanup in-process; no executor restart is needed.
 
 For live or retained observation, use `roadmap tui --repo <path> --arc <id>`. It refreshes without runtime writes;
 closing it leaves execution running. The header separates executor liveness, active workloads and signed-in Claude

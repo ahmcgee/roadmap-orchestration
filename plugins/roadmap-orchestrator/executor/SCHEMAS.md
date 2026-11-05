@@ -1133,7 +1133,15 @@ an additive path fallback (one ROADMAP_UPGRADE warning per process) and still re
 stable path project only the latest standing create for retirement. Interrupted series without completed snapshots
 preserve dirty/evidence outputs before reset, as the previous removal path did.
 
-Checkout create/reset/remove EACCES/EPERM (including git's permission-denied diagnostics) becomes a blocking
-recovery-required notice naming the path and ownership fix. Prepare/lanes/candidate park with existing occupied
-outcomes, release reservations, and leave the worktree intent for recovery. Retirement has no outcome stage and
-raises the arc notice directly. Recovery parks permission failures in both reconciliation and redo rather than throwing.
+Checkout create/reset/remove EACCES/EPERM (including git's permission-denied diagnostics) raises a blocking
+unit-subject `residue` notice; other units remain admissible. Prepare, reproduce, pre-build, build, lanes and gate,
+and candidate record uncharged `checkout-residue` outcomes, release reservations and leave checkout intents open.
+These are operator environment parks: ownership repair requires the user, and a general host probe cannot prove it.
+Retirement has no outcome stage and holds only its unit with the same notice. Restore ownership/write/search
+permission (`sudo chown -R ...`) or remove the path, then `roadmap resume <unit>` retries in-process, without restarting.
+Resume and every unit step reconcile only that unit's open create/remove intents through startup's canonical recovery
+path: an already absent checkout closes `reconciled`; redo acts and verifies before closing `redone`; permission errors
+leave the intent open and the unit parked. A partial git removal can unregister the checkout before failing: redo may
+remove its leftover directory only with the journal's standing create, verified evidence from that checkout or its stage,
+no replacement `.git` entry or symlink, and no competing open intent on the path. Unknown unregistered content parks.
+Failed base-comparison promises are evicted so another unit or a resumed attempt can compare again.

@@ -22,6 +22,7 @@ import { actOnDemo } from '../demo/promote.ts';
 import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
 import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
 import { gitRun } from '../git/git.ts';
+import { WorktreeRecoveryError } from '../git/worktree.ts';
 import { staleSetOf } from '../holistic/staleset.ts';
 import type { BusyAttempt,DivergenceDraft } from '../holistic/types.ts';
 import { type ResidueEntry,readResidues,recordDisposition,undispositioned } from '../host/residues.ts';
@@ -43,6 +44,7 @@ import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
 import { type SmokeRouting,backendsOf,smokeBackends,smokeRejections } from '../preflight/smoke.ts';
 import type { StartupContext,StartupRejection } from '../preflight/startup.ts';
+import { reconcileUnitWorktrees } from '../recover/recover.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
 import { type DocsPublisher,commitRevision } from '../recover/revision.ts';
 import {
@@ -417,6 +419,12 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
     case 'unit': {
       if (!ctx.plan().units.some((u) => u.id === target.unit)) return { kind: 'rejected', reason: `unknown unit ${target.unit}` };
       if (view.control().pausedAll) return { kind: 'rejected', reason: 'the whole arc is paused; `resume` without a unit clears it' };
+      const hadOpenCheckout = view.openIntents().some((i) => (i.kind === 'worktree.create' || i.kind === 'worktree.remove') && i.parent.type === 'stage' && i.parent.unit === target.unit);
+      try { await reconcileUnitWorktrees(ctx, target.unit); }
+      catch (error) {
+        if (!(error instanceof WorktreeRecoveryError)) throw error;
+        return { kind: 'rejected', reason: error.message };
+      }
       const u = view.unit(target.unit);
       const paused = view.control().pausedUnits.includes(target.unit);
       // A unit both paused and parked: one resume re-opens (or re-runs) it and clears the pause. The park's
@@ -426,6 +434,14 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
         ctx.journal.fact({ kind: 'resumed', command: id, target });
         return [`unit ${target.unit} unpaused`];
       };
+      // A crash after reconciliation but before the receipt must still finish this resume successfully.
+      const retirementReconciled = view.opsOfUnit('worktree.remove', target.unit).some((i) => {
+        const done = view.doneOf(i.op);
+        return i.parent.type === 'stage' && i.parent.stage === 'retire' && done !== null && done.recoveredBy !== null;
+      });
+      if (u.status === 'retired' && (hadOpenCheckout || retirementReconciled)) {
+        return { kind: 'applied', verified: [`unit ${target.unit} retirement checkout reconciled`, ...unpause()] };
+      }
       // Run again after a crash past the reopen: its fact is the postcondition.
       if (u.reopened?.command === id) {
         return { kind: 'applied', verified: [`unit ${target.unit} re-opened at pre-build on spec rev ${u.reopened.specRev}`, ...unpause()] };

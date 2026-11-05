@@ -2,7 +2,7 @@
 // start; a verification tree is created detached. Removal requires a verified evidence manifest (the
 // request type cannot be built without one) and never deletes a branch: branches and salvage survive
 // every cleanup path.
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, type OpOutcome, type WorktreeCheckout, parentUnit } from '../core/events.ts';
@@ -188,6 +188,11 @@ function actRemove(repo: AbsPath, intent: IntentOf<'worktree.remove'>): void {
   const { path } = intent.expect;
   crashPoint('worktree.remove.act-start', parentUnit(intent.parent));
   if (worktreeList(repo).some((e) => e.path === path)) worktreeRemove(repo, path);
+  else if (existsSync(path)) {
+    // Reconciliation authorizes this redo only for our evidence-backed, partially removed checkout.
+    if (!lstatSync(path).isDirectory() || existsSync(join(path, '.git'))) throw new WorktreeStateError(path, 'unregistered path is not checkout residue');
+    rmSync(path, { recursive: true });
+  }
   crashPoint('worktree.remove.inside', parentUnit(intent.parent));
   worktreePrune(repo);
 }

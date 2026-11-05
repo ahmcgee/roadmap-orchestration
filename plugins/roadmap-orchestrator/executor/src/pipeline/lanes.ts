@@ -952,7 +952,7 @@ export async function runLaneSeries(
         // A permission park releases the slot. A candidate already queued for it must not reset the older op's inputs.
         const pending = ctx.journal.view.openIntents().find((i) => (i.kind === 'worktree.create' || i.kind === 'worktree.remove')
           ? i.expect.path === path : i.kind === 'evidence.snapshot' && i.expect.source === path);
-        if (pending !== undefined) throw new WorktreeRecoveryError(path, `Checkout ${path} still has ${pending.kind} ${pending.op} awaiting recovery. Restore the named residue's permissions and restart to settle it before another series.`);
+        if (pending !== undefined) throw new WorktreeRecoveryError(path, `Checkout ${path} still has ${pending.kind} ${pending.op} awaiting recovery. Restore ownership or remove the path, then roadmap resume the owning unit to reconcile it before another series.`);
         if (existsSync(path) && !ctx.journal.view.opsOf('worktree.create').some((i) => i.expect.path === path && standing(ctx.journal.view, i))) throw new Error(`stable checkout ${path} has no standing journal create`);
       }
       if (checkout.reset && existsSync(path)) {

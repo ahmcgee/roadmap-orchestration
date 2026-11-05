@@ -42,6 +42,7 @@ import { GitError,type Identity,git,gitRun,revParse } from '../git/git.ts';
 import { mergeHead,resolvedHead } from '../git/mergein.ts';
 import { type SalvageRules,SalvageStateError,SalvageUnmergedError,checkRejected,planSalvage } from '../git/salvage.ts';
 import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
+import { WorktreeRecoveryError } from '../git/worktree.ts';
 
 import { selectObligations,unitRules } from '../holistic/impact.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
@@ -1229,8 +1230,13 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
   const key = canonicalJson({ base, lanes, set });
   const known = checks.get(key);
   if (known !== undefined) {
-    const check = await known;
-    if (check.kind === 'verdict') return check;
+    try {
+      const check = await known;
+      if (check.kind === 'verdict') return check;
+    } catch (error) {
+      // The originating unit owns its failed checkout; another unit compares in its own checkout.
+      if (!(error instanceof WorktreeRecoveryError)) throw error;
+    }
   }
   const running = (async (): Promise<BaseCheck> => {
     const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), set);
@@ -1240,9 +1246,14 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
     return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'base') };
   })();
   checks.set(key, running);
-  const check = await running;
-  if (check.kind !== 'verdict' && checks.get(key) === running) checks.delete(key);
-  return check;
+  try {
+    const check = await running;
+    if (check.kind !== 'verdict' && checks.get(key) === running) checks.delete(key);
+    return check;
+  } catch (error) {
+    if (checks.get(key) === running) checks.delete(key);
+    throw error;
+  }
 }
 
 /**

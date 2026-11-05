@@ -1,5 +1,3 @@
-import { permissionResidue } from '../git/worktree.ts';
-import { protectedPathsInForce } from '../input/protected.ts';
 // The first recovery pass (plan "Recovery on `roadmap start`"): every intent a dead executor left open is
 // closed by its kind's reconciler before anything is dispatched. Order:
 //
@@ -15,7 +13,7 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //   resources   recoverReservations: open transitions closed, dead holders' reservations cleaned.
 //   files       spec.patch, needsuser.raise, command.apply.
 //
-// A `park` leaves its intent open and raises one blocking needs-user (reason recovery-required) naming the
+// A `park` leaves its intent open and raises one blocking needs-user (unit checkout: residue; else recovery-required) naming the
 // op, parented by the op so a later pass raises it once. `recovery-required` (integration.ff) raises the
 // same needs-user, then closes the intent with that outcome; `abort` (candidate, snapshot) raises it, then
 // aborts. Then a second pass checks the fixed point: it must find only the parked intents and append
@@ -33,15 +31,17 @@ import type { CommandContext } from '../commands/apply.ts';
 import { containmentFor, detectContainmentMode } from '../contain/detect.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf, IntentRecord, OpKind, OpOutcome, Parent } from '../core/events.ts';
-import { type InvocationId, type OpId, invocationId } from '../core/ids.ts';
+import { type InvocationId, type OpId, type UnitId, invocationId } from '../core/ids.ts';
 import type { Disposition, DispositionKind, Journal, JournalView } from '../core/interfaces.ts';
 import { LogCorruptError, type LogSnapshot, openJournal, readJournal } from '../core/log.ts';
 import { type HostLockClaim, type NeedsUserContent } from '../core/records.ts';
 import { type AbsPath, absPath } from '../core/values.ts';
 import { refTarget } from '../git/git.ts';
 import type { SalvageRules } from '../git/salvage.ts';
+import { WorktreeRecoveryError, permissionResidue } from '../git/worktree.ts';
 import type { PreviousArcVerdict } from '../host/lock.ts';
 import type { PlanUnit } from '../input/plan.ts';
+import { protectedPathsInForce } from '../input/protected.ts';
 import { needsUserReconciler, publishNeedsUser, raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import { type StageContext, dispatchOf } from '../pipeline/dispatch.ts';
 import { unitRedo } from '../pipeline/integrate.ts';
@@ -55,6 +55,7 @@ import { killReconciler } from './kill.ts';
 import { recoverReservations } from './resource.ts';
 import { revisionReconciler } from './revision.ts';
 import { spawnReconciler } from './spawn.ts';
+import { checkoutResidueNeedsUser } from './worktree.ts';
 import {
   candidateMergeOp, docsCommitOp, evidenceSnapshotOp, integrationFfOp, mergeinOp, mutantApplyOp, salvageCommitOp, snapshotPublishOp, worktreeCreateOp, worktreeRemoveOp,
 } from './ops.ts';
@@ -133,6 +134,9 @@ function commandOp(ctx: CommandContext): Redoable<'command.apply'> {
 // Applying a disposition
 
 function recoveryNeedsUser(intent: IntentRecord, detail: string): NeedsUserContent {
+  if ((intent.kind === 'worktree.create' || intent.kind === 'worktree.remove') && intent.parent.type === 'stage') {
+    return checkoutResidueNeedsUser(intent.parent.unit, intent.expect.path, detail);
+  }
   return {
     blocking: true,
     subject: intent.parent.type === 'stage' ? { type: 'unit', unit: intent.parent.unit } : { type: 'arc' },
@@ -150,15 +154,15 @@ function recoveryNeedsUser(intent: IntentRecord, detail: string): NeedsUserConte
  * recovery reaches the same disposition and finds the item raised. A raise a crash left open holds the
  * one `needs-user` key, so it is finished first (it may be this op's own).
  */
-async function raiseOnce(ctx: RecoveryContext, intent: IntentRecord, detail: string): Promise<void> {
-  const { journal, runDir } = ctx.stage;
-  for (const open of openOf(journal, ['needsuser.raise'])) await step(ctx, open);
+async function raiseOnce(ctx: Pick<StageContext, 'journal' | 'runDir' | 'repo'>, intent: IntentRecord, detail: string): Promise<void> {
+  const { journal, runDir } = ctx;
+  for (const open of openOf(journal, ['needsuser.raise'])) await apply(ctx, open, needsUserOp(runDir));
   const parent: Parent = { type: 'op', op: intent.op };
   if (raisedFor(journal.view, parent) === null) raiseNeedsUser(journal, runDir, recoveryNeedsUser(intent, detail), parent);
 }
 
-async function apply<K extends StepKind>(ctx: RecoveryContext, record: IntentRecord, op: Redoable<K>): Promise<DispositionKind> {
-  const { journal, repo } = ctx.stage;
+async function apply<K extends StepKind>(ctx: Pick<StageContext, 'journal' | 'runDir' | 'repo'>, record: IntentRecord, op: Redoable<K>): Promise<DispositionKind> {
+  const { journal, repo } = ctx;
   const intent = record as IntentOf<K>;
   let d: Disposition<K>;
   try { d = await op.reconcile(intent, journal.view); }
@@ -210,37 +214,52 @@ function step(ctx: RecoveryContext, intent: IntentRecord): Promise<DispositionKi
   const s = ctx.stage;
   switch (intent.kind) {
     case 'worktree.create':
-      return apply(ctx, intent, worktreeCreateOp(s.repo));
+      return apply(s, intent, worktreeCreateOp(s.repo));
     case 'worktree.remove':
-      return apply(ctx, intent, worktreeRemoveOp(s.repo));
+      return apply(s, intent, worktreeRemoveOp(s.repo));
     case 'evidence.snapshot':
-      return apply(ctx, intent, evidenceSnapshotOp);
+      return apply(s, intent, evidenceSnapshotOp);
     case 'salvage.commit':
-      return apply(ctx, intent, salvageCommitOp(salvageRules(s, unitOf(s, intent))));
+      return apply(s, intent, salvageCommitOp(salvageRules(s, unitOf(s, intent))));
     case 'mergein.prepare':
-      return apply(ctx, intent, mergeinOp(s.repo));
+      return apply(s, intent, mergeinOp(s.repo));
     case 'candidate.merge':
-      return apply(ctx, intent, candidateMergeOp(s.repo));
+      return apply(s, intent, candidateMergeOp(s.repo));
     case 'integration.ff':
       // A docs publication's `ff` (parent job{docs-n}) is redone without a unit's re-check.
-      return apply(ctx, intent, integrationFfOp(s.repo, intent.expect.subject === undefined ? unitRedo(s, unitOf(s, intent)) : notAUnit(intent)));
+      return apply(s, intent, integrationFfOp(s.repo, intent.expect.subject === undefined ? unitRedo(s, unitOf(s, intent)) : notAUnit(intent)));
     case 'docs.commit':
-      return apply(ctx, intent, docsCommitOp(s.repo));
+      return apply(s, intent, docsCommitOp(s.repo));
     case 'snapshot.publish':
-      return apply(ctx, intent, snapshotPublishOp(s.repo));
+      return apply(s, intent, snapshotPublishOp(s.repo));
     case 'spec.patch':
-      return apply(ctx, intent, specPatchOp(s.runDir));
+      return apply(s, intent, specPatchOp(s.runDir));
     case 'needsuser.raise':
-      return apply(ctx, intent, needsUserOp(s.runDir));
+      return apply(s, intent, needsUserOp(s.runDir));
     case 'command.apply':
-      return apply(ctx, intent, commandOp(ctx.commands));
+      return apply(s, intent, commandOp(ctx.commands));
     case 'mutant.apply':
-      return apply(ctx, intent, mutantApplyOp(s.repo, s.runDir));
+      return apply(s, intent, mutantApplyOp(s.repo, s.runDir));
     case 'revision.commit':
     case 'proc.spawn':
     case 'proc.kill':
     case 'resource.transition':
       throw new Error(`${intent.kind} ${intent.op} is recovered by its own phase`);
+  }
+}
+
+/** Reconcile only this unit's open checkout intents, through the same path as startup recovery. */
+export async function reconcileUnitWorktrees(ctx: Pick<StageContext, 'journal' | 'runDir' | 'repo'>, unit: UnitId): Promise<void> {
+  for (const kind of ['worktree.create', 'worktree.remove'] as const) {
+    for (const intent of ctx.journal.view.openIntents()) {
+      if ((intent.kind !== 'worktree.create' && intent.kind !== 'worktree.remove') || intent.kind !== kind || intent.parent.type !== 'stage' || intent.parent.unit !== unit) continue;
+      const disposition = intent.kind === 'worktree.create'
+        ? await apply(ctx, intent, worktreeCreateOp(ctx.repo))
+        : await apply(ctx, intent, worktreeRemoveOp(ctx.repo));
+      if (disposition === 'park') {
+        throw new WorktreeRecoveryError(intent.expect.path, `The open ${intent.kind} ${intent.op} at ${intent.expect.path} still needs repair; its recovery notice records the cause.`);
+      }
+    }
   }
 }
 

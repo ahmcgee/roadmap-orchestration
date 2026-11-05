@@ -325,12 +325,12 @@ test('ci reset permission residue parks the unit with paths and ownership fix, l
     const result = await runUnit(r.ctx, r.unit('u1'), admitAll);
     assert.equal(result.kind, 'parked');
     if (result.kind !== 'parked') throw new Error('permission failure did not park');
-    assert.equal(result.needsUser.reason, 'recovery-required');
+    assert.equal(result.needsUser.reason, 'residue');
     assert.match(result.needsUser.summary, /locked\/file/);
     assert.match(result.needsUser.recommendation, /sudo chown -R/);
-    assert.equal(r.journal.view.unit(unitId('u1')).decided?.outcome, 'occupied');
+    assert.equal(r.journal.view.unit(unitId('u1')).decided?.outcome, 'checkout-residue');
     assert.ok(r.journal.view.openIntents().some((i) => i.kind === 'worktree.create' && i.expect.reset === true));
-    assert.ok(r.journal.view.opsOf('needsuser.raise').some((i) => readNeedsUser(r.ctx.runDir, i.expect.id)?.reason === 'recovery-required'));
+    assert.ok(r.journal.view.opsOf('needsuser.raise').some((i) => readNeedsUser(r.ctx.runDir, i.expect.id)?.reason === 'residue'));
     const w = wire(r);
     const blocked = await recover(w);
     assert.ok(blocked.parked.length > 0, 'recovery redo also parks the permission failure');

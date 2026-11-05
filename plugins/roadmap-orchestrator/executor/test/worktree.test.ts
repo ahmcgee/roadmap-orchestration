@@ -302,3 +302,35 @@ test('a reset-capable first add recovers an empty partial checkout using the ori
   assert.equal(git(s.path, 'status', '--porcelain'), '');
   journal.close();
 });
+
+test('worktree remove reconciles a hand-removed checkout with stale git registration as done', async () => {
+  const s = setup();
+  const evidence = await createdWithEvidence(s);
+  const journal = openArc(s.runDir);
+  try {
+    const op = worktreeRemoveOp(s.repo);
+    const body = await op.prepare({ path: s.path, evidence: capturedEvidence(journal.view, evidence) });
+    const opened = journal.begin({ kind: 'worktree.remove', key: opKey('worktree:unit'), parent: { type: 'arc' }, deadlineAt: null, body: () => body });
+    rmSync(s.path, { recursive: true });
+    assert.ok(worktreeList(s.repo).some((e) => e.path === s.path));
+    const recovered = await recoverOp(journal, op);
+    assert.equal(recovered.kind, 'closed');
+    assert.equal(journal.view.doneOf(opened.op)?.recoveredBy, 'reconciled');
+    assert.equal(worktreeGone(s.repo, s.path), true);
+  } finally { journal.close(); }
+});
+
+test('worktree remove leaves unknown unregistered content parked even with valid evidence', async () => {
+  const s = setup();
+  const evidence = await createdWithEvidence(s);
+  const unknown = absPath(join(s.runDir, 'foreign'));
+  writeFiles(unknown, { 'keep.txt': 'not a checkout' });
+  const journal = openArc(s.runDir);
+  try {
+    journal.begin({ kind: 'worktree.remove', key: opKey('worktree:foreign'), parent: { type: 'arc' }, deadlineAt: null,
+      body: () => ({ expect: { path: unknown, evidence }, post: null }) });
+    const recovered = await recoverOp(journal, worktreeRemoveOp(s.repo));
+    assert.equal(recovered.kind, 'parked');
+    assert.equal(readFileSync(join(unknown, 'keep.txt'), 'utf8'), 'not a checkout');
+  } finally { journal.close(); }
+});
