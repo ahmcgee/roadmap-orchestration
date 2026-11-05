@@ -124,7 +124,7 @@ describe('fold derives', () => {
   it('an empty log', () => {
     assert.deepEqual(fold(ARC, []), {
       v: 2, arc: ARC, plan: null, lastSeq: 0, snapshotHighWater: 0, openIntents: [], units: [], meter: [], needsUser: [], needsUserBlocking: [], needsUserAcked: [],
-      control: { stop: null, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
+      control: { stop: null, stopOptions: { mode: 'immediate', deadline: null }, pausedAll: false, pausedUnits: [] }, containmentMode: null, tailDiscarded: [], parkedBackends: [],
       backendParks: [], resources: [], runOnly: null, resolvedEdges: [],
       holistic: {
         on: false, witnessed: [], baselineHeld: [], latched: [], findings: [], audits: [], auditRequests: [], docsCovered: [], docsPublished: [], divergences: [],
@@ -432,7 +432,7 @@ describe('fold: command effects (step 13)', () => {
       fact({ kind: 'backend-park', backend: 'codex', class: 'usage-limit', inv: inv1(1) }), // 4
     ]);
     for (const e of events) f.apply(e, prevHash(Buffer.from(serializeEvent(e))));
-    assert.deepEqual(f.control(), { stop: C, pausedAll: false, pausedUnits: [U1] });
+    assert.deepEqual(f.control(), { stop: C, stopOptions: { mode: 'immediate', deadline: null }, pausedAll: false, pausedUnits: [U1] });
     assert.equal(f.unit(U1).status, 'held');
     // A backend resume releases holds no pause covers: u1 is paused, so it stays held.
     const resumed = chain([hold, fact({ kind: 'paused', command: C, target: { type: 'unit', unit: U1 } }), fact({ kind: 'backend-park', backend: 'codex', class: 'usage-limit', inv: inv1(1) }), fact({ kind: 'resumed', command: C, target: { type: 'backend', backend: 'codex' } })]);
@@ -454,11 +454,25 @@ describe('fold: command effects (step 13)', () => {
     assert.equal(next.interrupted, null);
   });
 
+  it('unfinished drain survives executor startup; completed drain clears for the next run', () => {
+    const stop = fact({ kind: 'stop-requested', command: C, mode: 'drain', deadline: AT });
+    const start = fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
+    const pending = fold(ARC, chain([stop, start]));
+    assert.deepEqual(pending.control.stopOptions, { mode: 'drain', deadline: AT });
+    assert.equal(pending.control.stop, C);
+    const escalated = fold(ARC, chain([stop, fact({ kind: 'stop-requested', command: C, mode: 'immediate', deadline: null }), start]));
+    assert.equal(escalated.control.stop, C, 'a crashed escalation must still stop');
+    assert.equal(escalated.control.stopOptions.mode, 'immediate');
+    const completed = fold(ARC, chain([stop, fact({ kind: 'stop-completed', command: C }), start]));
+    assert.equal(completed.control.stop, null);
+    assert.deepEqual(completed.control.stopOptions, { mode: 'immediate', deadline: null });
+  });
+
   it('executor-started clears the stop marker and nothing else: pauses and holds persist', () => {
     const s = fold(ARC, chain([
       hold, fact({ kind: 'paused', command: C, target: { type: 'all' } }), fact({ kind: 'stop-requested', command: C }), fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 }),
     ]));
-    assert.deepEqual(s.control, { stop: null, pausedAll: true, pausedUnits: [] });
+    assert.deepEqual(s.control, { stop: null, stopOptions: { mode: 'immediate', deadline: null }, pausedAll: true, pausedUnits: [] });
     assert.equal(s.units[0]?.status, 'held');
   });
 
@@ -483,7 +497,7 @@ describe('fold: command effects (step 13)', () => {
       ['active', 'pre-build', null, { rev: 2, sha256: H2 }, { command: C, specRev: 2 }, 2],
     );
     refuses(chain([dispatch('med'), redirect, reopen(2)]), 3, /which is active without a pending revision/);
-    refuses(chain([dispatch('med'), stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park' }), reopen(2)]), 3, /parked at lanes, not at a judgment stage/);
+    refuses(chain([dispatch('med'), stageOutcome({ stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'park' }), reopen(2)]), 3, /parked at lanes, requires a judgment or build spec-wrong park/);
     refuses(chain([dispatch('med'), gatePark, reopen(3)]), 3, /spec rev 3; its recorded rev is 1/);
   });
 

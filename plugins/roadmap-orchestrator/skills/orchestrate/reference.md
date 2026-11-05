@@ -23,7 +23,7 @@ Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 liv
 | `roadmap watch [--repo <path> --arc <arc>]` | Stream events. |
 | `roadmap watch --actionable [--replace] [--heartbeat-min <min>] [--from <seq>] [--repo <path> --arc <arc>]` | Hold the arc’s watcher lease and stream actionable transitions and heartbeat check-ins. Use --replace to stop a live holder and take over, including across plugin versions. |
 | `roadmap watch --stop [--repo <path> --arc <arc>]` | Stop the lease holder and remove its lease; succeeds when none exists. |
-| `roadmap stop [--repo <path> --arc <arc>]` | Quiesce work and stop. |
+| `roadmap stop [--drain [--within <minutes>]] [--repo <path> --arc <arc>]` | Plain stop aborts immediately. Drain finishes running stages/jobs and required chains, admits no new work, cleans up and ends stop. Deadline or a later plain stop escalates to abort. Recommended before plugin updates; wait for stop, update, then start. Drain/deadline survive crashes and appear in status. |
 | `roadmap pause (<unit> | --all) [--repo <path> --arc <arc>]` | Pause one unit or the arc. |
 | `roadmap resume [<unit> | --backend claude|codex] [--repo <path> --arc <arc>]` | Resume a unit, explicitly unpark a backend, or resume all ordinary resumable work. |
 | `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Name the item to close it. Arc-subject items and pack-review items accept optionless ack; unit/host items without options require subject action. Any supplied choice must be offered. |
@@ -188,9 +188,9 @@ Only the executor writes runtime. The journal's intents/done/facts and immutable
 
 ## Status, brief and watch
 
-Full status includes supervision, run/owner/heartbeat, revision and routing provenance, units with active invocations and lane progress, waits/resources, backend parks, spend by role/class/model, findings, obligation observations, census, timings, milestones, demo and completion. Read evidence named by an item before choosing an intervention. TUI observations do not acquire authority or alter the journal.
+Full status includes supervision, run/owner/heartbeat and stop mode/deadline, revision and routing provenance, units with active invocations and lane progress, waits/resources, backend parks, spend by role/class/model, findings, obligation observations, census, timings, milestones, demo and completion. Read evidence named by an item before choosing an intervention. TUI observations do not acquire authority or alter the journal.
 
-Summary JSON fields are arc/state/planRev, supervision, progress, spend, milestones, caught, verdicts, captures, needsUser, waste, demo, completion. Spend separates estimated/unavailable calls, compares optional expectations and never stops work on USD. Milestone cost includes member/re-entry/polish units and walk/compare jobs; it is not an allocation of every arc-level cost. `caught.total = laneReds + gateRevisions + uniqueFindings`, with findings deduped by key and classified in byLens. It is not unique-catch attribution across seats. Captures currently lists suite capture spawn ids, not all retained screenshots.
+Summary JSON fields are arc/state/stop/planRev, supervision, progress, spend, milestones, caught, verdicts, captures, needsUser, waste, demo, completion. Spend separates estimated/unavailable calls, compares optional expectations and never stops work on USD. Milestone cost includes member/re-entry/polish units and walk/compare jobs; it is not an allocation of every arc-level cost. `caught.total = laneReds + gateRevisions + uniqueFindings`, with findings deduped by key and classified in byLens. It is not unique-catch attribution across seats. Captures currently lists suite capture spawn ids, not all retained screenshots.
 
 Waste detectors report grinding, red-on-unit/green-on-base, low unique-catch lanes and repeated expensive suites from observed evidence. They raise replay-safe non-blocking items keyed by waste cause. They advise the root; no optimizer rewrites the plan.
 
@@ -231,7 +231,8 @@ Read the complete row/receipt. Fix the source, then retry the same canonical act
 | stale apply files | Export current inputs and reapply intended edits; do not edit export metadata. |
 | owner/resource request | Obtain the actual decision and use its offered option/action; do not fabricate readiness. |
 | parked backend | Fix auth/outage or wait for subscription availability, then explicitly resume that backend. No USD cap. |
-| attempt-cap / spec wrong / too big | Read history/base comparisons; root revises spec/decomposition/lineage. Steering does not erase cap counts. |
+| judgment park / build spec-wrong | Export and correct the spec (including striking stale facts), apply its next revision, then `roadmap resume <unit>`. Re-opens at pre-build on the new rev, keeping branch, worktree, counters and implementer session. Other build design parks need a new re-entry unit. A steer cannot remove a stale spec fact. |
+| attempt-cap / too big | Read history/base comparisons; root revises spec/decomposition/lineage. Steering does not erase cap counts. |
 | base-red / known defect / ordering | Spec base-red offers a plan.json knownDefects fragment for an exported CAS apply: root names/declares the fix unit, then acknowledges the arc item. Output matches also accept literal masked failure lines (`<checkout>`, `<time>`, `<hex>`, `<n>`). Gate continues; candidate base-red still halts merges. Repair the actual baseline/fix-unit dependency; ordering parks wake on the declared blockers' merges. |
 | residue / ambiguous owner / log-corrupt | Inspect kept evidence and ownership. Use declared cleanup/recovery; never hand-edit runtime or claim another process dead without identity checks. |
 

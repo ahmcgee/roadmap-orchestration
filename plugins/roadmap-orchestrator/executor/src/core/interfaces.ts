@@ -12,7 +12,7 @@ PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
 import type { ArcId,ClaudeSessionId,CommandId,DivergenceId,EdgeId,FindingId,InvocationId,JobId,JobKind,MilestoneId,NeedsUserId,OpId,OpKey,PolishId,ResourceUnit,Sha,Sha256Hex,UnitId } from './ids.ts';
 import type {
 CancelFile,ChildEnd,ContainmentMode,DispatchRecord,ExitFile,KillReason,LaunchFile,ProcIdentity,RunnerFileMap,
-RunnerFileName,SpecPatchBy
+RunnerFileName,SpecPatchBy,StopOptions
 } from './records.ts';
 import type { ApplyQueued,BackendParkState,EdgeResolvedState,FindingState,HolisticFold,ProbeState,ResidueState,ResourceEntry,ReviewFold,UnitState } from './state.ts';
 import type { SessionCharge } from './usage.ts';
@@ -178,7 +178,7 @@ export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: Propa
 export type NeedsUserAckState = Readonly<{ command: CommandId; choice: string | null }>;
 export type NeedsUserState = Readonly<{ id: NeedsUserId; blocking: boolean; ack: NeedsUserAckState | null }>;
 /** `stop`: the stop command recorded, if any. A pause of every unit and pauses of single units are kept apart. */
-export type ControlState = Readonly<{ stop: CommandId | null; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;
+export type ControlState = Readonly<{ stop: CommandId | null; stopOptions: StopOptions; pausedAll: boolean; pausedUnits: readonly UnitId[] }>;
 
 export interface Journal {
   readonly view: JournalView;

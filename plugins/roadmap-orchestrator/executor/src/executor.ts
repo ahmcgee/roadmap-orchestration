@@ -248,8 +248,11 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     // M3 (B3): the findings' moves the recovered log calls for (ownership, a killed mutant's dismissal).
     syncRepairs(x.stage);
     await consumeRecovered(x);
-    const smoked = await smokeCheck(checks, args.env);
-    if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
+    // An unfinished drain resumes only recovery/chains, with no new backend smoke job.
+    if (journal.view.control().stop === null) {
+      const smoked = await smokeCheck(checks, args.env);
+      if (smoked.kind === 'refused') return refuse(args, smoked.rejections);
+    }
     const reason = await schedule(x);
     await pushes.drain();
     writeExitReason(args.hostDir, claim, reason.kind);
@@ -376,7 +379,10 @@ async function controlOnly(x: Exec): Promise<ExitReason | null> {
     for (const command of pollCommands(x.stage.runDir, arc)) {
       if (isControl(command.body) && !open.has(command.id)) await applyCommand(x.commands, command);
     }
-    if (x.journal.view.control().stop !== null) return { kind: 'stop', cause: 'command', needsUser: null };
+    if (x.journal.view.control().stop !== null) {
+      if (x.journal.view.control().stopOptions.mode === 'drain') return null; // Recovery and the scheduler finish the drain.
+      return { kind: 'stop', cause: 'command', needsUser: null };
+    }
     if (openBlockingItems(x.stage.runDir, x.journal.view).length === 0) return null;
     await sleep(POLL_MS);
   }

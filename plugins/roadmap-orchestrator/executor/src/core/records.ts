@@ -1542,7 +1542,7 @@ export const applyManifest: Read<RevisionManifest> = object((f): RevisionManifes
 
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
-  | Readonly<{ type: 'stop' }>
+  | Readonly<{ type: 'stop'; mode?: StopMode; deadline?: IsoTime | null }>
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
@@ -1582,6 +1582,22 @@ export type DemoAct = (typeof DEMO_ACTS)[number];
 /** The lens names a command may carry; `LensKind` in src/holistic/types.ts is the same closed list. */
 export const LENS_KIND_NAMES = ['invariants', 'drift', 'vacuity', 'vision'] as const;
 export type LensKindName = (typeof LENS_KIND_NAMES)[number];
+/** Immediate abort or drain to clean stage boundaries. */
+export type StopMode = 'immediate' | 'drain';
+export type StopOptions = Readonly<{ mode: StopMode; deadline: IsoTime | null }>;
+let legacyStopWarned = false;
+/** Upgrade in place: old stop commands and facts mean immediate stop. */
+export function stopFields(f: Fields): StopOptions {
+  const mode = f.optional('mode', oneOf(['immediate', 'drain'] as const));
+  const deadline = f.optional('deadline', nullable(isoTime));
+  if ((mode === undefined || deadline === undefined) && !legacyStopWarned) {
+    legacyStopWarned = true;
+    process.emitWarning('defaulting absent stop mode/deadline to immediate/null (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+  }
+  if (mode !== 'drain' && deadline != null) throw new SchemaError(`${f.path}.deadline`, 'null for an immediate stop', deadline);
+  return { mode: mode ?? 'immediate', deadline: deadline ?? null };
+}
+
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
 export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss'] as const;
 
@@ -1603,7 +1619,7 @@ export const resumeTarget: Read<ResumeTarget> = tagged<'all' | 'unit' | 'backend
 });
 export const commandBody: Read<CommandBody> = tagged('type', {
   pause: object((f): CommandBody => ({ type: f.get('type', literal('pause')), target: f.get('target', pauseTarget) })),
-  stop: object((f): CommandBody => ({ type: f.get('type', literal('stop')) })),
+  stop: object((f): CommandBody => ({ type: f.get('type', literal('stop')), ...stopFields(f) })),
   ack: object((f): CommandBody => ({
     type: f.get('type', literal('ack')),
     needsUser: f.get('needsUser', (v, p) => needsUserId(v, p)),

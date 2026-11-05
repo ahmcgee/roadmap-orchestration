@@ -43,7 +43,7 @@ export function summarize(s: Status, events: readonly Event[], plan: PlanM1 | nu
   const states: Record<string, number> = {};
   for (const u of s.units) states[u.state] = (states[u.state] ?? 0) + 1;
   return {
-    arc: s.arc, state: s.run.state, supervision: s.supervision, planRev: s.plan?.rev ?? null,
+    arc: s.arc, state: s.run.state, stop: s.run.stop, supervision: s.supervision, planRev: s.plan?.rev ?? null,
     progress: { total: s.units.length, merged: s.units.filter((u) => u.state === 'merged').length, states,
       held: s.nowTrue.length, remaining: s.notYetTrue.length },
     spend: { costUsd: totalUsd, expectedUsd: expected?.arcUsd ?? null,

@@ -189,6 +189,24 @@ describe('command queue', () => {
     journal.close();
   });
 
+  it('drain latches its first deadline, cannot soften immediate stop, and plain stop escalates', T, async () => {
+    const { ctx, journal } = openCommandRun(newCmdRun());
+    try {
+      const deadline = isoTimeOf(new Date(Date.now() + 60_000));
+      const first = submit(ctx, { type: 'stop', mode: 'drain', deadline });
+      await applyCommand(ctx, first);
+      await applyCommand(ctx, submit(ctx, { type: 'stop', mode: 'drain', deadline: null }));
+      assert.equal(journal.view.control().stop, first.id);
+      assert.deepEqual(journal.view.control().stopOptions, { mode: 'drain', deadline });
+      const immediate = submit(ctx, { type: 'stop' });
+      await applyCommand(ctx, immediate);
+      assert.equal(journal.view.control().stop, immediate.id);
+      assert.deepEqual(journal.view.control().stopOptions, { mode: 'immediate', deadline: null });
+      await applyCommand(ctx, submit(ctx, { type: 'stop', mode: 'drain', deadline }));
+      assert.equal(journal.view.control().stop, immediate.id);
+    } finally { journal.close(); }
+  });
+
   it('cmd.idempotent: re-delivering an applied command is a no-op', T, async () => {
     const run = newCmdRun();
     const { ctx, journal } = openCommandRun(run);
@@ -234,7 +252,7 @@ describe('command queue', () => {
     journal.abort(stage.op, 'precondition', 'test: stage over');
     const mutations = await applyMutations(ctx);
     assert.deepEqual(mutations.kind === 'applied' ? mutations.outcomes.map((o) => o.command) : mutations, [resume.id]);
-    assert.deepEqual(journal.view.control(), { stop: stop.id, pausedAll: false, pausedUnits: [] });
+    assert.deepEqual(journal.view.control(), { stop: stop.id, stopOptions: { mode: 'immediate', deadline: null }, pausedAll: false, pausedUnits: [] });
     assert.deepEqual(poll(ctx), []);
     journal.close();
   });
@@ -307,7 +325,7 @@ describe('command queue', () => {
     assert.match(refused?.state === 'rejected' ? refused.reason : '', /whole arc is paused/);
     assert.equal(readReceipt(ctx.runDir, unknown.id, 'rejected')?.state, 'rejected');
     assert.equal(readReceipt(ctx.runDir, all.id, 'applied')?.state, 'applied');
-    assert.deepEqual(journal.view.control(), { stop: null, pausedAll: false, pausedUnits: [] });
+    assert.deepEqual(journal.view.control(), { stop: null, stopOptions: { mode: 'immediate', deadline: null }, pausedAll: false, pausedUnits: [] });
     journal.close();
   });
 
@@ -366,7 +384,7 @@ describe('resume.per-class: resume <unit> of a parked unit follows its park\'s c
     journal.fact({ kind: 'stage-outcome', unit: UNIT, stage: 'candidate', attempt: 1, outcome: 'red', class: 'park', chargeable: false, park: { class: 'operator', kind: 'design' } });
     const { receipt } = await resumeU1(ctx);
     assert.equal(receipt?.state === 'rejected' && receipt.reason,
-      'unit u1 is parked (candidate-red) at candidate, a design park no revision re-opens there; re-enter it: a new unit with `reenters: {unit: u1, fixes: u1/candidate#1}` that changes what that park ran under, then `roadmap apply`. Re-entry keeps counters; set `reenters.reset: {reason}` when fresh chargeable rounds are warranted. The previous release recorded no cause: inspect its original candidate evidence before choosing what to change.');
+      'unit u1 is parked (candidate-red) at candidate, only judgment parks and build spec-wrong parks re-open on a spec revision; this park needs re-entry; re-enter it: a new unit with `reenters: {unit: u1, fixes: u1/candidate#1}` that changes what that park ran under, then `roadmap apply`. Re-entry keeps counters; set `reenters.reset: {reason}` when fresh chargeable rounds are warranted. The previous release recorded no cause: inspect its original candidate evidence before choosing what to change.');
     assert.equal(journal.view.unit(UNIT).status, 'park-pending');
     assert.deepEqual(unitFacts(ctx, 'unparked'), []);
     journal.close();

@@ -281,6 +281,27 @@ describe('a job whose lane gives no verdict (B7 follow-up, lead ruling)', () => 
 });
 
 describe('stop (B7 follow-up, lead ruling: control applies immediately)', () => {
+  test('sched.drain-finishes-audit: running audit completes, another request and checkpoint do not start', T, async () => {
+    const barrier = { type: 'barrier', name: 'drain-lens', timeoutMs: 120_000 } as const;
+    const d = checkpointArc([lensStep('audit-1', 'vision', [], [barrier])]);
+    const r = contextFor(d);
+    submit(r, { type: 'pause', target: { type: 'unit', unit: unitId('u1') } });
+    submit(r, { type: 'audit' });
+    const s = startHolistic(r);
+    try {
+      await reached(d.scenarioDir, 'drain-lens', WAIT_MS);
+      submit(r, { type: 'stop', mode: 'drain', deadline: null });
+      await until(() => r.journal.view.control().stop !== null, WAIT_MS, 'drain applied');
+      submit(r, { type: 'audit' });
+      release(d.scenarioDir, 'drain-lens');
+      assert.deepEqual(await s.end, { kind: 'stop', cause: 'command', needsUser: null });
+      assert.equal(factsOf(r, 'audit-started').length, 1);
+      assert.equal(factsOf(r, 'audit-ended')[0]?.outcome, 'completed');
+      assert.deepEqual(r.journal.view.opsOf('proc.kill'), []);
+      assert.deepEqual(r.journal.view.openIntents(), []);
+    } finally { r.journal.close(); }
+  });
+
   test('sched.stop-kills-lens: a stop kills a running audit\'s lens call; the audit is abandoned and the run ends stop', T, async () => {
     const barrier = { type: 'barrier', name: 'lens', timeoutMs: 120_000 } as const;
     const d = checkpointArc([lensStep('audit-1', 'vision', [], [barrier])]);

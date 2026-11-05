@@ -61,7 +61,7 @@ import { basename,join } from 'node:path';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import { JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
+import { specReopenable,JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
 import { type OpId,type ResourceInstance,type Sha,type UnitId,invocationId } from '../core/ids.ts';
 import { mutantOf } from '../core/projections.ts';
 import { type NeedsUserContent,type NeedsUserReason,STDERR_FILE,STDOUT_FILE,type Stage } from '../core/records.ts';
@@ -164,7 +164,7 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): r
  * The needs-user content of a halt the table decided (the unit's latest decided outcome), when the stage
  * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a
  * `routing-changed` park re-enters once its implementer seat's routing is restored; any other park at a
- * judgment stage re-opens after a spec edit; any other is re-entered under a new unit id.
+ * judgment stage or build spec-wrong re-opens after a spec edit; any other is re-entered under a new unit id.
  */
 function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop', reason: NeedsUserReason, summary: string): NeedsUserContent {
   const f = ctx.journal.view.unit(unit.id).decided;
@@ -197,7 +197,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
-      : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
+      : specReopenable(f)
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
   return {

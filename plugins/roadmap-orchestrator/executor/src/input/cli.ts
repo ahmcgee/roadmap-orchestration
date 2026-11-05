@@ -44,7 +44,7 @@ export type Command =
     | { actionable: null; stop?: true; replace?: never }
     | { actionable: Readonly<{ heartbeatMin: number | null; from: number | null }>; replace?: true; stop?: never }
   )>
-  | Readonly<{ command: 'stop'; run: RunLocator }>
+  | Readonly<{ command: 'stop'; run: RunLocator; drain?: Readonly<{ withinMin: number | null }> }>
   | Readonly<{ command: 'pause'; target: PauseTarget; run: RunLocator }>
   | Readonly<{ command: 'ack'; id: NeedsUserId; choice: string | null; run: RunLocator }>
   | Readonly<{ command: 'resume'; target: ResumeTarget; run: RunLocator }>
@@ -225,8 +225,16 @@ export function parseCommand(argv: readonly string[]): Command {
       positionals(p, command, 0);
       return { command, run: locator(p, command), ...(p.flags.has('summary') ? { summary: true } : {}) };
     }
-    case 'tui':
     case 'stop': {
+      const p = parseRest(rest, { ...LOCATOR, drain: 'switch', within: 'value' }, command);
+      positionals(p, command, 0);
+      const within = value(p, 'within');
+      if (within !== undefined && !p.flags.has('drain')) throw new CliError('stop: --within requires --drain');
+      const withinMin = within === undefined ? null : Number(within);
+      if (withinMin !== null && (!Number.isFinite(withinMin) || withinMin <= 0)) throw new CliError('stop: --within takes positive finite minutes');
+      return { command, run: locator(p, command), ...(p.flags.has('drain') ? { drain: { withinMin } } : {}) };
+    }
+    case 'tui': {
       const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);
       return { command, run: locator(p, command) };

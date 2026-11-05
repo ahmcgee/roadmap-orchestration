@@ -4,7 +4,7 @@ import { candidateReentryChange } from '../pipeline/candidate-red.ts';
 import { join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import type { IntentOf,OpOutcome,Parent,PlanAppliedFact,PlanChange,RevisionPayload,RevisionSource,StageOutcomeFact } from '../core/events.ts';
-import { JUDGMENT_STAGES,probeTargetKey } from '../core/events.ts';
+import { specReopenable,probeTargetKey } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { exclusivePublish } from '../core/fsx.ts';
 import { type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,type UnitId,invocationId,opKey,parseResourceUnit,planRev,resourceInstance } from '../core/ids.ts';
@@ -241,8 +241,13 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'pause':
       return pause(ctx, command.id, body.target);
     case 'stop': {
-      if (ctx.journal.view.control().stop === null) ctx.journal.fact({ kind: 'stop-requested', command: command.id });
-      return { kind: 'applied', verified: [`stop requested (by ${ctx.journal.view.control().stop})`] };
+      const c = ctx.journal.view.control();
+      const mode = body.mode ?? 'immediate';
+      // A later plain stop escalates; repeated drains cannot extend a deadline or soften an immediate stop.
+      if (c.stop === null || (c.stopOptions.mode === 'drain' && mode === 'immediate')) {
+        ctx.journal.fact({ kind: 'stop-requested', command: command.id, mode, deadline: body.deadline ?? null });
+      }
+      return { kind: 'applied', verified: [`${ctx.journal.view.control().stopOptions.mode} stop requested (by ${ctx.journal.view.control().stop})`] };
     }
     case 'ack':
       return ack(ctx, command.id, body);
@@ -327,7 +332,7 @@ function parkReason(f: StageOutcomeFact): string {
 }
 
 /**
- * `resume <unit>` of a design park: re-opened when it parked at a judgment stage and the architect has
+ * `resume <unit>` of a design park: re-opened at a judgment stage or build spec-wrong when the architect has
  * applied a revision of its spec (pending in the fold); otherwise rejected, saying what would work.
  */
 function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
@@ -335,10 +340,10 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
   const unit = ctx.plan().units.find((p) => p.id === unitId);
   if (unit === undefined) throw new Error(`reopen of ${unitId}: a parked unit the plan in force does not list`);
   const reason = parkReason(f);
-  if (!(JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)) {
+  if (!specReopenable(f)) {
     return {
       kind: 'rejected',
-      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, a design park no revision re-opens there; re-enter it: a new unit with \`reenters: {unit: ${unitId}, fixes: ${unitId}/${f.stage}#${f.attempt}}\` that changes what that park ran under, then \`roadmap apply\`. Re-entry keeps counters; set \`reenters.reset: {reason}\` when fresh chargeable rounds are warranted.`
+      reason: `unit ${unitId} is parked (${reason}) at ${f.stage}, only judgment parks and build spec-wrong parks re-open on a spec revision; this park needs re-entry; re-enter it: a new unit with \`reenters: {unit: ${unitId}, fixes: ${unitId}/${f.stage}#${f.attempt}}\` that changes what that park ran under, then \`roadmap apply\`. Re-entry keeps counters; set \`reenters.reset: {reason}\` when fresh chargeable rounds are warranted.`
         + (f.detail?.kind === 'candidate-red' ? ` ${candidateReentryChange(f.detail)}` : ''),
     };
   }

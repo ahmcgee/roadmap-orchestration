@@ -195,7 +195,7 @@ export function readNeedsUserAck(runDir: AbsPath, id: NeedsUserId): NeedsUserAck
 // What a park's recommendation says: exactly what `resume` does for it
 
 /**
- * A unit parked at a judgment stage (pre-build or gate): `resume <unit>` re-opens it once a revision of its
+ * A judgment (pre-build or gate) or build spec-wrong park: `resume <unit>` re-opens it once a revision of its
  * spec is applied (commands/apply.ts), so that is what the item recommends.
  */
 export function reopenRecommendation(unit: UnitId, specPath: AbsPath, rev: SpecRev): string {

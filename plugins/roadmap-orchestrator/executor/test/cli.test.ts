@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe,it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { arcId } from '../src/core/ids.ts';
-import { commandFile } from '../src/core/records.ts';
+import { commandBody,commandFile } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { CliError,parseCommand,parseStartArgs,runDir } from '../src/input/cli.ts';
 import { runUntilExit } from './helpers/proc.ts';
@@ -44,6 +44,15 @@ describe('cli', () => {
       assert.throws(() => parseCommand([command, 'extra']), /unexpected argument/);
     });
   }
+
+  it('stop drain options', () => {
+    assert.deepEqual(parseCommand(['stop', '--drain']), { command: 'stop', run: HOST, drain: { withinMin: null } });
+    assert.deepEqual(parseCommand(['stop', '--drain', '--within', '2.5']), { command: 'stop', run: HOST, drain: { withinMin: 2.5 } });
+    assert.throws(() => parseCommand(['stop', '--within', '2']), /requires --drain/);
+    assert.deepEqual(commandBody({ type: 'stop' }, 'legacy'), { type: 'stop', mode: 'immediate', deadline: null });
+    assert.throws(() => commandBody({ type: 'stop', mode: 'immediate', deadline: '2026-11-05T00:00:00.000Z' }, 'stop'), /null for an immediate stop/);
+    for (const bad of ['0', '-1', 'no', 'Infinity']) assert.throws(() => parseCommand(['stop', '--drain', '--within', bad]), /positive finite minutes/);
+  });
 
   it('watch --actionable', () => {
     assert.deepEqual(parseCommand(['watch', '--actionable']), { command: 'watch', actionable: { heartbeatMin: null, from: null }, run: HOST });
@@ -136,7 +145,8 @@ describe('bin/roadmap', () => {
     const cases: readonly [readonly string[], unknown][] = [
       [['pause', 'u1'], { type: 'pause', target: { type: 'unit', unit: 'u1' } }],
       [['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8 disproves the claim'], {type: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8 disproves the claim'}],
-      [['stop'], { type: 'stop' }],
+      [['stop'], { type: 'stop', mode: 'immediate', deadline: null }],
+      [['stop', '--drain'], { type: 'stop', mode: 'drain', deadline: null }],
       [['ack', 'nu-7', '--choice', 'retry'], { type: 'ack', needsUser: 'nu-7', choice: 'retry' }],
       [['resume', '--backend', 'codex'], { type: 'resume', target: { type: 'backend', backend: 'codex' } }],
       [['sweep', '--resource', 'db'], { type: 'sweep', resource: 'db' }],

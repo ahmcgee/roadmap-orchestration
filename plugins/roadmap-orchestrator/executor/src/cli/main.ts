@@ -19,7 +19,7 @@ import { planRev,sha256 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
-import { type AbsPath,absPath } from '../core/values.ts';
+import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
 import { revParse } from '../git/git.ts';
 import { branchRef } from '../core/values.ts';
 import { requirePlanInForce } from '../input/inforce.ts';
@@ -65,8 +65,11 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
     }
     case 'pause':
       return submit(command.run, hostDir, { type: 'pause', target: command.target });
-    case 'stop':
-      return submit(command.run, hostDir, { type: 'stop' });
+    case 'stop': {
+      const deadline = command.drain?.withinMin == null ? null : new Date(Date.now() + command.drain.withinMin * 60_000);
+      if (deadline !== null && Number.isNaN(deadline.getTime())) throw new CliError('stop: --within exceeds the supported timestamp range');
+      return submit(command.run, hostDir, { type: 'stop', mode: command.drain === undefined ? 'immediate' : 'drain', deadline: deadline === null ? null : isoTimeOf(deadline) });
+    }
     case 'ack':
       return submit(command.run, hostDir, { type: 'ack', needsUser: command.id, choice: command.choice });
     case 'resume':

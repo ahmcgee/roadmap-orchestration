@@ -249,10 +249,10 @@ export type PackReviewOutcome =
   | Readonly<{ kind: 'ended'; job: JobId; outcome: 'completed' | 'abandoned'; needsUser: NeedsUserId | null }>;
 
 /** Why a due review does not start now, or null. */
-function skip(ctx: RevisionContext): 'backend-parked' | 'paused' | null {
+function skip(ctx: RevisionContext, running = false): 'backend-parked' | 'paused' | null {
   const view = ctx.journal.view;
   const control = view.control();
-  if (control.stop !== null || control.pausedAll) return 'paused';
+  if ((control.stop !== null && (!running || control.stopOptions.mode === 'immediate')) || control.pausedAll) return 'paused';
   return view.parkedBackends().includes(arcSeat(ctx, 'packReview').triple.backend) ? 'backend-parked' : null;
 }
 
@@ -391,7 +391,7 @@ async function ask(ctx: RevisionContext, inputs: PackReviewInputs, delta: PackRe
     if (recorded !== null && recorded.kind === 'result') {
       called = recorded;
     } else {
-      const why = skip(ctx);
+      const why = skip(ctx, true);
       if (why !== null) return { kind: 'skipped', reason: why };
       const turn: ReturnType<typeof repairTurnOf> = refused === null ? null : repairTurnOf(ctx.runDir, refused.inv);
       if (refused !== null && turn === null) return { kind: 'failed', detail: refused.detail };
