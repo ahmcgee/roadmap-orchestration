@@ -84,7 +84,7 @@ import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId,type InvocationId,type SeatRev,type Sha,type Sha256Hex,type UnitId,invocationId,parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { UnitState } from '../core/state.ts';
-import { isRed,type Bounds,type ImplementerSession,STDERR_FILE } from '../core/records.ts';
+import { isRed,type Bounds,type ImplementerSession,type LaneDef,STDERR_FILE } from '../core/records.ts';
 import { type AbsPath,type IsoTime,type RefName,type RepoPath,branchRef,isoTimeOf } from '../core/values.ts';
 import { refTarget,revParse } from '../git/git.ts';
 import { type FixRound,ignoredText } from '../prompts/inputs.ts';
@@ -92,6 +92,7 @@ import {
 CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,differentFailuresDirective,dirtyFlakyLaneDirective,dirtyLanesDirective,
 flakyLaneDirective,movedHeadDirective,repeatRedDirective,resolveUnmetDirective,resumeDirectives,smokeFixDirectives,stalledLaneDirective,witnessFixDirectives,
 } from '../prompts/directives.ts';
+import { builderRunnableLane } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import {
 type BackendCallOutcome,type BackendCallSpec,type ImplementerDispatch,type StageContext,type StageParent,callBackend,implementerSeatRev,minutesMs,runOp,sameSession,seatTripleOf,sessionNeverPersisted,unitBranch,
@@ -196,14 +197,15 @@ export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly 
 /** The evidence dirs a fix round reads: the failing run's and its diagnostic rerun's, red or green. */
 export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.diagnostic !== null ? [...l.fixDirs, ...l.diagnostic.fixDirs] : l.fixDirs);
 
-/** The fix round after a red or not-certified series: the failing evidence, and for a dirty checkout, why. */
-export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha, comparisons: readonly CiFact[] = []): DecidedRound {
+/** The fix round after a red or not-certified series: failing evidence, runnable checks, and any dirty-checkout blocker. */
+export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha, lanes: readonly LaneDef[], comparisons: readonly CiFact[] = []): DecidedRound {
   const compared = comparisons.filter((c) => c.kind === 'lane-base-compared');
   const red = ledger.filter((l) => isRed(l.verdict));
   const dirtyDirectives = dirty.length === 0 ? [] : [dirtyLanesDirective(dirty)];
   const dirtyFlaky = dirty.length > 0 && red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass')
     ? red.map((l) => dirtyFlakyLaneDirective(l.lane)) : [];
-  if (red.length > 0) return { kind: 'fix', fix: { baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...dirtyDirectives, ...dirtyFlaky, ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
+  const requiredChecks = lanes.filter((l) => builderRunnableLane(l) && red.some((r) => r.lane === l.id));
+  if (red.length > 0) return { kind: 'fix', fix: { requiredChecks, baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...dirtyDirectives, ...dirtyFlaky, ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {
     kind: 'fix',

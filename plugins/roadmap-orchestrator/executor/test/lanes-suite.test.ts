@@ -10,9 +10,10 @@ import { test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import { type Sha,sha } from '../src/core/ids.ts';
 import { worktreeList } from '../src/git/git.ts';
-import { pinDispatch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch,unitWorktree } from '../src/pipeline/dispatch.ts';
 import { stageSuiteLanes,suiteStandIns } from '../src/pipeline/lanes.ts';
 import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,preBuild } from '../src/pipeline/stages.ts';
+import { laneCommand } from '../src/prompts/inputs.ts';
 import { step } from '../src/pipeline/unit.ts';
 import {
 BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
@@ -94,6 +95,9 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
   assert.equal(calls.length, 3);
   const suiteDir = fastSuiteRoot(run.runDir, { type: 'stage', unit: U1, stage: 'lanes', attempt: red.attempt }, 'suite');
   assert.ok(calls[2]!.stdin.includes(join(suiteDir, 'lint', 'output', 'files')), 'the fix round lists the suite lane\'s output');
+  const required = calls[2]!.stdin.match(/<fix_round>[\s\S]*?<required_checks>([\s\S]*?)<\/required_checks>/)?.[1];
+  assert.ok(required !== undefined);
+  assert.ok(required.includes(laneCommand(unitWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1), run.ctx.plan().suite.lanes.find((l) => l.id === 'lint')!)), 'the rebuilt fix round requires the failing suite command');
   assert.equal(run.journal.view.unit(U1).decided?.outcome, 'success');
 
   while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');

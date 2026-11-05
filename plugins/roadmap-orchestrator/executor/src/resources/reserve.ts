@@ -51,7 +51,7 @@ import {
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type HeldState, type ResourceEntry, FREE_RESOURCE, afterEdge, sameHolder } from '../core/state.ts';
-import type { ResidueKey, SpecM1, Stage } from '../core/records.ts';
+import type { LaneDef, ResidueKey, SpecM1, Stage } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { type ResidueEntry, readResidues, recordDisposition, undispositioned } from '../host/residues.ts';
 import type { PlanM1 } from '../input/plan.ts';
@@ -487,8 +487,11 @@ export async function retryReclaim(ctx: ResourceContext, holder: ReclaimHolder, 
 // ---------------------------------------------------------------------------------------------------
 // The build-cadence boundary
 
+/** A lane the builder can run without executor reservations or environment lifecycle. */
+export const builderRunnableLane = (lane: LaneDef): boolean => lane.resources.length === 0 && lane.environment === undefined;
+
 export type SpecLane = SpecM1['lanes'][number];
 /** Resource-free build-cadence lanes available for targeted checks inside the implementer's session. */
 export function buildLanes(spec: SpecM1): readonly SpecLane[] {
-  return spec.lanes.filter((l) => l.cadence === 'build' && l.resources.length === 0 && l.environment === undefined);
+  return spec.lanes.filter((l) => l.cadence === 'build' && builderRunnableLane(l));
 }

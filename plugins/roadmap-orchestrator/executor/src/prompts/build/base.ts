@@ -22,7 +22,7 @@ The spec and corpus are normative. Contracts bind as written; contract changes a
 </implementation>
 
 <witnesses_and_lanes>
-For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. Use the provided witness-check commands for targeted checks after changing witnesses. Before a final report requesting certification, run every <build_lanes> command once on your final tree. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
+For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. Use the provided witness-check commands for targeted checks after changing witnesses. Before a final report requesting certification, run every <build_lanes> command once on your final tree. The <fix_round> required checks have the same requirement, including lanes of a later cadence. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run other suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
 </witnesses_and_lanes>
 
 <decisions>
@@ -54,7 +54,7 @@ export const PROMPT: PromptModule<'build'> = {
 <notes>${bullets(i.notes, '(none)')}</notes>${systemNotesText(i.systemNotes)}${milestonesText(i.milestones)}
 <build_lanes>${fastLanesText(i.worktree, i.fastLanes)}</build_lanes>${i.lastLaneSeries === null ? '' : `<last_lane_series>${JSON.stringify(i.lastLaneSeries)}</last_lane_series>`}${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}
 ${i.handover === null ? '' : `<handover>${handoverText(i.handover)}</handover>`}
-${i.fixRound === null ? '' : `<fix_round>\n<failing_lane_evidence>${bullets(i.fixRound.failingEvidenceDirs, '(none)')}</failing_lane_evidence>\n<findings_and_evidence>${bullets(i.fixRound.directives, '(none)')}</findings_and_evidence>\n<base_comparison>${JSON.stringify(i.fixRound.baseComparison ?? null)}</base_comparison>\n<notes>${bullets(i.notes, '(none)')}</notes>\n<cap_and_allowance>${JSON.stringify(i.fixRound.capState ?? null)}</cap_and_allowance>\n</fix_round>`}
+${i.fixRound === null ? '' : `<fix_round>\n<required_checks>${i.fixRound.requiredChecks?.length ? fastLanesText(i.worktree, i.fixRound.requiredChecks) : '(none)'}</required_checks>\n<failing_lane_evidence>${bullets(i.fixRound.failingEvidenceDirs, '(none)')}</failing_lane_evidence>\n<findings_and_evidence>${bullets(i.fixRound.directives, '(none)')}</findings_and_evidence>\n<base_comparison>${JSON.stringify(i.fixRound.baseComparison ?? null)}</base_comparison>\n<notes>${bullets(i.notes, '(none)')}</notes>\n<cap_and_allowance>${JSON.stringify(i.fixRound.capState ?? null)}</cap_and_allowance>\n</fix_round>`}
 ${methodModules('build', i.method)}
 Implement unit ${i.spec.unit}, run targeted checks, and return the report.`,
 };

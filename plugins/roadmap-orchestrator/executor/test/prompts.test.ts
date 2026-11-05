@@ -872,6 +872,22 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
     }
   });
 
+  it('prompts.build-fix-checks: required checks render inside the fix round with cwd in the builder worktree', () => {
+    const required = {
+      ...lane('typecheck-tests', ['npx', 'tsc', '-p', 'tsconfig.test.json']),
+      cwd: repoPath('packages/app'), cadence: 'unit' as const, env: { set: { CI: '1' }, pass: ['PATH'] },
+    };
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      const text = mod.render({ ...SAMPLES.build[1], fixRound: { failingEvidenceDirs: [], directives: [], requiredChecks: [required] } });
+      const fix = text.match(/<fix_round>([\s\S]*?)<\/fix_round>/)?.[1];
+      assert.ok(fix !== undefined);
+      assert.ok(fix.includes('<required_checks>- typecheck-tests (expects exit 0; needs PATH from the environment):\n  cd /wt/b/packages/app && env CI=1 npx tsc -p tsconfig.test.json</required_checks>'));
+      assert.doesNotMatch(mod.render(SAMPLES.build[0]), /<fix_round>/);
+      assert.match(mod.render(SAMPLES.build[1]), /<required_checks>\(none\)<\/required_checks>/);
+    }
+  });
+
   it('prompts.build-handover: a fresh session\'s handover renders every record it carries; no handover block without one', () => {
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);

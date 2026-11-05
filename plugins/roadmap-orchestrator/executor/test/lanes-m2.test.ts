@@ -146,7 +146,7 @@ test('lanes.flake-deflake-own: a deflake unit\'s own flake is not forgiven: flak
   assert.ok(spawnParent.type === 'stage');
   const back = seriesLedger(run.ctx, spawnParent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, spawnParent));
   assert.deepEqual(back, done.ledger);
-  assert.deepEqual(laneFixRound(back, [], run.base), done.fix);
+  assert.deepEqual(laneFixRound(back, [], run.base, loadUnitSpec(run.ctx, run.unit).spec.lanes), done.fix);
 });
 
 test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does not contain) is flaky, uncharged, the fix round told; never the ledger\'s; a standing tip flake of the lane is forgiven', T, async () => {

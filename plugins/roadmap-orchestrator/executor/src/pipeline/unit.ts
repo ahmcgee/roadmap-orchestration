@@ -315,6 +315,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   const root = specSeriesRoot(ctx.runDir, parent);
   const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
   const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
+  const definitions = [...spec.lanes, ...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes];
   const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', tip, suiteRoot)];
   const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
@@ -334,7 +335,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return smokeFixRound(survived, required, smokeEvidence(ctx, parent), ledger, tip);
     }
     case 'not-certified': {
-      if (dirty.length > 0) return laneFixRound(series, dirty, tip);
+      if (dirty.length > 0) return laneFixRound(series, dirty, tip, definitions);
       // D1: the witness lanes left their own checkout dirty or moved (the spec series was clean).
       const witnessRoot = absPath(join(evidenceRoot(ctx.runDir, parent), 'journey'));
       const dest = absPath(join(witnessRoot, `_dirty-${basename(witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt))}`));
@@ -343,7 +344,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
     }
     default: {
       const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
-      return laneFixRound(series, dirty, tip, compared);
+      return laneFixRound(series, dirty, tip, definitions, compared);
     }
   }
 }

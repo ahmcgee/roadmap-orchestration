@@ -1397,7 +1397,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
   const compared = ctx.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt);
-  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, compared) : null;
+  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, [...spec.lanes, ...fastSuiteLanes(ctx, spec, salvaged)], compared) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }
