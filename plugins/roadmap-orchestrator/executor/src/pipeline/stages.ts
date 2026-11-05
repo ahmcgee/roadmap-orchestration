@@ -83,7 +83,7 @@ import { type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type C
 
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
-import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,laneSummaryIn,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
+import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,laneSummaryIn,lastLaneSeriesCost,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
 
 import {
 type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
@@ -739,7 +739,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: [`Attempt state: ${ctx.journal.view.attemptCounts(unit.id).builds} builds, ${ctx.journal.view.attemptCounts(unit.id).judged} judged stages; diagnosis at 8 builds or 20 stages. Chargeable failures ${ctx.journal.view.unit(unit.id).counters.chargeableFailures}/${boundsOf(ctx.plan(), unit).chargeable}.`, ...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
     method: methodContext(ctx, unit, spec),
-    fastLanes: activeBuildLanes(spec), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
+    fastLanes: activeBuildLanes(spec), lastLaneSeries: lastLaneSeriesCost(ctx, unit.id), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, baseComparison: call.fixRound.baseComparison ?? null, capState: {builds: ctx.journal.view.attemptCounts(unit.id).builds, judgedStages: ctx.journal.view.attemptCounts(unit.id).judged, chargeableFailures: state.counters.chargeableFailures, chargeableBound: state.bounds.chargeable, certificationAllowance: allowance}, directives: [...call.fixRound.directives,
       `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, handover: handed(call),
   }, dispatch.triple.backend);

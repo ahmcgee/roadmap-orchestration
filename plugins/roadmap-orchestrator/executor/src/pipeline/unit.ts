@@ -79,7 +79,7 @@ import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
-import { revertedPathsDirective } from '../prompts/directives.ts';
+import { dirtyLanesDirective,revertedPathsDirective } from '../prompts/directives.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
 import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceTable,sameHolder } from '../resources/reserve.ts';
@@ -335,10 +335,21 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   }
 }
 
+/** A reopen keeps the latest failed series' dirty-checkout blocker, read from its snapshot records. */
+function freshRound(ctx: StageContext, unit: UnitId): DecidedRound {
+  const view = ctx.journal.view;
+  const latest = view.completedLanesOutcome(unit);
+  if (view.unit(unit).reopened === null || latest === null || !['not-certified', 'red', 'regression'].includes(latest.outcome)) return { kind: 'fresh' };
+  const parent = stageParent(latest);
+  const dirty = [...seriesDirty(view, specSeriesRoot(ctx.runDir, parent)), ...seriesDirty(view, fastSuiteRoot(ctx.runDir, parent, 'suite'))];
+  return dirty.length === 0 ? { kind: 'fresh' } : { kind: 'fresh', directives: [dirtyLanesDirective(dirty)] };
+}
+
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
   // A malformed answer's resume round quotes why it was malformed (I3).
   if (round === 'resume') return { kind: 'resume', error: malformedError(ctx, unit, f) };
+  if (round === 'fresh') return freshRound(ctx, unit.id);
   if (round !== 'fix') return { kind: round };
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
@@ -608,7 +619,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   if (f === null) {
     const first = nextStage(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review);
     if (first?.kind !== 'admission') throw new Error(`unit ${unit.id}: no first stage before a decision`);
-    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await build(ctx, unit, {kind: 'fresh'}) : await preBuild(ctx, unit));
+    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await build(ctx, unit, freshRound(ctx, unit.id)) : await preBuild(ctx, unit));
   }
   const halted = haltResult(ctx, unit);
   if (halted !== null) return halted;

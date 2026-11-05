@@ -77,8 +77,8 @@ import type { FlakeOn,IntentOf,LaneIdentity,Parent,WitnessFor } from '../core/ev
 import type { FlakyEvent } from '../core/flaky.ts';
 import { exclusivePublish,canonicalJson as fileJson,readJson } from '../core/fsx.ts';
 import {
-type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type UnitId,
-invocationDirName,invocationId,laneRev,opKey,parseInvocationId,parseOpId,sha256,
+type EnvId,type InvocationId,type JobId,type LaneId,type LaneRev,type OpId,type ResourceInstance,type ResourceName,type ResourceUnit,type Sha,type Sha256Hex,type UnitId,
+compareResourceUnits,invocationDirName,invocationId,laneRev,opKey,parseInvocationId,parseOpId,sha256,
 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
@@ -113,7 +113,7 @@ import { sameExecution } from '../input/laneexecution.ts';
 import { resourceEnvironments } from '../input/plan.ts';
 import { type SystemsMap,laneInput,laneTestFiles,systemsMapInForce } from '../input/systems.ts';
 import { type Argv0,resolveArgv0 } from '../preflight/argv0.ts';
-import type { BuildLane,LaneLedgerEntry,ObligationView } from '../prompts/inputs.ts';
+import type { BuildLane,LaneLedgerEntry,LaneSeriesCost,ObligationView } from '../prompts/inputs.ts';
 import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { cpuCost,laneCpuKey } from '../resources/calibrate.ts';
 import { releaseEnvironment,useEnvironment } from '../resources/environments.ts';
@@ -180,6 +180,8 @@ export function laneCommand(lane: LaneDef) {
 export type LaneRun = LaneLedgerEntry & Readonly<{
   inv: InvocationId; at: IsoTime; endedAt: IsoTime; fixDirs: readonly AbsPath[]; host: LaneHost | null; signatures: readonly HostSignatureId[];
   redRev: RedRev | null; pressure: number | null;
+  /** Derived from persisted red.json or invocation output, never a new journal field. */
+  failure: Sha256Hex | null;
 }>;
 
 /** A red run whose output carried a host signature (F3): the signatures, and whether its host samples showed a busy host. */
@@ -413,6 +415,7 @@ function laneRun(ctx: StageContext, intent: IntentOf<'proc.spawn'>, lane: LaneDe
     host: pendingEvidence ? null : readLaneHost(dir), signatures: isRed(verdict) ? outputSignatures([join(invDir, STDOUT_FILE), join(invDir, STDERR_FILE)], HOST_SIGNATURES) : [],
     // A run's own record; a reused lane's ledger entry sets it (`reusedRecord`).
     reused: null, redRev, pressure: donePressure(ctx.journal.view, intent.op),
+    failure: isRed(verdict) ? (readRedClass(dir)?.failure ?? failureOf(ctx.runDir, inv, verdict, result?.exitCode ?? null, absPath(join(launch.cwd, posix.relative(lane.cwd, '.')))).failure) : null,
   };
 }
 
@@ -1215,6 +1218,26 @@ export function latestSpecSeries(ctx: Readonly<{ journal: Readonly<{ view: Journ
     if (p.type === 'stage' && p.stage === 'lanes' && i.expect.path === verificationWorktree(worktreeRoot, arc, p.unit, p.attempt)) see(parseOpId(i.op).seq, p);
   }
   return latest.parent;
+}
+
+/** The latest lanes attempt's wall time, including reruns and intervening waits, and its actual reservations. */
+export function lastLaneSeriesCost(ctx: Parameters<typeof latestSpecSeries>[0] & Pick<StageContext, 'runDir'>, unit: UnitId): LaneSeriesCost | null {
+  const parent = latestSpecSeries(ctx, unit);
+  if (parent === null) return null;
+  const view = ctx.journal.view;
+  const runs = view.opsOfParent('proc.spawn', parent).flatMap((i) => {
+    const s = i.expect.subject;
+    if (s.purpose !== 'lane' && s.purpose !== 'journey' && s.purpose !== 'mutant') return [];
+    const inv = invocationId(i.op, i.ordinal);
+    const files = runnerFiles(invocationDir(ctx.runDir, inv), inv);
+    const launch = files.read('launch.json');
+    const exit = files.read('exit.json');
+    if (launch === null || exit === null) return [];
+    return [{ start: Date.parse(launch.deadlineAt) - laneDeadlineMs(launch.terminal.type === 'command' ? launch.terminal : {}), end: Date.parse(exit.endedAt) }];
+  });
+  const reservations = view.opsOfParent('resource.transition', parent);
+  const resources = [...new Set(reservations.filter((i) => i.expect.edge.type === 'reserve' && view.doneOf(i.op) !== null).flatMap((i) => i.expect.resources))].sort(compareResourceUnits);
+  return { durationMs: runs.length === 0 ? 0 : Math.max(...runs.map((r) => r.end)) - Math.min(...runs.map((r) => r.start)), resources };
 }
 
 /**

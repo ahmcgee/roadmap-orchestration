@@ -5,13 +5,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { Fact } from '../src/core/events.ts';
 import { type UnitId, unitId } from '../src/core/ids.ts';
-import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { mergeHead } from '../src/git/mergein.ts';
 import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
 import { implementerDispatch, pinDispatch, unitBranch, workDir } from '../src/pipeline/dispatch.ts';
+import { lastLaneSeriesCost } from '../src/pipeline/lanes.ts';
 import { prepare } from '../src/pipeline/prepare.ts';
 import { type RoundInput, callRound, prepareRound } from '../src/pipeline/rounds.ts';
 import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
@@ -19,7 +18,7 @@ import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, pr
 import { promptFor } from '../src/prompts/index.ts';
 import { commitAll, git, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, planCheckStep, seated, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, planCheckStep, seated, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 import { contextFor, setupArc, unitWorktreePath } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -133,4 +132,39 @@ test('rounds.session-unrecoverable: a resumed fix session that dies before print
   assert.equal(calls.length, 4);
   assert.ok(calls.every((c) => c.step !== null), `every call matched: ${calls.map((c) => c.step).join(',')}`);
   assert.equal(calls[3]!.cwd, round.worktree, 'the fresh session runs on the kept worktree');
+});
+
+test('rounds.last-series-cost: builds receive elapsed time through the diagnostic rerun and actual reserved resources', T, async () => {
+  const run = setupUnit({
+    steps: [planCheckStep({ decision: 'approve' }), codexBuild([]), codexBuild([])],
+    lanes: [{ id: 'red', resources: [DB], argv: ['sh', '-c', 'echo "deploy assertion failed" >&2; exit 1'] }], resources: [DB],
+  });
+  started(await preBuild(run.ctx, run.unit));
+  assert.equal(lastLaneSeriesCost(run.ctx, U1), null);
+  const done = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
+  assert.ok(done.fix?.kind === 'fix');
+  const lane = done.ledger[0]!;
+  assert.ok(lane.diagnostic !== null);
+  const cost = lastLaneSeriesCost(run.ctx, U1);
+  assert.ok(cost !== null);
+  assert.equal(cost.durationMs, Date.parse(lane.diagnostic.endedAt) - Date.parse(lane.at));
+  assert.ok(cost.resources.some((r) => r === DB));
+  assert.ok(cost.resources.some((r) => r.startsWith('@cpu#')));
+  await buildToLanes(run, done.fix);
+  const builds = readCalls(run.scenario.path).filter((c) => c.argv[0] === 'exec');
+  assert.equal(builds.length, 2);
+  assert.doesNotMatch(builds[0]!.stdin, /<last_lane_series>\{/);
+  const rendered = builds[1]!.stdin.match(/<last_lane_series>(.*?)<\/last_lane_series>/)?.[1];
+  assert.ok(rendered !== undefined);
+  assert.deepEqual(JSON.parse(rendered), cost);
+});
+
+test('rounds.fresh-directives: a build without an earlier session keeps its decided directives', T, async () => {
+  const run = setupUnit({ steps: [planCheckStep({ decision: 'approve' })] });
+  started(await preBuild(run.ctx, run.unit));
+  const parent = at(start(run.ctx, U1, 'build'), 'build');
+  const directives = ['Recorded checkout blocker'];
+  const round = await prepareRound(run.ctx, seated(implementerDispatch(run.ctx, U1)), { kind: 'fresh', directives }, parent);
+  assert.equal(round.session.mode, 'fresh');
+  assert.deepEqual(round.fixRound, { failingEvidenceDirs: [], directives });
 });
