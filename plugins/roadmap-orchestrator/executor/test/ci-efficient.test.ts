@@ -1,8 +1,10 @@
+import { recover } from '../src/recover/recover.ts';
+import { wire } from './fixtures/publish-common.ts';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { commandId, laneId, obligationId, sha, sha256 } from '../src/core/ids.ts';
+import { commandId, laneId, obligationId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { laneDef } from '../src/core/records.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
@@ -21,9 +23,9 @@ import { captureLaunch } from '../src/pipeline/capture.ts';
 import { unitSteps, moduleFiles } from './fixtures/audit-common.ts';
 import { checkpointContext } from './fixtures/checkpoint-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
-import { applyBody, contextFor, codexStep, gateStep, syncInputs } from './fixtures/unit-common.ts';
+import { applyBody, contextFor, codexStep, gateStep, mulBuild, setupArc, syncInputs } from './fixtures/unit-common.ts';
 import { DB, admitAll, planCheckStep, keptSpec, setupUnit, started, U1, SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { git } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
@@ -96,6 +98,30 @@ test('ci attempts: all uncharged attempts count; plan-check excluded; M4 at 8/20
   assert.deepEqual(await runUnit(stages.ctx, stages.unit, admitAll), replayed, 'a root-reactivated unit over its cap still returns a park, never null');
 });
 
+test('ci recovery: an uncertified red series does not turn its retry into a repeated failure', T, async (t) => {
+  const run = setupUnit({ steps: [], lanes: [{ id: 'check', argv: ['sh', '-c', 'echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1'] }] });
+  t.after(() => run.journal.close());
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+  const fact = run.journal.fact.bind(run.journal);
+  const crash = new Error('crashed before series-certified');
+  run.journal.fact = (f) => {
+    if (f.kind === 'series-certified') throw crash;
+    return fact(f);
+  };
+  try { await assert.rejects(lanes(run.ctx, run.unit, run.base), (error) => error === crash); }
+  finally { run.journal.fact = fact; }
+  const abandoned = run.journal.view.unit(U1).open!;
+  fact({ kind: 'executor-started', pressure: 'unavailable', generation: 2 });
+  fact({ kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: abandoned.attempt, outcome: 'interrupted', class: 'hold', chargeable: false, cause: { type: 'recovery' } });
+  assert.equal(run.journal.view.opsOf('proc.spawn').length, 2, 'both red runs finished before the crash');
+  const retried = started(await lanes(run.ctx, run.unit, run.base));
+  assert.equal(retried.outcome.kind, 'red', 'the retry still asks for its first fix round');
+  assert.equal(run.journal.view.opsOf('proc.spawn').length, 4, 'the retry gets its own diagnostic, without a base comparison');
+  assert.equal(retried.ledger[0]!.repeat, null);
+  assert.ok(retried.fix?.kind === 'fix');
+  assert.ok(!run.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared'));
+});
+
 for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (${baseGreen ? 'green charges regression' : 'red follows base-red'})`, T, async () => {
   const command = baseGreen ? 'if grep -q BROKEN src/add.js; then echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1; fi' : 'echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1';
   const run = setupUnit({ steps: [], lanes: [{ id: 'check', argv: ['sh', '-c', command] }] });
@@ -108,6 +134,17 @@ for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (
   if (baseGreen) { assert.ok(second.fix?.kind === 'fix'); assert.match(second.fix.fix.directives.join(), /green.*diffBase/); }
   assert.equal(second.outcome.kind, baseGreen ? 'regression' : 'base-red');
   assert.equal(run.journal.view.unit(U1).decided?.chargeable, baseGreen);
+  if (!baseGreen) {
+    assert.equal(second.fix, null, 'no further fix round for the base red');
+    assert.equal(second.next.kind, 'stage');
+    const notice = run.journal.view.opsOf('needsuser.raise').map((i) => readNeedsUser(run.runDir, i.expect.id)).find((n) => n?.reason === 'base-red')!;
+    assert.deepEqual(notice.subject, { type: 'arc' });
+    const payload = JSON.parse(notice.recommendation.match(/\{"knownDefects".*\}/)![0]);
+    assert.deepEqual(payload.knownDefects, [{ id: 'K-1', match: { type: 'output', lane: 'check', contains: 'src/add.js:<n> ASSERTION_ADD broken sum' }, fixUnit: 'root-named-fix-unit' }]);
+    const prior = run.journal.view.opsOf('proc.spawn').length;
+    assert.equal(started(await lanes(run.ctx, run.unit, at)).outcome.kind, 'base-red');
+    assert.equal(run.journal.view.opsOf('proc.spawn').length - prior, 1, 'one lane execution, no diagnostic or repeated base comparison');
+  }
   if (baseGreen) {
     assert.equal(started(await lanes(run.ctx, run.unit, at)).outcome.kind, 'regression');
     const comparisons = run.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared');
@@ -274,4 +311,57 @@ test('ci candidate spec red reaches the delivering unit fix round with its evide
   assert.match(call.stdin, /candidate-proof/);
   assert.match(call.stdin, /candidate\/_spec/);
   assert.equal(run.journal.view.unit(U1).counters.candidateReds, 1);
+});
+
+test('ci noRerunPatterns is optional, literal and rejects empty patterns', () => {
+  assert.equal(lane().noRerunPatterns, undefined);
+  assert.deepEqual(lane({ noRerunPatterns: ['G104', 'compile error'] }).noRerunPatterns, ['G104', 'compile error']);
+  assert.throws(() => lane({ noRerunPatterns: [''] }), /noRerunPatterns/);
+  assert.throws(() => lane({ noRerunPatterns: [] }), /noRerunPatterns/);
+});
+
+test('ci candidate suite keeps one arc checkout and ignored caches across different units; unit verification retires', T, async () => {
+  const hits = join(tmpDir('candidate-cache'), 'hits');
+  const d = setupArc({ units: [{ id: 'u1' }, { id: 'u2' }], suite: [{ id: 'cache', cadence: 'candidate', argv: ['sh', '-c', `if test -f out/cache; then echo hit >> '${hits}'; else echo miss >> '${hits}'; fi; mkdir -p out; echo cache > out/cache`] }],
+    steps: [
+      { ...mulBuild(), unit: 'u1' }, { ...gateStep({ decision: 'approve' }), unit: 'u1' },
+      { ...mulBuild({ 'src/second.js': 'export const second = true;\n' }), unit: 'u2' }, { ...gateStep({ decision: 'approve' }), unit: 'u2' },
+    ] });
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u2'), admitAll), { kind: 'merged' });
+    assert.equal(readFileSync(hits, 'utf8'), 'miss\nhit\n');
+    const creates = r.journal.view.opsOf('worktree.create').filter((i) => i.expect.path.endsWith('/.candidate.verify'));
+    assert.equal(creates.length, 2);
+    assert.equal(new Set(creates.map((i) => i.expect.path)).size, 1);
+    assert.deepEqual(creates.map((i) => i.expect.reset), [undefined, true], 'first add keeps its original recovery protocol; the next unit resets');
+    for (const id of ['u1', 'u2']) assert.equal(existsSync(join(r.ctx.plan().worktreeRoot, d.arc, `${id}.verify`)), false, 'unit verification removed at retirement');
+  } finally { r.journal.close(); }
+});
+
+test('ci reset permission residue parks the unit with paths and ownership fix, leaving a recoverable intent', T, async () => {
+  const fix = codexStep([{ type: 'commit', message: 'fix dirt', files: { 'src/other.js': 'export const other = true;\n' } }], { argv: ['exec', 'resume'] });
+  const d = setupArc({ units: [{ id: 'u1', lanes: [{ id: 'locked', argv: ['sh', '-c', 'mkdir -p locked; echo residue > locked/file; chmod 555 locked'] }] }], suite: [], steps: [mulBuild(), fix] });
+  const r = contextFor(d);
+  const locked = join(r.ctx.plan().worktreeRoot, d.arc, 'u1.verify', 'locked');
+  try {
+    const result = await runUnit(r.ctx, r.unit('u1'), admitAll);
+    assert.equal(result.kind, 'parked');
+    if (result.kind !== 'parked') throw new Error('permission failure did not park');
+    assert.equal(result.needsUser.reason, 'residue');
+    assert.match(result.needsUser.summary, /locked\/file/);
+    assert.match(result.needsUser.recommendation, /sudo chown -R/);
+    assert.equal(r.journal.view.unit(unitId('u1')).decided?.outcome, 'checkout-residue');
+    assert.ok(r.journal.view.openIntents().some((i) => i.kind === 'worktree.create' && i.expect.reset === true));
+    assert.ok(r.journal.view.opsOf('needsuser.raise').some((i) => readNeedsUser(r.ctx.runDir, i.expect.id)?.reason === 'residue'));
+    const w = wire(r);
+    const blocked = await recover(w);
+    assert.ok(blocked.parked.length > 0, 'recovery redo also parks the permission failure');
+    chmodSync(locked, 0o755);
+    const fixed = await recover(w);
+    assert.deepEqual(fixed.parked, [], 'restoring permissions lets recovery finish the same intent');
+    assert.equal(r.journal.view.openIntents().length, 0);
+
+  } finally { if (existsSync(locked)) chmodSync(locked, 0o755); r.journal.close(); }
 });

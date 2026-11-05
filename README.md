@@ -83,7 +83,10 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    journeys without this config. The executor quiesces workloads, captures evidence,
    salvages changes and tears resources down before running full lanes and witnesses. A fresh gate judges the diff,
    actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
-   revisions feed fix rounds with original evidence and base comparisons. Every judgment begins in a fresh named
+   revisions feed fix rounds with original evidence and base comparisons. A spec lane red on its diff base
+   raises an arc notice with a known-defect apply fragment; the root names its fix unit. That lane gets no
+   further fix round: the gate continues, while candidate publication waits for the notice to be resolved.
+   Verification checkouts keep stable paths and ignored caches between series. Every judgment begins in a fresh named
    session; one invalid answer may be repaired in that same session, schema and checkout. Verifier directives
    accompany only a revise decision, including in annotation modes. Backend schemas use plain object roots
    and encode supported field constraints; property descriptions state remaining semantic rules.
@@ -157,7 +160,8 @@ deflake units. Stochastic k-of-n lanes follow their declared rule instead. Order
 merge. Managed environments start lazily, stay up while used and stop when idle; failed up/probe parks retryably rather
 than counting as a red test. CPU reservations calibrate from completed runs; judgments and one workload can progress
 under the host-pressure brake. Startup refuses foreign residues until cleaned or isolated, allowing proven own-arc
-residues to recover.
+residues to recover. Checkout permission residue parks only its unit. Restore ownership or remove the
+checkout, then `roadmap resume <unit>` reconciles its unfinished cleanup in-process; no executor restart is needed.
 
 For live or retained observation, use `roadmap tui --repo <path> --arc <id>`. It refreshes without runtime writes;
 closing it leaves execution running. The header separates executor liveness, active workloads and signed-in Claude

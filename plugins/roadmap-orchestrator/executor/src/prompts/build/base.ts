@@ -22,7 +22,7 @@ The spec and corpus are normative. Contracts bind as written; contract changes a
 </implementation>
 
 <witnesses_and_lanes>
-For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. Use the provided witness-check commands for targeted checks after changing witnesses. Report every development check in experiments with its argv and exit code. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. Do not rehearse the full suite or start environments used by executor-only lanes.
+For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. Use the provided witness-check commands for targeted checks after changing witnesses. Before a final report requesting certification, run every <build_lanes> command once on your final tree. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
 </witnesses_and_lanes>
 
 <decisions>
@@ -40,7 +40,7 @@ Return summary, grounding, tooBig, experiments, blockers, notes and final. Notes
 
 export const PROMPT: PromptModule<'build'> = {
   system, schema: BUILD_SCHEMA,
-  fields: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
+  fields: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'lastLaneSeries', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   render: (i: BuildInputs) => `${documentsXml([
     { source: `spec.json ${i.spec.unit} rev ${i.spec.rev}`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: c.path, content: c.text })), ...milestoneDocuments(i.milestones), targetDocument(i.target),
@@ -52,7 +52,7 @@ export const PROMPT: PromptModule<'build'> = {
 <worktree>${i.worktree}</worktree>
 <evidence_dir>${i.evidenceDir}</evidence_dir>
 <notes>${bullets(i.notes, '(none)')}</notes>${systemNotesText(i.systemNotes)}${milestonesText(i.milestones)}
-<build_lanes>${fastLanesText(i.worktree, i.fastLanes)}</build_lanes>${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}
+<build_lanes>${fastLanesText(i.worktree, i.fastLanes)}</build_lanes>${i.lastLaneSeries === null ? '' : `<last_lane_series>${JSON.stringify(i.lastLaneSeries)}</last_lane_series>`}${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}
 ${i.handover === null ? '' : `<handover>${handoverText(i.handover)}</handover>`}
 ${i.fixRound === null ? '' : `<fix_round>\n<failing_lane_evidence>${bullets(i.fixRound.failingEvidenceDirs, '(none)')}</failing_lane_evidence>\n<findings_and_evidence>${bullets(i.fixRound.directives, '(none)')}</findings_and_evidence>\n<base_comparison>${JSON.stringify(i.fixRound.baseComparison ?? null)}</base_comparison>\n<notes>${bullets(i.notes, '(none)')}</notes>\n<cap_and_allowance>${JSON.stringify(i.fixRound.capState ?? null)}</cap_and_allowance>\n</fix_round>`}
 ${methodModules('build', i.method)}

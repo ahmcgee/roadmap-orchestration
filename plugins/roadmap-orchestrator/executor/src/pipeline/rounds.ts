@@ -89,7 +89,7 @@ import { type AbsPath,type IsoTime,type RefName,type RepoPath,branchRef,isoTimeO
 import { refTarget,revParse } from '../git/git.ts';
 import { type FixRound,ignoredText } from '../prompts/inputs.ts';
 import {
-CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,dirtyLanesDirective,
+CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,differentFailuresDirective,dirtyFlakyLaneDirective,dirtyLanesDirective,
 flakyLaneDirective,movedHeadDirective,repeatRedDirective,resolveUnmetDirective,resumeDirectives,smokeFixDirectives,stalledLaneDirective,witnessFixDirectives,
 } from '../prompts/directives.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -186,19 +186,24 @@ export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly 
       ...(l.verdict === 'timeout' ? [`Lane ${l.lane} exceeded its configured wall timeout; read its output and fix the bounded command.`] : []),
       ...(l.repeat === null ? [] : [repeatRedDirective(l.lane, l.repeat)]),
       ...(l.flaky && l.diagnostic !== null ? [flakyLaneDirective(l.lane, l.diagnostic.evidenceDir)] : []),
+      ...(l.diagnostic !== null && isRed(l.diagnostic.verdict) && l.failure !== null && l.diagnostic.failure !== null && l.failure !== l.diagnostic.failure
+        ? [differentFailuresDirective(l.lane, l.evidenceDir, l.diagnostic.evidenceDir)] : []),
       ...(ignored === null ? [] : [`Lane ${l.lane} ${ignored}.`]),
     ];
   });
 }
 
-/** The evidence dirs a fix round reads for a failing lane: its failing run's, and a flaky lane's passing rerun's. */
-export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.flaky && l.diagnostic !== null ? [...l.fixDirs, ...l.diagnostic.fixDirs] : l.fixDirs);
+/** The evidence dirs a fix round reads: the failing run's and its diagnostic rerun's, red or green. */
+export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.diagnostic !== null ? [...l.fixDirs, ...l.diagnostic.fixDirs] : l.fixDirs);
 
 /** The fix round after a red or not-certified series: the failing evidence, and for a dirty checkout, why. */
 export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha, comparisons: readonly CiFact[] = []): DecidedRound {
   const compared = comparisons.filter((c) => c.kind === 'lane-base-compared');
   const red = ledger.filter((l) => isRed(l.verdict));
-  if (red.length > 0) return { kind: 'fix', fix: { baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
+  const dirtyDirectives = dirty.length === 0 ? [] : [dirtyLanesDirective(dirty)];
+  const dirtyFlaky = dirty.length > 0 && red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass')
+    ? red.map((l) => dirtyFlakyLaneDirective(l.lane)) : [];
+  if (red.length > 0) return { kind: 'fix', fix: { baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...dirtyDirectives, ...dirtyFlaky, ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {
     kind: 'fix',
@@ -340,7 +345,7 @@ export function resumed(
 /** The inputs a decided round gives its session, beyond the spec: a fix round's evidence and directives, or a resume's directive. */
 function roundInputs(round: DecidedRound): FixRound | null {
   switch (round.kind) {
-    case 'fresh': return null;
+    case 'fresh': return round.directives === undefined || round.directives.length === 0 ? null : { failingEvidenceDirs: [], directives: round.directives };
     case 'fix': return round.fix;
     case 'resume': return { failingEvidenceDirs: [], directives: resumeDirectives(round.error) };
     case 'resolve': return { failingEvidenceDirs: [], directives: [RESOLVE_DIRECTIVE] };
@@ -477,7 +482,7 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       // Only a reopen leads to a second fresh round, and the unit keeps its implementer session across it
       // (on the same seat: a moved seat gets a fresh session, told the worktree holds the earlier work).
       const earlier = ctx.journal.view.unit(unit).reopened === null ? null : lastImplementerSession(ctx, unit);
-      if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: null, evidenceDirs: [], deadlineAt, fresh: null };
+      if (earlier === null) return { ...ready, session: freshSession(dispatch), fixRound: roundInputs(input), evidenceDirs: [], deadlineAt, fresh: null };
       const respec = (directive: string): FixRound => ({ failingEvidenceDirs: [], directives: [directive, ...(input.directives ?? [])] });
       return { ...ready, ...resumed(dispatch, onSeat(dispatch, earlier), respec(RESPEC_DIRECTIVE), [], respec(RESPEC_FRESH_DIRECTIVE)), deadlineAt };
     }

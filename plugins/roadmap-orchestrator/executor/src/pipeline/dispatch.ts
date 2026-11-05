@@ -874,8 +874,21 @@ export const unitBranchPrefix = (arc: ArcId): BranchName => branchName(`roadmap/
 export const unitBranch = (arc: ArcId, unit: UnitId): RefName => refName(`refs/heads/${unitBranchPrefix(arc)}/${unit}`);
 export const unitWorktree = (root: AbsPath, arc: ArcId, unit: UnitId): AbsPath => absPath(join(root, arc, unit));
 /** A lanes attempt's clean detached checkout of the salvage SHA. */
-export const verificationWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, attempt: number): AbsPath =>
-  absPath(join(root, arc, `${unit}.verify-${attempt}`));
+export const verificationWorktree = (root: AbsPath, arc: ArcId, unit: UnitId, _attempt?: number): AbsPath =>
+  absPath(join(root, arc, `${unit}.verify`));
+// Temporary dev.47 path adoption: kept records remain untouched; warn once when an old path is read.
+let warnedVerificationPath = false;
+export function matchesVerificationPath(actual: AbsPath, current: AbsPath, attempt: number): boolean {
+  if (actual === current) return true;
+  if (actual !== `${current}-${attempt}`) return false;
+  if (!warnedVerificationPath) {
+    warnedVerificationPath = true;
+    process.emitWarning('using legacy numbered verification checkout from dev.47 (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+  }
+  return true;
+}
+/** Arc-wide candidate suite checkout. integration-slot excludes concurrent series. */
+export const candidateVerificationWorktree = (root: AbsPath, arc: string): AbsPath => absPath(join(root, arc, '.candidate.verify'));
 /**
  * M4a rev 3 (D1): a lanes attempt's own detached checkout of the salvage SHA for its witness presence check (the arc's
  * required witness lanes), never the verification checkout the gate reads.

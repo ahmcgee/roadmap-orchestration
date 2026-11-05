@@ -100,3 +100,18 @@ test('redlane.failure-signature: the last stderr line (else stdout\'s) masked; s
   assert.deepEqual(classifyRed({ signatures: [], host: null }, repeat), { kind: 'diagnostic' }, 'no host evidence reruns');
   assert.equal(classifyRed({ signatures: ['eagain'], host: host(CLEAR, CLEAR) }, repeat).kind, 'signature-without-evidence', 'a signature wins');
 });
+
+test('redlane skips make/npm/FAIL/exit wrappers and generic summaries before selecting a specific diagnostic', () => {
+  const signature = (stderr: string, stdout: string) => failureSignature({ verdict: 'fail', exitCode: 2, stderr, stdout, checkout: '/wt/u.verify' });
+  const wrappers = 'make[1]: *** [Makefile:22: test] Error 1\nmake: *** [Makefile:8: check] Error 2\nnpm error code ELIFECYCLE\nnpm ERR! command failed\nnpm error A complete log of this run can be found in /tmp/npm.log\nexit status 1\nFAIL example.test/package 2.4s\nTests: 1 failed, 3 passed, 4 total\n';
+  const a = signature(wrappers, 'src/lint.go:12: G104 unchecked error\nok other/module 0.1s\nFAIL\n');
+  const b = signature(wrappers, 'src/lint.go:98: G104 unchecked error\nok other/module 0.2s\nFAIL\n');
+  assert.equal(a.line, 'src/lint.go:<n>: G<n> unchecked error');
+  assert.equal(a.specific, true);
+  assert.equal(a.failure, b.failure);
+  assert.notEqual(a.failure, signature(wrappers, 'src/lint.go:12: G201 unsafe permissions').failure);
+  assert.equal(signature(wrappers, '').specific, false);
+  assert.equal(signature('make: *** [Makefile:8: check] Error 2', '').specific, false, 'a make target is not a specific failure');
+  assert.deepEqual(classifyRed({ signatures: [], host: host(CLEAR, CLEAR) }, null, 'deterministic'), { kind: 'no-rerun', reason: 'deterministic' });
+  assert.equal(classifyRed({ signatures: ['eagain'], host: host(CLEAR, BUSY) }, null, 'base-red').kind, 'host-signature');
+});

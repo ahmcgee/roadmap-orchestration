@@ -94,7 +94,7 @@ import {
 } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { type Cancelled, type StageContext, type StageParent, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
+import { type Cancelled, type StageContext, type StageParent, candidateVerificationWorktree, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
   type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
@@ -105,8 +105,8 @@ import { pressureCause, seriesRuling } from './starved.ts';
 import { type StageDone, at, environmentFacts, executorIdentity, failedFacts, holisticInForce, integrationTip, latestMergein, loadUnitSpec, record, start } from './stages.ts';
 import { candidateMergeOp, integrationFfOp, mergeinOp, snapshotPublishOp } from '../recover/ops.ts';
 
-export const candidateWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
-  absPath(join(root, arc, `${unit}.candidate-${attempt}`));
+export const candidateWorktree = (root: AbsPath, arc: string, _unit: UnitId, _attempt: number): AbsPath =>
+  candidateVerificationWorktree(root, arc);
 const baseWorktree = (root: AbsPath, arc: string, unit: UnitId, attempt: number): AbsPath =>
   absPath(join(root, arc, `${unit}.base-${attempt}`));
 

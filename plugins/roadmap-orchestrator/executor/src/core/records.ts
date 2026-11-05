@@ -718,6 +718,7 @@ export type RedRev = number;
  */
 export type RedClassRecord =
   | Readonly<{ kind: 'host-signature' | 'signature-without-evidence'; signatures: readonly HostSignatureId[] }>
+  | Readonly<{ kind: 'no-rerun'; reason: 'base-red' | 'deterministic' }>
   | Readonly<{ kind: 'diagnostic' }>
   | Readonly<{ kind: 'repeat'; attempt: number; inv: InvocationId }>;
 export type RedFile = Readonly<{ v: SchemaVersion; class: RedClassRecord; failure: Sha256Hex; redRev: RedRev }>;
@@ -734,6 +735,7 @@ const signatureIds: Read<readonly HostSignatureId[]> = (value, path) => {
 const redClass: Read<RedClassRecord> = tagged('kind', {
   'host-signature': object((f): RedClassRecord => ({ kind: f.get('kind', literal('host-signature')), signatures: f.get('signatures', signatureIds) })),
   'signature-without-evidence': object((f): RedClassRecord => ({ kind: f.get('kind', literal('signature-without-evidence')), signatures: f.get('signatures', signatureIds) })),
+  'no-rerun': object((f): RedClassRecord => ({ kind: f.get('kind', literal('no-rerun')), reason: f.get('reason', oneOf(['base-red', 'deterministic'] as const)) })),
   diagnostic: object((f): RedClassRecord => ({ kind: f.get('kind', literal('diagnostic')) })),
   repeat: object((f): RedClassRecord => ({ kind: f.get('kind', literal('repeat')), attempt: f.get('attempt', positive), inv: f.get('inv', inv) })),
 });
@@ -932,6 +934,8 @@ export type LaneDef = Readonly<{
   testArgv?: readonly string[];
   /** dev.17: run k-of-n (`Stochastic`); absent: one run under the red-lane protocol. */
   stochastic?: Stochastic;
+  /** Literal output substrings identifying deterministic failures; absent: none. Host signatures take precedence. */
+  noRerunPatterns?: readonly string[];
   /**
    * dev.17: the plan environment the lane runs against (plan `environments`), reserved with its resources and brought up
    * before it runs (src/resources/environments.ts); absent: none. An arc lane never names one (`laneFields`).
@@ -995,6 +999,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const systems = f.optional('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   const testArgv = f.optional('testArgv', argv);
   const stoch = f.optional('stochastic', stochastic);
+  const noRerunPatterns = f.optional('noRerunPatterns', arrayOf(str, { nonEmpty: true }));
   const environment = f.optional('environment', resource);
   const readsComments = f.optional('readsComments', literal(true));
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
@@ -1016,6 +1021,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     ...(cpu === undefined ? {} : { cpu }), ...(timeout === undefined ? {} : { timeoutMin: timeout }), ...(systems === undefined ? {} : { systems }), ...(testArgv === undefined ? {} : { testArgv }),
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
+    ...(noRerunPatterns === undefined ? {} : { noRerunPatterns }),
   };
 }
 /** A lane declared as `kind` (see `laneFields`). */

@@ -64,10 +64,11 @@ export const hostWasBusy = (host: LaneHost | null): boolean => host !== null && 
  * checks the history, the identity and the specific failure signature), or null; it counts only without a signature, on
  * a host its samples show clear at both ends.
  */
-export function classifyRed(first: RedEvidence, repeat: RepeatOf | null): RedClass {
+export function classifyRed(first: RedEvidence, repeat: RepeatOf | null, noRerun: 'base-red' | 'deterministic' | null = null): RedClass {
   if (first.signatures.length > 0) {
     return hostWasBusy(first.host) ? { kind: 'host-signature', signatures: first.signatures } : { kind: 'signature-without-evidence', signatures: first.signatures };
   }
+  if (noRerun !== null) return { kind: 'no-rerun', reason: noRerun };
   if (repeat !== null && first.host !== null && !hostWasBusy(first.host)) return { kind: 'repeat', attempt: repeat.attempt, inv: repeat.inv };
   return { kind: 'diagnostic' };
 }
@@ -77,7 +78,7 @@ export function classifyRed(first: RedEvidence, repeat: RepeatOf | null): RedCla
  * which failure it was, so its signature is not specific (F2, R53).
  */
 export const GENERIC_SUMMARY_WORDS: ReadonlySet<string> = new Set([
-  'fail', 'failed', 'failing', 'error', 'errors', 'tests', 'test', 'exit', 'code', 'status', 'npm', 'err', 'pass', 'passed', 'total', 'duration', 'ms', 's',
+  'ok', 'suite', 'suites', 'cancelled', 'skipped', 'todo', 'fail', 'failed', 'failing', 'error', 'errors', 'tests', 'test', 'exit', 'code', 'status', 'npm', 'err', 'pass', 'passed', 'total', 'duration', 'ms', 's',
 ]);
 
 /** What a red run's failure signature reads: its verdict and exit code, its output files' tails, and its checkout. */
@@ -86,25 +87,35 @@ export type FailureInput = Readonly<{ verdict: CommandVerdict; exitCode: number 
 /** A run's failure signature (`failure`), whether its line identifies the failure (`specific`), and the masked line. */
 export type FailureSignature = Readonly<{ failure: Sha256Hex; specific: boolean; line: string }>;
 
-const lastLine = (text: string): string | undefined => text.split('\n').map((l) => l.trim()).filter((l) => l !== '').at(-1);
+/** Mask once for signatures and known-defect matching; masks are literal tokens, never regexes. */
+export function maskFailureLine(raw: string, checkout: string): string {
+  return raw
+    .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?/g, '<time>')
+    .replaceAll(checkout || '\0', '<checkout>')
+    .replace(/\b[0-9a-fA-F]{7,}\b/g, '<hex>')
+    .replace(/\d+/g, '<n>');
+}
+const wordsOf = (line: string): string[] => line.replace(/<(time|checkout|hex|n)>/g, ' ').toLowerCase().match(/[a-z]+/g) ?? [];
+const specificLine = (line: string): boolean => wordsOf(line).some((w) => !GENERIC_SUMMARY_WORDS.has(w));
+const wrapper = (line: string): boolean => /^make(?:\[\d+\])?:.*\*\*\*/i.test(line)
+  || /^npm\s+(?:ERR!|error)(?:\s|$)/i.test(line)
+  || /^(?:error:\s*)?exit status \d+$/i.test(line)
+  || /^(?:FAIL|PASS|ok)(?:\s|$)/.test(line);
+const linesOf = (text: string): string[] => text.split('\n').map((l) => l.trim()).filter(Boolean);
 
 /**
  * The failure signature (F2, R53): sha256 of the canonical `{verdict, exitCode, line}`, where `line` is the last
- * non-empty stderr line (else stdout's) with ISO timestamps, the checkout path, hex runs of 7 or more and digit runs
- * masked. Specific when the masked line keeps a word outside `GENERIC_SUMMARY_WORDS`.
+ * specific non-wrapper stderr line (else stdout's), falling back to the last summary when no diagnostic exists.
+ * ISO timestamps, the checkout path, hex runs of 7 or more and digit runs are masked. Specific when the masked line keeps a word outside `GENERIC_SUMMARY_WORDS`.
  */
 export function failureSignature(input: FailureInput): FailureSignature {
-  const raw = lastLine(input.stderr) ?? lastLine(input.stdout) ?? '';
-  const line = raw
-    .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?/g, '<time>')
-    .replaceAll(input.checkout, '<checkout>')
-    .replace(/\b[0-9a-fA-F]{7,}\b/g, '<hex>')
-    .replace(/\d+/g, '<n>');
-  // Words are letter runs: `duration_ms` is `duration` and `ms`.
-  const words = line.replace(/<(time|checkout|hex|n)>/g, ' ').toLowerCase().match(/[a-z]+/g) ?? [];
+  const stderr = linesOf(input.stderr), stdout = linesOf(input.stdout);
+  const useful = (lines: string[]) => lines.filter((l) => !wrapper(l) && specificLine(maskFailureLine(l, input.checkout))).at(-1);
+  const raw = useful(stderr) ?? useful(stdout) ?? stderr.filter((l) => !wrapper(l)).at(-1) ?? stdout.filter((l) => !wrapper(l)).at(-1) ?? stderr.at(-1) ?? stdout.at(-1) ?? '';
+  const line = maskFailureLine(raw, input.checkout);
   return {
     failure: sha256(sha256Hex(canonicalJson({ verdict: input.verdict, exitCode: input.exitCode, line }))),
-    specific: words.some((w) => !GENERIC_SUMMARY_WORDS.has(w)),
+    specific: !wrapper(raw) && specificLine(line),
     line,
   };
 }
@@ -193,6 +204,7 @@ export type RerunEnd<R, E> = Readonly<{ kind: 'ran'; run: R; verdict: RerunRun }
 export type RedLaneResult<R, E> =
   /** A repeat of the unit's earlier red: red, not flaky, no rerun. */
   | Readonly<{ kind: 'repeat' }>
+  | Readonly<{ kind: 'no-rerun' }>
   /** The rerun decided: `pass`/`red`/`blocked` as `afterRerun` reads it. */
   | Readonly<{ kind: 'reran'; reason: RerunReason; verdict: LaneVerdict; rerun: R }>
   /** A signature without host evidence, or a host that did not clear in time: no rerun. */
@@ -209,6 +221,7 @@ export type RedLaneResult<R, E> =
 export async function redLane<R, E>(
   cls: RedClass, rerun: () => Promise<RerunEnd<R, E>>, host: Readonly<{ sample: () => HostSample; signal: AbortSignal }>,
 ): Promise<RedLaneResult<R, E>> {
+  if (cls.kind === 'no-rerun') return { kind: 'no-rerun' };
   if (cls.kind === 'repeat') return { kind: 'repeat' };
   if (cls.kind === 'signature-without-evidence') {
     return { kind: 'blocked', detail: `red with host signature ${cls.signatures.join(', ')}, but the host samples do not show a busy host` };

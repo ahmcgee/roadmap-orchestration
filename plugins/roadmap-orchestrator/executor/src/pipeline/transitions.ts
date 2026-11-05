@@ -127,10 +127,13 @@ const hold: Hold = { do: 'hold' };
  * replayed, not the throw.
  */
 const fault: Park = park('executor-fault', 'env');
+// Ownership repair needs the operator; a backend/host/resource probe cannot settle an open checkout intent.
+const checkoutResidue: Park = park('residue', 'env');
 
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
   prepare: {
+    'checkout-residue': checkoutResidue,
     'clean-pre-build': go(at('pre-build')),
     'clean-build': go(build('fresh')),
     // Merged cleanly and the tree already verifies the unit's work: straight to its lanes.
@@ -143,6 +146,7 @@ export const TABLE: Table = {
   },
   // M3 (B3): a vacuity repair reproduces its finding's mutant before anything is graded.
   reproduce: {
+    'checkout-residue': checkoutResidue,
     reproduced: go(at('pre-build')),
     // The finding is dismissed by code; the unit parks (the checkpoint respecs or cuts it, OR-Q1).
     'not-reproduced': park('not-reproduced', 'design'),
@@ -154,8 +158,9 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     'executor-fault': fault,
   },
-  'pre-build': { approve: go(build('fresh')), interrupted: hold, 'executor-fault': fault },
+  'pre-build': { 'checkout-residue': checkoutResidue, approve: go(build('fresh')), interrupted: hold, 'executor-fault': fault },
   build: {
+    'checkout-residue': checkoutResidue,
     'spec-wrong': park('spec-wrong', 'design'),
     success: go(at('quiesce')),
     refusal: park('refusal', 'design'),
@@ -194,6 +199,7 @@ export const TABLE: Table = {
   // Failed cleanup leaves a residue and never releases its resources.
   teardown: { released: go(at('lanes')), 'cleanup-failed': park('residue', 'retryable'), 'executor-fault': fault },
   lanes: {
+    'checkout-residue': checkoutResidue,
     green: go(at('gate')),
     // `decide` applies the uncharged certification allowance before the chargeable bound.
     red: charge(build('fix')),
@@ -228,6 +234,7 @@ export const TABLE: Table = {
     'env-unavailable': park('env-unavailable', 'retryable'),
   },
   gate: {
+    'checkout-residue': checkoutResidue,
     approve: go(at('candidate')),
     revise: { do: 'bounded', round: 'revise', bound: 'reviseRounds', to: build('fix'), chargeable: true, then: routeUp('escalation') },
     escalate: routeUp('escalation'),
@@ -251,6 +258,7 @@ export const TABLE: Table = {
     'delta-empty': go(at('candidate')),
   },
   candidate: {
+    'checkout-residue': checkoutResidue,
     green: go(at('ff')),
     // Scope growth: a C fix round, and a risk trigger for the fresh gate that follows it.
     'transient-violation': { do: 'go', to: build('fix'), chargeable: true, trigger: true },

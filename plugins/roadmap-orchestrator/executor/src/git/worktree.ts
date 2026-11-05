@@ -2,7 +2,7 @@
 // start; a verification tree is created detached. Removal requires a verified evidence manifest (the
 // request type cannot be built without one) and never deletes a branch: branches and salvage survive
 // every cleanup path.
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, type OpOutcome, type WorktreeCheckout, parentUnit } from '../core/events.ts';
@@ -11,7 +11,7 @@ import type { GitSteps, IntentBody, JournalView } from '../core/interfaces.ts';
 import type { AbsPath } from '../core/values.ts';
 import type { CapturedEvidence } from './evidence.ts';
 import {
-  catFileType, gitCommonDir, refTarget, revParse, statusPorcelainV2Z, symbolicHead, worktreeAdd, worktreeList,
+  git, catFileType, gitCommonDir, refTarget, revParse, statusPorcelainV2Z, symbolicHead, worktreeAdd, worktreeList,
   worktreePrune, worktreeRemove,
 } from './git.ts';
 
@@ -31,7 +31,7 @@ export type WorktreeInspection = Readonly<{ kind: 'ready'; head: Sha }> | Readon
  * links to an admin dir under the common dir's `worktrees/` that links back, git lists it, HEAD is the
  * recorded start on the recorded branch (or detached), and its status is clean.
  */
-export function inspectWorktree(repo: AbsPath, expect: IntentOf<'worktree.create'>['expect']): WorktreeInspection {
+export function inspectWorktree(repo: AbsPath, expect: IntentOf<'worktree.create'>['expect'], clean = true): WorktreeInspection {
   const { path, checkout } = expect;
   const notReady = (problem: string): WorktreeInspection => ({ kind: 'not-ready', problem });
   if (!existsSync(path) || !lstatSync(path).isDirectory()) return notReady('path missing');
@@ -49,7 +49,7 @@ export function inspectWorktree(repo: AbsPath, expect: IntentOf<'worktree.create
   const attached = symbolicHead(path);
   if (checkout.type === 'branch' && attached !== checkout.branch) return notReady(`HEAD on ${attached ?? 'detached'}, expected ${checkout.branch}`);
   if (checkout.type === 'detached' && attached !== null) return notReady(`HEAD on ${attached}, expected detached`);
-  if (statusPorcelainV2Z(path, false).length > 0) return notReady('status not clean');
+  if (clean && statusPorcelainV2Z(path, false).length > 0) return notReady('status not clean');
   return { kind: 'ready', head };
 }
 
@@ -69,24 +69,71 @@ export function standing(view: JournalView, created: IntentOf<'worktree.create'>
   return view.doneOf(created.op) !== null && !removedSince(view, created.expect.path, created.op);
 }
 
-export type WorktreeCreateRequest = Readonly<{ path: AbsPath; checkout: WorktreeCheckout }>;
+export type WorktreeCreateRequest = Readonly<{ path: AbsPath; checkout: WorktreeCheckout; reset?: true }>;
+
+/** A reset may touch only a registered detached checkout of this repo. */
+export function inspectResetTarget(repo: AbsPath, path: AbsPath): WorktreeInspection {
+  const entry = worktreeList(repo).find((e) => e.path === path);
+  if (entry?.head === null || entry?.head === undefined || entry.branch !== null) return { kind: 'not-ready', problem: 'reset target is not a registered detached checkout' };
+  return inspectWorktree(repo, { path, checkout: { type: 'detached', at: entry.head } }, false);
+}
+
+/** A checkout must wait for operator repair/recovery; callers park without discarding its open intent. */
+export class WorktreeRecoveryError extends Error {
+  readonly path: AbsPath;
+  constructor(path: AbsPath, detail: string) {
+    super(detail);
+    this.name = 'WorktreeRecoveryError';
+    this.path = path;
+  }
+}
+export class WorktreePermissionError extends WorktreeRecoveryError {
+  constructor(path: AbsPath, error: unknown) {
+    super(path, `Permission residue at ${path}: ${error instanceof Error ? error.message : String(error)}. Restore ownership, for example sudo chown -R $(id -u):$(id -g) '${path.replaceAll("'", "'\\''")}', then retry.`);
+    this.name = 'WorktreePermissionError';
+  }
+}
+export function permissionResidue(path: AbsPath, error: unknown): WorktreePermissionError | null {
+  if (error instanceof WorktreePermissionError) return error;
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === 'EACCES' || code === 'EPERM' || /permission denied|operation not permitted/i.test(error instanceof Error ? error.message : String(error))
+    ? new WorktreePermissionError(path, error) : null;
+}
+function permissionAware<T>(path: AbsPath, action: () => T): T {
+  try { return action(); } catch (error) { throw permissionResidue(path, error) ?? error; }
+}
 
 /** `request.checkout.at` must name a commit; a new branch must not exist yet, an existing one must be at `at`. */
 function prepareCreate(repo: AbsPath, request: WorktreeCreateRequest): IntentBody<'worktree.create'> {
   const { path, checkout } = request;
-  if (existsSync(path)) throw new WorktreeStateError(path, 'already exists');
+  if (request.reset && checkout.type !== 'detached') throw new WorktreeStateError(path, 'only detached checkouts can reset');
+  if (existsSync(path)) {
+    if (!request.reset) throw new WorktreeStateError(path, 'already exists');
+    const target = inspectResetTarget(repo, path);
+    if (target.kind !== 'ready') throw new WorktreeStateError(path, target.problem);
+  }
   if (catFileType(repo, checkout.at) !== 'commit') throw new WorktreeStateError(path, `start ${checkout.at} is not a commit`);
   if (checkout.type === 'branch') {
     const current = refTarget(repo, checkout.branch);
     if (checkout.createBranch && current !== null) throw new WorktreeStateError(path, `branch ${checkout.branch} already exists`);
     if (!checkout.createBranch && current !== checkout.at) throw new WorktreeStateError(path, `branch ${checkout.branch} is at ${current}, expected ${checkout.at}`);
   }
-  return { expect: { path, checkout }, post: null };
+  // An absent path is a fresh add even at a stable address: preserve the existing partial-add recovery protocol.
+  return { expect: { path, checkout, ...(request.reset && existsSync(path) ? { reset: true as const } : {}) }, post: null };
 }
 
 function actCreate(repo: AbsPath, intent: IntentOf<'worktree.create'>): void {
   const { path, checkout } = intent.expect;
   crashPoint('worktree.create.act-start', parentUnit(intent.parent));
+  if (intent.expect.reset && existsSync(path)) {
+    const target = inspectResetTarget(repo, path);
+    if (target.kind !== 'ready') throw new WorktreeStateError(path, target.problem);
+    git(path, ['checkout', '--detach', '--force', checkout.at]);
+    // Existing B3 crash boundary also covers reset between its two git commands.
+    crashPoint('worktree.add.inside', parentUnit(intent.parent));
+    git(path, ['clean', '-fd']);
+    return;
+  }
   if (checkout.type === 'detached') {
     worktreeAdd(repo, path, { type: 'detached', at: checkout.at });
   } else {
@@ -113,9 +160,9 @@ function verifyCreate(repo: AbsPath, intent: IntentOf<'worktree.create'>): OpOut
 export function worktreeCreateSteps(repo: AbsPath): GitSteps<'worktree.create', WorktreeCreateRequest> {
   return {
     kind: 'worktree.create',
-    prepare: async (request) => prepareCreate(repo, request),
-    act: async (intent) => actCreate(repo, intent),
-    verify: async (intent) => verifyCreate(repo, intent),
+    prepare: async (request) => permissionAware(request.path, () => prepareCreate(repo, request)),
+    act: async (intent) => permissionAware(intent.expect.path, () => actCreate(repo, intent)),
+    verify: async (intent) => permissionAware(intent.expect.path, () => verifyCreate(repo, intent)),
   };
 }
 
@@ -141,6 +188,11 @@ function actRemove(repo: AbsPath, intent: IntentOf<'worktree.remove'>): void {
   const { path } = intent.expect;
   crashPoint('worktree.remove.act-start', parentUnit(intent.parent));
   if (worktreeList(repo).some((e) => e.path === path)) worktreeRemove(repo, path);
+  else if (existsSync(path)) {
+    // Reconciliation authorizes this redo only for our evidence-backed, partially removed checkout.
+    if (!lstatSync(path).isDirectory() || existsSync(join(path, '.git'))) throw new WorktreeStateError(path, 'unregistered path is not checkout residue');
+    rmSync(path, { recursive: true });
+  }
   crashPoint('worktree.remove.inside', parentUnit(intent.parent));
   worktreePrune(repo);
 }
@@ -153,8 +205,8 @@ function verifyRemove(repo: AbsPath, intent: IntentOf<'worktree.remove'>): OpOut
 export function worktreeRemoveSteps(repo: AbsPath): GitSteps<'worktree.remove', WorktreeRemoveRequest> {
   return {
     kind: 'worktree.remove',
-    prepare: async (request) => prepareRemove(repo, request),
-    act: async (intent) => actRemove(repo, intent),
-    verify: async (intent) => verifyRemove(repo, intent),
+    prepare: async (request) => permissionAware(request.path, () => prepareRemove(repo, request)),
+    act: async (intent) => permissionAware(intent.expect.path, () => actRemove(repo, intent)),
+    verify: async (intent) => permissionAware(intent.expect.path, () => verifyRemove(repo, intent)),
   };
 }

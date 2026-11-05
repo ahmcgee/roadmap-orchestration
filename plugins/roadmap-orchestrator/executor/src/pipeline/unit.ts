@@ -1,6 +1,3 @@
-import { candidateRed, candidateReentryChange } from './candidate-red.ts';
-import { attemptSignals } from './attempts.ts';
-import { markers } from './surface.ts';
 // The unit driver: `runUnit(ctx, unit, gate)` loops stage → transition → next until the unit is merged,
 // parked, held or stopped. The scheduler (src/schedule/scheduler.ts) runs one per unit in flight, as that
 // unit's task.
@@ -73,19 +70,24 @@ import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
 import { capturedEvidence,patternPath } from '../git/evidence.ts';
 import { candidateLaneDir,smokeLaneDir } from '../git/snapshot.ts';
-import { standing } from '../git/worktree.ts';
+import { WorktreeRecoveryError,standing } from '../git/worktree.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
+import { raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
-import { revertedPathsDirective } from '../prompts/directives.ts';
+import { dirtyLanesDirective,revertedPathsDirective } from '../prompts/directives.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
+import { reconcileUnitWorktrees } from '../recover/recover.ts';
+import { settleHolders } from '../recover/resource.ts';
+import { checkoutResidueNeedsUser } from '../recover/worktree.ts';
 import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceTable,sameHolder } from '../resources/reserve.ts';
 import type { Role } from '../routing/types.ts';
 import { type NextStage,nextStage } from '../schedule/ready.ts';
 import { ADMISSION_STAGES } from '../schedule/types.ts';
+import { attemptSignals } from './attempts.ts';
+import { candidateRed,candidateReentryChange } from './candidate-red.ts';
 import {
 type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
 } from './dispatch.ts';
@@ -110,13 +112,14 @@ import {
 type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
 preBuild,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,teardown
 } from './stages.ts';
+import { markers } from './surface.ts';
 import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
 
 export type UnitResult =
   | Readonly<{ kind: 'merged' }>
   | Readonly<{ kind: 'parked'; needsUser: NeedsUserContent }>
-  /** Waiting for a resume: an interrupted stage (with the arc-wide needs-user of a backend park), or a signal between stages. */
+  /** Waiting for a resume: an interrupted stage, a backend park, a signal between stages, or unit checkout residue at retirement. */
   | Readonly<{ kind: 'held'; needsUser: NeedsUserContent | null }>
   | Readonly<{ kind: 'stopped'; needsUser: NeedsUserContent }>;
 
@@ -169,6 +172,16 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   const { path, spec } = loadUnitSpec(ctx, unit);
   const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
   if (reason === 'context-exceeded' && exceeded === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} context-exceeded without its detail`);
+  if (f.outcome === 'checkout-residue') {
+    const id = raisedFor(ctx.journal.view, stageParent(f));
+    const notice = id === null ? null : readNeedsUser(ctx.runDir, id);
+    if (notice !== null) {
+      const { blocking, subject, reason, summary, recommendation, options, evidence } = notice;
+      return { blocking, subject, reason, summary, recommendation, options, evidence };
+    }
+    const intent = ctx.journal.view.openIntents().find((i) => (i.kind === 'worktree.create' || i.kind === 'worktree.remove') && i.parent.type === 'stage' && i.parent.unit === unit.id);
+    if (intent?.kind === 'worktree.create' || intent?.kind === 'worktree.remove') return checkoutResidueNeedsUser(unit.id, intent.expect.path, summary);
+  }
   const faulted = f.detail?.kind === 'executor-fault' ? f.detail : null;
   if (reason === 'executor-fault' && faulted === null) throw new Error(`unit ${unit.id}: ${f.stage}#${f.attempt} executor-fault without its stack`);
   const recommendation = kind === 'stop'
@@ -335,10 +348,21 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   }
 }
 
+/** A reopen keeps the latest failed series' dirty-checkout blocker, read from its snapshot records. */
+function freshRound(ctx: StageContext, unit: UnitId): DecidedRound {
+  const view = ctx.journal.view;
+  const latest = view.completedLanesOutcome(unit);
+  if (view.unit(unit).reopened === null || latest === null || !['not-certified', 'red', 'regression'].includes(latest.outcome)) return { kind: 'fresh' };
+  const parent = stageParent(latest);
+  const dirty = [...seriesDirty(view, specSeriesRoot(ctx.runDir, parent)), ...seriesDirty(view, fastSuiteRoot(ctx.runDir, parent, 'suite'))];
+  return dirty.length === 0 ? { kind: 'fresh' } : { kind: 'fresh', directives: [dirtyLanesDirective(dirty)] };
+}
+
 /** The build round `round` after the decision `f`, with the inputs its kind needs. */
 function decidedInput(ctx: StageContext, unit: PlanUnit, round: Extract<Target, { stage: 'build' }>['round'], f: StageOutcomeFact): DecidedRound {
   // A malformed answer's resume round quotes why it was malformed (I3).
   if (round === 'resume') return { kind: 'resume', error: malformedError(ctx, unit, f) };
+  if (round === 'fresh') return freshRound(ctx, unit.id);
   if (round !== 'fix') return { kind: round };
   const view = ctx.journal.view;
   const { spec } = loadUnitSpec(ctx, unit);
@@ -587,9 +611,16 @@ export function holdAbandoned(ctx: StageContext, unit: PlanUnit): void {
 export async function step(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   // M3 (B3): the findings' moves the log calls for (ownership, a killed mutant's dismissal) before and after each stage.
   syncRepairs(ctx);
-  const s = await stepOnce(ctx, unit);
-  syncRepairs(ctx);
-  return s;
+  try {
+    assertQuiescent(ctx, unit.id);
+    await reconcileUnitWorktrees(ctx, unit.id);
+    const s = await stepOnce(ctx, unit);
+    syncRepairs(ctx);
+    return s;
+  } catch (error) {
+    if (!(error instanceof WorktreeRecoveryError)) throw error;
+    return parkCheckoutResidue(ctx, unit, error);
+  }
 }
 
 async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
@@ -608,7 +639,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   if (f === null) {
     const first = nextStage(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review);
     if (first?.kind !== 'admission') throw new Error(`unit ${unit.id}: no first stage before a decision`);
-    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await build(ctx, unit, {kind: 'fresh'}) : await preBuild(ctx, unit));
+    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await build(ctx, unit, freshRound(ctx, unit.id)) : await preBuild(ctx, unit));
   }
   const halted = haltResult(ctx, unit);
   if (halted !== null) return halted;
@@ -736,7 +767,7 @@ function assertQuiescent(ctx: StageContext, unit: UnitId): void {
  * parked or stopped unit starts no stage: its step only reads its result back (a merged unit's retire is
  * finished first).
  */
-export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
+async function runUnitSteps(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
   for (;;) {
     const due = upcoming(ctx.journal.view.unit(unit.id), specFacts(ctx)(unit).reproduces);
     const count = attemptSignals(ctx.journal, unit.id, due?.kind === 'admission');
@@ -759,5 +790,37 @@ export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Pr
     const s = await step(ctx, unit);
     if (s.kind !== 'continue') return s;
     crashPoint('unit.after-stage', unit.id);
+  }
+}
+
+/** Permission repair parks only its unit and leaves the checkout intent available for reconciliation. */
+async function parkCheckoutResidue(ctx: StageContext, unit: PlanUnit, error: WorktreeRecoveryError): Promise<UnitResult> {
+  await settleHolders(ctx, (h) => (h.type === 'stage' || h.type === 'publication') && h.unit === unit.id);
+  const needsUser = checkoutResidueNeedsUser(unit.id, error.path, error.message);
+  const u = ctx.journal.view.unit(unit.id);
+  if (u.status === 'park-pending') return { kind: 'parked', needsUser };
+  const stage = u.open?.stage ?? upcoming(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review)?.stage;
+  switch (stage) {
+    case 'prepare': case 'reproduce': case 'pre-build': case 'build': case 'lanes': case 'gate': case 'candidate': {
+      const parent = { type: 'stage', unit: unit.id, stage, attempt: u.open?.attempt ?? u.counters.attempts + 1 } as const;
+      record(ctx, parent, 'checkout-residue');
+      if (raisedFor(ctx.journal.view, parent) === null) raiseNeedsUser(ctx.journal, ctx.runDir, needsUser, parent);
+      return { kind: 'parked', needsUser };
+    }
+    default: {
+      // Retirement has no outcome stage. Its unit notice holds only this unit, including across startup recovery.
+      const intent = ctx.journal.view.openIntents().find((i) => (i.kind === 'worktree.create' || i.kind === 'worktree.remove') && i.parent.type === 'stage' && i.parent.unit === unit.id && i.expect.path === error.path);
+      const parent = intent === undefined ? { type: 'stage', unit: unit.id, stage: 'retire', attempt: u.counters.attempts + 1 } as const : { type: 'op', op: intent.op } as const;
+      if (raisedFor(ctx.journal.view, parent) === null) raiseNeedsUser(ctx.journal, ctx.runDir, needsUser, parent);
+      return { kind: 'held', needsUser };
+    }
+  }
+}
+
+export async function runUnit(ctx: StageContext, unit: PlanUnit, gate: Gate): Promise<UnitResult> {
+  try { return await runUnitSteps(ctx, unit, gate); }
+  catch (error) {
+    if (!(error instanceof WorktreeRecoveryError)) throw error;
+    return parkCheckoutResidue(ctx, unit, error);
   }
 }

@@ -1,3 +1,6 @@
+import { WorktreeRecoveryError } from '../src/git/worktree.ts';
+import { certification,workRuns } from '../src/status-work.ts';
+import { createArbiter } from '../src/schedule/arbiter.ts';
 import { systemName } from '../src/core/ids.ts';
 // M4a rev 3 step N1 (src/pipeline/lanes.ts, src/pipeline/redlane.ts, src/host/signatures.ts), integrated over real
 // processes and real git: series certificates, spec lane reuse (F1a), the repeat-signature rerun skip and the
@@ -8,7 +11,7 @@ import { systemName } from '../src/core/ids.ts';
 // rows LANE_REUSE, SERIES_CERTIFIED and RED_CLASS (labels lanes.after-reused, lanes.after-census-before-certified,
 // redlane.after-class).
 import assert from 'node:assert/strict';
-import { chmodSync,existsSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
+import { chmodSync,existsSync,readFileSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import type { Fact,IntentOf } from '../src/core/events.ts';
@@ -27,8 +30,8 @@ import {
 LANE_DEADLINE_MS,LANE_GRACE_MS,LANE_STALL_MS,type LaneRuntime,type Series,arcJourneyLane,
 laneOrder,
 latestSpecSeries,
-reserveNow,runJourneySeries,runLaneSeries,
-seriesLedger,seriesOrder,seriesTree,specSeriesRoot,
+presentCheckouts,removeCheckout,reserveNow,runJourneySeries,runLaneSeries,
+seriesLedger,seriesOrder,seriesTree,specSeriesRoot,suiteJourneyLane,
 } from '../src/pipeline/lanes.ts';
 import { readRedClass } from '../src/pipeline/redlane.ts';
 import { holisticInForce,lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
@@ -479,7 +482,7 @@ describe('crash rows', () => {
         assert.equal(existsSync(join(invocationDir(absPath(d.runDir), invocationId(spawns[0]!.op, spawns[0]!.ordinal)), 'launch.json')), false);
       } else {
         assert.equal(spawns.length, 0);
-        assert.equal(crashed.journal.view.opsOf('worktree.create').some((i) => i.expect.path === verificationWorktree(crashed.ctx.plan().worktreeRoot, crashed.ctx.plan().arc, U1, open.attempt)), false);
+        assert.equal(crashed.journal.view.opsOf('worktree.create').some((i) => i.parent.type === 'stage' && i.parent.attempt === open.attempt && i.expect.path === verificationWorktree(crashed.ctx.plan().worktreeRoot, crashed.ctx.plan().arc, U1, open.attempt)), false);
       }
     } finally { crashed.journal.close(); }
     const resumed = await runFixture('stage-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
@@ -527,4 +530,121 @@ describe('crash rows', () => {
     const dir = join(specSeriesRoot(absPath(d.runDir), crashed.parent as StageParent), 'mul');
     assert.deepEqual(readRedClass(dir)?.class, { kind: 'diagnostic' }, 'the crashed attempt\'s class stays on disk');
   });
+});
+
+test('redlane make wrapper repeats the specific stdout failure, not the final make target', T, async () => {
+  const run = unitRun([{ id: 'make', argv: ['sh', '-c', 'echo "src/check.go:12: G104 unchecked error"; echo "make: *** [Makefile:8: check] Error 2" >&2; exit 2'] }]);
+  const first = await series(run, 1, specLanes(run), run.base);
+  const second = await series(run, 2, specLanes(run), run.base);
+  assert.equal(first.end.kind, 'red');
+  assert.equal(second.end.kind, 'red');
+  assert.equal(laneSpawns(run, 'make', 1).length, 2);
+  assert.equal(laneSpawns(run, 'make', 2).length, 1);
+  assert.equal(readRedClass(second.ledger[0]!.evidenceDir)?.class.kind, 'repeat');
+});
+
+test('redlane optional deterministic patterns skip reruns; absence keeps diagnostics', T, async () => {
+  const run = unitRun([{ id: 'lint', argv: ['sh', '-c', 'echo "G104 unchecked error"; exit 1'] }]);
+  const defs = specLanes(run).map((l) => ({ ...l, noRerunPatterns: ['G104 unchecked error'] }));
+  const first = await series(run, 1, defs, run.base);
+  assert.equal(first.end.kind, 'red');
+  assert.equal(laneSpawns(run, 'lint', 1).length, 1);
+  assert.deepEqual(readRedClass(first.ledger[0]!.evidenceDir)?.class, { kind: 'no-rerun', reason: 'deterministic' });
+  assert.deepEqual(seriesLedger(run.ctx, parentOf(1), defs, 'spec', run.base, specSeriesRoot(run.runDir, parentOf(1))), first.ledger);
+  await series(run, 2, specLanes(run), run.base);
+  assert.equal(laneSpawns(run, 'lint', 2).length, 2);
+});
+
+test('redlane a recorded failing base skips diagnostics for that unit/lane/base only', T, async () => {
+  const run = unitRun([{ id: 'broken', argv: ['sh', '-c', 'echo "Tests: 2 failed"; exit 1'] }]);
+  run.journal.fact({ kind: 'lane-base-compared', unit: U1, attempt: 1, lane: specLanes(run)[0]!.id, base: run.base, evidence: run.runDir, result: 'fail' });
+  const first = await series(run, 2, specLanes(run), run.base);
+  assert.equal(laneSpawns(run, 'broken', 2).length, 1, 'generic signature still skips: the base fact suffices');
+  assert.deepEqual(readRedClass(first.ledger[0]!.evidenceDir)?.class, { kind: 'no-rerun', reason: 'base-red' });
+  const next = commit(run, { 'base-change': 'new baseline' });
+  const second = await series(run, 3, specLanes(run), next);
+  assert.equal(second.end.kind, 'red');
+  assert.equal(laneSpawns(run, 'broken', 3).length, 2, 'a different diffBase reruns');
+});
+
+test('stable verification keeps cache/path/mtime across series and invalidates an older gate tree; legacy numbered trees still read and remove', T, async () => {
+  const run = unitRun([{ id: 'cache', argv: ['true'] }]);
+  const stable = verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1, 1);
+  const old = absPath(`${stable}-1`);
+  const defs = specLanes(run);
+  const first = await runLaneSeries(run.ctx, parentOf(1), defs, 'spec', { path: old, checkout: { type: 'detached', at: run.base } }, specSeriesRoot(run.runDir, parentOf(1)), runtime(run.ctx), false);
+  assert.equal(seriesTree(run.journal.view, parentOf(1), stable)?.path, old, 'upgrade read-time fallback');
+  const created = presentCheckouts(run.journal.view, U1).find((c) => c.expect.path === old)!;
+  await removeCheckout(run.ctx, created, parentOf(2), []);
+  assert.equal(existsSync(old), false, 'legacy path removed by existing journaled lifecycle');
+  const checkout = { path: stable, checkout: { type: 'detached', at: run.base } } as const;
+  await runLaneSeries(run.ctx, parentOf(2), defs, 'spec', checkout, specSeriesRoot(run.runDir, parentOf(2)), runtime(run.ctx), false);
+  const file = join(stable, 'src/add.js');
+  const mtime = statSync(file).mtimeMs;
+  writeFiles(stable, { 'out/cache.log': 'cache' });
+  writeFileSync(join(stable, 'scratch.tmp'), 'untracked');
+  const moved = commit(run, { 'src/new-commit.js': 'export const changed = true;\n' });
+  const third = await runLaneSeries(run.ctx, parentOf(3), defs, 'spec', { ...checkout, checkout: { type: 'detached', at: moved } }, specSeriesRoot(run.runDir, parentOf(3)), runtime(run.ctx), false);
+  assert.equal(third.tree?.path, stable);
+  assert.equal(statSync(file).mtimeMs, mtime);
+  assert.equal(readFileSync(join(stable, 'out/cache.log'), 'utf8'), 'cache');
+  assert.equal(existsSync(join(stable, 'scratch.tmp')), false);
+  assert.equal(seriesTree(run.journal.view, parentOf(2), stable), null, 'a reset prevents stale gate checkout binding');
+  assert.equal(presentCheckouts(run.journal.view, U1).filter((c) => c.expect.path === stable).length, 1, 'retirement removes the latest create once');
+  assert.ok(first.tree !== null);
+  const events = readJournal(run.runDir, run.ctx.plan().arc).events;
+  assert.equal(certification(run.ctx, run.unit, events, workRuns(run.ctx, events), 3).lanes[0]!.state, 'green', 'status reads this attempt at its commit, not the first create at the stable path');
+});
+
+
+test('deterministic patterns apply to job-owned journey suites without treating them as unit repeats', T, async () => {
+  const run = unitRun([{ id: 'compile', argv: ['sh', '-c', 'echo "compile error: missing symbol"; exit 1'] }]);
+  const lane = suiteJourneyLane({ ...specLanes(run)[0]!, noRerunPatterns: ['compile error:'] });
+  const arbiter = createArbiter(run.ctx);
+  const result = await runJourneySeries(run.ctx, { type: 'job', job: jobId('audit', 1), acquireFirst: arbiter.acquireFirst }, [lane], {
+    path: absPath(join(tmpDir('deterministic-journey'), 'checkout')), checkout: { type: 'detached', at: run.base },
+  }, { reuse: false, stop: () => true });
+  assert.equal(result.end.kind, 'ran');
+  assert.equal(result.runs[0]!.verdict, 'fail');
+  assert.equal(result.runs[0]!.flaky, false);
+  assert.equal(run.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey').length, 1);
+  assert.deepEqual(readRedClass(result.runs[0]!.dir!)?.class, { kind: 'no-rerun', reason: 'deterministic' });
+});
+
+test('deterministic output patterns leave timeout reruns available', T, async () => {
+  const run = unitRun([{ id: 'slow', argv: ['sh', '-c', 'echo "compile error: transient setup"; sleep 5'], timeoutMin: 0.002 }]);
+  const defs = specLanes(run).map((l) => ({ ...l, noRerunPatterns: ['compile error:'] }));
+  const result = await series(run, 1, defs, run.base);
+  assert.equal(result.end.kind, 'red');
+  assert.equal(result.ledger[0]!.verdict, 'timeout');
+  assert.equal(laneSpawns(run, 'slow', 1).length, 2, 'timeouts remain diagnostic even with a matching deterministic pattern');
+  assert.equal(readRedClass(result.ledger[0]!.evidenceDir)?.class.kind, 'diagnostic');
+});
+
+
+test('a queued series cannot reset a stable checkout while an earlier permission park has an open intent', T, async () => {
+  const run = unitRun([{ id: 'check', argv: ['true'] }]);
+  const path = verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1);
+  const checkout = { path, checkout: { type: 'detached', at: run.base } } as const;
+  await runLaneSeries(run.ctx, parentOf(1), specLanes(run), 'spec', checkout, specSeriesRoot(run.runDir, parentOf(1)), runtime(run.ctx), false);
+  writeFiles(path, { 'out/cache': 'retained', 'pending-output': 'must survive until the older intent settles' });
+  const body = await worktreeCreateOp(run.repo).prepare({ ...checkout, reset: true });
+  run.journal.begin({ kind: 'worktree.create', key: opKey('worktree:old:verify'), parent: parentOf(2), deadlineAt: null, body: () => body });
+  const count = run.journal.view.opsOf('worktree.create').length;
+  await assert.rejects(runLaneSeries(run.ctx, parentOf(3), specLanes(run), 'spec', checkout, specSeriesRoot(run.runDir, parentOf(3)), runtime(run.ctx), false), WorktreeRecoveryError);
+  assert.equal(run.journal.view.opsOf('worktree.create').length, count, 'no second reset intent competes with recovery');
+  assert.equal(readFileSync(join(path, 'pending-output'), 'utf8'), 'must survive until the older intent settles');
+});
+
+test('a pending first create is parked before the stable-checkout ownership check', T, async () => {
+  const run = unitRun([{ id: 'check', argv: ['true'] }]);
+  const path = verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1);
+  const checkout = { path, checkout: { type: 'detached', at: run.base }, reset: true } as const;
+  const op = worktreeCreateOp(run.repo);
+  const body = await op.prepare(checkout);
+  const { op: id } = run.journal.begin({ kind: 'worktree.create', key: opKey('worktree:old:verify'), parent: parentOf(1), deadlineAt: null, body: () => body });
+  await op.act(run.journal.view.latestIntent(id) as IntentOf<'worktree.create'>);
+  await assert.rejects(runLaneSeries(run.ctx, parentOf(2), specLanes(run), 'spec', checkout, specSeriesRoot(run.runDir, parentOf(2)), runtime(run.ctx), false), WorktreeRecoveryError);
+  assert.equal(run.journal.view.opsOf('worktree.create').length, 1);
+  assert.equal(run.journal.view.doneOf(id), null, 'the older intent remains available to recovery');
 });

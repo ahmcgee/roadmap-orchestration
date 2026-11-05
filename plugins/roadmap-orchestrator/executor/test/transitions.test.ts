@@ -218,6 +218,11 @@ const ROWS: readonly Row[] = [
   ['lanes', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['gate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
   ['candidate', 'executor-fault', {}, 'park:executor-fault', 'park', {}],
+  // Checkout ownership repair is uncharged and needs the operator, independently of the chargeable bound.
+  ...(['prepare', 'reproduce', 'pre-build', 'build', 'lanes', 'gate', 'candidate'] as const).flatMap((stage): readonly Row[] => [
+    [stage, 'checkout-residue', {}, 'park:residue', 'park', {}],
+    [stage, 'checkout-residue', { counters: { chargeableFailures: 2 } }, 'park:residue', 'park', {}],
+  ]),
   ['candidate', 'env-unavailable', {}, 'park:env-unavailable', 'park', {}],
   // ff
   ['ff', 'published', {}, 'snapshot', 'advance', {}],
@@ -266,6 +271,7 @@ describe('transitions', () => {
       'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce env-unavailable': 'retryable', 'reproduce cleanup-failed': 'retryable',
       ...Object.fromEntries(['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'].map((st) => [`${st} executor-fault`, 'env'])),
+      ...Object.fromEntries(['prepare', 'reproduce', 'pre-build', 'build', 'lanes', 'gate', 'candidate'].map((st) => [`${st} checkout-residue`, 'env'])),
       // dev.17 (design pass): a plan defect is the plan's to fix (an apply, then `resume`), as at lanes.
       'pre-build plan-defect': 'env', 'scaffold plan-defect': 'env', 'scaffold refusal': 'design', 'scaffold process-fault': 'retryable', 'scaffold lost': 'retryable',
       'scaffold routing-changed': 'env', 'scaffold context-exceeded': 'env', 'scaffold occupied': 'env', 'scaffold cleanup-failed': 'retryable',

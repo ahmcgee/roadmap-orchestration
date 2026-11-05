@@ -140,7 +140,7 @@ Pins in `src/core/pins.ts` bind linked requirement revisions and contract blobs.
 Required LaneDef fields: id, nonempty argv, cwd, env `{set:Record<string,string>,pass:string[]}`, expectedExit,
 cadence, resources, evidenceGlobs. EvidenceExcludes defaults to []. Pass/set names cannot overlap. Optional fields:
 inputs (nonempty unique patterns), cost cheap|expensive, placement local|shared-resource|cross-system, cpu, timeoutMin,
-systems, testArgv, stochastic, environment, readsComments, kind/capture.
+systems, testArgv, stochastic, noRerunPatterns, environment, readsComments, kind/capture.
 
 | Lane context | Accepted cadence | Additional rules |
 |---|---|---|
@@ -1100,3 +1100,48 @@ evidence and recommends fixing walkthrough.mcp for the worktree. Builds continue
 build or acting walk explicitly settles that server's open notice IDs; unrelated applies/resumes do not. Named ack remains
 available. No declared MCP config or no init census produces no availability fact or notice. Monitoring and spawn recovery
 share the same idempotent inspection. Old logs need no new fields; the new fact collection starts empty.
+
+
+### Lane reruns and stable verification checkouts
+
+`LaneDef.noRerunPatterns?: string[]` is additive and optional: absent means no deterministic output patterns.
+When supplied it is nonempty and each literal substring is nonempty. A substring in the failed command's stdout/stderr
+tail suppresses its diagnostic rerun. Host signatures take precedence; timeout verdicts do not use this opt-out.
+Stochastic lanes keep their runs/minPasses rule. The persisted red class adds
+`{kind:'no-rerun', reason:'base-red'|'deterministic'}`; older red classes remain readable without changes.
+A failing `lane-base-compared` for the same unit/lane/diffBase also suppresses diagnostics, retaining original evidence.
+Specific failure signatures skip make `***`, npm lifecycle, exit-status and FAIL wrapper lines and generic summaries;
+masking still replaces checkout paths, timestamps, hashes and digits. Spec base-red raises a blocking arc `base-red`
+notice with an exported plan.json knownDefects apply fragment (root chooses fixUnit), goes to gate uncharged, and never
+starts a fix round for that lane. Candidate behavior remains the final tip-alone merge brake. Known-defect output
+matches accept their existing raw substrings or masked output lines; masked tokens are literal, not regexes.
+
+`worktree.create.expect` adds optional `reset:true`, accepted only for detached checkouts. Absent retains the old
+create-only contract. A reset-capable request at an absent path records an ordinary fresh add, retaining the old
+partial-add recovery protocol. Each series journals a fresh create/reset intent, acts with `git checkout --detach --force <sha>`
+and `git clean -fd`, and verifies the same detached-HEAD/clean-status/admin-link postcondition before done. Ignored
+caches survive; unchanged files keep mtimes. Recovery can reconcile a completed reset or redo a partial reset only
+in a registered detached checkout belonging to the repo. A queued series parks rather than resetting a path with
+an earlier open create/remove/snapshot intent, including a permission park that released integration-slot. Existing crash points `worktree.create.act-start` and
+`worktree.add.inside` cover reset before checkout and between checkout and clean, respectively; no new labels.
+
+Unit verification uses `<unit>.verify`, kept until merge/retirement. Candidate suites use the arc's `.candidate.verify`,
+serialized by integration-slot and kept between unit publications. The unit driver serializes stages and checks for
+live workloads before moving stages, so its gate finishes before another series can reset its verification tree.
+Series readers reject a checkout superseded by a later reset. Legacy `<unit>.verify-<attempt>` records are read via
+an additive path fallback (one ROADMAP_UPGRADE warning per process) and still removed by the original evidence-backed removal path. Multiple creates for one
+stable path project only the latest standing create for retirement. Interrupted series without completed snapshots
+preserve dirty/evidence outputs before reset, as the previous removal path did.
+
+Checkout create/reset/remove EACCES/EPERM (including git's permission-denied diagnostics) raises a blocking
+unit-subject `residue` notice; other units remain admissible. Prepare, reproduce, pre-build, build, lanes and gate,
+and candidate record uncharged `checkout-residue` outcomes, release reservations and leave checkout intents open.
+These are operator environment parks: ownership repair requires the user, and a general host probe cannot prove it.
+Retirement has no outcome stage and holds only its unit with the same notice. Restore ownership/write/search
+permission (`sudo chown -R ...`) or remove the path, then `roadmap resume <unit>` retries in-process, without restarting.
+Resume and every unit step reconcile only that unit's open create/remove intents through startup's canonical recovery
+path: an already absent checkout closes `reconciled`; redo acts and verifies before closing `redone`; permission errors
+leave the intent open and the unit parked. A partial git removal can unregister the checkout before failing: redo may
+remove its leftover directory only with the journal's standing create, verified evidence from that checkout or its stage,
+no replacement `.git` entry or symlink, and no competing open intent on the path. Unknown unregistered content parks.
+Failed base-comparison promises are evicted so another unit or a resumed attempt can compare again.

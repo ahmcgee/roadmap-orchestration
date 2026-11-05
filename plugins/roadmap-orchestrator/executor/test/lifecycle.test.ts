@@ -15,7 +15,7 @@ import { type NeedsUserId, commandId, invocationId } from '../src/core/ids.ts';
 import type { CommandBody, NeedsUserContent } from '../src/core/records.ts';
 import { openBlocking, raiseNeedsUser } from '../src/needsuser.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
-import { NO_SESSION_NOTE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE } from '../src/prompts/directives.ts';
+import { NO_SESSION_NOTE, RESPEC_DIRECTIVE, RESPEC_FRESH_DIRECTIVE, dirtyLanesDirective } from '../src/prompts/directives.ts';
 import type { StageContext } from '../src/pipeline/dispatch.ts';
 import { keptSpecPath } from '../src/pipeline/stages.ts';
 import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
@@ -290,3 +290,34 @@ test('reroute.routing-changed-park: resume is rejected while the implementer sea
     r.journal.close();
   }
 });
+
+for (const series of ['not-certified', 'red', 'suite-dirty'] as const) {
+  test(`reopen.dirty-carry: ${series} carries the snapshot paths through an applied revision and executor restart`, T, async () => {
+    const writer = { id: 'writer', argv: ['sh', '-c', `echo stray > src/stray.txt; echo "deploy assertion failed" >&2; exit ${series === 'red' ? 1 : 0}`] };
+    const d = setupArc({
+      units: [{ id: 'u1', lanes: series === 'suite-dirty' ? [{ id: 'unit', argv: ['true'] }] : [writer] }],
+      suite: series === 'suite-dirty' ? [{ ...writer, cadence: 'build', argv: ['sh', '-c', 'if [ -f src/mul.js ]; then echo stray > src/stray.txt; fi'] }] : [],
+      steps: [planCheckStep({ decision: 'approve' }), mulBuild(), planCheckStep({ decision: 'approve' }), codexStep([])],
+    });
+    const r = contextFor(d);
+    await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === (series === 'red' ? 'red' : 'not-certified'));
+    editSpec(r, (s) => { addClause(s); s['rev'] = 2; });
+    assert.equal((await apply(r)).outcome.kind, 'applied');
+    assert.ok(r.journal.view.unit(U1).pendingRevision !== null);
+    r.journal.close();
+    const restarted = contextFor(d);
+    try {
+      const held = await runUnit(restarted.ctx, restarted.unit('u1'), (next) => Promise.resolve(next.stage !== 'lanes'));
+      assert.equal(held.kind, 'held');
+      assert.equal(restarted.journal.view.unit(U1).reopened?.specRev, 2);
+      const calls = readCalls(d.scenarioPath);
+      assert.ok(calls.every((c) => c.step !== null));
+      const build = calls.at(-1)!;
+      assert.ok(build.stdin.includes(dirtyLanesDirective(['src/stray.txt'])));
+      assert.ok(build.stdin.includes(RESPEC_DIRECTIVE));
+      assert.ok(build.argv.includes('resume'));
+    } finally {
+      restarted.journal.close();
+    }
+  });
+}

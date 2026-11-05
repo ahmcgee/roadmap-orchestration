@@ -178,7 +178,7 @@ test('lanes.flake-unit-own: a flake on the unit\'s own commit (one the tip does 
 
 
 
-test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix round reads the first run', T, async () => {
+test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix round reads both runs in order', T, async () => {
   const run = laneRun([{ id: 'broken', argv: ['sh', '-c', 'echo "not ok 1 - add" >&2; exit 1'] }]);
   const done = started(await lanes(run.ctx, run.unit, run.base));
   assert.equal(done.outcome.kind, 'red');
@@ -189,7 +189,10 @@ test('lanes.red-red: red on the diagnostic rerun too is red, not flaky; the fix 
   assert.ok(record.diagnostic.evidenceDir.endsWith('/broken.rerun'));
   assert.equal(laneSpawns(run).length, 2);
   assert.ok(done.fix !== null && done.fix.kind === 'fix');
-  assert.deepEqual(done.fix.fix.failingEvidenceDirs, record.fixDirs, 'the failing evidence is the first run\'s');
+  assert.deepEqual(done.fix.fix.failingEvidenceDirs, [
+    join(record.evidenceDir, 'output', 'files'),
+    join(record.diagnostic.evidenceDir, 'output', 'files'),
+  ], 'exactly the first run and diagnostic rerun, in execution order');
   assert.deepEqual(done.fix.fix.directives, []);
   const spawnParent = laneSpawns(run)[0]!.parent;
   assert.ok(spawnParent.type === 'stage');

@@ -7,7 +7,7 @@
 // test `prompts.fields==required` holds each module to it.
 import { createHash } from 'node:crypto';
 import type { TestRef } from '../core/events.ts';
-import type { ClauseId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,ReviewFindingId,RulingId,ServeName,Sha,SpecRev,SystemName,UnitId,VisionClauseId,WitnessItemId } from '../core/ids.ts';
+import type { ClauseId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,ReviewFindingId,ResourceUnit,RulingId,ServeName,Sha,SpecRev,SystemName,UnitId,VisionClauseId,WitnessItemId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
 import type { CommandVerdict,FailureRef,IgnoredCensus,LaneDef } from '../core/records.ts';
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
@@ -130,6 +130,9 @@ export type MilestonesInput = Readonly<{ of: readonly UnitMilestone[]; reference
  */
 export type BuildBrowser = Readonly<{ servers: readonly string[]; bringUps: readonly Readonly<{ milestone: MilestoneId; bringUp: BringUp }>[] }>;
 
+/** The last lanes attempt's elapsed lane wall time and actual reserved resources, including CPU tokens. */
+export type LaneSeriesCost = Readonly<{ durationMs: number; resources: readonly ResourceUnit[] }>;
+
 export type BuildInputs = Readonly<{
   /** Existing per-system notes at this unit's checkout commit, relative to the product repo. */
   systemNotes: readonly RepoPath[];
@@ -143,6 +146,8 @@ export type BuildInputs = Readonly<{
   index: ReferenceIndex;
   /** The approving pre-build's notes: facts it found about existing code (item 26); empty when none. */
   fastLanes: readonly BuildLane[];
+  /** Null before this unit has run a lane series. */
+  lastLaneSeries: LaneSeriesCost | null;
   /**
    * The 2026-10-15 batch: the plan's fast suite lanes the lanes stage runs after the spec's (`fastSuiteLanes`,
    * src/pipeline/lanes.ts), which the implementer runs green beside its fast lanes; empty when the plan has none.
@@ -501,7 +506,7 @@ export type RoleInputs = {
 export const ROLE_INPUTS = {
   experienceVerdict: ['mode', 'brief'],
   campaignAudit: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout'],
-  build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
+  build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'lastLaneSeries', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   verifier: ['mode', 'brief'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };

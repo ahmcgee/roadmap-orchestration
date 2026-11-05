@@ -96,7 +96,7 @@ test('surface.fix-evidence: both builders receive findings, lane evidence, a bas
   const inputs: BuildInputs = {
     target: {kind: 'full', doc: {path: repoPath('ARCH.md'), text: 'Target'}}, spec: {unit: unitId('u1'), rev: specRev(1), markdown: 'Spec'},
     intent: 'Repair the failure', nonGoals: ['No unrelated change'], contracts: [], index: {contracts: [], rulings: [], withdrawn: [], ledger: absPath('/run/rulings')},
-    systemNotes: [], notes: ['Retain the restart experiment'], fastLanes: [], suiteLanes: [], evidenceDir: absPath('/run/build'), worktree: absPath('/work'), systems: [],
+    systemNotes: [], notes: ['Retain the restart experiment'], fastLanes: [], suiteLanes: [], lastLaneSeries: null, evidenceDir: absPath('/run/build'), worktree: absPath('/work'), systems: [],
     fixRound: {failingEvidenceDirs: [absPath('/run/lanes/failed')], directives: ['Lost write: src/store.ts:42; experiment node restart.mjs: exit 1'], baseComparison: null, capState: {builds: 4, judgedStages: 12, chargeableFailures: 1, chargeableBound: 3, certificationAllowance: 2}},
     method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, witnessChecks: [], milestones: null, browser: null, handover: null,
   };

@@ -10,10 +10,11 @@ import { absPath,isoTimeOf } from '../src/core/values.ts';
 import { checkManifest } from '../src/git/evidence.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { readInputFiles,recordPlan } from '../src/input/inforce.ts';
-import { pinDispatch,unitBranch } from '../src/pipeline/dispatch.ts';
+import { pinDispatch,unitBranch,verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { fingerprintAt } from '../src/pipeline/gate.ts';
 import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
 import { LANE_STALL_MS,type LaneRecord,seriesDirty,seriesLedger,specSeriesRoot } from '../src/pipeline/lanes.ts';
+import { differentFailuresDirective,dirtyFlakyLaneDirective,dirtyLanesDirective,flakyLaneDirective } from '../src/prompts/directives.ts';
 import { laneFixRound } from '../src/pipeline/rounds.ts';
 import { lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
 import { laneLedgerText } from '../src/prompts/inputs.ts';
@@ -23,7 +24,7 @@ import { fileSha256 } from '../src/spec/spec.ts';
 import { events,intents } from './fixtures/invoke-specs.ts';
 import { DB,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,headOf,keptSpec,launchOf,outcomeFacts,setupUnit,spawnIntents,started } from './fixtures/stage-common.ts';
 import { waitFor } from './helpers/invocation.ts';
-import { git,tmpDir } from './helpers/repo.ts';
+import { commitAll,git,tmpDir } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -112,9 +113,11 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
   assert.ok((fact.kind === 'stage-outcome' && 'unit' in fact) && fact.outcome === 'not-certified' && !fact.chargeable && fact.unchargedLanesReds === 1, 'not-certified consumes one uncharged certification red');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
-  // The dirty checkout is never kept; what the lane wrote is snapshotted first (ignored output is not dirt).
+  // No gate binding is offered for the dirty checkout; its stable path and caches survive until reset or retirement.
   assert.equal(done.verification, null);
-  assert.ok(!worktreeList(run.repo).some((w) => w.path.includes('.verify-')));
+  const stable = verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1);
+  assert.ok(worktreeList(run.repo).some((w) => w.path === stable));
+  assert.equal(readFileSync(join(stable, 'out/x'), 'utf8'), 'ignored\n');
   const snapshots = intents(run.runDir, 'evidence.snapshot');
   const dirty = snapshots.find((s) => s.kind === 'evidence.snapshot' && s.expect.dest.endsWith('/_dirty'));
   assert.ok(dirty !== undefined && dirty.kind === 'evidence.snapshot');
@@ -123,7 +126,7 @@ test('verify.dirty-tree: a lane that writes into the checkout is not certified, 
   assert.deepEqual(manifest.manifest.files.map((f) => f.path), ['src/stray.txt', 'src/w[1]*.txt']);
   assert.ok(dirty.parent.type === 'stage');
   assert.deepEqual(seriesDirty(run.journal.view, specSeriesRoot(run.runDir, dirty.parent)), ['src/stray.txt', 'src/w[1]*.txt'], 'read back as paths');
-  assert.ok(intents(run.runDir, 'worktree.remove').length === 1);
+  assert.equal(intents(run.runDir, 'worktree.remove').length, 0, 'stable checkout removal waits for retirement');
   // The fix round names the dirt.
   assert.ok(done.fix !== null && done.fix.kind === 'fix');
   assert.match(done.fix.fix.directives.join('\n'), /src\/stray\.txt/);
@@ -142,7 +145,7 @@ test('lanes.occupied-before-tree: unlabelled occupancy parks before any lane run
   assert.equal(resourceTable(run.journal.view).get(resourceName(DB))?.status.state, 'free');
 });
 
-test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the checkout and charges nothing; its result.json records cancelled{pause}', T, async () => {
+test('lanes.interrupted-holds: a pause mid-lane holds the unit, keeps the stable checkout and charges nothing; its result.json records cancelled{pause}', T, async () => {
   const mark = join(tmpDir('lanes-mark'), 'running');
   const sleeper: LaneJson = { id: 'sleeper', argv: ['sh', '-c', `touch "${mark}"; sleep 60`] };
   const held = laneRun([sleeper]);
@@ -160,6 +163,7 @@ test('lanes.interrupted-holds: a pause mid-lane holds the unit, removes the chec
   assert.ok(result?.type === 'command' && result.verdict === 'cancelled', `one shape with a backend call's cancel: ${JSON.stringify(result)}`);
   assert.equal(result.reason, 'pause');
   assert.deepEqual(done.ledger.map((l) => l.verdict), ['cancelled']);
+  assert.ok(existsSync(verificationWorktree(held.ctx.plan().worktreeRoot, held.ctx.plan().arc, U1)));
   const u = held.journal.view.unit(U1);
   assert.equal(u.status, 'held');
   assert.equal(u.counters.chargeableFailures, 0);
@@ -170,7 +174,7 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
   const lane = (id: string, verdict: LaneRecord['verdict']): LaneRecord => ({
     lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: verdict === 'fail' ? 1 : null, verdict, evidenceDir: absPath(`/ev/${id}`), ignored: null,
     inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${id}/output/files`)],
-    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, pressure: null, repeat: null, hostSuspected: null,
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, pressure: null, failure: null, repeat: null, hostSuspected: null,
   });
   const salvage = sha('a'.repeat(40));
   const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
@@ -216,7 +220,7 @@ test('lanes.ignored-capture: a failing lane\'s undeclared ignored output is capt
   assert.deepEqual(readJsonFile(join(dir, 'ignored.json')), census, 'recorded durably, read back the same');
   // The fix round reads the captured files and is told the census.
   assert.ok(done.fix !== null && done.fix.kind === 'fix');
-  assert.deepEqual(done.fix.fix.failingEvidenceDirs, record.fixDirs);
+  assert.deepEqual(done.fix.fix.failingEvidenceDirs, [...record.fixDirs, ...record.diagnostic!.fixDirs]);
   assert.deepEqual(done.fix.fix.directives, [
     'Lane deploy ignored writes: 5 files (26 B), 3 captured; uncaptured: 1 under .local/demo/ (excluded), 1 under node_modules/dep/ (build-output).',
   ]);
@@ -299,4 +303,47 @@ test('lanes.evidence-globs-in-flight: evidenceGlobs and evidenceExcludes edited 
   assert.ok(lane !== undefined && lane.evidenceDir !== first.ledger[0]!.evidenceDir);
   assert.deepEqual(capturedFiles(join(lane.evidenceDir, 'tree')), ['out/b.log'], 'the edited globs were read');
   assert.deepEqual(lane.ignored?.uncaptured, [{ dir: 'out/', reason: 'not-declared', files: 1, bytes: 2 }]);
+});
+
+for (const different of [false, true]) {
+  test(`lanes.red-rerun-evidence: both runs reach the fix round (${different ? 'different' : 'same'} failure signatures), including after reconstruction`, T, async () => {
+    const command = different
+      ? 'mkdir -p out; if [ -f out/first ]; then echo "operator-and-bound-clients forbidden" >&2; else touch out/first; echo "regional-owners-and-policy deadline exceeded" >&2; fi; exit 1'
+      : 'echo "$PWD/regional-owners-and-policy deadline exceeded" >&2; exit 1';
+    const run = laneRun([{ id: 'deploy', cwd: different ? '.' : 'src', argv: ['sh', '-c', command] }]);
+    const done = started(await lanes(run.ctx, run.unit, run.base));
+    assert.equal(done.outcome.kind, 'red');
+    const lane = done.ledger[0]!;
+    assert.ok(lane.diagnostic !== null && lane.diagnostic.verdict === 'fail');
+    assert.ok(lane.failure !== null && lane.diagnostic.failure !== null);
+    assert.equal(lane.failure !== lane.diagnostic.failure, different);
+    assert.ok(done.fix?.kind === 'fix');
+    assert.deepEqual(done.fix.fix.failingEvidenceDirs, [...lane.fixDirs, ...lane.diagnostic.fixDirs]);
+    const directive = differentFailuresDirective(lane.lane, lane.evidenceDir, lane.diagnostic.evidenceDir);
+    assert.equal(done.fix.fix.directives.includes(directive), different);
+    const parent = { type: 'stage', unit: U1, stage: 'lanes', attempt: run.journal.view.completedLanes(U1)! } as const;
+    const replay = seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, parent));
+    assert.deepEqual(laneFixRound(replay, [], run.base), done.fix);
+  });
+}
+
+test('lanes.red-and-dirty: a diagnostic pass carries both the red directives and the dirty blocker', T, async () => {
+  const run = laneRun([{ id: 'flaky', argv: ['sh', '-c', 'mkdir -p out; if [ -f out/first ]; then exit 0; fi; touch out/first; echo stray > src/stray.txt; echo "deploy assertion failed" >&2; exit 1'] }]);
+  git(run.repo, 'checkout', '--quiet', '-b', 'unit-change');
+  writeFileSync(join(run.repo, 'src/add.js'), 'export function add(a, b) { return a + b; }\n');
+  commitAll(run.repo, 'unit change');
+  const done = started(await lanes(run.ctx, run.unit, headOf(run.repo)));
+  assert.equal(done.outcome.kind, 'red', 'dirt prevents reclassification as flaky');
+  const lane = done.ledger[0]!;
+  assert.ok(lane.flaky && lane.diagnostic?.verdict === 'pass');
+  assert.ok(done.fix?.kind === 'fix');
+  for (const directive of [flakyLaneDirective(lane.lane, lane.diagnostic.evidenceDir), dirtyLanesDirective(['src/stray.txt']), dirtyFlakyLaneDirective(lane.lane)]) {
+    assert.ok(done.fix.fix.directives.includes(directive));
+  }
+  assert.deepEqual(done.fix.fix.failingEvidenceDirs, [...lane.fixDirs, ...lane.diagnostic.fixDirs]);
+  const trueRed = { ...lane, flaky: false, diagnostic: { ...lane.diagnostic, verdict: 'fail' as const, failure: lane.failure } };
+  const fix = laneFixRound([trueRed], ['src/stray.txt'], run.base);
+  assert.ok(fix.kind === 'fix');
+  assert.ok(fix.fix.directives.includes(dirtyLanesDirective(['src/stray.txt'])));
+  assert.ok(!fix.fix.directives.includes(dirtyFlakyLaneDirective(lane.lane)), 'a genuinely red rerun gets no flaky acceptance directive');
 });

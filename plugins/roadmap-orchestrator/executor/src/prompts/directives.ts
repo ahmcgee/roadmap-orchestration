@@ -112,6 +112,16 @@ export function dirtyLanesDirective(dirty: readonly string[]): string {
   return `The lanes changed these paths in a clean checkout of your commit: ${dirty.join(', ')}. A lane may write only ignored paths; make the lanes leave every tracked and unignored file as committed.`;
 }
 
+/** Diagnostic passes would have made this series flaky, but dirt prevents that acceptance. */
+export function dirtyFlakyLaneDirective(lane: LaneId): string {
+  return `Lane ${lane} passed its diagnostic rerun and would have been accepted as flaky had the checkout been clean. The dirty files are the certification blocker.`;
+}
+
+/** Both red runs are evidence, even when they failed at different points. */
+export function differentFailuresDirective(lane: LaneId, first: string, rerun: string): string {
+  return `Lane ${lane} failed at different points on its first run and diagnostic rerun (different failure signatures). Read both evidence directories: ${first} and ${rerun}. This suggests stacked faults or an environmental cause rather than one repeatable bug.`;
+}
+
 /** M4a rev 3 (D1): witness lanes that moved their checkout's HEAD away from the commit (not certified). */
 export function movedHeadDirective(): string {
   return 'The witness lanes moved the HEAD of a clean checkout of your commit (a lane committed, checked out or reset). A lane may write only ignored paths and may not touch git state; make the lanes leave the checkout at the commit.';

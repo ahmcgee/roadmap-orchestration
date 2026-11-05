@@ -229,7 +229,7 @@ export type WorktreeCheckout =
 
 /** Recorded inputs and preconditions, per kind. Git kinds record every input of the object they create. */
 export type OpExpect = {
-  'worktree.create': Readonly<{ path: AbsPath; checkout: WorktreeCheckout }>;
+  'worktree.create': Readonly<{ path: AbsPath; checkout: WorktreeCheckout; reset?: true }>;
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
@@ -451,7 +451,9 @@ export type MeterSubject =
 // outcome leads to) is `src/pipeline/transitions.ts`; its `StageOutcome` union is derived from this list.
 
 /**
- * Every outcome a stage can report, per stage. `retire` is terminal and reports none. 1.0.0-dev.17 (fault isolation):
+ * Every outcome a stage can report, per stage. `retire` is terminal and reports none.
+ * `checkout-residue` parks checkout create/reset/remove failures with unit-scoped residue/retry advice.
+ * 1.0.0-dev.17 (fault isolation):
  * `executor-fault` at every stage but `ff` and `snapshot` (which always hold the integration slot, so a throw there crashes):
  * the executor threw inside the unit's task while it held only the unit's own state (src/schedule/fault.ts); an uncharged
  * operator env park whose detail carries the stack, so `resume <unit>` re-enters the stage.
@@ -460,14 +462,14 @@ export const STAGE_OUTCOME_KINDS = {
   // A re-entered unit's preparation (M2): where the prepared worktree enters. `conflicted` keeps MERGE_HEAD and
   // enters a `resolve` round (A6). `interrupted` (arc feedback 2026-10-15): only ever the recovery hold of a preparation
   // a crash cut short (`cause: recovery`); the stage itself is never cancelled.
-  prepare: ['clean-pre-build', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
+  prepare: ['checkout-residue', 'clean-pre-build', 'clean-build', 'clean-verify', 'conflicted', 'interrupted', 'executor-fault'],
   // A vacuity repair's first stage (M3, B3): the mutant applied and its lane run. `reproduced` goes on to
   // pre-build; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
-  reproduce: ['reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
-  'pre-build': ['approve', 'interrupted', 'executor-fault'],
+  reproduce: ['checkout-residue', 'reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
+  'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault'],
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
-  build: ['spec-wrong',
+  build: ['checkout-residue', 'spec-wrong',
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
   ],
   quiesce: ['empty', 'executor-fault'],
@@ -485,6 +487,7 @@ export const STAGE_OUTCOME_KINDS = {
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
   // environment, never a red lane), here and at the candidate.
   lanes: [
+    'checkout-residue',
     'green', 'red', 'regression', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
     'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable',
   ],
@@ -496,12 +499,14 @@ export const STAGE_OUTCOME_KINDS = {
   // dev.17 (proportional review): `delta-empty` (no file changed since the unit's approval and no target it bound moved:
   // code skips the gate and approves again at the new fingerprint, uncharged).
   gate: [
+    'checkout-residue',
     'approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded',
     'executor-fault', 'delta-empty',
   ],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
   candidate: [
+    'checkout-residue',
     'green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked',
     'executor-fault', 'env-unavailable',
   ],
@@ -1495,7 +1500,12 @@ type OpSchema<K extends OpKind> = Readonly<{
 
 export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
   'worktree.create': {
-    expect: object((f) => ({ path: f.get('path', absR), checkout: f.get('checkout', worktreeCheckout) })),
+    expect: object((f) => {
+      const reset = f.optional('reset', literal(true));
+      const checkout = f.get('checkout', worktreeCheckout);
+      if (reset && checkout.type !== 'detached') throw new SchemaError(`${f.path}.reset`, 'detached checkout', checkout);
+      return { path: f.get('path', absR), checkout, ...(reset === undefined ? {} : { reset }) };
+    }),
     post: nothing,
     outcome: object((f) => ({ kind: f.get('kind', literal('created')), head: f.get('head', shaR) })),
   },

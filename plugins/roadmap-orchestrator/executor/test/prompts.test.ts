@@ -13,6 +13,7 @@ import type { BoundedDiff } from '../src/git/boundeddiff.ts';
 import { type ObligationDef } from '../src/holistic/types.ts';
 import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
 import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor as livePromptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
+import { resourceUnit } from '../src/core/ids.ts';
 import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
 import { BUILD_SCHEMA, EXPERIENCE_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, validateBuildOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
@@ -190,12 +191,12 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
     {target: {kind: 'full', doc: doc('docs/target-0.md', 'TARGET-0')},  notes: ['NOTE-A'],
       systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      systems: [systemName('app-a')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
+      lastLaneSeries: null, systems: [systemName('app-a')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
     },
     {target: {kind: 'full', doc: doc('docs/target-1.md', 'TARGET-1')},  notes: ['NOTE-B'],
       systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
-      systems: [systemName('app-b')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
+      lastLaneSeries: { durationMs: 123456, resources: [resourceUnit('kind-estate'), resourceUnit('@cpu#1')] }, systems: [systemName('app-b')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
       witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
       milestones: milestonesSample(), browser: browserSample(),
       handover: {
@@ -421,6 +422,15 @@ describe('prompts', () => {
         }
       }
     }
+  });
+
+  it('build renders the last lane series cost only when one exists', () => {
+    const prompt = promptFor('build', 'claude-opus-5-5');
+    assert.doesNotMatch(prompt.render(SAMPLES.build[0]), /<last_lane_series>/);
+    const text = prompt.render(SAMPLES.build[1]);
+    const cost = text.match(/<last_lane_series>(.*?)<\/last_lane_series>/)?.[1];
+    assert.ok(cost !== undefined);
+    assert.deepEqual(JSON.parse(cost), SAMPLES.build[1].lastLaneSeries);
   });
 
   it('prompts.every-supported-seat-renders: deterministic, and the schema accepts a sample output', () => {
