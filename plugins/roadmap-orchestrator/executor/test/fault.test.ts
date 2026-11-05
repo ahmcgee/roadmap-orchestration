@@ -12,6 +12,7 @@ import { unitId } from '../src/core/ids.ts';
 import { readManifest } from '../src/git/evidence.ts';
 import { laneRevOf, parseObligations } from '../src/holistic/types.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
+import { verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { jobFaultOpen } from '../src/schedule/fault.ts';
 import { baselineOwed } from '../src/schedule/scheduler.ts';
@@ -21,6 +22,7 @@ import { assertNoSurvivors } from './helpers/reap.ts';
 import { tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
+import { events } from './fixtures/invoke-specs.ts';
 import { EXEC_TIMEOUT_MS, SMOKE_DEFAULT, journalOf, reasonOf, setupExec, startExec, until } from './fixtures/exec-common.ts';
 import { haltItem, receiptOf, startScheduler, stopScheduler, submit } from './fixtures/sched-common.ts';
 import { startHolistic } from './fixtures/sched-m3-common.ts';
@@ -103,6 +105,16 @@ test('fault.unit-confined: a throw inside u1\'s lanes parks it executor-fault (u
     await receiptOf(r, submit(r, { type: 'resume', target: { type: 'unit', unit: U1 } }));
     await until(() => r.journal.view.unit(U1).status === 'retired', WAIT_MS, 'u1 to merge after its resume');
     assert.deepEqual(outcomes(d, 'u1'), [...UP_TO_LANES, 'lanes:executor-fault', 'lanes:green', ...FROM_GATE], 'resume re-entered lanes, no new pre-build or build');
+    const path = verificationWorktree(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, U1);
+    const creates = r.journal.view.opsOfUnit('worktree.create', U1).filter((i) => i.expect.path === path);
+    assert.equal(creates.length, 2, 'the faulted checkout is recreated once on resume');
+    assert.deepEqual(creates.map((i) => i.expect.reset), [undefined, undefined], 'resume discards the faulted cache rather than preserving its unreadable ignored evidence');
+    const removals = r.journal.view.opsOfUnit('worktree.remove', U1).filter((i) => i.expect.path === path);
+    assert.deepEqual(removals.map((i) => i.parent.type === 'stage' ? i.parent.stage : null), ['lanes', 'retire']);
+    const log = events(r.ctx.runDir);
+    const removed = log.find((e) => e.type === 'done' && e.op === removals[0]!.op)!;
+    const recreated = log.find((e) => e.type === 'intent' && e.op === creates[1]!.op)!;
+    assert.ok(removed.seq < recreated.seq, 'the faulted checkout is removed before the next lanes create');
     release(d.scenarioDir, 'u2build');
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }, { unit: 'u2', result: 'merged' }] });
   } finally {
@@ -207,9 +219,11 @@ test('fault.symlink-in-evidence-glob: a symlink a lane leaves under its declared
     assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
     // The lane's own tree snapshots, of its verification checkout; the build's evidence stage snapshots the unit worktree,
     // where the lane never ran.
-    const trees = r.journal.view.opsOf('evidence.snapshot').filter((i) => i.expect.source.includes('.verify-'));
-    assert.ok(trees.length >= 1);
+    const path = verificationWorktree(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, U1);
+    const trees = r.journal.view.opsOf('evidence.snapshot').filter((i) => i.expect.source === path);
+    assert.equal(trees.length, 1, 'exactly one snapshot of the lane\'s stable verification checkout');
     for (const snap of trees) {
+      assert.ok(r.journal.view.doneOf(snap.op) !== null, 'the tree evidence snapshot completed');
       assert.deepEqual(snap.expect.notRegular, ['out/link']);
       assert.deepEqual(readManifest(snap.expect.dest)?.files.map((f) => f.path), ['out/real']);
     }

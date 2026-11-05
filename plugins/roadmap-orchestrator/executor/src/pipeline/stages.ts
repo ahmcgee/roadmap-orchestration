@@ -1334,8 +1334,14 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const entry = seriesEntry(ctx, order);
   const entered = await enter(ctx, stageHolder(parent), entry);
   if (isCancelled(entered)) return entered;
-  // Legacy numbered and diagnostic checkouts keep their original removal path. The stable unit checkout resets below.
-  for (const created of presentCheckouts(ctx.journal.view, unit.id).filter((c) => c.expect.path !== verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id))) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
+  // A faulted series may leave unreadable ignored evidence. A cache-preserving reset would retain it and fault again.
+  // Discard that series' checkout through the normal evidence-backed removal, just like legacy/diagnostic checkouts.
+  const previous = ctx.journal.view.completedLanesOutcome(unit.id);
+  for (const created of presentCheckouts(ctx.journal.view, unit.id)) {
+    const faulted = previous?.outcome === 'executor-fault' && created.parent.type === 'stage'
+      && created.parent.stage === 'lanes' && created.parent.attempt === previous.attempt;
+    if (faulted || created.expect.path !== verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
+  }
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
   const series = await runLaneSeries(ctx, parent, order, 'spec', checkout, specSeriesRoot(ctx.runDir, parent), rt, entry !== null, new Map(), verifyRunsOf(unit, approvedVerification(ctx, unit)));

@@ -12,7 +12,9 @@ import { test } from 'node:test';
 import { invocationId, opKey, resourceName, sha256 } from '../src/core/ids.ts';
 import { isoTimeOf } from '../src/core/values.ts';
 import { EVENTS_FILE, openJournal } from '../src/core/log.ts';
-import { implementerDispatch, judgmentDispatch } from '../src/pipeline/dispatch.ts';
+import { implementerDispatch, judgmentDispatch, verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { seriesTree } from '../src/pipeline/lanes.ts';
+import { runUnit } from '../src/pipeline/unit.ts';
 import { invocationDir, killWorkload } from '../src/pipeline/invoke.ts';
 import { type RoundInput, gateReviseRound } from '../src/pipeline/rounds.ts';
 import { promptFor } from '../src/prompts/index.ts';
@@ -27,7 +29,7 @@ import { parseRepoConfig } from '../src/routing/layers.ts';
 import { reached } from './helpers/barrier.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
-import { BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts, planCheckRepairStep, planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf } from './fixtures/stage-common.ts';
+import { BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, admitAll, facts, headOf, laneEvidencePattern, launchOf, outcomeFacts, planCheckRepairStep, planCheckStep, seated, setupUnit, spawnIntents, started, worktreeOf } from './fixtures/stage-common.ts';
 import { events, intents } from './fixtures/invoke-specs.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -122,7 +124,8 @@ test('stages.red-lane-fix-round: the resumed implementer reads both red runs\' e
   const red = started(await lanes(run.ctx, run.unit, first.sha as LanesDone['at']));
   assert.equal(red.outcome.kind, 'red');
   assert.equal(show(red.next), 'build/fix@med');
-  assert.equal(red.verification, null, 'the failed series\' checkout is removed');
+  assert.equal(red.verification, null, 'the failed series supplies no gate tree binding');
+  assert.ok(existsSync(verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1)), 'the stable checkout persists for the next series');
   assert.ok(red.fix !== null && red.fix.kind === 'fix');
   const failing = red.fix.fix.failingEvidenceDirs;
   const record = red.ledger[0]!;
@@ -251,14 +254,15 @@ test('rounds.crash-lost-inherits-deadline: a build a crash left lost without tre
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null));
 });
 
-test('rounds.gate-revise: the verification checkout is removed first, then the session resumes with the directives', T, async () => {
+test('rounds.gate-revise: the session resumes with directives; the stable checkout persists until retirement and its old series binding expires on reset', T, async () => {
   const fixed = { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' };
   const directive = 'Name the parameters augend and addend.';
   const run = setupUnit({
     steps: [
       planCheckStep({ decision: 'approve' }),
       codexBuild([{ type: 'commit', message: 'add', files: fixed }], { argv: ['exec', '-C'] }),
-      codexBuild([], { argv: ['exec', 'resume', '00000000-0000-4000-8000-000000000001'], stdinContains: [directive] }),
+      codexBuild([{ type: 'commit', message: 'name add parameters', files: { 'src/add.js': 'export function add(augend, addend) {\n  return augend + addend;\n}\n' } }], { argv: ['exec', 'resume', '00000000-0000-4000-8000-000000000001'], stdinContains: [directive] }),
+      gateStep({ decision: 'approve' }),
     ],
   });
   started(await preBuild(run.ctx, run.unit));
@@ -270,13 +274,29 @@ test('rounds.gate-revise: the verification checkout is removed first, then the s
   const revise = gateReviseRound([directive], green.ledger, green.verification, green.at);
   const b = started(await build(run.ctx, run.unit, revise));
   assert.equal(b.outcome.kind, 'success');
-  assert.ok(!existsSync(green.verification.path), 'the verification checkout is gone');
-  // The pre-build removed its own checkout of the tip; the verification checkout is removed once, here.
-  const removal = events(run.runDir).filter((e) => e.type === 'intent' && e.kind === 'worktree.remove' && e.expect.path === green.verification!.path);
-  assert.equal(removal.length, 1);
-  const removed = removal[0]!;
-  assert.ok(removed.type === 'intent' && removed.parent.type === 'stage' && removed.parent.stage === 'build' && removed.parent.attempt === b.attempt);
-  assert.ok(removed.seq < spawnIntents(run).at(-1)!.seq, 'removed before the round\'s invocation');
+  const path = green.verification.path;
+  assert.equal(path, verificationWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1));
+  assert.ok(existsSync(path), 'the stable verification checkout survives the fix build');
+  assert.equal(git(path, 'rev-parse', 'HEAD'), first.sha, 'the build does not reset the verification checkout');
+  assert.equal(run.journal.view.opsOf('worktree.remove').filter((i) => i.expect.path === path).length, 0);
+  const resumed = readCalls(run.scenario.path).at(-1)!;
+  assert.equal(resumed.cwd, worktreeOf(run), 'the fix resumes in the unit worktree');
+  assert.ok(resumed.stdin.includes(directive));
+  const second = await afterBuild(run, b);
+  assert.notEqual(second.sha, first.sha);
+  const next = started(await lanes(run.ctx, run.unit, second.sha as LanesDone['at']));
+  assert.equal(next.outcome.kind, 'green');
+  assert.equal(next.verification?.path, path, 'the next series reuses the same stable address');
+  assert.equal(next.verification.at, second.sha);
+  const previous = { type: 'stage', unit: U1, stage: 'lanes', attempt: green.attempt } as const;
+  assert.equal(seriesTree(run.journal.view, previous, path), null, 'the reset releases the previous series binding');
+  assert.deepEqual(run.journal.view.opsOf('worktree.create').filter((i) => i.expect.path === path).map((i) => i.expect.reset), [undefined, true]);
+  assert.deepEqual(await runUnit(run.ctx, run.unit, admitAll), { kind: 'merged' });
+  assert.equal(existsSync(path), false, 'retirement removes the stable checkout');
+  const removals = run.journal.view.opsOf('worktree.remove').filter((i) => i.expect.path === path);
+  assert.equal(removals.length, 1, 'one removal, at retirement');
+  assert.ok(removals[0]!.parent.type === 'stage' && removals[0]!.parent.stage === 'retire');
+  assert.ok(run.journal.view.doneOf(removals[0]!.op) !== null);
   assert.ok(readCalls(run.scenario.path).every((c) => c.step !== null));
 });
 
