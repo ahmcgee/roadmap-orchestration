@@ -153,12 +153,6 @@ export function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlyS
 export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
   return ({ view, plan, unit, stage, blocking, drains, tripped, pressure }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
-    for (const dependency of unit.after) {
-      const effective = effectiveDependency(view, dependency);
-      if (view.unit(effective).status !== 'retired') c.push({ type: 'dependency', unit: effective });
-    }
-    for (const edge of unit.contingent) if (view.edgeResolved(edge.id) === null) c.push({ type: 'contingent-edge', edge: edge.id });
-    for (const milestone of milestoneWaits(view, plan).get(unit.id) ?? []) c.push({ type: 'milestone', milestone });
     const pack = packReviewHold(view, plan);
     // An ended fact can precede its item's raise (a crash boundary); the scheduler settles items before admission.
     if ((pack.kind === 'arc' || (pack.kind === 'units' && pack.units.has(unit.id))) && pack.needsUser !== null) {
@@ -287,13 +281,22 @@ export function readyDecisions(input: ReadyInput): readonly (ReadyUnit & Readonl
   const { view, plan } = input;
   const admit = admitter(input.routing, input.spec);
   const out: (ReadyUnit & Readonly<{ constraints: readonly AdmissionConstraint[] }>)[] = [];
+  const waits = milestoneWaits(view, plan);
   for (const unit of plan.units) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
     const next = nextStage(u, input.spec(unit).reproduces, input.spec(unit).review);
     if (next?.kind !== 'admission') continue;
+    const constraints: AdmissionConstraint[] = [];
+    for (const dependency of unit.after) {
+      const effective = effectiveDependency(view, dependency);
+      if (view.unit(effective).status !== 'retired') constraints.push({ type: 'dependency', unit: effective });
+    }
+    for (const edge of unit.contingent) if (view.edgeResolved(edge.id) === null) constraints.push({ type: 'contingent-edge', edge: edge.id });
+    for (const milestone of waits.get(unit.id) ?? []) constraints.push({ type: 'milestone', milestone });
     const decision = admit({ ...input, unit, stage: next.stage });
-    out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id), constraints: decision.kind === 'admit' ? [] : decision.constraints });
+    if (decision.kind === 'wait') constraints.push(...decision.constraints);
+    out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id), constraints });
   }
   return out.sort((a, b) => compareRank(a.rank, b.rank));
 }

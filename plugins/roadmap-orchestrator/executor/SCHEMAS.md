@@ -852,6 +852,8 @@ wait ids, recovery closure facts or active-tail extrapolation exist.
 
 Admission rechecks pause, pending mutation drain, run-only, backend parks, breakers, base-red, blocking items, findings,
 known defects, pressure, compare and deflake holds before prepare/reproduce/pre-build/build/lanes/gate/candidate.
+Dependency, contingent-edge and milestone constraints gate initial task dispatch only; tasks already in flight retain
+the original stage-admission rules. Waiting reasons are measured only from the constraints each path enforces.
 Quiesce/evidence/salvage/teardown and ff/snapshot are mandatory chains despite pause/drain.
 
 The arbiter serves docs/batch/job waiters first in arrival order, then units: high priority; promoted waiters by age;

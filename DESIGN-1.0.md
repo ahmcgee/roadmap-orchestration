@@ -109,7 +109,7 @@ decisions, report and evidence), bounded to ten recent history items per list.
 Waiting is measured per request in memory at each arbiter tick: one total and independent simultaneous reason
 totals (CPU pressure, memory pressure, tokens, named resources, publication slot, queue precedence). Completed
 reservations persist those totals on the reserve transition. Scheduler admission holds use the same accumulation,
-including dependency/contingent/milestone, baseline, review and repair-batch holds, recorded at stage admission.
+including dependency/contingent/milestone holds at initial dispatch and baseline, review and repair-batch holds, recorded at stage admission. In-flight tasks retain their previous stage-admission constraints; graph readiness is not reimposed.
 Status and summary share the completed totals per unit-stage and job-stage; live blockers remain in sched.json.
 Old grants without measurements are unmeasured, warned once; crashes discard in-flight timing and exclude downtime.
 CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers. Only positive workload CPU (a calibrated request or build/lanes/candidate stage) arms CPU and memory braking; classification survives run/cleanup/replay until release, and pending reserves count. Judgments alone leave first-workload progress available. Both CPU and memory pressure brake only while another workload holds or has reserved CPU tokens, so a lone workload always progresses despite external host saturation.
