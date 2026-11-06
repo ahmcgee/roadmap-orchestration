@@ -431,6 +431,11 @@ readers for their complete nested schema; those fields are validated against rea
 
 ## Event log and effect contracts
 
+Throughput additions retain schema 2: reserve transitions may carry `expect.waited` and candidate reserves may
+carry `expect.slotHolder`. `stage-admitted {unit,stage,waited}` records admission measurement without advancing an
+attempt; `candidate-entry-planned {unit,attempt,tip,request}` records candidate selection and tip-driven refresh.
+The Scheduling and Residues sections define their validation and ownership contracts. No wait-episode facts or ids exist.
+
 Events are hash-chained records. Envelope is `{v,seq,prev,at,arc}`; prev binds the preceding record hash (null at seq 1); body is intent,
 done, abort or fact. Intents carry op id/kind, resource, parent and exact expect payload; done binds kind-specific outcome
 and recoveredBy. Aborts give reason/evidence. Log replay enforces closure, identity and order; torn tails are recorded.
@@ -493,6 +498,12 @@ candidates uncharged. Completion binds planRev/head/highWater and can reopen und
 remains immutable. GC preserves needed verified snapshots while compacting eligible old runtime/evidence.
 
 ## Status and brief projections
+
+Full status and summary share `waiting` through StatusCore:
+`{unmeasuredReservations,byUnitStage:[{unit,stage,totalMs,byReasonMs}],byJobStage:[{job,stage:JobKind,totalMs,byReasonMs}]}`.
+It sums completed reserve and stage-admitted measurements. Simultaneous reason totals are non-additive; absent
+legacy measurements remain unmeasured. Current blockers stay in sched.json; no active tail or recovery downtime is
+extrapolated. Summary retains the lightweight shared projection.
 
 Status is read-only without a lock. Summary fields: arc, state, planRev, supervision, progress `{total,merged,states,held,remaining}`,
 spend `{costUsd,expectedUsd,differenceUsd,estimatedCalls,unavailableCalls}`, milestones, caught, verdicts, captures,
