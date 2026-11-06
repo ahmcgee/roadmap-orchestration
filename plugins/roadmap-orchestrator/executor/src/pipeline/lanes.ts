@@ -1041,6 +1041,14 @@ export async function runLaneSeries(
       }
       entry = false;
       const reserved = heldReservation(ctx, holder, 'reserved');
+      // A compound entry has already acquired its first lane: honour a pause that arrived at the grant.
+      if (rt.signal.aborted) {
+        const cleaned = await cleanup(ctx, reserved, parent);
+        return {
+          kind: 'ended', ran: null,
+          end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'interrupted', reason: laneAbortReason(rt.signal) },
+        };
+      }
       const occupancy = await probe(ctx, reserved, parent);
       if (occupancy.kind === 'parked') {
         const cleaned = await cleanup(ctx, reserved, parent);

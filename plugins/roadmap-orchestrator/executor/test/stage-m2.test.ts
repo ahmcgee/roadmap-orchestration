@@ -87,7 +87,7 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
   }
   const events = eventsOf(d);
   const expected: Readonly<Record<(typeof ADMISSION)[number], readonly ResourceUnit[]>> = {
-    'pre-build': tokens(1), build: tokens(4), lanes: tokens(2), gate: tokens(1), candidate: [INTEGRATION_SLOT],
+    'pre-build': tokens(1), build: tokens(4), lanes: tokens(2), gate: tokens(1), candidate: [...tokens(2), INTEGRATION_SLOT],
   };
   for (const stage of ADMISSION) {
     const f = events.map(outcomeOf).find((o) => o !== null && o.stage === stage);
@@ -96,16 +96,15 @@ test('stage.entry-before-first-op: every admitted stage\'s first journaled op is
     const first = ops[0];
     assert.ok(first !== undefined && first.type === 'intent' && first.kind === 'resource.transition', `${stage}: its first op is a resource transition`);
     assert.equal(first.expect.edge.type, 'reserve', `${stage}: the first op reserves`);
-    assert.deepEqual(first.expect.holder, stage === 'candidate'
-      ? { type: 'publication', unit: U1, attempt: f.attempt }
-      : { type: 'stage', unit: U1, stage, attempt: f.attempt });
+    assert.deepEqual(first.expect.holder, { type: 'stage', unit: U1, stage, attempt: f.attempt });
+    assert.deepEqual(first.expect.slotHolder, stage === 'candidate' ? { type: 'publication', unit: U1, attempt: f.attempt } : undefined);
     assert.deepEqual(first.expect.resources, expected[stage], `${stage}'s entry reservation`);
     // Nothing the attempt wrote comes before its reservation (no fact since the previous outcome or, for the first
     // stage, since the plan revision) but a judgment's capture under the fence (M3 Checkpoint A: the fence, then
-    // `@cpu`): pre-build's pin and its judgment-inputs, the gate's judgment-inputs.
+    // `@cpu`): pre-build's pin and its judgment-inputs, the gate's judgment-inputs, and candidate's entry plan.
     const since = events.findLast((x) => x.seq < first.seq && (outcomeOf(x) !== null || (x.type === 'fact' && x.fact.kind === 'plan-applied')))?.seq ?? 0;
     const facts = events.filter((e) => e.type === 'fact' && e.seq > since && e.seq < first.seq);
-    const capture = stage === 'pre-build' ? ['dispatch', 'judgment-inputs'] : stage === 'gate' ? ['judgment-inputs'] : [];
+    const capture = stage === 'pre-build' ? ['dispatch', 'judgment-inputs'] : stage === 'gate' ? ['judgment-inputs'] : stage === 'candidate' ? ['candidate-entry-planned'] : [];
     assert.deepEqual(facts.map((e) => e.type === 'fact' && e.fact.kind), capture, `${stage}: only its capture between the previous outcome and the reservation`);
   }
   // The build's reservation is held through its chain and released by teardown.
@@ -330,8 +329,10 @@ test('publication.ownership: the candidate\'s publication holds the slot through
     await assert.rejects(snapshot(r.ctx, u1), /not running under the unit's publication/, 'snapshot publishes only under the publication');
     const slot = transitions(eventsOf(d)).filter((t) => t.expect.resources.includes(INTEGRATION_SLOT));
     assert.deepEqual(slot.map((t) => [t.expect.holder, t.expect.edge.type, t.parent.type === 'stage' ? t.parent.stage : t.parent.type]), [
-      [holder, 'reserve', 'candidate'], [holder, 'run', 'candidate'], [holder, 'clean', 'snapshot'], [holder, 'release', 'snapshot'],
+      [{ type: 'stage', unit: U1, stage: 'candidate', attempt: c.attempt }, 'reserve', 'candidate'], [holder, 'run', 'candidate'], [holder, 'clean', 'snapshot'], [holder, 'release', 'snapshot'],
     ]);
+    assert.deepEqual(slot[0]!.expect.resources, [...tokens(2), INTEGRATION_SLOT]);
+    assert.deepEqual(slot.map((t) => t.expect.slotHolder ?? t.expect.holder), [holder, holder, holder, holder], 'every slot transition belongs to the publication');
   } finally {
     r.journal.close();
   }
@@ -346,10 +347,10 @@ test('publication.ownership: a pause before green abandons the candidate (its su
     const u1 = r.unit('u1');
     const pause = new AbortController();
     const now = reserveNow(r.ctx);
-    // The pause lands once the publication holds the slot: the suite lane's wait is the one it cancels.
-    const acquire: Acquire = async (request, holder, rank, signal) => {
-      const grant = await now(request, holder, rank, signal);
-      if (holder.type === 'publication') pause.abort('pause');
+    // The pause lands at the compound publication grant, cancelling entry before the suite lane runs.
+    const acquire: Acquire = async (request, holder, rank, signal, entry) => {
+      const grant = await now(request, holder, rank, signal, entry);
+      if (request.publication) pause.abort('pause');
       return grant;
     };
     const abandoned = started(await candidate({ ...r.ctx, acquire, signal: pause.signal }, u1));
@@ -408,7 +409,7 @@ describe('publication.ownership: a crash at each boundary of the publication, th
     assert.equal(exit.code, 0, exit.stderr);
     const child = transitions(eventsOf(d).slice(gated));
     child.forEach((t, i) => {
-      if (t.expect.holder.type === 'publication') occurrences[t.expect.edge.type as keyof typeof occurrences] = i + 1;
+      if ((t.expect.slotHolder ?? t.expect.holder).type === 'publication') occurrences[t.expect.edge.type as keyof typeof occurrences] = i + 1;
     });
     assert.ok(Object.values(occurrences).every((n) => n > 0), JSON.stringify(occurrences));
   });
@@ -441,10 +442,10 @@ describe('publication.ownership: a crash at each boundary of the publication, th
       assert.equal(all.filter((o) => o === 'ff:published').length, 1);
       // The slot: only publications ever held it, one at a time, and the green one kept it to the end.
       const slot = transitions(events).filter((t) => t.expect.resources.includes(INTEGRATION_SLOT));
-      assert.ok(slot.every((t) => t.expect.holder.type === 'publication'), 'only publications hold the slot');
+      assert.ok(slot.every((t) => (t.expect.slotHolder ?? t.expect.holder).type === 'publication'), 'only publications hold the slot');
       let holder: string | null = null;
       for (const t of slot) {
-        const h = JSON.stringify(t.expect.holder);
+        const h = JSON.stringify(t.expect.slotHolder ?? t.expect.holder);
         if (t.expect.edge.type === 'reserve') {
           assert.equal(holder, null, 'reserved only when free');
           holder = h;
@@ -456,7 +457,7 @@ describe('publication.ownership: a crash at each boundary of the publication, th
       assert.equal(holder, null, 'free at the end');
       const green = events.map(outcomeOf).find((o) => o !== null && o.stage === 'candidate' && o.outcome === 'green')!;
       const greenHolder = JSON.stringify({ type: 'publication', unit: U1, attempt: green.attempt });
-      const afterGreen = slot.filter((t) => JSON.stringify(t.expect.holder) === greenHolder).map((t) => t.expect.edge.type);
+      const afterGreen = slot.filter((t) => JSON.stringify(t.expect.slotHolder ?? t.expect.holder) === greenHolder).map((t) => t.expect.edge.type);
       assert.deepEqual(afterGreen, ['reserve', 'run', 'clean', 'release'], 'the green publication kept the slot from candidate to its release');
       const reserves = slot.filter((t) => t.expect.edge.type === 'reserve').length;
       assert.equal(reserves, cell.greenFirst ? 1 : 2, cell.greenFirst ? 'nothing took the slot again' : 'the abandoned candidate was cleaned, the next one reserved');
