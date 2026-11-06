@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { recordAnswer } from '../../src/answers.ts';
 import { writeReceipt } from '../../src/commands/queue.ts';
-import { type Event, prevHash, serializeEvent } from '../../src/core/events.ts';
+import { type Event, type Fact, prevHash, serializeEvent } from '../../src/core/events.ts';
 import { arcId, commandId, envId, invocationId, jobId, laneId, opKey, sha, sha256, unitId } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { absPath, isoTime } from '../../src/core/values.ts';
@@ -84,10 +84,22 @@ export async function statusCostArc(lines: number, units: number, trees: number)
   const initial = readJournal(r.ctx.runDir, arcId(a.d.arc));
   const bytes = readFileSync(path); const chunks: Buffer[] = [bytes];
   let hash = prevHash(bytes.subarray(bytes.lastIndexOf(10, bytes.length - 2) + 1));
-  for (let seq = initial.events.length + 1; seq <= lines; seq++) {
-    const e: Event = { v: 2 as never, arc: arcId(a.d.arc), at: AT, seq, prev: hash, type: 'fact', fact: { kind: 'containment-mode', mode: 'session' } };
+  const current = sha(git(repo, 'rev-parse', 'main'));
+  let seq = initial.events.length;
+  const append = (fact: Fact) => {
+    const e: Event = { v: 2 as never, arc: arcId(a.d.arc), at: AT, seq: ++seq, prev: hash, type: 'fact', fact };
     const line = Buffer.from(serializeEvent(e)); chunks.push(line); hash = prevHash(line);
+  };
+  // Repeated audits on the same real head are valid (e.g. repeated owner requests). The old
+  // coverage reader rescans every earlier edge for each audit, even with unit/history counts fixed.
+  for (let n = 1; seq + 2 <= lines; n++) {
+    const job = jobId('audit', n);
+    append({ kind: 'audit-started', job, triggers: [{ type: 'requested', command: commandId('cmd-0000000000000001') }], generation: 1,
+      lenses: ['invariants'], integrationSha: current, planRev: initial.view.planApplied()!.rev, ledgerSha256: null, obligationsSha256: null,
+      visionSha256: initial.view.planApplied()!.visionSha256!, owners: [], priorFindings: [], highWater: seq, diffBudget: 24_000 });
+    append({ kind: 'audit-ended', job, covered: [{ lens: 'invariants', from: current, to: current }], findings: [], suppressed: 0, outcome: 'completed', refused: [] });
   }
+  if (seq < lines) append({ kind: 'containment-mode', mode: 'session' });
   writeFileSync(path, Buffer.concat(chunks));
   return { runDir: r.ctx.runDir, hostDir: r.ctx.hostDir, arc: arcId(a.d.arc), forgePath: a.forge.path, units, lines };
 }

@@ -1,4 +1,5 @@
-// Measure after imports, with fresh process caches. Linux cutime/cstime includes waited-for Git children.
+// Time only the synchronous call after imports, with fresh process caches.
+// Main-thread CPU excludes background V8 workers; Linux cutime/cstime adds waited-for Git CPU.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -10,11 +11,12 @@ const [mode, runDir, arc, hostDir, units, lines] = process.argv.slice(2);
 const hz = spawnSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }); assert.equal(hz.status, 0, hz.stderr);
 const ticks = Number(hz.stdout.trim()); assert.ok(ticks > 0);
 const children = () => { const stat = readFileSync('/proc/self/stat', 'utf8'); const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' '); return (Number(fields[13]) + Number(fields[14])) * 1000 / ticks; };
-const childBefore = children(), began = process.cpuUsage(), wall = performance.now();
+const childBefore = children(), began = process.threadCpuUsage(), wall = performance.now();
 const value = mode === 'status' ? status(absPath(runDir), arcId(arc), absPath(hostDir)) : statusSummary(absPath(runDir), arcId(arc), absPath(hostDir));
-const cpu = process.cpuUsage(began), childMs = children() - childBefore, wallMs = performance.now() - wall;
+const cpu = process.threadCpuUsage(began), childMs = children() - childBefore, wallMs = performance.now() - wall;
 if ('units' in value) {
   assert.equal(value.units.length, Number(units)); assert.equal(value.host.log.events, Number(lines));
+  assert.equal(value.audit?.generation, 1); assert.equal(value.audit?.coverage[0]?.outstanding, false);
   assert.equal(value.commands.receipts.length, 10); assert.equal(value.answers.length, 1);
   assert.equal(value.notYetTrue.length, 2); assert.equal(value.notYetTrue[0]!.lastObserved?.verdict, 'held');
   assert.equal(value.notYetTrue[1]!.lastObserved?.verdict, 'not-held');
