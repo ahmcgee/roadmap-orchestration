@@ -1,3 +1,5 @@
+import { reservedLaneEnv } from '../input/ci.ts';
+import { loadUnitSpec } from '../pipeline/stages.ts';
 import { resourceRequest } from '../core/events.ts';
 import { WaitAccumulator } from './waits.ts';
 import { type WaitReason, waitReason } from '../core/waiting.ts';
@@ -720,6 +722,19 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   if (holistic()) {
     settlePackReviews(h.revision);
     settleWalks(x.stage);
+  }
+
+  // Upgrade-in-place: persisted lane readers accept the old declaration; hold it as an actionable plan defect.
+  const legacyCollisions = [
+    ...plan().suite.lanes.map((lane) => ({ lane, source: 'suite' })),
+    ...plan().units.filter((u) => u.cut === undefined && !TERMINAL.includes(view().unit(u.id).status)).flatMap((unit) => loadUnitSpec(x.stage, unit).spec.lanes.filter((l) => l.state === 'active').map((lane) => ({ lane, source: `unit ${unit.id}` }))),
+    ...(holistic() ? holisticInForce(x.stage).obligations?.lanes ?? [] : []).map((lane) => ({ lane, source: 'arc witness' })),
+  ].filter(({ lane }) => reservedLaneEnv(lane));
+  if (legacyCollisions.length > 0) {
+    const summary = `Kept lanes declare executor-owned ROADMAP_CPU: ${legacyCollisions.map(({ lane, source }) => `${source}/${lane.id}`).join(', ')}. Remove it from env.set and env.pass before execution.`;
+    const existing = openBlocking(view()).some((id) => readNeedsUser(runDir, id)?.summary === summary);
+    if (!existing) raiseNeedsUser(journal, runDir, { blocking: true, subject: { type: 'arc' }, reason: 'plan-defect', summary, recommendation: 'Export the inputs, remove the reserved variable declarations and apply the corrected revision with --resolves naming this item.', options: [], evidence: [] }, { type: 'arc' });
+    process.emitWarning('kept ROADMAP_CPU declaration adopted as an actionable plan-defect, execution held until corrected', { code: 'ROADMAP_UPGRADE' });
   }
 
   const tasks = new Map<UnitId, Task>();

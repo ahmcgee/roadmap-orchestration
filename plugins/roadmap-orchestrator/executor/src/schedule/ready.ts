@@ -193,7 +193,7 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
-    for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
+    for (const b of blocking) if (b.subject === 'host' || (b.subject === 'arc' && b.reason === 'plan-defect') || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };
 }
