@@ -1541,6 +1541,7 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
+      if (e.waited !== undefined && e.edge.type !== 'reserve') throw new SchemaError(`${path}.expect.waited`, 'measurement on a reserve transition', e.waited);
       if (e.slotHolder !== undefined && !(e.edge.type === 'reserve' && e.resources.includes(resourceName('integration-slot')) && e.holder.type === 'stage' && e.holder.stage === 'candidate' && e.holder.unit === e.slotHolder.unit && e.holder.attempt === e.slotHolder.attempt)) throw new SchemaError(`${path}.expect.slotHolder`, 'matching candidate-stage reserve containing integration-slot', e.slotHolder);
       if (e.edge.type === 'reserve' && e.waited === undefined) warnUnmeasuredWaiting();
       if (e.edge.type === 'reclaim' && !(RECLAIM_HOLDERS as readonly string[]).includes(e.holder.type)) {
@@ -2412,7 +2413,12 @@ function intentRecord(f: Fields): IntentRecord {
     post: f.get('post', schema.post),
   };
   schema.check?.(out.expect, out.post, f.path);
-  return out as IntentRecord;
+  const record = out as IntentRecord;
+  if (record.kind === 'resource.transition' && record.expect.slotHolder !== undefined) {
+    const h = record.expect.slotHolder;
+    if (record.parent.type !== 'stage' || record.parent.stage !== 'candidate' || record.parent.unit !== h.unit || record.parent.attempt !== h.attempt) throw new SchemaError(`${f.path}.parent`, 'matching candidate-stage parent for compound reserve', record.parent);
+  }
+  return record;
 }
 
 function doneRecord(f: Fields): DoneRecord {

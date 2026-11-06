@@ -17,16 +17,21 @@ export function waitReason(value: unknown, path: string): WaitReason {
 }
 
 export const waited: Read<Waited> = object((f) => {
+  const totalMs = f.get('totalMs', nat);
   const byReasonMs = f.get('byReasonMs', (v, p) => {
     // Validate an object with dynamic, closed reason keys, without expanding legacy disk bytes.
     const fields = new Fields(v, p);
     const raw = v as Record<string, unknown>;
     const out: Partial<Record<WaitReason, number>> = {};
-    for (const key of Object.keys(raw)) out[waitReason(key, p)] = fields.get(key, nat);
+    for (const key of Object.keys(raw)) {
+      const ms = fields.get(key, nat);
+      if (ms > totalMs) throw new SchemaError(`${p}.${key}`, 'reason milliseconds no larger than totalMs', ms);
+      out[waitReason(key, p)] = ms;
+    }
     fields.end();
     return out;
   });
-  return { totalMs: f.get('totalMs', nat), byReasonMs };
+  return { totalMs, byReasonMs };
 });
 
 let warned = false;
