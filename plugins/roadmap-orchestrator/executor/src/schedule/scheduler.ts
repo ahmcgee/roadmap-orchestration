@@ -152,7 +152,7 @@ import { isActive,raiseFindingItems } from '../holistic/findings.ts';
 import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
-import { PressureTicks,readHostCpu,readHostMemory } from '../host/pressure.ts';
+import { PressureTicks,readHostCpuAt,HOST_SCHEDSTAT,readHostMemory } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,hasMilestones } from '../input/plan.ts';
@@ -953,6 +953,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const next = upcoming(u, specOf(planUnit(task.unit)).reproduces, specOf(planUnit(task.unit)).review);
       // Ended at this boundary: a pause or stop, or the unit moved on without it (cut, superseded, re-opened, retired).
       if (stopping !== null || task.abort.signal.aborted || u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) {
+        if (u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) admissionWaits.delete(`${task.unit}/${w.stage}`);
         endTask(task);
         continue;
       }
@@ -991,7 +992,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   };
 
   const startReady = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>, holds: Holds): void => {
-    for (const r of readyDecisions({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table, spec: specOf })) {
+    const decisions = readyDecisions({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table, spec: specOf });
+    const current = new Set(decisions.map((r) => `${r.unit.id}/${r.stage}`));
+    for (const key of admissionWaits.keys()) if (!current.has(key)) admissionWaits.delete(key);
+    for (const r of decisions) {
       if (tasks.has(r.unit.id)) continue;
       const reasons = admissionReasons(r.unit.id, r.stage, r.constraints, blocking, holds);
       observeAdmission(r.unit.id, r.stage, reasons);
@@ -1317,7 +1321,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   for (;;) {
     if (failures.length > 0) throw failures[0];
-    pressure.record(readHostCpu());
+    pressure.record(readHostCpuAt(HOST_SCHEDSTAT, Date.now()));
     pressure.recordMemory(readHostMemory());
     const arc = view().arc;
     /** The pending mutations' scopes, for sched.json: none while stopping (nothing will apply). */

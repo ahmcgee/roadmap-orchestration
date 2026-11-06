@@ -18,7 +18,7 @@
 // inputs bind it as the host's cpu wait now.
 //
 // A host without schedstat (no `/proc/schedstat`: a kernel built without CONFIG_SCHEDSTATS) is `unavailable`: every
-// launch's pressure is null and every pressure rule is off. A file that is present but malformed fails loud.
+// launch's CPU pressure is null; independently available memory evidence still participates in admission. A file that is present but malformed fails loud.
 //
 // PSI `/proc/pressure/cpu` is not read: its `some` (the share of wall time during which at least one task waited) is high
 // on a many-cpu host whenever anything waits, and it did not separate a healthy busy host from a starving one.

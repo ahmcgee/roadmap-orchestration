@@ -148,7 +148,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
       if (reasons.length > 0) {
         if ('onBlocked' in w) refused.push(w as FirstWaiter);
         if (w.request.publication && reasons.includes('publication-slot')) blocked.push({ named: [], pools: [], cpu: 0, publication: true });
-        else if (!envBlocked(resourceTable(ctx.journal.view), plan, w.request) && pressureReasons(w).length === 0) blocked.push(w.request);
+        else if (!envBlocked(resourceTable(ctx.journal.view), plan, w.request) && !reasons.includes('cpu-pressure') && !reasons.includes('memory-pressure')) blocked.push(w.request);
         return;
       }
       const got = reserve(ctx, w.holder, w.request, parent, Math.max(0, Date.now() - w.queuedAt), w.wait.measured(), w.entry?.slotHolder);
