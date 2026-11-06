@@ -796,6 +796,22 @@ it. Its dirty instance remains unavailable. Cleaned/isolated/transferred disposi
 
 ## Scheduling
 
+The arbiter accumulates waiting milliseconds in memory at each re-evaluation, counting each interval once in
+`totalMs` and once for each simultaneous blocker in `byReasonMs` (non-additive). A grant writes optional
+`resource.transition.expect.waited: {totalMs,byReasonMs}` on its reserve intent. Immediate grants record zero.
+Closed keys are `cpu-pressure`, `memory-pressure`, `cpu-tokens`, `named-resource:<declared name or pool>`,
+`publication-slot`, `queue-precedence`, and `admission-hold:<kind>`. Admission kinds are the constraint variants
+plus dependency, contingent-edge, milestone, baseline, pack-review and repair-batch. Resource inspection collects
+all blockers even when pressure or a dirty instance prevents allocation.
+
+Scheduler admission accumulation runs from first refusal to admission, including undispatched units. A measurement-only
+`stage-admitted {unit,stage,waited}` fact records it when the stage is admitted; it never advances attempts.
+`status.waiting` and summary's identical shared-core field sum completed measurements by unit/stage and job/stage;
+`unmeasuredReservations` counts legacy grants without a measurement. Missing measurements are never zero historical
+waiting; readers log one ROADMAP_UPGRADE warning per process. Current blockers stay in sched.json's queue/jobQueue
+`reasons` and `admissions` rows. A crash loses only in-flight measurements; downtime is excluded. No wait episodes,
+wait ids, recovery closure facts or active-tail extrapolation exist.
+
 Admission rechecks pause, pending mutation drain, run-only, backend parks, breakers, base-red, blocking items, findings,
 known defects, pressure, compare and deflake holds before prepare/reproduce/pre-build/build/lanes/gate/candidate.
 Quiesce/evidence/salvage/teardown and ff/snapshot are mandatory chains despite pause/drain.
@@ -846,7 +862,7 @@ within one hour trip an admission breaker and raise `env-blocked` (`src/park/sch
 
 `src/host/pressure.ts` samples `/proc/schedstat` CPU totals: delta wait / (delta run + delta wait), over a minute.
 Memory PSI full avg10 contributes; available RAM below 5% supplies a saturated backstop. Missing schedstat makes CPU
-pressure unavailable, never invented. Scheduler ticks are retained for 30 minutes in memory.
+pressure unavailable, never invented. Latest memory readings remain independently available without schedstat or a full CPU window; `hostCpuPressure` and `PressureTicks.memory()` keep the causes separate, with `hostPressure` the combined wrapper. Scheduler ticks are retained for 30 minutes in memory.
 
 At pressure >= 0.5 (saturated) the arbiter holds new builds/lanes while CPU is already reserved. Judgments bypass this brake,
 and one workload always progresses. A deadline/stall under saturation is uncharged starved work; an ordinary red gets

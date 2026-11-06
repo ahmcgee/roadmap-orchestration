@@ -1,3 +1,4 @@
+import type { Waited } from '../core/waiting.ts';
 // The reservation cycle (plan "Reservation cycle", R4; DESIGN §2.2 Locks; M2 "Resources"):
 //
 //   reserve (all-or-none, lock order, free→reserved) → occupancy probe (probe.ts) → run (→running)
@@ -222,6 +223,7 @@ function journalTransition(
   recipes: ReadonlyMap<ResourceInstance, ResidueRecipe>,
   cpuBasis?: CpuBasis,
   tokenWaitMs?: number,
+  waited?: Waited,
 ): void {
   const view = ctx.journal.view;
   assertLegal(view, holder, resources, edge);
@@ -230,7 +232,7 @@ function journalTransition(
     key: holderKey(holder),
     parent,
     deadlineAt: null,
-    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }) }, post: null }),
+    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }), ...(waited === undefined ? {} : { waited }) }, post: null }),
   });
   const unit = 'unit' in holder ? holder.unit : undefined;
   crashPoint('resource.after-intent', unit);
@@ -290,6 +292,7 @@ export function reserve<H extends AcquiringHolder>(
   req: ResourceRequest,
   parent: Parent,
   tokenWaitMs?: number,
+  waited: Waited = { totalMs: 0, byReasonMs: {} },
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
   const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
@@ -299,7 +302,7 @@ export function reserve<H extends AcquiringHolder>(
   if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
   const got = allocate(resourceTable(ctx.journal.view), plan, req);
   if (got.kind === 'busy') return { state: 'refused', busy: got.busy };
-  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis, tokenWaitMs);
+  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis, tokenWaitMs, waited);
   return { state: 'reserved', holder, resources: got.units, recipes: holderRecipes(plan, ctx.repo, holder, got.units) };
 }
 

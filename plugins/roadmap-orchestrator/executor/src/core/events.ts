@@ -1,3 +1,4 @@
+import { type Waited, waited, warnUnmeasuredWaiting } from './waiting.ts';
 import { nonBlank } from './validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
 // The event log (`events.jsonl`) record types, their validators, canonical serialisation and the chain
@@ -233,7 +234,7 @@ export type OpExpect = {
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis; tokenWaitMs?: number }>;
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis; tokenWaitMs?: number; waited?: Waited }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
   'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex; cpuKey?: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
@@ -767,6 +768,7 @@ export type WalkMcpFact = Readonly<{
 }>;
 
 export type Fact =
+  | Readonly<{ kind: 'stage-admitted'; unit: UnitId; stage: Stage; waited: Waited }>
   | WalkMcpFact
   | IntegrationPushFact
   | CiFact
@@ -1524,11 +1526,13 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
     expect: object((f) => {
       const basis = f.optional('cpuBasis', cpuBasis);
       const tokenWaitMs = f.optional('tokenWaitMs', nat);
-      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }) };
+      const measurement = f.optional('waited', waited);
+      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }), ...(measurement === undefined ? {} : { waited: measurement }) };
     }),
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
+      if (e.edge.type === 'reserve' && e.waited === undefined) warnUnmeasuredWaiting();
       if (e.edge.type === 'reclaim' && !(RECLAIM_HOLDERS as readonly string[]).includes(e.holder.type)) {
         throw new SchemaError(`${path}.expect.holder.type`, `${RECLAIM_HOLDERS.join(' or ')} (only these reclaim a cleanup-failed resource)`, e.holder.type);
       }
@@ -2311,6 +2315,7 @@ export const fact: Read<Fact> = tagged('kind', {
     if (opt['obligationsSha256'] !== undefined && opt['visionSha256'] === undefined) throw new SchemaError(`${f.path}.obligationsSha256`, 'absent without a vision (obligations are a holistic input, A5)', opt['obligationsSha256']);
     return out as Fact;
   }),
+  'stage-admitted': object((f): Fact => ({ kind: f.get('kind', literal('stage-admitted')), unit: f.get('unit', unitR), stage: f.get('stage', stage), waited: f.get('waited', waited) })),
   'executor-started': object((f): Fact => {
     const host = f.optional('host', hostFingerprint);
     const pressure = f.get('pressure', oneOf(PRESSURE_AVAILABILITIES));

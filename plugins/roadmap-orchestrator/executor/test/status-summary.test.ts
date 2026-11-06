@@ -49,3 +49,20 @@ test('status --summary reads expectations from the recorded plan and bounds the 
   assert.equal(summary.planRev, 1); assert.equal(summary.progress.total, 1);
   assert.equal(summary.spend.expectedUsd, 5); assert.equal(summary.spend.differenceUsd, -5); assert.equal(summary.spend.costUsd, 0);
 });
+
+test('waiting totals by unit and job stage are shared by summary and full status', async () => {
+  const { reserve } = await import('../src/resources/reserve.ts');
+  const { jobId } = await import('../src/core/ids.ts');
+  const d = setupArc({ steps: [] }); const r = contextFor(d);
+  const { git } = await import('./helpers/repo.ts');
+  git(d.repo, 'update-ref', `refs/heads/roadmap/${d.arc}/u1`, git(d.repo, 'rev-parse', 'main'));
+  const measured = { totalMs: 30, byReasonMs: { 'cpu-tokens': 30, 'memory-pressure': 20 } } as const;
+  reserve(r.ctx, { type: 'stage', unit: unitId('u1'), stage: 'lanes', attempt: 1 }, { named: [], pools: [], cpu: 1, publication: false }, { type: 'stage', unit: unitId('u1'), stage: 'lanes', attempt: 1 }, 30, measured);
+  reserve(r.ctx, { type: 'job', job: jobId('audit', 1) }, { named: [], pools: [], cpu: 1, publication: false }, { type: 'job', job: jobId('audit', 1) }, 30, measured);
+  r.journal.fact({ kind: 'stage-admitted', unit: unitId('u1'), stage: 'lanes', waited: { totalMs: 10, byReasonMs: { 'admission-hold:baseline': 10 } } });
+  r.journal.close();
+  const full = status(absPath(d.runDir), arcId(d.arc), absPath(d.hostDir));
+  const summary = statusSummary(absPath(d.runDir), arcId(d.arc), absPath(d.hostDir));
+  assert.deepEqual(full.waiting, { unmeasuredReservations: 0, byUnitStage: [{ unit: 'u1', stage: 'lanes', totalMs: 40, byReasonMs: { 'cpu-tokens': 30, 'memory-pressure': 20, 'admission-hold:baseline': 10 } }], byJobStage: [{ job: 'audit-1', stage: 'audit', ...measured }] });
+  assert.deepEqual(summary.waiting, full.waiting);
+});

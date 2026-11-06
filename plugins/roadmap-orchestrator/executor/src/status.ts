@@ -1,3 +1,4 @@
+import { type WaitingTotals, waitingTotals } from './status/waiting.ts';
 import { canonicalJson } from './core/json.ts';
 import { terminalReceipts } from './commands/queue.ts';
 import { withArcRefReads } from './chain.ts';
@@ -463,6 +464,7 @@ export const LOG_COMPACTION_BYTES = 50 * 1024 * 1024;
 export const LOG_COMPACTION_FOLD_MS = 2_000;
 
 export type Status = Readonly<{
+  waiting: WaitingTotals;
   arc: ArcId;
   supervision: Supervision;
   run: Readonly<{ state: ArcState; owner: OwnerState; heartbeatAt: IsoTime | null; stop: Readonly<{ mode: 'immediate' | 'drain'; deadline: IsoTime | null }> | null }>;
@@ -1547,7 +1549,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
 }
 
 /** The common projection consumed by summary; execution detail is layered on only for full status. */
-export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones'> & Readonly<{
+export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones' | 'waiting'> & Readonly<{
   units: readonly UnitCore[];
   spend: Pick<Status['spend'], 'byRole' | 'bySmoke'>;
 }>;
@@ -1574,7 +1576,7 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   });
 
   const core: StatusCore = {
-    arc, supervision: supervision(runDir),
+    arc, supervision: supervision(runDir), waiting: waitingTotals(events),
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
     units: d.units, needsUser, spend: { byRole: meter.byRole, bySmoke: meter.bySmoke },
     plan: inForce === null ? null : { rev: inForce.rev, planSha256: inForce.manifest.planSha256 },
@@ -1681,6 +1683,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     demo: core.demo,
     milestones: core.milestones,
+    waiting: core.waiting,
   };
 }
 

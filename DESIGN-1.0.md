@@ -106,6 +106,14 @@ decisions, report and evidence), bounded to ten recent history items per list.
 
 ### 2.2 Scheduling, systems and resources
 
+Waiting is measured per request in memory at each arbiter tick: one total and independent simultaneous reason
+totals (CPU pressure, memory pressure, tokens, named resources, publication slot, queue precedence). Completed
+reservations persist those totals on the reserve transition. Scheduler admission holds use the same accumulation,
+including dependency/contingent/milestone, baseline, review and repair-batch holds, recorded at stage admission.
+Status and summary share the completed totals per unit-stage and job-stage; live blockers remain in sched.json.
+Old grants without measurements are unmeasured, warned once; crashes discard in-flight timing and exclude downtime.
+CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers.
+
 Units form a dependency DAG. Dependencies require actual merged/retired lineage state; contingent edges require an
 explicit resolve-edge with evidence. Priority, origin and aging order waiters. Repair and deflake work can take precedence;
 polish has its own origin. Admission reserves all named resources and CPU atomically before workload startup. CPU

@@ -4,7 +4,7 @@
 // `ProbeTarget`) live in src/core/events.ts.
 import type { CpuBasis } from '../core/cpu.ts';
 import type { BackendParkClass,Holder,OutcomeStage,ProbeTarget } from '../core/events.ts';
-import type { CommandId,FindingId,InvocationId,KnownDefectId,LaneId,NeedsUserId,ObligationId,ResourceName,ResourceUnit,UnitId } from '../core/ids.ts';
+import type { CommandId,FindingId,InvocationId,KnownDefectId,LaneId,EdgeId,MilestoneId,NeedsUserId,ObligationId,ResourceName,ResourceUnit,UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import type { CommandBody,LaneCadence,NeedsUserReason } from '../core/records.ts';
 import type { PressureNow } from '../host/pressure.ts';
@@ -107,6 +107,9 @@ export function compareRank(a: Rank, b: Rank): number {
 
 /** Why a stage may not be admitted now. Each holds per stage, never arc-wide unless it says so (A17). */
 export type AdmissionConstraint =
+  | Readonly<{ type: 'dependency'; unit: UnitId }>
+  | Readonly<{ type: 'contingent-edge'; edge: EdgeId }>
+  | Readonly<{ type: 'milestone'; milestone: MilestoneId }>
   | Readonly<{ type: 'paused'; scope: 'arc' | 'unit' }>
   /** A pending mutation whose scope covers the unit is draining it. */
   | Readonly<{ type: 'drain'; command: CommandId }>

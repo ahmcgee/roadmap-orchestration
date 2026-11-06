@@ -1418,6 +1418,9 @@ export class Fold implements JournalView {
         this.#lastReopenSeq = at.seq;
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
+      case 'stage-admitted':
+        if (this.#planApplied?.specs[f.unit] === undefined) fail(`admission of unknown unit ${f.unit}`);
+        return; // Measurement only: admission does not advance attempts.
       default:
         this.#holisticFact(f, fail, at);
     }
