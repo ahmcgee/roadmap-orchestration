@@ -147,6 +147,8 @@ non-blocking park-escalated while probes continue. Repeating a recovered target 
 env-blocked. Usage-limit parks dominate retryable backend parks and need explicit backend resume. Backend/recovery
 holds retain their cause and do not advance the held stage. Ordering parks emit unparked once every blocker merges.
 
+Every lane/journey launch persists executor-owned ROADMAP_CPU as the granted CPU-token count, including an empty grant. Lanes may size worker pools from it; authoring/preflight refuse env.set/env.pass collisions. Kept legacy declarations load and become blocking plan-defect requests before execution.
+
 CPU defaults are judgment 1, build 4, lane build 2 and other lane cadences 4. Explicit values win; after three completed
 samples of at least 30 s, use ceil(p90 of the last ten), floor 1, cap at the default. Host admission uses CPU wait ratio,
 memory PSI and low available RAM; judgments bypass the pressure brake and the first workload progresses under CPU pressure; memory saturation still blocks workloads. Pressure
