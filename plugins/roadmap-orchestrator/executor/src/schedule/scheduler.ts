@@ -1269,7 +1269,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       v: SCHEMA_VERSION, arc: view().arc, pid: process.pid,
       tasks: [...tasks.values()].map((t) => ({ unit: t.unit, state: t.state })).sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       queue: arbiter.waiting().map((w) => ({
-        unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.holder.type === 'publication', request: w.request,
+        unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.request.publication, request: w.request,
         envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt, reasons: w.reasons ?? [],
       })),
       jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt, reasons: w.reasons ?? [] })),
