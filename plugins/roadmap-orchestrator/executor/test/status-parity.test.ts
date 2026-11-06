@@ -25,3 +25,12 @@ test('status and summary retain the captured rich projection, including receipt 
   // Compare the complete serialized summary, with no field omissions or reordering.
   assert.equal(JSON.stringify(statusSummary(runDir, arc, hostDir)), JSON.stringify(summary));
 });
+
+test('status and summary validate malformed receipts outside the ten displayed rows', async () => {
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { d, runDir, hostDir } = parityArc();
+  writeFileSync(join(runDir, 'commands', 'receipts', 'cmd-0000000000000001.rejected.json'), '{}');
+  assert.throws(() => status(runDir, arcId(d.arc), hostDir));
+  assert.throws(() => statusSummary(runDir, arcId(d.arc), hostDir));
+});
