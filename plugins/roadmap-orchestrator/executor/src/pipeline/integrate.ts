@@ -323,11 +323,12 @@ function baseRedNeedsUser(ctx: StageContext, parent: StageParent, tip: Sha, base
 class CandidateEntryMoved extends Error {}
 
 /** Only the unused first-lane entry remains reserved; completed lane cleanup owns its residues. */
-async function releaseEntry(ctx: StageContext, holder: StageHolder, parent: StageParent): Promise<void> {
+async function releaseEntry(ctx: StageContext, holder: StageHolder, parent: StageParent): Promise<readonly ResourceInstance[]> {
   const table = resourceTable(ctx.journal.view);
   const resources = holderUnits(ctx.journal.view, holder).filter((u) => table.get(u)!.status.state === 'reserved');
-  if (resources.length === 0) return;
-  await cleanup(ctx, { state: 'reserved', holder, resources, recipes: heldReservation(ctx, holder, 'reserved').recipes }, parent);
+  if (resources.length === 0) return [];
+  const cleaned = await cleanup(ctx, { state: 'reserved', holder, resources, recipes: heldReservation(ctx, holder, 'reserved').recipes }, parent);
+  return cleaned.kind === 'cleanup-failed' ? cleaned.failed : [];
 }
 
 export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'candidate'> | Cancelled> {
@@ -358,27 +359,37 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
     const held = run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
     const tip = decision.kind === 'merge' ? decision.plan.tip : decision.tip;
     if (integrationTip(ctx) !== tip) {
-      await releaseEntry(ctx, stageHolder, parent);
+      const failed = await releaseEntry(ctx, stageHolder, parent);
       await releasePublication(ctx, held, parent);
+      if (failed.length > 0) return record(ctx, parent, 'cleanup-failed', null, failedFacts(failed));
       continue;
     }
     const preempt = preemptible(ctx, unit.id, parent);
     let end: CandidateEnd;
     let retry = false;
+    let entryFailures: readonly ResourceInstance[] = [];
     try {
       try {
-      try { end = await integrate(preempt.ctx, unit, parent, decision, entry !== null); }
-      catch (error) { if (!(error instanceof CandidateEntryMoved)) throw error; retry = true; end = ended('preempted'); }
-      if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
-      if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
-      if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
-    } finally {
-      await preempt.close();
-      await releaseEntry(ctx, stageHolder, parent);
+        try { end = await integrate(preempt.ctx, unit, parent, decision, entry !== null); }
+        catch (error) {
+          if (!(error instanceof CandidateEntryMoved)) throw error;
+          retry = true;
+          end = ended('preempted');
+        }
+        if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
+        if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
+        if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
+      } finally {
+        await preempt.close();
+        entryFailures = await releaseEntry(ctx, stageHolder, parent);
       }
     } catch (error) {
       await releasePublication(ctx, held, parent);
       throw error;
+    }
+    if (entryFailures.length > 0) {
+      retry = false;
+      end = { kind: 'cleanup-failed', needsUser: null, failed: entryFailures };
     }
     if (retry) { await releasePublication(ctx, held, parent); continue; }
     const detail = end.kind === 'red' ? candidateRed(ctx, unit, parent, end.checkout ?? null).detail : undefined;

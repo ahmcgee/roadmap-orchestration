@@ -314,7 +314,7 @@ export function reserve<H extends AcquiringHolder>(
   slotHolder?: PublicationHolder,
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
-  if (slotHolder !== undefined && !(holder.type === 'stage' && holder.stage === 'candidate' && holder.unit === slotHolder.unit && holder.attempt === slotHolder.attempt && req.publication)) throw new Error('compound entry requires matching candidate and publication holders');
+  if (slotHolder !== undefined && !(holder.type === 'stage' && holder.stage === 'candidate' && holder.unit === slotHolder.unit && holder.attempt === slotHolder.attempt && req.publication && parent.type === 'stage' && parent.stage === 'candidate' && parent.unit === holder.unit && parent.attempt === holder.attempt)) throw new Error('compound entry requires matching candidate and publication holders');
   const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
   if ((holder.type === 'publication' || holder.type === 'docs' || holder.type === 'batch') && !slotAlone) {
     throw new Error(`a ${holder.type} holder reserves integration-slot alone, not ${canonicalJson(req)}`);

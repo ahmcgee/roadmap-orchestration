@@ -274,3 +274,26 @@ for (const moveAt of ['before-grant', 'after-grant'] as const) test(`tip-move-re
     assert.ok([...resourceTable(r.journal.view)].filter(([u]) => u.startsWith('@cpu#')).every(([, e]) => e.status.state === 'free'));
   } finally { r.journal.close(); }
 });
+
+test('unused-entry cleanup failure retains only named residue and stops re-entry', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+  plan.resources = [{ name: 'entry-db', probe: { argv: ['true'], cwd: '.', env: { set: {}, pass: ['PATH'] } }, teardown: { argv: ['false'], cwd: '.', env: { set: {}, pass: ['PATH'] } } }];
+  plan.suite.lanes = [{ ...plan.suite.lanes[0], cadence: 'candidate', argv: ['true'], resources: ['entry-db'] }];
+  writeFileSync(d.planPath, JSON.stringify(plan));
+  const r = contextFor(d);
+  try {
+    const now = r.ctx.acquire; let moved = false;
+    const ctx = { ...r.ctx, acquire: (async (request, holder, rank, signal, entry) => {
+      const granted = await now(request, holder, rank, signal, entry);
+      if (request.publication && !moved) { moved = true; git(d.repo, 'commit', '--allow-empty', '-m', 'move after entry grant'); }
+      return granted;
+    }) satisfies typeof now };
+    await stepUntil({ ...r, ctx }, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'cleanup-failed');
+    assert.equal(r.journal.view.opsOf('candidate.merge').length, 0, 'selection invalidated before publishing any candidate ref');
+    const table = resourceTable(r.journal.view);
+    assert.equal(table.get(resourceName('entry-db'))?.status.state, 'cleanup-failed');
+    assert.equal(table.get(resourceName('integration-slot'))?.status.state, 'free');
+    assert.ok([...table].filter(([name]) => name.startsWith('@cpu#')).every(([, entry]) => entry.status.state === 'free'));
+  } finally { r.journal.close(); }
+});
