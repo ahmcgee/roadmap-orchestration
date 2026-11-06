@@ -458,10 +458,15 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
     if ('requests' in output) for (const request of (output as import('../prompts/schemas.ts').CampaignAuditOutput).requests) {
-      const raised = ctx.journal.view.opsOf('needsuser.raise').some((i) =>
-        i.parent.type === 'job' && i.parent.job === job && readNeedsUser(ctx.runDir, i.expect.id)?.summary === request.summary);
-      if (raised) continue;
       const target = request.dismisses === null ? undefined : ctx.journal.view.holistic().findings.find((f) => f.id === request.dismisses);
+      const raised = ctx.journal.view.opsOf('needsuser.raise').some((i) => {
+        if (i.parent.type !== 'job' || i.parent.job !== job) return false;
+        const item = readNeedsUser(ctx.runDir, i.expect.id);
+        return target === undefined ? item?.summary === request.summary
+          : item?.subject.type === 'findings' && item.subject.findings.includes(target.id);
+      });
+      // Finding duplicates need no further action: the first request already blocks on that finding.
+      if (raised) continue;
       // A root decision may land while the audit is running. Surface its stale request without reopening a blocker.
       const blocking = target === undefined || isActive(target);
       const dismissal = request.dismisses === null ? '' : `Dismiss ${request.dismisses} only on counter-evidence: ${request.counterEvidence}. `;

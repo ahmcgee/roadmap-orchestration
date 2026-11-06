@@ -139,7 +139,7 @@ export function catFileType(repo: AbsPath, object: string): ObjectType | null {
  * answer is `<sha> blob <size>\n<bytes>\n`, cut by its size, so binary content round-trips. Throws on a missing
  * object, an object that is not a blob, or a malformed answer.
  */
-export function catFileBlobs(repo: AbsPath, blobs: readonly Sha[]): ReadonlyMap<Sha, Buffer> {
+function catFileObjects(repo: AbsPath, blobs: readonly Sha[], type: 'blob' | 'tree'): ReadonlyMap<Sha, Buffer> {
   const wanted = [...new Set(blobs)];
   const out = new Map<Sha, Buffer>();
   if (wanted.length === 0) return out;
@@ -156,7 +156,7 @@ export function catFileBlobs(repo: AbsPath, blobs: readonly Sha[]): ReadonlyMap<
     const m = /^([0-9a-f]{40}) (\S+) ([0-9]+)$/.exec(header);
     if (m === null) throw new Error(`cat-file --batch: ${object} answered ${JSON.stringify(header)}`);
     if (m[1] !== object) throw new Error(`cat-file --batch: asked for ${object}, answered ${m[1]}`);
-    if (m[2] !== 'blob') throw new Error(`cat-file --batch: ${object} is a ${m[2]}, not a blob`);
+    if (m[2] !== type) throw new Error(`cat-file --batch: ${object} is a ${m[2]}, not a ${type}`);
     const start = eol + 1;
     const end = start + Number(m[3]);
     if (end >= stdout.length || stdout[end] !== 0x0a) throw new Error(`cat-file --batch: ${object}'s ${m[3]} bytes are cut short`);
@@ -166,6 +166,9 @@ export function catFileBlobs(repo: AbsPath, blobs: readonly Sha[]): ReadonlyMap<
   if (at !== stdout.length) throw new Error(`cat-file --batch: ${stdout.length - at} bytes after the last answer`);
   return out;
 }
+
+export const catFileBlobs = (repo: AbsPath, blobs: readonly Sha[]): ReadonlyMap<Sha, Buffer> => catFileObjects(repo, blobs, 'blob');
+export const catFileTrees = (repo: AbsPath, trees: readonly Sha[]): ReadonlyMap<Sha, Buffer> => catFileObjects(repo, trees, 'tree');
 
 /** A batch read holds every blob it answers at once: a snapshot's whole tree (66 MB on a 4,769-file arc, 2026-10-23). */
 const BATCH_MAX_BUFFER = 1024 * 1024 * 1024;

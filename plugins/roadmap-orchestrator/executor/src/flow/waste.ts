@@ -44,11 +44,16 @@ export function grinding(events: readonly Event[]): readonly WasteFinding[] {
 
 export function redOnUnitGreenOnBase(runs: readonly LaneRun[]): readonly WasteFinding[] {
   const found = new Map<string, WasteFinding>();
+  const passing = new Map<string, Set<string>>();
+  for (const r of runs) if (r.verdict === 'pass') {
+    const key = JSON.stringify([r.series, r.lane]); const commits = passing.get(key) ?? new Set<string>();
+    commits.add(r.at); passing.set(key, commits);
+  }
   for (const red of runs) {
     if (red.unit === null || !['fail', 'stall', 'timeout'].includes(red.verdict)) continue;
     // A stage series runs the candidate/salvage first, then the same lane on its diff base/tip.
-    const base = runs.find((b) => b.series === red.series && b.lane === red.lane && b.at !== red.at && b.verdict === 'pass');
-    if (base === undefined) continue;
+    const commits = passing.get(JSON.stringify([red.series, red.lane]));
+    if (commits === undefined || commits.size === 1 && commits.has(red.at)) continue;
     const key = `red-on-unit-green-on-base:${red.unit}:${red.lane}`;
     found.set(key, { key, detector: 'red-on-unit-green-on-base', unit: red.unit, summary: `${red.unit}: ${red.lane} red on the unit, green on its base; inspect the fix rounds.` });
   }
@@ -57,9 +62,14 @@ export function redOnUnitGreenOnBase(runs: readonly LaneRun[]): readonly WasteFi
 
 export function lowUniqueCatch(runs: readonly LaneRun[]): readonly WasteFinding[] {
   const lanes = new Map<LaneId, { runs: number; unique: number }>();
+  const failing = new Map<string, Set<LaneId>>();
+  for (const r of runs) if (r.verdict === 'fail') {
+    const key = JSON.stringify([r.series, r.at]); const ids = failing.get(key) ?? new Set<LaneId>();
+    ids.add(r.lane); failing.set(key, ids);
+  }
   for (const r of runs) {
     const n = lanes.get(r.lane) ?? { runs: 0, unique: 0 }; n.runs++;
-    if (r.verdict === 'fail' && !runs.some((other) => other.series === r.series && other.at === r.at && other.lane !== r.lane && other.verdict === 'fail')) n.unique++;
+    if (r.verdict === 'fail' && failing.get(JSON.stringify([r.series, r.at]))!.size === 1) n.unique++;
     lanes.set(r.lane, n);
   }
   return [...lanes].flatMap(([lane, n]) => n.runs >= 10 && n.unique === 0 ? [{ key: `low-unique-catch:${lane}`, detector: 'low-unique-catch' as const, unit: null,
@@ -67,14 +77,15 @@ export function lowUniqueCatch(runs: readonly LaneRun[]): readonly WasteFinding[
 }
 
 export function repeatedExpensiveSuites(runs: readonly LaneRun[], expensive: ReadonlySet<LaneId>): readonly WasteFinding[] {
-  const lanes = new Map<LaneId, LaneRun[]>();
-  for (const r of runs) if (r.set === 'suite' && (expensive.has(r.lane) || r.minutes >= 5)) lanes.set(r.lane, [...lanes.get(r.lane) ?? [], r]);
-  return [...lanes].flatMap(([lane, rs]) => rs.length >= 3 ? [{ key: `repeated-expensive-suite:${lane}`, detector: 'repeated-expensive-suite' as const, unit: null,
-    summary: `${lane}: ${rs.length} expensive suite executions (${rs.reduce((n, r) => n + r.minutes, 0).toFixed(1)} min); review reuse and cadence.` }] : []);
+  const lanes = new Map<LaneId, { count: number; minutes: number }>();
+  for (const r of runs) if (r.set === 'suite' && (expensive.has(r.lane) || r.minutes >= 5)) {
+    const n = lanes.get(r.lane) ?? { count: 0, minutes: 0 }; n.count++; n.minutes += r.minutes; lanes.set(r.lane, n);
+  }
+  return [...lanes].flatMap(([lane, n]) => n.count >= 3 ? [{ key: `repeated-expensive-suite:${lane}`, detector: 'repeated-expensive-suite' as const, unit: null,
+    summary: `${lane}: ${n.count} expensive suite executions (${n.minutes.toFixed(1)} min); review reuse and cadence.` }] : []);
 }
 
-export function wasteFindings(events: readonly Event[]): readonly WasteFinding[] {
-  const runs = laneRuns(events);
+export function wasteFindings(events: readonly Event[], runs = laneRuns(events)): readonly WasteFinding[] {
   return [...grinding(events), ...redOnUnitGreenOnBase(runs), ...lowUniqueCatch(runs), ...repeatedExpensiveSuites(runs, new Set())];
 }
 

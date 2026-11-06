@@ -81,6 +81,14 @@ function finishOpen(runDir: AbsPath, path: AbsPath, fold: Fold, validEnd: number
 
 export type LogSnapshot = Readonly<{ view: JournalView; events: readonly Event[] }>;
 
+const verifiedPrefixes = new WeakMap<LogSnapshot, { bytes: Buffer; ends: readonly number[] }>();
+/** Exact bytes already verified by this cold read, bounded to a complete event prefix. */
+export function verifiedJournalPrefix(log: LogSnapshot, through: number): Buffer | null {
+  const prefix = verifiedPrefixes.get(log);
+  if (prefix === undefined || through > prefix.ends.length || through < 0) return null;
+  return prefix.bytes.subarray(0, through === 0 ? 0 : prefix.ends[through - 1]!);
+}
+
 /**
  * Reads a run's log without opening it for append: no lock, no tail repair, no fact. For
  * readers beside a live executor (`roadmap status`, a previous arc's run dir at takeover). An absent log
@@ -99,11 +107,14 @@ export function readJournal(runDir: AbsPath, arc: ArcId, through: number | null 
   const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const bytes = readFileSync(path);
   let start = 0;
+  const ends: number[] = [];
   for (let nl = bytes.indexOf(0x0a, start); nl !== -1 && (through === null || fold.highWater() < through); nl = bytes.indexOf(0x0a, start)) {
     events.push(verifyLine(path, fold, utf8, bytes.subarray(start, nl + 1), start));
-    start = nl + 1;
+    start = nl + 1; ends.push(start);
   }
-  return { view: fold, events };
+  const log = { view: fold, events };
+  verifiedPrefixes.set(log, { bytes, ends });
+  return log;
 }
 
 /** Observer cursor. The returned view is valid until the next read; callers publish derived models.

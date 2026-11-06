@@ -1,3 +1,4 @@
+import type { JobId } from './core/ids.ts';
 // Needs-user items (plan "Commands, needs-user", R10): the executor's durable questions to the architect.
 //
 // Raising one is the `needsuser.raise` op. The record's bytes are decided inside the intent body (the id is
@@ -152,10 +153,12 @@ export function raisedWithReason(view: JournalView, runDir: AbsPath, parent: Par
 export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
   const ended = view.holistic().packReviews.filter((r) => r.ended !== null).slice(0, -1);
   const facts = view.walkFacts();
+  const walkStarts = new Map<JobId, Extract<(typeof facts)[number]['fact'], { kind: 'walk-started' }>>();
+  for (const { fact } of facts) if (fact.kind === 'walk-started' && !walkStarts.has(fact.job)) walkStarts.set(fact.job, fact);
   const rewalked = facts.flatMap((x) => {
     if (x.fact.kind !== 'walk-ended' || x.fact.outcome === 'reported' || x.fact.interrupted === true) return [];
     const job = x.fact.job;
-    const started = facts.find((y) => y.fact.kind === 'walk-started' && y.fact.job === job)?.fact;
+    const started = walkStarts.get(job);
     if (started?.kind !== 'walk-started') throw new Error(`walk-ended of ${job}, which never started`);
     return view.rewalkSeq(started.milestone) > x.seq ? [job] : [];
   });

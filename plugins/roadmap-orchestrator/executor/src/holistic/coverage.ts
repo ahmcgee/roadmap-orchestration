@@ -159,14 +159,34 @@ export function lensCoverage(fold: HolisticFold, base: CoverageBase, lens: LensK
       : a.ended.covered.filter((c) => c.lens === lens).map((c): Edge => ({ from: c.from, to: c.to, by: 'audit', job: a.started.job, at: a.started.seq })))),
     ...fold.docsCovered.filter((d) => d.seq > base.seq && d.seq < before).map((d): Edge => ({ from: d.from, to: d.to, by: 'docs', job: d.pub, at: d.seq })),
   ];
+  const byFrom = new Map<Sha, { ids: number[]; cursor: number }>();
+  let size = 1; while (size < edges.length) size *= 2;
+  // A range maximum finds the earliest unused base-audit edge eligible at reachedAt.
+  const auditAt = new Array<number>(size * 2).fill(Number.NEGATIVE_INFINITY);
+  edges.forEach((e, i) => {
+    const row = byFrom.get(e.from) ?? { ids: [], cursor: 0 }; row.ids.push(i); byFrom.set(e.from, row);
+    if (e.by === 'audit' && e.from === base.head) auditAt[size + i] = e.at;
+  });
+  for (let i = size - 1; i > 0; i--) auditAt[i] = Math.max(auditAt[i * 2]!, auditAt[i * 2 + 1]!);
+  const firstAudit = (at: number): number => {
+    if (auditAt[1]! <= at) return -1;
+    let i = 1;
+    while (i < size) i = auditAt[i * 2]! > at ? i * 2 : i * 2 + 1;
+    return i - size;
+  };
   const used = new Set<number>();
   const followed: Edge[] = [];
   let watermark = base.head;
   let reachedAt = base.seq;
   for (;;) {
-    const i = edges.findIndex((e, k) => !used.has(k) && (e.from === watermark || e.by === 'audit' && e.from === base.head && e.at > reachedAt));
+    const row = byFrom.get(watermark);
+    if (row !== undefined) while (row.cursor < row.ids.length && used.has(row.ids[row.cursor]!)) row.cursor++;
+    const direct = row?.ids[row.cursor] ?? -1;
+    const audit = firstAudit(reachedAt);
+    const i = direct === -1 ? audit : audit === -1 ? direct : Math.min(direct, audit);
     if (i === -1) break;
     used.add(i);
+    for (let k = size + i; k > 0; k = Math.floor(k / 2)) auditAt[k] = k >= size ? Number.NEGATIVE_INFINITY : Math.max(auditAt[k * 2]!, auditAt[k * 2 + 1]!);
     const e = edges[i]!;
     followed.push(e);
     watermark = e.to;

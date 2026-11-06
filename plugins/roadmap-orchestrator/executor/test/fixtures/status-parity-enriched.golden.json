@@ -1,0 +1,767 @@
+{
+  "full": {
+    "arc": "<arc>",
+    "supervision": {
+      "state": "none"
+    },
+    "run": {
+      "state": "no-owner",
+      "owner": {
+        "state": "none",
+        "generation": null,
+        "pid": null
+      },
+      "heartbeatAt": null,
+      "stop": null
+    },
+    "units": [
+      {
+        "unit": "u1",
+        "stage": "lanes",
+        "status": "active",
+        "attempts": 1,
+        "chargeableFailures": 0,
+        "risk": "med",
+        "seat": null,
+        "state": "ready",
+        "waitingFor": null,
+        "holds": [],
+        "priority": {
+          "priority": "normal",
+          "origin": "planned",
+          "waitStartSeq": 16,
+          "bypassMerges": 0,
+          "promoted": false
+        },
+        "park": null,
+        "lineage": null,
+        "supersededBy": null,
+        "buildTier": "med",
+        "running": null,
+        "certification": {
+          "used": 0,
+          "allowance": 3,
+          "left": 3,
+          "attempt": 1,
+          "lanes": [
+            {
+              "id": "mul",
+              "set": "spec",
+              "redFirst": false,
+              "state": "green",
+              "verdict": "pass",
+              "flaky": false,
+              "inv": "<arc>/11#1",
+              "holds": []
+            },
+            {
+              "id": "mul",
+              "set": "suite",
+              "redFirst": false,
+              "state": "reused",
+              "verdict": "pass",
+              "flaky": false,
+              "inv": "<arc>/11#1",
+              "holds": []
+            }
+          ]
+        },
+        "work": [
+          {
+            "inv": "<arc>/11#1",
+            "cause": "exited",
+            "parent": {
+              "type": "stage",
+              "unit": "u1",
+              "stage": "lanes",
+              "attempt": 1
+            },
+            "kind": "lane",
+            "lane": "mul",
+            "reservedCpu": null,
+            "cpuBasis": null,
+            "measured": {
+              "wallMs": 120,
+              "runMs": 80,
+              "waitMs": 10
+            },
+            "tokenWaitMs": null,
+            "resources": []
+          }
+        ],
+        "failures": [],
+        "gate": null
+      },
+      {
+        "unit": "u2",
+        "stage": "lanes",
+        "status": "held-after:u1",
+        "attempts": 1,
+        "chargeableFailures": 0,
+        "risk": "med",
+        "seat": null,
+        "state": "waiting",
+        "waitingFor": {
+          "deps": [
+            "u1"
+          ],
+          "milestones": [],
+          "edges": [],
+          "admission": [],
+          "resources": null,
+          "envBlocked": false,
+          "drainFor": []
+        },
+        "holds": [],
+        "priority": {
+          "priority": "normal",
+          "origin": "planned",
+          "waitStartSeq": 25,
+          "bypassMerges": 0,
+          "promoted": false
+        },
+        "park": null,
+        "lineage": null,
+        "supersededBy": null,
+        "buildTier": "med",
+        "running": null,
+        "certification": {
+          "used": 0,
+          "allowance": 3,
+          "left": 3,
+          "attempt": 1,
+          "lanes": [
+            {
+              "id": "mul",
+              "set": "spec",
+              "redFirst": false,
+              "state": "green",
+              "verdict": "pass",
+              "flaky": false,
+              "inv": "<arc>/20#1",
+              "holds": []
+            },
+            {
+              "id": "mul",
+              "set": "suite",
+              "redFirst": false,
+              "state": "reused",
+              "verdict": "pass",
+              "flaky": false,
+              "inv": "<arc>/20#1",
+              "holds": []
+            }
+          ]
+        },
+        "work": [
+          {
+            "inv": "<arc>/20#1",
+            "cause": "exited",
+            "parent": {
+              "type": "stage",
+              "unit": "u2",
+              "stage": "lanes",
+              "attempt": 1
+            },
+            "kind": "lane",
+            "lane": "mul",
+            "reservedCpu": null,
+            "cpuBasis": null,
+            "measured": {
+              "wallMs": 120,
+              "runMs": 80,
+              "waitMs": 10
+            },
+            "tokenWaitMs": null,
+            "resources": []
+          }
+        ],
+        "failures": [],
+        "gate": null
+      },
+      {
+        "unit": "u3",
+        "stage": "pre-build",
+        "status": "active",
+        "attempts": 0,
+        "chargeableFailures": 0,
+        "risk": null,
+        "seat": null,
+        "state": "ready",
+        "waitingFor": null,
+        "holds": [],
+        "priority": {
+          "priority": "normal",
+          "origin": "planned",
+          "waitStartSeq": 2,
+          "bypassMerges": 0,
+          "promoted": false
+        },
+        "park": null,
+        "lineage": null,
+        "supersededBy": null,
+        "buildTier": null,
+        "running": null,
+        "certification": {
+          "used": 0,
+          "allowance": 3,
+          "left": 3,
+          "attempt": null,
+          "lanes": []
+        },
+        "work": [],
+        "failures": [],
+        "gate": null
+      }
+    ],
+    "edges": [
+      {
+        "type": "after",
+        "unit": "u2",
+        "on": "u1",
+        "effective": "u1",
+        "met": false
+      },
+      {
+        "type": "milestone",
+        "unit": "u2",
+        "milestone": "MS-1",
+        "passed": false
+      }
+    ],
+    "runOnly": null,
+    "needsUser": [
+      {
+        "id": "nu-27",
+        "reason": "revision-notice",
+        "blocking": false
+      }
+    ],
+    "commands": {
+      "pending": [
+        {
+          "id": "<command>",
+          "type": "pause"
+        }
+      ],
+      "receipts": [
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 3"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 4"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 5"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 6"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 7"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 8"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 9"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 10"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 11"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "<time>",
+          "reason": "Rejected 12"
+        }
+      ]
+    },
+    "spend": {
+      "byRole": [],
+      "byModel": {
+        "models": [],
+        "unresolvedRevs": []
+      },
+      "byClass": {
+        "classes": [],
+        "unresolvedRevs": []
+      },
+      "byJob": [],
+      "bySmoke": []
+    },
+    "host": {
+      "containment": {
+        "mode": null,
+        "guarantee": "Every process that keeps ROADMAP_INV in its exec-time environment, or stays in the workload session, is stopped and killed before output is certified, resources are released or a stage advances. Not guaranteed: a descendant that calls setsid() and execs with a cleared environment; it may keep writing the original unit worktree, touch external resources, or write after every check. Partial backstops: the verification-tree dirty assertion and the occupancy probe. Original-worktree writes, external undeclared residue and delayed writes are not caught."
+      },
+      "resources": [],
+      "pools": {
+        "@cpu": {
+          "size": 16,
+          "used": 0,
+          "dirty": 0
+        }
+      },
+      "queue": [],
+      "jobQueue": [],
+      "work": [
+        {
+          "inv": "<arc>/4#1",
+          "cause": null,
+          "parent": {
+            "type": "job",
+            "job": "baseline-1"
+          },
+          "kind": "lane",
+          "lane": "journey",
+          "reservedCpu": null,
+          "cpuBasis": null,
+          "measured": null,
+          "tokenWaitMs": null,
+          "resources": []
+        }
+      ],
+      "probes": [],
+      "backends": [],
+      "log": {
+        "bytes": 0,
+        "events": 28,
+        "foldMs": 0,
+        "compactionDue": false
+      }
+    },
+    "parkedBackends": [],
+    "plan": {
+      "rev": 1,
+      "planSha256": "<sha256>"
+    },
+    "routing": {
+      "profile": "default",
+      "rev": "da8fc5d9bd8d1885",
+      "seats": {
+        "build": {
+          "low": "efficient",
+          "med": "efficient",
+          "high": "frontier"
+        },
+        "verifier": {
+          "low": "frontier",
+          "med": "frontier",
+          "high": "frontier",
+          "escalation": "frontier"
+        },
+        "packReview": {
+          "arc": "frontier"
+        },
+        "experienceVerdict": {
+          "arc": "frontier"
+        },
+        "campaignAudit": {
+          "arc": "summit"
+        }
+      },
+      "sources": {
+        "build": {
+          "low": "builtin",
+          "med": "builtin",
+          "high": "builtin"
+        },
+        "verifier": {
+          "low": "builtin",
+          "med": "builtin",
+          "high": "builtin",
+          "escalation": "builtin"
+        },
+        "packReview": {
+          "arc": "builtin"
+        },
+        "experienceVerdict": {
+          "arc": "builtin"
+        },
+        "campaignAudit": {
+          "arc": "builtin"
+        }
+      },
+      "bindings": {
+        "efficient": "builtin",
+        "frontier": "builtin",
+        "summit": "builtin",
+        "economy": "builtin"
+      }
+    },
+    "rejection": null,
+    "holistic": true,
+    "target": {
+      "cutLine": "mul ships",
+      "nextMilestone": null,
+      "criticalPath": [
+        "u1",
+        "u2"
+      ],
+      "obligations": {
+        "total": 2,
+        "nowTrue": 0,
+        "notYetTrue": 2,
+        "latched": 0,
+        "split": 0,
+        "waived": 0,
+        "deferred": 0,
+        "retired": 0
+      }
+    },
+    "nowTrue": [],
+    "notYetTrue": [
+      {
+        "obligation": "I-1",
+        "statement": "A berth is never double-booked.",
+        "activation": "must-hold",
+        "verdict": "not-covered",
+        "evidence": [],
+        "blockingUnits": [],
+        "reason": "witness",
+        "lastObserved": {
+          "treeSha": "<sha>",
+          "verdict": "held",
+          "evidence": [
+            "<path>"
+          ]
+        }
+      },
+      {
+        "obligation": "I-2",
+        "statement": "A booking names one berth and one tide window.",
+        "activation": "must-hold",
+        "verdict": "not-covered",
+        "evidence": [],
+        "blockingUnits": [],
+        "reason": "witness",
+        "lastObserved": {
+          "treeSha": "<sha>",
+          "verdict": "not-held",
+          "evidence": []
+        }
+      }
+    ],
+    "waived": [],
+    "deferred": [],
+    "vision": {
+      "rev": 1,
+      "confirmation": {
+        "ref": "corpus:0005_Vision.md#sha256:<sha256>",
+        "at": "<time>"
+      },
+      "clauses": [
+        {
+          "id": "V-1",
+          "kind": "world",
+          "text": "Every vessel finds a berth.",
+          "rank": null,
+          "state": "active"
+        },
+        {
+          "id": "V-2",
+          "kind": "purpose",
+          "text": "A calm harbour.",
+          "rank": null,
+          "state": "active"
+        }
+      ],
+      "questions": [],
+      "advances": [
+        "V-1"
+      ],
+      "coverage": {
+        "unservedAdvanced": [],
+        "horizon": [
+          "V-2"
+        ],
+        "obligationsServingNone": [],
+        "withdrawnCited": []
+      }
+    },
+    "divergences": [],
+    "decisionsSince": [],
+    "findings": {
+      "active": [],
+      "metrics": [],
+      "released": {
+        "root": 0,
+        "closeOut": 0
+      }
+    },
+    "audit": {
+      "lenses": [
+        "invariants"
+      ],
+      "coverage": [
+        {
+          "lens": "invariants",
+          "coveredTo": "<sha>",
+          "outstanding": false,
+          "pendingDocs": []
+        }
+      ],
+      "uncovered": [],
+      "generation": 0,
+      "running": null
+    },
+    "completion": {
+      "planRev": null,
+      "head": null,
+      "active": false,
+      "sealed": false,
+      "notSealed": "not completed",
+      "unmet": [
+        "units-open",
+        "pending-commands",
+        "close-out",
+        "obligations-not-discharged"
+      ]
+    },
+    "holds": [],
+    "packReview": {
+      "state": "none",
+      "reviews": []
+    },
+    "corpus": {
+      "pinSha256": "<sha256>",
+      "source": {
+        "kind": "same-repo",
+        "commit": "<sha>",
+        "root": "docs/corpus"
+      },
+      "files": 3,
+      "rules": {
+        "active": 3,
+        "retired": 0,
+        "highWater": 3
+      },
+      "phase0Sha256": "<sha256>"
+    },
+    "census": {
+      "rules": [
+        {
+          "rule": "T-1",
+          "state": {
+            "type": "obligation",
+            "id": "I-1"
+          },
+          "held": false
+        },
+        {
+          "rule": "T-2",
+          "state": {
+            "type": "obligation",
+            "id": "I-2"
+          },
+          "held": false
+        },
+        {
+          "rule": "T-3",
+          "state": {
+            "type": "out-of-slice"
+          },
+          "held": null
+        }
+      ],
+      "counts": {
+        "held": 0,
+        "obligationRules": 2,
+        "outOfSlice": 1,
+        "untestable": 0,
+        "prodOnly": 0
+      },
+      "heldPct": 0,
+      "lastHeld": 1
+    },
+    "debt": {
+      "banked": [
+        {
+          "id": "B-1",
+          "bankReason": "gate-note",
+          "what": "Tidy the parity helpers.",
+          "seq": 26
+        }
+      ],
+      "ledger": [
+        {
+          "id": "B-1",
+          "state": "open",
+          "originArc": "<arc>",
+          "what": "Tidy the parity helpers."
+        }
+      ]
+    },
+    "chain": {
+      "arcs": [
+        {
+          "arc": "earlier",
+          "previousArc": null,
+          "acked": true,
+          "pr": {
+            "type": "unavailable",
+            "reason": "gh repo view --json owner,name,url exited 1: no git remotes found"
+          }
+        },
+        {
+          "arc": "<arc>",
+          "previousArc": "earlier",
+          "acked": false,
+          "pr": {
+            "type": "unavailable",
+            "reason": "gh repo view --json owner,name,url exited 1: no git remotes found"
+          }
+        }
+      ],
+      "k": null,
+      "unackedStarts": [
+        "<arc>"
+      ],
+      "nextStart": {
+        "allowed": false,
+        "reason": "previous-incomplete",
+        "arc": "<arc>"
+      },
+      "position": 2
+    },
+    "timings": [
+      {
+        "stage": "lanes",
+        "count": 2,
+        "p50Ms": 0,
+        "maxMs": 0
+      }
+    ],
+    "answers": [
+      {
+        "schema": "roadmap/answer-m4a",
+        "question": "P-1",
+        "k": 1,
+        "answer": "Yes",
+        "at": "<time>",
+        "arc": "<arc>",
+        "line": "P-1 answered at <time>: \"Yes\" — apply it now (Phase-0 record answered{answer, at}, rules to match)"
+      }
+    ],
+    "knownDefects": [],
+    "demo": null,
+    "milestones": [
+      {
+        "id": "MS-1",
+        "state": "building",
+        "passed": false,
+        "round": 0,
+        "walks": [],
+        "findings": []
+      }
+    ]
+  },
+  "summary": {
+    "arc": "<arc>",
+    "state": "no-owner",
+    "stop": null,
+    "supervision": {
+      "state": "none"
+    },
+    "planRev": 1,
+    "progress": {
+      "total": 3,
+      "merged": 0,
+      "states": {
+        "ready": 2,
+        "waiting": 1
+      },
+      "held": 0,
+      "remaining": 2
+    },
+    "spend": {
+      "costUsd": 0,
+      "expectedUsd": 10,
+      "differenceUsd": -10,
+      "estimatedCalls": 0,
+      "unavailableCalls": 0
+    },
+    "milestones": [
+      {
+        "id": "MS-1",
+        "state": "building",
+        "round": 0,
+        "findings": 0,
+        "costUsd": 0,
+        "expectedUsd": 3
+      }
+    ],
+    "caught": {
+      "total": 0,
+      "laneReds": 0,
+      "gateRevisions": 0,
+      "uniqueFindings": 0,
+      "byLens": {}
+    },
+    "verdicts": [],
+    "captures": [],
+    "needsUser": [
+      {
+        "id": "nu-27",
+        "reason": "revision-notice",
+        "blocking": false
+      }
+    ],
+    "waste": [],
+    "demo": null,
+    "completion": {
+      "planRev": null,
+      "head": null,
+      "active": false,
+      "sealed": false,
+      "notSealed": "not completed",
+      "unmet": [
+        "units-open",
+        "pending-commands",
+        "close-out",
+        "obligations-not-discharged"
+      ]
+    }
+  }
+}

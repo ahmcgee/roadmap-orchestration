@@ -54,21 +54,36 @@ export type ArcRef = Readonly<{
   input: (sha: Sha256Hex, ext: string) => Buffer;
 }>;
 
+let arcRefReads: Map<string, ArcRef> | null = null;
+export function withArcRefReads<T>(read: () => T): T {
+  if (arcRefReads !== null) return read();
+  arcRefReads = new Map();
+  try { return read(); } finally { arcRefReads = null; }
+}
+
 /** The arc's verified ref, or null when it has none. */
 export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
   const ref = snapshotRef(arc);
   const commit = refTarget(repo, ref);
   if (commit === null) return null;
+  const key = commit;
+  const cached = arcRefReads?.get(key);
+  if (cached !== undefined) {
+    if (cached.arc !== arc) throw new ArcRefError(arc, `at ${commit} is a snapshot of arc ${cached.arc}`);
+    return cached;
+  }
   const check = verifySnapshot(repo, commit);
   if (check.kind === 'mismatch') throw new ArcRefError(arc, `at ${commit} does not verify: ${check.detail}`);
   if (check.manifest.arc !== arc) throw new ArcRefError(arc, `at ${commit} is a snapshot of arc ${check.manifest.arc}`);
-  const lines = check.files.get(EVENTS_FILE)!.toString('utf8').split('\n').filter((l) => l !== '');
+  const bytes = check.files.get(EVENTS_FILE)!;
   const fold = new Fold(arc);
-  const events = lines.map((line) => {
-    const e = parseEventLine(line);
-    fold.apply(e, prevHash(Buffer.from(`${line}\n`, 'utf8')));
-    return e;
-  });
+  const events = check.events;
+  let offset = 0;
+  for (const e of events) {
+    const end = bytes.indexOf(10, offset) + 1;
+    fold.apply(e, prevHash(bytes.subarray(offset, end)));
+    offset = end;
+  }
   // Only the kept inputs outlive the verification, copied out of the batch read's one buffer: the ref's other files
   // (results, witnesses) are most of its bytes, and a chain holds every earlier arc's ref.
   const inputs = new Map([...check.files].filter(([path]) => path.startsWith('inputs/')).map(([path, bytes]) => [path, Buffer.from(bytes)] as const));
@@ -81,7 +96,9 @@ export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
   if (applied === null) throw new ArcRefError(arc, `at ${commit} records no plan in force`);
   const plan = parsePlan(JSON.parse(input(applied.planSha256, PLAN_INPUT).toString('utf8')));
   const manifest = parseRevisionPayload(JSON.parse(input(applied.payloadSha256, REVISION_INPUT).toString('utf8'))).manifest;
-  return { arc, commit, highWater: check.manifest.highWater, events, view: fold, plan, manifest, input };
+  const result = { arc, commit, highWater: check.manifest.highWater, events, view: fold, plan, manifest, input };
+  arcRefReads?.set(key, result);
+  return result;
 }
 
 // Schema-cut scaffolding (dev.36): an arc a schema-1 executor (dev.32 or earlier) wrote is not adopted, so the cross-arc
