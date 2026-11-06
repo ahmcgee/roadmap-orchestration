@@ -81,7 +81,7 @@ function recordsOf(ctx: Reader, job: JobId, tree: Sha): ReadonlyMap<LaneId, Witn
  * its `external-witness` CI facts (src/holistic/external.ts), so the journey series skips it and the baseline neither
  * waits for nor grades it.
  */
-const localLanes = (obligations: Obligations): readonly ArcLaneDef[] => obligations.lanes.filter((l) => l.witnessClass !== 'external');
+export const localLanes = (obligations: Obligations): readonly ArcLaneDef[] => obligations.lanes.filter((l) => l.witnessClass !== 'external');
 
 /** The problems over the records, in id order. An obligation an external-class lane witnesses is not graded here. */
 export function baselineProblems(obligations: Obligations, records: ReadonlyMap<LaneId, WitnessRecord>, latched: ReadonlySet<ObligationId>): readonly BaselineProblem[] {

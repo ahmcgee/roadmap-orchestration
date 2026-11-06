@@ -154,7 +154,7 @@ import { type PlanM1,type PlanUnit,hasMilestones } from '../input/plan.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
-import { baselineDue,runBaseline } from '../pipeline/baseline.ts';
+import { baselineDue,localLanes,runBaseline } from '../pipeline/baseline.ts';
 import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/deflakemint.ts';
 import { type StageContext,runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
@@ -423,12 +423,14 @@ export function arcHolds(h: HolisticContexts, blocking: readonly BlockingItem[],
 
 /**
  * A6: the baseline the arc owes before any admission under holistic (`baselineDue`), or null. `baselineDue` reads the
- * tip now; a baseline job that already witnessed every arc lane on one tree the tip has since left is done.
+ * tip now; a baseline job that already witnessed every local arc lane on one tree the tip has since left is done (an
+ * external lane is never witnessed by the baseline: `localLanes`).
  */
 export function baselineOwed(ctx: StageContext): JobId | null {
   const job = baselineDue(ctx);
   if (job === null) return null;
-  const lanes = holisticInForce(ctx).obligations?.lanes.map((l) => l.id) ?? [];
+  const { obligations } = holisticInForce(ctx);
+  const lanes = obligations === null ? [] : localLanes(obligations).map((l) => l.id);
   const byTree = new Map<Sha, Set<LaneId>>();
   for (const w of ctx.journal.view.holistic().witnessed) {
     if (w.for.type !== 'job' || w.for.job !== job) continue;

@@ -303,6 +303,23 @@ describe('the baseline witness (A6)', () => {
     }
   });
 
+  test('baseline.external-done-elsewhere (nu-99732 stall): a baseline that witnessed every local lane on a tree the tip has left is done; an external lane, never run locally, does not keep it owed', T, async () => {
+    const { r, ctx, w } = arc({
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['ci'], lane: 'ci' }], lanes: ['journey', 'ci'],
+      trees: { '*': { outcomes: { t1: 'pass' } } },
+      laneExtra: { ci: { witnessClass: 'external', inputs: ['src/**'] } },
+    });
+    try {
+      assert.deepEqual(await runBaseline(ctx), { kind: 'held' });
+      writeFiles(r.d.repo, { 'src/merged.js': 'export const merged = 1;\n' });
+      commitAll(r.d.repo, 'a unit merge');
+      assert.equal(baselineOwed(w.stage), null, 'done on the tree it left: every local lane was witnessed there');
+      assert.deepEqual([spawnsOf(r, 'journey'), spawnsOf(r, 'ci')], [1, 0]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('baseline.not-holistic: an arc without the holistic layer (no vision) owes no baseline and spends nothing', T, () => {
     const d = publishArc({ steps: [] });
     const r = contextFor(d);
