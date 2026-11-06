@@ -95,6 +95,8 @@ A repair names finding/obligation ids in `repairs`; a re-entry names its predece
 
 ### Lanes and evidence
 
+Lanes may read executor-owned ROADMAP_CPU, the granted CPU-token count, to size worker pools; never declare it in env.set or env.pass.
+
 A lane requires id, argv, cwd, env `{set,pass}`, expectedExit, cadence, resources and evidenceGlobs; evidenceExcludes is optional. argv has no shell. Pass only required inherited variables. Supply timeoutMin for a real wall timeout; without it the runner backstop is six hours, not a red timeout verdict.
 
 | Kind | Cadences |

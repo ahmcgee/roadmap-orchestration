@@ -31,9 +31,9 @@ import type { Holder, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import { allocate, envBlocked, overlaps } from '../resources/pool.ts';
 import {
-  type AcquiringHolder, type BatchHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder,
+  type AcquiringHolder, type BatchHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder, publicationOwner, holderUnits,
 } from '../resources/reserve.ts';
-import { type Acquire, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
+import { type Acquire, type CandidateEntry, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
 
 /** A units' waiter as `status` shows it, in the order the arbiter serves them. */
 export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean; pressureBlocked: boolean; queuedAt: number; reasons?: readonly WaitReason[] }>;
@@ -66,7 +66,8 @@ export type FirstWaiterView = Readonly<{ holder: FirstHolder; request: ResourceR
 type Waiter<H extends AcquiringHolder> = {
   readonly queuedAt: number;
   readonly wait: WaitAccumulator;
-  readonly request: ResourceRequest;
+  request: ResourceRequest;
+  readonly entry?: CandidateEntry;
   readonly holder: H;
   readonly signal: AbortSignal;
   readonly resolve: (grant: Grant) => void;
@@ -119,7 +120,9 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     if (!workload) return [];
     const reasons: WaitReason[] = [];
     if ((pressure.memory() ?? 0) >= PRESSURE_SATURATED) reasons.push('memory-pressure');
-    if ((hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED && [...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.workload === true || (e.pending?.expect.edge.type === 'reserve' && workloadCpu(e.pending.expect.holder, 1, e.pending.expect.cpuBasis))))) reasons.push('cpu-pressure');
+    const owner = publicationOwner(ctx.journal.view);
+    const ownsSlot = owner !== null && sameHolder(owner, h);
+    if (!ownsSlot && (hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED && [...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.workload === true || (e.pending?.expect.edge.type === 'reserve' && workloadCpu(e.pending.expect.holder, 1, e.pending.expect.cpuBasis))))) reasons.push('cpu-pressure');
     return reasons;
   };
 
@@ -139,14 +142,16 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     const blocked: ResourceRequest[] = [];
     const refused: FirstWaiter[] = [];
     const evaluate = <W extends UnitWaiter | FirstWaiter>(queue: W[], w: W, parent: Parent): void => {
+      if (w.entry !== undefined) w.request = w.entry.refresh();
       const reasons = reasonsFor(w, blocked);
       w.wait.observe(reasons);
       if (reasons.length > 0) {
         if ('onBlocked' in w) refused.push(w as FirstWaiter);
-        if (!envBlocked(resourceTable(ctx.journal.view), plan, w.request) && pressureReasons(w).length === 0) blocked.push(w.request);
+        if (w.request.publication && reasons.includes('publication-slot')) blocked.push({ named: [], pools: [], cpu: 0, publication: true });
+        else if (!envBlocked(resourceTable(ctx.journal.view), plan, w.request) && pressureReasons(w).length === 0) blocked.push(w.request);
         return;
       }
-      const got = reserve(ctx, w.holder, w.request, parent, Math.max(0, Date.now() - w.queuedAt), w.wait.measured());
+      const got = reserve(ctx, w.holder, w.request, parent, Math.max(0, Date.now() - w.queuedAt), w.wait.measured(), w.entry?.slotHolder);
       if (got.state === 'refused') throw new Error('availability changed during synchronous reservation');
       settle(queue, w, { kind: 'granted', units: got.resources });
     };
@@ -155,12 +160,13 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     for (const w of refused) w.onBlocked();
   };
 
-  const acquire: Acquire = (request, holder, rank, signal) => {
+  const acquire: Acquire = (request, holder, rank, signal, entry) => {
     const h = acquiring(holder);
+    if (request.publication && holderUnits(ctx.journal.view, h).some((u) => u !== 'integration-slot')) throw new Error('cannot wait for publication while retaining workload resources');
     if (units.some((w) => sameHolder(w.holder, h))) throw new Error(`${canonicalJson(h)} already waits`);
     if (signal.aborted) return Promise.resolve({ kind: 'cancelled' });
     return new Promise<Grant>((resolve) => {
-      const w: UnitWaiter = { queuedAt: Date.now(), wait: new WaitAccumulator(), request, holder: h, rank, signal, resolve, onAbort: () => settle(units, w, { kind: 'cancelled' }) };
+      const w: UnitWaiter = { queuedAt: Date.now(), wait: new WaitAccumulator(), request, ...(entry === undefined ? {} : { entry }), holder: h, rank, signal, resolve, onAbort: () => settle(units, w, { kind: 'cancelled' }) };
       signal.addEventListener('abort', w.onAbort, { once: true });
       units.push(w);
       wake();

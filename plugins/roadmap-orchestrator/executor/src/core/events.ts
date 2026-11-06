@@ -1,3 +1,4 @@
+import type { ResourceRequest } from '../schedule/types.ts';
 import { type Waited, waited, warnUnmeasuredWaiting } from './waiting.ts';
 import { nonBlank } from './validate.ts';
 import { type SystemName,systemName } from '../core/ids.ts';
@@ -234,7 +235,7 @@ export type OpExpect = {
   /** `evidence` is the done evidence.snapshot op whose manifest must be complete before removal. */
   'worktree.remove': Readonly<{ path: AbsPath; evidence: OpId }>;
   /** `resources` in lock order (`compareResourceUnits`): names and pool instances, then `@cpu#*`, `integration-slot` last. */
-  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis; tokenWaitMs?: number; waited?: Waited }>;
+  'resource.transition': Readonly<{ holder: Holder; resources: readonly ResourceUnit[]; edge: ResourceEdge; cpuBasis?: CpuBasis; tokenWaitMs?: number; waited?: Waited; slotHolder?: Extract<Holder, { type: 'publication' }> }>;
   /** The invocation is `op#ordinal`; launch.json is written after the intent and must hash to `launchSha256`. */
   'proc.spawn': Readonly<{ subject: SpawnSubject; launchSha256: Sha256Hex; cpuKey?: Sha256Hex }>;
   /** `op` scope also kills stray earlier ordinals of the same op. */
@@ -768,6 +769,7 @@ export type WalkMcpFact = Readonly<{
 }>;
 
 export type Fact =
+  | Readonly<{ kind: 'candidate-entry-planned'; unit: UnitId; attempt: number; tip: Sha; request: ResourceRequest }>
   | Readonly<{ kind: 'stage-admitted'; unit: UnitId; stage: Stage; waited: Waited }>
   | WalkMcpFact
   | IntegrationPushFact
@@ -1312,6 +1314,11 @@ const opR: Read<OpId> = (v, p) => opIdOf(v, p);
 const invR: Read<InvocationId> = (v, p) => invocationIdOf(v, p);
 const revR: Read<RoutingRev> = (v, p) => routingRev(v, p);
 const resR: Read<ResourceName> = (v, p) => resourceName(v, p);
+/** Canonical resource request reader, also used by the derived scheduler file. */
+export const resourceRequest: Read<ResourceRequest> = object((f) => {
+  const basis = f.optional('cpuBasis', cpuBasis);
+  return { named: f.get('named', arrayOf(resR)), pools: f.get('pools', arrayOf(resR)), cpu: f.get('cpu', nat), publication: f.get('publication', bool), ...(basis === undefined ? {} : { cpuBasis: basis }) };
+});
 const instR: Read<ResourceInstance> = (v, p) => resourceInstance(v, p);
 const unitResR: Read<ResourceUnit> = (v, p) => resourceUnit(v, p);
 const cmdR: Read<CommandId> = (v, p) => commandId(v, p);
@@ -1527,11 +1534,14 @@ export const OP_SCHEMAS: { readonly [K in OpKind]: OpSchema<K> } = {
       const basis = f.optional('cpuBasis', cpuBasis);
       const tokenWaitMs = f.optional('tokenWaitMs', nat);
       const measurement = f.optional('waited', waited);
-      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }), ...(measurement === undefined ? {} : { waited: measurement }) };
+      const slotHolder = f.optional('slotHolder', holder);
+      if (slotHolder !== undefined && slotHolder.type !== 'publication') throw new SchemaError(`${f.path}.slotHolder`, 'publication holder', slotHolder);
+      return { holder: f.get('holder', holder), resources: f.get('resources', lockOrder), edge: f.get('edge', resourceEdge), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }), ...(measurement === undefined ? {} : { waited: measurement }), ...(slotHolder === undefined ? {} : { slotHolder }) };
     }),
     post: nothing,
     outcome: kindOnly('transitioned'),
     check: (e, _post, path) => {
+      if (e.slotHolder !== undefined && !(e.edge.type === 'reserve' && e.resources.includes(resourceName('integration-slot')) && e.holder.type === 'stage' && e.holder.stage === 'candidate' && e.holder.unit === e.slotHolder.unit && e.holder.attempt === e.slotHolder.attempt)) throw new SchemaError(`${path}.expect.slotHolder`, 'matching candidate-stage reserve containing integration-slot', e.slotHolder);
       if (e.edge.type === 'reserve' && e.waited === undefined) warnUnmeasuredWaiting();
       if (e.edge.type === 'reclaim' && !(RECLAIM_HOLDERS as readonly string[]).includes(e.holder.type)) {
         throw new SchemaError(`${path}.expect.holder.type`, `${RECLAIM_HOLDERS.join(' or ')} (only these reclaim a cleanup-failed resource)`, e.holder.type);
@@ -2315,6 +2325,7 @@ export const fact: Read<Fact> = tagged('kind', {
     if (opt['obligationsSha256'] !== undefined && opt['visionSha256'] === undefined) throw new SchemaError(`${f.path}.obligationsSha256`, 'absent without a vision (obligations are a holistic input, A5)', opt['obligationsSha256']);
     return out as Fact;
   }),
+  'candidate-entry-planned': object((f): Fact => ({ kind: f.get('kind', literal('candidate-entry-planned')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), tip: f.get('tip', shaR), request: f.get('request', resourceRequest) })),
   'stage-admitted': object((f): Fact => ({ kind: f.get('kind', literal('stage-admitted')), unit: f.get('unit', unitR), stage: f.get('stage', stage), waited: f.get('waited', waited) })),
   'executor-started': object((f): Fact => {
     const host = f.optional('host', hostFingerprint);

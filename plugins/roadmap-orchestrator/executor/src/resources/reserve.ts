@@ -1,3 +1,4 @@
+import { INTEGRATION_SLOT } from '../core/ids.ts';
 import type { Waited } from '../core/waiting.ts';
 // The reservation cycle (plan "Reservation cycle", R4; DESIGN §2.2 Locks; M2 "Resources"):
 //
@@ -184,6 +185,22 @@ export function holderUnits(view: JournalView, holder: Holder): readonly Resourc
   return units.sort(compareResourceUnits);
 }
 
+/** The durable slot owner's workload holder, including an open compound reserve. */
+export function publicationOwner(view: JournalView): StageHolder | JobHolder | null {
+  const entry = entryOf(resourceTable(view), INTEGRATION_SLOT);
+  const holder = entry.pending?.expect.slotHolder ?? (entry.status.state === 'free' ? null : entry.status.holder);
+  if (holder === null) return null;
+  if (holder.type === 'publication') return { type: 'stage', unit: holder.unit, stage: 'candidate', attempt: holder.attempt };
+  if (holder.type === 'docs') return { type: 'job', job: holder.pub };
+  if (holder.type === 'batch') {
+    const reserve = view.opsOf('resource.transition').findLast((i) => i.expect.edge.type === 'reserve' && sameHolder(i.expect.holder, holder) && i.expect.resources.includes(INTEGRATION_SLOT));
+    if (reserve?.parent.type !== 'job') throw new Error(`batch slot ${canonicalJson(holder)} has no originating parent job`);
+    return { type: 'job', job: reserve.parent.job };
+  }
+  // Legacy tests/primitives may hold the slot under an ordinary stage; they get no publication exemption.
+  return null;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Transitions
 
@@ -224,6 +241,7 @@ function journalTransition(
   cpuBasis?: CpuBasis,
   tokenWaitMs?: number,
   waited?: Waited,
+  slotHolder?: PublicationHolder,
 ): void {
   const view = ctx.journal.view;
   assertLegal(view, holder, resources, edge);
@@ -232,7 +250,7 @@ function journalTransition(
     key: holderKey(holder),
     parent,
     deadlineAt: null,
-    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }), ...(waited === undefined ? {} : { waited }) }, post: null }),
+    body: () => ({ expect: { holder, resources, edge, ...(cpuBasis === undefined ? {} : { cpuBasis }), ...(tokenWaitMs === undefined ? {} : { tokenWaitMs }), ...(waited === undefined ? {} : { waited }), ...(slotHolder === undefined ? {} : { slotHolder }) }, post: null }),
   });
   const unit = 'unit' in holder ? holder.unit : undefined;
   crashPoint('resource.after-intent', unit);
@@ -293,8 +311,10 @@ export function reserve<H extends AcquiringHolder>(
   parent: Parent,
   tokenWaitMs?: number,
   waited: Waited = { totalMs: 0, byReasonMs: {} },
+  slotHolder?: PublicationHolder,
 ): Reservation<'reserved', H> | Refused {
   const plan = ctx.plan();
+  if (slotHolder !== undefined && !(holder.type === 'stage' && holder.stage === 'candidate' && holder.unit === slotHolder.unit && holder.attempt === slotHolder.attempt && req.publication)) throw new Error('compound entry requires matching candidate and publication holders');
   const slotAlone = req.publication && req.named.length === 0 && req.pools.length === 0 && req.cpu === 0;
   if ((holder.type === 'publication' || holder.type === 'docs' || holder.type === 'batch') && !slotAlone) {
     throw new Error(`a ${holder.type} holder reserves integration-slot alone, not ${canonicalJson(req)}`);
@@ -302,8 +322,9 @@ export function reserve<H extends AcquiringHolder>(
   if (holder.type === 'job' && req.publication) throw new Error(`a job holder never reserves integration-slot: ${canonicalJson(req)}`);
   const got = allocate(resourceTable(ctx.journal.view), plan, req);
   if (got.kind === 'busy') return { state: 'refused', busy: got.busy };
-  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis, tokenWaitMs, waited);
-  return { state: 'reserved', holder, resources: got.units, recipes: holderRecipes(plan, ctx.repo, holder, got.units) };
+  journalTransition(ctx, holder, got.units, { type: 'reserve' }, parent, new Map(), req.cpuBasis, tokenWaitMs, waited, slotHolder);
+  const owned = slotHolder === undefined ? got.units : got.units.filter((u) => u !== INTEGRATION_SLOT);
+  return { state: 'reserved', holder, resources: owned, recipes: holderRecipes(plan, ctx.repo, holder, owned) };
 }
 
 /**

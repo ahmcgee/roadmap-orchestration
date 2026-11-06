@@ -62,7 +62,10 @@ export type Grant =
  * named resource cleanup-failed or with an undisposed own residue, or more instances than a pool has healthy)
  * are set aside until the dirty unit is disposed.
  */
-export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Rank, signal: AbortSignal) => Promise<Grant>;
+/** Candidate-only combined entry; refresh executes synchronously immediately before grant inspection. */
+export type CandidateEntry = Readonly<{ slotHolder: Extract<Holder, { type: 'publication' }>; refresh: () => ResourceRequest }>;
+
+export type Acquire = (request: ResourceRequest, holder: Holder, rank: () => Rank, signal: AbortSignal, entry?: CandidateEntry) => Promise<Grant>;
 
 // ---------------------------------------------------------------------------------------------------
 // Priority and aging (F17)

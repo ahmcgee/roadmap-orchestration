@@ -242,11 +242,11 @@ export type LaneRuntime = Readonly<{ acquire: Acquire; rank: () => Rank; signal:
  * A cancelled signal is honoured.
  */
 export function reserveNow(ctx: ResourceContext): Acquire {
-  return (request, holder, _rank, signal) => {
+  return (request, holder, _rank, signal, entry) => {
     if (signal.aborted) return Promise.resolve({ kind: 'cancelled' });
     if (holder.type !== 'stage' && holder.type !== 'publication') throw new Error(`${canonicalJson(holder)} does not acquire`);
     const parent = { type: 'stage', unit: holder.unit, stage: holder.type === 'stage' ? holder.stage : 'candidate', attempt: holder.attempt } as const;
-    const got = reserve(ctx, holder, request, parent);
+    const got = reserve(ctx, holder, entry?.refresh() ?? request, parent, 0, { totalMs: 0, byReasonMs: {} }, entry?.slotHolder);
     if (got.state === 'refused') throw new Error(`${canonicalJson(holder)}: resources ${got.busy.join(', ')} are held by another`);
     return Promise.resolve({ kind: 'granted', units: got.resources });
   };

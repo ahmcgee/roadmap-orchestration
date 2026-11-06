@@ -220,3 +220,57 @@ for (const label of ['salvage.after-commit-tree', 'candidate.after-commit-tree']
     assert.equal(readCalls(d.scenarioPath).length, 3, 'recovery never reruns the builder or gate');
   });
 }
+
+test('entry-is-one-atomic-grant and spec-before-suite-entry', T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+  const path = join(d.planPath, '..', plan.units[0].spec);
+  const spec = JSON.parse(readFileSync(path, 'utf8'));
+  spec.lanes.push({ ...spec.lanes[0], id: 'candidate-spec', cadence: 'candidate', cpu: 1, argv: ['true'] });
+  writeFileSync(path, JSON.stringify(spec));
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'green');
+    const grants = r.journal.view.opsOf('resource.transition').filter((i) => i.expect.edge.type === 'reserve' && i.parent.type === 'stage' && i.parent.stage === 'candidate');
+    const entry = grants.find((i) => i.expect.resources.includes(resourceName('integration-slot')))!;
+    assert.equal(entry.expect.holder.type, 'stage');
+    assert.deepEqual(entry.expect.slotHolder, { type: 'publication', unit: U1, attempt: entry.parent.type === 'stage' ? entry.parent.attempt : 0 });
+    assert.equal(entry.expect.resources.filter((u) => u.startsWith('@cpu#')).length, 1, 'the first spec lane, rather than the larger suite lane');
+    assert.equal(grants.filter((i) => i.expect.holder.type === 'stage').length, 1, 'entry is consumed once; the suite reuses its earlier certified pass');
+    const slot = resourceTable(r.journal.view).get(resourceName('integration-slot'))!.status;
+    assert.equal(slot.state !== 'free' && slot.holder.type, 'publication');
+    assert.ok([...resourceTable(r.journal.view)].filter(([u]) => u.startsWith('@cpu#')).every(([, e]) => e.status.state === 'free'), 'entry CPU never reaches ff/snapshot');
+  } finally { r.journal.close(); }
+});
+
+for (const moveAt of ['before-grant', 'after-grant'] as const) test(`tip-move-reselects (${moveAt}) and releases replaced entry`, T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+  const lane = plan.suite.lanes[0];
+  plan.suite.lanes = [{ ...lane, id: 'selected', argv: ['true'], cadence: 'candidate', systems: ['mul'], cpu: 3 }, { ...lane, id: 'always', argv: ['true'], cadence: 'candidate', cpu: 1 }];
+  writeFileSync(d.planPath, JSON.stringify(plan));
+  const r = contextFor(d);
+  try {
+    const acquire = r.ctx.acquire; let moved = false;
+    const move = () => {
+      const commit = r.journal.view.unit(U1).approval!.fingerprint.unitCommit;
+      git(d.repo, 'cherry-pick', commit);
+      git(d.repo, 'commit', '--allow-empty', '-m', 'external tip moved');
+    };
+    const ctx = { ...r.ctx, acquire: (async (request, holder, rank, signal, entry) => {
+      const moving = request.publication && !moved;
+      if (moving) { moved = true; if (moveAt === 'before-grant') move(); }
+      const grant = await acquire(request, holder, rank, signal, entry);
+      if (moving && moveAt === 'after-grant') move();
+      return grant;
+    }) satisfies typeof acquire };
+    await stepUntil({ ...r, ctx }, 'u1', (f) => f.stage === 'candidate' && f.outcome === 'green');
+    const facts = (await import('../src/core/log.ts')).readJournal(r.ctx.runDir, r.ctx.plan().arc).events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'candidate-entry-planned' ? [e.fact] : []);
+    assert.deepEqual(facts.map((f) => f.request.cpu), [3, 1]);
+    const grants = r.journal.view.opsOf('resource.transition').filter((i) => i.expect.edge.type === 'reserve' && i.expect.resources.includes(resourceName('integration-slot')));
+    assert.equal(grants.length, moveAt === 'before-grant' ? 1 : 2);
+    assert.equal(grants.at(-1)!.expect.resources.filter((u) => u.startsWith('@cpu#')).length, 1);
+    assert.equal(r.journal.view.opsOf('candidate.merge').length, 1, 'only the revalidated plan publishes candidate refs');
+    assert.ok([...resourceTable(r.journal.view)].filter(([u]) => u.startsWith('@cpu#')).every(([, e]) => e.status.state === 'free'));
+  } finally { r.journal.close(); }
+});

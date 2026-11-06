@@ -917,9 +917,9 @@ export class Fold implements JournalView {
     if (r.kind !== intent.kind) fail(`done of kind ${r.kind} for ${r.op}, an intent of kind ${intent.kind}`);
     const moved: [ResourceUnit, ResourceStatus][] = [];
     if (intent.kind === 'resource.transition') {
-      const { holder, resources, edge } = intent.expect;
+      const { holder, resources, edge, slotHolder } = intent.expect;
       for (const res of resources) {
-        const next = afterEdge((this.#resources.get(res) ?? FREE_RESOURCE).status, holder, edge);
+        const next = afterEdge((this.#resources.get(res) ?? FREE_RESOURCE).status, edge.type === 'reserve' && res === 'integration-slot' && slotHolder !== undefined ? slotHolder : holder, edge);
         if (typeof next === 'string') return fail(`${r.op} is illegal for ${res}: ${next}`);
         moved.push([res, next]);
       }
@@ -964,7 +964,7 @@ export class Fold implements JournalView {
 
   /** A done `fail` records its residues; a `release` ends the residue of each instance it frees. */
   #residuesAfter(intent: IntentOf<'resource.transition'>, at: IsoTime, fail: (detail: string) => never): void {
-    const { holder, resources, edge } = intent.expect;
+    const { holder, resources, edge, slotHolder } = intent.expect;
     if (edge.type === 'release') for (const res of resources) this.#residues.delete(res as ResourceInstance);
     if (edge.type !== 'fail') return;
     if (holder.type !== 'stage' && holder.type !== 'job') return fail(`${intent.op}: a fail transition held by ${canonicalJson(holder)}; only a stage or job holder records residues`);
@@ -1425,6 +1425,8 @@ export class Fold implements JournalView {
         this.#staleReopened(f, fail);
         this.#lastReopenSeq = at.seq;
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
+        return;
+      case 'candidate-entry-planned':
         return;
       case 'stage-admitted':
         if (this.#planApplied?.specs[f.unit] === undefined) fail(`admission of unknown unit ${f.unit}`);

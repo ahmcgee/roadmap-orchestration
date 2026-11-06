@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import type { Event, IntentOf } from '../../src/core/events.ts';
 import { absPath } from '../../src/core/values.ts';
 import { readResidues, undispositioned } from '../../src/host/residues.ts';
@@ -154,4 +154,27 @@ describe('res.failed-cleanup-residue-first-never-released', { concurrency: 4 }, 
     // Recovery tore down db again (it was still cleaning) and released it alone.
     assert.deepEqual(transitions(r).slice(4).map((t) => `${t.edge} ${t.resources.join(',')}`), ['release db']);
   });
+});
+
+for (const label of ['resource.after-intent', 'resource.after-done']) for (const failed of [false, true]) test(`compound-reserve-crash-recovers-both-owners / compound-cleanup-preserves-residue: ${label} failed=${failed}`, T, async () => {
+  const r = newRun();
+  if (failed) writeFileSync(join(r.stateDir, `${DB}.teardown-fails`), '');
+  const trigger = writeTrigger(tmpDir('compound-trigger'), { label, occurrence: 1 });
+  const crashed = await runFixture('pool-child.ts', ['compound', JSON.stringify(r)], { env: { ...process.env, ROADMAP_TEST_CRASH: trigger }, timeoutMs: CHILD_TIMEOUT_MS });
+  assert.equal(crashed.signal, 'SIGKILL', crashed.stderr);
+  assertFired(trigger);
+  const intent = transitionIntents(r)[0]!;
+  assert.equal(intent.expect.holder.type, 'stage');
+  assert.equal(intent.expect.slotHolder?.type, 'publication');
+  for (let n = 0; n < 2; n++) {
+    const recovered = await runFixture('pool-child.ts', ['recover', JSON.stringify(r)], { env: { ...process.env }, timeoutMs: CHILD_TIMEOUT_MS });
+    assert.equal(recovered.code, 0, recovered.stderr);
+    const { openPoolRun } = await import('../fixtures/pool-plan.ts');
+    const { journal } = openPoolRun(r);
+    try {
+      assert.equal(journal.view.openIntents().length, 0);
+      for (const [name, entry] of journal.view.resources()) assert.equal(entry.status.state, failed && name === DB ? 'cleanup-failed' : 'free', name);
+      assert.deepEqual(undispositioned(absPath(r.hostDir)).map((k) => k.resource), failed ? [DB] : []);
+    } finally { journal.close(); }
+  }
 });

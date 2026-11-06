@@ -66,6 +66,7 @@ export function resourceReconciler(ctx: ResourceContext): Reconciler<'resource.t
     const disposition = close(ctx, intent);
     const { holder } = intent.expect;
     if (holder.type !== 'sweep') await settleHolder(ctx, holder);
+    if (intent.expect.slotHolder !== undefined) await settleHolder(ctx, intent.expect.slotHolder);
     return disposition;
   };
 }

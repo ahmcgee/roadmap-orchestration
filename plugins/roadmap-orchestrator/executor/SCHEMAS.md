@@ -773,7 +773,20 @@ Stop removes a stale lease too and succeeds when absent. Poll renewal fails loud
 
 ## Residues and reservation states
 
-`resource.transition` moves an all-or-none set under a holder:
+`resource.transition` moves an all-or-none set under a holder. A candidate-stage reserve containing integration-slot
+may additionally name `expect.slotHolder: publication{unit,attempt}` matching its stage holder. All units become
+pending in one intent and settle in one done: the slot belongs to slotHolder; every other resource belongs to the
+candidate stage. Later transitions are ordinary per-owner transitions; recovery settles both partitions. Absent
+slotHolder keeps legacy single-holder behavior. It is illegal on any other edge/stage, without the slot, or with
+mismatched unit/attempt.
+
+`candidate-entry-planned {unit,attempt,tip,request}` records the initial candidate entry and each changed tip/request.
+Selection uses the merged tree: first scheduled candidate spec lane, else first selected suite lane. Refresh is
+synchronous before allocation/precedence inspection. A tip change after grant releases entry and slot before retry.
+The first owning series consumes the reservation, releasing it unused on reuse or preparation/refusal/cancellation.
+The publication alone retains its slot through green ff/snapshot; workload CPU never carries across those stages.
+
+The ordinary transitions are:
 
 | From | Edge | To |
 |---|---|---|
@@ -820,6 +833,7 @@ The arbiter serves docs/batch/job waiters first in arrival order, then units: hi
 otherwise repair=deflake, polish, planned; wait-start sequence then plan index break ties. A unit promotes after **three
 other unit publications** in its waiting interval. Backfill may pass a blocked higher rank only with a disjoint request
 (CPU and any shared pool count as overlap). Environment/pressure-blocked requests are set aside.
+Slot-blocked combined entrants contribute only publication-slot precedence, including through other queued requests. The durable publication owner maps unit/attempt to candidate, docs to its job, and batch to the originating reserve parent job. Only its workload requests bypass CPU pressure; memory, tokens, dirty instances and independent precedence still apply. Blocked docs callbacks run despite other simultaneous blockers.
 Docs publications outrank unit publications and may request candidate preemption before green. Red/preempted or
 finding-blocked candidates abandon and release their reservations; green publication finishes ff/snapshot under its holder.
 

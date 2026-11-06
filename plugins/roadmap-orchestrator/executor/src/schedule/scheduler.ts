@@ -1,3 +1,4 @@
+import { resourceRequest } from '../core/events.ts';
 import { WaitAccumulator } from './waits.ts';
 import { type WaitReason, waitReason } from '../core/waiting.ts';
 import { stopAborts,stopKills } from '../pipeline/stop.ts';
@@ -213,14 +214,8 @@ export type SchedFile = Readonly<{
 }>;
 
 const units: Read<readonly UnitId[]> = arrayOf((v, p) => unitId(v, p));
-const request: Read<ResourceRequest> = object((f) => {
-  const basis = f.optional('cpuBasis', cpuBasis);
-  return {
-    named: f.get('named', arrayOf((v, p) => resourceName(v, p))), pools: f.get('pools', arrayOf((v, p) => resourceName(v, p))),
-    cpu: f.get('cpu', nat), publication: f.get('publication', bool),
-    ...(basis === undefined ? {} : { cpuBasis: basis }),
-  };
-});
+const request = resourceRequest;
+
 const scope: Read<CommandScope> = tagged('type', {
   arc: object((f): CommandScope => ({ type: f.get('type', literal('arc')) })),
   units: object((f): CommandScope => ({ type: f.get('type', literal('units')), units: f.get('units', units) })),
