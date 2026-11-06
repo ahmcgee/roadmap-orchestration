@@ -1,3 +1,4 @@
+import type { LogSnapshot } from './core/log.ts';
 // The owner-answer channel (M4a, paid runs 12-14: an unattended root agent that never ends its turn never received the
 // owner's answer to a ranked Phase-0 question). The owner, or the root agent relaying a chat answer, records it with
 // `roadmap answer <P-n> --text <answer>` (src/commands/answer.ts) the moment it is given, whether or not an arc is live.
@@ -73,10 +74,10 @@ export function refQuestions(ref: ArcRef): readonly PhaseQuestion[] | null {
 }
 
 /** The questions of the arc's Phase-0 record in force now: its run dir's revision when it has a log, else its ref's; null when neither holds one. */
-export function questionsNow(repo: AbsPath, arc: ArcId): readonly PhaseQuestion[] | null {
+export function questionsNow(repo: AbsPath, arc: ArcId, current?: LogSnapshot): readonly PhaseQuestion[] | null {
   const dir = runDir(gitCommonDir(repo), arc);
   if (existsSync(join(dir, EVENTS_FILE))) {
-    const inForce = planInForce(dir, readJournal(dir, arc).view);
+    const inForce = planInForce(dir, current?.view.arc === arc ? current.view : readJournal(dir, arc).view);
     const payload = inForce?.fact.payloadSha256;
     if (inForce !== null && payload !== undefined) {
       const sha = keptPayload(dir, payload).manifest.phase0;
@@ -163,12 +164,12 @@ export function unappliedOf(answers: readonly OwnerAnswer[], records: Iterable<r
  * The unapplied answers now (see the header), of the repo whose git common dir is `common` (git reads it as the repo).
  * Nothing but the answer dir is read while no answer is recorded.
  */
-export function unappliedAnswers(common: AbsPath): readonly OwnerAnswer[] {
+export function unappliedAnswers(common: AbsPath, current?: LogSnapshot): readonly OwnerAnswer[] {
   const latest = latestAnswers(answerLog(common));
   if (latest.length === 0) return [];
   function* records(): Generator<readonly PhaseQuestion[]> {
     for (const arc of arcsNewestFirst(common)) {
-      const q = questionsNow(common, arc);
+      const q = questionsNow(common, arc, current);
       if (q !== null) yield q;
     }
   }

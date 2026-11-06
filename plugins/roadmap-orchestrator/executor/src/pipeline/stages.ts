@@ -1,3 +1,4 @@
+import { derivedOf } from '../input/plan.ts';
 import { failureSignature, maskFailureLine } from './redlane.ts';
 import { candidateRed } from './candidate-red.ts';
 import { captureUnderFence } from '../core/fence.ts';
@@ -1267,10 +1268,23 @@ export function forcedLanes(view: JournalView, spec: SpecM1): ReadonlySet<LaneId
 }
 
 /** The lanes of a lanes attempt's fast suite at `salvaged`: the regenerate checks the unit's diff calls for, then the stage's suite lanes. */
+export function fastSuiteLaneReader(ctx: StageContext) {
+  let tip: Sha | null = null;
+  const diffs = new Map<Sha, ReturnType<typeof unitDiffPaths>>();
+  return (spec: SpecM1, salvaged: Sha): readonly LaneDef[] => {
+    let regenerate: readonly LaneDef[] = [];
+    if (derivedOf(ctx.plan()).some((d) => d.regenerate !== undefined)) {
+      tip ??= integrationTip(ctx);
+      let paths = diffs.get(salvaged);
+      if (paths === undefined) { paths = unitDiffPaths(ctx.repo, tip, salvaged); diffs.set(salvaged, paths); }
+      regenerate = unitRegenerateLanes(ctx.plan(), paths);
+    }
+    return [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
+  };
+}
+
 export function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): readonly LaneDef[] {
-  // dev.12: the regenerate checks of the derived entries the unit's diff touches go first (src/input/derived.ts).
-  const regenerate = unitRegenerateLanes(ctx.plan(), unitDiffPaths(ctx.repo, integrationTip(ctx), salvaged));
-  return [...regenerate, ...stageSuiteLanes(ctx.plan().suite.lanes, spec, forcedLanes(ctx.journal.view, spec))];
+  return fastSuiteLaneReader(ctx)(spec, salvaged);
 }
 
 /** Reds in the unit's latest completed lanes attempt, excluding holds and the suite's diagnostic base run. */
@@ -1278,7 +1292,7 @@ export function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1
   if (attempt === null) return { spec: new Set(), suite: new Set() };
   const previous: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
   const path = verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, previous.attempt);
-  const created = ctx.journal.view.opsOf('worktree.create').find((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'lanes' && i.parent.attempt === previous.attempt && matchesVerificationPath(i.expect.path, path, previous.attempt));
+  const created = ctx.journal.view.opsOfParent('worktree.create', previous).find((i) => matchesVerificationPath(i.expect.path, path, previous.attempt));
   // A completed attempt may park before running anything (for example a missing witness lane).
   if (created === undefined) return { spec: new Set(), suite: new Set() };
   if (created.expect.checkout.type !== 'detached') throw new Error(`lanes ${unit.id}#${previous.attempt}: no detached verification checkout`);

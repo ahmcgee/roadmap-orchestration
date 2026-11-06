@@ -16,7 +16,7 @@ import { type EnvId, type LaneId, type LaneRev, type Sha, sha } from '../core/id
 import type { LaneDef } from '../core/records.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
 import { type SystemsMap, laneInput } from '../input/systems.ts';
-import { git, revParse } from './git.ts';
+import { catFileTrees, git, revParse } from './git.ts';
 import { matchesPattern } from '../core/values.ts';
 
 export type ReuseKey = Readonly<{ lane: LaneId; laneRev: LaneRev; envId: EnvId; inputSha: Sha }>;
@@ -56,6 +56,38 @@ function listing(repo: AbsPath, tree: Sha): readonly Readonly<{ line: string; pa
   LISTINGS.set(tree, out);
   trimListings();
   return out;
+}
+
+/** Batch remaining immutable trees by directory depth; reconstruct exactly ls-tree -r -z's entry order. */
+export function prefetchTreeListings(repo: AbsPath, trees: readonly Sha[]): void {
+  const missing = trees.filter((t) => !LISTINGS.has(t));
+  type Entry = { mode: string; name: string; object: Sha };
+  const entries = new Map<Sha, Entry[]>();
+  let pending = missing;
+  while (pending.length > 0) {
+    const next = new Set<Sha>();
+    for (const [tree, bytes] of catFileTrees(repo, pending)) {
+      const rows: Entry[] = [];
+      for (let at = 0; at < bytes.length;) {
+        const space = bytes.indexOf(32, at), nul = bytes.indexOf(0, space + 1);
+        if (space < 0 || nul < 0 || nul + 21 > bytes.length) throw new Error(`malformed Git tree ${tree}`);
+        const mode = bytes.toString('ascii', at, space).padStart(6, '0');
+        const object = sha(bytes.subarray(nul + 1, nul + 21).toString('hex'));
+        rows.push({ mode, name: bytes.toString('utf8', space + 1, nul), object });
+        if (mode === '040000' && !entries.has(object)) next.add(object);
+        at = nul + 21;
+      }
+      entries.set(tree, rows);
+    }
+    pending = [...next].filter((t) => !entries.has(t));
+  }
+  const flatten = (tree: Sha, prefix: string): { line: string; path: RepoPath }[] => entries.get(tree)!.flatMap((e) => {
+    const path = `${prefix}${e.name}` as RepoPath;
+    return e.mode === '040000' ? flatten(e.object, `${path}/`)
+      : [{ path, line: `${e.mode} ${e.mode === '160000' ? 'commit' : 'blob'} ${e.object}\t${path}` }];
+  });
+  for (const tree of missing) LISTINGS.set(tree, flatten(tree, ''));
+  trimListings();
 }
 
 const INPUTS = new WeakMap<object, Map<string, Sha>>();

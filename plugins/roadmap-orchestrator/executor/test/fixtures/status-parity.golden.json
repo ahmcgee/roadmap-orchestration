@@ -1,0 +1,530 @@
+{
+  "full": {
+    "arc": "<arc>",
+    "supervision": {
+      "state": "none"
+    },
+    "run": {
+      "state": "no-owner",
+      "owner": {
+        "state": "none",
+        "generation": null,
+        "pid": null
+      },
+      "heartbeatAt": null,
+      "stop": null
+    },
+    "units": [
+      {
+        "unit": "u1",
+        "stage": "pre-build",
+        "status": "active",
+        "attempts": 0,
+        "chargeableFailures": 0,
+        "risk": null,
+        "seat": null,
+        "state": "ready",
+        "waitingFor": null,
+        "holds": [],
+        "priority": {
+          "priority": "normal",
+          "origin": "planned",
+          "waitStartSeq": 2,
+          "bypassMerges": 0,
+          "promoted": false
+        },
+        "park": null,
+        "lineage": null,
+        "supersededBy": null,
+        "buildTier": null,
+        "running": null,
+        "certification": {
+          "used": 0,
+          "allowance": 3,
+          "left": 3,
+          "attempt": null,
+          "lanes": []
+        },
+        "work": [],
+        "failures": [],
+        "gate": null
+      },
+      {
+        "unit": "u2",
+        "stage": "pre-build",
+        "status": "held-after:u1",
+        "attempts": 0,
+        "chargeableFailures": 0,
+        "risk": null,
+        "seat": null,
+        "state": "waiting",
+        "waitingFor": {
+          "deps": [
+            "u1"
+          ],
+          "milestones": [],
+          "edges": [],
+          "admission": [],
+          "resources": null,
+          "envBlocked": false,
+          "drainFor": []
+        },
+        "holds": [],
+        "priority": {
+          "priority": "normal",
+          "origin": "planned",
+          "waitStartSeq": 2,
+          "bypassMerges": 0,
+          "promoted": false
+        },
+        "park": null,
+        "lineage": null,
+        "supersededBy": null,
+        "buildTier": null,
+        "running": null,
+        "certification": {
+          "used": 0,
+          "allowance": 3,
+          "left": 3,
+          "attempt": null,
+          "lanes": []
+        },
+        "work": [],
+        "failures": [],
+        "gate": null
+      },
+      {
+        "unit": "u3",
+        "stage": "pre-build",
+        "status": "active",
+        "attempts": 0,
+        "chargeableFailures": 0,
+        "risk": null,
+        "seat": null,
+        "state": "ready",
+        "waitingFor": null,
+        "holds": [],
+        "priority": {
+          "priority": "normal",
+          "origin": "planned",
+          "waitStartSeq": 2,
+          "bypassMerges": 0,
+          "promoted": false
+        },
+        "park": null,
+        "lineage": null,
+        "supersededBy": null,
+        "buildTier": null,
+        "running": null,
+        "certification": {
+          "used": 0,
+          "allowance": 3,
+          "left": 3,
+          "attempt": null,
+          "lanes": []
+        },
+        "work": [],
+        "failures": [],
+        "gate": null
+      }
+    ],
+    "edges": [
+      {
+        "type": "after",
+        "unit": "u2",
+        "on": "u1",
+        "effective": "u1",
+        "met": false
+      },
+      {
+        "type": "milestone",
+        "unit": "u2",
+        "milestone": "MS-1",
+        "passed": false
+      }
+    ],
+    "runOnly": null,
+    "needsUser": [
+      {
+        "id": "nu-4",
+        "reason": "revision-notice",
+        "blocking": false
+      }
+    ],
+    "commands": {
+      "pending": [
+        {
+          "id": "<command>",
+          "type": "pause"
+        }
+      ],
+      "receipts": [
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 3"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 4"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 5"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 6"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 7"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 8"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 9"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 10"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 11"
+        },
+        {
+          "v": 2,
+          "command": "<command>",
+          "state": "rejected",
+          "at": "2026-01-01T00:00:00.000Z",
+          "reason": "Rejected 12"
+        }
+      ]
+    },
+    "spend": {
+      "byRole": [],
+      "byModel": {
+        "models": [],
+        "unresolvedRevs": []
+      },
+      "byClass": {
+        "classes": [],
+        "unresolvedRevs": []
+      },
+      "byJob": [],
+      "bySmoke": []
+    },
+    "host": {
+      "containment": {
+        "mode": null,
+        "guarantee": "Every process that keeps ROADMAP_INV in its exec-time environment, or stays in the workload session, is stopped and killed before output is certified, resources are released or a stage advances. Not guaranteed: a descendant that calls setsid() and execs with a cleared environment; it may keep writing the original unit worktree, touch external resources, or write after every check. Partial backstops: the verification-tree dirty assertion and the occupancy probe. Original-worktree writes, external undeclared residue and delayed writes are not caught."
+      },
+      "resources": [],
+      "pools": {
+        "@cpu": {
+          "size": 16,
+          "used": 0,
+          "dirty": 0
+        }
+      },
+      "queue": [],
+      "jobQueue": [],
+      "work": [],
+      "probes": [],
+      "backends": [],
+      "log": {
+        "bytes": 0,
+        "events": 5,
+        "foldMs": 0,
+        "compactionDue": false
+      }
+    },
+    "parkedBackends": [],
+    "plan": {
+      "rev": 1,
+      "planSha256": "<sha256>"
+    },
+    "routing": {
+      "profile": "default",
+      "rev": "c45761cd46905fd8",
+      "seats": {
+        "build": {
+          "low": "efficient",
+          "med": "efficient",
+          "high": "frontier"
+        },
+        "verifier": {
+          "low": "frontier",
+          "med": "frontier",
+          "high": "frontier",
+          "escalation": "frontier"
+        },
+        "packReview": {
+          "arc": "frontier"
+        },
+        "experienceVerdict": {
+          "arc": "frontier"
+        },
+        "campaignAudit": {
+          "arc": "summit"
+        }
+      },
+      "sources": {
+        "build": {
+          "low": "builtin",
+          "med": "builtin",
+          "high": "builtin"
+        },
+        "verifier": {
+          "low": "builtin",
+          "med": "builtin",
+          "high": "builtin",
+          "escalation": "builtin"
+        },
+        "packReview": {
+          "arc": "builtin"
+        },
+        "experienceVerdict": {
+          "arc": "builtin"
+        },
+        "campaignAudit": {
+          "arc": "builtin"
+        }
+      },
+      "bindings": {
+        "efficient": "builtin",
+        "frontier": "builtin",
+        "summit": "builtin",
+        "economy": "builtin"
+      }
+    },
+    "rejection": null,
+    "holistic": true,
+    "target": {
+      "cutLine": "the helpers ship",
+      "nextMilestone": null,
+      "criticalPath": [
+        "u1",
+        "u2"
+      ],
+      "obligations": {
+        "total": 1,
+        "nowTrue": 0,
+        "notYetTrue": 1,
+        "latched": 0,
+        "split": 0,
+        "waived": 0,
+        "deferred": 0,
+        "retired": 0
+      }
+    },
+    "nowTrue": [],
+    "notYetTrue": [
+      {
+        "obligation": "I-1",
+        "statement": "I-1 holds.",
+        "activation": "must-hold",
+        "verdict": "not-covered",
+        "evidence": [],
+        "blockingUnits": [],
+        "reason": "witness",
+        "lastObserved": null
+      }
+    ],
+    "waived": [],
+    "deferred": [],
+    "vision": {
+      "rev": 1,
+      "confirmation": null,
+      "clauses": [
+        {
+          "id": "V-1",
+          "kind": "purpose",
+          "text": "Arithmetic helpers anyone can trust.",
+          "rank": null,
+          "state": "active"
+        },
+        {
+          "id": "V-2",
+          "kind": "world",
+          "text": "A developer calls add or mul and gets the exact answer, every time.",
+          "rank": null,
+          "state": "active"
+        }
+      ],
+      "questions": [],
+      "advances": [
+        "V-1",
+        "V-2"
+      ],
+      "coverage": {
+        "unservedAdvanced": [
+          "V-2"
+        ],
+        "horizon": [],
+        "obligationsServingNone": [],
+        "withdrawnCited": []
+      }
+    },
+    "divergences": [],
+    "decisionsSince": [],
+    "findings": {
+      "active": [],
+      "metrics": [],
+      "released": {
+        "root": 0,
+        "closeOut": 0
+      }
+    },
+    "audit": {
+      "lenses": [
+        "invariants"
+      ],
+      "coverage": [
+        {
+          "lens": "invariants",
+          "coveredTo": "<sha>",
+          "outstanding": false,
+          "pendingDocs": []
+        }
+      ],
+      "uncovered": [],
+      "generation": 0,
+      "running": null
+    },
+    "completion": {
+      "planRev": null,
+      "head": null,
+      "active": false,
+      "sealed": false,
+      "notSealed": "not completed",
+      "unmet": [
+        "units-open",
+        "pending-commands",
+        "baseline-owed",
+        "close-out",
+        "obligations-not-discharged"
+      ]
+    },
+    "holds": [
+      "baseline"
+    ],
+    "packReview": null,
+    "corpus": null,
+    "census": null,
+    "debt": null,
+    "chain": null,
+    "timings": [],
+    "answers": [],
+    "knownDefects": [],
+    "demo": null,
+    "milestones": [
+      {
+        "id": "MS-1",
+        "state": "building",
+        "passed": false,
+        "round": 0,
+        "walks": [],
+        "findings": []
+      }
+    ]
+  },
+  "summary": {
+    "arc": "<arc>",
+    "state": "no-owner",
+    "stop": null,
+    "supervision": {
+      "state": "none"
+    },
+    "planRev": 1,
+    "progress": {
+      "total": 3,
+      "merged": 0,
+      "states": {
+        "ready": 2,
+        "waiting": 1
+      },
+      "held": 0,
+      "remaining": 1
+    },
+    "spend": {
+      "costUsd": 0,
+      "expectedUsd": null,
+      "differenceUsd": null,
+      "estimatedCalls": 0,
+      "unavailableCalls": 0
+    },
+    "milestones": [
+      {
+        "id": "MS-1",
+        "state": "building",
+        "round": 0,
+        "findings": 0,
+        "costUsd": 0,
+        "expectedUsd": null
+      }
+    ],
+    "caught": {
+      "total": 0,
+      "laneReds": 0,
+      "gateRevisions": 0,
+      "uniqueFindings": 0,
+      "byLens": {}
+    },
+    "verdicts": [],
+    "captures": [],
+    "needsUser": [
+      {
+        "id": "nu-4",
+        "reason": "revision-notice",
+        "blocking": false
+      }
+    ],
+    "waste": [],
+    "demo": null,
+    "completion": {
+      "planRev": null,
+      "head": null,
+      "active": false,
+      "sealed": false,
+      "notSealed": "not completed",
+      "unmet": [
+        "units-open",
+        "pending-commands",
+        "baseline-owed",
+        "close-out",
+        "obligations-not-discharged"
+      ]
+    }
+  }
+}
