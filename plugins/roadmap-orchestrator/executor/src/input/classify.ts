@@ -4,7 +4,7 @@ import { referenceCommit } from '../phase0/rows.ts';
 // Classify a proposal against the plan in force. Every refused edit contributes its reason.
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
 import type { IntentOf,PlanChange } from '../core/events.ts';
-import { PLAN_FIELDS } from '../core/events.ts';
+import { PLAN_FIELDS,specReopenable } from '../core/events.ts';
 import { type JobId,type ObligationId,type ResourceName,type ResourceUnit,type Sha256Hex,type UnitId,compareIds,parseResourceUnit } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -162,7 +162,7 @@ function dispatchedSpec(
   const status = u.status;
   if (approvedOrPublishing(u)) return `unit ${unit.id} is ${status === 'retired' ? 'merged' : 'approved and publishing'}; its spec is fixed`;
   if (status === 'stop-pending') return `unit ${unit.id} stopped the arc; its spec is fixed`;
-  if (status === 'park-pending' && (u.decided === null || !['pre-build', 'gate'].includes(u.decided.stage))) {
+  if (status === 'park-pending' && (u.decided === null || !specReopenable(u.decided))) {
     return `unit ${unit.id} is parked at ${u.decided?.stage}, which is final in M1; re-enter the work under a new unit id`;
   }
   const kept = keptInput(input.runDir, recorded.sha256, SPEC_INPUT);

@@ -81,7 +81,7 @@ describe('status.subset', () => {
     assert.deepEqual({ ...before_, host: { ...before_.host, log: { ...before_.host.log, foldMs: 0 } } }, {
       arc: r.arc,
       supervision: { state: 'none' },
-      run: { state: 'no-owner', owner: { state: 'none', generation: null, pid: null }, heartbeatAt: null },
+      run: { state: 'no-owner', owner: { state: 'none', generation: null, pid: null }, heartbeatAt: null, stop: null },
       units: [],
       edges: [],
       runOnly: null,

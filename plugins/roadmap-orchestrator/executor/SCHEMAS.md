@@ -432,7 +432,7 @@ Live fact families:
 | Family | Facts and meaning |
 |---|---|
 | Work/usage | dispatch, judgment-inputs, approval, stage-outcome, meter, usage-unavailable; exact attempt/role/routing attribution |
-| Control | paused, stop-requested, resumed, backend-park, probe, reopened/unparked, edge-resolved, run-only |
+| Control | paused, stop-requested, stop-completed, resumed, backend-park, probe, reopened/unparked, edge-resolved, run-only |
 | Inputs | plan-applied, apply-queued, finding-dismissed, noted, steered, merged-in, revision-link stale-set/answers/reopening |
 | CI | external-witness/reopened, spike-completed, attempt-marker/capped, lane-base-compared, lane-reused, series-certified, smoke-ran |
 | Review | review-triggered/completed; gate round/findings-ledger/dispute facts |
@@ -617,7 +617,7 @@ export type RevisionInputs = Readonly<{
 ```ts
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
-  | Readonly<{ type: 'stop' }>
+  | Readonly<{ type: 'stop'; mode?: 'immediate' | 'drain'; deadline?: IsoTime | null }>
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
@@ -1145,3 +1145,27 @@ leave the intent open and the unit parked. A partial git removal can unregister 
 remove its leftover directory only with the journal's standing create, verified evidence from that checkout or its stage,
 no replacement `.git` entry or symlink, and no competing open intent on the path. Unknown unregistered content parks.
 Failed base-comparison promises are evicted so another unit or a resumed attempt can compare again.
+
+### Stop controls and spec reopen eligibility
+
+`stop` command bodies and `stop-requested{command}` facts add `mode: immediate|drain` and
+`deadline: IsoTime|null` (absolute UTC). Missing mode/deadline read as immediate/null with a once-per-process
+`ROADMAP_UPGRADE` warning; the schema version stays unchanged. An immediate stop has no deadline. The CLI
+accepts `stop --drain [--within <positive minutes>]`, including fractional minutes, and stamps the deadline
+at submission. Repeated drain requests do not extend it; a plain stop during drain replaces the control
+with immediate mode. `control().stop` remains the command id; `stopOptions` exposes mode/deadline.
+
+Drain closes task and stage admission and starts no probes, audits or other new jobs. Running stages and
+jobs finish normally, including build→teardown and ff→snapshot chains. At a boundary tasks end without
+an interrupted outcome. All tasks/jobs settle, reservations recover and environments go down, then the
+scheduler writes `stop-completed{command}` and returns the ordinary `{kind:stop,cause:command,needsUser:null}`.
+A drain deadline or later plain stop uses the existing immediate abort/kill path; recovery enforces
+that policy while adopting live runners too. An unfinished drain starts no backend smoke job and
+survives `executor-started`, including escalation to immediate; a completed stop clears on the next start. Legacy immediate stops retain
+their startup reset. Full status exposes `run.stop{mode,deadline}` and summary exposes `stop`; live run
+state is draining, or stopping after escalation. This is separate from holistic close-admissions draining.
+
+`reopened` accepts judgment parks (pre-build/gate) and build `spec-wrong` parks on an applied next spec
+revision. Apply validation, resume validation and the fold use the same eligibility rule. Reopen starts
+at pre-build with the new spec revision and retains branch, worktree, counters and implementer session.
+Other build design parks still require re-entry.

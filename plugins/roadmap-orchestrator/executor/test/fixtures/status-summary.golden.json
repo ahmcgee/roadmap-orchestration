@@ -2,6 +2,7 @@
   "arc": "golden",
   "supervision": { "state": "none" },
   "state": "no-owner",
+  "stop": null,
   "planRev": 1,
   "progress": {
     "total": 1,

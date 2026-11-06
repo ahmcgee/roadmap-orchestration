@@ -162,13 +162,14 @@ test('reopen.paused-and-parked: one resume of a unit both paused and parked clea
       addClause(s);
       s['rev'] = 2;
     });
-    assert.equal((await apply(r)).outcome.kind, 'applied');
+    const revised = await apply(r);
+    assert.equal(revised.outcome.kind, 'applied');
     const both = await resume(r);
     assert.equal(both.outcome.kind, 'applied');
     assert.deepEqual(r.journal.view.control().pausedUnits, [], 'the pause is cleared');
     const u = r.journal.view.unit(U1);
     assert.deepEqual([u.status, u.stage, u.decided, u.reopened?.specRev, u.reopened?.command], ['active', 'pre-build', null, 2, both.id], 'and the unit re-opened');
-    assert.equal(r.journal.view.ackOf(item)?.command, paused.id, 'the first successful subject action closes the park');
+    assert.equal(r.journal.view.ackOf(item)?.command, revised.id, 'the spec revision that re-opens the unit closes its park; the pauses and the unpause of the still-parked unit did not');
   } finally {
     r.journal.close();
   }

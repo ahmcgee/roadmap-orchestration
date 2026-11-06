@@ -177,13 +177,13 @@ test('lanes.stall-fix-round: a stalled lane is red; its fix round reads its outp
     host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, pressure: null, failure: null, repeat: null, hostSuspected: null,
   });
   const salvage = sha('a'.repeat(40));
-  const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage);
+  const stalled = laneFixRound([lane('fast', 'pass'), lane('suite', 'stall')], [], salvage, []);
   assert.equal(stalled.kind, 'fix');
   if (stalled.kind !== 'fix') return;
   assert.deepEqual(stalled.fix.failingEvidenceDirs, ['/ev/suite/output/files']);
   assert.equal(stalled.fix.directives.length, 1);
   assert.match(stalled.fix.directives[0]!, /^Lane suite hung: .* for 10 minutes/);
-  const red = laneFixRound([lane('suite', 'fail')], [], salvage);
+  const red = laneFixRound([lane('suite', 'fail')], [], salvage, []);
   assert.ok(red.kind === 'fix' && red.fix.directives.length === 0);
 });
 
@@ -323,7 +323,7 @@ for (const different of [false, true]) {
     assert.equal(done.fix.fix.directives.includes(directive), different);
     const parent = { type: 'stage', unit: U1, stage: 'lanes', attempt: run.journal.view.completedLanes(U1)! } as const;
     const replay = seriesLedger(run.ctx, parent, loadUnitSpec(run.ctx, run.unit).spec.lanes, 'spec', run.base, specSeriesRoot(run.runDir, parent));
-    assert.deepEqual(laneFixRound(replay, [], run.base), done.fix);
+    assert.deepEqual(laneFixRound(replay, [], run.base, loadUnitSpec(run.ctx, run.unit).spec.lanes), done.fix);
   });
 }
 
@@ -342,7 +342,7 @@ test('lanes.red-and-dirty: a diagnostic pass carries both the red directives and
   }
   assert.deepEqual(done.fix.fix.failingEvidenceDirs, [...lane.fixDirs, ...lane.diagnostic.fixDirs]);
   const trueRed = { ...lane, flaky: false, diagnostic: { ...lane.diagnostic, verdict: 'fail' as const, failure: lane.failure } };
-  const fix = laneFixRound([trueRed], ['src/stray.txt'], run.base);
+  const fix = laneFixRound([trueRed], ['src/stray.txt'], run.base, loadUnitSpec(run.ctx, run.unit).spec.lanes);
   assert.ok(fix.kind === 'fix');
   assert.ok(fix.fix.directives.includes(dirtyLanesDirective(['src/stray.txt'])));
   assert.ok(!fix.fix.directives.includes(dirtyFlakyLaneDirective(lane.lane)), 'a genuinely red rerun gets no flaky acceptance directive');

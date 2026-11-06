@@ -92,8 +92,8 @@ export type RunnerEnd =
   /** exit.json was still absent at deadlineAt + 2·graceMs: the runner was SIGKILLed by (pid, start). */
   | Readonly<{ kind: 'backstop-killed'; runner: ProcIdentity }>;
 
-/** Resolves when the runner is gone, killing it first if it is still running at the backstop. */
-export async function awaitRunner(handle: RunnerHandle): Promise<RunnerEnd> {
+/** Waits for the runner, enforcing the backstop and any recovery control cancellation while it is alive. */
+export async function awaitRunner(handle: RunnerHandle, cancelWhen?: () => CancelReason | null): Promise<RunnerEnd> {
   const backstopAt = new Date(handle.launch.deadlineAt).getTime() + 2 * handle.launch.graceMs;
   let killed = false;
   for (;;) {
@@ -103,6 +103,10 @@ export async function awaitRunner(handle: RunnerHandle): Promise<RunnerEnd> {
     if (!alive) {
       if (exit !== null) return { kind: 'exited', exit };
       return killed ? { kind: 'backstop-killed', runner: handle.runner } : { kind: 'died' };
+    }
+    if (cancelWhen !== undefined && exit === null && handle.files.read('cancel.json') === null) {
+      const reason = cancelWhen();
+      if (reason != null) cancel(handle, reason);
     }
     if (exit === null && !killed && Date.now() >= backstopAt) {
       signal(handle.runner, 'SIGKILL');

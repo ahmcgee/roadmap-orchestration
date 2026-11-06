@@ -75,7 +75,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Restarts retain the arc’s recorded routing profile. A conflicting `start --profile` refuses; change profiles through a routing apply.
 3. **Build and certify.** Ready units get isolated worktrees and atomic resource/CPU reservations. A conditional
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
-   specs first, implement, run targeted checks and report evidence. Every Claude build gets the configured
+   specs first, implement, run targeted checks and report evidence. A judgment park or a build `spec-wrong` park
+   re-opens after the architect applies a spec revision and runs `resume <unit>`: pre-build on the new rev, with
+   branch, worktree and implementer session kept. Other build design parks require re-entry under a new unit id. Every Claude build gets the configured
    `walkthrough.mcp` servers. A declared server unavailable at init raises a non-blocking `walkthrough-mcp` notice,
    once per server/error signature; a later connected build or acting walk explicitly settles its named notices. Bring-ups list its member/design milestones and origin milestones of findings its spec
    `repairs` cites, once each in plan order; empty is valid. Without the config, builds get no servers and no new
@@ -118,6 +120,11 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    heartbeat; each wake gets at most three chat lines. One actionable watch holds the arc’s lease: start or switch
    versions with `watch --actionable --replace`, end with `watch --stop`, and confirm supervision is live in status.
    Every transition and heartbeat repeats all open blocking items in `openBlocking`; act on each item on every wake.
+   Before a plugin update, use `roadmap stop --drain [--within <min>]` and wait for the run to end, then
+   update and `roadmap start`. Drain admits no new tasks or stages; running stages/jobs record their normal
+   outcomes and required build-to-teardown and ff-to-snapshot chains finish before cleanup and stop.
+   The optional deadline escalates to abort; a later plain `stop` escalates immediately. A crash retains the drain
+   and deadline. Plain `stop` keeps its immediate abort behavior. Status shows the drain and deadline.
    Interventions and every arc-wide control go in the external operator log. The root never patches the plugin or run directory. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an

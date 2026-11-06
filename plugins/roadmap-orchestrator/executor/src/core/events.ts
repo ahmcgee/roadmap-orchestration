@@ -16,7 +16,7 @@ import {
 type ApprovalFingerprint,
 type BackendOutcomeKind,
 type ClassUsage,
-type CommandVerdict,type ContainmentMode,
+type CommandVerdict,type ContainmentMode,type StopMode,stopFieldsAsWritten,
 type DemoAct,
 type DispatchRecord,type KillReason,type KnownDefectMatch,type LensKindName,type PauseTarget,type PlanManifest,
 type PromptSize,
@@ -520,6 +520,10 @@ export const OUTCOME_STAGES = Object.keys(STAGE_OUTCOME_KINDS) as readonly Outco
 /** Judgment stages run a fresh judgment session; a refusal or escalation there routes up the role's seats. */
 export const JUDGMENT_STAGES = ['pre-build', 'gate'] as const satisfies readonly OutcomeStage[];
 export type JudgmentStage = (typeof JUDGMENT_STAGES)[number];
+/** Parks that an applied spec correction can answer without re-entry. */
+export function specReopenable(f: StageOutcomeFact): boolean {
+  return (JUDGMENT_STAGES as readonly string[]).includes(f.stage) || (f.stage === 'build' && f.outcome === 'spec-wrong');
+}
 /** Stages with an uncharged retry (malformed report, blocked lane). */
 export const RETRY_STAGES = ['build', 'lanes', 'gate'] as const satisfies readonly OutcomeStage[];
 export type RetryStage = (typeof RETRY_STAGES)[number];
@@ -791,12 +795,14 @@ export type Fact =
   /**
    * Command effects (step 13), each written once by the `command.apply` op of `command`. `needs-user-acked`:
    * the item is acknowledged (at most once per id; its `.ack.json` is the file twin). `paused` and
-   * `stop-requested`: the durable control markers the driver consults. `resumed`: a unit's or every hold
+   * `stop-requested`: the durable control markers the driver consults. `stop-completed` marks finished stop cleanup
+   * so the next start clears it. `resumed`: a unit's or every hold
    * and pause cleared, or a backend's park cleared after a passing smoke.
    */
   | Readonly<{ kind: 'needs-user-acked'; id: NeedsUserId; command: CommandId; choice: string | null }>
   | Readonly<{ kind: 'paused'; command: CommandId; target: PauseTarget }>
-  | Readonly<{ kind: 'stop-requested'; command: CommandId }>
+  | Readonly<{ kind: 'stop-requested'; command: CommandId; mode?: StopMode; deadline?: IsoTime | null }>
+  | Readonly<{ kind: 'stop-completed'; command: CommandId }>
   | Readonly<{ kind: 'resumed'; command: CommandId; target: ResumeTarget }>
 
   /**
@@ -2224,7 +2230,8 @@ export const fact: Read<Fact> = tagged('kind', {
     choice: f.get('choice', nullable(optionId)),
   })),
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
-  'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR) })),
+  'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR), ...stopFieldsAsWritten(f) })),
+  'stop-completed': object((f): Fact => ({ kind: f.get('kind', literal('stop-completed')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
   'apply-queued': object((f): Fact => {
     const out = { kind: f.get('kind', literal('apply-queued')), command: f.get('command', cmdR), waitsFor: f.get('waitsFor', arrayOf(unitR, { nonEmpty: true })) };

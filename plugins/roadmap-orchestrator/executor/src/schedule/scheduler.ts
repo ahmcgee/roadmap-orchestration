@@ -1,3 +1,4 @@
+import { stopAborts,stopKills } from '../pipeline/stop.ts';
 import { raiseWasteFindings } from '../flow/waste.ts';
 // The scheduler (M2 "Scheduler model"; A12, A17, F5, F13, F19, G2; M3 B7): runs every unit of the arc that may run,
 // each in its own task, and the holistic layer's jobs, from one non-reentrant loop that never awaits long work.
@@ -283,9 +284,6 @@ type Task = {
 
 /** Invocation purposes a pause kills among a paused unit's spawns. */
 const PAUSE_KILLS: readonly string[] = ['backend', 'lane', 'journey', 'mutant'];
-/** Invocation purposes a stop kills, including arc judgments and proofs; never a docs publication's lanes. */
-const STOP_KILLS: readonly string[] = ['backend', 'lane', 'smoke', 'journey', 'mutant', 'arc-backend', 'proof', 'bring-up'];
-
 /** A holistic job that made no progress is asked again only this long after. */
 export const HOLISTIC_RETRY_MS = 5 * POLL_MS;
 
@@ -969,18 +967,15 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     }
   };
 
-  /** A stop kills a spawn unless it is a docs publication's lane: a revision's or the close-out's runs to its end (a critical section). */
-  const stopKills = (intent: IntentOf<'proc.spawn'>): boolean =>
-    STOP_KILLS.includes(intent.expect.subject.purpose) && !(intent.parent.type === 'job' && parseJobId(intent.parent.job).kind === 'docs');
-
   /** What pause and stop ask of the running tasks now, per the durable markers. */
   const interrupt = (): void => {
     const c = view().control();
-    if (stopping !== null) {
+    if (stopping !== null && x.stop.signal.aborted) {
       for (const task of tasks.values()) if (!task.abort.signal.aborted) task.abort.abort('stop');
       killLive('stop', stopKills);
       return;
     }
+    if (stopping !== null) return;
     const steering = new Set(pollCommands(runDir, view().arc).flatMap((c) => c.body.type === 'steer' ? [c.body.unit] : []));
     const paused = (unit: UnitId): boolean => c.pausedAll || c.pausedUnits.includes(unit) || steering.has(unit);
     for (const task of tasks.values()) if (paused(task.unit) && !task.abort.signal.aborted) task.abort.abort('pause');
@@ -1278,7 +1273,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const stopped = plan().units.find((u) => view().unit(u.id).status === 'stop-pending');
       if (c.stop !== null) stopping = { cause: 'command', unit: null };
       else if (stopped !== undefined) stopping = { cause: 'unit', unit: stopped.id };
-      if (stopping !== null) x.stop.abort('stop');
+    }
+    if (stopping !== null) {
+      if (stopping.cause === 'unit' || stopAborts(view().control())) x.stop.abort('stop');
     }
     interrupt();
     startEnvironmentDowns();
@@ -1292,6 +1289,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       if (tasks.size === 0 && jobs.size === 0) {
         await recoverReservations(x.stage);
         await downEnvironments(x.stage);
+        const command = view().control().stop;
+        if (command !== null) journal.fact({ kind: 'stop-completed', command });
         const needsUser = stopping.unit === null ? null : raisedFor(view(), decidedParent(view(), stopping.unit));
         return { kind: 'stop', cause: stopping.cause, needsUser };
       }

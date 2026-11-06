@@ -14,7 +14,7 @@ type CiFact,type DoneRecord,type Event,type Fact,
 type Holder,
 type HolisticFact,
 type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
-type ResourceEdge,type RetryStage,type StageOutcomeFact,JUDGMENT_STAGES,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
+type ResourceEdge,type RetryStage,type StageOutcomeFact,JUDGMENT_STAGES,specReopenable,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
 RETRYABLE_BACKEND_PARKS,
 RETRY_STAGES,
 certificationRed,
@@ -24,7 +24,7 @@ import { CounterRegressionError } from './fsx.ts';
 import { type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,type MilestoneId,type NeedsUserId,type ObligationId,type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,type ReviewFindingId,type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,reviewFindingIdOf } from './ids.ts';
 import type { ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,SpecHistoryEntry,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
-import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
+import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,type StopOptions,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
 import type { ApprovalBlobs,FindingsLedgerEntry } from './review.ts';
 import { type SessionCharge,addCharged } from './usage.ts';
 import type { AbsPath,IsoTime } from './values.ts';
@@ -150,7 +150,7 @@ export type UnitState = Readonly<{
   /**
    * A spec revision (the recorded rev + 1) a `plan-applied` fact holds for the unit until it re-opens on it:
    * at its next stage boundary that allows it while in flight, or by `resume <unit>` while parked at a
-   * judgment stage. `command` is the apply that recorded it (null for a start). Null when none is pending.
+   * judgment stage or build spec-wrong. `command` is the apply that recorded it (null for a start). Null when none is pending.
    */
   pendingRevision: Readonly<{ rev: SpecRev; sha256: Sha256Hex; command: CommandId | null }> | null;
   /**
@@ -645,6 +645,9 @@ export class Fold implements JournalView {
   readonly #needsUser = new Map<NeedsUserId, { blocking: boolean }>();
   readonly #acks = new Map<NeedsUserId, NeedsUserAckState>();
   #stop: CommandId | null = null;
+  #stopOptions: StopOptions = { mode: 'immediate', deadline: null };
+  #stopCompleted = false;
+  #drainRequested = false;
   #pausedAll = false;
   readonly #pausedUnits = new Set<UnitId>();
   #containmentMode: ContainmentMode | null = null;
@@ -1231,10 +1234,23 @@ export class Fold implements JournalView {
         return;
       case 'stop-requested':
         this.#stop = f.command;
+        this.#stopOptions = { mode: f.mode ?? 'immediate', deadline: f.deadline ?? null };
+        this.#drainRequested ||= f.mode === 'drain';
+        this.#stopCompleted = false;
+        return;
+      case 'stop-completed':
+        if (this.#stop !== f.command) fail(`completed stop ${f.command} does not match ${this.#stop}`);
+        this.#stopCompleted = true;
         return;
       case 'executor-started':
-        // A stop ends the run it was given to; the next start begins without it. Pauses and holds persist.
-        this.#stop = null;
+        // A crashed drain survives startup; a completed stop ends only the run it was given to.
+        // Legacy immediate stops keep their existing startup reset.
+        if (this.#stopCompleted || !this.#drainRequested) {
+          this.#stop = null;
+          this.#stopOptions = { mode: 'immediate', deadline: null };
+          this.#stopCompleted = false;
+          this.#drainRequested = false;
+        }
         this.#executorStarted = at.seq;
         return;
       case 'resumed':
@@ -1784,7 +1800,7 @@ export class Fold implements JournalView {
   }
 
   /**
-   * A reopen: of a unit parked at a judgment stage, or of an active unit on its pending revision (the driver,
+   * A reopen: of a judgment or build spec-wrong park, or of an active unit on its pending revision (the driver,
    * at a stage boundary), onto the spec rev after the one the log recorded. A pending revision must be the
    * one re-opened on (a reopen written before revisions were applied has none). The unit starts over at
    * pre-build (no decided outcome) with its counters, routed-up seats and branch kept; the redirect bound
@@ -1796,7 +1812,7 @@ export class Fold implements JournalView {
     const decided = u.state.decided;
     const pending = u.state.pendingRevision;
     if (u.state.status === 'park-pending') {
-      if (decided === null || !(JUDGMENT_STAGES as readonly Stage[]).includes(decided.stage)) fail(`reopen of unit ${f.unit}, parked at ${decided?.stage}, not at a judgment stage`);
+      if (decided === null || !specReopenable(decided)) fail(`reopen of unit ${f.unit}, parked at ${decided?.stage}, requires a judgment or build spec-wrong park`);
     } else if (u.state.status !== 'active' || pending === null) {
       fail(`reopen of unit ${f.unit}, which is ${u.state.status} without a pending revision`);
     }
@@ -1981,7 +1997,7 @@ export class Fold implements JournalView {
   }
 
   control(): ControlState {
-    return { stop: this.#stop, pausedAll: this.#pausedAll, pausedUnits: [...this.#pausedUnits].sort(compare) };
+    return { stop: this.#stop, stopOptions: this.#stopOptions, pausedAll: this.#pausedAll, pausedUnits: [...this.#pausedUnits].sort(compare) };
   }
 
   containmentMode(): ContainmentMode | null {

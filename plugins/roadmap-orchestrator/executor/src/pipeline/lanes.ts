@@ -121,7 +121,7 @@ import { releaseEnvironment,useEnvironment } from '../resources/environments.ts'
 import { instanceEnv,laneCpu,requestOf } from '../resources/pool.ts';
 import { probe } from '../resources/probe.ts';
 import {
-type JobHolder,type Reservation,type ResourceContext,type SpecLane,type StageHolder,cleanup,heldReservation,jobOwnerLabel,reserve,run,
+type JobHolder,type Reservation,type ResourceContext,type SpecLane,type StageHolder,builderRunnableLane,cleanup,heldReservation,jobOwnerLabel,reserve,run,
 } from '../resources/reserve.ts';
 import { OWNER_ENV,ownerLabel } from '../resources/teardown.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -279,7 +279,7 @@ export function stageSuiteLanes(suite: readonly LaneDef[], spec: SpecM1, forced:
 
 /** Resource-free build-cadence suite lanes available for the builder's targeted checks. */
 export const builderSuiteLanes = (suite: readonly LaneDef[], spec: SpecM1): readonly BuildLane[] =>
-  stageSuiteLanes(suite, spec, new Set()).filter((l): l is BuildLane => l.cadence === 'build' && l.resources.length === 0 && l.environment === undefined);
+  stageSuiteLanes(suite, spec, new Set()).filter((l): l is BuildLane => l.cadence === 'build' && builderRunnableLane(l));
 
 /**
  * The lane's declared env verbatim (`set`, and `pass` copied from the host), plus the unit's owner label and

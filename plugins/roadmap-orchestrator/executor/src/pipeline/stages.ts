@@ -1,7 +1,7 @@
 import { failureSignature, maskFailureLine } from './redlane.ts';
 import { candidateRed } from './candidate-red.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser } from '../needsuser.ts';
+import { openNeedsUser,reopenRecommendation,raiseNeedsUser,raisedWithReason,readNeedsUser } from '../needsuser.ts';
 import { methodContext,runReview,diagnosisDue,diagnosed } from './surface.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
@@ -799,7 +799,7 @@ export async function buildRead(
   if (v.kind === 'success' && !malformed && round === 'resolve') malformed = !mergeinResolved(ctx, unit.id);
   if (v.kind === 'success' && !malformed) {
     const report = buildOutput(v.value, 'build');
-    const content = (reason: 'spec-wrong' | 'split-proposal', summary: string): NeedsUserContent => ({blocking: reason === 'spec-wrong', subject: {type: 'unit', unit: unit.id}, reason, summary, recommendation: 'The root reviews the evidence and amends the plan with apply --reason.', options: [], evidence: [called.invDir]});
+    const content = (reason: 'spec-wrong' | 'split-proposal', summary: string): NeedsUserContent => ({blocking: reason === 'spec-wrong', subject: {type: 'unit', unit: unit.id}, reason, summary, recommendation: reason === 'spec-wrong' ? reopenRecommendation(unit.id, loadUnitSpec(ctx, unit).path, loadUnitSpec(ctx, unit).spec.rev) : 'The root reviews the evidence and amends the plan with apply --reason.', options: [], evidence: [called.invDir]});
     if (report.tooBig !== null && raisedWithReason(ctx.journal.view, ctx.runDir, parent, 'split-proposal') === null) raiseNeedsUser(ctx.journal, ctx.runDir, content('split-proposal', `Unit ${unit.id}: ${report.tooBig.estimate}; suggested children: ${report.tooBig.suggestedChildren.join('; ')}`), parent);
     if (report.grounding.specWrong !== null) {
       const cleaned = held === null ? null : await cleanup(ctx, held, parent);
@@ -1397,7 +1397,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
   const compared = ctx.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt);
-  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, compared) : null;
+  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, [...spec.lanes, ...fastSuiteLanes(ctx, spec, salvaged)], compared) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

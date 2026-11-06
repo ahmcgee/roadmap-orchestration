@@ -5,16 +5,18 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { type UnitId, unitId } from '../src/core/ids.ts';
-import { absPath } from '../src/core/values.ts';
+import { type UnitId, invocationId, laneId, opIdOf, resourceName, sha, unitId } from '../src/core/ids.ts';
+import { absPath, isoTimeOf, repoPath } from '../src/core/values.ts';
 import { mergeHead } from '../src/git/mergein.ts';
 import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
-import { implementerDispatch, pinDispatch, unitBranch, workDir } from '../src/pipeline/dispatch.ts';
-import { lastLaneSeriesCost } from '../src/pipeline/lanes.ts';
+import { implementerDispatch, pinDispatch, unitBranch, unitWorktree, workDir } from '../src/pipeline/dispatch.ts';
+import type { LaneDef } from '../src/core/records.ts';
+import { type LaneRecord, lastLaneSeriesCost } from '../src/pipeline/lanes.ts';
 import { prepare } from '../src/pipeline/prepare.ts';
-import { type RoundInput, callRound, prepareRound } from '../src/pipeline/rounds.ts';
+import { type RoundInput, callRound, laneFixRound, prepareRound } from '../src/pipeline/rounds.ts';
 import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
 import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, preBuild, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
+import { laneCommand } from '../src/prompts/inputs.ts';
 import { promptFor } from '../src/prompts/index.ts';
 import { commitAll, git, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
@@ -167,4 +169,48 @@ test('rounds.fresh-directives: a build without an earlier session keeps its deci
   const round = await prepareRound(run.ctx, seated(implementerDispatch(run.ctx, U1)), { kind: 'fresh', directives }, parent);
   assert.equal(round.session.mode, 'fresh');
   assert.deepEqual(round.fixRound, { failingEvidenceDirs: [], directives });
+});
+
+
+test('rounds.required-checks: failing local lanes retain their exact command at any cadence; executor-only and green lanes are excluded', () => {
+  const local: LaneDef = {
+    id: laneId('typecheck-tests'), argv: ['npx', 'tsc', '-p', 'tsconfig.test.json'], cwd: repoPath('packages/app'),
+    env: { set: { CI: '1' }, pass: ['PATH'] }, expectedExit: 0, cadence: 'unit',
+    resources: [], evidenceGlobs: [], evidenceExcludes: [],
+  };
+  const definitions: readonly LaneDef[] = [
+    local,
+    { ...local, id: laneId('environment'), environment: resourceName('estate') },
+    { ...local, id: laneId('resource'), resources: [resourceName('db')] },
+    { ...local, id: laneId('green'), cadence: 'build' },
+  ];
+  const ledger: readonly LaneRecord[] = definitions.map((l) => ({
+    lane: l.id, argv: l.argv, expectedExit: l.expectedExit, exitCode: l.id === 'green' ? 0 : 1,
+    verdict: l.id === 'green' ? 'pass' : 'fail', evidenceDir: absPath(`/ev/${l.id}`), ignored: null,
+    inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(`/ev/${l.id}/output/files`)],
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, pressure: null, failure: null, repeat: null, hostSuspected: null,
+  }));
+  const round = laneFixRound(ledger, [], sha('a'.repeat(40)), definitions);
+  assert.equal(round.kind, 'fix');
+  if (round.kind !== 'fix') return;
+  assert.deepEqual(round.fix.requiredChecks, [local]);
+  assert.deepEqual(round.fix.failingEvidenceDirs, ['/ev/typecheck-tests/output/files', '/ev/environment/output/files', '/ev/resource/output/files']);
+});
+
+
+test('rounds.required-checks-dispatch: a non-build lane reaches the repair builder with its own worktree cwd', T, async () => {
+  const run = setupUnit({
+    steps: [planCheckStep({ decision: 'approve' }), codexBuild([]), codexBuild([])],
+    lanes: [{ id: 'typecheck-tests', cadence: 'unit', cwd: 'src', argv: ['sh', '-c', 'echo "test typecheck failed" >&2; exit 1'] }],
+  });
+  started(await preBuild(run.ctx, run.unit));
+  const done = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
+  assert.ok(done.fix?.kind === 'fix');
+  const definition = loadUnitSpec(run.ctx, run.unit).spec.lanes[0]!;
+  assert.deepEqual(done.fix.fix.requiredChecks, [definition]);
+  await buildToLanes(run, done.fix);
+  const repair = readCalls(run.scenario.path).filter((c) => c.argv[0] === 'exec')[1]!;
+  const checks = repair.stdin.match(/<fix_round>[\s\S]*?<required_checks>([\s\S]*?)<\/required_checks>/)?.[1];
+  assert.ok(checks !== undefined);
+  assert.ok(checks.includes(laneCommand(unitWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1), definition)));
 });

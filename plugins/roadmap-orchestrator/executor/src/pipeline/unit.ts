@@ -61,7 +61,7 @@ import { basename,join } from 'node:path';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import { JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
+import { specReopenable,JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
 import { type OpId,type ResourceInstance,type Sha,type UnitId,invocationId } from '../core/ids.ts';
 import { mutantOf } from '../core/projections.ts';
 import { type NeedsUserContent,type NeedsUserReason,STDERR_FILE,STDOUT_FILE,type Stage } from '../core/records.ts';
@@ -164,7 +164,7 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): r
  * The needs-user content of a halt the table decided (the unit's latest decided outcome), when the stage
  * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a
  * `routing-changed` park re-enters once its implementer seat's routing is restored; any other park at a
- * judgment stage re-opens after a spec edit; any other is re-entered under a new unit id.
+ * judgment stage or build spec-wrong re-opens after a spec edit; any other is re-entered under a new unit id.
  */
 function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop', reason: NeedsUserReason, summary: string): NeedsUserContent {
   const f = ctx.journal.view.unit(unit.id).decided;
@@ -197,7 +197,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
-      : (JUDGMENT_STAGES as readonly Stage[]).includes(f.stage)
+      : specReopenable(f)
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
   return {
@@ -315,6 +315,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   const root = specSeriesRoot(ctx.runDir, parent);
   const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
   const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
+  const definitions = [...spec.lanes, ...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes];
   const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', tip, suiteRoot)];
   const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
@@ -334,7 +335,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return smokeFixRound(survived, required, smokeEvidence(ctx, parent), ledger, tip);
     }
     case 'not-certified': {
-      if (dirty.length > 0) return laneFixRound(series, dirty, tip);
+      if (dirty.length > 0) return laneFixRound(series, dirty, tip, definitions);
       // D1: the witness lanes left their own checkout dirty or moved (the spec series was clean).
       const witnessRoot = absPath(join(evidenceRoot(ctx.runDir, parent), 'journey'));
       const dest = absPath(join(witnessRoot, `_dirty-${basename(witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt))}`));
@@ -343,7 +344,7 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
     }
     default: {
       const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);
-      return laneFixRound(series, dirty, tip, compared);
+      return laneFixRound(series, dirty, tip, definitions, compared);
     }
   }
 }

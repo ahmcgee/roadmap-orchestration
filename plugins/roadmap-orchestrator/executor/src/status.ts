@@ -1,3 +1,4 @@
+import { stopAborts } from './pipeline/stop.ts';
 import { externalVerdict } from './holistic/external.ts';
 import { claudeBuilderRouting } from './routing/eligibility.ts';
 import { type Certification,type WorkRun,certification,workRuns } from './status-work.ts';
@@ -183,7 +184,7 @@ export function ownerState(runDir: AbsPath, hostDir: AbsPath): OwnerState {
   return { state: isAlive(executor, claim.bootId) ? 'alive' : 'dead', generation: claim.generation, pid: executor.pid };
 }
 
-export type ArcState = 'running' | 'draining' | 'held' | 'parked' | 'blocked' | 'complete' | 'refused' | 'no-owner';
+export type ArcState = 'running' | 'draining' | 'held' | 'parked' | 'blocked' | 'complete' | 'refused' | 'no-owner' | 'stopping';
 
 /** A unit's place in the schedule (see the header). */
 export type UnitRunState =
@@ -455,7 +456,7 @@ export const LOG_COMPACTION_FOLD_MS = 2_000;
 export type Status = Readonly<{
   arc: ArcId;
   supervision: Supervision;
-  run: Readonly<{ state: ArcState; owner: OwnerState; heartbeatAt: IsoTime | null }>;
+  run: Readonly<{ state: ArcState; owner: OwnerState; heartbeatAt: IsoTime | null; stop: Readonly<{ mode: 'immediate' | 'drain'; deadline: IsoTime | null }> | null }>;
   units: readonly UnitStatusLine[];
   edges: readonly EdgeView[];
   /** The `run-only` allowlist in force, or null when admission is unlimited. */
@@ -851,6 +852,8 @@ function moving(l: UnitCore): boolean {
 function runStateOf(view: JournalView, lines: readonly UnitCore[], owner: OwnerState, blocking: readonly BlockingItem[], rejection: RejectionFile | null): ArcState {
   const h = view.holistic();
   if (owner.state === 'alive') {
+    const c = view.control();
+    if (c.stop !== null) return stopAborts(c) ? 'stopping' : 'draining';
     // §2.10: admissions closed (`close-admissions`) and nothing held, parked or blocked: the arc drains.
     const running: ArcState = h.draining === null ? 'running' : 'draining';
     if (lines.some(moving)) return running;
@@ -1533,7 +1536,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: Lo
   return {
     arc,
     supervision: supervision(runDir),
-    run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null },
+    run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
     units: d.units.map((l) => ({ ...l, certification: workContext === null ? null : certification(workContext, plan!.units.find((u) => u.id === l.unit)!, events, work, d.sched?.queue.find((q) => q.unit === l.unit && q.stage === 'lanes')?.attempt), work: work.filter((r) => r.parent.type === 'stage' && r.parent.unit === l.unit), failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),

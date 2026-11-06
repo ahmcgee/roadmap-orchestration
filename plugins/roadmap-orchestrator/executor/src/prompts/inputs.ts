@@ -69,6 +69,8 @@ export type UnitTargetInput = ArchitectureInput | UnitCorpusInput;
 export type GateTargetInput = ArchitectureInput | (UnitCorpusInput & Readonly<{ visionDoc: null }>);
 
 export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[];
+  /** Failing lanes runnable in the builder worktree, including later cadences. */
+  requiredChecks?: readonly LaneDef[];
   baseComparison?: readonly Readonly<{lane: LaneId; base: Sha; result: 'pass' | 'fail'; evidence: AbsPath}>[] | null;
   capState?: Readonly<{builds: number; judgedStages: number; chargeableFailures: number; chargeableBound: number; certificationAllowance: number}>;
 }>;
@@ -625,7 +627,7 @@ export function bullets(items: readonly string[], empty: string): string {
 }
 
 /** The implementer's lane list: one exact command per lane, with its expected exit. */
-export function fastLanesText(worktree: AbsPath, lanes: readonly BuildLane[]): string {
+export function fastLanesText(worktree: AbsPath, lanes: readonly LaneDef[]): string {
   if (lanes.length === 0) return '(no fast lanes)';
   return lanes.map((l) => {
     const pass = l.env.pass.length === 0 ? '' : `; needs ${l.env.pass.join(', ')} from the environment`;

@@ -1,3 +1,5 @@
+import { pollCommands } from '../commands/queue.ts';
+import { stopAborts,stopKills } from '../pipeline/stop.ts';
 // Reattaching to an open proc.spawn intent after the executor restarted (plan "Recovery", row proc.spawn;
 // R13, R15). The invocation dir is re-read from scratch; no file is trusted for merely existing.
 //
@@ -35,6 +37,13 @@ export async function reattach(ctx: ProcContext, intent: IntentOf<'proc.spawn'>)
   if (launch === null) throw new Error(`${files.invDir}: runner ${runner.pid} is alive but launch.json is missing`);
   const handle = { files, launch, runner };
   if (intent.expect.subject.purpose === 'bring-up' && files.read('cancel.json') === null) cancel(handle, 'recovery');
-  await awaitRunner(handle);
+  await awaitRunner(handle, () => {
+    // Recovery can wait on a live workload before the scheduler exists. Keep a durable drain's
+    // deadline and a later plain stop effective during that wait, with the same critical sections.
+    const control = ctx.journal.view.control();
+    if (control.stop === null || !stopKills(intent)) return null;
+    const immediate = stopAborts(control) || pollCommands(ctx.runDir, ctx.journal.view.arc).some((c) => c.body.type === 'stop' && c.body.mode !== 'drain');
+    return immediate ? 'stop' : null;
+  });
   return { how: 'adopted', settled: await settle(ctx, intent, { type: 'adopted' }) };
 }
