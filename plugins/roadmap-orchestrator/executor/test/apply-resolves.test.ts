@@ -3,10 +3,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { applyCommand, evaluateApply } from '../src/commands/apply.ts';
-import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
+import { readCommand, submitCommand, terminalReceipt } from '../src/commands/queue.ts';
 import { needsUserId, unitId, findingId, sha, jobId } from '../src/core/ids.ts';
 import { parseCommand } from '../src/input/cli.ts';
-import { raiseNeedsUser } from '../src/needsuser.ts';
+import { needsUserAckPath, raiseNeedsUser, readNeedsUserAck } from '../src/needsuser.ts';
+import { events } from './fixtures/invoke-specs.ts';
+import { PLAN_APPLY_RESOLVES, crashCells } from './matrix.ts';
 import { openFinding } from '../src/holistic/findings.ts';
 import { setupArc, contextFor, commandContextFor, syncInputs, applyBody } from './fixtures/unit-common.ts';
 import type { NeedsUserContent } from '../src/core/records.ts';
@@ -111,11 +113,17 @@ test('queued stale proposal and request closed after evaluation close nothing', 
   } finally { r.journal.close(); }
 });
 
-for (const [label, occurrence] of [
-  ['revision.commit.after-fact', 1], ['command.apply.after-effect', 1],
-  ['command.apply.after-ack-file', 1], ['command.apply.after-ack-file', 2],
-  ['command.apply.after-ack', 1], ['command.apply.after-ack', 2], ['command.apply.after-receipt', 1],
-] as const) test(`applied-resolution-replays-after-each-crash: ${label} #${occurrence}`, { timeout: 60_000 }, async () => {
+const resolutionCells = crashCells(PLAN_APPLY_RESOLVES);
+test('lists the linked apply resolution crash points', () => {
+  assert.deepEqual(resolutionCells.map((c) => `${c.boundary} ${c.label}`), [
+    'B3 revision.commit.after-fact', 'B4 command.apply.after-effect',
+    'B4 command.apply.after-ack-file', 'B4 command.apply.after-ack', 'B4 command.apply.after-receipt',
+  ]);
+});
+
+for (const { label } of resolutionCells) for (const occurrence of
+  label === 'command.apply.after-ack-file' || label === 'command.apply.after-ack' ? [1, 2] : [1]
+) test(`applied-resolution-replays-after-each-crash: ${label} #${occurrence}`, { timeout: 60_000 }, async () => {
   const { runFixture } = await import('./helpers/proc.ts');
   const { writeTrigger, assertFired } = await import('./helpers/crash.ts');
   const { tmpDir } = await import('./helpers/repo.ts');
@@ -130,12 +138,36 @@ for (const [label, occurrence] of [
   const r = contextFor(d);
   try {
     const stage = followingContext(r); const commands = commandContextFor(r, stage);
+    const existingAcks = ids.map((id) => readNeedsUserAck(r.ctx.runDir, id));
     await recover({ stage, commands });
-    for (const id of ids) assert.equal(r.journal.view.ackOf(id)?.command, file.id);
+    for (const [index, id] of ids.entries()) {
+      assert.equal(r.journal.view.ackOf(id)?.command, file.id);
+      assert.deepEqual(r.journal.view.ackOf(id), { command: file.id, choice: null });
+      const ack = readNeedsUserAck(r.ctx.runDir, id);
+      assert.ok(ack !== null);
+      assert.deepEqual({ id: ack.id, command: ack.command, choice: ack.choice }, { id, command: file.id, choice: null });
+      if (existingAcks[index] !== null) assert.deepEqual(ack, existingAcks[index], 'recovery preserves an existing ack file');
+    }
+    const journal = events(d.runDir);
+    assert.deepEqual(journal.flatMap((e) => e.type === 'fact' && e.fact.kind === 'plan-applied' && e.fact.command === file.id ? [e.fact.rev] : []), [2]);
+    assert.deepEqual(journal.flatMap((e) => e.type === 'fact' && e.fact.kind === 'needs-user-acked' ? [e.fact] : []),
+      ids.map((id) => ({ kind: 'needs-user-acked', id, command: file.id, choice: null })));
+    const applies = r.journal.view.opsOf('command.apply').filter((i) => i.expect.command === file.id);
+    assert.equal(applies.length, 1);
+    const apply = applies[0]!;
+    const durable = readCommand(r.ctx.runDir, file.id, r.journal.view.arc);
+    assert.equal(apply.expect.commandSha256, durable.sha256);
+    assert.ok(durable.file.body.type === 'apply');
+    assert.deepEqual(durable.file.body.resolves, ids, 'the durable command retains the resolution link');
+    assert.deepEqual(journal.flatMap((e) => e.type === 'done' && e.op === apply.op ? [e.kind] : []), ['command.apply']);
     const receipt = terminalReceipt(r.ctx.runDir, file.id);
     assert.ok(receipt?.state === 'applied'); assert.deepEqual(receipt.resolved, ids);
     assert.equal(r.journal.view.opsOf('revision.commit').filter((i) => i.expect.rev === 2).length, 1);
+    assert.equal(receipt.op, apply.op);
+    const ackBytes = ids.map((id) => readFileSync(needsUserAckPath(r.ctx.runDir, id), 'utf8'));
     const high = r.journal.view.highWater(); await recover({ stage, commands }); assert.equal(r.journal.view.highWater(), high);
+    assert.deepEqual(ids.map((id) => readFileSync(needsUserAckPath(r.ctx.runDir, id), 'utf8')), ackBytes);
+    assert.deepEqual(terminalReceipt(r.ctx.runDir, file.id), receipt);
   } finally { r.journal.close(); }
 });
 

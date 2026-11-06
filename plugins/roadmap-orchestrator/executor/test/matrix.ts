@@ -73,6 +73,7 @@ export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const DISMISS = 'command.apply: dismiss a finding with root counter-evidence';
 export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
+export const PLAN_APPLY_RESOLVES = 'command.apply: apply with linked needs-user resolutions';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
 export const QUEUED_APPLY = 'command.apply: an apply queued behind a running stage (dev.17: apply-queued, queued receipt, its landing at the boundary, apply-dropped; supervised)';
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
@@ -808,6 +809,26 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the fact is written: the reconciler finds it (the postcondition) and writes the applied receipt if missing, or reads it; no second fact',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op: nothing is open for recovery, and a re-delivered command is a no-op (cmd.idempotent)' },
+    },
+  },
+  {
+    // A changed apply resolves two named requests; each ack boundary is crashed at both occurrences.
+    row: PLAN_APPLY_RESOLVES,
+    test: 'test/apply-resolves.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: `before-effect is covered by ${PLAN_APPLY}; no resolution is acknowledged before the revision commits` },
+      B3: {
+        status: 'crash',
+        labels: ['revision.commit.after-fact'],
+        recovery: 'the plan-applied fact links the command to the committed revision; recovery closes the revision and acknowledges each named request once',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-effect', 'command.apply.after-ack-file', 'command.apply.after-ack', 'command.apply.after-receipt'],
+        recovery: 'recovery preserves each existing ack file, writes each missing ack fact once, and completes one applied receipt whose resolved ids match the command and both acknowledgements; a second recovery changes nothing',
+      },
+      B5: { status: 'excluded', why: 'the done closes the command; repeated recovery preserves the journal and acknowledgement files byte-for-byte' },
     },
   },
   {
