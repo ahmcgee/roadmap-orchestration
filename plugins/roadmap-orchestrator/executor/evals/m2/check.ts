@@ -119,9 +119,10 @@ function noOverlap(run: Run): Verdict {
   let maxCpu = 0;
   const cpuCap = run.plan.capacity?.cpu ?? CPU_CAPACITY;
   for (const i of transitions(run)) {
-    const holder = canonicalJson(i.expect.holder);
     const edge = i.expect.edge;
     for (const u of i.expect.resources) {
+      // Compound entry gives only the publication slot to slotHolder, as in the production fold.
+      const holder = canonicalJson(edge.type === 'reserve' && u === 'integration-slot' && i.expect.slotHolder !== undefined ? i.expect.slotHolder : i.expect.holder);
       const now = state.get(u) ?? 'free';
       const instance = /^(.+)#([0-9]+)$/.exec(u);
       if (instance !== null && instance[1] === POOL && Number(instance[2]) > POOL_SIZE) problems.push(`${u} is beyond the pool's size ${POOL_SIZE}`);
