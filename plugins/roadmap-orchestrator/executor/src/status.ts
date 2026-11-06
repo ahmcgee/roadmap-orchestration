@@ -1,7 +1,16 @@
+import { canonicalJson } from './core/json.ts';
+import { terminalReceipts } from './commands/queue.ts';
+import { withArcRefReads } from './chain.ts';
+import { withSnapshotReads } from './git/snapshot.ts';
+import { systemsMapInForce } from './input/systems.ts';
+import { prefetchTreeListings } from './git/reusekey.ts';
+import { type EnvId } from './core/ids.ts';
+import { laneRevOf } from './holistic/types.ts';
+import { withObservationReads } from './pipeline/lanes.ts';
 import { stopAborts } from './pipeline/stop.ts';
-import { externalVerdict } from './holistic/external.ts';
+import { externalAttestations } from './holistic/external.ts';
 import { claudeBuilderRouting } from './routing/eligibility.ts';
-import { type Certification,type WorkRun,certification,workRuns } from './status-work.ts';
+import { type Certification,type WorkRun,certificationReader,workRuns } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
@@ -94,14 +103,14 @@ import { type Certification,type WorkRun,certification,workRuns } from './status
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings; `edges` adds each node edge
-import { existsSync,readdirSync,statSync } from 'node:fs';
+import { existsSync,statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { answerLine,commonDirOfRun,unappliedAnswers } from './answers.ts';
 import { chainBack,readArcRef } from './chain.ts';
 import { type ChainStatus,chainStatusOf,linkOf } from './commands/chain.ts';
 import { type Sealing,sealingOf } from './commands/gc.ts';
-import { COMMANDS_DIR,incomingPath,pendingCommandIds,readCommand,terminalReceipt } from './commands/queue.ts';
+import { incomingPath,pendingCommandIds,readCommand } from './commands/queue.ts';
 import {
 type Event,
 type Holder,
@@ -110,7 +119,7 @@ OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,commandId,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
+import { type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
@@ -161,7 +170,7 @@ type SeatRef,
 import { effectiveDependency } from './schedule/graph.ts';
 import { type SpecFactsOf,admitter,nextStage,rankOf } from './schedule/ready.ts';
 import {
-type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,type QueueEntry,SCHED_FILE,type SchedFile,arcHolds,arcSettled,completionBlockers,dischargingObservation,
+type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,type QueueEntry,SCHED_FILE,type SchedFile,arcHolds,arcSettled,completionBlockers,dischargingObservationReader,
 readOnlyContexts,recordedLaneEnv,schedFile,unitSettled,
 } from './schedule/scheduler.ts';
 import type { AdmissionConstraint,Rank,ResourceRequest } from './schedule/types.ts';
@@ -564,25 +573,13 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
   return null;
 }
 
-/** The terminal receipts' dir (src/commands/queue.ts writes `<id>.<applied|rejected>.json` there). */
-const TERMINAL_RECEIPT = /^(cmd-[0-9a-f]{16})\.(?:applied|rejected)\.json$/;
-
-function commandsOf(runDir: AbsPath, arc: ArcId, view: JournalView): Status['commands'] {
-  const pending = pendingCommandIds(runDir).map((id) => {
+function commandsOf(runDir: AbsPath, arc: ArcId, view: JournalView) {
+  const receipts = terminalReceipts(runDir);
+  const pending = pendingCommandIds(runDir, receipts).map((id) => {
     const queued = view.applyQueued(id);
     return { id, type: readCommand(runDir, id, arc).file.body.type, ...(queued === null ? {} : { queuedFor: queued.waitsFor }) };
   });
-  const dir = join(runDir, COMMANDS_DIR, 'receipts');
-  const done = existsSync(dir) ? readdirSync(dir).flatMap((n) => {
-    const m = TERMINAL_RECEIPT.exec(n);
-    return m === null ? [] : [commandId(m[1])];
-  }).sort() : [];
-  const receipts = done.map((id) => {
-    const r = terminalReceipt(runDir, id);
-    if (r === null) throw new Error(`command ${id}'s terminal receipt vanished while status read it; receipts are write-once`);
-    return r;
-  });
-  return { pending, receipts: receipts.slice(-RECEIPTS_SHOWN) };
+  return { pending, receipts };
 }
 
 /** The kept plan of a revision. */
@@ -603,14 +600,19 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
 function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
   const out = new Map<RoutingRev, ResolvedRouting>();
   const aliases = new Map<RoutingRev, ResolvedRouting>();
+  const plans = new Map<Sha256Hex, PlanM1>();
+  const resolutions = new Map<string, ResolvedRouting>();
   for (const e of events) {
     if (e.type !== 'fact' || e.fact.kind !== 'plan-applied') continue;
     const provenance = e.fact.routingProvenance;
-    const kept = keptPlan(runDir, e.fact);
+    let kept = plans.get(e.fact.planSha256);
+    if (kept === undefined) { kept = keptPlan(runDir, e.fact); plans.set(e.fact.planSha256, kept); }
     const scope = arcScopeOf(kept);
     for (const unit of [null, ...(Object.keys(provenance.unitLayers) as UnitId[])]) {
       const stack = provenanceStack(provenance, scope, unit, hasMilestones(kept));
-      const r = resolveRouting(stack);
+      const key = canonicalJson(stack);
+      let r = resolutions.get(key);
+      if (r === undefined) { r = resolveRouting(stack); resolutions.set(key, r); }
       out.set(r.rev, r);
       const fallback = claudeBuilderRouting(r);
       out.set(fallback.rev, fallback);
@@ -1039,32 +1041,72 @@ export type ObligationLeaf = Readonly<{ verdict: ObligationTruth['verdict']; wit
  * split parent's is its non-exempt children's (held when every one holds). `store` is the run dir's (`observations`) or
  * a snapshot ref's (the brief): one rule.
  */
-export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
+function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore) {
   const fold = view.holistic();
-  const onTree = (lane: ArcLaneDef): Observation | null => dischargingObservation({ repo, journal: { view } }, store, tree, lane, (l) => recordedLaneEnv(view, l));
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
-  const leaf = (o: ObligationDef): ObligationLeaf => {
-    if (o.state.type === 'split') {
-      const kids = o.state.children.map((c) => defs.get(c)).filter((c): c is ObligationDef => c !== undefined && !isExempt(c)).map(leaf);
-      const verdicts = new Set(kids.map((k) => k.verdict));
-      const verdict: ObligationLeaf['verdict'] = kids.every((k) => k.verdict === 'held') ? 'held'
-        : (['not-held', 'partial', 'unwitnessed', 'not-covered'] as const).find((v) => verdicts.has(v))!;
-      return { verdict, witnessed: kids.flatMap((k) => k.witnessed), units: [...new Set(kids.flatMap((k) => k.units))].sort() };
-    }
-    if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
-    const lane = lanes.get(o.witness.lane);
-    if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const units = obligationBlockingUnits(view, o);
-    if (lane.witnessClass === 'external') return { verdict: externalVerdict(repo, view, tree, lane, o) ?? 'not-covered', witnessed: [], units };
-    const found = onTree(lane);
-    if (found === null) return { verdict: 'not-covered', witnessed: [], units };
-    const entry = witnessed.get(found.seq);
-    if (entry === undefined) throw new Error(`observation ${observationKeyText(found.key)} names seq ${found.seq}, which no witnessed fact has`);
-    return { verdict: verdictOf(found.record, o.witness), witnessed: [entry], units };
+  const environments = new Map<string, EnvId>();
+  for (const w of fold.witnessed) if (w.purpose === 'witness') environments.set(`${w.lane}/${w.laneRev}`, w.envId);
+  const revs = new Map(obligations.lanes.map((l) => [l, laneRevOf(l)]));
+  const compatible = new Set([...store.values()].map((o) => `${o.reuse.lane}/${o.reuse.laneRev}/${o.reuse.envId}`));
+  const external = externalAttestations(repo, view);
+  const observationOn = dischargingObservationReader({ repo, journal: { view } }, store, (lane) => environments.get(`${lane.id}/${revs.get(lane)!}`) ?? null);
+  const byTree = new Map<Sha, Map<ObligationDef, ObligationLeaf>>();
+  const observationsByTree = new Map<Sha, Map<ArcLaneDef, Observation | null>>();
+  const canObserve = (o: ObligationDef): boolean => {
+    if (o.state.type === 'split') return o.state.children.some((id) => { const child = defs.get(id); return child !== undefined && !isExempt(child) && canObserve(child); });
+    const lane = lanes.get(o.witness!.lane)!;
+    if (lane.witnessClass === 'external') return external.compatible(lane, o);
+    const rev = revs.get(lane)!;
+    const env = environments.get(`${lane.id}/${rev}`);
+    return env !== undefined && compatible.has(`${lane.id}/${rev}/${env}`);
   };
-  return leaf;
+  const evaluate = (tree: Sha) => {
+    const memo = byTree.get(tree) ?? new Map<ObligationDef, ObligationLeaf>(); byTree.set(tree, memo);
+    const observed = observationsByTree.get(tree) ?? new Map<ArcLaneDef, Observation | null>(); observationsByTree.set(tree, observed);
+    const onTree = (lane: ArcLaneDef): Observation | null => {
+      if (observed.has(lane)) return observed.get(lane)!;
+      const rev = revs.get(lane)!;
+      const env = environments.get(`${lane.id}/${rev}`) ?? null;
+      const found = env === null || !compatible.has(`${lane.id}/${rev}/${env}`) ? null
+        : observationOn(tree, lane);
+      observed.set(lane, found); return found;
+    };
+    const compute = (o: ObligationDef): ObligationLeaf => {
+      if (o.state.type === 'split') {
+        const kids = o.state.children.map((c) => defs.get(c)).filter((c): c is ObligationDef => c !== undefined && !isExempt(c)).map(leaf);
+        const verdicts = new Set(kids.map((k) => k.verdict));
+        const verdict: ObligationLeaf['verdict'] = kids.every((k) => k.verdict === 'held') ? 'held'
+          : (['not-held', 'partial', 'unwitnessed', 'not-covered'] as const).find((v) => verdicts.has(v))!;
+        return { verdict, witnessed: kids.flatMap((k) => k.witnessed), units: [...new Set(kids.flatMap((k) => k.units))].sort() };
+      }
+      if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
+      const lane = lanes.get(o.witness.lane);
+      if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
+      const units = obligationBlockingUnits(view, o);
+      if (lane.witnessClass === 'external') {
+        const result = external(tree, lane, o);
+        return { verdict: result === null ? 'not-covered' : result.result === 'pass' ? 'held' : 'not-held', witnessed: [], units };
+      }
+      const found = onTree(lane);
+      if (found === null) return { verdict: 'not-covered', witnessed: [], units };
+      const entry = witnessed.get(found.seq);
+      if (entry === undefined) throw new Error(`observation ${observationKeyText(found.key)} names seq ${found.seq}, which no witnessed fact has`);
+      return { verdict: verdictOf(found.record, o.witness), witnessed: [entry], units };
+    };
+    const leaf = (o: ObligationDef): ObligationLeaf => {
+      let result = memo.get(o);
+      if (result === undefined) { result = compute(o); memo.set(o, result); }
+      return result;
+    };
+    return leaf;
+  };
+  return Object.assign(evaluate, { canObserve });
+}
+
+export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
+  return obligationEvaluator(repo, view, obligations, store)(tree);
 }
 
 // A commit's first-parent trees are immutable. Keep only the current head per repo, so observer polls
@@ -1081,20 +1123,26 @@ function treesOf(repo: AbsPath, head: Sha): readonly Sha[] {
 /** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
 function truths(
   runDir: AbsPath, view: JournalView, lines: readonly UnitCore[], obligations: Obligations, repo: AbsPath, head: Sha,
-): Readonly<{ nowTrue: readonly ObligationTruth[]; notYetTrue: readonly ObligationPending[] }> {
+) {
   const latched = new Set(view.holistic().latched.map((l) => l.obligation));
   const byUnit = new Map(lines.map((l) => [l.unit, l]));
   const store = observations({ journal: { view }, runDir });
   // The head's tree first, then each earlier tree of its first-parent history, newest first (a tree once).
   const trees = treesOf(repo, head);
+  const evaluate = obligationEvaluator(repo, view, obligations, store);
   const leaves = new Map<Sha, ReturnType<typeof obligationLeaves>>();
   const leafOn = (tree: Sha, o: ObligationDef): ObligationLeaf => {
     let at = leaves.get(tree);
-    if (at === undefined) leaves.set(tree, at = obligationLeaves(repo, view, obligations, store, tree));
+    if (at === undefined) leaves.set(tree, at = evaluate(tree));
     return at(o);
   };
   const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));
+  const definitions = new Map(obligations.obligations.map((o) => [o.id, o]));
+  const needsListings = systemsMapInForce(view.planApplied()) !== null || obligations.lanes.some((l) => l.inputs !== undefined);
+  let prefetched = false;
   const lastObserved = (o: ObligationDef): LastObservation | null => {
+    if (!evaluate.canObserve(o)) return null;
+    if (!prefetched && needsListings) { prefetchTreeListings(repo, trees.slice(1)); prefetched = true; }
     for (const tree of trees.slice(1)) {
       const l = leafOn(tree, o);
       if (l.verdict !== 'not-covered') return { treeSha: tree, verdict: l.verdict, evidence: evidenceOf(l) };
@@ -1126,9 +1174,11 @@ function truths(
     }));
     // Nothing to wait on: a witness run on the head when its lane has not run there, else a spec (a repair to plan).
     const reason = l.units.length > 0 ? OBLIGATION_REASONS.find((r) => reasons.has(r as never)) ?? 'code' : l.verdict === 'not-covered' ? 'witness' : 'spec';
-    notYetTrue.push({ ...truth, blockingUnits: l.units, reason, lastObserved: l.verdict === 'not-covered' ? lastObserved(o) : null });
+    notYetTrue.push({ ...truth, blockingUnits: l.units, reason, lastObserved: null });
   }
-  return { nowTrue, notYetTrue };
+  return { nowTrue, notYetTrue, withHistory: () => ({ nowTrue, notYetTrue: notYetTrue.map((o) => ({
+    ...o, lastObserved: o.verdict === 'not-covered' ? lastObserved(definitions.get(o.obligation)!) : null,
+  })) }) };
 }
 
 /** The longest chain of unsettled units along their effective `after` edges (ties: the first in plan order). */
@@ -1157,7 +1207,7 @@ function criticalPath(view: JournalView, plan: PlanM1): readonly UnitId[] {
   return path;
 }
 
-function targetOf(view: JournalView, plan: PlanM1, obligations: Obligations, t: ReturnType<typeof truths>): TargetView {
+function targetOf(view: JournalView, plan: PlanM1, obligations: Obligations, t: Pick<ReturnType<typeof truths>, 'nowTrue' | 'notYetTrue'>): TargetView {
   const latched = new Set(view.holistic().latched.map((l) => l.obligation));
   const count = (type: ObligationDef['state']['type']): number => obligations.obligations.filter((o) => o.state.type === type).length;
   const pending = obligations.obligations
@@ -1321,7 +1371,7 @@ function auditOf(runDir: AbsPath, view: JournalView, events: readonly Event[], p
 const generationOf = (fold: HolisticFold): number =>
   Math.max(0, ...fold.audits.map((a) => a.started.generation));
 
-type CompletionInputs = Readonly<{ d: Derived; hostDir: AbsPath; pending: number }>;
+type CompletionInputs = Readonly<{ d: Derived; hostDir: AbsPath; pending: readonly CommandId[] }>;
 
 /**
  * The completion predicate's unmet clauses now: the scheduler's `completionBlockers` over a read-only view of the arc
@@ -1335,12 +1385,12 @@ function unmetOf(runDir: AbsPath, x: CompletionInputs): readonly CompletionBlock
     view, runDir, repo: start.record.repo, hostDir: x.hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
     routingBase: routingBaseOf(inForce.fact.routingProvenance),
   });
-  return completionBlockers(h, { blocking: blocking.length, pending: x.pending });
+  return completionBlockers(h, { blocking: blocking.length, pending: x.pending.length });
 }
 
 function completionOf(runDir: AbsPath, d: Derived, x: CompletionInputs): CompletionView {
   const c = d.view.holistic().completion;
-  const sealing: Sealing = c === null || d.start === null ? { kind: 'open', reason: 'not completed' } : sealingOf(d.start.record.repo, runDir, d.log);
+  const sealing: Sealing = c === null || d.start === null ? { kind: 'open', reason: 'not completed' } : sealingOf(d.start.record.repo, runDir, d.log, x.pending);
   return {
     planRev: c?.planRev ?? null, head: c?.head ?? null, active: c?.active ?? false, sealed: sealing.kind === 'sealed',
     notSealed: sealing.kind === 'sealed' ? null : sealing.kind === 'open' ? sealing.reason : sealing.detail,
@@ -1453,7 +1503,7 @@ function corpusOf(c: CorpusInForce): CorpusView {
   };
 }
 
-function censusOf(obligations: Obligations, t: ReturnType<typeof truths>): CensusView | null {
+function censusOf(obligations: Obligations, t: Pick<ReturnType<typeof truths>, 'nowTrue' | 'notYetTrue'>): CensusView | null {
   if (obligations.census === undefined) return null;
   const held = new Set(t.nowTrue.map((o) => o.obligation));
   const lastHeld = new Set([...held, ...t.notYetTrue.filter((o) => o.lastObserved?.verdict === 'held').map((o) => o.obligation)]);
@@ -1490,58 +1540,98 @@ function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitC
 }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
-  return withTreeListings(() => readStatus(runDir, arc, hostDir, snapshot));
+  return withTreeListings(() => withObservationReads(() => {
+    const d = derive(runDir, arc, hostDir, snapshot);
+    return withSnapshotReads(d.log, () => withArcRefReads(() => readStatus(runDir, arc, hostDir, d)));
+  }));
 }
 
-function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
-  const d = derive(runDir, arc, hostDir, snapshot);
+/** The common projection consumed by summary; execution detail is layered on only for full status. */
+export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones'> & Readonly<{
+  units: readonly UnitCore[];
+  spend: Pick<Status['spend'], 'byRole' | 'bySmoke'>;
+}>;
+
+function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   const { view, events, start, inForce } = d;
   const now = Date.now();
   const meter = meterOf(events);
-  const tables = routingTables(runDir, events);
-  const resolvable = { bySeat: meter.bySeat.filter((t) => tables.has(t.routingRev)), delegatedBySeat: meter.delegatedBySeat };
-  const each = <V>(of: (r: ResolvedRouting) => V): ReadonlyMap<RoutingRev, V> => new Map([...tables].map(([rev, r]) => [rev, of(r)]));
-  const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
-
   const needsUser = openItems(runDir, view);
   const commands = commandsOf(runDir, arc, view);
-  const acks = ackSeqs(events);
 
   // The holistic keys: only an arc whose plan in force names a vision (A5) has them.
   const fold = view.holistic();
   const plan = inForce?.plan ?? null;
   const on = fold.on && plan !== null && start !== null && inForce !== null
     ? { plan, repo: start.record.repo, revision: revisionInForce(runDir, inForce) } : null;
-  const holistic = on !== null;
   const revision = on?.revision ?? null;
   const head = on === null ? null : revParse(on.repo, branchRef(on.plan.integrationBranch));
   const obligations = revision?.obligations?.value ?? null;
-  const t = on === null || head === null || obligations === null ? { nowTrue: [], notYetTrue: [] }
+  const t = on === null || head === null || obligations === null ? { nowTrue: [], notYetTrue: [], withHistory: () => ({ nowTrue: [], notYetTrue: [] }) }
     : truths(runDir, view, d.units, obligations, on.repo, head);
-  const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
-  // M4a: the scheduler's holds and the pack review read through the read-only contexts, with the routing in force (the
-  // pack review's key binds the arc's routing rev); the baseline job's running is the live scheduler's alone (false).
-  const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
-  const corpus = revision?.corpus ?? null;
-  const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
   const repairs = start === null || plan === null ? [] : repairUnits({
     journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
   });
 
+  const core: StatusCore = {
+    arc, supervision: supervision(runDir),
+    run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
+    units: d.units, needsUser, spend: { byRole: meter.byRole, bySmoke: meter.bySmoke },
+    plan: inForce === null ? null : { rev: inForce.rev, planSha256: inForce.manifest.planSha256 },
+    nowTrue: t.nowTrue, notYetTrue: t.notYetTrue,
+    completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.map((c) => c.id) }),
+    demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
+    milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairs),
+  };
+  return { core, d, meter, commands, on, revision, head, obligations, t, repairs, plan, now };
+}
+
+export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath) {
+  return withTreeListings(() => withObservationReads(() => {
+    const d = derive(runDir, arc, hostDir);
+    return withSnapshotReads(d.log, () => {
+      const x = readCore(runDir, arc, hostDir, d);
+      return { core: x.core, events: x.d.events, plan: x.plan, meter: x.meter };
+    });
+  }));
+}
+
+function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Derived): Status {
+  const x = readCore(runDir, arc, hostDir, derived);
+  const { core, d, meter, commands, on, revision, head, obligations, repairs, plan, now } = x;
+  const { view, events, start, inForce } = d;
+  const t = x.t.withHistory();
+  const fold = view.holistic();
+  const holistic = on !== null;
+  const tables = routingTables(runDir, events);
+  const resolvable = { bySeat: meter.bySeat.filter((t) => tables.has(t.routingRev)), delegatedBySeat: meter.delegatedBySeat };
+  const each = <V>(of: (r: ResolvedRouting) => V): ReadonlyMap<RoutingRev, V> => new Map([...tables].map(([rev, r]) => [rev, of(r)]));
+  const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
+  const audit = on === null || head === null ? null : auditOf(runDir, view, events, on.plan, head, now);
+  const h = on === null || start === null || inForce === null ? null : holisticReader(runDir, hostDir, d, inForce);
+  const corpus = revision?.corpus ?? null;
+  const reader = on === null || start === null ? null : { journal: { view }, runDir, planFile: start.record.planFile, repo: on.repo };
   const workContext = start === null || plan === null || inForce === null ? null : readOnlyContexts({
     view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => plan,
     hostEnv: process.env, routingBase: routingBaseOf(inForce.fact.routingProvenance),
   }).audit;
   const work = workContext === null ? [] : workRuns(workContext, events);
+  const certify = workContext === null ? null : certificationReader(workContext, events, work);
+  const byUnit = new Map<UnitId, WorkRun[]>(); const hostWork: WorkRun[] = [];
+  for (const r of work) {
+    if (r.parent.type !== 'stage') { hostWork.push(r); continue; }
+    const rows = byUnit.get(r.parent.unit) ?? []; rows.push(r); byUnit.set(r.parent.unit, rows);
+  }
+  const units = new Map(plan?.units.map((u) => [u.id, u]));
   return {
     arc,
-    supervision: supervision(runDir),
-    run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
-    units: d.units.map((l) => ({ ...l, certification: workContext === null ? null : certification(workContext, plan!.units.find((u) => u.id === l.unit)!, events, work, d.sched?.queue.find((q) => q.unit === l.unit && q.stage === 'lanes')?.attempt), work: work.filter((r) => r.parent.type === 'stage' && r.parent.unit === l.unit), failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
+    supervision: core.supervision,
+    run: core.run,
+    units: d.units.map((l) => ({ ...l, certification: certify === null ? null : certify(units.get(l.unit)!, d.sched?.queue.find((q) => q.unit === l.unit && q.stage === 'lanes')?.attempt), work: byUnit.get(l.unit) ?? [], failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
-    needsUser,
-    commands,
+    needsUser: core.needsUser,
+    commands: { pending: commands.pending, receipts: [...commands.receipts.values()].slice(-RECEIPTS_SHOWN) },
     spend: {
       byRole: meter.byRole,
       byModel: { models: byModel(ownShare(resolvable), each((r) => r.table)), unresolvedRevs },
@@ -1555,7 +1645,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: Lo
       pools: d.plan === null ? {} : pools(view, d.plan),
       queue: d.sched?.queue ?? [],
       jobQueue: d.sched?.jobQueue ?? [],
-      work: work.filter((r) => r.parent.type !== 'stage'),
+      work: hostWork,
       probes: probesOf(view),
       backends: view.backendParks().map((b) => ({ backend: b.backend, parkSeq: b.seq, class: b.class })),
       log: logOf(runDir, d),
@@ -1579,7 +1669,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: Lo
       ...releaseCounts(view),
     },
     audit,
-    completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.length }),
+    completion: core.completion,
     holds: h === null ? [] : arcHolds(h, d.blocking, false),
     packReview: h === null || corpus === null ? null : packReviewOf(h.revision),
     corpus: corpus === null ? null : corpusOf(corpus),
@@ -1587,10 +1677,10 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: Lo
     debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
     timings: stageTimings(events),
-    answers: unappliedAnswers(commonDirOfRun(runDir)).map((a) => ({ ...a, line: answerLine(a) })),
+    answers: unappliedAnswers(commonDirOfRun(runDir), d.log).map((a) => ({ ...a, line: answerLine(a) })),
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
-    demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
-    milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairs),
+    demo: core.demo,
+    milestones: core.milestones,
   };
 }
 

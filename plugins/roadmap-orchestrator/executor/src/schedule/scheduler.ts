@@ -159,7 +159,7 @@ import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/d
 import { type StageContext,runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir,killWorkload } from '../pipeline/invoke.ts';
-import { arcLaneKey,laneEnvId,observations } from '../pipeline/lanes.ts';
+import { arcLaneKeyReader,laneEnvId,observations } from '../pipeline/lanes.ts';
 import { type DocsContext,closeOutFiles,endDetail,publishCloseOut } from '../pipeline/publish.ts';
 import { repairUnits,specFacts } from '../pipeline/reproduce.ts';
 import { at,executorIdentity,holisticInForce,record,start } from '../pipeline/stages.ts';
@@ -449,11 +449,22 @@ const integrationTree = (ctx: StageContext): Sha => revParse(ctx.repo, `${integr
  * for it (its reuse key, dev.17) at its revision in the executor's environment (`laneEnv`), or null. Completion and `status`
  * both read it (one rule).
  */
+export function dischargingObservationReader(
+  ctx: Readonly<{ repo: AbsPath; journal: Readonly<{ view: JournalView }> }>, store: ObservationStore, laneEnv: (lane: ArcLaneDef) => EnvId | null,
+) {
+  const keyOf = arcLaneKeyReader(ctx);
+  const environments = new Map<ArcLaneDef, EnvId | null>();
+  return (tree: Sha, lane: ArcLaneDef): Observation | null => {
+    if (!environments.has(lane)) environments.set(lane, laneEnv(lane));
+    const env = environments.get(lane)!;
+    return env === null ? null : reuse(store, keyOf(tree, lane, env));
+  };
+}
+
 export function dischargingObservation(
   ctx: Readonly<{ repo: AbsPath; journal: Readonly<{ view: JournalView }> }>, store: ObservationStore, tree: Sha, lane: ArcLaneDef, laneEnv: (lane: ArcLaneDef) => EnvId | null,
 ): Observation | null {
-  const env = laneEnv(lane);
-  return env === null ? null : reuse(store, arcLaneKey(ctx, tree, lane, env));
+  return dischargingObservationReader(ctx, store, laneEnv)(tree, lane);
 }
 
 /**
@@ -470,12 +481,13 @@ export function obligationsOn(
   const tree = revParse(ctx.repo, `${head}^{tree}`);
   const store = observations(ctx);
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
+  const observationOn = dischargingObservationReader(ctx, store, laneEnv);
   let unobserved = false;
   for (const o of obligations.obligations) {
     if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    const found = dischargingObservation(ctx, store, tree, lane, laneEnv);
+    const found = observationOn(tree, lane);
     if (found === null) unobserved = true;
     else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
   }

@@ -40,7 +40,7 @@ import { durableRename, durableUnlink } from '../core/fsx.ts';
 import { type ArcId, arcId, sha256 } from '../core/ids.ts';
 import { sha256Hex } from '../core/json.ts';
 import type { HostLockClaim } from '../core/records.ts';
-import { EVENTS_FILE, type LogSnapshot, readJournal } from '../core/log.ts';
+import { EVENTS_FILE, type LogSnapshot, readJournal, verifiedJournalPrefix } from '../core/log.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath, type IsoTime, absPath, branchRef } from '../core/values.ts';
 import { isAncestor } from '../git/ff.ts';
@@ -71,12 +71,11 @@ export type Sealing =
   | Readonly<{ kind: 'mismatch'; detail: string }>;
 
 /** Whether the arc whose log `log` is (read from `runDir`) is sealed (A20, H5), against `repo`'s refs. */
-export function sealingOf(repo: AbsPath, runDir: AbsPath, log: LogSnapshot): Sealing {
+export function sealingOf(repo: AbsPath, runDir: AbsPath, log: LogSnapshot, pending = pendingCommandIds(runDir)): Sealing {
   const { view } = log;
   const completion = view.holistic().completion;
   if (completion === null) return { kind: 'open', reason: 'not completed' };
   if (view.lastWorkSeq() > completion.seq) return { kind: 'open', reason: `work at seq ${view.lastWorkSeq()} follows the completion at seq ${completion.seq}` };
-  const pending = pendingCommandIds(runDir);
   if (pending.length > 0) return { kind: 'open', reason: `pending commands ${pending.join(', ')}` };
   const inForce = planInForce(runDir, view);
   if (inForce === null) throw new Error(`arc ${view.arc} completed with no plan in force`);
@@ -105,7 +104,7 @@ export function sealingOf(repo: AbsPath, runDir: AbsPath, log: LogSnapshot): Sea
   if (lastSeq < manifest.highWater) return { kind: 'mismatch', detail: `${ref} at ${at} holds ${manifest.highWater} events; the log holds ${lastSeq}` };
   const logged = manifest.files.find((f) => f.path === EVENTS_FILE);
   if (logged === undefined) throw new Error(`${ref} at ${at} verified without ${EVENTS_FILE}`);
-  if (sha256(sha256Hex(eventsPrefix(runDir, manifest.highWater).bytes)) !== logged.sha256) {
+  if (sha256(sha256Hex(verifiedJournalPrefix(log, manifest.highWater) ?? eventsPrefix(runDir, manifest.highWater).bytes)) !== logged.sha256) {
     return { kind: 'mismatch', detail: `${ref} at ${at}: its ${EVENTS_FILE} is not the first ${manifest.highWater} lines of ${join(runDir, EVENTS_FILE)}` };
   }
   const completedAt = log.events.find((e) => e.seq === completion.seq)?.at;

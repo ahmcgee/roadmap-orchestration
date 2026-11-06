@@ -100,7 +100,7 @@ function classified(parent: StageParent, lane: LaneId, cls: RedClass | null, rer
 export function laneFailures(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, unit: Readonly<{ id: UnitId }>): readonly LaneFailure[] {
   const view = ctx.journal.view;
   const open = view.unit(unit.id).open;
-  const baseSources = new Set(view.opsOf('evidence.snapshot').filter((i) => i.parent.type === 'stage' && i.parent.unit === unit.id && i.parent.stage === 'lanes' && i.expect.dest.startsWith(join(specSeriesRoot(ctx.runDir, i.parent), '_base') + '/')).map((i) => i.expect.source));
+  const baseSources = new Set(view.opsOfUnit('evidence.snapshot', unit.id).filter((i) => i.parent.type === 'stage' && i.parent.stage === 'lanes' && i.expect.dest.startsWith(join(specSeriesRoot(ctx.runDir, i.parent), '_base') + '/')).map((i) => i.expect.source));
   // attempt → lane → its spawns, in log order.
   const attempts = new Map<number, Readonly<{ parent: StageParent; lanes: Map<LaneId, IntentOf<'proc.spawn'>[]> }>>();
   for (const i of view.spawnsOfUnit(unit.id)) {

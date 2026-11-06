@@ -1,3 +1,4 @@
+import { type LogSnapshot, verifiedJournalPrefix } from '../core/log.ts';
 // `snapshot.publish`: copy the run's authoritative records one-way to `refs/roadmap/<arc>` (DESIGN §2.9), so no
 // PR diff carries them and the arc's history survives the run dir.
 //
@@ -596,7 +597,7 @@ function writeSnapshotTree(repo: AbsPath, old: Sha | null, previous: ReadonlyMap
 
 /** `files`: every file the tree holds but the manifest, by path, as verified (read once, so a reader re-reads none). */
 export type SnapshotVerification =
-  | Readonly<{ kind: 'verified'; manifest: SnapshotManifest; manifestSha256: Sha256Hex; files: ReadonlyMap<string, Buffer> }>
+  | Readonly<{ kind: 'verified'; manifest: SnapshotManifest; manifestSha256: Sha256Hex; files: ReadonlyMap<string, Buffer>; events: readonly Event[] }>
   | Readonly<{ kind: 'mismatch'; detail: string }>;
 
 class Mismatch extends Error {}
@@ -607,7 +608,25 @@ class Mismatch extends Error {}
  * tree's own events and payloads name (reads.json where a call wrote one, red.json where a red lane's class was written), each with its naming record, hashing as
  * that record states. The tree's blobs are read in one `cat-file --batch` (`catFileBlobs`).
  */
+type SnapshotReads = { live: LogSnapshot; verified: Map<string, SnapshotVerification> };
+let snapshotReads: SnapshotReads | null = null;
+/** One synchronous projection shares immutable verification by resolved commit, never by moving ref. */
+export function withSnapshotReads<T>(live: LogSnapshot, read: () => T): T {
+  const previous = snapshotReads;
+  snapshotReads = { live, verified: new Map() };
+  try { return read(); } finally { snapshotReads = previous; }
+}
+
 export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {
+  const key = commit;
+  const known = snapshotReads?.verified.get(key);
+  if (known !== undefined) return known;
+  const check = readSnapshot(repo, commit);
+  snapshotReads?.verified.set(key, check);
+  return check;
+}
+
+function readSnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {
   const mismatch = (detail: string): SnapshotVerification => ({ kind: 'mismatch', detail });
   const entries = lsTree(repo, commit);
   const manifestEntry = entries.find((e) => e.path === SNAPSHOT_MANIFEST);
@@ -631,9 +650,11 @@ export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification
   if (log === undefined) return mismatch('no events.jsonl');
   const lines = log.toString('utf8').split('\n');
   if (lines.pop() !== '' || lines.length !== manifest.highWater) return mismatch(`events.jsonl holds ${lines.length} lines, high-water mark ${manifest.highWater}`);
-  const events = lines.map(parseEventLine);
+  const live = snapshotReads?.live;
+  const prefix = live === undefined || live.view.arc !== manifest.arc ? null : verifiedJournalPrefix(live, manifest.highWater);
+  const events = prefix !== null && prefix.equals(log) ? live!.events.slice(0, manifest.highWater) : lines.map(parseEventLine);
   if (events[events.length - 1]!.seq !== manifest.highWater) return mismatch(`events.jsonl ends at another seq than ${manifest.highWater}`);
-  const verified: SnapshotVerification = { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestBytes)), files: blobs };
+  const verified: SnapshotVerification = { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestBytes)), files: blobs, events };
 
   let closure: readonly Item[];
   try {

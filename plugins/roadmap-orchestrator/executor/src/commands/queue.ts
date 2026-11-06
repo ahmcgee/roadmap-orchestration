@@ -120,6 +120,22 @@ export function terminalReceipt(runDir: AbsPath, id: CommandId): Receipt | null 
   return applied ?? rejected;
 }
 
+/** All terminal receipts, validated once in id order, including ones outside status's displayed tail. */
+export function terminalReceipts(runDir: AbsPath): ReadonlyMap<CommandId, Receipt> {
+  const dir = receiptsDir(runDir);
+  const ids = existsSync(dir) ? readdirSync(dir).flatMap((name) => {
+    const m = /^(cmd-[0-9a-f]{16})\.(?:applied|rejected)\.json$/.exec(name);
+    return m === null ? [] : [commandId(m[1])];
+  }).sort() : [];
+  const out = new Map<CommandId, Receipt>();
+  for (const id of ids) {
+    const r = terminalReceipt(runDir, id);
+    if (r === null) throw new Error(`command ${id}'s terminal receipt vanished while status read it; receipts are write-once`);
+    out.set(id, r);
+  }
+  return out;
+}
+
 /**
  * Writes a receipt once, atomically (a `status` read never sees it empty), and returns the sha256 of its
  * bytes. A second write of any state is a bug.
@@ -135,13 +151,13 @@ export const receiptSha256 = (runDir: AbsPath, id: CommandId, state: ReceiptStat
   sha256(sha256Hex(canonicalRecordBytes(readFileSync(receiptPath(runDir, id, state)))));
 
 /** The ids of the incoming commands without a terminal receipt, in id order; read-only (`roadmap gc` reads it too). */
-export function pendingCommandIds(runDir: AbsPath): readonly CommandId[] {
+export function pendingCommandIds(runDir: AbsPath, terminals?: ReadonlyMap<CommandId, Receipt>): readonly CommandId[] {
   const dir = incomingDir(runDir);
   if (!existsSync(dir)) return [];
   return readdirSync(dir).flatMap((name) => {
     const m = INCOMING_NAME.exec(name);
     return m === null ? [] : [commandId(m[1])];
-  }).sort().filter((id) => terminalReceipt(runDir, id) === null);
+  }).sort().filter((id) => !terminals?.has(id) && terminalReceipt(runDir, id) === null);
 }
 
 /**

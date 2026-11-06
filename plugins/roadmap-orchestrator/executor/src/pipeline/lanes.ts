@@ -520,8 +520,18 @@ export function laneNow(ctx: ReuseContext, lane: LaneDef, at: Sha, systems?: Lan
 }
 
 /** An arc lane's reuse key on `tree` (a tree id) in environment `envId`: what its observation is stored under. */
+export function arcLaneKeyReader(ctx: Pick<ReuseContext, 'journal' | 'repo'>) {
+  const revisions = new Map<ArcLaneDef, LaneRev>();
+  const map = mapInForce(ctx.journal.view);
+  return (tree: Sha, lane: ArcLaneDef, envId: EnvId): ReuseKey => {
+    let laneRev = revisions.get(lane);
+    if (laneRev === undefined) { laneRev = laneRevOf(lane); revisions.set(lane, laneRev); }
+    return { lane: lane.id, laneRev, envId, inputSha: inputShaOf(ctx.repo, tree, lane, map) };
+  };
+}
+
 export const arcLaneKey = (ctx: Pick<ReuseContext, 'journal' | 'repo'>, tree: Sha, lane: ArcLaneDef, envId: EnvId): ReuseKey =>
-  ({ lane: lane.id, laneRev: laneRevOf(lane), envId, inputSha: inputShaOf(ctx.repo, tree, lane, mapInForce(ctx.journal.view)) });
+  arcLaneKeyReader(ctx)(tree, lane, envId);
 
 /** The identity a lane or journey spawn was stamped with; null for an unstamped one (never reused). */
 function spawnIdentity(view: JournalView, inv: InvocationId): LaneIdentity | null {
@@ -607,9 +617,34 @@ function spawnRecord(ctx: StageContext, parent: StageParent, lane: LaneDef, spaw
  * snapshotted (`<root>/<lane>/output`), or null when postprocessing never finished. `host.json` is published
  * last, after the snapshots and census, so its presence marks a readable execution rather than a partial crash artifact.
  */
+const evidenceIndexes = new WeakMap<JournalView, { seq: number; bySource: Map<string, IntentOf<'evidence.snapshot'>> }>();
+function evidenceBySource(view: JournalView) {
+  let index = evidenceIndexes.get(view);
+  if (index?.seq !== view.highWater()) {
+    const bySource = new Map<string, IntentOf<'evidence.snapshot'>>();
+    for (const i of view.opsOf('evidence.snapshot')) if (!bySource.has(i.expect.source)) bySource.set(i.expect.source, i);
+    index = { seq: view.highWater(), bySource }; evidenceIndexes.set(view, index);
+  }
+  return index.bySource;
+}
+
+const reuseIndexes = new WeakMap<JournalView, { seq: number; byLane: Map<string, ReturnType<JournalView['holistic']>['laneReuses'][number][]> }>();
+function reusesOf(view: JournalView, parent: Parent, lane: LaneId, set: LaneSet) {
+  let index = reuseIndexes.get(view);
+  if (index?.seq !== view.highWater()) {
+    const byLane = new Map<string, ReturnType<JournalView['holistic']>['laneReuses'][number][]>();
+    for (const r of view.holistic().laneReuses) {
+      const key = `${canonicalJson(r.parent)}/${r.lane}/${r.set ?? 'spec'}`;
+      const rows = byLane.get(key) ?? []; rows.push(r); byLane.set(key, rows);
+    }
+    index = { seq: view.highWater(), byLane }; reuseIndexes.set(view, index);
+  }
+  return index.byLane.get(`${canonicalJson(parent)}/${lane}/${set}`) ?? [];
+}
+
 function seriesRootOf(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>, inv: InvocationId): AbsPath | null {
   const source = invocationDir(ctx.runDir, inv);
-  const snap = ctx.journal.view.opsOf('evidence.snapshot').find((i) => i.expect.source === source);
+  const snap = evidenceBySource(ctx.journal.view).get(source);
   if (snap === undefined) return null;
   const lane = dirname(snap.expect.dest);
   return existsSync(join(lane, HOST_FILE)) ? absPath(dirname(lane)) : null;
@@ -1325,7 +1360,7 @@ export function seriesLedger(ctx: StageContext, parent: StageParent, lanes: read
 export function laneRecordIn(ctx: StageContext, parent: StageParent, lane: LaneDef, set: LaneSet, at: Sha, root: AbsPath): LaneRecord | null {
   const spawns = laneSpawns(ctx.journal.view, parent, lane.id, at, set);
   if (spawns.length > 0) return spawnRecord(ctx, parent, lane, spawns, root);
-  const reused = ctx.journal.view.holistic().laneReuses.find((r) => r.lane === lane.id && sameParent(r.parent, parent) && (r.set ?? 'spec') === set && (r.at ?? at) === at);
+  const reused = reusesOf(ctx.journal.view, parent, lane.id, set).find((r) => (r.at ?? at) === at);
   return reused === undefined ? null : reusedRecord(ctx, reused.from, lane);
 }
 
@@ -1334,7 +1369,7 @@ export function laneSummaryIn(ctx: StageContext, parent: StageParent, lane: Lane
   const view = ctx.journal.view;
   const spawns = laneSpawns(view, parent, lane.id, at, set);
   if (spawns.length === 0) {
-    const reuse = view.holistic().laneReuses.find((r) => r.lane === lane.id && sameParent(r.parent, parent) && (r.set ?? 'spec') === set && (r.at ?? at) === at);
+    const reuse = reusesOf(view, parent, lane.id, set).find((r) => (r.at ?? at) === at);
     if (reuse === undefined) return null;
     const source = view.latestIntent(parseInvocationId(reuse.from.inv).op);
     if (source.kind !== 'proc.spawn' || source.expect.subject.purpose !== 'lane' || source.parent.type !== 'stage') throw new Error(`${reuse.from.inv}: not a lane spawn`);
@@ -1536,9 +1571,22 @@ function storeOf(ctx: WitnessedView, witnessed: readonly WitnessedEntry[]): Obse
   }));
 }
 
+// A synchronous projection shares verified witness bytes with the completion reader. Never retained across calls.
+let observationReads: Map<JournalView, ObservationStore> | null = null;
+export function withObservationReads<T>(read: () => T): T {
+  if (observationReads !== null) return read();
+  observationReads = new Map();
+  try { return read(); } finally { observationReads = null; }
+}
+
 /** Every certifying observation the log's `witnessed` facts name, the latest per key (src/holistic/observe.ts). */
 export function observations(ctx: WitnessedView): ObservationStore {
-  return storeOf(ctx, ctx.journal.view.holistic().witnessed);
+  const view = ctx.journal.view;
+  const known = observationReads?.get(view);
+  if (known !== undefined) return known;
+  const store = storeOf(ctx, view.holistic().witnessed);
+  observationReads?.set(view, store);
+  return store;
 }
 
 /** The observations a journey series may reuse: those of certified series only (R51). */
