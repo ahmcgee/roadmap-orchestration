@@ -369,23 +369,20 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
     let retry = false;
     let entryFailures: readonly ResourceInstance[] = [];
     try {
-      try {
-        try { end = await integrate(preempt.ctx, unit, parent, decision, entry !== null); }
-        catch (error) {
-          if (!(error instanceof CandidateEntryMoved)) throw error;
-          retry = true;
-          end = ended('preempted');
-        }
-        if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
-        if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
-        if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
-      } finally {
-        await preempt.close();
-        entryFailures = await releaseEntry(ctx, stageHolder, parent);
+      try { end = await integrate(preempt.ctx, unit, parent, decision, entry !== null); }
+      catch (error) {
+        if (!(error instanceof CandidateEntryMoved)) throw error;
+        retry = true;
+        end = ended('preempted');
       }
-    } catch (error) {
-      await releasePublication(ctx, held, parent);
-      throw error;
+      if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
+      if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
+      if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
+    } finally {
+      await preempt.close();
+      entryFailures = await releaseEntry(ctx, stageHolder, parent);
+      // Unexpected errors retain the publication slot: the scheduler must classify the fault as shared,
+      // then full recovery settles it. Only normal outcomes and tip-move retries release it below.
     }
     if (entryFailures.length > 0) {
       retry = false;
