@@ -836,7 +836,7 @@ it. Its dirty instance remains unavailable. Cleaned/isolated/transferred disposi
 
 The arbiter accumulates waiting milliseconds in memory at each re-evaluation, counting each interval once in
 `totalMs` and once for each simultaneous blocker in `byReasonMs` (non-additive). A grant writes optional
-`resource.transition.expect.waited: {totalMs,byReasonMs}` on its reserve intent. Immediate grants record zero.
+`resource.transition.expect.waited: {totalMs,byReasonMs}` on its reserve intent. Immediate grants, including sweep reserves, record zero.
 Closed keys are `cpu-pressure`, `memory-pressure`, `cpu-tokens`, `named-resource:<declared name or pool>`,
 `publication-slot`, `queue-precedence`, and `admission-hold:<kind>`. Admission kinds are the constraint variants
 plus dependency, contingent-edge, milestone, baseline, pack-review and repair-batch. Resource inspection collects

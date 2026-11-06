@@ -353,7 +353,7 @@ export function reserveForSweep(
   const table = resourceTable(ctx.journal.view);
   const busy = resources.filter((r) => !isFree(entryOf(table, r)));
   if (busy.length > 0) return { state: 'refused', busy };
-  journalTransition(ctx, holder, resources, { type: 'reserve' }, parent, recipes);
+  journalTransition(ctx, holder, resources, { type: 'reserve' }, parent, recipes, undefined, 0, { totalMs: 0, byReasonMs: {} });
   return { state: 'reserved', holder, resources, recipes };
 }
 

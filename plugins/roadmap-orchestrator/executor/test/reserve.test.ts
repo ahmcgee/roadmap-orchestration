@@ -244,3 +244,16 @@ test('res.sweep-cannot-fail', T, async () => {
   assert.ok(status.state === 'cleaning' && status.holder.type === 'sweep');
   journal.close();
 });
+
+test('review.sweep-reserve-is-measured-zero', T, async () => {
+  const { ctx, journal } = openRun(newRun());
+  try {
+    const sweep: SweepHolder = { type: 'sweep', command: commandId('cmd-00000000000000bb') };
+    const got = reserveForSweep(ctx, sweep, stageRecipes(ctx.plan(), ctx.repo, UNIT, [QUEUE]), { type: 'command', command: sweep.command });
+    assert.equal(got.state, 'reserved');
+    assert.deepEqual(journal.view.opsOf('resource.transition')[0]!.expect.waited, { totalMs: 0, byReasonMs: {} });
+    const { readJournal } = await import('../src/core/log.ts');
+    const { waitingTotals } = await import('../src/status/waiting.ts');
+    assert.equal(waitingTotals(readJournal(ctx.runDir, journal.view.arc).events).unmeasuredReservations, 0);
+  } finally { journal.close(); }
+});
