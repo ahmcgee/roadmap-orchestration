@@ -117,12 +117,12 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     if (w.request.cpu === 0) return [];
     const h = w.holder;
     const workload = workloadCpu(h, w.request.cpu, w.request.cpuBasis);
-    if (!workload) return [];
+    if (!workload || ![...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.workload === true || (e.pending?.expect.edge.type === 'reserve' && workloadCpu(e.pending.expect.holder, 1, e.pending.expect.cpuBasis))))) return [];
     const reasons: WaitReason[] = [];
     if ((pressure.memory() ?? 0) >= PRESSURE_SATURATED) reasons.push('memory-pressure');
     const owner = publicationOwner(ctx.journal.view);
     const ownsSlot = owner !== null && sameHolder(owner, h);
-    if (!ownsSlot && (hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED && [...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.workload === true || (e.pending?.expect.edge.type === 'reserve' && workloadCpu(e.pending.expect.holder, 1, e.pending.expect.cpuBasis))))) reasons.push('cpu-pressure');
+    if (!ownsSlot && (hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED) reasons.push('cpu-pressure');
     return reasons;
   };
 

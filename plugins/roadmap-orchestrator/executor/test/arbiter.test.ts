@@ -507,9 +507,10 @@ test('judgments-alone-do-not-arm CPU braking', T, async () => {
   } finally { abort.abort(); journal.close(); }
 });
 
-test('memory pressure blocks the first workload independently of CPU braking', T, async () => {
+test('memory pressure blocks a second workload independently of CPU braking', T, async () => {
   const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
   try {
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
     arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0, memory: 0.8 });
     const pending = wait(arb, req({ cpu: 1 }), holderOf('lane'), rank('lane', 1), abort.signal);
     await tick();
@@ -639,5 +640,26 @@ test('publication owner CPU exemption never bypasses dirty pools', T, async () =
     assert.equal(arb.waiting()[0]?.envBlocked, true); assert.equal(arb.waiting()[0]?.pressureBlocked, false);
     assert.deepEqual(arb.waiting()[0]?.reasons, ['named-resource:estate']);
     abort.abort(); await own.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+for (const publication of [false, true]) test(`review.memory-first-workload-escape: publication=${publication}`, T, async () => {
+  const { ctx, journal } = openPoolRun(newRun());
+  const arb = createArbiter(ctx), abort = new AbortController();
+  const h = { ...holderOf('first'), stage: publication ? 'candidate' : 'lanes' } as const;
+  try {
+    const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+    reserve(ctx, judge, req({ cpu: 1 }), stageParent(judge));
+    if (publication) reserve(ctx, { type: 'publication', unit: h.unit, attempt: h.attempt }, req({ publication: true }), stageParent(h));
+    arb.pressure.recordMemory(0.8);
+    const pending = wait(arb, req({ cpu: 1 }), h, rank('first', 1), abort.signal);
+    await tick();
+    assert.equal(pending.box.grant?.kind, 'granted', 'external memory saturation and judgment tokens cannot stall the first workload');
+    const next = wait(arb, req({ cpu: 1 }), holderOf('next'), rank('next', 2), abort.signal);
+    await tick();
+    assert.equal(next.box.grant, null, 'a held workload arms the memory brake despite spare tokens');
+    assert.deepEqual(arb.waiting()[0]?.reasons, ['memory-pressure']);
+    release(ctx, h); arb.wake();
+    assert.equal((await next.done).kind, 'granted', 'the next workload progresses once only judgment tokens remain');
   } finally { abort.abort(); journal.close(); }
 });

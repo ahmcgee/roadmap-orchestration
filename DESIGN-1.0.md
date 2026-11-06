@@ -112,7 +112,7 @@ reservations persist those totals on the reserve transition. Scheduler admission
 including dependency/contingent/milestone, baseline, review and repair-batch holds, recorded at stage admission.
 Status and summary share the completed totals per unit-stage and job-stage; live blockers remain in sched.json.
 Old grants without measurements are unmeasured, warned once; crashes discard in-flight timing and exclude downtime.
-CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers. Only positive workload CPU (a calibrated request or build/lanes/candidate stage) arms CPU braking; classification survives run/cleanup/replay until release, and pending reserves count. Judgments alone leave first-workload progress available. Memory saturation blocks workloads independently, including the first workload.
+CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers. Only positive workload CPU (a calibrated request or build/lanes/candidate stage) arms CPU and memory braking; classification survives run/cleanup/replay until release, and pending reserves count. Judgments alone leave first-workload progress available. Both CPU and memory pressure brake only while another workload holds or has reserved CPU tokens, so a lone workload always progresses despite external host saturation.
 
 Units form a dependency DAG. Dependencies require actual merged/retired lineage state; contingent edges require an
 explicit resolve-edge with evidence. Priority, origin and aging order waiters. Repair and deflake work can take precedence;
@@ -138,7 +138,7 @@ reproduce, pre-build, build, lanes, gate and candidate. The post-build quiesce/e
 ff/snapshot chain finish despite pause/drain, so resources and publication cannot be stranded halfway through.
 Reservations are all-or-none, in global order: resource/pool name (instance number), CPU token number, integration-slot.
 Over-capacity requests refuse at load/apply; release follows confirmed cleanup. Candidate entry plans against the merged tree before queueing and atomically reserves the slot plus the first scheduled spec lane, otherwise selected suite lane. The request refreshes when the tip moves, synchronously before granting; after acquisition it revalidates before publishing candidate refs, releasing both partitions before retrying a changed selection. A compound reserve records optional slotHolder: the publication owns the slot and its candidate stage owns the lane set. Only the first owning series consumes entry, cleaning unused resources on reuse/refusal/conflict/cancellation/preparation failure; CPU never carries into later lanes or ff/snapshot. Recovery settles both owners from that single intent. The publication holder keeps the slot
-through ff/snapshot. While the slot is held, combined entrants contribute slot-only queue precedence, avoiding indirect CPU/resource convoys. Only that durable slot owner’s lane/journey requests bypass CPU pressure; memory, tokens, dirty pools and independent precedence still apply. Docs publications outrank units and may preempt a candidate before green; red, preempted and
+through ff/snapshot. While the slot is held, combined entrants contribute slot-only queue precedence, avoiding indirect CPU/resource convoys. Only that durable slot owner’s lane/journey requests bypass CPU pressure; memory still brakes them while another workload holds or has reserved CPU tokens. A lone workload retains the escape under either pressure cause. Tokens, dirty pools and independent precedence still apply. Docs publications outrank units and may preempt a candidate before green; red, preempted and
 finding-blocked candidates abandon and release resources before waiting again.
 
 Retryable parks name backend/host/resource/environment targets; operator parks require a root action. Probes coalesce
@@ -151,7 +151,7 @@ Every lane/journey launch persists executor-owned ROADMAP_CPU as the granted CPU
 
 CPU defaults are judgment 1, build 4, lane build 2 and other lane cadences 4. Explicit values win; after three completed
 samples of at least 30 s, use ceil(p90 of the last ten), floor 1, cap at the default. Host admission uses CPU wait ratio,
-memory PSI and low available RAM; judgments bypass the pressure brake and the first workload progresses under CPU pressure; memory saturation still blocks workloads. Pressure
+memory PSI and low available RAM; judgments bypass the pressure brake and the first workload progresses under both CPU and memory pressure; memory saturation brakes further workloads while workload CPU tokens are held or pending. Pressure
 charging/holds distinguish starvation from product reds and are bounded at 30 minutes; not all job paths participate.
 
 A unit-confined throw is settled like recovery, then parks uncharged executor-fault with stack. Only audit/walk/baseline
