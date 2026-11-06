@@ -1,3 +1,5 @@
+import { workloadCpu } from './cpu.ts';
+import { parseResourceUnit } from './ids.ts';
 import { candidateRedDefault } from './events.ts';
 // The fold: the one derivation of run state from the event log. Everything the executor knows about ops,
 // units, spend and needs-user comes from folding events.jsonl in order. `state.json` exists only in
@@ -317,7 +319,7 @@ export type ResourceStatus =
   | Readonly<{ state: HeldState | 'cleanup-failed'; holder: Holder }>;
 
 /** A resource unit's state after its last done transition, and the transition still open on it, if any. */
-export type ResourceEntry = Readonly<{ status: ResourceStatus; pending: IntentOf<'resource.transition'> | null }>;
+export type ResourceEntry = Readonly<{ status: ResourceStatus; pending: IntentOf<'resource.transition'> | null; workload?: true }>;
 
 export const FREE_RESOURCE: ResourceEntry = { status: { state: 'free' }, pending: null };
 
@@ -855,7 +857,7 @@ export class Fold implements JournalView {
     }
     if (r.kind === 'docs.commit') this.#seeJob(r.expect.pub);
     if (r.kind === 'resource.transition') {
-      for (const res of r.expect.resources) this.#resources.set(res, { status: (this.#resources.get(res) ?? FREE_RESOURCE).status, pending: r });
+      for (const res of r.expect.resources) this.#resources.set(res, { ...(this.#resources.get(res) ?? FREE_RESOURCE), pending: r });
     }
     this.#open.set(r.op, r);
     this.#openByKey.set(r.key, r.op);
@@ -923,7 +925,13 @@ export class Fold implements JournalView {
       }
     }
     this.#close(entry, { type: 'done', record: r });
-    for (const [res, status] of moved) this.#resources.set(res, { status, pending: null });
+    for (const [res, status] of moved) {
+      const previous = this.#resources.get(res) ?? FREE_RESOURCE;
+      const workload = intent.kind === 'resource.transition' && intent.expect.edge.type === 'reserve'
+        ? workloadCpu(intent.expect.holder, parseResourceUnit(res).type === 'cpu' ? 1 : 0, intent.expect.cpuBasis)
+        : previous.workload === true;
+      this.#resources.set(res, { status, pending: null, ...(status.state !== 'free' && workload ? { workload: true } : {}) });
+    }
     if (intent.kind === 'resource.transition') this.#residuesAfter(intent, at, fail);
     if (intent.kind === 'spec.patch') {
       const history = this.#patchedSpecs.get(intent.expect.path) ?? [];

@@ -492,3 +492,52 @@ test('arbiter.pressure-brake: restart rebuilds job and unit waits over actual re
   transition(ctx, job, held, { type: 'release' }, { type: 'job', job: job.job });
   journal.close();
 });
+
+test('judgments-alone-do-not-arm CPU braking', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx);
+  const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+  const lane = holderOf('lane'); const abort = new AbortController();
+  try {
+    reserve(ctx, judge, req({ cpu: 1 }), stageParent(judge));
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+    arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const pending = wait(arb, req({ cpu: 1 }), lane, rank('lane', 1), abort.signal);
+    await tick();
+    assert.equal(pending.box.grant?.kind, 'granted', 'only workload tokens arm the brake');
+  } finally { abort.abort(); journal.close(); }
+});
+
+test('memory pressure blocks the first workload independently of CPU braking', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0, memory: 0.8 });
+    const pending = wait(arb, req({ cpu: 1 }), holderOf('lane'), rank('lane', 1), abort.signal);
+    await tick();
+    assert.equal(pending.box.grant, null);
+    assert.ok(arb.waiting()[0]?.reasons?.includes('memory-pressure'));
+    assert.equal((await wait(arb, req({ cpu: 1 }), { ...holderOf('judge'), stage: 'gate' }, rank('judge', 2)).done).kind, 'granted');
+    abort.abort(); await pending.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+for (const state of ['running', 'cleaning'] as const) test(`classification-survives-${state}-replay for job lanes`, T, async () => {
+  const descriptor = newRun(); const before = openPoolRun(descriptor);
+  const job = { type: 'job', job: jobId('audit', 1) } as const;
+  const parent = { type: 'job', job: job.job } as const;
+  const held = reserve(before.ctx, job, req({ cpu: 1, cpuBasis: { kind: 'explicit', value: 1 } }), parent);
+  assert.equal(held.state, 'reserved');
+  if (held.state !== 'reserved') throw new Error('not reserved');
+  run(before.ctx, held, parent);
+  if (state === 'cleaning') transition(before.ctx, job, held.resources, { type: 'clean', from: 'running' }, parent);
+  before.journal.close();
+  const { ctx, journal } = openPoolRun(descriptor); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    assert.equal(journal.view.resources().get(held.resources[0]!)?.workload, true);
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+    arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const waiting = wait(arb, req({ cpu: 1 }), holderOf('next'), rank('next', 1), abort.signal);
+    await tick(); assert.equal(waiting.box.grant, null);
+    assert.ok(arb.waiting()[0]?.reasons?.includes('cpu-pressure'));
+    abort.abort(); await waiting.done;
+  } finally { abort.abort(); journal.close(); }
+});

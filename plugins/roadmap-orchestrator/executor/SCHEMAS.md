@@ -864,8 +864,7 @@ within one hour trip an admission breaker and raise `env-blocked` (`src/park/sch
 Memory PSI full avg10 contributes; available RAM below 5% supplies a saturated backstop. Missing schedstat makes CPU
 pressure unavailable, never invented. Latest memory readings remain independently available without schedstat or a full CPU window; `hostCpuPressure` and `PressureTicks.memory()` keep the causes separate, with `hostPressure` the combined wrapper. Scheduler ticks are retained for 30 minutes in memory.
 
-At pressure >= 0.5 (saturated) the arbiter holds new builds/lanes while CPU is already reserved. Judgments bypass this brake,
-and one workload always progresses. A deadline/stall under saturation is uncharged starved work; an ordinary red gets
+At CPU pressure >= 0.5 the arbiter holds new workloads only while workload CPU tokens are already held or pending. Positive CPU with cpuBasis, or a build/lanes/candidate stage, is workload CPU; uncalibrated judgments never arm the brake. This derived classification follows its originating reserve through running and cleaning until release, including replay of old records. One first workload may progress under CPU pressure. Memory saturation independently blocks workloads even with no held CPU; judgments retain their exemption. A deadline/stall under saturation is uncharged starved work; an ordinary red gets
 one pressure rerun. Holds wait for a clear minute or 30 minutes, with at most three pressure holds per unit; after that bound
 ordinary charging applies. This does not assert every job/witness path has pressure-aware charging.
 

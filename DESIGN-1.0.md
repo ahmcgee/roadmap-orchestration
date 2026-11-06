@@ -112,7 +112,7 @@ reservations persist those totals on the reserve transition. Scheduler admission
 including dependency/contingent/milestone, baseline, review and repair-batch holds, recorded at stage admission.
 Status and summary share the completed totals per unit-stage and job-stage; live blockers remain in sched.json.
 Old grants without measurements are unmeasured, warned once; crashes discard in-flight timing and exclude downtime.
-CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers.
+CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers. Only positive workload CPU (a calibrated request or build/lanes/candidate stage) arms CPU braking; classification survives run/cleanup/replay until release, and pending reserves count. Judgments alone leave first-workload progress available. Memory saturation blocks workloads independently, including the first workload.
 
 Units form a dependency DAG. Dependencies require actual merged/retired lineage state; contingent edges require an
 explicit resolve-edge with evidence. Priority, origin and aging order waiters. Repair and deflake work can take precedence;

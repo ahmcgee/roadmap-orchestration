@@ -1,3 +1,4 @@
+import { workloadCpu } from '../core/cpu.ts';
 import type { WaitReason } from '../core/waiting.ts';
 import { WaitAccumulator } from './waits.ts';
 // The arbiter (M2 "Arbiter"; A1, F8, F17): who of the waiting holders gets resources next.
@@ -114,11 +115,11 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const pressureReasons = (w: UnitWaiter | FirstWaiter): WaitReason[] => {
     if (w.request.cpu === 0) return [];
     const h = w.holder;
-    const workload = w.request.cpuBasis !== undefined || (h.type === 'stage' && ['build', 'lanes', 'candidate'].includes(h.stage));
+    const workload = workloadCpu(h, w.request.cpu, w.request.cpuBasis);
     if (!workload) return [];
     const reasons: WaitReason[] = [];
     if ((pressure.memory() ?? 0) >= PRESSURE_SATURATED) reasons.push('memory-pressure');
-    if ((hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED && [...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.pending !== null || e.status.state !== 'free'))) reasons.push('cpu-pressure');
+    if ((hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED && [...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.workload === true || (e.pending?.expect.edge.type === 'reserve' && workloadCpu(e.pending.expect.holder, 1, e.pending.expect.cpuBasis))))) reasons.push('cpu-pressure');
     return reasons;
   };
 
