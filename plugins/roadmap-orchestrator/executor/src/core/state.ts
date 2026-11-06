@@ -964,7 +964,7 @@ export class Fold implements JournalView {
 
   /** A done `fail` records its residues; a `release` ends the residue of each instance it frees. */
   #residuesAfter(intent: IntentOf<'resource.transition'>, at: IsoTime, fail: (detail: string) => never): void {
-    const { holder, resources, edge, slotHolder } = intent.expect;
+    const { holder, resources, edge } = intent.expect;
     if (edge.type === 'release') for (const res of resources) this.#residues.delete(res as ResourceInstance);
     if (edge.type !== 'fail') return;
     if (holder.type !== 'stage' && holder.type !== 'job') return fail(`${intent.op}: a fail transition held by ${canonicalJson(holder)}; only a stage or job holder records residues`);
@@ -983,7 +983,7 @@ export class Fold implements JournalView {
     // An aborted transition never happened.
     const intent = entry.latest;
     if (intent.kind === 'resource.transition') {
-      for (const res of intent.expect.resources) this.#resources.set(res, { status: (this.#resources.get(res) ?? FREE_RESOURCE).status, pending: null });
+      for (const res of intent.expect.resources) this.#resources.set(res, { ...(this.#resources.get(res) ?? FREE_RESOURCE), pending: null });
     }
   }
 

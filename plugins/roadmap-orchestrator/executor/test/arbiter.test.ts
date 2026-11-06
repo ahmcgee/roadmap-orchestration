@@ -604,3 +604,19 @@ for (const stage of ['build', 'gate'] as const) test(`pending-workload classific
     abort.abort(); await next.done;
   } finally { abort.abort(); journal.close(); }
 });
+
+test('classification survives an aborted transition until release', T, async () => {
+  const { opKey } = await import('../src/core/ids.ts');
+  const descriptor = newRun(); const before = openPoolRun(descriptor); const holder = holderOf('aborted');
+  const got = reserve(before.ctx, holder, req({ cpu: 1 }), stageParent(holder));
+  assert.equal(got.state, 'reserved'); if (got.state !== 'reserved') throw new Error('not reserved');
+  const { op } = before.journal.begin({ kind: 'resource.transition', key: opKey('aborted-run'), parent: stageParent(holder), deadlineAt: null,
+    body: () => ({ expect: { holder, resources: got.resources, edge: { type: 'run' } }, post: null }) });
+  before.journal.abort(op, 'cancelled', 'run did not happen'); before.journal.close();
+  const { journal } = openPoolRun(descriptor);
+  try {
+    const entry = journal.view.resources().get(got.resources[0]!);
+    assert.equal(entry?.status.state, 'reserved');
+    assert.equal(entry?.workload, true, 'aborting a transition preserves the originating workload reserve');
+  } finally { journal.close(); }
+});
