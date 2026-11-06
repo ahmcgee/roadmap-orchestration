@@ -16,7 +16,7 @@ import {
 type ApprovalFingerprint,
 type BackendOutcomeKind,
 type ClassUsage,
-type CommandVerdict,type ContainmentMode,type StopMode,stopFields,
+type CommandVerdict,type ContainmentMode,type StopMode,stopFieldsAsWritten,
 type DemoAct,
 type DispatchRecord,type KillReason,type KnownDefectMatch,type LensKindName,type PauseTarget,type PlanManifest,
 type PromptSize,
@@ -2230,7 +2230,7 @@ export const fact: Read<Fact> = tagged('kind', {
     choice: f.get('choice', nullable(optionId)),
   })),
   paused: object((f): Fact => ({ kind: f.get('kind', literal('paused')), command: f.get('command', cmdR), target: f.get('target', pauseTarget) })),
-  'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR), ...stopFields(f) })),
+  'stop-requested': object((f): Fact => ({ kind: f.get('kind', literal('stop-requested')), command: f.get('command', cmdR), ...stopFieldsAsWritten(f) })),
   'stop-completed': object((f): Fact => ({ kind: f.get('kind', literal('stop-completed')), command: f.get('command', cmdR) })),
   resumed: object((f): Fact => ({ kind: f.get('kind', literal('resumed')), command: f.get('command', cmdR), target: f.get('target', resumeTarget) })),
   'apply-queued': object((f): Fact => {

@@ -1586,8 +1586,9 @@ export type LensKindName = (typeof LENS_KIND_NAMES)[number];
 export type StopMode = 'immediate' | 'drain';
 export type StopOptions = Readonly<{ mode: StopMode; deadline: IsoTime | null }>;
 let legacyStopWarned = false;
-/** Upgrade in place: old stop commands and facts mean immediate stop. */
-export function stopFields(f: Fields): StopOptions {
+/** Upgrade in place: a dev.49 stop (no mode/deadline) means an immediate stop. Log facts keep the absence so old lines
+ * keep their canonical bytes (the state fold defaults them); command bodies take `stopFields`' defaults. */
+export function stopFieldsAsWritten(f: Fields): Partial<StopOptions> {
   const mode = f.optional('mode', oneOf(['immediate', 'drain'] as const));
   const deadline = f.optional('deadline', nullable(isoTime));
   if ((mode === undefined || deadline === undefined) && !legacyStopWarned) {
@@ -1595,6 +1596,11 @@ export function stopFields(f: Fields): StopOptions {
     process.emitWarning('defaulting absent stop mode/deadline to immediate/null (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
   }
   if (mode !== 'drain' && deadline != null) throw new SchemaError(`${f.path}.deadline`, 'null for an immediate stop', deadline);
+  return { ...(mode === undefined ? {} : { mode }), ...(deadline === undefined ? {} : { deadline }) };
+}
+
+export function stopFields(f: Fields): StopOptions {
+  const { mode, deadline } = stopFieldsAsWritten(f);
   return { mode: mode ?? 'immediate', deadline: deadline ?? null };
 }
 

@@ -120,7 +120,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    heartbeat; each wake gets at most three chat lines. One actionable watch holds the arc’s lease: start or switch
    versions with `watch --actionable --replace`, end with `watch --stop`, and confirm supervision is live in status.
    Every transition and heartbeat repeats all open blocking items in `openBlocking`; act on each item on every wake.
-   Before a plugin update, use `roadmap stop --drain [--within <minutes>]` and wait for the run to end, then
+   Before a plugin update, use `roadmap stop --drain [--within <min>]` and wait for the run to end, then
    update and `roadmap start`. Drain admits no new tasks or stages; running stages/jobs record their normal
    outcomes and required build-to-teardown and ff-to-snapshot chains finish before cleanup and stop.
    The optional deadline escalates to abort; a later plain `stop` escalates immediately. A crash retains the drain
