@@ -1540,13 +1540,33 @@ export const applyManifest: Read<RevisionManifest> = object((f): RevisionManifes
   ...revisionInputs(f),
 }));
 
+/** Resolution links name journal items; supervisor and host file-only ids require their own actions. */
+export const journalNeedsUserIds: Read<readonly NeedsUserId[]> = (value, path) => {
+  const ids = arrayOf((v, p) => {
+    const id = needsUserId(v, p);
+    if (!id.startsWith('nu-')) throw new SchemaError(p, 'journal nu-* id', v);
+    return id;
+  })(value, path);
+  assertUnique(ids, (id) => id, path);
+  return ids;
+};
+let legacyResolutionsWarned = false;
+function resolutionList(f: Fields, key: 'resolves' | 'resolved'): readonly NeedsUserId[] | undefined {
+  const ids = f.optional(key, journalNeedsUserIds);
+  if (ids === undefined && !legacyResolutionsWarned) {
+    legacyResolutionsWarned = true;
+    process.emitWarning('defaulting absent apply resolves/receipt resolved to an empty list (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+  }
+  return ids;
+}
+
 export type CommandBody =
   | Readonly<{ type: 'pause'; target: PauseTarget }>
   | Readonly<{ type: 'stop'; mode?: StopMode; deadline?: IsoTime | null }>
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
-  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest }>
+  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest; resolves?: readonly NeedsUserId[] }>
   /** `roadmap resolve-edge` (M2): a contingent edge's condition is met, on the architect's evidence. Scope ∅. */
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   /** `roadmap run-only <ids>` / `--clear` (M2): admission is limited to these units (sorted), or unlimited (null). Scope ∅. */
@@ -1636,6 +1656,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   apply: object((f): CommandBody => ({
     type: f.get('type', literal('apply')), planFile: f.get('planFile', abs), rev: f.get('rev', (v, p) => planRev(v, p)), reason: f.get('reason', str),
     base: f.get('base', applyManifest), manifest: f.get('manifest', applyManifest),
+    ...((resolves) => resolves === undefined ? {} : { resolves })(resolutionList(f, 'resolves')),
   })),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
@@ -1674,7 +1695,7 @@ export const commandFile: Read<CommandFile> = object((f) => ({
 /** `applied` names the op that applied it and the postconditions verified; `accepted` is never done. */
 export type Receipt =
   | Readonly<{ v: SchemaVersion; command: CommandId; state: 'accepted'; at: IsoTime }>
-  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'applied'; at: IsoTime; op: OpId; verified: readonly string[] }>
+  | Readonly<{ v: SchemaVersion; command: CommandId; state: 'applied'; at: IsoTime; op: OpId; verified: readonly string[]; resolved?: readonly NeedsUserId[] }>
   | Readonly<{ v: SchemaVersion; command: CommandId; state: 'rejected'; at: IsoTime; reason: string }>
   /**
    * dev.17: an `apply` whose scope holds a unit in a stage waits for that stage's boundary (A12) and says so (`apply-queued`):
@@ -1687,6 +1708,7 @@ export const receipt: Read<Receipt> = tagged('state', {
   applied: object((f): Receipt => ({
     v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('applied')), at: f.get('at', time),
     op: f.get('op', opId), verified: f.get('verified', arrayOf(str, { nonEmpty: true })),
+    ...((resolved) => resolved === undefined ? {} : { resolved })(resolutionList(f, 'resolved')),
   })),
   rejected: object((f): Receipt => ({
     v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('rejected')), at: f.get('at', time), reason: f.get('reason', str),

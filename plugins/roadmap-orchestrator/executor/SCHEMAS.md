@@ -364,6 +364,19 @@ Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for ex
 
 ## Commands, receipts and needs-user
 
+`apply --resolves nu-ID[,nu-ID...]` names unique nonempty journal item ids. Malformed, duplicate, host-* and sup-*
+ids refuse. Optional `CommandBody.apply.resolves` and applied `Receipt.resolved` are additive; absence reads as an
+empty list with one ROADMAP_UPGRADE warning, preserving original content-addressed bytes.
+One eligibility predicate runs at submission, dry-run, fenced precommit (after queueing and smokes), and successful
+finish. Items must be canonical open journal items, including ack-file and supersession checks. A changed apply may
+explicitly answer arc subjects (the architect's assertion); unit subjects require that unit's change or re-entry;
+finding subjects require all named findings settled or answered by the prospective repair predicate. Host/file-only
+subjects and no-op applies refuse. Rejected/stale applies close nothing.
+After planAppliedBy(command) exists, explicit and automatic closures reuse acknowledge, writing choice:null to the
+existing ack file/fact. Recovery resumes after commit, each ack file/fact and receipt without a second closure fact.
+Another command's acknowledgement wins without overwrite. Receipt.command identifies the apply and resolved lists
+only journal ids actually closed by it, rebuilt from acknowledgement facts on replay.
+
 CLI parsing is pure and closes over Command kinds; run locator is host or paired repo/arc. Complete forms are in the
 skill reference and parsed by skill-lint. The persisted CommandBody union appears below; host acts such as export and
 brief are not queued command bodies. Brief/note evidence is hashed before submit, so later changed bytes refuse.
@@ -623,7 +636,7 @@ export type CommandBody =
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
-  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest }>
+  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest; resolves?: readonly NeedsUserId[] }>
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>
   | Readonly<{ type: 'reverse'; divergence: DivergenceId }>

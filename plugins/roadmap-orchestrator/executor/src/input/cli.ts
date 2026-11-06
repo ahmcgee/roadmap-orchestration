@@ -5,7 +5,7 @@ import {
 type FindingId,findingId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
 type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
-import { DEMO_ACTS,type DemoAct,type PauseTarget,type ResumeTarget } from '../core/records.ts';
+import { journalNeedsUserIds,DEMO_ACTS,type DemoAct,type PauseTarget,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
 import { type BuildClass,type ProfileName,backend,buildClass,profileName } from '../routing/types.ts';
@@ -52,7 +52,7 @@ export type Command =
   /**
    * Apply an edited export at rev with its reason. Dry-run validates without queueing.
    */
-  | Readonly<{ command: 'apply'; from: string; rev: number; reason: string; dryRun: boolean; run: RunLocator }>
+  | Readonly<{ command: 'apply'; from: string; rev: number; reason: string; dryRun: boolean; run: RunLocator; resolves?: readonly NeedsUserId[] }>
   /** A contingent edge's condition is met, on the architect's evidence (M2). */
   | Readonly<{ command: 'resolve-edge'; edge: EdgeId; evidence: string; run: RunLocator }>
   /** Admission limited to these units (ascending, unique), or unlimited again (`--clear`: null) (M2). */
@@ -270,13 +270,15 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, resource: r === undefined ? null : arg(command, '--resource', resourceName, r), run: locator(p, command) };
     }
     case 'apply': {
-      const p = parseRest(rest, { ...LOCATOR, from: 'value', rev: 'value', reason: 'value', 'dry-run': 'switch' }, command);
+      const p = parseRest(rest, { ...LOCATOR, from: 'value', rev: 'value', reason: 'value', resolves: 'value', 'dry-run': 'switch' }, command);
       positionals(p, command, 0);
       const rev = Number(required(p, command, 'rev', '<N>'));
       if (!Number.isSafeInteger(rev) || rev < 1) throw new CliError('apply: --rev must be a positive integer');
       const reason = required(p, command, 'reason', '<line>').trim();
       if (!reason || /[\r\n]/.test(reason)) throw new CliError('apply: --reason must be one non-empty line');
-      return { command, from: required(p, command, 'from', '<dir>'), rev, reason, dryRun: p.flags.has('dry-run'), run: locator(p, command) };
+      const ids = value(p, 'resolves');
+      const resolves = ids === undefined ? undefined : arg(command, '--resolves', (v, path = '--resolves') => journalNeedsUserIds((v as string).split(','), path), ids);
+      return { command, ...(resolves === undefined ? {} : { resolves }), from: required(p, command, 'from', '<dir>'), rev, reason, dryRun: p.flags.has('dry-run'), run: locator(p, command) };
     }
     case 'resolve-edge': {
       const p = parseRest(rest, { ...LOCATOR, evidence: 'value' }, command);

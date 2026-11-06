@@ -3,7 +3,7 @@ import { existsSync,readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename,join,resolve } from 'node:path';
 import { recordAnswer } from '../answers.ts';
-import { evaluateApply } from '../commands/apply.ts';
+import { type ApplyInput, evaluateApply, rejectedText } from '../commands/apply.ts';
 import { brief } from '../commands/brief.ts';
 import { chainStatus } from '../commands/chain.ts';
 import { corpusPin } from '../commands/corpus.ts';
@@ -15,7 +15,7 @@ import { submitCommand } from '../commands/queue.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
-import { planRev,sha256 } from '../core/ids.ts';
+import { type NeedsUserId,planRev,sha256 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
@@ -88,12 +88,17 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const planFile = absPath(join(from, basename(start.planFile)));
       const base = exported.base;
       if (command.dryRun) {
-        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, planFile, base, command.rev, command.reason))}\n`);
+        process.stdout.write(`${canonicalJson(await dryRun(run, start, hostDir, planFile, base, command.rev, command.reason, command.resolves ?? []))}\n`);
         return;
       }
       const manifest = revisionManifestOf(readInputFiles(planFile, start.repo, true));
       if ('missing' in manifest) throw new CliError(`apply: ${manifest.missing.join('; ')}`);
-      return submit(command.run, hostDir, { type: 'apply', planFile, base, manifest, rev: planRev(command.rev), reason: command.reason });
+      const resolves = command.resolves ?? [];
+      if (resolves.length > 0) {
+        const verdict = await evaluateApply(cliApplyInput(run, start, hostDir, planFile, base, command.rev, command.reason, resolves, manifest));
+        if (verdict.kind === 'rejected' && verdict.busy === undefined) throw new CliError(rejectedText(verdict.reasons));
+      }
+      return submit(command.run, hostDir, { type: 'apply', planFile, base, manifest, rev: planRev(command.rev), reason: command.reason, resolves });
     }
     case 'watch': {
       const run = locate(command.run, hostDir);
@@ -241,12 +246,16 @@ function startOf(run: Run): RunStart {
 }
 
 /** `apply --dry-run`: the executor's evaluation, read-only, over the log as `status` reads it. */
-async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, planFile: AbsPath, base: RevisionManifest, rev: number, reason: string): Promise<unknown> {
+function cliApplyInput(run: Run, start: RunStart, hostDir: AbsPath, planFile: AbsPath, base: RevisionManifest, rev: number, reason: string, resolves: readonly NeedsUserId[], manifest: RevisionManifest | null = null): ApplyInput {
   const { view } = readJournal(run.runDir, run.arc);
-  const verdict = await evaluateApply({
+  return {
     runDir: run.runDir, view, hostDir, repo: start.repo, planFile, routingBase: { profile: view.planApplied()!.routingProvenance.profile, config: readRepoConfig(start.repo), arcRoles: arcRolesOf(view.planApplied()) },
-    laneEnv: process.env, manifest: null, base, rev, reason,
-  });
+    laneEnv: process.env, manifest, base, rev, reason, resolves,
+  };
+}
+
+async function dryRun(run: Run, start: RunStart, hostDir: AbsPath, planFile: AbsPath, base: RevisionManifest, rev: number, reason: string, resolves: readonly NeedsUserId[]): Promise<unknown> {
+  const verdict = await evaluateApply(cliApplyInput(run, start, hostDir, planFile, base, rev, reason, resolves));
   switch (verdict.kind) {
     case 'rejected':
       // dev.17: refused only because units run a stage attempt: the apply would queue behind their boundary and be evaluated there.

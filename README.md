@@ -129,7 +129,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
-   their notices. Arc items stay open until named with `ack <id>`; read and resolve or explicitly accept each one first.
+   their notices. Resolve an audit’s arc requests with the apply that answers them: add `--resolves nu-ID[,nu-ID...]`. Unit requests require that unit’s change/re-entry and grouped findings require every named repair. No-op/stale applies close nothing; the receipt lists actual closures. Other arc items accept named `ack <id>` after review.
    A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests
    close when their findings settle or a root apply supplies all named repairs. Dismissal suppresses the same finding
    on unchanged code. Supplied ack choices must be offered. External witnesses are explicit root attestations

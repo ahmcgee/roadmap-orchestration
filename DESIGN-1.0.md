@@ -173,6 +173,13 @@ Contract behavior changes land through gate-reviewed units. Plain ledger edits d
 ledger remains exported root text; existing rulings/cites.rulings/debt resolve.ruling fields still refer to it.
 
 Revision payload is kept before activation under the revision fence; queued root applies wait for safe stage boundaries.
+A changed apply may name `--resolves nu-ID[,nu-ID...]` to answer canonical open journal requests. Arc subjects are
+explicit architect assertions; unit subjects require a change/re-entry of that unit; grouped findings require every
+named finding answered by prospective repairs or already settled. Host/file-only, malformed/duplicate/closed ids and
+no-op applies refuse. Submission, dry-run and fenced precommit after queueing/smokes use one eligibility predicate.
+After its plan-applied fact, the apply closes eligible requests through existing choice:null acknowledgements; a
+concurrent ack wins. The applied receipt names the answering command and lists only its actual closures. Recovery
+replays commit/ack-file/ack-fact/receipt boundaries idempotently and preserves original bytes.
 Recovery preserves queued/applied receipt provenance and subject closure. Executor revisions use CAS/retry and a
 non-blocking revision notice. Root apply itself does not automatically produce that executor notice.
 

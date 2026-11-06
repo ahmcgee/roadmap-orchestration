@@ -1,3 +1,5 @@
+import { inputPath, SPEC_INPUT, keptInput } from '../input/inforce.ts';
+import { applyAnswer, findingsAnswered, resolutionProblem, resolutionProblems } from './resolution.ts';
 import { candidateReentryChange } from '../pipeline/candidate-red.ts';
 // Durable command effects, receipts and subject closure. Apply uses file CAS against an exported revision.
 // The frozen contract classifier and revision fence are shared with executor-built revisions.
@@ -6,7 +8,7 @@ import { crashPoint } from '../core/crash.ts';
 import type { IntentOf,OpOutcome,Parent,PlanAppliedFact,PlanChange,RevisionPayload,RevisionSource,StageOutcomeFact } from '../core/events.ts';
 import { specReopenable,probeTargetKey } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
-import { exclusivePublish } from '../core/fsx.ts';
+import { AlreadyExistsError, exclusivePublish } from '../core/fsx.ts';
 import { type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,type UnitId,invocationId,opKey,parseResourceUnit,planRev,resourceInstance } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -160,6 +162,17 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     const queued = ctx.journal.view.applyQueued(id);
     if (queued !== null) verified.push(`queued behind the stage boundary of ${queued.waitsFor.join(', ')} (seq ${queued.seq}); applied there`);
   }
+  if (command.body.type === 'apply') {
+    const fact = ctx.journal.view.planAppliedBy(id);
+    if (fact !== null) {
+      const files = appliedFiles(ctx, fact);
+      const answer = applyAnswer(fact.changes, files);
+      for (const item of command.body.resolves ?? []) {
+        const own = readNeedsUserAck(ctx.runDir, item)?.command === id || ctx.journal.view.ackOf(item)?.command === id;
+        if (own || resolutionProblem({ runDir: ctx.runDir, view: ctx.journal.view }, item, answer) === null) verified.push(...acknowledge(ctx, id, item, null));
+      }
+    }
+  }
   if (command.body.type !== 'ack') {
     const b = command.body;
     // Actions close the subjects they resolve (DESIGN-1.0). A pause resolves nothing; `resume --all` only lifts the
@@ -182,24 +195,22 @@ export async function finish(ctx: CommandContext, intent: IntentOf<'command.appl
     const repairs = new Set<string>();
     if (b.type === 'apply' && findingItems.length > 0) {
       // A root revision supplying a repair answers its request, just as it answered the former arc item.
-      const inForce = requirePlanInForce(ctx.runDir, ctx.journal.view);
-      const files = inForceFiles(ctx.runDir, ctx.journal.view, inForce, revisionInForce(ctx.runDir, inForce), ctx.planFile, ctx.repo);
+      const fact = ctx.journal.view.planAppliedBy(id);
+      const files = fact === null ? null : appliedFiles(ctx, fact);
       for (const subject of subjects) if (subject.type === 'unit') {
-        const file = files.specs.get(subject.unit);
+        const file = files?.specs.get(subject.unit);
         if (file !== undefined && file.bytes !== null) for (const ref of parseSpec(file.bytes, file.path).repairs ?? []) repairs.add(ref);
       }
     }
-    const findings = ctx.journal.view.holistic().findings;
     for (const subject of findingItems) {
       if (b.type === 'dismiss' && !subject.findings.includes(b.finding)) continue;
-      const answered = subject.findings.every((id) => findings.some((f) => f.id === id && (
-        f.state === 'ruled' || f.state === 'resolved' || repairs.has(f.id) || (f.lens === 'witness' && f.obligation !== null && repairs.has(f.obligation))
-      )));
+      const answered = findingsAnswered(ctx.journal.view, subject.findings, repairs);
       if (answered) subjects.push(subject);
     }
     for (const subject of subjects) verified.push(...closeItemsFor(ctx, subject, id));
   }
-  const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified });
+  const resolved = ctx.journal.view.needsUser().filter((n) => n.ack?.command === id).map((n) => n.id);
+  const sha = writeReceipt(ctx.runDir, { v: SCHEMA_VERSION, command: id, state: 'applied', at, op: intent.op, verified, ...(command.body.type === 'apply' ? { resolved } : {}) });
   crashPoint('command.apply.after-receipt');
   return { kind: 'applied', receiptSha256: sha };
 }
@@ -309,11 +320,24 @@ function ackedBy(ctx: CommandContext, item: NeedsUserId): CommandId | null {
 
 /** The ack's effect, only what is missing: `<id>.ack.json` naming `id`, then the `needs-user-acked` fact. */
 export function acknowledge(ctx: Pick<CommandContext, 'journal' | 'runDir'>, id: CommandId, item: NeedsUserId, choice: string | null): readonly string[] {
-  if (readNeedsUserAck(ctx.runDir, item) === null) {
+  const fact = ctx.journal.view.ackOf(item);
+  if (fact !== null && fact.command !== id) return [];
+  let ack = readNeedsUserAck(ctx.runDir, item);
+  if (ack !== null && ack.command !== id) return [];
+  if ((ack !== null && ack.choice !== choice) || (fact !== null && fact.choice !== choice)) throw new Error(`ack ${item} changes its choice on replay`);
+  if (ack === null) {
     const record: NeedsUserAck = { v: SCHEMA_VERSION, id: item, command: id, choice, at: isoTimeOf(new Date()) };
-    exclusivePublish(needsUserAckPath(ctx.runDir, item), canonicalJson(record));
+    try { exclusivePublish(needsUserAckPath(ctx.runDir, item), canonicalJson(record)); }
+    catch (error) {
+      if (!(error instanceof AlreadyExistsError)) throw error;
+      ack = readNeedsUserAck(ctx.runDir, item);
+      if (ack === null) throw new Error(`ack ${item} vanished after exclusive publication`);
+      if (ack.command !== id) return [];
+    }
   }
+  crashPoint('command.apply.after-ack-file');
   if (ctx.journal.view.ackOf(item) === null) ctx.journal.fact({ kind: 'needs-user-acked', id: item, command: id, choice });
+  crashPoint('command.apply.after-ack');
   return [`needs-user/${item}.ack.json written by ${id}`, `needs-user ${item} acknowledged in the log`];
 }
 
@@ -323,6 +347,15 @@ export function closeItemsFor(ctx: Pick<CommandContext, 'journal' | 'runDir'>, s
     const item = readNeedsUser(ctx.runDir, n.id);
     return item !== null && canonicalJson(item.subject) === canonicalJson(subject) ? acknowledge(ctx, command, n.id, null) : [];
   });
+}
+
+function appliedFiles(ctx: CommandContext, fact: PlanAppliedFact): Pick<InputFiles, 'specs'> {
+  return { specs: new Map(Object.entries(fact.specs).map(([id, hash]) => {
+    const path = inputPath(ctx.runDir, hash, SPEC_INPUT);
+    const bytes = keptInput(ctx.runDir, hash, SPEC_INPUT);
+    if (bytes === null) throw new Error(`applied revision ${fact.rev} lacks kept spec ${id}`);
+    return [id as UnitId, { path, bytes }];
+  })) };
 }
 
 /** Why a parked unit parked: its park's needs-user reason, or the outcome. */
@@ -672,14 +705,24 @@ function nextRegistry(inputs: NextInputs): RulesRegistry | undefined {
  * (src/core/fence.ts) and evaluates again: a draft that differs is stale. `proposer` is who proposes it; a
  * bundle's cites and evidence back the `split-dropped` divergences its splits record (H14).
  */
-export function evaluateRevision(
-  ctx: RevisionContext, proposal: InputFiles, proposer: Proposer,
+function classifyRevision(ctx: RevisionContext, proposal: InputFiles, proposer: Proposer) {
+  const inForce = requirePlanInForce(ctx.runDir, ctx.view);
+  const revision = revisionInForce(ctx.runDir, inForce);
+  return classify({
+    runDir: ctx.runDir, view: ctx.view, inForce, revision, next: proposal, residues: undispositioned(ctx.hostDir), routing: ctx.routingBase, proposer,
+  });
+}
+
+export function evaluateRevision(ctx: RevisionContext, proposal: InputFiles, proposer: Proposer): RevisionVerdict {
+  return evaluateClassifiedRevision(ctx, proposal, proposer, classifyRevision(ctx, proposal, proposer));
+}
+
+function evaluateClassifiedRevision(
+  ctx: RevisionContext, proposal: InputFiles, proposer: Proposer, classified: ReturnType<typeof classifyRevision>,
 ): RevisionVerdict {
   const inForce = requirePlanInForce(ctx.runDir, ctx.view);
   const revision = revisionInForce(ctx.runDir, inForce);
-  const verdict = classify({
-    runDir: ctx.runDir, view: ctx.view, inForce, revision, next: proposal, residues: undispositioned(ctx.hostDir), routing: ctx.routingBase, proposer,
-  });
+  const verdict = classified;
   if (verdict.kind === 'rejected') return verdict;
   if (verdict.kind === 'busy') return { kind: 'rejected', reasons: verdict.busy.map(busyText), busy: verdict.busy };
   if (verdict.kind === 'unchanged') return { kind: 'unchanged', rev: inForce.rev };
@@ -740,6 +783,7 @@ export type ApplyInput = RevisionContext & Readonly<{
   base: RevisionManifest;
   rev: number;
   reason: string;
+  resolves?: readonly NeedsUserId[];
 }>;
 
 export type ApplyVerdict =
@@ -800,7 +844,15 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
   if ('reasons' in built) return { kind: 'rejected', reasons: built.reasons };
   const proposal = built.next;
   const proposer: Proposer = { type: 'apply', reason: input.reason };
-  const verdict = evaluateRevision(input, proposal, proposer);
+  const classified = classifyRevision(input, proposal, proposer);
+  const ids = input.resolves ?? [];
+  if (ids.length > 0 && classified.kind !== 'rejected') {
+    const changes = classified.kind === 'unchanged' ? [] : classified.changes;
+    const busy = classified.kind === 'busy' ? classified.busy.map((b) => b.unit) : [];
+    const problems = resolutionProblems(input, ids, applyAnswer(changes, proposal, busy, classified.kind !== 'unchanged'));
+    if (problems.length > 0) return { kind: 'rejected', reasons: problems };
+  }
+  const verdict = evaluateClassifiedRevision(input, proposal, proposer, classified);
   if (verdict.kind !== 'accepted') return verdict;
   const context: StartupContext = {
     repo: input.repo, planFile: input.planFile, plan: proposal.plan, specOf: (u) => proposal.specs.get(u.id)?.bytes ?? null, profile: input.routingBase.profile,
@@ -852,7 +904,7 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
   try {
     const verdict = await evaluateApply({
       runDir: ctx.runDir, view: ctx.journal.view, hostDir: ctx.hostDir, repo: ctx.repo, planFile: body.planFile, routingBase: ctx.routingBase,
-      laneEnv: ctx.laneEnv, manifest: body.manifest, base: body.base, rev: body.rev, reason: body.reason,
+      laneEnv: ctx.laneEnv, manifest: body.manifest, base: body.base, rev: body.rev, reason: body.reason, resolves: body.resolves ?? [],
     });
     if (verdict.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(verdict.reasons) };
     if (verdict.kind === 'unchanged') return { kind: 'applied', verified: [`plan rev ${verdict.rev} is unchanged`] };
@@ -870,7 +922,9 @@ async function applyPlan(ctx: CommandContext, id: CommandId, body: Extract<Comma
     if ('reasons' in final) return { kind: 'rejected', reason: rejectedText(final.reasons) };
     const evaluated = evaluateRevision({ ...ctx, view: ctx.journal.view, planFile: body.planFile }, final.next, { type: 'apply', reason: body.reason });
     if (evaluated.kind === 'rejected') return { kind: 'rejected', reason: rejectedText(evaluated.reasons) };
-    if (evaluated.kind === 'unchanged') return { kind: 'applied', verified: [`plan rev ${evaluated.rev} is unchanged`] };
+    if (evaluated.kind === 'unchanged') return (body.resolves?.length ?? 0) > 0 ? { kind: 'rejected', reason: '--resolves requires a changed apply' } : { kind: 'applied', verified: [`plan rev ${evaluated.rev} is unchanged`] };
+    const problems = resolutionProblems({ runDir: ctx.runDir, view: ctx.journal.view }, body.resolves ?? [], applyAnswer(evaluated.draft.changes, final.next));
+    if (problems.length > 0) return { kind: 'rejected', reason: rejectedText(problems) };
     keepCorpusFiles(ctx.runDir, verdict.corpusFiles);
     keepRevision(ctx.runDir, evaluated);
     const committed = await commitRevision(ctx, payloadOf(evaluated.draft, { type: 'command', command: id }), parentOf(id));
