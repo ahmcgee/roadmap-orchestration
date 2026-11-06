@@ -30,6 +30,7 @@ function commandProblems(command: Declared, env: Env): CommandProblem[] {
 /** argv[0], the declared host variables, and (dev.17) the environment the lane names, which the plan must declare. */
 function laneProblems(plan: PlanM1, unit: UnitId | null, lane: LaneDef, env: Env): LaneRow[] {
   const out: LaneRow[] = commandProblems(lane, env).map((problem) => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem }));
+  if (Object.hasOwn(lane.env.set, 'ROADMAP_CPU') || lane.env.pass.includes('ROADMAP_CPU')) out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'env-reserved', name: 'ROADMAP_CPU' } });
   if (lane.capture !== undefined) for (const argv of [lane.capture.up, lane.capture.script]) out.push(...commandProblems({ argv, env: lane.env }, env).map((problem): LaneRow => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem })));
   if (lane.environment !== undefined && environmentOf(plan, lane.environment) === null) {
     out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'unknown-environment', environment: lane.environment } });

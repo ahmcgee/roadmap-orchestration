@@ -137,6 +137,8 @@ Pins in `src/core/pins.ts` bind linked requirement revisions and contract blobs.
 
 ### Lanes
 
+Every lane launch (unit, candidate, capture, rerun and job journey) receives executor-owned `ROADMAP_CPU`, the decimal count of actually granted `@cpu` tokens, including zero. It is persisted in launch.env. Authoring and preflight refuse env.set/env.pass collisions; persisted legacy lane readers remain compatible, so old collisions become actionable plan defects.
+
 Required LaneDef fields: id, nonempty argv, cwd, env `{set:Record<string,string>,pass:string[]}`, expectedExit,
 cadence, resources, evidenceGlobs. EvidenceExcludes defaults to []. Pass/set names cannot overlap. Optional fields:
 inputs (nonempty unique patterns), cost cheap|expensive, placement local|shared-resource|cross-system, cpu, timeoutMin,

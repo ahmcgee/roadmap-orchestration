@@ -129,6 +129,8 @@ Apply queues at safe boundaries when necessary; read the durable receipt through
 
 Lane reuse hashes declared `inputs`, else the appropriate systems input; it also binds command/environment identity. Keep witness ids stable across lane moves and refresh proof only when its test ids/files or statement change. Run targeted development checks; let the executor certify full lanes. A repeated red is compared at diffBase: green there supplies regression evidence to the fix round; red there follows the base-red protocol. Never weaken tests to make a lane green. Declare deterministic fixtures for clocks and time zones.
 
+Lanes may read executor-owned ROADMAP_CPU, the granted CPU-token count, to size worker pools; never declare it in env.set or env.pass.
+
 Capture lanes bring up a contained stack and repo capture script on a leased port and retain every declared PNG state. Gate capture evidence is supplied only to the milestone's design/member units. Resource probe/teardown commands must label their own workload and clean it; declare pools and environment lifecycle honestly. Evidence globs must not hide tracked product/test files or protected paths.
 
 `docs/systems/<system>.md` (configurable as `systemNotesDir`) carries non-normative gotchas, seams and rigs. Build/gate receive existing note paths from their checkout commit. Edit notes as normal unit diffs, with gate review. Normative claims stay in the corpus. Salvage and candidate commit bodies retain captured build summaries and decisions; recovery uses verified evidence bytes.

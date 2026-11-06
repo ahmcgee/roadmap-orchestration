@@ -269,7 +269,7 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
  * forge runner identity/control variables. These are protocol names, not product environment prerequisites.
  * Named here so core imports neither the holistic nor pipeline layers.
  */
-const WORKLOAD_PROTOCOL_ENV = new Set(['ROADMAP_WITNESS_FILE', 'ROADMAP_CAPTURE_CONFIG', 'ROADMAP_CAPTURE_DIR', 'ROADMAP_CAPTURE_STATES', 'ROADMAP_CAPTURE_SLOT', 'ROADMAP_CAPTURE_PORT']);
+const WORKLOAD_PROTOCOL_ENV = new Set(['ROADMAP_CPU', 'ROADMAP_WITNESS_FILE', 'ROADMAP_CAPTURE_CONFIG', 'ROADMAP_CAPTURE_DIR', 'ROADMAP_CAPTURE_STATES', 'ROADMAP_CAPTURE_SLOT', 'ROADMAP_CAPTURE_PORT']);
 
 const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
   const env = stringMap(value, path);
