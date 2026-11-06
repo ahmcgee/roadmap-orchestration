@@ -663,3 +663,23 @@ for (const publication of [false, true]) test(`review.memory-first-workload-esca
     assert.equal((await next.done).kind, 'granted', 'the next workload progresses once only judgment tokens remain');
   } finally { abort.abort(); journal.close(); }
 });
+
+test('review.batch-owner-is-read-once-per-wake', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const abort = new AbortController();
+  try {
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
+    reserve(ctx, { type: 'batch', finding: 'F-1' as never, attempt: 1 }, req({ publication: true }), { type: 'job', job: jobId('batch', 1) });
+    let scans = 0;
+    const view = new Proxy(journal.view, { get(target, property) {
+      if (property === 'opsOf') return (kind: Parameters<typeof target.opsOf>[0]) => { if (kind === 'resource.transition') scans++; return target.opsOf(kind); };
+      const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const arb = createArbiter({ ...ctx, journal: { ...journal, view } });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const waits = ['one', 'two', 'three'].map((u, n) => wait(arb, req({ cpu: 1 }), holderOf(u), rank(u, n), abort.signal));
+    scans = 0; arb.wake();
+    assert.equal(scans, 1, 'one batch-owner lookup for the entire wake, independent of waiter count');
+    assert.ok(waits.every((w) => w.box.grant === null));
+    abort.abort(); await Promise.all(waits.map((w) => w.done));
+  } finally { abort.abort(); journal.close(); }
+});

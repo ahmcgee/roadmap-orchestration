@@ -113,21 +113,20 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const ordered = (): readonly Readonly<{ w: UnitWaiter; rank: Rank }>[] =>
     units.map((w) => ({ w, rank: w.rank() })).sort((a, b) => compareRank(a.rank, b.rank));
 
-  const pressureReasons = (w: UnitWaiter | FirstWaiter): WaitReason[] => {
+  const pressureReasons = (w: UnitWaiter | FirstWaiter, owner: ReturnType<typeof publicationOwner>): WaitReason[] => {
     if (w.request.cpu === 0) return [];
     const h = w.holder;
     const workload = workloadCpu(h, w.request.cpu, w.request.cpuBasis);
     if (!workload || ![...resourceTable(ctx.journal.view)].some(([u, e]) => parseResourceUnit(u).type === 'cpu' && (e.workload === true || (e.pending?.expect.edge.type === 'reserve' && workloadCpu(e.pending.expect.holder, 1, e.pending.expect.cpuBasis))))) return [];
     const reasons: WaitReason[] = [];
     if ((pressure.memory() ?? 0) >= PRESSURE_SATURATED) reasons.push('memory-pressure');
-    const owner = publicationOwner(ctx.journal.view);
     const ownsSlot = owner !== null && sameHolder(owner, h);
     if (!ownsSlot && (hostCpuPressure(pressure.ticks(), 0) ?? 0) >= PRESSURE_SATURATED) reasons.push('cpu-pressure');
     return reasons;
   };
 
-  const reasonsFor = (w: UnitWaiter | FirstWaiter, blocked: readonly ResourceRequest[]): readonly WaitReason[] => {
-    const reasons = pressureReasons(w);
+  const reasonsFor = (w: UnitWaiter | FirstWaiter, blocked: readonly ResourceRequest[], owner: ReturnType<typeof publicationOwner>): readonly WaitReason[] => {
+    const reasons = pressureReasons(w, owner);
     const allocation = allocate(resourceTable(ctx.journal.view), ctx.plan(), w.request);
     if (allocation.kind === 'busy') for (const unit of allocation.busy) {
       const parsed = parseResourceUnit(unit);
@@ -141,9 +140,10 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     const plan = ctx.plan();
     const blocked: ResourceRequest[] = [];
     const refused: FirstWaiter[] = [];
+    const owner = publicationOwner(ctx.journal.view);
     const evaluate = <W extends UnitWaiter | FirstWaiter>(queue: W[], w: W, parent: Parent): void => {
       if (w.entry !== undefined) w.request = w.entry.refresh();
-      const reasons = reasonsFor(w, blocked);
+      const reasons = reasonsFor(w, blocked, owner);
       w.wait.observe(reasons);
       if (reasons.length > 0) {
         if ('onBlocked' in w) refused.push(w as FirstWaiter);
@@ -192,13 +192,15 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
   const waiting = (): readonly WaiterView[] => {
     const plan = ctx.plan();
     const table = resourceTable(ctx.journal.view);
-    return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureReasons(w).length > 0, queuedAt: w.queuedAt, reasons: w.wait.reasons() }));
+    const owner = publicationOwner(ctx.journal.view);
+    return ordered().map(({ w, rank }) => ({ holder: w.holder, request: w.request, rank, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureReasons(w, owner).length > 0, queuedAt: w.queuedAt, reasons: w.wait.reasons() }));
   };
 
   const waitingFirst = (): readonly FirstWaiterView[] => {
     const plan = ctx.plan();
     const table = resourceTable(ctx.journal.view);
-    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureReasons(w).length > 0, queuedAt: w.queuedAt, reasons: w.wait.reasons() }));
+    const owner = publicationOwner(ctx.journal.view);
+    return first.map((w) => ({ holder: w.holder, request: w.request, envBlocked: envBlocked(table, plan, w.request), pressureBlocked: pressureReasons(w, owner).length > 0, queuedAt: w.queuedAt, reasons: w.wait.reasons() }));
   };
 
   return { pressure, acquire, acquireFirst, wake, waiting, waitingFirst };
