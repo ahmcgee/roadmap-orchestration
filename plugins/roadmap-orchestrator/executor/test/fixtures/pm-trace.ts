@@ -24,6 +24,8 @@ export const LABEL_TRACE: Readonly<Record<string, Trace>> = {
   'command.apply.queued': R('adopted', 'redone'),
   'command.apply.before-effect': R('reconciled'),
   'command.apply.after-effect': R('reconciled'),
+  'command.apply.after-ack-file': R('reconciled'),
+  'command.apply.after-ack': R('reconciled'),
   'command.apply.after-receipt': R('reconciled'),
   'spawn.after-intent': R('reconciled'),
   'launch.after-launch-json': R('reconciled'),

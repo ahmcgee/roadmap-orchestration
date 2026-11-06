@@ -57,6 +57,7 @@ import type { ExitReason } from '../../src/executor.ts';
 import { ownArcResidue, readResidues, undispositioned } from '../../src/host/residues.ts';
 import { requirePlanInForce } from '../../src/input/inforce.ts';
 import { invocationDir } from '../../src/pipeline/invoke.ts';
+import { needsUserAckPath, readNeedsUserAck } from '../../src/needsuser.ts';
 import { resourceTable } from '../../src/resources/reserve.ts';
 import { runnerFiles } from '../../src/runner/files.ts';
 import { nextStage, rankOf } from '../../src/schedule/ready.ts';
@@ -438,7 +439,8 @@ function assertPublicationSafe(r: ExecRun, snap: LogSnapshot): number {
   const grants: { grant: Event & IntentOf<'resource.transition'>; released: number }[] = [];
   let released = 0;
   for (const e of slot) {
-    const h = JSON.stringify(e.expect.holder);
+    // A compound candidate entry reserves the slot for its slotHolder (the publication), the rest for the stage.
+    const h = JSON.stringify(e.expect.edge.type === 'reserve' && e.expect.slotHolder !== undefined ? e.expect.slotHolder : e.expect.holder);
     if (e.expect.edge.type === 'reserve') {
       assert.equal(holder, null, `seq ${e.seq}: the slot granted to ${h} while ${holder} holds it`);
       holder = h;
@@ -742,7 +744,17 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   const { r } = hc.laid;
   const trigger = writeTrigger(tmpDir('cm-trigger'), { label: c.label, occurrence: c.occurrence });
   let atCrash: LogSnapshot | null = null;
-  await supervisedRun(hc.laid, { trigger, keyed: true, whileDown: (x) => void (atCrash = journalOf(x)) });
+  let ackAtCrash: Readonly<{ path: string; bytes: string }> | null = null;
+  await supervisedRun(hc.laid, { trigger, keyed: true, whileDown: (x) => {
+    atCrash = journalOf(x);
+    if (c.label === 'command.apply.after-ack-file' || c.label === 'command.apply.after-ack') {
+      const [item] = atCrash.view.needsUser();
+      assert.ok(item !== undefined);
+      const path = needsUserAckPath(absPath(x.runDir), item.id);
+      ackAtCrash = { path, bytes: readFileSync(path, 'utf8') };
+      assert.equal(item.ack !== null, c.label === 'command.apply.after-ack', 'the crash straddles the acknowledgement fact');
+    }
+  } });
   assertFired(trigger);
   if (atCrash === null) throw new Error('the crash was not observed while the executor was down');
   const crash = atCrash as LogSnapshot;
@@ -777,6 +789,15 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   assert.deepEqual(m, { steps: m.steps, calls: m.steps, unmatched: 0 }, 'every backend call matched its step once: no completed call made twice');
   const end = journalOf(r);
   assertJobRequestClosed(ref.peer, end);
+  if (ackAtCrash !== null) {
+    const { path, bytes } = ackAtCrash as Readonly<{ path: string; bytes: string }>;
+    assert.equal(readFileSync(path, 'utf8'), bytes, 'recovery keeps the durable ack file byte-for-byte');
+    const [item] = end.view.needsUser();
+    assert.ok(item !== undefined);
+    const ack = readNeedsUserAck(absPath(r.runDir), item.id);
+    assert.ok(ack !== null);
+    assert.deepEqual(item.ack, { command: ack.command, choice: ack.choice }, 'the one ack fact agrees with its file');
+  }
   assertRevisionNoticeRecovery(crash, end, c.label);
   const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
   for (const u of jobUnits(ref.peer)) assertWorkloadsDisjoint(r, end, u);

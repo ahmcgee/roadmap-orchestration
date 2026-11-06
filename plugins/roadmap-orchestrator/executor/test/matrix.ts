@@ -246,7 +246,7 @@ const LABEL_BOUNDARY: ReadonlyMap<string, Boundary> = new Map([
   ...(Object.entries(PIPELINE_LABELS) as [Boundary, readonly string[]][]).flatMap(([b, ls]) => ls.map((l) => [l, b] as const)),
   ...(Object.entries(HOLISTIC_LABELS) as [Boundary, readonly string[]][]).flatMap(([b, ls]) => ls.map((l) => [l, b] as const)),
   ['kill.after-intent', 'B2'], ['kill.after-cancel', 'B3'], ['kill.after-quiesced', 'B4'], ['kill.after-done', 'B5'],
-  ['docs.after-lanes', 'B4'], ['revision.commit.after-docs', 'B4'], ['batch.after-candidate', 'B4'], ['command.apply.after-effect', 'B4'], ['command.apply.after-receipt', 'B4'],
+  ['docs.after-lanes', 'B4'], ['revision.commit.after-docs', 'B4'], ['batch.after-candidate', 'B4'], ['command.apply.after-effect', 'B4'], ['command.apply.after-ack-file', 'B4'], ['command.apply.after-ack', 'B4'], ['command.apply.after-receipt', 'B4'],
 ]);
 
 /**
@@ -1156,11 +1156,11 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_APPLY,
     test: 'test/serial/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'needsuser.raise.before-publish', 'needsuser.raise.after-publish', 'command.apply.before-effect', 'command.apply.after-effect', 'command.apply.after-receipt'], {
+    cells: jobCells([...LOG_APPENDS, 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'needsuser.raise.before-publish', 'needsuser.raise.after-publish', 'command.apply.before-effect', 'command.apply.after-effect', 'command.apply.after-ack-file', 'command.apply.after-ack', 'command.apply.after-receipt'], {
       B1: 'a plan-applied or item-closure fact is absent after the crash: the command and revision reconcile from their kept inputs',
       B2: 'the campaign request raise or root command/revision is open: recovery finishes each exactly once',
       B3: 'the root revision inputs are kept before activation: recovery finishes the same accepted edit',
-      B4: 'the request file, revision fact or root receipt is durable: recovery consumes it, closing the request once',
+      B4: 'the request file, revision fact, acknowledgement file/fact or root receipt is durable: recovery keeps the ack file, writes the ack fact exactly once, and closes the request exactly once after the apply',
       B5: 'nothing is open: durable request, revision and receipt remain singular',
     }, PEERS_IN_BUILDS, 'no root decision label falls on this boundary'),
   },
