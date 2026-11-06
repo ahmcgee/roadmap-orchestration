@@ -410,10 +410,10 @@ describe('arbiter.pressure-brake', () => {
     release(ctx, first);
     arb.wake();
     await tick();
-    assert.equal(queued.box.grant, null, 'the judgment still holds CPU');
+    assert.equal((await queued.done).kind, 'granted', 'a judgment token alone no longer arms the workload brake');
     release(ctx, judge);
     arb.wake();
-    assert.equal((await queued.done).kind, 'granted', 'the oldest workload advances when the CPU pool is empty');
+    assert.equal((await queued.done).kind, 'granted', 'the oldest workload remains granted after the judgment releases');
     release(ctx, lane);
     journal.close();
   });
