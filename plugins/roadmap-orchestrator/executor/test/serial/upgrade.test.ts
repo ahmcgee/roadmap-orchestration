@@ -191,7 +191,8 @@ test('upgrade.dev53-throughput: held reservation, queued apply, needs-user and k
     assert.equal([...r.journal.view.resources().values()].filter((e) => e.status.state !== 'free').length, 1);
     assert.ok(r.journal.view.applyQueued(commandId(data.command)));
     const legacy = readCommand(r.ctx.runDir, commandId(data.command), r.ctx.plan().arc).file;
-    assert.deepEqual(legacy.body.type === 'apply' && legacy.body.resolves, []);
+    assert.ok(legacy.body.type === 'apply');
+    assert.equal(Object.hasOwn(legacy.body, 'resolves'), false, 'the optional legacy field stays absent; the apply consumer supplies the empty-list default');
     const w = wire(r); await recover({ stage: w.stage, commands: w.commands });
     assert.ok([...r.journal.view.resources().values()].every((e) => e.status.state === 'free'));
     assert.equal((await applyCommand(w.commands, legacy)).kind, 'applied', 'the adopted queued apply executes with absent resolves defaulting empty');

@@ -1550,14 +1550,10 @@ export const journalNeedsUserIds: Read<readonly NeedsUserId[]> = (value, path) =
   assertUnique(ids, (id) => id, path);
   return ids;
 };
-let legacyResolutionsWarned = false;
-function resolutionList(f: Fields, key: 'resolves' | 'resolved'): readonly NeedsUserId[] {
+/** Preserve optional fields while validating: defaults belong to consumers, never serialized records. */
+function resolutionFields<K extends 'resolves' | 'resolved'>(f: Fields, key: K): Partial<Record<K, readonly NeedsUserId[]>> {
   const ids = f.optional(key, journalNeedsUserIds);
-  if (ids === undefined && !legacyResolutionsWarned) {
-    legacyResolutionsWarned = true;
-    process.emitWarning('defaulting absent apply resolves/receipt resolved to an empty list (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
-  }
-  return ids ?? [];
+  return ids === undefined ? {} : { [key]: ids } as Record<K, readonly NeedsUserId[]>;
 }
 
 export type CommandBody =
@@ -1656,7 +1652,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   apply: object((f): CommandBody => ({
     type: f.get('type', literal('apply')), planFile: f.get('planFile', abs), rev: f.get('rev', (v, p) => planRev(v, p)), reason: f.get('reason', str),
     base: f.get('base', applyManifest), manifest: f.get('manifest', applyManifest),
-    resolves: resolutionList(f, 'resolves'),
+    ...resolutionFields(f, 'resolves'),
   })),
   'resolve-edge': object((f): CommandBody => ({
     type: f.get('type', literal('resolve-edge')), edge: f.get('edge', (v, p) => edgeId(v, p)), evidence: f.get('evidence', str),
@@ -1708,7 +1704,7 @@ export const receipt: Read<Receipt> = tagged('state', {
   applied: object((f): Receipt => ({
     v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('applied')), at: f.get('at', time),
     op: f.get('op', opId), verified: f.get('verified', arrayOf(str, { nonEmpty: true })),
-    resolved: resolutionList(f, 'resolved'),
+    ...resolutionFields(f, 'resolved'),
   })),
   rejected: object((f): Receipt => ({
     v: f.get('v', version), command: f.get('command', cmdId), state: f.get('state', literal('rejected')), at: f.get('at', time), reason: f.get('reason', str),

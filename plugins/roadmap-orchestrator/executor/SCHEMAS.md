@@ -365,8 +365,9 @@ Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for ex
 ## Commands, receipts and needs-user
 
 `apply --resolves nu-ID[,nu-ID...]` names unique nonempty journal item ids. Malformed, duplicate, host-* and sup-*
-ids refuse. Optional `CommandBody.apply.resolves` and applied `Receipt.resolved` are additive; absence reads as an
-empty list with one ROADMAP_UPGRADE warning, preserving original content-addressed bytes.
+ids refuse. Optional `CommandBody.apply.resolves` and applied `Receipt.resolved` are additive; readers preserve absence and consumers default it to an
+empty list. Validation never writes defaults or emits upgrade warnings. Disk reads of absent legacy apply fields
+warn once per process; non-apply receipts have no resolution field by design. Original content-addressed bytes are preserved.
 One eligibility predicate runs at submission, dry-run, fenced precommit (after queueing and smokes), and successful
 finish. Items must be canonical open journal items, including ack-file and supersession checks. A changed apply may
 explicitly answer arc subjects (the architect's assertion); unit subjects require that unit's change or re-entry;
