@@ -99,9 +99,8 @@ export async function recoverReservations(ctx: ResourceContext): Promise<void> {
  * holders (src/schedule/fault.ts: the task is over, as a dead executor's are), never a publication's slot.
  */
 export async function settleHolders(ctx: ResourceContext, owns: (holder: Holder) => boolean): Promise<void> {
-  const reconcile = resourceReconciler(ctx);
   for (const intent of ctx.journal.view.openIntents()) {
-    if (intent.kind === 'resource.transition' && owns(intent.expect.holder)) await reconcile(intent, ctx.journal.view);
+    if (intent.kind === 'resource.transition' && (owns(intent.expect.holder) || (intent.expect.slotHolder !== undefined && owns(intent.expect.slotHolder)))) close(ctx, intent);
   }
   const holders: Exclude<Holder, SweepHolderShape>[] = [];
   for (const entry of resourceTable(ctx.journal.view).values()) {

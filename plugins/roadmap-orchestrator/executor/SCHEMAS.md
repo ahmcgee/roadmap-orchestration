@@ -861,6 +861,7 @@ otherwise repair=deflake, polish, planned; wait-start sequence then plan index b
 other unit publications** in its waiting interval. Backfill may pass a blocked higher rank only with a disjoint request
 (CPU and any shared pool count as overlap). Environment/pressure-blocked requests are set aside.
 Slot-blocked combined entrants contribute only publication-slot precedence, including through other queued requests. The durable publication owner maps unit/attempt to candidate, docs to its job, and batch to the originating reserve parent job. Only its workload requests bypass CPU pressure. Memory pressure still brakes them while another workload holds or has reserved CPU tokens; a lone workload progresses under either pressure cause. Tokens, dirty instances and independent precedence still apply. Blocked docs callbacks run despite other simultaneous blockers.
+Task-fault recovery closes a compound reserve atomically but settles only holders selected by its scope; full recovery settles both owners.
 Docs publications outrank unit publications and may request candidate preemption before green. Red/preempted or
 finding-blocked candidates abandon and release their reservations; green publication finishes ff/snapshot under its holder.
 
