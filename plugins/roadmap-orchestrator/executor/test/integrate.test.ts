@@ -297,3 +297,27 @@ test('unused-entry cleanup failure retains only named residue and stops re-entry
     assert.ok([...table].filter(([name]) => name.startsWith('@cpu#')).every(([, entry]) => entry.status.state === 'free'));
   } finally { r.journal.close(); }
 });
+
+for (const scenario of ['reused', 'conflicted'] as const) test(`reused-or-conflicted-entry-released: ${scenario}`, T, async () => {
+  const d = setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    const now = r.ctx.acquire; let moved = false;
+    const ctx = { ...r.ctx, acquire: (async (request, holder, rank, signal, entry) => {
+      if (request.publication && scenario === 'conflicted' && !moved) {
+        moved = true;
+        writeFileSync(join(d.repo, 'src/mul.js'), 'export function mul() { return 0; }\n');
+        git(d.repo, 'add', 'src/mul.js'); git(d.repo, 'commit', '-m', 'conflicting external implementation');
+      }
+      return now(request, holder, rank, signal, entry);
+    }) satisfies typeof now };
+    await stepUntil({ ...r, ctx }, 'u1', (f) => f.stage === 'candidate' && f.outcome === (scenario === 'reused' ? 'green' : 'conflict'));
+    const grants = r.journal.view.opsOf('resource.transition').filter((i) => i.expect.edge.type === 'reserve' && i.expect.resources.includes(resourceName('integration-slot')));
+    assert.equal(grants.length, 1); assert.ok(grants[0]!.expect.slotHolder);
+    const resources = grants[0]!.expect.resources;
+    assert.equal(resources.filter((r) => r.startsWith('@cpu#')).length, scenario === 'reused' ? 2 : 0);
+    assert.ok([...resourceTable(r.journal.view)].filter(([name]) => name.startsWith('@cpu#')).every(([, entry]) => entry.status.state === 'free'));
+    if (scenario === 'reused') assert.equal(r.journal.view.opsOf('proc.spawn').filter((i) => i.parent.type === 'stage' && i.parent.stage === 'candidate' && i.expect.subject.purpose === 'lane').length, 0, 'unused suite entry released on reuse');
+    else assert.equal(resourceTable(r.journal.view).get(resourceName('integration-slot'))?.status.state, 'free');
+  } finally { r.journal.close(); }
+});

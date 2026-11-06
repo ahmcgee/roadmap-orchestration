@@ -620,3 +620,24 @@ test('classification survives an aborted transition until release', T, async () 
     assert.equal(entry?.workload, true, 'aborting a transition preserves the originating workload reserve');
   } finally { journal.close(); }
 });
+
+test('publication owner CPU exemption never bypasses dirty pools', T, async () => {
+  const descriptor = newRun(); const { ctx, journal } = openPoolRun(descriptor); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    for (let attempt = 1; attempt <= ESTATE_SIZE; attempt++) {
+      const h = holderOf('u1', attempt); const got = reserve(ctx, h, req({ pools: [ESTATE] }), stageParent(h));
+      assert.ok(got.state === 'reserved');
+      writeFileSync(join(descriptor.stateDir, `${ESTATE}.teardown-fails-once`), '');
+      assert.equal((await cleanup(ctx, got, stageParent(h))).kind, 'cleanup-failed');
+    }
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
+    const pub = { type: 'publication', unit: unitId('owner'), attempt: 1 } as const;
+    reserve(ctx, pub, req({ publication: true }), { type: 'stage', unit: pub.unit, stage: 'candidate', attempt: 1 });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const own = wait(arb, req({ cpu: 1, pools: [ESTATE] }), { ...holderOf('owner'), stage: 'candidate' }, rank('owner', 1), abort.signal);
+    await tick(); assert.equal(own.box.grant, null);
+    assert.equal(arb.waiting()[0]?.envBlocked, true); assert.equal(arb.waiting()[0]?.pressureBlocked, false);
+    assert.deepEqual(arb.waiting()[0]?.reasons, ['named-resource:estate']);
+    abort.abort(); await own.done;
+  } finally { abort.abort(); journal.close(); }
+});
