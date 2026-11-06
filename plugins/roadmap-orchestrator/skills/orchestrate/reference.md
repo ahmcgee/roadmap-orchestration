@@ -28,7 +28,7 @@ Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 liv
 | `roadmap resume [<unit> | --backend claude|codex] [--repo <path> --arc <arc>]` | Resume a unit, explicitly unpark a backend, or resume all ordinary resumable work. |
 | `roadmap ack <needs-user-id> [--choice <option-id>] [--repo <path> --arc <arc>]` | Name the item to close it. Arc-subject items and pack-review items accept optionless ack; unit/host items without options require subject action. Any supplied choice must be offered. |
 | `roadmap sweep [--resource <name>] [--repo <path> --arc <arc>]` | Re-probe/clean residual resources using declared protocol. |
-| `roadmap apply --from <dir> --rev <n> --reason <text> [--resolves nu-ID[,nu-ID...]] [--dry-run] [--repo <path> --arc <arc>]` | File-level CAS from a genuine export. Reason is a nonempty single line; N equals export.planRev. |
+| `roadmap apply --from <dir> --rev <n> --reason <text> [--resolves <needs-user-id>] [--dry-run] [--repo <path> --arc <arc>]` | File-level CAS from a genuine export. Reason is a nonempty single line; N equals export.planRev. --resolves also accepts a comma-separated list of unique journal ids. |
 | `roadmap resolve-edge <edge> --evidence <text> [--repo <path> --arc <arc>]` | Record a contingent condition met, with evidence. |
 | `roadmap run-only <unit>... [--repo <path> --arc <arc>]` | Admit only these units temporarily. |
 | `roadmap run-only --clear [--repo <path> --arc <arc>]` | Remove that restriction and close its applicable subject notices. |
