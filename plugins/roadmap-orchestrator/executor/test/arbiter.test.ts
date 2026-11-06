@@ -588,3 +588,19 @@ test('publication owner CPU exemption still blocks on memory and tokens simultan
     abort.abort(); await owner.done;
   } finally { abort.abort(); journal.close(); }
 });
+
+for (const stage of ['build', 'gate'] as const) test(`pending-workload classification: ${stage}`, T, async () => {
+  const { cpuToken, opKey } = await import('../src/core/ids.ts');
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const h = { ...holderOf('pending'), stage };
+    journal.begin({ kind: 'resource.transition', key: opKey('pending-cpu'), parent: stageParent(h), deadlineAt: null,
+      body: () => ({ expect: { holder: h, resources: [cpuToken(1)], edge: { type: 'reserve' } }, post: null }) });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const next = wait(arb, req({ cpu: 1 }), holderOf('next'), rank('next', 1), abort.signal);
+    await tick();
+    assert.equal(next.box.grant?.kind ?? null, stage === 'build' ? null : 'granted');
+    if (stage === 'build') assert.ok(arb.waiting()[0]?.reasons?.includes('cpu-pressure'));
+    abort.abort(); await next.done;
+  } finally { abort.abort(); journal.close(); }
+});
