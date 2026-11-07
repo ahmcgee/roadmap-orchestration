@@ -22,7 +22,7 @@
 //   stacked-prs       PR 1 is arc 1's branch → main, PR 2 arc 2's branch → arc 1's; both bodies carry the merge-commit
 //                     line and PR 1's lists arc 1's amendments; origin's arc branches are at the completed heads and its
 //                     main at the seed commit
-//   config            `.roadmap/config.json` has exactly K = 1 and a valid systems map covering the units at both completed heads
+//   config            `.roadmap/config.json` has K = 1 and a valid systems map covering the units at both completed heads, plus optional webConsole only
 //   brief-acked-once  the bootstrap arc is the only acked start: no committed brief ack (the owner simulator
 //                     acknowledged no brief), and the chain's unacked starts are exactly arc 2
 //   no-model-ids      no model id in either run dir (launch inputs and captured backend output aside) or ref
@@ -271,14 +271,15 @@ function config(run: Run): Verdict {
     const text = git(run.product, ['show', `${head}:.roadmap/config.json`]);
     const value = JSON.parse(text) as Record<string, unknown>;
     const parsed = parseRepoConfig(value);
-    const { systemsMap: _map, ...settings } = value;
+    // webConsole affects observation only, never routing or flow.
+    const { systemsMap: _map, webConsole: _console, ...settings } = value;
     if (JSON.stringify(settings) !== JSON.stringify({ chain: { k: 1 } }) || parsed.systemsMap === undefined) {
-      problems.push(`${ref.arc}'s config.json requires K = 1 and its systemsMap, with no other settings: ${text.trim()}`);
+      problems.push(`${ref.arc}'s config.json requires K = 1 and its systemsMap, with only optional webConsole besides these settings: ${text.trim()}`);
       continue;
     }
     for (const unit of ref.plan.units) for (const system of unit.systems) if (!Object.hasOwn(parsed.systemsMap.systems, system)) problems.push(`${ref.arc}'s config.json does not declare unit ${unit.id}'s system ${system}`);
   }
-  return verdict(problems, 'K = 1 and a valid systems map covering each unit at both completed heads; no other settings');
+  return verdict(problems, 'K = 1 and a valid systems map covering each unit at both completed heads; only optional webConsole besides these settings');
 }
 
 function briefAckedOnce(run: Run): Verdict {

@@ -67,6 +67,8 @@ export function setupExec(t: Owner, opts: ExecOptions): ExecRun {
   mkdirSync(d.hostDir, { recursive: true });
   const r = { ...d, runDir: join(common, 'roadmap-runtime', d.arc), stateDir };
   own(t, { paths: [r.hostDir, r.repo], stop: async () => { await cli(r, ['stop']); await stopConsole(absPath(r.repo)); } });
+  // Reaping can skip graceful stop after completion; still remove the repo service's lease.
+  t.after(async () => { await stopConsole(absPath(r.repo)); });
   return r;
 }
 

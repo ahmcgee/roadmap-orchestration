@@ -71,6 +71,7 @@
 //
 // The M5 fixture's driver (evals/m5/driver.ts) reuses the session, owner-channel, wake, cleanup and forensics helpers
 // exported here; it adds its own owner and loop.
+import { stopConsole } from '../../src/console/lease.ts';
 import { type ChildProcess, type SpawnOptions, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
@@ -930,7 +931,7 @@ export async function drive(dir: string, mode: Mode, options: DriveOptions = {})
     released = await stopHeldArc(mode.kind === 'real' ? HOST_DIR : absPath(fakeHostDir(l.dir)), product, (arc) => {
       const [cmd, args] = roadmapArgv(l, mode, ['stop', '--repo', l.product, '--arc', arc]);
       return spawnSync(cmd, [...args], { cwd: l.product, env, encoding: 'utf8', timeout: RELEASE_WAIT_MS }).status;
-    }, RELEASE_WAIT_MS);
+    }, RELEASE_WAIT_MS).finally(() => stopConsole(product));
     // An arc winding down after its stop gets LEFTOVER_GRACE_MS to exit on its own; what is still running then is killed.
     const graceEnd = Date.now() + LEFTOVER_GRACE_MS;
     let left = fixtureProcesses(l.dir);

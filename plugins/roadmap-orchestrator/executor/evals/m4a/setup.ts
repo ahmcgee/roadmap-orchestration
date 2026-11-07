@@ -5,8 +5,8 @@
 //                     and its messy design record, the corpus under docs/corpus/ (numbered docs, two with same-named
 //                     sub-folders, five ADRs, the vision document 0005_Vision.md): no ids, no rules blocks, no marker
 //                     of the planted defects (answer-key.json). In-tree `.roadmap/` holds the corpus guide `corpus.md`
-//                     (same-repo, root docs/corpus) and `vision.json`, confirmed against the vision document; no
-//                     `config.json` (K is asked at bootstrap). One commit on `main`, pushed to the bare origin.
+//                     (same-repo, root docs/corpus) and `vision.json`, confirmed against the vision document, plus
+//                     `config.json` with observation-only settings (K is asked at bootstrap). One commit on `main`, pushed to the bare origin.
 //   stage/origin.git  the bare origin (`roadmap pr` pushes arc branches here; `main` is never pushed again)
 //   stage/forge/      the fake forge (pull requests only: `roadmap pr` and the brief read it), empty at setup. The fake
 //                     gh's sources are copied into forge/lib/, so the shim names nothing in this repository.
@@ -20,6 +20,7 @@
 // test/unit/clock.js (TICKS × TICK_MS, about a minute each), so a serial run takes about six minutes and one at six
 // files a time about one. `--fake-pace` (fake runs and the free tests only) sets TICK_MS to FAKE_TICK_MS, so the same
 // files take seconds; nothing else differs, and the paid product carries no pace knob.
+import { freeConsolePort } from '../../test/helpers/console-port.ts';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -107,6 +108,7 @@ export async function setup(dir: string, opts: Readonly<{ visionSilent: boolean;
     else if (text.split(PAID_TICK).length !== 2) throw new Error(`${CLOCK_FILE} does not hold ${PAID_TICK} exactly once`);
     else write(join(l.product, path), text.replace(PAID_TICK, `export const TICK_MS = ${FAKE_TICK_MS};`));
   }
+  write(join(l.product, '.roadmap', 'config.json'), json({ webConsole: { host: '127.0.0.1', port: freeConsolePort() } }));
   const visionText = readFileSync(join(l.product, CORPUS_ROOT, VISION_DOC), 'utf8');
   write(join(l.product, '.roadmap', 'vision.json'), json(visionRecord(visionText, opts.visionSilent)));
   git(l.product, '-c', `init.defaultBranch=${MAIN}`, 'init', '--quiet');

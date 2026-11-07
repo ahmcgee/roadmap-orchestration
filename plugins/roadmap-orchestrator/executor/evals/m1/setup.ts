@@ -1,3 +1,4 @@
+import { freeConsolePort } from '../../test/helpers/console-port.ts';
 import { systemName } from '../../src/core/ids.ts';
 // The M1 paid fixture, step 1: `node evals/m1/setup.ts <dir>` lays out a fresh fixture in `<dir>` (absent or
 // empty). Everything is hand-authored against SCHEMAS.md ("Input contract", "spec.json M1 subset"):
@@ -160,7 +161,7 @@ export function setup(dir: string): void {
   git(l.repo, 'config', 'user.name', 'M1 Fixture');
   git(l.repo, 'config', 'user.email', 'm1-fixture@example.invalid');
   git(l.repo, 'config', 'commit.gpgsign', 'false');
-  for (const [path, text] of Object.entries(PRODUCT)) write(join(l.repo, path), text);
+  for (const [path, text] of Object.entries(PRODUCT)) write(join(l.repo, path), path === '.roadmap/config.json' ? json({ ...JSON.parse(text), webConsole: { host: '127.0.0.1', port: freeConsolePort() } }) : text);
   git(l.repo, 'add', '--all');
   git(l.repo, 'commit', '--quiet', '--message', 'm1 fixture: initial product');
   git(l.repo, 'branch', INTEGRATION, MAIN);
