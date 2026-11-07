@@ -8,7 +8,7 @@
   const protocol = document.querySelector('meta[name="roadmap-protocol"]').content;
   const api = `/api/${protocol}`;
   const money = (n) => `$${n.toFixed(2)}`;
-  const elapsed = (ms) => ms == null ? 'unrecorded' : D.formatElapsed(ms);
+  const elapsed = (ms) => ms == null ? 'unrecorded' : ms < 1000 ? `${ms} ms` : D.formatElapsed(ms);
   const words = (value) => typeof value === 'string' ? value : JSON.stringify(value);
   function route() {
     const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
@@ -26,6 +26,18 @@
   function Panel({ title, subtitle, children, extra }) {
     return h('section', { className: 'panel' }, h('div', { className: 'panelhead' }, h('div', null, h('h2', null, title), subtitle && h('p', { className: 'muted' }, subtitle)), extra), children);
   }
+  const effortTotal = (row) => ['agent', 'deterministic', 'held', 'queued'].reduce((n, k) => n + (row?.[k] || 0), 0);
+  function Effort({ row }) {
+    const total = effortTotal(row);
+    return total > 0 ? h('div', { className: 'recorded-effort' }, h('p', null, `${elapsed(total)} recorded`), h(D.BreakdownBar, { row }))
+      : h('p', { className: 'empty-effort' }, 'No recorded effort yet.');
+  }
+  function Notice({ hold }) {
+    const [recommendation, ...rest] = (hold.detail || '').split(' After reviewing');
+    return h('div', { className: 'owner-notice' }, h(D.HoldNotice, { hold: { ...hold, detail: undefined } }),
+      recommendation && h('p', null, h('strong', null, 'Recommendation: '), recommendation),
+      rest.length > 0 && h('p', null, `After reviewing${rest.join(' After reviewing')}`));
+  }
   function Attention({ model, arc, tab }) {
     const rows = model.attention;
     return h(Panel, { title: 'Attention', subtitle: 'Open questions, holds and recorded evidence' },
@@ -36,7 +48,7 @@
         { key: 'reason', label: 'Reason' },
       ] })),
       rows.map((r) => h('article', { key: r.id, id: `attention-${r.id}`, className: 'detailsection' },
-        h(D.HoldNotice, { hold: { reason: r.blocking ? 'query' : 'manual', label: r.blocking ? 'Owner decision needed' : 'Owner notice', question: r.summary, detail: r.recommendation } }),
+        h(Notice, { hold: { reason: r.blocking ? 'query' : 'manual', label: r.blocking ? 'Owner decision needed' : 'Owner notice', question: r.summary, detail: r.recommendation } }),
         r.options.length > 0 && h('p', null, `Recorded options: ${r.options.map((o) => `${o.id}: ${o.label}`).join(' · ')}`),
         h('div', { className: 'evidence' }, r.evidence.map((e, i) => h('p', { key: i, className: 'mono' }, r.evidenceLinks?.[i] ? h('a', { href: link(arc, tab, 'invocations', r.evidenceLinks[i]) }, e) : e))))),
       model.holds.length > 0 && h('div', { className: 'detailsection' }, h('h3', null, 'Current holds'), model.holds.map((v, i) => h('pre', { key: i }, words(v)))));
@@ -57,14 +69,14 @@
         h('div', { className: 'graph' }, h(D.UnitGraph, { ...m.graph, selectedId: focus?.id, onSelect: setSelected, onOpen: open, height: 400 })),
         h('div', { className: 'unit-list' }, m.graph.units.map((u) => h('a', { key: u.id, href: link(e.arc, 'overview', 'units', u.id) }, h('strong', null, u.label), h('span', null, u.meta))))),
       h('div', { className: 'columns' }, h(Panel, { title: 'Recorded effort', subtitle: m.time.caption },
-        h(D.BreakdownBar, { row: m.time.total }), h('p', { className: 'backlog' }, `${elapsed(m.time.unallocated)} unallocated waiting · ${m.time.unmeasuredReservations} unmeasured reservations`)),
+        h(Effort, { row: m.time.total }), h('p', { className: 'backlog' }, `${elapsed(m.time.unallocated)} unallocated waiting · ${m.time.unmeasuredReservations} unmeasured reservations`)),
       h(Panel, { title: 'Milestone gates', subtitle: 'Passing member units alone does not pass a gate.' },
         s.milestones.length ? s.milestones.map((gate) => h('p', { key: gate.id }, h('a', { href: link(e.arc, 'overview', 'units', `milestone:${gate.id}`) }, gate.id), ` · ${gate.state} · ${gate.passed ? 'gate passed' : 'gate not passed'}`)) : h('p', { className: 'muted' }, 'No milestone gates in this plan.'))));
   }
   function Resources({ e, open }) {
     const m = e.data.console;
     return h(R.Fragment, null,
-      h(Panel, { title: 'Time', subtitle: m.time.caption }, h(D.TimeBreakdown, { rows: m.time.rows, title: 'Recorded effort by subject', caption: m.time.caption, onSelect: (id) => e.data.display.status.units.some((u) => u.unit === id) && open(id) }),
+      h(Panel, { title: 'Time', subtitle: m.time.caption }, effortTotal(m.time.total) === 0 ? h(Effort, { row: m.time.total }) : h(D.TimeBreakdown, { rows: m.time.rows, title: 'Recorded effort by subject', caption: m.time.caption, onSelect: (id) => e.data.display.status.units.some((u) => u.unit === id) && open(id) }),
         h('p', { className: 'backlog' }, `Unallocated waiting: ${elapsed(m.time.unallocated)}. Unmeasured reservations: ${m.time.unmeasuredReservations}. Reason totals overlap and are not added.`),
         h('details', null, h('summary', null, 'Waiting reason totals'), h('pre', null, Object.entries(m.time.byReasonMs).map(([reason, ms]) => `${reason}: ${elapsed(ms)}`).join('\n') || 'No recorded waiting.'))),
       h(Panel, { title: 'Resources', subtitle: `${m.resources.unknownQueueStarts} current queue entries have an unknown start.` },
@@ -117,9 +129,9 @@
       gate ? h(R.Fragment, null, h('p', null, `Executor milestone gate: ${gate.state} · ${gate.passed ? 'passed' : 'not passed'}`), h('pre', { className: 'record' }, JSON.stringify(gate, null, 2)),
         (e.data.plan?.milestones.find((v) => v.id === gate.id)?.units || []).map((u) => h('p', { key: u }, h('a', { href: link(e.arc, 'overview', 'units', u) }, u)))) : unit ? h(R.Fragment, null,
         h('p', { className: 'kv' }, h('strong', null, unit.state), `Stage ${unit.stage} · ${unit.attempts} recorded attempts`),
-        row && h(D.BreakdownBar, { row }),
-        unit.waitingFor && h(D.HoldNotice, { hold: { reason: 'manual', label: 'Current admission or reservation reasons', detail: JSON.stringify(unit.waitingFor) } }),
-        m.attention.filter((r) => r.subject.type !== 'unit' || r.subject.unit === id).map((r) => h(D.HoldNotice, { key: r.id, hold: { reason: 'query', label: r.blocking ? 'Blocking owner request' : 'Owner notice', question: r.summary, detail: r.recommendation } })),
+        h(Effort, { row }),
+        unit.waitingFor && h(Notice, { hold: { reason: 'manual', label: 'Current admission or reservation reasons', detail: JSON.stringify(unit.waitingFor) } }),
+        m.attention.filter((r) => r.subject.type !== 'unit' || r.subject.unit === id).map((r) => h(Notice, { key: r.id, hold: { reason: 'query', label: r.blocking ? 'Blocking owner request' : 'Owner notice', question: r.summary, detail: r.recommendation } })),
         h('section', { className: 'detailsection' }, h('h3', null, 'Activity by stage and attempt'), groups.length ? groups.map((group) => h('div', { key: group }, h('h3', null, group), stale ? activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group).map((a, i, all) => h(D.ActivityRow, { key: a.id, activity: a, now: Date.parse(e.checkedAt), last: i === all.length - 1 })) : h(D.ActivityTimeline, { activities: activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group) }))) : h('p', { className: 'muted' }, 'No recorded invocations for this unit.'),
           activities.map((a) => h('p', { key: a.id }, h('a', { href: link(e.arc, 'overview', 'invocations', a.routeId) }, `${a.stage} attempt ${a.attempt}: logs and result`)))),
         h('section', { className: 'detailsection' }, h('h3', null, 'Lane certification'), unit.certification ? h(R.Fragment, null, h('p', null, `${unit.certification.used} used · ${unit.certification.left} left of ${unit.certification.allowance}`), unit.certification.lanes.map((l, i) => h('p', { key: i }, `${l.set} / ${l.id}: ${l.state}${l.verdict ? ` (${l.verdict})` : ''}`))) : h('p', { className: 'muted' }, 'No current certification series.')),

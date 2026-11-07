@@ -43,6 +43,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
     return dom;
   }
   await brandAudit('overview');
+  assert.match(await text(), /[1-9][0-9]+ ms recorded/);
   assert.match(await text(), /Applied work/); assert.match(await text(), /milestone gate/i);
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'overview.png'), fullPage: true });
   copyFileSync(join(evidence, 'overview.png'), join(SHOTS, 'overview.png'));
@@ -61,6 +62,13 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   assert.equal(await browser.evaluate<boolean>('() => Boolean(document.activeElement.closest("[role=dialog]"))'), true);
   await browser.call('browser_press_key', { key: 'Escape' });
   assert.equal(await browser.evaluate<string>('() => document.activeElement.getAttribute("aria-label")'), 'Open u1 details');
+
+  await browser.evaluate(`() => { location.hash = '#/runs/${f.d.arc}/overview/units/u3'; return true; }`);
+  await until(async () => /Unit u3/.test(await text()), 10_000, 'empty unit detail');
+  assert.match(await browser.evaluate<string>('() => document.querySelector("[role=dialog]").textContent'), /No recorded effort yet/);
+  assert.equal(await browser.evaluate<number>('() => document.querySelectorAll("[role=dialog] .recorded-effort").length'), 0);
+  assert.equal(await browser.evaluate<boolean>('() => [...document.querySelectorAll(".owner-notice > p")].some(p => p.textContent.startsWith("After reviewing"))'), true, 'automatic follow-up is its own paragraph');
+  await browser.call('browser_press_key', { key: 'Escape' });
 
   // Open a retained invocation's real stdout. HTML-like evidence remains plain text, with no invented line timestamps.
   const inv = (await browser.evaluate<{ invocations: { id: string; unit: string }[] }>(`async () => { const r = await fetch('/api/${JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version}/runs/${f.d.arc}/snapshot'); return (await r.json()).data.display; }`)).invocations.find((v) => v.unit === 'u1')!;

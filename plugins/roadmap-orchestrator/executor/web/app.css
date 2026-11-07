@@ -46,3 +46,6 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-data-sm);
 .empty { padding: 44px 16px; text-align: center; color: var(--ink-3); }
 @media (max-width: 800px) { .shell { padding: 18px 16px 40px; } .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .topline { flex-wrap: wrap; gap: 16px; } .connection { text-align: left; } .nav { margin: 0; } .columns { grid-template-columns: 1fr; } .panel { padding: 14px; } .graph { display: none; } .unit-list { display: grid; } .detailpanel { width: 100vw; padding: 20px 16px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+.empty-effort { color: var(--ink-3); padding: 12px 0; }
+.owner-notice { display: grid; gap: 10px; margin: 12px 0; }
+.owner-notice > p { margin: 0; padding-left: 10px; }

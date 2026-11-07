@@ -88,3 +88,11 @@ test('stable graph, formatted activities and effort survive heartbeat-only check
   assert.equal(later.graph, first.graph); assert.equal(later.time, first.time); assert.equal(later.activities, first.activities);
   assert.equal(later.resources.now - first.resources.now, 2);
 });
+
+test('completed lane fixture is ready between stages despite unfinished-unit status active', async () => {
+  const f = await enrichedParityArc();
+  const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const unit = e.data.display.status.units.find(u => u.unit === 'u1')!;
+  assert.equal(unit.status, 'active'); assert.equal(unit.stage, 'lanes'); assert.equal(unit.state, 'ready'); assert.equal(unit.running, null);
+  assert.equal(consoleModel(e).graph.units.find(u => u.id === 'u1')!.status, 'pending');
+});
