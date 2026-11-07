@@ -92,7 +92,7 @@ export function consoleModel(e: Envelope) {
   }
   const work = [...s.host.work, ...s.units.flatMap((u) => u.work)];
   const cpu = work.filter((w) => w.reservedCpu !== null || w.measured !== null).map((w) => ({ id: w.inv, unit: w.parent.type === 'stage' ? w.parent.unit : 'arc', reserved: w.reservedCpu,
-    average: w.measured && w.measured.wallMs > 0 ? w.measured.runMs / w.measured.wallMs : null,
+    measured: w.measured, average: w.measured && w.measured.wallMs > 0 ? w.measured.runMs / w.measured.wallMs : null,
     demand: w.cpuBasis?.value ?? null, basis: w.cpuBasis?.kind ?? 'unrecorded' }));
   const origin = Date.parse(events[0]?.at ?? e.observedAt);
   const endAt = [...events].reverse().find(event => event.type === 'fact' && ['arc-completed','stop-completed'].includes(event.fact.kind))?.at ?? null;

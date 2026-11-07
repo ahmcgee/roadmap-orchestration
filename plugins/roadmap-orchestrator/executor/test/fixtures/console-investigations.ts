@@ -24,7 +24,7 @@ import { reserve } from '../../src/resources/reserve.ts';
 import { raiseNeedsUser } from '../../src/needsuser.ts';
 import { git } from '../helpers/repo.ts';
 type StageParent=Extract<Parent,{type:'stage'}>;
-export async function investigationFixture(count=14) {
+export async function investigationFixture(count=14,purposeOverrides:Record<string,string>={}) {
  const {d:original}=await setupCorpusArc([],{units:Array.from({length:count},(_,i)=>({id:`u${i+1}`,...(i===3?{after:['u3']}:{})})).filter(u=>u.id!=='u14')});
  const d={...original,runDir:join(original.repo,'.git','roadmap-runtime',original.arc)};
  mkdirSync(d.runDir,{recursive:true});const arc=arcId(d.arc), plan=JSON.parse(readFileSync(d.planPath,'utf8'));
@@ -32,7 +32,7 @@ export async function investigationFixture(count=14) {
  plan.units[4].after=['u1'];
  writeFileSync(d.planPath,JSON.stringify(plan));
  const purposes=['Publish multiplication support','Run arithmetic checks','Build customer greeting','Deliver dependent feature','Wait for release milestone','Recover failed compiler','Review edge cases','Queue first integration','Queue second integration','Hold integration slot','Wait for host capacity','Retired experiment'];
- for(let i=1;i<=count;i++){if(i===14)continue;const path=join(dirname(d.planPath),`u${i}.json`);const spec=JSON.parse(readFileSync(path,'utf8'));spec.acceptance[0].clause=purposes[i-1]??`Deliver feature ${i}`;writeFileSync(path,JSON.stringify(spec));}
+ for(let i=1;i<=count;i++){if(i===14)continue;const path=join(dirname(d.planPath),`u${i}.json`);const spec=JSON.parse(readFileSync(path,'utf8'));spec.acceptance[0].clause=purposeOverrides[`u${i}`]??purposes[i-1]??`Deliver feature ${i}`;writeFileSync(path,JSON.stringify(spec));}
  const r=contextFor(d),j=r.journal,head=sha(git(d.repo,'rev-parse','HEAD'));
  for(const unit of r.ctx.plan().units)git(d.repo,'update-ref',`refs/heads/roadmap/${d.arc}/${unit.id}`,head);
  const pinned=new Set<string>();
