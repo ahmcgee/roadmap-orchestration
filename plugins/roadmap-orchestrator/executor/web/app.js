@@ -202,7 +202,9 @@
     if(Array.isArray(value))return name==='argv'?h('pre',null,h('code',null,value.join(' '))):h('ul',null,value.filter(v=>!historyEmpty(v)).map((v,i)=>h('li',{key:i},h(HistoryValue,{value:v,name:name==='evidence'?'evidence':''}))));
     if(typeof value==='object'){
       if(typeof value.path==='string'&&typeof value.line==='number')return h('code',{className:'history-evidence'},`${value.path}:${value.line}`);
-      return h('dl',{className:'history-fields'},Object.entries(value).filter(([,v])=>!historyEmpty(v)).map(([key,v])=>h('div',{key},h('dt',null,historyLabel(key)),h('dd',null,h(HistoryValue,{value:v,name:key})))));
+      const order=['title','claim','text','what','summary','description','name','severity','path','evidence','command','argv','exit','output'];
+      const fields=Object.entries(value).filter(([,v])=>!historyEmpty(v)).sort(([a],[b])=>(order.includes(a)?order.indexOf(a):order.length)-(order.includes(b)?order.indexOf(b):order.length));
+      return h('dl',{className:'history-fields'},fields.map(([key,v])=>h('div',{key},h('dt',null,historyLabel(key)),h('dd',null,h(HistoryValue,{value:v,name:key})))));
     }
     if(['decision','outcome','severity'].includes(name))return h('span',{className:'history-status','data-status':String(value)},historyLabel(value));
     if(['path','file','contractRef','evidence'].includes(name))return h('code',{className:'history-evidence'},String(value));

@@ -60,6 +60,7 @@ test('native history has a safe structured brief, compact tools, closed unforese
   assert.equal(await b.evaluate('() => { const card=document.querySelector(".history-verdict").getBoundingClientRect(); const scroller=document.querySelector(".history-scroll").getBoundingClientRect(); return card.top>=scroller.top-1 && card.top<scroller.top+30; }'),true,'finished report opens at its verdict and reasons');
   const log = await b.evaluate<string>('() => document.querySelector(".history-scroll").innerText');
   assert.equal(log.split('A single canonical reason').length - 1, 1);
+  assert.equal(await b.evaluate('() => [...document.querySelectorAll(".history-verdict-section")].find(s=>s.querySelector("h4")?.textContent==="Findings").querySelector("dt").textContent'), 'Text', 'finding prose precedes schema metadata');
   assert.match(log, /src\/main.ts:12/); assert.doesNotMatch(log, /none recorded|Decision: approve|Successfully returned|Verified the change/);
   assert.equal(await b.evaluate('() => document.querySelectorAll(".history-empty").length'), 1);
   assert.equal(await b.evaluate('() => document.querySelectorAll(".history-live").length'), 0);
