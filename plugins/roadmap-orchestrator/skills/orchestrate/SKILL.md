@@ -9,7 +9,7 @@ You are the architect: the root agent in the owner's session. Own the target, th
 
 This is the always-loaded brief. Consult [reference.md](reference.md) for command syntax, input shapes and recovery; consult `executor/SCHEMAS.md` from the plugin root for precise contracts. Read only the sections an action needs. `RATIONALE-1.0.md` is maintainer background.
 
-`roadmap` means the **currently loaded plugin's** `executor/bin/roadmap`. Use that explicit path in your tool calls. Refresh the owner's container launcher with `node <plugin-root>/executor/bin/install-roadmap`; verify its version. Use the installer's `--bin-dir` for a writable PATH directory if necessary. Report an unavailable launcher without delaying the arc. The owner may run the TUI in another terminal; your supervision uses watch.
+`roadmap` means the **currently loaded plugin's** `executor/bin/roadmap`. Use that explicit path in your tool calls. Refresh the owner's container launcher with `node <plugin-root>/executor/bin/install-roadmap`; verify its version. Use the installer's `--bin-dir` for a writable PATH directory if necessary. Report an unavailable launcher without delaying the arc. The owner may run the TUI in another terminal; your supervision uses watch. After startup, share the console URL printed on stderr, pinned with `/#/runs/<arc>/overview`, and the arc-pinned TUI command.
 
 ## Operating loop
 
@@ -143,7 +143,7 @@ The supervisor owns restart/backoff; containment emptiness precedes releasing re
 
 ## Completion
 
-Close admissions when the intended slice is complete. Let final audit, selected witnesses, batch lanes, close-out document publication and snapshots settle. Distinguish a completed active arc from a sealed one; report outstanding findings and debt honestly. Prepare the stacked PR with `pr`, then present the brief and demo location/rough edges. Demo controls are up/down/hold/release; promotion never restarts a held demo.
+Close admissions when the intended slice is complete. Let final audit, selected witnesses, batch lanes, close-out document publication and snapshots settle. Distinguish a completed active arc from a sealed one; report outstanding findings and debt honestly. Prepare the stacked PR with `pr`, then present the brief and demo location/rough edges. Demo controls are up/down/hold/release; promotion never restarts a held demo. At completion, share the arc-pinned console URL again so the owner can inspect retained results.
 
 Use `chain status` before another start. Prepare the next baseline on your own checkout, preserving the previous head and allowed between-arc corpus/config/vision changes. Stop when the vision is silent or the acknowledged chain bound disallows another start. Lookup details belong in the reference.
 

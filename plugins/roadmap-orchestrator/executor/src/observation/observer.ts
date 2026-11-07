@@ -1,8 +1,9 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readClaim } from '../host/lock.ts';
 import { locate, type Run } from '../cli/locate.ts';
 import { ObserverJournal, type LogSnapshot } from '../core/log.ts';
+import { sha256Hex } from '../core/json.ts';
 import { invocationId } from '../core/ids.ts';
 import { readJson } from '../core/fsx.ts';
 import { JUDGMENT_SESSION_ROLES } from '../routing/types.ts';
@@ -92,14 +93,14 @@ export class Observer {
 
   private invocations(run: Run, snapshot: LogSnapshot, alive: boolean): Invocation[] {
     const rows: Invocation[] = [];
-    const terminal = new Map<string, { at: string; value: unknown; state: string }>();
+    const terminal = new Map<string, { at: string; value: unknown; state: string; resultSha256: string | null }>();
     const ordinal = new Map<string, number>();
     for (const e of snapshot.events) {
       if (e.type === 'intent' && e.kind === 'proc.spawn') ordinal.set(e.op, e.ordinal);
       if ((e.type === 'done' && e.kind === 'proc.spawn') || e.type === 'abort') {
         const inv = invocationId(e.op, ordinal.get(e.op) ?? 1);
         terminal.set(inv, { at: e.at, value: e.type === 'abort' ? { reason: e.reason } : { outcome: e.outcome, recoveredBy: e.recoveredBy },
-          state: e.type === 'abort' ? `aborted:${e.reason.code}` : e.outcome.kind });
+          state: e.type === 'abort' ? `aborted:${e.reason.code}` : e.outcome.kind, resultSha256: e.type === 'done' && e.outcome.kind === 'result' ? e.outcome.resultSha256 : null });
       }
     }
     const relations = this.#relations.read(run.runDir, snapshot.events);
@@ -118,6 +119,7 @@ export class Observer {
       const exit = files.read('exit.json');
       files.read('runner.json'); // Validate identity bindings, even though liveness comes from the host owner.
       const done = terminal.get(id);
+      if (result !== null && done?.resultSha256 && sha256Hex(readFileSync(join(dir, 'result.json'))) !== done.resultSha256) throw new Error(`${dir}/result.json does not hash to its recorded resultSha256`);
       const subject = e.expect.subject;
       const unit = subject.purpose === 'mutant' && 'of' in subject && subject.of.type === 'smoke' ? subject.of.unit : 'unit' in subject && subject.unit ? subject.unit : 'owner' in subject && subject.owner.type === 'unit' ? subject.owner.unit : 'job' in subject ? subject.job : e.parent.type === 'job' ? e.parent.job : 'arc';
       const role = launch?.terminal.type === 'backend' ? launch.terminal.role : 'role' in subject ? subject.role : 'lane' in subject ? `${subject.purpose}:${subject.lane}` : subject.purpose;

@@ -38,3 +38,20 @@ export function validateEnvelope(raw: unknown, expected: Readonly<{ instance: st
   }
   return e;
 }
+
+/** Status transport carries only the canonical object, not the observer's evidence working set. */
+export function validateStatusEnvelope(raw: unknown, expected: Readonly<{ instance: string; repoId: string; arc: ArcId }>, summary: boolean): Envelope<unknown> {
+  const e = raw as Envelope<unknown> | null;
+  if (!e || e.protocol !== CONSOLE_PROTOCOL) throw new ConsoleError('protocol', 'console protocol/version mismatch; reload required');
+  if (e.instance !== expected.instance || e.repoId !== expected.repoId || e.arc !== expected.arc) throw new ConsoleError('conflict', 'console identity mismatch');
+  const data = e.data as Record<string, unknown> | null;
+  const required = summary ? ['arc', 'state', 'stop', 'supervision', 'planRev', 'progress', 'spend', 'milestones', 'caught', 'verdicts', 'captures', 'needsUser', 'waste', 'demo', 'completion', 'waiting']
+    : ['arc', 'supervision', 'run', 'units', 'edges', 'runOnly', 'needsUser', 'commands', 'host', 'spend', 'plan', 'completion', 'milestones', 'waiting'];
+  if (typeof e.epoch !== 'string' || !Number.isSafeInteger(e.highWater) || e.highWater < 0 || !Number.isSafeInteger(e.revision) || e.revision < 1 || !Number.isFinite(Date.parse(e.checkedAt)) || !Number.isFinite(Date.parse(e.observedAt))
+    || !data || typeof data !== 'object' || data['arc'] !== e.arc || required.some((k) => !Object.hasOwn(data, k)) || !Array.isArray(data['needsUser']) || !Array.isArray(data['milestones'])
+    || (summary ? typeof data['progress'] !== 'object' || data['progress'] === null : !Array.isArray(data['units']) || typeof data['run'] !== 'object' || data['run'] === null || typeof data['host'] !== 'object' || data['host'] === null)) {
+    throw new ConsoleError('protocol', 'malformed canonical console status payload');
+  }
+  canonicalJson(data); // All nested values must remain JSON representable; stdout uses these exact values.
+  return e;
+}

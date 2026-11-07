@@ -203,6 +203,33 @@ progress, resources/waits, spend, findings, obligation observations/census, timi
 There is no single-flight status lock. TUI reads the same records with bounded observation; it never controls admission.
 Actionable watch wakes the architect on durable work/questions, death or timed check-ins and returns a sequence cursor.
 
+The Roadmap web console is a detached repo service, keyed by realpath Git common directory and kept outside
+supervisor/workload containment and arc GC. Start/resume and direct supervisor entry ensure readiness before
+host claim; normal executor exit leaves it running. Explicit console start/stop/status manage an identity-checked
+lease; version replacement waits for death under an abstract-socket mutex. A bind/configuration failure names
+`.roadmap/config.json` webConsole.port and refuses startup, never selecting another port. Defaults are
+0.0.0.0:4747: devcontainers need the wildcard interface for access from the host. No authentication is provided;
+loopback binding is the option for exposed hosts, and logs/results can contain sensitive text.
+
+One observation worker continuously maintains the active/latest and subscribed runs with bounded older-run
+caches. TUI, console and local CLI observation share the verified ObserverJournal capture and status core.
+HTTP status contains the same canonical full/summary objects as CLI stdout, with clock and measured fold telemetry
+captured once, not independently timed reads. Requests fence the journal and revalidate side files/liveness;
+unavailable transport/catch-up falls back locally with a stderr diagnostic, while identity, protocol, malformed
+payload and corrupt evidence failures remain loud. Watch's actionable filtering, cursor and lease stay local.
+Envelopes bind package-version protocol, service instance, repo, arc, epoch, highWater and revision with observation
+and verification timestamps. They describe a verified journal prefix plus sampled external state, not a filesystem
+transaction. SSE invalidates snapshots; five seconds without verification marks content stale and freezes timers.
+
+The browser uses vendored React 18.3.1 and supplied square-geometry components with Roadmap names throughout.
+UnitGraph has explicit milestone gate nodes; member completion cannot infer gate passage. Waiting totals allocate
+completed measurements once: reservation waits and dependency/contingent-edge/milestone/host-pressure/compare/
+deflake/repair-batch admission waits are queued, other admission holds are held, and mixed totals stay unallocated.
+Resource history comes from completed transitions and current queues only from owner-validated sched.json. CPU
+compares recorded reservations with measured run/wall averages; continuous utilization/peaks and individual test
+case bars remain unavailable. GET/HEAD-only versioned APIs serve validated retained evidence with bounded log
+cursors, containment checks, no CORS, same-origin CSP and no evidence HTML execution.
+
 Summary is compact JSON: progress, spend/expectations, milestones, caught, verdicts, captures, needsUser, waste, demo and
 completion. Optional plan.expectations arcUsd/perMilestoneUsd are forecasts, never limits. Caught is lane-red count plus
 gate-revise count plus unique finding keys, with byLens classification; it is not independent-defect or cross-seat

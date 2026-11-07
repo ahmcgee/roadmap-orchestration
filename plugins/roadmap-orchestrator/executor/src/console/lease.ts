@@ -16,7 +16,7 @@ import { gitCommonDir } from '../git/git.ts';
 import { isAlive } from '../host/liveness.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
 import { CONSOLE_PROTOCOL } from '../observation/protocol.ts';
-import { consoleSettings, consolePort, literalHost } from './settings.ts';
+import { consoleSettings, consolePort, literalHost, consoleUrl } from './settings.ts';
 
 export type ConsoleLease = ProcIdentity & Readonly<{
   bootId: BootId; nonce: Nonce; executorVersion: string; repo: AbsPath; common: AbsPath; hostDir: AbsPath; configSource: string;
@@ -34,6 +34,7 @@ export function readConsoleLease(common: AbsPath): ConsoleLease | null {
   if (!existsSync(path)) return null;
   const lease = consoleLease(readJson(path), path);
   if (lease.common !== realpathSync(common)) throw new Error('console lease common-directory identity mismatch');
+  if (lease.url !== consoleUrl(lease.host, lease.port) || lease.bindUrl !== consoleUrl(lease.host, lease.port, false)) throw new Error('console lease URL/binding identity mismatch');
   return lease;
 }
 export const consoleCommon = (repo: AbsPath): AbsPath => absPath(realpathSync(gitCommonDir(repo)));

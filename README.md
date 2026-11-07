@@ -41,12 +41,36 @@ The first run bootstraps the repo and distils the vision with you (it runs the `
 `/roadmap-orchestrator:estate-compaction` at any time to prune what the arcs have accumulated.
 
 The skill installs a managed `/usr/local/bin/roadmap` launcher inside the executor container and refreshes
-it on each skill session. Developers can then use `roadmap tui` in another terminal. After startup and at
-completion, the skill supplies a command pinned to that arc for inspection. The launcher points to the
-installed plugin and the current Node executable; no global npm package or copied executor is required.
+it on each skill session. Startup also ensures the **Roadmap web console**, normally at
+`http://localhost:4747`, and prints its URL on stderr without changing JSON stdout. Developers can use
+`roadmap tui` in another terminal. After startup and at completion, the architect shares the console URL
+and an arc-pinned TUI command. Pin browser inspection with `/#/runs/<arc>/overview`; the initial page
+follows this repo's live run, or its latest retained run. The launcher points to the installed plugin and
+the current Node executable; no global npm package or copied executor is required.
 For manual setup, run `node "<plugin root>/executor/bin/install-roadmap"` (with container administrator
 rights if needed), or pass `--bin-dir <directory>` for a writable PATH directory. Unrelated commands are
 never overwritten. Keep the plugin installed; refresh the launcher after updates or container rebuilds.
+
+The console is a detached, read-only service. `roadmap console start|stop|status --repo <path>` controls
+it independently of executor/watch; normal stop, completion, parking and supervisor death leave it
+available. Explicit console stop persists until another start. Startup refuses an occupied port or invalid
+configuration and names `.roadmap/config.json` `webConsole.port`; it never chooses another port.
+
+The executor normally runs in a devcontainer. The intended default, `0.0.0.0:4747`, makes the console
+reachable from the host through the container's network interface. There is **no authentication**: it
+exposes plans, state, spend, questions and selected logs/results. On an exposed host, use loopback in the
+existing `.roadmap/config.json`: `{"webConsole":{"host":"127.0.0.1","port":4747}}`. Hosts must be IP
+literals; missing fields default without rewriting config. Binding changes need console stop/start, and
+conflicting settings across worktrees are refused. For LAN sharing, replace the printed loopback address
+with the host's reachable hostname/IP. Service metadata lives under the realpath Git common directory's
+`roadmap-console/`, shared across worktrees and outside arc GC.
+
+The page retains timestamped content and reports “Disconnected/stale” after five seconds without a
+verified observation. Milestone nodes show executor gates, including when all member units have passed.
+Time charts show partial recorded effort, not wall-time coverage; overlapping waiting reasons are never
+summed and mixed-category waiting stays unallocated. CPU shows recorded reservations and measured
+run/wall averages, without invented utilization histories, peaks or test-case counts. Assets ship with
+the plugin; there is no runtime package installation or asset download.
 
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 

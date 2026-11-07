@@ -3,11 +3,11 @@ import { commonDirOfRun } from '../answers.ts';
 import type { Run } from '../cli/locate.ts';
 import { EVENTS_FILE } from '../core/log.ts';
 import { join } from 'node:path';
-import { sha256Hex } from '../core/json.ts';
+import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { AbsPath } from '../core/values.ts';
 import { isAlive } from '../host/liveness.ts';
 import { ObservationCache } from '../observation/cache.ts';
-import { CONSOLE_PROTOCOL, ConsoleError, statusBytes, validateEnvelope } from '../observation/protocol.ts';
+import { CONSOLE_PROTOCOL, ConsoleError, statusBytes, validateStatusEnvelope } from '../observation/protocol.ts';
 import { consoleStatusLine, readConsoleLease } from './lease.ts';
 
 /** Absence, death and bounded transport failure alone fall back. Evidence/protocol failures are never concealed. */
@@ -25,7 +25,7 @@ export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean
   const path = join(run.runDir, EVENTS_FILE);
   if (existsSync(path)) { const st = statSync(path); query.set('fenceIdentity', `${st.dev}:${st.ino}`); query.set('fenceSize', String(st.size)); }
   let response: Response;
-  try { response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/runs/${run.arc}/snapshot?${query}`, { signal: AbortSignal.timeout(2_100) }); }
+  try { response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/runs/${run.arc}/status?summary=${summary ? 1 : 0}&${query}`, { signal: AbortSignal.timeout(2_100) }); }
   catch (e) { return local(e instanceof Error ? e.message : String(e)); }
   let raw: unknown;
   try { raw = await response.json(); } catch { throw new ConsoleError('protocol', 'malformed console JSON payload'); }
@@ -34,7 +34,7 @@ export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean
     if (response.status === 503 && error?.code === 'unavailable') return local(error.message ?? 'catch-up timed out');
     throw new ConsoleError('protocol', `console ${error?.code ?? response.status}: ${error?.message ?? 'invalid error payload'}`);
   }
-  const e = validateEnvelope(raw, { instance: lease.nonce, repoId: sha256Hex(common), arc: run.arc });
+  const e = validateStatusEnvelope(raw, { instance: lease.nonce, repoId: sha256Hex(common), arc: run.arc }, summary);
   if (Date.now() - Date.parse(e.checkedAt) > 5_000) throw new ConsoleError('protocol', 'server returned an unchecked stale observation');
-  return statusBytes(e, summary);
+  return canonicalJson(e.data) + '\n';
 }

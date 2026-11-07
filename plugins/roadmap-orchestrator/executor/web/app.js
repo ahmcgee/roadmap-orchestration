@@ -30,9 +30,9 @@
     const rows = model.attention;
     return h(Panel, { title: 'Attention', subtitle: 'Open questions, holds and recorded evidence' },
       h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Owner attention', rows, empty: 'No open owner requests.', columns: [
-        { key: 'blocking', label: 'Impact', render: (v) => v ? 'Blocking' : 'Nonblocking' },
+        { key: 'blocking', label: 'Impact', render: (row) => row.blocking ? 'Blocking' : 'Nonblocking' },
         { key: 'summary', label: 'Request' },
-        { key: 'subject', label: 'Affected', render: (v) => v.type === 'unit' ? h('a', { href: link(arc, tab, 'units', v.unit) }, v.unit) : words(v) },
+        { key: 'subject', label: 'Affected', render: (row) => row.subject.type === 'unit' ? h('a', { href: link(arc, tab, 'units', row.subject.unit) }, row.subject.unit) : words(row.subject) },
         { key: 'reason', label: 'Reason' },
       ] })),
       rows.map((r) => h('article', { key: r.id, id: `attention-${r.id}`, className: 'detailsection' },
@@ -69,12 +69,12 @@
         h('details', null, h('summary', null, 'Waiting reason totals'), h('pre', null, Object.entries(m.time.byReasonMs).map(([reason, ms]) => `${reason}: ${elapsed(ms)}`).join('\n') || 'No recorded waiting.'))),
       h(Panel, { title: 'Resources', subtitle: `${m.resources.unknownQueueStarts} current queue entries have an unknown start.` },
         m.resources.resources.length ? h(D.ResourceSchedule, { ...m.resources, end: Math.max(m.resources.now, 1), tickEvery: Math.max(1, Math.ceil(m.resources.now / 6)), title: 'Recorded resource bookings', timeFormat: (n) => elapsed(n * 1000), onSelect: open }) : h('p', { className: 'muted' }, 'No named-resource or integration-slot bookings have been recorded.'),
-        h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Resource bookings', rows: m.resources.bookings, columns: [{ key: 'resource', label: 'Resource' }, { key: 'label', label: 'Subject' }, { key: 'state', label: 'State' }, { key: 'from', label: 'From', render: (n) => elapsed(n * 1000) }, { key: 'to', label: 'To', render: (n) => n === undefined ? 'open' : elapsed(n * 1000) }] }))),
+        h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Resource bookings', rows: m.resources.bookings, columns: [{ key: 'resource', label: 'Resource' }, { key: 'label', label: 'Subject' }, { key: 'state', label: 'State' }, { key: 'from', label: 'From', render: (row) => elapsed(row.from * 1000) }, { key: 'to', label: 'To', render: (row) => row.to === undefined ? 'open' : elapsed(row.to * 1000) }] }))),
       h(Panel, { title: 'CPU evidence', subtitle: 'Measured run time / measured wall time, compared with the recorded reservation. Demand is shown separately.' },
         h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Recorded CPU evidence', rows: m.cpu, empty: 'No measured CPU or reservations are recorded.', columns: [
-          { key: 'unit', label: 'Subject' }, { key: 'reserved', label: 'Reserved tokens', render: (n) => n ?? 'unrecorded' },
-          { key: 'average', label: 'Measured cores', render: (n, row) => n == null ? 'unmeasured' : h('div', { role: 'img', 'aria-label': `Measured average ${n.toFixed(2)} cores; reserved ${row.reserved ?? 'unrecorded'} tokens` }, h('span', { className: 'mono' }, n.toFixed(2)), h('div', { 'aria-hidden': 'true' }, h(D.BudgetMeter, { budget: row.reserved || 0, avg: n, showText: false }))) },
-          { key: 'demand', label: 'Demand basis', render: (n, r) => `${n ?? 'unrecorded'} · ${r.basis}` },
+          { key: 'unit', label: 'Subject' }, { key: 'reserved', label: 'Reserved tokens', render: (row) => row.reserved ?? 'unrecorded' },
+          { key: 'average', label: 'Measured cores', render: (row) => row.average == null ? 'unmeasured' : h('div', { role: 'img', 'aria-label': `Measured average ${row.average.toFixed(2)} cores; reserved ${row.reserved ?? 'unrecorded'} tokens` }, h('span', { className: 'mono' }, row.average.toFixed(2)), h('div', { 'aria-hidden': 'true' }, h(D.BudgetMeter, { budget: row.reserved || 0, avg: row.average, showText: false }))) },
+          { key: 'demand', label: 'Demand basis', render: (row) => `${row.demand ?? 'unrecorded'} · ${row.basis}` },
         ] })), h('p', { className: 'backlog' }, 'Continuous CPU utilization, peaks and test-case counts are not recorded.')));
   }
   function Dialog({ title, close, children }) {

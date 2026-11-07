@@ -64,3 +64,40 @@ test('partial tails stay read-only, journal replacement resets epoch, corrupt co
   appendFileSync(path, 'broken\n');
   assert.throws(() => cache.read(run), /corrupt|JSON|Unexpected/);
 });
+
+
+test('owner death and owner-validated scheduler invalidation advance revision without journal changes', async (t) => {
+  const { spawn } = await import('node:child_process');
+  const { claimHost, releaseHost } = await import('../src/host/lock.ts');
+  const { openHostDir } = await import('../src/host/hostdir.ts');
+  const { publishOwner } = await import('../src/host/owner.ts');
+  const { selfIdentity } = await import('../src/host/liveness.ts');
+  const { identityOf } = await import('../src/contain/proc.ts');
+  const { absPath } = await import('../src/core/values.ts');
+  const { cache, run, hostDir, d } = fixture();
+  openHostDir(hostDir);
+  const claim = await claimHost(hostDir, { ...run, repo: absPath(d.repo), supervisor: selfIdentity() }, async () => ({ kind: 'reconciled' }));
+  assert.equal(claim.kind, 'claimed'); if (claim.kind !== 'claimed') return assert.fail();
+  const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+  t.after(() => { child.kill('SIGKILL'); releaseHost(hostDir, claim.claim); });
+  const id = identityOf(child.pid!); publishOwner(hostDir, claim.claim, { pid: id.pid, start: id.start });
+  const path = join(run.runDir, 'sched.json');
+  writeFileSync(path, JSON.stringify({ v: 2, arc: run.arc, pid: id.pid, tasks: [], queue: [{ unit: 'u1', stage: 'pre-build', attempt: 1, publication: false, request: { named: [], pools: [], cpu: 1, publication: false }, envBlocked: false, pressureBlocked: false, queuedAt: Date.now() }], jobQueue: [], drains: [] }));
+  const first = cache.read(run); assert.equal(first.data.display.status.run.owner.state, 'alive');
+  assert.equal(first.data.display.status.host.queue.length, 1);
+  const ended = new Promise<void>((r) => child.once('exit', () => r())); child.kill('SIGKILL'); await ended;
+  const next = cache.read(run);
+  assert.equal(next.highWater, first.highWater); assert.ok(next.revision > first.revision);
+  assert.equal(next.data.display.status.run.owner.state, 'dead');
+  assert.deepEqual(next.data.display.status.host.queue, []);
+});
+
+
+test('maintained runs survive the bounded older-run LRU; an evicted cursor requires an explicit new epoch', () => {
+  const first = fixture(); first.cache.pin(first.run.arc);
+  const initial = first.cache.read(first.run);
+  const others = Array.from({ length: 9 }, () => { const f = parityArc(); const run = { runDir: f.runDir, arc: arcId(f.d.arc) }; return { run, envelope: first.cache.read(run) }; });
+  assert.equal(first.cache.read(first.run).data, initial.data, 'active/subscribed captures are pinned');
+  const oldest = others[0]!;
+  assert.throws(() => first.cache.read(oldest.run, { epoch: oldest.envelope.epoch }), /epoch changed/);
+});

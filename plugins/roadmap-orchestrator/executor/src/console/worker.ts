@@ -1,7 +1,7 @@
 import { existsSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
-import { invocationDirName, invocationIdOf, parseInvocationId } from '../core/ids.ts';
+import { type ArcId, invocationDirName, invocationIdOf, parseInvocationId } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { RUNNER_FILE_READERS } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -10,12 +10,14 @@ import { ObservationCache } from '../observation/cache.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, type Admission, type Envelope } from '../observation/protocol.ts';
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
-import { consoleModel } from './model.ts';
+import { ConsoleModels } from './model.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
 const cache = new ObservationCache(args.hostDir, args.instance, args.repoId);
 const subscribed = new Set<string>();
+const maintained = new Set<string>();
+const models = new ConsoleModels();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
 function read(arc: string, admission: Admission = {}) { return cache.read(retainedRun(args.common, args.hostDir, arc), admission); }
 function result(e: Envelope, id: string) {
@@ -47,7 +49,10 @@ function route(path: string[], params: Record<string, string>) {
     if (error instanceof ConsoleError && error.code === 'not-found' && (section === 'snapshot' || section === 'status')) throw new ConsoleError('unavailable', 'run has no retained observation yet');
     throw error;
   }
-  if (path.length === 3 && section === 'snapshot') return { ...e, data: { ...e.data, console: consoleModel(e) } };
+  if (path.length === 3 && section === 'snapshot') {
+    const { events: _events, ...displayData } = e.data;
+    return { ...e, data: { ...displayData, console: models.read(e) } };
+  }
   if (path.length === 3 && section === 'status') {
     if (params['summary'] !== undefined && params['summary'] !== '0' && params['summary'] !== '1') throw new ConsoleError('invalid', 'summary is 0 or 1');
     return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };
@@ -84,7 +89,7 @@ function integer(raw: string) {
 parentPort!.on('message', (m: { id: number; path?: string[]; params?: Record<string, string>; subscribe?: string; unsubscribe?: string }) => {
   try {
     if (m.subscribe) { subscribed.add(m.subscribe); cache.pin(m.subscribe); }
-    if (m.unsubscribe) { subscribed.delete(m.unsubscribe); cache.unpin(m.unsubscribe); }
+    if (m.unsubscribe) { subscribed.delete(m.unsubscribe); if (!maintained.has(m.unsubscribe)) cache.unpin(m.unsubscribe); }
     parentPort!.postMessage({ id: m.id, value: m.path ? route(m.path, m.params ?? {}) : null });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -96,7 +101,11 @@ function tick() {
   timer = null;
   try {
     const runs = retainedRuns(args.common, args.hostDir);
-    const arcs = new Set([runs.selected, runs.runs[0]?.arc, ...subscribed].filter((a): a is string => Boolean(a)));
+    const defaults = new Set<string>([runs.selected, runs.runs[0]?.arc].filter((a): a is ArcId => a !== null && a !== undefined));
+    for (const arc of maintained) if (!defaults.has(arc) && !subscribed.has(arc)) cache.unpin(arc);
+    maintained.clear();
+    for (const arc of defaults) { maintained.add(arc); cache.pin(arc); }
+    const arcs = new Set([...defaults, ...subscribed]);
     for (const arc of arcs) {
       try { const e = read(arc); parentPort!.postMessage({ kind: 'checked', arc, epoch: e.epoch, highWater: e.highWater, revision: e.revision, checkedAt: e.checkedAt }); }
       catch (error) { parentPort!.postMessage({ kind: 'error', arc, error: err(error) }); }

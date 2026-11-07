@@ -41,7 +41,7 @@ stay under the repo; PlanPath resolves beside plan.json; AbsPath is absolute. Co
 | Routing and effective profile/fallback | `src/routing/{types,layers,profiles,eligibility}.ts` |
 | Journal intents/done/abort/facts | `src/core/events.ts` |
 | Finding ledger/disputes, design, pins | `src/core/{review,design,pins,stale}.ts` |
-| Status, summary and TUI projections | `src/status.ts`, `src/status/summary.ts`, `src/tui/` |
+| Status, summary, TUI and web observations | `src/status.ts`, `src/status/summary.ts`, `src/observation/`, `src/console/`, `src/tui/` |
 
 ## Input contract
 
@@ -506,7 +506,7 @@ It sums completed reserve and stage-admitted measurements. Simultaneous reason t
 legacy measurements remain unmeasured. Current blockers stay in sched.json; no active tail or recovery downtime is
 extrapolated. Summary retains the lightweight shared projection.
 
-Status is read-only without a lock. Summary fields: arc, state, planRev, supervision, progress `{total,merged,states,held,remaining}`,
+Status is read-only without a lock. `captureStatus` carries one clock, source stamps and measured fold telemetry; full and summary share its core derivation. The TUI and console use the shared observer; console-backed CLI output remains canonicalJson(value)+"\n", without URL/freshness fields. Summary fields: arc, state, planRev, supervision, progress `{total,merged,states,held,remaining}`,
 spend `{costUsd,expectedUsd,differenceUsd,estimatedCalls,unavailableCalls}`, milestones, caught, verdicts, captures,
 needsUser, waste, demo, completion. Caught is laneReds + gateRevisions + uniqueFindings, with byLens counts of unique keys;
 not a cross-seat unique-defect metric. Milestone costs include members/re-entries/polish and walk/compare jobs, not all
@@ -767,6 +767,7 @@ row in that group (`src/preflight/checks.ts`).
 `supervisor.state.json`, `supervisor.ready.<generation>` / `supervisor.failed.<generation>`,
 `executor.<generation>.out`, `.err`, `.exit.json`, supervisor stdout/stderr logs, `exit.reason.json` and `demo.json`.
 Generation/owner identity guards stale files. Supervisor crash history survives restarts; three crashes/hour stop it.
+The independent console lease/logs are under `<realpath-git-common-dir>/roadmap-console/`, never this host directory or an arc directory; see “Roadmap web console” below.
 
 Temporary dev.32/schema-1 handling runs before the host claim: a live previous-schema lock/recovery holder (or
 owner executor) refuses startup with exit 75 and must be stopped with its own `roadmap stop`. With no live holder,
@@ -1094,6 +1095,96 @@ Each history list retains the ten most recent items; unmet clauses are spec-boun
 `--bin-dir` chooses a writable PATH directory. It refuses unrelated existing commands. Refresh on plugin/container
 updates. The TUI reads retained runtime and captured document identities without making runtime writes or controlling
 admission. Closing it leaves the executor running; status/usage observation is bounded and read-only.
+
+### Roadmap web console
+
+`.roadmap/config.json` accepts `webConsole:{host?,port?}`. Missing fields default to `0.0.0.0:4747`
+without rewriting the file. Host must be an IPv4/IPv6 literal; port is an integer 1–65535; unknown keys
+are refused. This is the devcontainer default: the wildcard interface makes the console reachable from
+the host through the container network. No auth is provided. On exposed hosts, choose loopback (`127.0.0.1`
+or `::1`); plans, state, spend, questions and selected logs/results can contain sensitive text. Port 4318 is
+reserved for OTLP/HTTP, not the console. EADDRINUSE or invalid config refuses startup with a message naming
+`.roadmap/config.json` webConsole.port, without a fallback port. Binding changes require console stop/start;
+conflicting worktree settings name the startup config source.
+
+`console start|stop|status --repo` prints the same console status/URL line to stderr only. `status` also
+prints it on stderr, preserving legacy JSON stdout. Wildcard binds use loopback in local connection URLs;
+LAN sharing substitutes the reachable machine hostname/IP. Startup ensures the detached service before
+supervisor launch, and direct supervisor entry ensures it before host claim. No supervisor tick ensures it:
+explicit console stop persists until another start; normal stop/drain/park/completion/death leaves it running.
+
+`<common>/roadmap-console/lease.json` is outside arc GC, shared across worktrees and keyed by realpath
+Git common directory. Its closed schema is `{pid,start,bootId,nonce,executorVersion,repo,common,hostDir,
+configSource,host,port,bindUrl,url,ready,startedAt,lastObservation}`. Identity is bootId/PID/start, not PID
+alone. Nonce identifies the instance. An abstract-socket mutex serializes concurrent starters, stop and
+replacement. Readiness is published only after bind. Dead identities are reclaimed; a version replacement
+identity-checks SIGTERM then bounded SIGKILL, awaits death and rebuilds caches. Stopping never signals the
+executor or actionable watch. Only console lease/log metadata is written; schema remains 2, including
+adoption of dev.54 state.
+
+A dedicated observation worker polls every second without browser clients; filesystem notices accelerate
+polling. It discovers retained (including refused) arcs, maintains active/latest/subscribed arcs and an LRU
+of eight older captures. Default browser selection follows this repo's claim, otherwise latest retained;
+`/#/runs/<arc>/overview` pins a run. Only ObserverJournal.read verifies journal prefixes, retaining incomplete
+tails without repair; inode/truncation/anchor resets change epoch. Derived materialized values are detached
+from the cursor before another read. Dependency stamps include identity/size/mtime/ctime and membership;
+refs, owner/liveness, scheduler, heartbeat, needs-user, answers, receipts and outputs invalidate independently
+of the journal. A heartbeat updates volatile fields without rebuilding expensive evidence. Existing hash-keyed
+Git/snapshot and ended-invocation/transcript caches remain in use.
+
+An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
+Protocol is the exact executor package version. HighWater is the verified event prefix; revision also changes
+with side files/liveness. This is a verified journal prefix plus sampled external state, not a filesystem
+transaction. Capture checks dependency stamps before/after and retries changed inputs. Requests accept
+`minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and `fenceSize` captured cheaply
+from the journal. The cursor must inspect through that fence, excluding incomplete trailing lines. Request
+admission rechecks dependencies and coalesces catch-up, bounded to two seconds. Reset/conflict (409),
+unavailable (503) and corruption (500) are explicit; old epochs/lower watermarks/unchecked caches are not
+silently returned. Absent/dead/unreachable servers or unavailable catch-up fall back locally with a stderr
+diagnostic. Protocol/version/identity mismatch, malformed payload and corrupt evidence do not fall back.
+`host.log.foldMs` and compactionDue retain measured fold semantics; elapsed time is not zeroed for parity.
+
+All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 405), no-store, no CORS:
+
+| Path after version | Response data |
+|---|---|
+| `/runs` | Retained runs and current selection |
+| `/runs/:arc/snapshot` | Envelope with canonical status/summary, observer detail and display adapters |
+| `/runs/:arc/status?summary=0|1` | Envelope containing the unchanged canonical CLI object |
+| `/runs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
+| `/runs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
+| `/runs/:arc/invocations/:id/log?source=stdout|stderr|runner.log&after=N` | At most 64 KiB of source bytes, next cursor, identity, text and lossless base64 bytes |
+| `/runs/:arc/events` | SSE revision/heartbeat/reset/error events with epoch:revision IDs |
+
+Invocation route IDs are the existing `seq-ordinal` directory keys: canonical invocation IDs contain `/`
+and `#`, while routes deliberately reject encoded separators. Keys resolve only to journal-recorded
+invocations of the named run. Log requests can echo `identity` to detect replacement; after beyond the
+current end returns reset. SSE reconnects with Last-Event-ID; missed revisions reset rather than replaying
+unbounded history. Slow consumers receive reset, not unbounded buffering. Heartbeats carry checkedAt;
+after five seconds without verification the browser shows “Disconnected/stale”, retaining timestamped
+content and freezing displayed timers. A browser on another package protocol requires reload.
+
+Static paths come only from an explicit content-hashed manifest. HTML revalidates; immutable assets include
+locally vendored React/ReactDOM 18.3.1 UMD, supplied component bundle/tokens/fonts and plain createElement app.js.
+`web/vendor/VENDOR.md` records origins, licences as supplied, registry tarball integrity and per-file SHA-256.
+No runtime dependency, build, install or download is required. Roadmap product names/accessibility labels
+exclude supplied branding and marks. Evidence is text only. Traversal, encoded separators and symlink escapes
+are refused; evidence reads verify containment of the opened descriptor. CSP is same-origin with nosniff;
+there are no commands, credential reads, shell actions or arbitrary filesystem browsing.
+
+The graph is UnitGraph with explicit executor milestone gates (never MilestoneGraph's inferred verdict).
+Merged maps to passed; preparing/running to active; held/blocked/parked to held; waiting/ready to pending;
+cut/superseded stay labelled withdrawn, never passed. `completedWaiting` exposes each completed measurement
+before aggregation. Reservation waits are queued; dependency/contingent-edge/milestone/host-pressure/compare/
+deflake/repair-batch admission waits are queued; others are held. Only a total with one shared category is
+allocated; mixed totals remain unallocated. Never sum overlapping byReasonMs. Time bars are partial recorded
+effort, not wall-time coverage; unmeasured reservations and reason totals stay separate. Resource bookings
+use completed transitions, including integration-slot and named pools; current queuedAt comes only from
+owner-validated sched.json and missing starts remain unknown. CPU compares WorkRun.reservedCpu with measured
+runMs/wallMs; demand is separate. Continuous utilization, peaks, sparklines and standardized individual test
+case bars are not inferred. Certification shows recorded lane verdicts. Attention includes blocking and
+nonblocking subjects, recommendations/options/evidence without response controls. StepLog has one phase per
+recorded invocation, neutral info lines and no inferred timestamps/levels.
 
 ### dev.42 publication adoption and item settlement
 

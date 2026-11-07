@@ -40,6 +40,8 @@ function bookings(events: readonly Event[], origin: number) {
     for (const r of x.resources) {
       const resource = resourceId(r); if (!resource) continue;
       if (x.edge.type === 'reserve' || x.edge.type === 'reclaim') {
+        const previous = active.get(r);
+        if (previous) { previous.to = (Date.parse(e.at) - origin) / 1000; previous.state = 'done'; }
         const row: Booking = { id: `${e.op}:${r}`, resource, label: 'unit' in x.holder ? x.holder.unit : x.holder.type,
           ...('unit' in x.holder ? { unitId: x.holder.unit } : {}), from: (Date.parse(e.at) - origin) / 1000, state: 'holding' };
         active.set(r, row); rows.push(row);
@@ -59,14 +61,18 @@ export function consoleModel(e: Envelope) {
   const edges: [string, string][] = s.edges.flatMap((edge) => edge.type === 'after' ? [[edge.effective, edge.unit] as [string, string]] : edge.type === 'milestone' ? [[`milestone:${edge.milestone}`, edge.unit] as [string, string]] : []);
   for (const m of plan?.milestones ?? []) for (const unit of m.units) edges.push([unit, `milestone:${m.id}`]);
   const activities = display.invocations.map((i) => {
-    const state = activityState(i);
+    let state = activityState(i);
+    const body = JSON.parse(i.body);
+    // A pruned result still has its validated terminal verdict in the journal. Completion is never a queue.
+    const terminal = body.settlement?.outcome;
+    if (state === 'result' && terminal?.kind === 'result') state = terminal.summary.type === 'command' ? terminal.summary.verdict : terminal.summary.outcome;
     const kind = i.execution ?? (i.work ? i.work.kind === 'build' ? 'agent' : 'command' : null);
     const elapsedMs = i.endedAt ? i.work?.measured?.wallMs ?? Math.max(0, Date.parse(i.endedAt) - Date.parse(i.startedAt)) : undefined;
     const status: GraphStatus = !i.endedAt && state === 'running' ? 'active' : /^(success|pass|probe passed)$/.test(state) ? 'passed' : /fail|fault|lost|malformed|refusal|stall|timeout/.test(state) ? 'failed' : /held|abort|unowned|blocked/.test(state) ? 'held' : 'pending';
     return { id: i.id, routeId: invocationDirName(invocationIdOf(i.id)), unit: i.unit, stage: i.role, attempt: i.attempt,
       name: `${i.role} · attempt ${i.attempt} · ${state}`, kind: kind === 'agent' ? 'agentic' as const : 'deterministic' as const,
       execution: kind ?? 'unavailable', status, startedAt: i.startedAt, ...(elapsedMs === undefined ? {} : { elapsedMs }),
-      detail: project(JSON.parse(i.body)).map((r) => r.text).join('\n'), ...(i.model ? { model: i.model } : {}) };
+      detail: project(body).map((r) => r.text).join('\n'), ...(i.model ? { model: i.model } : {}) };
   });
   const timeRows = new Map<string, { id: string; label: string; agent: number; deterministic: number; held: number; queued: number }>();
   const timeRow = (id: string) => { let r = timeRows.get(id); if (!r) { r = { id, label: id, agent: 0, deterministic: 0, held: 0, queued: 0 }; timeRows.set(id, r); } return r; };
@@ -110,4 +116,18 @@ export function consoleModel(e: Envelope) {
     resources: { resources: [...resources.values()], bookings: resourceRows, origin, now: Math.max(0, (Date.parse(e.checkedAt) - origin) / 1000), unknownQueueStarts: queue.filter((q) => q.queuedAt === undefined).length },
     attention: requests.map((r) => ({ id: r.id, blocking: r.blocking, summary: r.summary, recommendation: r.recommendation, options: r.options, subject: r.subject, evidence: r.evidence, evidenceLinks: r.evidence.map((path) => { const key = /\/inv\/([1-9][0-9]*-[1-9][0-9]*)(?:\/|$)/.exec(path)?.[1]; return activities.some((a) => a.routeId === key) ? key! : null; }), reason: r.reason })),
   };
+}
+
+/** Stable adapters are keyed by the actual captured dependencies, independent of heartbeat/verification clocks. */
+export class ConsoleModels {
+  #models = new Map<string, ReturnType<typeof consoleModel>>();
+  read(e: Envelope): ReturnType<typeof consoleModel> {
+    const key = `${e.arc}:${e.epoch}:${e.data.capture.source}`;
+    let model = this.#models.get(key);
+    if (!model) model = consoleModel(e);
+    this.#models.delete(key); this.#models.set(key, model);
+    while (this.#models.size > 8) this.#models.delete(this.#models.keys().next().value!);
+    const now = Math.max(0, (Date.parse(e.checkedAt) - model.resources.origin) / 1000);
+    return { ...model, resources: { ...model.resources, now, bookings: model.resources.bookings.map((b) => b.state === 'waiting' ? { ...b, to: now } : b) } };
+  }
 }

@@ -73,7 +73,28 @@ test('invalid config names the port setting; stale PID identity is never signall
   await stopConsole(f.repo);
   const { selfIdentity } = await import('../src/host/liveness.ts');
   const self = selfIdentity();
+  writeFileSync(join(serviceDir(f.common), 'lease.json'), JSON.stringify({ ...lease, url: 'http://127.0.0.1:1' }));
+  assert.throws(() => readConsoleLease(f.common), /URL\/binding identity mismatch/);
   writeFileSync(join(serviceDir(f.common), 'lease.json'), JSON.stringify({ ...lease, pid: self.pid, start: self.start + 1 }));
   assert.equal((await stopConsole(f.repo)).state, 'stale');
   assert.equal(process.pid, self.pid);
+});
+
+test('real console CLI keeps stdout empty, reports identical status URLs, restores after stop and bounds forced termination', { timeout: 25_000 }, async (t) => {
+  const { runFixture } = await import('./helpers/proc.ts');
+  const f = consoleFixture(); setConsolePort(f.repo, freeConsolePort());
+  t.after(() => stopConsole(f.repo));
+  const command = (action: string) => runFixture('exec-cli.ts', [f.hostDir, 'console', action, '--repo', f.repo], { timeoutMs: 15_000, env: process.env });
+  const start = await command('start'); assert.equal(start.code, 0, start.stderr); assert.equal(start.stdout, '');
+  const lease = readConsoleLease(f.common)!; assert.ok(start.stderr.includes(lease.url));
+  const status = await command('status'); assert.equal(status.code, 0); assert.equal(status.stdout, ''); assert.equal(status.stderr, start.stderr);
+  const legacy = await runFixture('exec-cli.ts', [f.hostDir, 'status', '--summary', '--repo', f.repo, '--arc', f.arc], { env: process.env, timeoutMs: 15_000 });
+  assert.equal(legacy.code, 0, legacy.stderr); const value = JSON.parse(legacy.stdout);
+  assert.equal(value.arc, f.arc); assert.equal(Object.hasOwn(value, 'observedAt'), false); assert.ok(legacy.stderr.includes(lease.url));
+  const stopped = await command('stop'); assert.equal(stopped.code, 0, stopped.stderr); assert.equal(stopped.stdout, ''); assert.match(stopped.stderr, /stopped/);
+  assert.equal((await command('status')).stderr, stopped.stderr);
+  const restart = await command('start'); assert.equal(restart.code, 0, restart.stderr);
+  const next = readConsoleLease(f.common)!; assert.notEqual(next.nonce, lease.nonce);
+  process.kill(next.pid, 'SIGSTOP'); // TERM cannot be handled; the production bounded KILL path must end it.
+  const forced = await command('stop'); assert.equal(forced.code, 0, forced.stderr); assert.equal(isAlive(next, next.bootId), false);
 });
