@@ -1,4 +1,4 @@
-// Adapters contain only recorded quantities. DS states supplement, never replace, executor labels.
+// Adapters contain only recorded quantities. Signal states supplement, never replace, executor labels.
 import { type Event, type IntentOf } from '../core/events.ts';
 import { invocationDirName, invocationIdOf, parseResourceUnit, type ResourceUnit } from '../core/ids.ts';
 import type { Waited, WaitReason } from '../core/waiting.ts';

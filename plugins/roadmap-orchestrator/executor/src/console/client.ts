@@ -32,7 +32,7 @@ export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean
   const path = join(run.runDir, EVENTS_FILE);
   if (existsSync(path)) { const st = statSync(path); query.set('fenceIdentity', `${st.dev}:${st.ino}`); query.set('fenceSize', String(st.size)); }
   let response: Response;
-  try { response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/runs/${run.arc}/status?summary=${summary ? 1 : 0}&${query}`, { signal: AbortSignal.timeout(2_100) }); }
+  try { response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${run.arc}/status?summary=${summary ? 1 : 0}&${query}`, { signal: AbortSignal.timeout(2_100) }); }
   catch (e) { return local(e instanceof Error ? e.message : String(e)); }
   let raw: unknown;
   try { raw = await response.json(); } catch { throw new ConsoleError('protocol', 'malformed console JSON payload'); }

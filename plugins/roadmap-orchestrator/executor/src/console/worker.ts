@@ -26,7 +26,7 @@ const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.c
 function read(arc: string, admission: Admission = {}) { return cache.read(retainedRun(args.common, args.hostDir, arc), admission); }
 function result(e: Envelope, id: string) {
   const selected = e.data.display.invocations.find((i) => i.id === id);
-  if (!selected) throw new ConsoleError('not-found', 'invocation is not recorded in this run');
+  if (!selected) throw new ConsoleError('not-found', 'invocation is not recorded in this arc');
   const inv = invocationIdOf(id);
   const dir = invocationDir(e.data.display.run.runDir, inv);
   const bytes = readEvidence(e.data.display.run.runDir, join(dir, 'result.json'));
@@ -43,9 +43,9 @@ function result(e: Envelope, id: string) {
   return { record, report, raw: JSON.stringify(record, null, 2), lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
 }
 function route(path: string[], params: Record<string, string>) {
-  if (path.length === 1 && path[0] === 'runs') return { protocol: CONSOLE_PROTOCOL, ...retainedRuns(args.common, args.hostDir) };
+  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, ...retainedRuns(args.common, args.hostDir) };
   const [runs, arc, section, id, file] = path;
-  if (runs !== 'runs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
+  if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
   const admission: Admission = {
     ...(params['epoch'] !== undefined ? { epoch: params['epoch'] } : {}),
     ...(params['revision'] !== undefined ? { revision: integer(params['revision']) } : {}),
@@ -55,7 +55,7 @@ function route(path: string[], params: Record<string, string>) {
   let e: Envelope;
   try { e = read(arc, admission); }
   catch (error) {
-    if (error instanceof ConsoleError && error.code === 'not-found' && (section === 'snapshot' || section === 'status')) throw new ConsoleError('unavailable', 'run has no retained observation yet');
+    if (error instanceof ConsoleError && error.code === 'not-found' && (section === 'snapshot' || section === 'status')) throw new ConsoleError('unavailable', 'arc has no retained observation yet');
     throw error;
   }
   if (path.length === 3 && section === 'snapshot') {
@@ -78,7 +78,7 @@ function route(path: string[], params: Record<string, string>) {
   if (path.length === 5 && section === 'invocations' && id) {
     if (!/^[1-9][0-9]*-[1-9][0-9]*$/.test(id)) throw new ConsoleError('invalid', 'invocation route ID is seq-ordinal');
     const recorded = e.data.display.invocations.find((i) => invocationDirName(invocationIdOf(i.id)) === id);
-    if (!recorded) throw new ConsoleError('not-found', 'invocation is not recorded in this run');
+    if (!recorded) throw new ConsoleError('not-found', 'invocation is not recorded in this arc');
     if (file === 'history') return { ...e, data: histories.page(e, id, params['before'], params['identity']) };
     if (file === 'history-field') return { ...e, data: histories.field(e, id, params['ref'] ?? '', params['field'] ?? '', integer(params['after'] ?? '0'), params['identity']) };
     if (file === 'prompt') return { ...e, data: histories.prompt(e, id, integer(params['after'] ?? '0')) };
@@ -128,7 +128,7 @@ function tick() {
   timer = null;
   try {
     const runs = retainedRuns(args.common, args.hostDir);
-    const defaults = new Set<string>([runs.selected, runs.runs[0]?.arc].filter((a): a is ArcId => a !== null && a !== undefined));
+    const defaults = new Set<string>([runs.selected, runs.arcs[0]?.arc].filter((a): a is ArcId => a !== null && a !== undefined));
     for (const arc of maintained) if (!defaults.has(arc) && !subscribed.has(arc)) cache.unpin(arc);
     maintained.clear();
     for (const arc of defaults) { maintained.add(arc); cache.pin(arc); }

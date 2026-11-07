@@ -6,13 +6,12 @@ import { CONSOLE_PROTOCOL } from '../observation/protocol.ts';
 import { readEvidence } from './evidence.ts';
 
 const root = fileURLToPath(new URL('../../web/', import.meta.url));
-const FILES = ['app.js', 'app.css', 'vendor/react.production.min.js', 'vendor/react-dom.production.min.js', 'vendor/bundle.js', 'vendor/bundle.css', 'vendor/tokens.css',
-  'vendor/fonts/space-grotesk.woff2', 'vendor/fonts/spectral-400.woff2', 'vendor/fonts/spectral-500.woff2', 'vendor/fonts/spectral-italic-400.woff2', 'vendor/fonts/ibm-plex-mono-400.woff2'] as const;
+const FILES = JSON.parse(readEvidence(root, join(root, 'manifest.json')).toString('utf8')) as string[];
 const ASSETS = FILES.map((name) => ({ name, bytes: readEvidence(root, join(root, name)) }));
 const digest = sha256Hex(ASSETS.map((f) => `${f.name}:${sha256Hex(f.bytes)}`).join('\n'));
 export const ASSET_ROOT = `/assets/${digest}`;
 const MANIFEST = new Map(ASSETS.map((f) => [`${ASSET_ROOT}/${f.name}`, f]));
-const TYPES: Record<string, string> = { '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.woff2': 'font/woff2' };
+const TYPES: Record<string, string> = { '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8', '.html': 'text/html; charset=utf-8' };
 export async function staticResponse(path: string, req: IncomingMessage, res: ServerResponse): Promise<boolean> {
   if (path === '/') {
     const html = readEvidence(root, join(root, 'index.html')).toString('utf8').replaceAll('__ASSET_ROOT__', ASSET_ROOT).replaceAll('__PROTOCOL__', CONSOLE_PROTOCOL);

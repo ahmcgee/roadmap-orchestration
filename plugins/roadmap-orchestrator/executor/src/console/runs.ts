@@ -21,10 +21,10 @@ export function retainedRuns(common: AbsPath, hostDir: AbsPath) {
   }).sort((a, b) => b.at.localeCompare(a.at) || a.arc.localeCompare(b.arc));
   const claim = readClaim(hostDir);
   const live = claim && realpathSync(commonDirOfRun(claim.runDir)) === realpathSync(common) ? runs.find((r) => r.arc === claim.arc) : null;
-  return { runs, selected: live?.arc ?? runs[0]?.arc ?? null };
+  return { arcs: runs, selected: live?.arc ?? runs[0]?.arc ?? null };
 }
 export function retainedRun(common: AbsPath, hostDir: AbsPath, id: string): Run {
-  const found = retainedRuns(common, hostDir).runs.find((r) => r.arc === id);
-  if (!found) throw new ConsoleError('not-found', 'run is absent or pruned');
+  const found = retainedRuns(common, hostDir).arcs.find((r) => r.arc === id);
+  if (!found) throw new ConsoleError('not-found', 'arc is absent or pruned');
   return found;
 }

@@ -24,6 +24,19 @@ export function waitWords(w:WaitingFor|null):string[] {
 const housekeepingStages=new Set(['quiesce','evidence','salvage','teardown']);
 const outcomeWords=(outcome:string)=>({empty:'No workloads running',captured:'Evidence captured',committed:'Changes saved','committed-contract-touched':'Changes saved; contract updated',released:'Resources released','cleanup-failed':'Cleanup failed','executor-fault':'Executor fault','commit-failed':'Commit failed',unmerged:'Unmerged changes',approve:'Approved',revise:'Changes requested',green:'Passed',success:'Succeeded',published:'Published','process-fault':'Process fault',red:'Failed'}[outcome]??outcome.replaceAll('-',' '));
 type Step={housekeeping:boolean;id:string;stage:string;label:string;attempt:number;sequence:number;round:number;at:string;endedAt:string|null;outcome:string;findingTitles:string[];activities:string[];notes:string[]};
+/** Human display text is separate from the complete agent-facing intent. */
+export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): string {
+ const prose = intent
+  .replace(/\b(?:contract|spec):[\w:#./-]+/gi, '')
+  .replace(/`[^`]+`/g, '')
+  .replace(/(?:https?:\/\/|(?:\.?\.?\/)?[\w@*{}.-]+\/)[^\s,;]+/g, '')
+  .replace(/\b[\w*-]+\.(?:[cm]?[jt]sx?|json|md|css|html|ya?ml|toml|sh)\b/g, '')
+  .replace(/\b(?:[a-z]+(?:[A-Z][a-z0-9]+)+|[a-z0-9]+(?:[_-][a-z0-9]+)+)\b/g, '')
+  .split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
+  .replace(/\s+/g, ' ').replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '').trim();
+ const value = prose || fallback;
+ return value.length <= 60 ? value : value.slice(0, 57).replace(/\s+\S*$/, '').trimEnd() + '…';
+}
 export function presentation(e:Envelope){
  const s=e.data.display.status,events=e.data.events;
  const startedAt=events[0]?.at??e.observedAt;
@@ -68,14 +81,16 @@ export function presentation(e:Envelope){
  const units=s.units.map(u=>{
   const specEntry=e.data.display.estate.find(r=>r.kind==='specification'&&r.id===u.unit);const spec=specEntry?record(JSON.parse(specEntry.body)):{};
   const acceptance=Array.isArray(spec['acceptance'])?spec['acceptance'].map(a=>String(record(a)['clause']??'')).filter(Boolean):[];
-  const title=typeof spec['title']==='string'?spec['title']:acceptance[0]??(typeof spec['intent']==='string'?spec['intent']:String(u.unit));
+  const intent=typeof spec['intent']==='string'?spec['intent']:acceptance.join('\n');
+  const existingTitle=typeof spec['title']==='string'&&spec['title'].trim()?spec['title']:acceptance[0];
+  const title=existingTitle&&existingTitle.length<=60?existingTitle:shortUnitTitle(intent,String(u.unit));
   const journey=[...steps.values()].filter(st=>st.id.startsWith(`${u.unit}:`));
   const invs=e.data.display.invocations.filter(i=>i.unit===u.unit);const first=journey[0]?.at??invs.at(-1)?.startedAt??null;
   const last=u.state==='merged'||u.state==='cut'||u.state==='superseded'||u.state==='parked'?journey.at(-1)?.endedAt??null:null;
   const queue=s.host.queue.find(q=>q.unit===u.unit);
   const reasons=waitWords(u.waitingFor);if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${journey.at(-1)?`: ${journey.at(-1)!.outcome}`:''}`);
   if(queue?.request.publication)reasons.push(`Integration queue position ${s.host.queue.filter(q=>q.request.publication).findIndex(q=>q.unit===u.unit)+1}`);
-  return{id:u.unit,title,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:first?Math.max(0,Date.parse(last??ended?.at??e.checkedAt)-Date.parse(first)):null,rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,redChecks:invs.filter(i=>i.execution==='command'&&(/fail/.test(i.state)||record(record(JSON.parse(i.body))['settlement'])['outcome']&&JSON.stringify(JSON.parse(i.body).settlement).includes('"verdict":"fail"'))).length,spend:invs.reduce((n,i)=>n+(meters.get(i.id)??0),0),reasons,waitSince:queue?.queuedAt?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
+  return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:first?Math.max(0,Date.parse(last??ended?.at??e.checkedAt)-Date.parse(first)):null,rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,redChecks:invs.filter(i=>i.execution==='command'&&(/fail/.test(i.state)||record(record(JSON.parse(i.body))['settlement'])['outcome']&&JSON.stringify(JSON.parse(i.body).settlement).includes('"verdict":"fail"'))).length,spend:invs.reduce((n,i)=>n+(meters.get(i.id)??0),0),reasons,waitSince:queue?.queuedAt?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
  });
  const feed:{id:number;at:string;text:string;unit?:string;invocation?:string;tab?:string;housekeeping?:boolean}[]=[];
  for(const ev of events){

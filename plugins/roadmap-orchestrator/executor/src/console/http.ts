@@ -80,7 +80,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
         if (version !== CONSOLE_PROTOCOL) throw new ConsoleError('protocol', 'console protocol/version mismatch; reload required');
         const params: Record<string, string> = {};
         for (const [key, value] of url.searchParams) { if (Object.hasOwn(params, key)) throw new ConsoleError('invalid', 'duplicate query parameter'); params[key] = value; }
-        if (path.length === 3 && path[0] === 'runs' && path[2] === 'events') {
+        if (path.length === 3 && path[0] === 'arcs' && path[2] === 'events') {
           const arc = path[1]!;
           const invocation = params['invocation'];
           connections.set(res, { arc, ...(invocation ? { invocation } : {}) });
@@ -95,9 +95,9 @@ export async function serveConsole(args: ConsoleServerArgs) {
           res.once('close', cleanup);
           let ready = false;
           try {
-            const initial = await ask({ kind: 'read', path: ['runs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string; highWater: number };
+            const initial = await ask({ kind: 'read', path: ['arcs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string; highWater: number };
             if (closed()) return;
-            const page = invocation ? await ask({ kind: 'read', path: ['runs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
+            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
             if (closed()) return;
             if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(); return; }
             if (invocation) await ask({ kind: 'history-subscribe', arc, invocation });

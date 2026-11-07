@@ -1,0 +1,440 @@
+// Recorded agent-history rendering, ported intact from the original console.
+import * as R from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Clock, api, elapsed, get, info, link, pluralise, relativeTime, route } from './shared.tsx';
+import { Drawer as Dialog } from './drawer.tsx';
+import { fileHistory, shellWritePath, fileLines, readFilePreview } from './file-history.ts';
+const h: any = R.createElement;
+function HistoryField({ event, field, base, identity }: any) {
+  const [pages, setPages] = useState<any>([]), [cursor, setCursor] = useState<any>(0), [size, setSize] = useState<any>(null), [error, setError] = useState<any>("");
+  const load = () => get(`${base}/history-field?identity=${encodeURIComponent(identity)}&ref=${encodeURIComponent(event.refs?.[field] || event.id)}&field=${field}&after=${cursor}`).then((r: any) => {
+    setPages([r.data.text]);
+    setCursor(r.data.next);
+    setSize(r.data.size);
+    setError("");
+  }).catch((err: any) => setError(err.message));
+  return h(
+    "details",
+    { className: "history-expansion", onToggle: (ev: any) => {
+      if (ev.currentTarget.open && size === null) load();
+    } },
+    h("summary", null, `Expand full ${field} (preview truncated)`),
+    error && h("p", { role: "alert" }, error),
+    pages.map((text: any, i: any) => h("pre", { key: i }, text)),
+    size !== null && h("p", { className: "muted" }, `Characters ${Math.max(0, cursor - pages.join("").length)}\u2013${cursor} of ${size}`),
+    size !== null && cursor < size && h("button", { onClick: load }, `Next ${field} page`)
+  );
+}
+const historyLabel = (value: any) => String(value).replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ").replaceAll("-", " ").replace(/^./, (c: any) => c.toUpperCase());
+const historyJson = (text: any) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+const historyEmpty = (value: any) => value == null || value === "" || (Array.isArray(value) ? !value.length : typeof value === "object" && Object.values(value).every(historyEmpty));
+function HistoryInline({ text }: any) {
+  return String(text).split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^\s)]+\))/g).map((part: any, i: any) => {
+    if (part.startsWith("`")) return h("code", { key: i }, part.slice(1, -1));
+    if (part.startsWith("**")) return h("strong", { key: i }, part.slice(2, -2));
+    const link2 = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(part);
+    if (link2 && /^https?:\/\//i.test(link2[2]!)) return h("a", { key: i, href: link2[2]!, target: "_blank", rel: "noreferrer" }, link2[1]!);
+    return part;
+  });
+}
+function HistoryMarkdown({ text }: any) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n"), blocks = [];
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i]!, fence = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      const code: any[] = [];
+      i++;
+      while (i < lines.length && !new RegExp(`^\\s{0,3}${fence[1]![0]}{${fence[1]!.length},}\\s*$`).test(lines[i]!)) code.push(lines[i++]!);
+      i++;
+      blocks.push(h("pre", { key: blocks.length }, h("code", null, code.join("\n"))));
+      continue;
+    }
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      blocks.push(h(`h${Math.min(6, heading[1]!.length + 2)}`, { key: blocks.length }, h(HistoryInline, { text: heading[2]! })));
+      i++;
+      continue;
+    }
+    const item = /^\s*(?:[-*+] |\d+[.)] )(.+)$/.exec(line);
+    if (item) {
+      const ordered = /^\s*\d/.test(line), items = [];
+      while (i < lines.length) {
+        const m = /^\s*(?:[-*+] |\d+[.)] )(.+)$/.exec(lines[i]!);
+        if (!m) break;
+        items.push(h("li", { key: i++ }, h(HistoryInline, { text: m[1] })));
+      }
+      blocks.push(h(ordered ? "ol" : "ul", { key: blocks.length }, items));
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const quote: any[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i]!)) quote.push(lines[i++]!.replace(/^>\s?/, ""));
+      blocks.push(h("blockquote", { key: blocks.length }, h(HistoryMarkdown, { text: quote.join("\n") })));
+      continue;
+    }
+    const paragraph = [line];
+    i++;
+    while (i < lines.length && lines[i]!.trim() && !/^\s*(?:#{1,6}\s|[-*+] |\d+[.)] |`{3,}|~{3,}|>)/.test(lines[i]!)) paragraph.push(lines[i++]!);
+    blocks.push(h("p", { key: blocks.length }, h(HistoryInline, { text: paragraph.join("\n") })));
+  }
+  return h("div", { className: "history-markdown" }, blocks);
+}
+function HistoryValue({ value, name = "" }: any) {
+  if (historyEmpty(value)) return null;
+  if (Array.isArray(value)) return name === "argv" ? h("pre", null, h("code", null, value.join(" "))) : h("ul", null, value.filter((v: any) => !historyEmpty(v)).map((v: any, i: any) => h("li", { key: i }, h(HistoryValue, { value: v, name: name === "evidence" ? "evidence" : "" }))));
+  if (typeof value === "object") {
+    if (typeof value.path === "string" && typeof value.line === "number") return h("code", { className: "history-evidence" }, `${value.path}:${value.line}`);
+    const order = ["title", "claim", "text", "what", "summary", "description", "name", "severity", "path", "evidence", "command", "argv", "exit", "output"];
+    const fields = Object.entries(value).filter(([, v]: any) => !historyEmpty(v)).sort(([a]: any, [b]: any) => (order.includes(a) ? order.indexOf(a) : order.length) - (order.includes(b) ? order.indexOf(b) : order.length));
+    return h("dl", { className: "history-fields" }, fields.map(([key, v]: any) => h("div", { key }, h("dt", null, historyLabel(key)), h("dd", null, h(HistoryValue, { value: v, name: key })))));
+  }
+  if (["decision", "outcome", "severity"].includes(name)) return h("span", { className: "history-status", "data-status": String(value) }, historyLabel(value));
+  if (["path", "file", "contractRef", "evidence"].includes(name)) return h("code", { className: "history-evidence" }, String(value));
+  if (["command", "output", "old_string", "new_string", "content", "code", "function"].includes(name)) return h("pre", null, h("code", null, String(value)));
+  return typeof value === "string" ? h(HistoryMarkdown, { text: value }) : h("span", null, typeof value === "boolean" ? value ? "Yes" : "No" : String(value));
+}
+function VerdictCard({ value }: any) {
+  if (value == null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) return h("section", { className: "history-verdict", "aria-label": "Agent report" }, h("h3", null, "Agent report"), h(HistoryValue, { value }));
+  if (value.mode && value.verdict && typeof value.verdict === "object") value = { mode: value.mode, ...value.verdict };
+  const decision = value.decision || (typeof value.outcome === "string" ? value.outcome : null) || (value.final === true ? "Report complete" : value.final === false ? "Interim report" : value.ok === true ? "Passed" : value.ok === false ? "Failed" : "Report recorded");
+  const order = ["summary", "reasons", "findings", "premises", "grounding", "experiments"];
+  const fields = Object.entries(value).filter(([key]: any) => !["decision", "final"].includes(key)).sort(([a]: any, [b]: any) => (order.includes(a) ? order.indexOf(a) : order.length) - (order.includes(b) ? order.indexOf(b) : order.length));
+  const empty = fields.filter(([, v]: any) => historyEmpty(v)).map(([key]: any) => historyLabel(key));
+  return h(
+    "section",
+    { className: "history-verdict", "aria-label": "Agent verdict" },
+    h("div", { className: "history-verdict-head" }, h("h3", null, "Agent report"), h("span", { className: "history-status", "data-status": String(decision) }, historyLabel(decision))),
+    fields.filter(([key, v]: any) => !historyEmpty(v) && !(key === "outcome" && typeof v === "string")).map(([key, v]: any) => h("section", { key, className: "history-verdict-section" }, h("h4", null, historyLabel(key)), h(HistoryValue, { value: v, name: key }))),
+    empty.length > 0 && h("p", { className: "muted history-empty" }, `Empty sections: ${empty.join(", ")}.`)
+  );
+}
+const briefSections = new Set("affected audited_range base_comparison browser build_lanes builder_touches cap_and_allowance changed checkout contracts_index decisions delta diff direction_text disputes driving_the_product escalation evidence_dir evidence_dirs executable_checks failing_lane_evidence finding_bar findings_and_evidence findings_ledger fix_round grounding_first handover history how_your_session_ends implementation intent journeys judging kept_tweaks lane_ledger large_diff last_lane_series lenses merged_units method milestone milestones non_goals not_inlined notes obligations open_findings orientation owner_branches plan previous_findings prior_findings prior_round product reach reach_traits references report required_checks rules_index safety seeing specs standing standing_items standing_obligations subagents suite_lanes system_notes system_traits systems tweak_diff undeclared_contracts unit_policy unit_systems vision vision_first walkthrough_findings witness_checks witnesses_and_lanes working_unattended workspace worktree your_checkout".split(" "));
+function BriefInstructions({ text }: any) {
+  let fence = null, chunk: string[] = [];
+  const blocks: any[] = [];
+  const flush = () => {
+    const body = chunk.join("\n").trim();
+    chunk = [];
+    if (!body) return;
+    const value = historyJson(body);
+    blocks.push(value !== null ? h(HistoryValue, { key: blocks.length, value }) : h(HistoryMarkdown, { key: blocks.length, text: body }));
+  };
+  for (const line of String(text || "").split("\n")) {
+    const mark = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (mark) {
+      if (!fence) fence = mark[1]!;
+      else if (mark[1]![0] === fence[0]! && mark[1]!.length >= fence.length) fence = null;
+      chunk.push(line);
+      continue;
+    }
+    if (fence) {
+      chunk.push(line);
+      continue;
+    }
+    for (const part of line.split(/(<\/?[a-z_]+>|<\/?pasted_content id="[a-f0-9]+">)/g)) {
+      const tag = /^<(\/?)([a-z_]+)(?: id="[a-f0-9]+")?>$/.exec(part);
+      if (tag && (briefSections.has(tag[2]!) || tag[2]! === "pasted_content")) {
+        flush();
+        if (!tag[1]!) blocks.push(h("h4", { key: blocks.length }, tag[2]! === "pasted_content" ? "Recorded diff" : historyLabel(tag[2]!)));
+      } else if (part) chunk.push(part);
+    }
+  }
+  flush();
+  return h("div", { className: "history-instructions" }, blocks);
+}
+function SeatBrief({ brief }: any) {
+  return h(
+    "div",
+    { className: "history-seat-brief" },
+    brief.mode && h("p", null, h("strong", null, "Mode: "), historyLabel(brief.mode)),
+    brief.documents.map((doc: any, i: any) => h("details", { key: i, className: "history-document", open: doc.content.length < 1600 }, h("summary", null, doc.source), h(HistoryMarkdown, { text: doc.content }))),
+    h("section", null, h("h3", null, "Instructions"), h(BriefInstructions, { text: brief.instructions }))
+  );
+}
+function useHistoryText(event: any, field: any, base: any, identity: any) {
+  const [full, setFull] = useState<any>(null), [error, setError] = useState<any>("");
+  const original = event?.[field], ref = event?.refs?.[field] || event?.id, truncated = event?.truncated?.includes(field);
+  useEffect(() => {
+    setFull(null);
+    setError("");
+    if (!truncated) return;
+    const c = new AbortController();
+    (async () => {
+      let after = 0, text = "";
+      for (; ; ) {
+        const r = (await get(`${base}/history-field?identity=${encodeURIComponent(identity)}&ref=${encodeURIComponent(ref)}&field=${field}&after=${after}`, c.signal)).data;
+        text += r.text;
+        after = r.next;
+        if (after >= r.size) {
+          setFull(text);
+          return;
+        }
+        if (text.length >= 8 * 1024 * 1024) throw new Error("Record exceeds the history decoder bound");
+      }
+    })().catch((err: any) => {
+      if (!c.signal.aborted) setError(err.message);
+    });
+    return () => c.abort();
+  }, [original, ref, truncated, field, base, identity]);
+  return { text: full ?? original, ready: !truncated || full !== null, error };
+}
+const FileHistory = R.createContext<any>({ views: /* @__PURE__ */ new Map(), hydrate: () => {
+} });
+function FileHistoryProvider({ events, children }: any) {
+  const [hydrated, setHydrated] = useState<any>({});
+  const hydrate = R.useCallback((id: any, fields: any) => setHydrated((old: any) => {
+    const before = old[id];
+    if (before?.input === fields.input && before?.output === fields.output && before?.text === fields.text) return old;
+    return { ...old, [id]: fields };
+  }), []);
+  useEffect(() => {
+    const ids = new Set(events.map((e: any) => e.id));
+    setHydrated((old: any) => Object.keys(old).some((id: any) => !ids.has(id)) ? Object.fromEntries(Object.entries(old).filter(([id]: any) => ids.has(id))) : old);
+  }, [events]);
+  const resolved = R.useMemo(() => events.map((e: any) => hydrated[e.id] ? { ...e, ...hydrated[e.id], truncated: (e.truncated || []).filter((f: any) => !(f in hydrated[e.id])) } : e), [events, hydrated]);
+  const views = R.useMemo(() => fileHistory(resolved), [resolved]), value = R.useMemo(() => ({ views, hydrate }), [views, hydrate]);
+  return h(FileHistory.Provider, { value }, children);
+}
+function FileLines({ rows, diff = false, path = "", start = 1 }: any) {
+  const [all, setAll] = useState<any>(false), shown = all ? rows : rows.slice(0, 40);
+  const tint = (text: any) => {
+    if (!/\.(?:[cm]?[jt]sx?|json|md|sh|css|html?)$/i.test(path)) return text;
+    return text.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b(?:const|let|var|function|return|export|import|from|true|false|null|if|else|class|async|await)\b|^\s*#.*$|\/\/.*$)/g).map((part: any, i: any) => /^(?:["']|\s*#|\/\/)/.test(part) || /^(?:const|let|var|function|return|export|import|from|true|false|null|if|else|class|async|await)$/.test(part) ? h("span", { key: i, className: "history-syntax" }, part) : part);
+  };
+  return h(R.Fragment, null, h("pre", { className: diff ? "history-diff" : "history-code" }, shown.map((row: any, i: any) => {
+    const text = diff ? row.text : row, mark = diff && row.mark;
+    return h(
+      "div",
+      { key: i, className: diff ? `history-diff-line history-diff-${({ "-": "remove", "+": "add", "@": "hunk", " ": "context" } as Record<string, string>)[row.kind]}` : "history-code-line" },
+      diff ? row.kind !== "@" && h(R.Fragment, null, row.old != null && h("small", { className: "history-line-number" }, row.old), row.next != null && h("small", { className: "history-line-number" }, row.next)) : h("small", { className: "history-line-number" }, start + i),
+      h("code", null, diff && row.kind !== "@" ? `${row.kind} ` : "", mark ? h(R.Fragment, null, text.slice(0, mark[0]!), h("mark", null, text.slice(...mark)), text.slice(mark[1]!)) : diff ? text : tint(text), "\n")
+    );
+  })), rows.length > 40 && h("button", { className: "history-show-all", onClick: () => setAll(!all) }, all ? "Show less" : `Show all (${rows.length} lines)`));
+}
+function NativeTool({ event, base, identity, onLayout }: any) {
+  const input = useHistoryText(event, "input", base, identity), output = useHistoryText(event, "output", base, identity), patch = useHistoryText(event, "text", base, identity);
+  const { views, hydrate } = R.useContext(FileHistory), view = views.get(event.id) || {};
+  const data = event.inputFormat === "json" ? historyJson(input.text) : null;
+  useEffect(() => {
+    if (input.ready && output.ready && patch.ready) hydrate(event.id, { input: input.text, output: output.text, text: patch.text });
+  }, [event.id, input.text, output.text, patch.text, input.ready, output.ready, patch.ready, hydrate]);
+  R.useLayoutEffect(() => {
+    onLayout?.();
+  }, [input.ready, output.ready, patch.ready]);
+  const tool = event.tool || "Tool result", path = data?.file_path || data?.path;
+  const shell = ["bash", "command", "bash_placeholder"].includes(tool.toLowerCase()), fileTool = ["Edit", "MultiEdit", "Write", "Read"].includes(tool);
+  const title = path ? `${tool === "Read" ? "Read  " : fileTool ? "" : tool + "  "}${path}` : tool === "Grep" ? `Grep  ${data?.pattern || "search"}` : tool === "Glob" ? `Glob  ${data?.pattern || "files"}` : data?.description ? `${tool}  ${data.description}` : historyLabel(tool.replace(/^mcp__playwright__browser_/, "Browser "));
+  const expansion = (field: any) => event.truncated?.includes(field) ? h(HistoryField, { event, field, base, identity }) : null;
+  const status = event.status && h("span", { className: event.status === "failed" ? "history-tool-error" : "history-tool-ok", title: event.status === "passed" ? "Succeeded" : void 0 }, event.status === "failed" ? "Error" : fileTool ? "\u2713" : "Done");
+  const errors = event.status === "failed" && h("details", { className: "tool-output history-tool-error", open: true }, h("summary", null, "Output  error"), h("pre", null, output.text), expansion("output"));
+  if (tool === "Read" && data) {
+    const read = view.read || readFilePreview(output.text, data), range = event.status === "failed" ? "read failed" : event.output == null ? "reading\u2026" : read.end < read.start ? "empty file" : read.start !== null ? `lines ${read.start}\u2013${read.end}` : data.offset ? `from line ${data.offset}${data.limit ? `  ${data.limit} requested` : ""}` : data.limit ? `first ${data.limit} lines requested` : "line range unrecorded";
+    return h(R.Fragment, null, h("details", { className: "history-read" }, h("summary", null, h("strong", { title: path }, title), h("small", { className: "muted" }, range), event.status === "passed" && h("small", { className: "muted" }, "Show output"), status), event.status !== "failed" && h("pre", null, h("code", null, read.text))), event.truncated?.includes("input") && h("div", { className: "tool-input" }, expansion("input")), errors);
+  }
+  const writes = shell && shellWritePath(data?.command || input.text || "");
+  return h(
+    R.Fragment,
+    null,
+    h("header", { className: "history-event-head" }, h("strong", null, title), h("span", { className: "history-file-meta" }, view.kind && h("small", { className: `history-file-badge history-file-${view.kind}` }, view.kind === "create" ? "new file" : "overwrote existing file"), view.replaceAll && h("small", { className: "history-file-badge" }, "replace_all"), view.diff && h("small", { className: "history-diff-count" }, h("span", { className: "history-count-add" }, `+${view.diff.added}`), h("span", { className: "history-count-remove" }, ` \u2212${view.diff.removed}`)), status)),
+    event.title && h("small", { className: "muted" }, event.title),
+    input.error && h("p", { role: "alert" }, input.error),
+    output.error && h("p", { role: "alert" }, output.error),
+    patch.error && h("p", { role: "alert" }, patch.error),
+    event.input != null && h("div", { className: "tool-input" }, !input.ready ? h("p", { className: "muted" }, "Reading recorded tool input\u2026") : shell ? h(R.Fragment, null, writes && h("small", { className: "muted" }, `writes ${writes}`), h("pre", { className: "history-command" }, h("code", null, data?.command || event.input))) : ["Edit", "MultiEdit"].includes(tool) && data ? view.diff ? h(FileLines, { rows: view.diff.rows, diff: true }) : h("p", { className: "muted" }, "Preparing diff\u2026") : tool === "Write" && data ? view.diff ? h(FileLines, { rows: view.diff.rows, diff: true }) : h(FileLines, { rows: fileLines(data.content || ""), path }) : data ? h(HistoryValue, { value: Object.fromEntries(Object.entries(data).filter(([key]: any) => !["file_path", "path", "description"].includes(key))) }) : event.input && h("pre", null, event.input), !fileTool && expansion("input")),
+    errors,
+    !fileTool && event.status !== "failed" && event.output != null && h("details", { className: "tool-output" }, h("summary", null, "Show output"), h("pre", null, event.output), expansion("output"))
+  );
+}
+function AgentEvent({ event, base, identity, onLayout }: any) {
+  const now = R.useContext(Clock), unknown = event.unknown;
+  const expansion = (field: any) => event.truncated?.includes(field) ? h(HistoryField, { event, field, base, identity }) : null;
+  const structured = event.tool === "StructuredOutput";
+  const title = unknown ? `${(event.title || "Transcript record").replace(/^Unknown\s*/, "")}  recorded event` : structured ? event.status === "failed" ? "Report rejected" : "Report submitted" : event.type === "result" ? "Agent finished" : event.title || historyLabel(event.type === "message" ? "Agent" : event.type);
+  return h(
+    "article",
+    { className: `history-event history-${event.type}${unknown ? " history-unforeseen" : ""}`, "data-event-id": event.id, "data-tool": event.tool, "data-tool-id": event.toolId, title: event.at ? new Date(event.at).toLocaleString() : void 0 },
+    event.parent && h("small", { className: "muted" }, `Subagent of ${event.parent}`),
+    event.type === "tool" && !structured ? h(NativeTool, { event, base, identity, onLayout }) : h(
+      R.Fragment,
+      null,
+      h("header", { className: "history-event-head" }, h("strong", null, title), event.at && h("time", null, relativeTime(event.at, now))),
+      unknown ? h("details", null, h("summary", null, "Raw event payload"), h("pre", null, historyJson(event.text) ? JSON.stringify(historyJson(event.text), null, 2) : event.text), expansion("text")) : structured && event.status === "failed" ? h("details", { open: true, className: "tool-output" }, h("summary", null, "Output  error"), h("pre", null, event.output), expansion("output")) : !structured && event.type !== "result" && h(R.Fragment, null, h(HistoryMarkdown, { text: event.text }), expansion("text"))
+    ),
+    (event.tokens != null || event.elapsedMs != null) && h("small", { className: "muted history-event-meta" }, [event.tokens != null ? `${pluralise(event.tokens, "token")}` : "", event.elapsedMs != null ? elapsed(event.elapsedMs) : ""].filter(Boolean).join("  "))
+  );
+}
+function TranscriptVerdict({ event, base, identity, onLayout }: any) {
+  const field = event?.tool === "StructuredOutput" ? "input" : "text", value = useHistoryText(event, field, base, identity);
+  R.useLayoutEffect(() => {
+    onLayout?.();
+  }, [value.ready]);
+  if (value.error) return h("p", { role: "alert" }, value.error);
+  if (!event) return null;
+  if (!value.ready) return h("p", { className: "muted" }, "Reading agent report\u2026");
+  return h(VerdictCard, { value: historyJson(value.text) || value.text });
+}
+function AgentDetail({ e, id, activity, close, stale }: any) {
+  const base = `/arcs/${e.arc}/invocations/${id}`;
+  const [history, setHistory] = useState<any>(null), [error, setError] = useState<any>(""), [brief, setBrief] = useState<any>(null), [result, setResult] = useState<any>(null);
+  const [following, setFollowing] = useState<any>(true), [earlier, setEarlier] = useState<any>(false);
+  const scroll = useRef<any>(null), follow = useRef<any>(true), placedScroll = useRef<any>(null);
+  useEffect(() => {
+    const c = new AbortController();
+    setHistory(null);
+    setBrief(null);
+    setError("");
+    setResult(null);
+    setEarlier(false);
+    follow.current = true;
+    setFollowing(true);
+    placedScroll.current = null;
+    get(`${base}/prompt?after=0`, c.signal).then((r: any) => setBrief(r.data)).catch((err: any) => {
+      if (!c.signal.aborted) setError(err.message);
+    });
+    let fetching = false, again = false;
+    const load = async (notice?: any) => {
+      if (fetching) {
+        again = true;
+        return;
+      }
+      fetching = true;
+      try {
+        const next = (await get(`${base}/history`, c.signal)).data;
+        setHistory((old: any) => {
+          if (!old || notice?.reset || old.identity !== next.identity) return next;
+          if (!follow.current) return { ...old, state: next.state, endedAt: next.endedAt, unseen: (old.unseen || 0) + (notice?.changed || 0) };
+          const events = new Map<string, any>(old.events.map((event: any) => [event.id, event]));
+          for (const event of next.events) events.set(event.id, event);
+          const kept = [...events.values()].slice(-200);
+          return { ...next, events: kept, before: kept[0]?.id === "0:0" ? null : kept[0]?.id };
+        });
+        setError("");
+      } catch (err: any) {
+        if (!c.signal.aborted) setError(err.message);
+      } finally {
+        fetching = false;
+        if (again && !c.signal.aborted) {
+          again = false;
+          load();
+        }
+      }
+    };
+    load();
+    const stream = new EventSource(`${api}/arcs/${e.arc}/events?invocation=${id}`);
+    stream.addEventListener("history", (ev: any) => load(JSON.parse(ev.data)));
+    stream.addEventListener("history-error", (ev: any) => {
+      if (ev.data) setError(JSON.parse(ev.data).message);
+    });
+    return () => {
+      c.abort();
+      stream.close();
+    };
+  }, [base]);
+  const followLayout = () => {
+    if (!follow.current || !scroll.current) return;
+    const verdict = completed ? scroll.current.querySelector(".history-verdict") : null;
+    scroll.current.scrollTop = verdict ? scroll.current.scrollTop + verdict.getBoundingClientRect().top - scroll.current.getBoundingClientRect().top : scroll.current.scrollHeight;
+    placedScroll.current = scroll.current.scrollTop;
+  };
+  R.useLayoutEffect(followLayout, [history, result]);
+  const back = () => {
+    location.hash = link(e.arc, route().tab, "units", activity.unit).slice(1);
+  };
+  const more = () => {
+    follow.current = false;
+    setFollowing(false);
+    get(`${base}/history?before=${history.before}&identity=${encodeURIComponent(history.identity)}`).then((r: any) => {
+      setEarlier(true);
+      setHistory((old: any) => ({ ...old, before: r.data.before, events: [...new Map([...r.data.events, ...old.events].map((event: any) => [event.id, event])).values()].slice(0, 200) }));
+    }).catch((err: any) => setError(err.message));
+  };
+  const latest = () => get(`${base}/history`).then((r: any) => {
+    setEarlier(false);
+    follow.current = true;
+    setFollowing(true);
+    setHistory(r.data);
+  }).catch((err: any) => setError(err.message));
+  const completed = history?.endedAt != null || ["success", "pass", "fail", "fault", "lost"].includes(history?.state);
+  const live = history?.state === "running" && !completed && !stale;
+  const model = history?.session?.model || [...history?.events || []].reverse().find((event: any) => event.model)?.model || activity.model;
+  const usage = [...history?.events || []].reverse().find((event: any) => event.tokens != null)?.tokens;
+  useEffect(() => {
+    if (!completed) return;
+    const c = new AbortController();
+    get(`${base}/result`, c.signal).then((r: any) => setResult(r.data)).catch((err: any) => {
+      if (!c.signal.aborted) setResult({ unavailable: err.message });
+    });
+    return () => c.abort();
+  }, [base, completed]);
+  const verdictEvent = [...history?.events || []].reverse().find((event: any) => event.report || event.tool === "StructuredOutput" && event.status !== "failed");
+  return h(
+    Dialog,
+    { title: `Agent history  ${info(e, activity).label}`, close, className: "agent-detail" },
+    h("button", { onClick: back }, `\u2039 Back to unit ${activity.unit}`),
+    h(
+      "div",
+      { className: "history-meta" },
+      h("strong", null, live ? "Running" : completed ? "Finished" : history?.state || "Connecting"),
+      h("span", null, model || "Model unrecorded"),
+      usage != null && h("span", null, `${pluralise(usage, "recorded token")}`)
+    ),
+    history?.session && h("details", { className: "history-session" }, h("summary", null, "Session  " + (history.session.model || model || "model unrecorded")), h("p", null, `Tools: ${history.session.tools.join(", ") || "unrecorded"}`), history.session.notices.map((n: any) => h("p", { key: n }, n))),
+    h(
+      "details",
+      { className: "history-brief" },
+      h("summary", null, "Brief  recorded seat prompt"),
+      brief?.brief ? h(SeatBrief, { brief: brief.brief }) : brief ? h(R.Fragment, null, h(HistoryMarkdown, { text: brief.lines.join("\n") }), brief.end < brief.size && h("button", { onClick: () => get(`${base}/prompt?after=${brief.end}`).then((r: any) => setBrief(r.data)).catch((err: any) => setError(err.message)) }, `Next brief page (${brief.end} of ${pluralise(brief.size, "byte")})`)) : h("p", null, "Reading retained brief\u2026")
+    ),
+    error && h("p", { role: "alert" }, error),
+    h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more }, "Show earlier"), live && h("button", { onClick: latest }, following ? "Following live tail" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && (earlier || !following || history?.unseen) && h("button", { onClick: latest }, "Show latest"), earlier && h("span", null, `Earlier history  latest ${pluralise(200, "event")} retained in view`)),
+    h(
+      "div",
+      { className: "history-scroll", ref: scroll, tabIndex: 0, "aria-label": "Agent transcript", onScroll: (ev: any) => {
+        if (placedScroll.current != null && Math.abs(ev.currentTarget.scrollTop - placedScroll.current) < 1) {
+          placedScroll.current = null;
+          return;
+        }
+        placedScroll.current = null;
+        follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48;
+        setFollowing(follow.current);
+      } },
+      h(FileHistoryProvider, { key: history?.identity, events: history?.events || [] }, history?.events.map((event: any) => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity: { ...activity, name: `${info(e, activity).label}  attempt ${info(e, activity).attempt}` }, base, identity: history.identity, onLayout: followLayout }))),
+      result?.report != null ? h(VerdictCard, { value: result.report }) : h(TranscriptVerdict, { event: verdictEvent, base, identity: history?.identity, onLayout: followLayout }),
+      history && !history.events.length && h("p", null, "Waiting for complete transcript records\u2026"),
+      live && h("p", { className: "history-live", role: "status" }, "Agent is working", h("span", { className: "history-caret", "aria-hidden": true }))
+    ),
+    h(
+      "div",
+      { className: "history-links" },
+      h(
+        "details",
+        { onToggle: (ev: any) => {
+          if (ev.currentTarget.open && !result) get(`${base}/result`).then((r: any) => setResult(r.data)).catch((err: any) => setResult({ unavailable: err.message }));
+        } },
+        h("summary", null, "Raw result.json"),
+        result?.raw ? h("pre", { className: "record" }, result.raw) : h("p", { className: "muted" }, result?.unavailable || "Reading retained result\u2026")
+      ),
+      h(TranscriptText, { base })
+    )
+  );
+}
+function TranscriptText({ base }: any) {
+  const [page, setPage] = useState<any>(null), [error, setError] = useState<any>("");
+  const load = (after: any) => get(`${base}/log?source=stdout&after=${after}`).then((r: any) => setPage(r.data)).catch((e: any) => setError(e.message));
+  return h("details", { onToggle: (ev: any) => {
+    if (ev.currentTarget.open && !page) load(0);
+  } }, h("summary", null, "Transcript text"), error && h("p", { role: "alert" }, error), page && h(R.Fragment, null, h("pre", { className: "record" }, page.text), h("p", null, `Bytes ${page.after}\u2013${page.next} of ${page.size}`), page.after > 0 && h("button", { onClick: () => load(Math.max(0, page.after - 65536)) }, "Show earlier text"), page.next < page.size && h("button", { onClick: () => load(page.next) }, "Next text page")));
+}
+
+export { AgentDetail };
