@@ -20,3 +20,12 @@ export class SseWriter {
     }}
   }
 }
+
+/** Error prose is untrusted and may include arbitrarily large Git stderr. Bound its encoded notice. */
+export function errorNotice<T extends { code: string; message: string }>(error: T): T {
+  let message = error.message;
+  if (Buffer.byteLength(JSON.stringify(message)) <= 2048) return error;
+  const marker = ` (truncated, ${Buffer.byteLength(message)} bytes)`;
+  while (Buffer.byteLength(JSON.stringify(message + marker)) > 2048) message = message.slice(0, Math.floor(message.length / 2));
+  return { ...error, message: message + marker };
+}

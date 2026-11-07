@@ -10,3 +10,11 @@ export function consoleUrl(host: string, port: number, connect = true): string {
   const h = connect && host === '0.0.0.0' ? '127.0.0.1' : connect && host === '::' ? '::1' : host;
   return `http://${h.includes(':') ? `[${h}]` : h}:${port}`;
 }
+
+export class ConsoleBindError extends Error {
+  readonly host: string; readonly port: number;
+  constructor(host: string, port: number, detail: string) {
+    super(`.roadmap/config.json webConsole.port: console bind ${host}:${port} failed: ${detail}`);
+    this.name = 'ConsoleBindError'; this.host = host; this.port = port;
+  }
+}
