@@ -38,7 +38,26 @@ export function consoleTranscript(line: string): TranscriptEvent[] {
     if ((part['type'] === 'server_tool_use' && part['name'] === 'advisor') || part['type'] === 'advisor_tool_result') return []; // Encrypted advisor housekeeping; no readable agent action.
     if (part['type'] === 'thinking' && !String(part['thinking'] ?? '').trim()) return []; // Signature-only thinking has no readable text.
     if (part['type'] === 'tool_use') return [{ ...event, input: JSON.stringify(part['input'], null, 2), inputFormat: 'json' as const }];
-    if (part['type'] === 'tool_result') return [{ ...event, output: contentText(part['content']) }];
+    if (part['type'] === 'tool_result') {
+      const result = record(e['tool_use_result']);
+      const kind = result['type'];
+      const original = result['originalFile'], old = result['oldString'];
+      const starts: number[] = [];
+      let previous = 0, lineNumber = 1;
+      if (typeof original === 'string' && typeof old === 'string' && old.length) {
+        for (let at = original.indexOf(old); at >= 0 && starts.length < 256; at = original.indexOf(old, at + old.length)) {
+          lineNumber += original.slice(previous, at).split('\n').length - 1;
+          starts.push(lineNumber); previous = at;
+          if (!result['replaceAll']) break;
+        }
+      }
+      return [{ ...event, output: contentText(part['content']),
+        ...(event.status === 'passed' && Array.isArray(result['structuredPatch']) && result['structuredPatch'].length
+          ? { text: JSON.stringify({ filePatch: result['structuredPatch'] }) } : {}),
+        ...((kind === 'create' || kind === 'update' || starts.length) ? { fileResult: {
+          ...((kind === 'create' || kind === 'update') ? { kind } : {}), ...(starts.length ? { starts } : {}),
+        } } : {}) }];
+    }
     return [event];
   });
   if (e['type'] === 'result' && !e['is_error']) {

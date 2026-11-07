@@ -165,4 +165,44 @@ th button { border: 0; padding: 0; text-align: left; background: transparent; }
 @keyframes history-caret-pulse { 50% { opacity:.2; } }
 @media (prefers-reduced-motion:reduce) { .agent-detail .history-caret { animation:none; } }
 .agent-detail .history-unforeseen .history-event-head strong { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+
+/* Compact file activity: preserve readable type while reducing empty space. */
+.agent-detail .history-event { padding:6px 10px; margin:0 0 5px; }
+.agent-detail .history-event pre { margin:4px 0; padding:5px 8px; line-height:1.45; }
+.agent-detail .history-event summary { padding:2px 0; }
+.agent-detail .tool-input, .agent-detail .tool-output { margin-top:3px; }
+.agent-detail .history-markdown p { margin:4px 0 6px; }
+.agent-detail .history-markdown h3, .agent-detail .history-markdown h4, .agent-detail .history-markdown h5 { margin:10px 0 5px; }
+.agent-detail .history-markdown li { margin:2px 0; }
+.agent-detail .history-fields { margin:3px 0 6px; }
+.agent-detail .history-fields > div { margin:4px 0 6px; }
+.agent-detail .history-verdict { padding:12px 14px; margin:8px 0; }
+.agent-detail .history-verdict-head { padding:4px 0; gap:10px; }
+.agent-detail .history-verdict-section { margin-top:10px; }
+.agent-detail .history-verdict-section h4 { margin-bottom:4px; }
+.agent-detail .history-file-meta { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
+.agent-detail .history-file-badge { font-size:12px; padding:1px 5px; border:1px solid var(--line-2); border-radius:3px; color:var(--ink-2); }
+.agent-detail .history-file-update { color:var(--caution); border-color:currentColor; }
+.agent-detail .history-diff-count, .agent-detail .history-tool-ok { font-size:12px; color:var(--positive); white-space:nowrap; }
+.agent-detail .history-diff { border:1px solid var(--line-1); padding:0; overflow:auto; }
+.agent-detail .history-diff span { display:inline; }
+.agent-detail .history-diff-line, .agent-detail .history-code-line { display:flex; min-height:1.45em; }
+.agent-detail .history-diff-line code, .agent-detail .history-code-line code { white-space:pre-wrap; overflow-wrap:anywhere; flex:1; min-width:0; font:inherit; }
+.agent-detail .history-line-number { flex:0 0 3.5em; text-align:right; padding-right:8px; color:var(--ink-3); font-size:11px; user-select:none; opacity:.8; }
+.agent-detail .history-diff-remove > .history-line-number { margin-right:3.5em; }
+.agent-detail .history-diff-add > .history-line-number { margin-left:3.5em; }
+.agent-detail .history-diff-hunk { color:var(--ink-3); font-size:11px; background:var(--ground-1); }
+.agent-detail .history-diff mark { background:color-mix(in srgb,currentColor 22%,transparent); color:inherit; border-radius:2px; font-weight:600; }
+.agent-detail .history-code { border:1px solid var(--line-1); }
+.agent-detail .history-syntax { color:#786098; }
+.agent-detail .history-show-all { padding:2px 7px; font-size:12px; margin:2px 0; }
+.agent-detail .history-read summary { display:flex; align-items:baseline; gap:8px; list-style:none; }
+.agent-detail .history-read summary::before { content:"▸"; flex-shrink:0; }
+.agent-detail .history-read[open] > summary::before { content:"▾"; }
+.agent-detail .history-read summary strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.agent-detail .history-read summary > small, .agent-detail .history-read summary > span { flex-shrink:0; white-space:nowrap; }
+.agent-detail .history-read summary small { font-size:12px; }
+.agent-detail .history-tool-error pre { color:var(--critical); background:color-mix(in srgb,var(--critical) 7%,var(--ground-2)); }
+
+.agent-detail .history-count-remove { color:var(--critical); }
 /* end agent history */

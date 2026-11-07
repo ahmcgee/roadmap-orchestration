@@ -12,6 +12,7 @@ export type TranscriptEvent = {
   title?: string; text?: string; input?: string; output?: string; status?: 'passed' | 'failed';
   /** Console presentation hints; the terminal's legacy projection ignores these. */
   inputFormat?: 'json'; report?: boolean;
+  fileResult?: { kind?: 'create' | 'update'; starts?: number[] };
   resultFor?: string; unknown?: boolean; literalOnly?: boolean; session?: { model?: string; tools?: string[]; notice?: string };
   /** Internal presentation instructions retain the terminal's exact historical text. Never sent over HTTP. */
   legacy: { heading?: string; body?: unknown; literal?: string[] }[];

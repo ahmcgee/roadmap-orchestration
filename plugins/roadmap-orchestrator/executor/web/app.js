@@ -257,28 +257,167 @@
     },[original,ref,truncated,field,base,identity]);
     return {text:full??original,ready:!truncated||full!==null,error};
   }
+  // File history helpers: deterministic, bounded work; no filesystem guesses.
+  const fileLines = text => text === '' ? [] : String(text).replace(/\n$/, '').split('\n');
+  function fileDiff(oldText,newText,oldStart=null,newStart=oldStart,eof=true) {
+    const tokens=text=>fileLines(text).map((line,i,all)=>line+(i<all.length-1||!eof||text.endsWith('\n')?'\n':''));
+    const a=tokens(oldText),b=tokens(newText),ops=[];
+    let prefix=0,suffix=0;
+    while(prefix<a.length&&prefix<b.length&&a[prefix]===b[prefix])prefix++;
+    while(suffix<a.length-prefix&&suffix<b.length-prefix&&a[a.length-1-suffix]===b[b.length-1-suffix])suffix++;
+    for(let i=0;i<prefix;i++)ops.push([' ',a[i]]);
+    const aa=a.slice(prefix,a.length-suffix),bb=b.slice(prefix,b.length-suffix);
+    if(aa.length*bb.length<=250000){
+      const table=Array.from({length:aa.length+1},()=>new Uint32Array(bb.length+1));
+      for(let i=aa.length-1;i>=0;i--)for(let j=bb.length-1;j>=0;j--)table[i][j]=aa[i]===bb[j]?table[i+1][j+1]+1:Math.max(table[i+1][j],table[i][j+1]);
+      let i=0,j=0;while(i<aa.length||j<bb.length){if(i<aa.length&&j<bb.length&&aa[i]===bb[j]){ops.push([' ',aa[i++]]);j++;}else if(i<aa.length&&(j===bb.length||table[i+1][j]>=table[i][j+1]))ops.push(['-',aa[i++]]);else ops.push(['+',bb[j++]]);}
+    }else{aa.forEach(line=>ops.push(['-',line]));bb.forEach(line=>ops.push(['+',line]));}
+    for(let i=a.length-suffix;i<a.length;i++)ops.push([' ',a[i]]);
+    let old=oldStart,next=newStart;
+    const numbered=ops.map(([kind,text])=>{const row={kind,text:text.replace(/\n$/,''),noNewline:eof&&!text.endsWith('\n'),oldCursor:old,nextCursor:next,old:kind==='+'?null:old,next:kind==='-'?null:next};if(kind!=='+'&&old!==null)old++;if(kind!=='-'&&next!==null)next++;return row;});
+    const ranges=[];
+    for(let i=0;i<numbered.length;i++)if(numbered[i].kind!==' '){const start=Math.max(0,i-3),end=Math.min(numbered.length,i+4),last=ranges.at(-1);if(last&&start<=last[1])last[1]=end;else ranges.push([start,end]);}
+    const rows=[];
+    for(const [start,end] of ranges){const chunk=numbered.slice(start,end),oldCount=chunk.filter(r=>r.kind!=='+').length,newCount=chunk.filter(r=>r.kind!=='-').length;
+      const o=oldStart===null?null:chunk[0].oldCursor-(oldCount===0?1:0),n=newStart===null?null:chunk[0].nextCursor-(newCount===0?1:0);
+      rows.push({kind:'@',text:o!=null&&n!=null?`@@ -${o},${oldCount} +${n},${newCount} @@`:'@@ changed lines @@'},...chunk.flatMap(row=>row.noNewline?[row,{kind:'@',text:'\\ No newline at end of file'}]:[row]));
+    }
+    highlightFileRows(rows);
+    return {rows,added:ops.filter(r=>r[0]==='+').length,removed:ops.filter(r=>r[0]==='-').length};
+  }
+  function highlightFileRows(rows) {
+    // A cheap common-word boundary highlight within adjacent replacement lines.
+    for(let i=0;i<rows.length;i++)if(rows[i].kind==='-'){
+      let end=i;while(rows[end]?.kind==='-')end++;
+      let plus=end;while(rows[plus]?.kind==='+')plus++;
+      for(let k=0;k<Math.min(end-i,plus-end);k++){
+        const left=rows[i+k],right=rows[end+k];if(left.text.length+right.text.length>4000)continue;
+        let p=0,s=0;while(p<left.text.length&&p<right.text.length&&left.text[p]===right.text[p])p++;
+        while(p>0&&/\w/.test(left.text[p-1])&&/\w/.test(left.text[p]||right.text[p]||''))p--;
+        while(s<left.text.length-p&&s<right.text.length-p&&left.text.at(-1-s)===right.text.at(-1-s))s++;
+        while(s>0&&/\w/.test(left.text[left.text.length-s])&&/\w/.test(left.text[left.text.length-s-1]||right.text[right.text.length-s-1]||''))s--;
+        left.mark=[p,left.text.length-s];right.mark=[p,right.text.length-s];
+      }i=end-1;
+    }
+  }
+  function resultFileDiff(text) {
+    let patches;try{patches=JSON.parse(text).filePatch;}catch{return null;}
+    if(!Array.isArray(patches)||!patches.length)return null;
+    const rows=[];let added=0,removed=0;
+    for(const patch of patches){
+      if(!Number.isSafeInteger(patch.oldStart)||!Number.isSafeInteger(patch.newStart)||!Array.isArray(patch.lines))return null;
+      let old=patch.oldStart,next=patch.newStart;
+      rows.push({kind:'@',text:`@@ -${old},${patch.oldLines} +${next},${patch.newLines} @@`});
+      for(const line of patch.lines){
+        if(typeof line!=='string')return null;
+        if(line.startsWith('\\ No newline')){rows.push({kind:'@',text:line});continue;}
+        if(![' ','-','+'].includes(line[0]))return null;
+        const kind=line[0];rows.push({kind,text:line.slice(1),old:kind==='+'?null:old,next:kind==='-'?null:next});
+        if(kind!=='-')next++;if(kind!=='+')old++;if(kind==='+')added++;if(kind==='-')removed++;
+      }
+    }
+    highlightFileRows(rows);return {rows,added,removed};
+  }
+  function readFilePreview(output,data) {
+    const numbered=String(output||'').split('\n').map(line=>/^\s*(\d+)(?:→|\t)(.*)$/.exec(line)).filter(Boolean);
+    if(numbered.length)return {text:numbered.map(m=>m[2]).join('\n'),start:Number(numbered[0][1]),end:Number(numbered.at(-1)[1])};
+    const text=String(output||''),start=Number(data.offset)||1;
+    return {text,start,end:start+fileLines(text).length-1};
+  }
+  function shellWritePath(command) {
+    const match=/^\s*cat\s*>\s*(?:'([^'\n]+)'|"([^"$`\n]+)"|([^\s<>;&|$`]+))\s*<<-?\s*['"]?([\w-]+)['"]?\s*\n([\s\S]*?)\n\4\s*$/.exec(command);
+    return match&&!match[5].split('\n').some(line=>line.trim()===match[4])?(match[1]||match[2]||match[3]):null;
+  }
+  function fileHistory(events) {
+    const files=new Map(),views=new Map();
+    for(const e of events){
+      if(e.type!=='tool')continue;
+      let data;try{data=JSON.parse(e.input);}catch{continue;}
+      if(!data||typeof data!=='object')continue;
+      const path=data.file_path||data.path,key=`${e.parent||''}:${path}`,before=files.get(key);
+      const complete=!e.truncated?.includes('input'),outputReady=!e.truncated?.includes('output');
+      if(e.tool==='Read'){
+        const read=readFilePreview(e.output,data);views.set(e.id,{read});
+        if(e.status==='passed'&&outputReady&&read.start!==null)files.set(key,{...read,eofKnown:false,whole:read.start===1&&fileLines(read.text).length<(Number(data.limit)||2000)});
+      }else if(e.tool==='Write'&&complete&&typeof data.content==='string'){
+        const result=e.status==='passed'?(e.fileResult?.kind||(/^File created successfully at:/.test(e.output||'')?'create':/has been (?:updated|overwritten) successfully|overwrote existing file/i.test(e.output||'')?'update':null)):null;
+        const kind=result||(before?'update':null);
+        views.set(e.id,{kind,diff:kind==='update'?(before?.whole?fileDiff(before.text,data.content,1,1,before.eofKnown):resultFileDiff(e.text)):null});
+        if(e.status==='passed')files.set(key,{text:data.content,start:1,whole:true,eofKnown:true});
+        else if(!e.status)files.delete(key);
+      }else if(['Edit','MultiEdit'].includes(e.tool)&&complete){
+        const edits=e.tool==='MultiEdit'?data.edits||[]:[data];let current=before?{...before}:null;const rows=[];let added=0,removed=0;
+        for(const edit of edits){
+          const old=String(edit.old_string??''),next=String(edit.new_string??'');let positions=[];
+          if(current&&old){for(let at=current.text.indexOf(old);at>=0;at=current.text.indexOf(old,at+old.length)){positions.push(current.start+current.text.slice(0,at).split('\n').length-1);if(!edit.replace_all)break;}}
+          if(!positions.length&&e.tool==='Edit')positions=e.fileResult?.starts||[];
+          if(!positions.length)positions=[null];
+          let delta=0;for(const start of positions){const diff=fileDiff(old,next,start,start===null?null:start+delta,false);rows.push(...diff.rows);added+=diff.added;removed+=diff.removed;delta+=fileLines(next).length-fileLines(old).length;}
+          if(current&&old&&current.text.includes(old))current.text=edit.replace_all?current.text.split(old).join(next):current.text.replace(old,()=>next);else current=null;
+        }
+        views.set(e.id,{diff:before&&current?fileDiff(before.text,current.text,before.start,before.start,before.eofKnown):resultFileDiff(e.text)||{rows,added,removed},replaceAll:edits.some(edit=>edit.replace_all)});
+        if(e.status==='passed'&&current)files.set(key,current);else if(e.status!=='failed')files.delete(key);
+      }else if(['Bash','Command'].includes(e.tool)){
+        // Shell mutations cannot reliably update the native-tool snapshot.
+        const command=data.command||'';if(shellWritePath(command)||/\btee\b|\bsed\s+-[a-z]*i|writeFile(?:Sync)?\s*\(|appendFile(?:Sync)?\s*\(|write_text\s*\(|write_bytes\s*\(|open\([^\n]+['"](?:w|a|x)[+b]?['"]/.test(command))files.clear();
+      }
+    }
+    return views;
+  }
+  // End file history helpers.
+  const FileHistory=R.createContext({views:new Map(),hydrate:()=>{}});
+  function FileHistoryProvider({events,children}) {
+    const [hydrated,setHydrated]=useState({});
+    const hydrate=R.useCallback((id,fields)=>setHydrated(old=>{const before=old[id];if(before?.input===fields.input&&before?.output===fields.output&&before?.text===fields.text)return old;return {...old,[id]:fields};}),[]);
+    useEffect(()=>{const ids=new Set(events.map(e=>e.id));setHydrated(old=>Object.keys(old).some(id=>!ids.has(id))?Object.fromEntries(Object.entries(old).filter(([id])=>ids.has(id))):old);},[events]);
+    const resolved=R.useMemo(()=>events.map(e=>hydrated[e.id]?{...e,...hydrated[e.id],truncated:(e.truncated||[]).filter(f=>!(f in hydrated[e.id]))}:e),[events,hydrated]);
+    const views=R.useMemo(()=>fileHistory(resolved),[resolved]),value=R.useMemo(()=>({views,hydrate}),[views,hydrate]);
+    return h(FileHistory.Provider,{value},children);
+  }
+  function FileLines({rows,diff=false,path='',start=1}) {
+    const [all,setAll]=useState(false),shown=all?rows:rows.slice(0,40);
+    const tint=text=>{
+      if(!/\.(?:[cm]?[jt]sx?|json|md|sh|css|html?)$/i.test(path))return text;
+      return text.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b(?:const|let|var|function|return|export|import|from|true|false|null|if|else|class|async|await)\b|^\s*#.*$|\/\/.*$)/g).map((part,i)=>/^(?:["']|\s*#|\/\/)/.test(part)||/^(?:const|let|var|function|return|export|import|from|true|false|null|if|else|class|async|await)$/.test(part)?h('span',{key:i,className:'history-syntax'},part):part);
+    };
+    return h(R.Fragment,null,h('pre',{className:diff?'history-diff':'history-code'},shown.map((row,i)=>{
+      const text=diff?row.text:row,mark=diff&&row.mark;
+      return h('div',{key:i,className:diff?`history-diff-line history-diff-${({'-':'remove','+':'add','@':'hunk',' ':'context'})[row.kind]}`:'history-code-line'},
+        diff?(row.kind!=='@'&&h(R.Fragment,null,row.old!=null&&h('small',{className:'history-line-number'},row.old),row.next!=null&&h('small',{className:'history-line-number'},row.next))):h('small',{className:'history-line-number'},start+i),
+        h('code',null,diff&&row.kind!=='@'?`${row.kind} `:'',mark?h(R.Fragment,null,text.slice(0,mark[0]),h('mark',null,text.slice(...mark)),text.slice(mark[1])):diff?text:tint(text),'\n'));
+    })),rows.length>40&&h('button',{className:'history-show-all',onClick:()=>setAll(!all)},all?'Show less':`Show all (${rows.length} lines)`));
+  }
   function NativeTool({event,base,identity,onLayout}) {
-    const compact=value=>typeof value==='string'&&value.length>1000?value.slice(0,1000)+'…':Array.isArray(value)?value.map(compact):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,v])=>[key,compact(v)])):value;
-    const input=useHistoryText(event,'input',base,identity),data=event.inputFormat==='json'?compact(historyJson(input.text)):null;
-    R.useLayoutEffect(()=>{onLayout?.();},[input.ready]);
+    const input=useHistoryText(event,'input',base,identity),output=useHistoryText(event,'output',base,identity),patch=useHistoryText(event,'text',base,identity);
+    const {views,hydrate}=R.useContext(FileHistory),view=views.get(event.id)||{};
+    const data=event.inputFormat==='json'?historyJson(input.text):null;
+    useEffect(()=>{if(input.ready&&output.ready&&patch.ready)hydrate(event.id,{input:input.text,output:output.text,text:patch.text});},[event.id,input.text,output.text,patch.text,input.ready,output.ready,patch.ready,hydrate]);
+    R.useLayoutEffect(()=>{onLayout?.();},[input.ready,output.ready,patch.ready]);
     const tool=event.tool||'Tool result',path=data?.file_path||data?.path;
-    const shell=['bash','command','bash_placeholder'].includes(tool.toLowerCase());
-    const title=path?`${tool} · ${path}`:tool==='Grep'?`Grep · ${data?.pattern||'search'}`:tool==='Glob'?`Glob · ${data?.pattern||'files'}`:data?.description?`${tool} · ${data.description}`:historyLabel(tool.replace(/^mcp__playwright__browser_/, 'Browser '));
+    const shell=['bash','command','bash_placeholder'].includes(tool.toLowerCase()),fileTool=['Edit','MultiEdit','Write','Read'].includes(tool);
+    const title=path?`${tool==='Read'?'Read · ':fileTool?'':tool+' · '}${path}`:tool==='Grep'?`Grep · ${data?.pattern||'search'}`:tool==='Glob'?`Glob · ${data?.pattern||'files'}`:data?.description?`${tool} · ${data.description}`:historyLabel(tool.replace(/^mcp__playwright__browser_/, 'Browser '));
     const expansion=field=>event.truncated?.includes(field)?h(HistoryField,{event,field,base,identity}):null;
-    return h(R.Fragment,null,h('header',{className:'history-event-head'},h('strong',null,title),event.status&&h('span',{className:event.status==='failed'?'history-tool-error':'muted'},event.status==='failed'?'Error':'Done')),
-      event.title&&h('small',{className:'muted'},event.title),input.error&&h('p',{role:'alert'},input.error),
-      event.input!=null&&h('div',{className:'tool-input'},!input.ready?h('p',{className:'muted'},'Reading recorded tool input…'):shell?h('pre',{className:'history-command'},h('code',null,data?.command||event.input)):
-      tool==='Edit'&&data?h('pre',{className:'history-diff'},String(data.old_string||'').split('\n').map((line,i)=>h('span',{className:'history-diff-remove',key:`old${i}`},`- ${line}\n`)),String(data.new_string||'').split('\n').map((line,i)=>h('span',{className:'history-diff-add',key:`new${i}`},`+ ${line}\n`))):
-      tool==='Write'&&data?h('details',null,h('summary',null,'Written content'),h('pre',null,h('code',null,data.content))):
-      data?h(HistoryValue,{value:Object.fromEntries(Object.entries(data).filter(([key])=>!['file_path','path','description'].includes(key)))}):event.input&&h('pre',null,event.input),expansion('input')),
-      event.output!=null&&h('details',{className:'tool-output',open:event.status==='failed'},h('summary',null,event.status==='failed'?'Output · error':'Show output'),h('pre',null,event.output),expansion('output')));
+    const status=event.status&&h('span',{className:event.status==='failed'?'history-tool-error':'history-tool-ok',title:event.status==='passed'?'Succeeded':undefined},event.status==='failed'?'Error':fileTool?'✓':'Done');
+    const errors=event.status==='failed'&&h('details',{className:'tool-output history-tool-error',open:true},h('summary',null,'Output · error'),h('pre',null,output.text),expansion('output'));
+    if(tool==='Read'&&data){
+      const read=view.read||readFilePreview(output.text,data),range=event.status==='failed'?'read failed':event.output==null?'reading…':read.end<read.start?'empty file':read.start!==null?`lines ${read.start}–${read.end}`:data.offset?`from line ${data.offset}${data.limit?` · ${data.limit} requested`:''}`:data.limit?`first ${data.limit} lines requested`:'line range unrecorded';
+      return h(R.Fragment,null,h('details',{className:'history-read'},h('summary',null,h('strong',{title:path},title),h('small',{className:'muted'},range),event.status==='passed'&&h('small',{className:'muted'},'Show output'),status),event.status!=='failed'&&h('pre',null,h('code',null,read.text))),event.truncated?.includes('input')&&h('div',{className:'tool-input'},expansion('input')),errors);
+    }
+    const writes=shell&&shellWritePath(data?.command||input.text||'');
+    return h(R.Fragment,null,h('header',{className:'history-event-head'},h('strong',null,title),h('span',{className:'history-file-meta'},view.kind&&h('small',{className:`history-file-badge history-file-${view.kind}`},view.kind==='create'?'new file':'overwrote existing file'),view.replaceAll&&h('small',{className:'history-file-badge'},'replace_all'),view.diff&&h('small',{className:'history-diff-count'},h('span',{className:'history-count-add'},`+${view.diff.added}`),h('span',{className:'history-count-remove'},` −${view.diff.removed}`)),status)),
+      event.title&&h('small',{className:'muted'},event.title),input.error&&h('p',{role:'alert'},input.error),output.error&&h('p',{role:'alert'},output.error),patch.error&&h('p',{role:'alert'},patch.error),
+      event.input!=null&&h('div',{className:'tool-input'},!input.ready?h('p',{className:'muted'},'Reading recorded tool input…'):shell?h(R.Fragment,null,writes&&h('small',{className:'muted'},`writes ${writes}`),h('pre',{className:'history-command'},h('code',null,data?.command||event.input))):
+      ['Edit','MultiEdit'].includes(tool)&&data?(view.diff?h(FileLines,{rows:view.diff.rows,diff:true}):h('p',{className:'muted'},'Preparing diff…')):
+      tool==='Write'&&data?(view.diff?h(FileLines,{rows:view.diff.rows,diff:true}):h(FileLines,{rows:fileLines(data.content||''),path})):
+      data?h(HistoryValue,{value:Object.fromEntries(Object.entries(data).filter(([key])=>!['file_path','path','description'].includes(key)))}):event.input&&h('pre',null,event.input),!fileTool&&expansion('input')),
+      errors,!fileTool&&event.status!=='failed'&&event.output!=null&&h('details',{className:'tool-output'},h('summary',null,'Show output'),h('pre',null,event.output),expansion('output')));
   }
   function AgentEvent({event,base,identity,onLayout}) {
     const now=R.useContext(Clock),unknown=event.unknown;
     const expansion=field=>event.truncated?.includes(field)?h(HistoryField,{event,field,base,identity}):null;
     const structured=event.tool==='StructuredOutput';
     const title=unknown?`${(event.title||'Transcript record').replace(/^Unknown\s*/,'')} · recorded event`:structured?(event.status==='failed'?'Report rejected':'Report submitted'):event.type==='result'?'Agent finished':event.title||historyLabel(event.type==='message'?'Agent':event.type);
-    return h('article',{className:`history-event history-${event.type}${unknown?' history-unforeseen':''}`,'data-event-id':event.id,title:event.at?new Date(event.at).toLocaleString():undefined},
+    return h('article',{className:`history-event history-${event.type}${unknown?' history-unforeseen':''}`,'data-event-id':event.id,'data-tool':event.tool,'data-tool-id':event.toolId,title:event.at?new Date(event.at).toLocaleString():undefined},
       event.parent&&h('small',{className:'muted'},`Subagent of ${event.parent}`),
       event.type==='tool'&&!structured?h(NativeTool,{event,base,identity,onLayout}):h(R.Fragment,null,
         h('header',{className:'history-event-head'},h('strong',null,title),event.at&&h('time',null,relativeTime(event.at,now))),
@@ -357,7 +496,7 @@
       error && h('p', { role: 'alert' }, error),
       h('div', { className: 'history-controls' }, history?.before != null && h('button', { onClick: more }, 'Show earlier'), live && h('button', { onClick: latest }, following ? 'Following live tail' : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen,'update')})` : ''}`), completed && (earlier||!following||history?.unseen) && h('button',{onClick:latest},'Show latest'), earlier && h('span', null, `Earlier history · latest ${pluralise(200,'event')} retained in view`)),
       h('div', { className: 'history-scroll', ref: scroll, tabIndex: 0, 'aria-label': 'Agent transcript', onScroll: ev => { if(placedScroll.current!=null&&Math.abs(ev.currentTarget.scrollTop-placedScroll.current)<1){placedScroll.current=null;return;}placedScroll.current=null;follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48; setFollowing(follow.current); } },
-        history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity:{...activity,name:`${info(e,activity).label} · attempt ${info(e,activity).attempt}`}, base, identity: history.identity, onLayout:followLayout })),
+        h(FileHistoryProvider,{key:history?.identity,events:history?.events||[]},history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity:{...activity,name:`${info(e,activity).label} · attempt ${info(e,activity).attempt}`}, base, identity: history.identity, onLayout:followLayout }))),
         result?.report!=null?h(VerdictCard,{value:result.report}):h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,onLayout:followLayout}),
         history && !history.events.length && h('p', null, 'Waiting for complete transcript records…'),
         live && h('p', { className: 'history-live', role: 'status' }, 'Agent is working', h('span', { className: 'history-caret', 'aria-hidden': true }))),
