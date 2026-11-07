@@ -2,7 +2,7 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { arcId, implementerSessionId, invocationDirName, opKey, sha256, specRev, unitId } from '../../src/core/ids.ts';
-import { sha256Hex } from '../../src/core/json.ts';
+import { sha256Hex, type JsonValue } from '../../src/core/json.ts';
 import type { LaunchFile, ResultFile } from '../../src/core/records.ts';
 import { absPath, isoTime } from '../../src/core/values.ts';
 import { claimHost, releaseHost } from '../../src/host/lock.ts';
@@ -17,12 +17,12 @@ import { runnerFiles } from '../../src/runner/files.ts';
 import { launchSha256 } from '../../src/runner/launch.ts';
 import { contextFor } from './unit-common.ts';
 import { enrichedParityArc } from './status-parity.ts';
-export async function consoleAgentFixture(existing?: Awaited<ReturnType<typeof enrichedParityArc>>) {
+export async function consoleAgentFixture(existing?: Awaited<ReturnType<typeof enrichedParityArc>>, seatPrompt?: string) {
   const f = existing ?? await enrichedParityArc(); const r = contextFor(f.d);
   const arc = arcId(f.d.arc); const unit = unitId('u3'); const rev = r.ctx.routing(null).rev;
   pinDispatch(r.ctx, r.unit(unit), { rev: specRev(1), sha256: specShaInForce(r.journal.view, unit)! });
   const parent = start(r.ctx, unit, 'build'); const session = implementerSessionId('00000000-0000-4000-8000-000000000111');
-  const prompt = 'Implement the unit contract. Inspect the source, explain your reasoning, and report verification evidence.\n';
+  const prompt = seatPrompt ?? 'Implement the unit contract. Inspect the source, explain your reasoning, and report verification evidence.\n';
   const stdinPath = inputPath(f.runDir, keepInput(f.runDir, Buffer.from(prompt), 'prompt.txt'), 'prompt.txt');
   let launch!: LaunchFile;
   const spawned = r.journal.begin({ kind: 'proc.spawn', key: opKey('console-live-agent'), parent, deadlineAt: null, body: (op, inv) => {
@@ -44,10 +44,10 @@ export async function consoleAgentFixture(existing?: Awaited<ReturnType<typeof e
   let ended = false;
   return { ...f, arc, inv: spawned.inv, routeId: invocationDirName(spawned.inv), transcript, prompt,
     append(text: string) { appendFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } }) + '\n'); },
-    finish() {
+    finish(report: JsonValue = { summary: 'Verified the change.' }) {
       appendFileSync(transcript, shape[6] + '\n');
       const now = isoTime(new Date().toISOString()); const binding = { v: 2 as const, arc, op: spawned.op, inv: spawned.inv };
-      const result: ResultFile = { ...binding, type: 'backend', role: 'build', routingRev: rev, session, outcome: { kind: 'success', value: { summary: 'Verified the change.' } }, usage: { kind: 'unavailable', reason: 'absent' }, backendErrors: [] };
+      const result: ResultFile = { ...binding, type: 'backend', role: 'build', routingRev: rev, session, outcome: { kind: 'success', value: report }, usage: { kind: 'unavailable', reason: 'absent' }, backendErrors: [] };
       files.write('result.json', result); files.write('exit.json', { ...binding, child: { type: 'exited', code: 0 }, cause: 'exited', endedAt: now, quiescedAt: now, cpu: null });
       r.journal.done(spawned.op, 'proc.spawn', { kind: 'result', pressure: null, resultSha256: sha256(sha256Hex(readFileSync(join(dir, 'result.json')))), summary: { type: 'backend', outcome: 'success' } }, null);
       record(r.ctx, at(parent, 'build'), 'success'); ended = true;

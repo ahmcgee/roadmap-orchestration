@@ -168,27 +168,139 @@
       size !== null && h('p', { className: 'muted' }, `Characters ${Math.max(0, cursor - pages.join('').length)}–${cursor} of ${size}`),
       size !== null && cursor < size && h('button', { onClick: load }, `Next ${field} page`));
   }
-  function AgentEvent({ event, activity, base, identity }) {
-    const now=R.useContext(Clock);
-    const display = { ...event, at: event.at ? relativeTime(event.at,now) : undefined, title: [event.parent ? `Subagent of ${event.parent}` : '', event.title].filter(Boolean).join(' · ') };
-    const expansion=field=>(event.truncated||[]).includes(field)?h(HistoryField,{key:`${event.id}:${field}:${identity}`,event,field,base,identity}):null;
-    // Compose bounded fields inside their event; keep the design system's event typography and rail.
-    if(event.type==='tool'){
-      display.input=undefined;display.output=undefined;
-      display.text=h(R.Fragment,null,event.text,expansion('text'),event.input!=null&&h('div',{className:'tool-input'},h('strong',{className:'eyebrow'},'Input'),h('pre',null,event.input),expansion('input')),
-        event.output!=null&&h('details',{className:'tool-output',open:event.status==='failed'},h('summary',null,event.status==='failed'?'Output · error':'Show output'),h('pre',null,event.output),expansion('output')));
-    }else display.text=h(R.Fragment,null,event.text,expansion('text'));
-    return h('article', { className: 'history-event', 'data-event-id': event.id, title: event.at ? new Date(event.at).toLocaleString() : undefined },
-      h(D.AgentHistory, { activity: { ...activity, status: 'pending' }, events: [display] }),expansion('title'));
+  // Agent history: inert Markdown, schema-aware reports and compact tool records.
+  const historyLabel = value => String(value).replace(/([a-z])([A-Z])/g,'$1 $2').replaceAll('_',' ').replaceAll('-',' ').replace(/^./,c=>c.toUpperCase());
+  const historyJson = text => { try { return JSON.parse(text); } catch { return null; } };
+  const historyEmpty = value => value == null || value === '' || (Array.isArray(value) ? !value.length : typeof value === 'object' && Object.values(value).every(historyEmpty));
+  function HistoryInline({text}) {
+    return String(text).split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^\s)]+\))/g).map((part,i)=>{
+      if(part.startsWith('`'))return h('code',{key:i},part.slice(1,-1));
+      if(part.startsWith('**'))return h('strong',{key:i},part.slice(2,-2));
+      const link=/^\[([^\]]+)\]\(([^)]+)\)$/.exec(part);
+      if(link && /^https?:\/\//i.test(link[2]))return h('a',{key:i,href:link[2],target:'_blank',rel:'noreferrer'},link[1]);
+      return part;
+    });
+  }
+  function HistoryMarkdown({text}) {
+    const lines=String(text||'').replace(/\r/g,'').split('\n'), blocks=[];
+    for(let i=0;i<lines.length;){
+      const line=lines[i], fence=/^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if(fence){const code=[];i++;while(i<lines.length&&!new RegExp(`^\\s{0,3}${fence[1][0]}{${fence[1].length},}\\s*$`).test(lines[i]))code.push(lines[i++]);i++;blocks.push(h('pre',{key:blocks.length},h('code',null,code.join('\n'))));continue;}
+      if(!line.trim()){i++;continue;}
+      const heading=/^(#{1,6})\s+(.+)$/.exec(line);
+      if(heading){blocks.push(h(`h${Math.min(6,heading[1].length+2)}`,{key:blocks.length},h(HistoryInline,{text:heading[2]})));i++;continue;}
+      const item=/^\s*(?:[-*+] |\d+[.)] )(.+)$/.exec(line);
+      if(item){const ordered=/^\s*\d/.test(line),items=[];while(i<lines.length){const m=/^\s*(?:[-*+] |\d+[.)] )(.+)$/.exec(lines[i]);if(!m)break;items.push(h('li',{key:i++},h(HistoryInline,{text:m[1]})));}blocks.push(h(ordered?'ol':'ul',{key:blocks.length},items));continue;}
+      if(/^>\s?/.test(line)){const quote=[];while(i<lines.length&&/^>\s?/.test(lines[i]))quote.push(lines[i++].replace(/^>\s?/,''));blocks.push(h('blockquote',{key:blocks.length},h(HistoryMarkdown,{text:quote.join('\n')})));continue;}
+      const paragraph=[line];i++;while(i<lines.length&&lines[i].trim()&&!/^\s*(?:#{1,6}\s|[-*+] |\d+[.)] |`{3,}|~{3,}|>)/.test(lines[i]))paragraph.push(lines[i++]);
+      blocks.push(h('p',{key:blocks.length},h(HistoryInline,{text:paragraph.join('\n')})));
+    }
+    return h('div',{className:'history-markdown'},blocks);
+  }
+  function HistoryValue({value,name=''}) {
+    if(historyEmpty(value))return null;
+    if(Array.isArray(value))return name==='argv'?h('pre',null,h('code',null,value.join(' '))):h('ul',null,value.filter(v=>!historyEmpty(v)).map((v,i)=>h('li',{key:i},h(HistoryValue,{value:v,name:name==='evidence'?'evidence':''}))));
+    if(typeof value==='object'){
+      if(typeof value.path==='string'&&typeof value.line==='number')return h('code',{className:'history-evidence'},`${value.path}:${value.line}`);
+      return h('dl',{className:'history-fields'},Object.entries(value).filter(([,v])=>!historyEmpty(v)).map(([key,v])=>h('div',{key},h('dt',null,historyLabel(key)),h('dd',null,h(HistoryValue,{value:v,name:key})))));
+    }
+    if(['decision','outcome','severity'].includes(name))return h('span',{className:'history-status','data-status':String(value)},historyLabel(value));
+    if(['path','file','contractRef','evidence'].includes(name))return h('code',{className:'history-evidence'},String(value));
+    if(['command','output','old_string','new_string','content','code','function'].includes(name))return h('pre',null,h('code',null,String(value)));
+    return typeof value==='string'?h(HistoryMarkdown,{text:value}):h('span',null,typeof value==='boolean'?(value?'Yes':'No'):String(value));
+  }
+  function VerdictCard({value}) {
+    if(value==null)return null;
+    if(typeof value!=='object'||Array.isArray(value))return h('section',{className:'history-verdict','aria-label':'Agent report'},h('h3',null,'Agent report'),h(HistoryValue,{value}));
+    if(value.mode&&value.verdict&&typeof value.verdict==='object')value={mode:value.mode,...value.verdict};
+    const decision=value.decision || (typeof value.outcome==='string'?value.outcome:null) || (value.final===true?'Report complete':value.final===false?'Interim report':value.ok===true?'Passed':value.ok===false?'Failed':'Report recorded');
+    const order=['summary','reasons','findings','premises','grounding','experiments'];
+    const fields=Object.entries(value).filter(([key])=>!['decision','final'].includes(key)).sort(([a],[b])=>(order.includes(a)?order.indexOf(a):order.length)-(order.includes(b)?order.indexOf(b):order.length));
+    const empty=fields.filter(([,v])=>historyEmpty(v)).map(([key])=>historyLabel(key));
+    return h('section',{className:'history-verdict','aria-label':'Agent verdict'},
+      h('div',{className:'history-verdict-head'},h('h3',null,'Agent report'),h('span',{className:'history-status','data-status':String(decision)},historyLabel(decision))),
+      fields.filter(([key,v])=>!historyEmpty(v)&&!(key==='outcome'&&typeof v==='string')).map(([key,v])=>h('section',{key,className:'history-verdict-section'},h('h4',null,historyLabel(key)),h(HistoryValue,{value:v,name:key}))),
+      empty.length>0&&h('p',{className:'muted history-empty'},`Empty sections: ${empty.join(', ')}.`));
+  }
+  // Only envelopes emitted by src/prompts are headings; document Markdown stays literal.
+  const briefSections=new Set('affected audited_range base_comparison browser build_lanes builder_touches cap_and_allowance changed checkout contracts_index decisions delta diff direction_text disputes driving_the_product escalation evidence_dir evidence_dirs executable_checks failing_lane_evidence finding_bar findings_and_evidence findings_ledger fix_round grounding_first handover history how_your_session_ends implementation intent journeys judging kept_tweaks lane_ledger large_diff last_lane_series lenses merged_units method milestone milestones non_goals not_inlined notes obligations open_findings orientation owner_branches plan previous_findings prior_findings prior_round product reach reach_traits references report required_checks rules_index safety seeing specs standing standing_items standing_obligations subagents suite_lanes system_notes system_traits systems tweak_diff undeclared_contracts unit_policy unit_systems vision vision_first walkthrough_findings witness_checks witnesses_and_lanes working_unattended workspace worktree your_checkout'.split(' '));
+  function BriefInstructions({text}) {
+    let fence=null,chunk=[];const blocks=[];
+    const flush=()=>{const body=chunk.join('\n').trim();chunk=[];if(!body)return;const value=historyJson(body);blocks.push(value!==null?h(HistoryValue,{key:blocks.length,value}):h(HistoryMarkdown,{key:blocks.length,text:body}));};
+    for(const line of String(text||'').split('\n')){
+      const mark=/^\s{0,3}(`{3,}|~{3,})/.exec(line);
+      if(mark){if(!fence)fence=mark[1];else if(mark[1][0]===fence[0]&&mark[1].length>=fence.length)fence=null;chunk.push(line);continue;}
+      if(fence){chunk.push(line);continue;}
+      for(const part of line.split(/(<\/?[a-z_]+>|<\/?pasted_content id="[a-f0-9]+">)/g)){
+        const tag=/^<(\/?)([a-z_]+)(?: id="[a-f0-9]+")?>$/.exec(part);
+        if(tag&&(briefSections.has(tag[2])||tag[2]==='pasted_content')){flush();if(!tag[1])blocks.push(h('h4',{key:blocks.length},tag[2]==='pasted_content'?'Recorded diff':historyLabel(tag[2])));}
+        else if(part)chunk.push(part);
+      }
+    }
+    flush();return h('div',{className:'history-instructions'},blocks);
+  }
+  function SeatBrief({brief}) {
+    return h('div',{className:'history-seat-brief'},brief.mode&&h('p',null,h('strong',null,'Mode: '),historyLabel(brief.mode)),
+      brief.documents.map((doc,i)=>h('details',{key:i,className:'history-document',open:doc.content.length<1600},h('summary',null,doc.source),h(HistoryMarkdown,{text:doc.content}))),
+      h('section',null,h('h3',null,'Instructions'),h(BriefInstructions,{text:brief.instructions})));
+  }
+  function useHistoryText(event,field,base,identity) {
+    const [full,setFull]=useState(null),[error,setError]=useState('');
+    const original=event?.[field],ref=event?.refs?.[field]||event?.id,truncated=event?.truncated?.includes(field);
+    useEffect(()=>{
+      setFull(null);setError('');if(!truncated)return;
+      const c=new AbortController();
+      (async()=>{let after=0,text='';for(;;){const r=(await get(`${base}/history-field?identity=${encodeURIComponent(identity)}&ref=${encodeURIComponent(ref)}&field=${field}&after=${after}`,c.signal)).data;text+=r.text;after=r.next;if(after>=r.size){setFull(text);return;}if(text.length>=8*1024*1024)throw new Error('Record exceeds the history decoder bound');}})().catch(err=>{if(!c.signal.aborted)setError(err.message);});
+      return()=>c.abort();
+    },[original,ref,truncated,field,base,identity]);
+    return {text:full??original,ready:!truncated||full!==null,error};
+  }
+  function NativeTool({event,base,identity,onLayout}) {
+    const compact=value=>typeof value==='string'&&value.length>1000?value.slice(0,1000)+'…':Array.isArray(value)?value.map(compact):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([key,v])=>[key,compact(v)])):value;
+    const input=useHistoryText(event,'input',base,identity),data=event.inputFormat==='json'?compact(historyJson(input.text)):null;
+    R.useLayoutEffect(()=>{onLayout?.();},[input.ready]);
+    const tool=event.tool||'Tool result',path=data?.file_path||data?.path;
+    const shell=['bash','command','bash_placeholder'].includes(tool.toLowerCase());
+    const title=path?`${tool} · ${path}`:tool==='Grep'?`Grep · ${data?.pattern||'search'}`:tool==='Glob'?`Glob · ${data?.pattern||'files'}`:data?.description?`${tool} · ${data.description}`:historyLabel(tool.replace(/^mcp__playwright__browser_/, 'Browser '));
+    const expansion=field=>event.truncated?.includes(field)?h(HistoryField,{event,field,base,identity}):null;
+    return h(R.Fragment,null,h('header',{className:'history-event-head'},h('strong',null,title),event.status&&h('span',{className:event.status==='failed'?'history-tool-error':'muted'},event.status==='failed'?'Error':'Done')),
+      event.title&&h('small',{className:'muted'},event.title),input.error&&h('p',{role:'alert'},input.error),
+      event.input!=null&&h('div',{className:'tool-input'},!input.ready?h('p',{className:'muted'},'Reading recorded tool input…'):shell?h('pre',{className:'history-command'},h('code',null,data?.command||event.input)):
+      tool==='Edit'&&data?h('pre',{className:'history-diff'},String(data.old_string||'').split('\n').map((line,i)=>h('span',{className:'history-diff-remove',key:`old${i}`},`- ${line}\n`)),String(data.new_string||'').split('\n').map((line,i)=>h('span',{className:'history-diff-add',key:`new${i}`},`+ ${line}\n`))):
+      tool==='Write'&&data?h('details',null,h('summary',null,'Written content'),h('pre',null,h('code',null,data.content))):
+      data?h(HistoryValue,{value:Object.fromEntries(Object.entries(data).filter(([key])=>!['file_path','path','description'].includes(key)))}):event.input&&h('pre',null,event.input),expansion('input')),
+      event.output!=null&&h('details',{className:'tool-output',open:event.status==='failed'},h('summary',null,event.status==='failed'?'Output · error':'Show output'),h('pre',null,event.output),expansion('output')));
+  }
+  function AgentEvent({event,base,identity,onLayout}) {
+    const now=R.useContext(Clock),unknown=event.unknown;
+    const expansion=field=>event.truncated?.includes(field)?h(HistoryField,{event,field,base,identity}):null;
+    const structured=event.tool==='StructuredOutput';
+    const title=unknown?`${(event.title||'Transcript record').replace(/^Unknown\s*/,'')} · recorded event`:structured?(event.status==='failed'?'Report rejected':'Report submitted'):event.type==='result'?'Agent finished':event.title||historyLabel(event.type==='message'?'Agent':event.type);
+    return h('article',{className:`history-event history-${event.type}${unknown?' history-unforeseen':''}`,'data-event-id':event.id,title:event.at?new Date(event.at).toLocaleString():undefined},
+      event.parent&&h('small',{className:'muted'},`Subagent of ${event.parent}`),
+      event.type==='tool'&&!structured?h(NativeTool,{event,base,identity,onLayout}):h(R.Fragment,null,
+        h('header',{className:'history-event-head'},h('strong',null,title),event.at&&h('time',null,relativeTime(event.at,now))),
+        unknown?h('details',null,h('summary',null,'Raw event payload'),h('pre',null,historyJson(event.text)?JSON.stringify(historyJson(event.text),null,2):event.text),expansion('text')):
+        structured&&event.status==='failed'?h('details',{open:true,className:'tool-output'},h('summary',null,'Output · error'),h('pre',null,event.output),expansion('output')):
+        !structured&&event.type!=='result'&&h(R.Fragment,null,h(HistoryMarkdown,{text:event.text}),expansion('text'))),
+      (event.tokens!=null||event.elapsedMs!=null)&&h('small',{className:'muted history-event-meta'},[event.tokens!=null?`${pluralise(event.tokens,'token')}`:'',event.elapsedMs!=null?elapsed(event.elapsedMs):''].filter(Boolean).join(' · ')));
+  }
+  function TranscriptVerdict({event,base,identity,onLayout}) {
+    const field=event?.tool==='StructuredOutput'?'input':'text',value=useHistoryText(event,field,base,identity);
+    R.useLayoutEffect(()=>{onLayout?.();},[value.ready]);
+    if(value.error)return h('p',{role:'alert'},value.error);
+    if(!event)return null;
+    if(!value.ready)return h('p',{className:'muted'},'Reading agent report…');
+    return h(VerdictCard,{value:historyJson(value.text)||value.text});
   }
 
   function AgentDetail({ e, id, activity, close, stale }) {
     const base = `/runs/${e.arc}/invocations/${id}`;
     const [history, setHistory] = useState(null), [error, setError] = useState(''), [brief, setBrief] = useState(null), [result, setResult] = useState(null);
     const [following, setFollowing] = useState(true), [earlier, setEarlier] = useState(false);
-    const scroll = useRef(null), follow = useRef(true);
+    const scroll = useRef(null), follow = useRef(true), placedScroll = useRef(null);
     useEffect(() => {
-      const c = new AbortController(); setHistory(null); setBrief(null); setError(''); setResult(null); setEarlier(false);
+      const c = new AbortController(); setHistory(null); setBrief(null); setError(''); setResult(null); setEarlier(false); follow.current=true; setFollowing(true); placedScroll.current=null;
       get(`${base}/prompt?after=0`, c.signal).then(r => setBrief(r.data)).catch(err => { if (!c.signal.aborted) setError(err.message); });
       let fetching=false, again=false;
       const load = async (notice) => {
@@ -209,7 +321,13 @@
       stream.addEventListener('history-error', ev => { if (ev.data) setError(JSON.parse(ev.data).message); });
       return () => { c.abort(); stream.close(); };
     }, [base]);
-    useEffect(() => { if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [history]);
+    const followLayout=()=>{
+      if(!follow.current||!scroll.current)return;
+      const verdict=completed?scroll.current.querySelector('.history-verdict'):null;
+      scroll.current.scrollTop=verdict?scroll.current.scrollTop+verdict.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top:scroll.current.scrollHeight;
+      placedScroll.current=scroll.current.scrollTop;
+    };
+    R.useLayoutEffect(followLayout,[history,result]);
     const back = () => { location.hash = link(e.arc, 'overview', 'units', activity.unit).slice(1); };
     const more = () => {
       follow.current = false; setFollowing(false);
@@ -222,23 +340,31 @@
     const live = history?.state === 'running' && !completed && !stale;
     const model = history?.session?.model || [...(history?.events || [])].reverse().find(event => event.model)?.model || activity.model;
     const usage = [...(history?.events || [])].reverse().find(event => event.tokens != null)?.tokens;
+    useEffect(()=>{
+      if(!completed)return;
+      const c=new AbortController();get(`${base}/result`,c.signal).then(r=>setResult(r.data)).catch(err=>{if(!c.signal.aborted)setResult({unavailable:err.message});});return()=>c.abort();
+    },[base,completed]);
+    const verdictEvent=[...(history?.events||[])].reverse().find(event=>event.report||(event.tool==='StructuredOutput'&&event.status!=='failed'));
     return h(Dialog, { title: `Agent history · ${info(e,activity).label}`, close, className:'agent-detail' },
       h('button', { onClick: back }, `‹ Back to unit ${activity.unit}`),
       h('div', { className: 'history-meta' }, h('strong', null, live ? 'Running' : completed ? 'Finished' : history?.state || 'Connecting'),
         h('span', null, model || 'Model unrecorded'), usage != null && h('span', null, `${pluralise(usage,'recorded token')}`)),
       history?.session && h('details', { className:'history-session' }, h('summary',null,'Session · '+(history.session.model || model || 'model unrecorded')), h('p',null,`Tools: ${history.session.tools.join(', ') || 'unrecorded'}`),history.session.notices.map(n=>h('p',{key:n},n))),
       h('details', { className: 'history-brief' }, h('summary', null, 'Brief · recorded seat prompt'),
-        brief ? h(R.Fragment, null, h('pre', null, brief.lines.join('\n')), brief.end < brief.size && h('button', { onClick: () => get(`${base}/prompt?after=${brief.end}`).then(r => setBrief(r.data)).catch(err => setError(err.message)) }, `Next brief page (${brief.end} of ${pluralise(brief.size,'byte')})`)) : h('p', null, 'Reading retained brief…')),
+        brief?.brief ? h(SeatBrief,{brief:brief.brief}) : brief ? h(R.Fragment, null, h(HistoryMarkdown,{text:brief.lines.join('\n')}), brief.end < brief.size && h('button', { onClick: () => get(`${base}/prompt?after=${brief.end}`).then(r => setBrief(r.data)).catch(err => setError(err.message)) }, `Next brief page (${brief.end} of ${pluralise(brief.size,'byte')})`)) : h('p', null, 'Reading retained brief…')),
       error && h('p', { role: 'alert' }, error),
       h('div', { className: 'history-controls' }, history?.before != null && h('button', { onClick: more }, 'Show earlier'), live && h('button', { onClick: latest }, following ? 'Following live tail' : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen,'update')})` : ''}`), completed && (earlier||!following||history?.unseen) && h('button',{onClick:latest},'Show latest'), earlier && h('span', null, `Earlier history · latest ${pluralise(200,'event')} retained in view`)),
-      h('div', { className: 'history-scroll', ref: scroll, tabIndex: 0, 'aria-label': 'Agent transcript', onScroll: ev => { follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48; setFollowing(follow.current); } },
-        history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity:{...activity,name:`${info(e,activity).label} · attempt ${info(e,activity).attempt}`}, base, identity: history.identity })),
+      h('div', { className: 'history-scroll', ref: scroll, tabIndex: 0, 'aria-label': 'Agent transcript', onScroll: ev => { if(placedScroll.current!=null&&Math.abs(ev.currentTarget.scrollTop-placedScroll.current)<1){placedScroll.current=null;return;}placedScroll.current=null;follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48; setFollowing(follow.current); } },
+        history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity:{...activity,name:`${info(e,activity).label} · attempt ${info(e,activity).attempt}`}, base, identity: history.identity, onLayout:followLayout })),
+        result?.report!=null?h(VerdictCard,{value:result.report}):h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,onLayout:followLayout}),
         history && !history.events.length && h('p', null, 'Waiting for complete transcript records…'),
-        live && h('p', { className: 'history-live', role: 'status' }, 'Agent is working', h('span', { className: 'atlas-settle-caret', 'aria-hidden': true }))),
-      h('div', { className: 'history-links' }, h('a', { href: `${api}${base}/result`, onClick: ev => { ev.preventDefault(); get(`${base}/result`).then(r => setResult(r.data.lines.join('\n'))).catch(err => setError(err.message)); } }, 'Final verdict / report'),
-        h(TranscriptText,{base})),
-      result && h('pre', { className: 'record' }, result));
+        live && h('p', { className: 'history-live', role: 'status' }, 'Agent is working', h('span', { className: 'history-caret', 'aria-hidden': true }))),
+      h('div', { className: 'history-links' },
+        h('details',{onToggle:ev=>{if(ev.currentTarget.open&&!result)get(`${base}/result`).then(r=>setResult(r.data)).catch(err=>setResult({unavailable:err.message}));}},h('summary',null,'Raw result.json'),
+          result?.raw?h('pre',{className:'record'},result.raw):h('p',{className:'muted'},result?.unavailable||'Reading retained result…')),
+        h(TranscriptText,{base})));
   }
+
   function TranscriptText({base}) {
     const [page,setPage]=useState(null),[error,setError]=useState('');
     const load=after=>get(`${base}/log?source=stdout&after=${after}`).then(r=>setPage(r.data)).catch(e=>setError(e.message));

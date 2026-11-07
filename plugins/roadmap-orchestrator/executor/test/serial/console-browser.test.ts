@@ -148,8 +148,10 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await brandAudit('finished-history');
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'agent-history-finished.png'), fullPage: false });
   copyFileSync(join(evidence, 'agent-history-finished.png'), join(SHOTS, 'agent-history-finished.png'));
-  await browser.evaluate('() => { [...document.querySelectorAll("a")].find(a => a.textContent === "Final verdict / report").click(); return true; }');
-  await until(async () => /Verified the change/.test(await browser.evaluate<string>('() => document.querySelector("[role=dialog] > .record")?.textContent || ""')), 10_000, 'linked final report');
+  assert.equal(await browser.evaluate('() => document.querySelectorAll(".history-verdict").length'), 1, 'one canonical report');
+  await browser.evaluate('() => { [...document.querySelectorAll("summary")].find(s => s.textContent === "Raw result.json").parentElement.open = true; return true; }');
+  await until(async () => /Verified the change/.test(await browser.evaluate<string>('() => [...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Raw result.json")?.querySelector("pre")?.textContent || ""')), 10_000, 'pretty printed raw result disclosure');
+  assert.equal(await browser.evaluate('() => { const p=[...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Raw result.json").querySelector("pre"); return JSON.parse(p.textContent).outcome.value.summary; }'), 'Verified the change.');
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => /Back to unit/.test(b.textContent)).click(); return true; }');
   await until(async () => await browser.evaluate('() => document.querySelector("#detail-title")?.textContent === "u3" && Boolean(document.querySelector(".unit-purpose"))'), 10_000, 'back to unit activity');
   await browser.call('browser_press_key', { key: 'Escape' });

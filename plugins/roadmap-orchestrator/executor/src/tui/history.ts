@@ -45,13 +45,15 @@ function bytes(fd: number, from: number, to: number) {
   while (n < data.length) { const got = readSync(fd, data, n, data.length - n, from + n); if (!got) break; n += got; }
   return data.subarray(0, n);
 }
-function decode(fd: number, start: number, end: number): HistoryEvent[] {
+function decode(fd: number, start: number, end: number, decoder: typeof decodeTranscript): HistoryEvent[] {
   if (end - start > RECORD_LIMIT) return [{ id: `${start}:0`, type: 'error', title: 'Oversize transcript record',
     text: 'This record exceeds the 8 MiB decoder bound. Its complete bytes remain available in the paged raw transcript.', legacy: [] }];
-  return decodeTranscript(bytes(fd, start, end).toString('utf8')).map((e, i) => ({ ...e, id: `${start}:${i}`,
+  return decoder(bytes(fd, start, end).toString('utf8')).map((e, i) => ({ ...e, id: `${start}:${i}`,
     refs: Object.fromEntries(['text', 'input', 'output', 'title'].filter(f => f in e).map(f => [f, `${start}:${i}`])) }));
 }
 export class HistoryTail {
+  readonly decoder: typeof decodeTranscript;
+  constructor(decoder = decodeTranscript) { this.decoder = decoder; }
   #identity = ''; #generation = randomUUID(); #size = 0; #mtime = 0; #prefix = Buffer.alloc(0); #anchor = Buffer.alloc(0);
   #scan = 0; #line = 0; #events: HistoryEvent[] = [];
   #session: {model?:string;tools:string[];notices:string[]} = {tools:[],notices:[]};
@@ -70,7 +72,7 @@ export class HistoryTail {
         || (st.size === this.#size && st.mtimeMs !== this.#mtime) || !this.#prefix.equals(prefix.subarray(0, this.#prefix.length)));
       if (!this.#identity || reset) {
         this.#generation = randomUUID(); this.#events = []; this.#pendingTools.clear(); this.#session={tools:[],notices:[]};
-        const header=bytes(fd,0,Math.min(st.size,65536));let begin=0;for(let nl=header.indexOf(10);nl>=0;nl=header.indexOf(10,begin)){this.#metadata(decode(fd,begin,nl));begin=nl+1;}
+        const header=bytes(fd,0,Math.min(st.size,65536));let begin=0;for(let nl=header.indexOf(10);nl>=0;nl=header.indexOf(10,begin)){this.#metadata(decode(fd,begin,nl,this.decoder));begin=nl+1;}
         this.#scan = Math.max(0, st.size - WINDOW); this.#line = this.#scan;
         if (this.#scan > 0) { const head = bytes(fd, this.#scan, st.size); const nl = head.indexOf(10); this.#scan = nl < 0 || nl === head.length - 1 ? 0 : this.#scan + nl + 1; this.#line = this.#scan; }
       }
@@ -79,7 +81,7 @@ export class HistoryTail {
       const fresh: HistoryEvent[] = [];
       for (let offset = chunk.indexOf(10); offset >= 0; offset = chunk.indexOf(10, offset + 1)) {
         const end = this.#scan + offset;
-        fresh.push(...decode(fd, this.#line, end)); this.#line = end + 1;
+        fresh.push(...decode(fd, this.#line, end, this.decoder)); this.#line = end + 1;
       }
       this.#scan += chunk.length; this.#anchor = bytes(fd, Math.max(0, this.#scan - 128), this.#scan);
       const previous = new Map(this.#events.map(e => [e.id, e]));
@@ -121,7 +123,7 @@ export class HistoryTail {
       let offset = preceding === 10 ? 0 : chunk.indexOf(10) + 1;
       const decoded: HistoryEvent[] = [];
       for (let nl = chunk.indexOf(10, offset); nl >= 0; nl = chunk.indexOf(10, offset)) {
-        decoded.push(...decode(fd, start + offset, start + nl)); offset = nl + 1;
+        decoded.push(...decode(fd, start + offset, start + nl, this.decoder)); offset = nl + 1;
       }
       // A long record can span the whole normal window. Recover its boundary within the decoder
       // bound, or expose an explicit oversize fragment; never silently skip it while paging backwards.
@@ -130,7 +132,7 @@ export class HistoryTail {
         const terminal = wider[wider.length - 1] === 10 ? wider.length - 1 : wider.length;
         const previous = wider.lastIndexOf(10, terminal - 1);
         const recordStart = previous >= 0 ? from + previous + 1 : from;
-        if (previous >= 0 || from === 0) decoded.push(...decode(fd, recordStart, from + terminal));
+        if (previous >= 0 || from === 0) decoded.push(...decode(fd, recordStart, from + terminal, this.decoder));
         else decoded.push({ id: `${start}:0`, type: 'error', title: 'Oversize transcript record',
           text: 'This record crosses the bounded history page. Inspect its full bytes through the paged raw transcript.', legacy: [] });
       }
@@ -149,7 +151,7 @@ export class HistoryTail {
       if (offset && bytes(fd, offset - 1, offset)[0] !== 10) throw new Error('event reference is not a record boundary');
       const chunk = bytes(fd, offset, Math.min(this.#line, offset + RECORD_LIMIT + 1)); const nl = chunk.indexOf(10);
       if (nl < 0) throw new Error('oversize record: use the bounded raw transcript endpoint');
-      const event = decode(fd, offset, offset + nl)[index]; if (!event) throw new Error('event reference is absent');
+      const event = decode(fd, offset, offset + nl, this.decoder)[index]; if (!event) throw new Error('event reference is absent');
       return expandEvent(event, field, after);
     } finally { if (opened === undefined) closeSync(fd); }
   }

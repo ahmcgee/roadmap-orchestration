@@ -5,6 +5,7 @@ import { invocationDir } from '../pipeline/invoke.ts';
 import { ConsoleError, type Envelope } from '../observation/protocol.ts';
 import { HistoryTail } from '../tui/history.ts';
 import { LogReader } from '../tui/log-reader.ts';
+import { consoleTranscript, parseSeatBrief } from './agent-history.ts';
 import { openEvidence } from './evidence.ts';
 
 /** Open histories alone are tailed; cache and per-read work have fixed bounds. */
@@ -31,7 +32,7 @@ export class ConsoleHistories {
     const path = join(invocationDir(root, invocationIdOf(i.id)), 'stdout');
     const fd = openEvidence(root, path);
     const key = `${e.arc}:${id}`;
-    let tail = this.#tails.get(key); if (!tail) tail = new HistoryTail();
+    let tail = this.#tails.get(key); if (!tail) tail = new HistoryTail(consoleTranscript);
     this.#tails.delete(key); this.#tails.set(key, tail);
     while (this.#tails.size > 16) this.#tails.delete(this.#tails.keys().next().value!);
     return { i, path, fd, tail, key };
@@ -63,6 +64,10 @@ export class ConsoleHistories {
     const selected = this.selected(e, id);
     const reply = this.#logs.read({ run: e.data.display.run, selected, token: 0, log: { inv: selected.id, source: 'prompt', after, before: after + 4096, expanded: false } });
     if (reply.error) throw new ConsoleError('corruption', reply.error);
-    return reply.log!;
+    const log = reply.log!;
+    if (after !== 0 || log.size > 8 * 1024 * 1024) return log;
+    const full = this.#logs.read({ run: e.data.display.run, selected, token: 0, log: { inv: selected.id, source: 'prompt', after: 0, before: null, expanded: false } });
+    if (full.error) throw new ConsoleError('corruption', full.error);
+    return { ...log, brief: parseSeatBrief(full.log!.lines.join('\n')) };
   }
 }

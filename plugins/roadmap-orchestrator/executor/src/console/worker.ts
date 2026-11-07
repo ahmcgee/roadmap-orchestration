@@ -35,7 +35,12 @@ function result(e: Envelope, id: string) {
   if (record.inv !== inv || record.op !== op || record.arc !== e.arc) throw new ConsoleError('corruption', 'result identity does not match its invocation');
   const terminal = e.data.events.find((event) => event.type === 'done' && event.kind === 'proc.spawn' && event.op === op);
   if (terminal?.type === 'done' && terminal.kind === 'proc.spawn' && terminal.outcome.kind === 'result' && sha256Hex(bytes) !== terminal.outcome.resultSha256) throw new ConsoleError('corruption', 'result bytes do not match recorded resultSha256');
-  return { record, lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
+  let report: unknown = null;
+  if (record.type === 'backend') {
+    const { kind, ...details } = record.outcome;
+    report = record.outcome.kind === 'success' ? record.outcome.value : { outcome: kind, ...details };
+  }
+  return { record, report, raw: JSON.stringify(record, null, 2), lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
 }
 function route(path: string[], params: Record<string, string>) {
   if (path.length === 1 && path[0] === 'runs') return { protocol: CONSOLE_PROTOCOL, ...retainedRuns(args.common, args.hostDir) };
