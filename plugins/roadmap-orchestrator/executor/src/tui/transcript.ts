@@ -5,19 +5,89 @@ export { safe } from './text.ts';
 import { safe } from './text.ts';
 import { decodeReport, label, project, record, summary } from './projection.ts';
 
-/** One event stays inspectable even when unknown. Parent labels come only from stream metadata. */
-export function normalize(line: string, expanded: boolean): string[] {
+/** Structured events and their legacy text projection share one decoder. No backend execution parsing lives here. */
+export type TranscriptEvent = {
+  type: 'prompt' | 'thinking' | 'tool' | 'message' | 'handoff' | 'result' | 'error';
+  at?: string; elapsedMs?: number; tokens?: number; model?: string; tool?: string; toolId?: string; parent?: string;
+  title?: string; text?: string; input?: string; output?: string; status?: 'passed' | 'failed';
+  resultFor?: string; unknown?: boolean; literalOnly?: boolean;
+  /** Internal presentation instructions retain the terminal's exact historical text. Never sent over HTTP. */
+  legacy: { heading?: string; body?: unknown; literal?: string[] }[];
+};
+const readable = (v: unknown): string => typeof v === 'string' ? v : project(decodeReport(v)).map(r => r.text).join('\n');
+export function decodeTranscript(line: string): TranscriptEvent[] {
   let value: unknown;
   try { value = JSON.parse(line); } catch {
-    return [/^\s*\{/.test(line) ? `[malformed JSON] ${safe(line)}` : safe(line)];
+    return [{ type: 'message', text: line, unknown: true, literalOnly: true, legacy: [{ literal: [/^\s*\{/.test(line) ? `[malformed JSON] ${safe(line)}` : safe(line)] }] }];
   }
   const e = record(value);
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return project(value).map((row) => row.text);
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return [{ type: 'message', text: line, unknown: true, literalOnly: true, legacy: [{ literal: project(value).map(r => r.text) }] }];
   const type = String(e['type'] ?? 'unknown');
+  const message = record(e['message']); const content = message['content'] ?? e['content'];
+  const usage = record(e['usage'] ?? message['usage']);
+  const input = usage['input_tokens'], output = usage['output_tokens'];
+  const tokens = typeof input === 'number' || typeof output === 'number'
+    ? (typeof input === 'number' ? input : 0) + (typeof output === 'number' ? output : 0)
+      + (typeof usage['cache_creation_input_tokens'] === 'number' ? usage['cache_creation_input_tokens'] : 0)
+      + (typeof usage['cache_read_input_tokens'] === 'number' ? usage['cache_read_input_tokens'] : 0) : undefined;
   const parent = e['parent_tool_use_id'] ?? e['parent_id'];
-  const prefix = parent ? `[parent ${String(parent)}] ` : '';
+  const model = message['model'] ?? e['model'];
+  const at = e['timestamp'] ?? e['at'];
+  const meta = { ...(parent ? { parent: String(parent) } : {}), ...(typeof model === 'string' ? { model } : {}),
+    ...(typeof at === 'string' ? { at } : {}), ...(tokens !== undefined ? { tokens } : {}),
+    ...(typeof e['duration_ms'] === 'number' ? { elapsedMs: e['duration_ms'] } : {}) };
+  const event = (fields: Omit<TranscriptEvent, 'legacy'>, heading: string, body: unknown): TranscriptEvent => ({ ...meta, ...fields, legacy: [{ heading, body }] });
+  const literal = (fields: Omit<TranscriptEvent, 'legacy'>, rows: string[]): TranscriptEvent => ({ ...meta, ...fields, legacy: [{ literal: rows }] });
+  if (Array.isArray(content)) return content.map((part: unknown) => {
+    const p = record(part);
+    switch (p['type']) {
+      case 'text': return event({ type: message['role'] === 'user' ? 'prompt' : 'message', text: readable(p['text']) }, `${String(message['role'] ?? type)}:`, p['text']);
+      case 'thinking': return event({ type: 'thinking', text: readable(p['thinking']) }, 'Thinking:', p['thinking']);
+      case 'tool_use': return event({ type: 'tool', tool: String(p['name']), toolId: String(p['id']), input: readable(p['input']) }, `tool ${String(p['name'])} [${String(p['id'])}]`, p['input']);
+      case 'tool_result': return event({ type: 'tool', toolId: String(p['tool_use_id']), resultFor: String(p['tool_use_id']), output: readable(p['content']), status: p['is_error'] ? 'failed' : 'passed' }, `Tool result [${String(p['tool_use_id'])}]${p['is_error'] ? ' · error' : ''}`, p['content']);
+      default: return event({ type: 'message', title: `Unknown ${String(p['type'] ?? 'event')}`, text: line, unknown: true }, `Event: ${String(p['type'] ?? 'unknown')}`, p);
+    }
+  }).map((item, index) => { if (index === 0) return item; const { tokens: _tokens, ...rest } = item; return rest; });
+  if ((type === 'user' || type === 'assistant') && typeof content === 'string') return [event({ type: type === 'user' ? 'prompt' : 'message', text: content }, `Event: ${type}`, e)];
+  if (type.startsWith('item.')) {
+    const item = record(e['item']);
+    const stage = type === 'item.completed' ? 'Completed' : type === 'item.started' ? 'Started' : 'Updated';
+    if (item['type'] === 'agent_message' || item['type'] === 'reasoning') return [event({ type: item['type'] === 'reasoning' ? 'thinking' : 'message', text: readable(item['text']) }, item['type'] === 'reasoning' ? 'Thinking:' : 'Assistant:', item['text'])];
+    if (item['type'] === 'command_execution') {
+      const rows = [`${stage} command: ${safe(String(item['command'] ?? 'unavailable'))}`];
+      if (item['exit_code'] !== undefined) rows.push(`  Exit code: ${String(item['exit_code'])}`);
+      const out = literal({ type: 'tool', tool: 'Command', toolId: String(item['id'] ?? ''), input: String(item['command'] ?? 'unavailable'),
+        ...(item['aggregated_output'] !== undefined ? { output: readable(item['aggregated_output']) } : {}),
+        ...(type === 'item.completed' ? { resultFor: String(item['id'] ?? ''), status: item['exit_code'] === 0 ? 'passed' as const : 'failed' as const } : {}) }, rows);
+      if (item['aggregated_output'] !== undefined) out.legacy.push({ heading: 'Output:', body: item['aggregated_output'] });
+      return [out];
+    }
+    return [event({ type: 'message', title: `${stage} ${label(String(item['type'] ?? 'item'))}`, text: line, unknown: true }, `${stage} ${label(String(item['type'] ?? 'item'))} [${String(item['id'] ?? '')}]`, item)];
+  }
+  if (type === 'result') {
+    const report = decodeReport(e['structured_output'] ?? e['result'] ?? e);
+    const out = event({ type: e['is_error'] === true ? 'error' : 'result', title: summary(report), text: readable(report), status: e['is_error'] === true ? 'failed' : 'passed' }, `final report: ${summary(report)}`, report);
+    if (e['is_error'] === true) out.legacy.unshift({ literal: ['Agent reported an error'] });
+    return [out];
+  }
+  if (type === 'stream_event') {
+    const stream = record(e['event']); const delta = record(stream['delta']);
+    if (typeof delta['text'] === 'string') return [event({ type: 'message', text: delta['text'] }, 'Assistant:', delta['text'])];
+    if (typeof delta['thinking'] === 'string') return [event({ type: 'thinking', text: delta['thinking'] }, 'Thinking:', delta['thinking'])];
+    return [event({ type: 'message', title: `Stream: ${label(String(stream['type'] ?? 'event'))}`, text: line, unknown: true }, `Stream: ${label(String(stream['type'] ?? 'event'))}`, stream)];
+  }
+  if (type === 'thread.started') return [literal({ type: 'handoff', title: 'Session started', text: String(e['thread_id'] ?? 'unavailable') }, [`Session started: ${String(e['thread_id'] ?? 'unavailable')}`])];
+  if (type === 'turn.started') return [literal({ type: 'handoff', text: 'Turn started' }, ['Turn started'])];
+  if (type === 'turn.completed') return [event({ type: 'result', title: 'Turn completed', text: readable(e['usage'] ?? e), status: 'passed' }, 'Turn completed', e['usage'] ?? e)];
+  if (type === 'turn.failed' || type === 'error') return [event({ type: 'error', text: readable(e['error'] ?? e['message'] ?? e), status: 'failed' }, 'Agent error', e['error'] ?? e['message'] ?? e)];
+  // Init is known metadata for the console, with the same historical terminal projection.
+  if (type === 'system' && e['subtype'] === 'init') return [event({ type: 'handoff', title: 'Session started', text: typeof model === 'string' ? `Model: ${model}` : 'Model unrecorded' }, `Event: ${type}`, e)];
+  return [event({ type: 'message', title: `Unknown ${type}`, text: line, unknown: true }, `Event: ${type}`, e)];
+}
+
+export function renderTranscript(events: readonly TranscriptEvent[], expanded: boolean): string[] {
   const preview = (v: unknown): string[] => {
-    const rows = project(decodeReport(v)).map((row) => row.text);
+    const rows = project(decodeReport(v)).map(row => row.text);
     if (expanded) return rows;
     let used = 0; const out: string[] = [];
     for (const row of rows) {
@@ -29,43 +99,10 @@ export function normalize(line: string, expanded: boolean): string[] {
     }
     return out;
   };
-  const block = (heading: string, body: unknown): string[] => [heading, ...preview(body).map((text) => '  ' + text)];
-  const message = record(e['message']); const content = message['content'] ?? e['content'];
-  let out: string[];
-  if (Array.isArray(content)) out = content.flatMap((part: unknown) => {
-    const p = record(part);
-    switch (p['type']) {
-      case 'text': return block(`${String(message['role'] ?? type)}:`, p['text']);
-      case 'thinking': return block('Thinking:', p['thinking']);
-      case 'tool_use': return block(`tool ${String(p['name'])} [${String(p['id'])}]`, p['input']);
-      case 'tool_result': return block(`Tool result [${String(p['tool_use_id'])}]${p['is_error'] ? ' · error' : ''}`, p['content']);
-      default: return block(`Event: ${String(p['type'] ?? 'unknown')}`, p);
-    }
-  });
-  else if (type.startsWith('item.')) {
-    const item = record(e['item']);
-    const stage = type === 'item.completed' ? 'Completed' : type === 'item.started' ? 'Started' : 'Updated';
-    if (item['type'] === 'agent_message' || item['type'] === 'reasoning') out = block(item['type'] === 'reasoning' ? 'Thinking:' : 'Assistant:', item['text']);
-    else if (item['type'] === 'command_execution') {
-      out = [`${stage} command: ${safe(String(item['command'] ?? 'unavailable'))}`];
-      if (item['exit_code'] !== undefined) out.push(`  Exit code: ${String(item['exit_code'])}`);
-      if (item['aggregated_output'] !== undefined) out.push(...block('Output:', item['aggregated_output']));
-    } else out = block(`${stage} ${label(String(item['type'] ?? 'item'))} [${String(item['id'] ?? '')}]`, item);
-  } else if (type === 'result') {
-    const report = decodeReport(e['structured_output'] ?? e['result'] ?? e);
-    out = [`final report: ${summary(report)}`, ...preview(report).map((text) => '  ' + text)];
-    if (e['is_error'] === true) out.unshift('Agent reported an error');
-  } else if (type === 'stream_event') {
-    const event = record(e['event']); const delta = record(event['delta']);
-    out = typeof delta['text'] === 'string' ? block('Assistant:', delta['text'])
-      : typeof delta['thinking'] === 'string' ? block('Thinking:', delta['thinking']) : block(`Stream: ${label(String(event['type'] ?? 'event'))}`, event);
-  } else if (type === 'thread.started') out = [`Session started: ${String(e['thread_id'] ?? 'unavailable')}`];
-  else if (type === 'turn.started') out = ['Turn started'];
-  else if (type === 'turn.completed') out = block('Turn completed', e['usage'] ?? e);
-  else if (type === 'turn.failed' || type === 'error') out = block('Agent error', e['error'] ?? e['message'] ?? e);
-  else out = block(`Event: ${type}`, e);
-  return out.flatMap((text) => safe(prefix + text).split('\n'));
+  return events.flatMap(e => e.literalOnly ? e.legacy.flatMap(part => part.literal ?? []) : e.legacy.flatMap(part => part.literal ?? [part.heading!, ...preview(part.body).map(text => '  ' + text)])
+    .flatMap(text => safe((e.parent ? `[parent ${e.parent}] ` : '') + text).split('\n')));
 }
+export function normalize(line: string, expanded: boolean): string[] { return renderTranscript(decodeTranscript(line), expanded); }
 
 export const PAGE_BYTES = 64 * 1024;
 // A tiny prefix check distinguishes append growth from a file rewritten in place between polls.

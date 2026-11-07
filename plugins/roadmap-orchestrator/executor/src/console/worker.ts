@@ -10,6 +10,7 @@ import { ObservationCache } from '../observation/cache.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, type Admission, type Envelope } from '../observation/protocol.ts';
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
+import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -18,6 +19,8 @@ const cache = new ObservationCache(args.hostDir, args.instance, args.repoId);
 const subscribed = new Set<string>();
 const maintained = new Set<string>();
 const models = new ConsoleModels();
+const histories = new ConsoleHistories();
+const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
 function read(arc: string, admission: Admission = {}) { return cache.read(retainedRun(args.common, args.hostDir, arc), admission); }
 function result(e: Envelope, id: string) {
@@ -69,6 +72,9 @@ function route(path: string[], params: Record<string, string>) {
     if (!/^[1-9][0-9]*-[1-9][0-9]*$/.test(id)) throw new ConsoleError('invalid', 'invocation route ID is seq-ordinal');
     const recorded = e.data.display.invocations.find((i) => invocationDirName(invocationIdOf(i.id)) === id);
     if (!recorded) throw new ConsoleError('not-found', 'invocation is not recorded in this run');
+    if (file === 'history') return { ...e, data: histories.page(e, id, params['before'], params['identity']) };
+    if (file === 'history-field') return { ...e, data: histories.field(e, id, params['ref'] ?? '', params['field'] ?? '', integer(params['after'] ?? '0'), params['identity']) };
+    if (file === 'prompt') return { ...e, data: histories.prompt(e, id, integer(params['after'] ?? '0')) };
     if (file === 'result') return { ...e, data: result(e, recorded.id) };
     if (file === 'log') {
       const source = params['source'] ?? 'stdout';
@@ -86,8 +92,17 @@ function integer(raw: string) {
   if (!/^(0|[1-9][0-9]*)$/.test(raw) || !Number.isSafeInteger(n)) throw new ConsoleError('invalid', 'cursor must be a non-negative safe integer');
   return n;
 }
-parentPort!.on('message', (m: { id: number; path?: string[]; params?: Record<string, string>; subscribe?: string; unsubscribe?: string }) => {
+parentPort!.on('message', (m: { id: number; path?: string[]; params?: Record<string, string>; subscribe?: string; unsubscribe?: string; history?: { arc: string; invocation: string; remove?: boolean } }) => {
   try {
+    if (m.history) {
+      const key = `${m.history.arc}:${m.history.invocation}`;
+      if (m.history.remove) historySubscriptions.delete(key);
+      else {
+        if (!historySubscriptions.has(key) && historySubscriptions.size >= 16) throw new ConsoleError('unavailable', 'sixteen open histories already subscribed');
+        histories.selected(read(m.history.arc), m.history.invocation);
+        historySubscriptions.set(key, { arc: m.history.arc, invocation: m.history.invocation });
+      }
+    }
     if (m.subscribe) { subscribed.add(m.subscribe); cache.pin(m.subscribe); }
     if (m.unsubscribe) { subscribed.delete(m.unsubscribe); if (!maintained.has(m.unsubscribe)) cache.unpin(m.unsubscribe); }
     parentPort!.postMessage({ id: m.id, value: m.path ? route(m.path, m.params ?? {}) : null });
@@ -107,7 +122,17 @@ function tick() {
     for (const arc of defaults) { maintained.add(arc); cache.pin(arc); }
     const arcs = new Set([...defaults, ...subscribed]);
     for (const arc of arcs) {
-      try { const e = read(arc); parentPort!.postMessage({ kind: 'checked', arc, epoch: e.epoch, highWater: e.highWater, revision: e.revision, checkedAt: e.checkedAt }); }
+      try {
+        const e = read(arc); parentPort!.postMessage({ kind: 'checked', arc, epoch: e.epoch, highWater: e.highWater, revision: e.revision, checkedAt: e.checkedAt });
+        for (const subscription of historySubscriptions.values()) if (subscription.arc === arc) {
+          try {
+            const delta = histories.poll(e, subscription.invocation);
+            const state = `${delta.state}:${delta.endedAt}`;
+            if (delta.reset || delta.events.length || subscription.state !== state) parentPort!.postMessage({ kind: 'history', arc, invocation: subscription.invocation, data: delta });
+            subscription.state = state;
+          } catch (error) { parentPort!.postMessage({ kind: 'history-error', arc, invocation: subscription.invocation, error: err(error) }); }
+        }
+      }
       catch (error) { parentPort!.postMessage({ kind: 'error', arc, error: err(error) }); }
     }
   } catch (error) { parentPort!.postMessage({ kind: 'error', error: err(error) }); }

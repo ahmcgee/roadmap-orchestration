@@ -124,6 +124,7 @@
     const activities = m.activities.filter((a) => a.unit === id);
     const groups = [...new Set(activities.map((a) => `${a.stage} · attempt ${a.attempt}`))];
     const row = m.time.rows.find((r) => r.id === id);
+    const onOpenHistory = a => { location.hash = link(e.arc, 'overview', 'invocations', a.routeId).slice(1); };
     return h(Dialog, { title: gate ? `Milestone ${gate.id}` : `Unit ${id}`, close },
       error && h('p', { role: 'alert', className: 'notice' }, error),
       gate ? h(R.Fragment, null, h('p', null, `Executor milestone gate: ${gate.state} · ${gate.passed ? 'passed' : 'not passed'}`), h('pre', { className: 'record' }, JSON.stringify(gate, null, 2)),
@@ -132,13 +133,89 @@
         h(Effort, { row }),
         unit.waitingFor && h(Notice, { hold: { reason: 'manual', label: 'Current admission or reservation reasons', detail: JSON.stringify(unit.waitingFor) } }),
         m.attention.filter((r) => r.subject.type !== 'unit' || r.subject.unit === id).map((r) => h(Notice, { key: r.id, hold: { reason: 'query', label: r.blocking ? 'Blocking owner request' : 'Owner notice', question: r.summary, detail: r.recommendation } })),
-        h('section', { className: 'detailsection' }, h('h3', null, 'Activity by stage and attempt'), groups.length ? groups.map((group) => h('div', { key: group }, h('h3', null, group), stale ? activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group).map((a, i, all) => h(D.ActivityRow, { key: a.id, activity: a, now: Date.parse(e.checkedAt), last: i === all.length - 1 })) : h(D.ActivityTimeline, { activities: activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group) }))) : h('p', { className: 'muted' }, 'No recorded invocations for this unit.'),
+        h('section', { className: 'detailsection' }, h('h3', null, 'Activity by stage and attempt'), groups.length ? groups.map((group) => h('div', { key: group }, h('h3', null, group), stale ? activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group).map((a, i, all) => h(D.ActivityRow, { key: a.id, activity: a, onOpenHistory, now: Date.parse(e.checkedAt), last: i === all.length - 1 })) : h(D.ActivityTimeline, { onOpenHistory, activities: activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group) }))) : h('p', { className: 'muted' }, 'No recorded invocations for this unit.'),
           activities.map((a) => h('p', { key: a.id }, h('a', { href: link(e.arc, 'overview', 'invocations', a.routeId) }, `${a.stage} attempt ${a.attempt}: logs and result`)))),
         h('section', { className: 'detailsection' }, h('h3', null, 'Lane certification'), unit.certification ? h(R.Fragment, null, h('p', null, `${unit.certification.used} used · ${unit.certification.left} left of ${unit.certification.allowance}`), unit.certification.lanes.map((l, i) => h('p', { key: i }, `${l.set} / ${l.id}: ${l.state}${l.verdict ? ` (${l.verdict})` : ''}`))) : h('p', { className: 'muted' }, 'No current certification series.')),
         h('section', { className: 'detailsection' }, h('h3', null, 'Readable records'), detail ? h('pre', { className: 'record' }, detail.lines.join('\n')) : h('p', null, 'Reading unit records…'),
           detail?.records.map((r) => h('details', { key: r.id }, h('summary', null, r.label), h('pre', { className: 'record' }, r.body))))) : h('p', null, 'This unit is absent from the applied plan.'));
   }
-  function InvocationDetail({ e, id, close, stale }) {
+  function HistoryField({ event, field, base, identity }) {
+    const [pages, setPages] = useState([]), [cursor, setCursor] = useState(0), [size, setSize] = useState(null), [error, setError] = useState('');
+    const load = () => get(`${base}/history-field?identity=${encodeURIComponent(identity)}&ref=${encodeURIComponent(event.refs?.[field] || event.id)}&field=${field}&after=${cursor}`)
+      .then(r => { setPages([r.data.text]); setCursor(r.data.next); setSize(r.data.size); setError(''); }).catch(err => setError(err.message));
+    return h('details', { className: 'history-expansion', onToggle: ev => { if (ev.currentTarget.open && size === null) load(); } },
+      h('summary', null, `Expand full ${field} (preview truncated)`),
+      error && h('p', { role: 'alert' }, error), pages.map((text, i) => h('pre', { key: i }, text)),
+      size !== null && h('p', { className: 'muted' }, `Characters ${Math.max(0, cursor - pages.join('').length)}–${cursor} of ${size}`),
+      size !== null && cursor < size && h('button', { onClick: load }, `Next ${field} page`));
+  }
+  function AgentEvent({ event, activity, base, identity }) {
+    const display = { ...event, at: /^\d{4}-\d{2}-\d{2}T/.test(event.at || '') ? event.at.slice(11, 19) : event.at, title: [event.parent ? `Subagent of ${event.parent}` : '', event.title].filter(Boolean).join(' · ') };
+    // The supplied tool renderer collapses every output, including failures. Render failed output openly.
+    if (event.status === 'failed') display.output = undefined;
+    return h('article', { className: 'history-event', 'data-event-id': event.id, title: event.at },
+      h(D.AgentHistory, { activity: { ...activity, status: 'pending' }, events: [display] }),
+      event.status === 'failed' && event.output != null && h('div', { className: 'failed-output' }, h('strong', null, 'Output · error'), h('pre', null, event.output)),
+      (event.truncated || []).map(field => h(HistoryField, { key: `${event.id}:${field}:${identity}`, event, field, base, identity })));
+  }
+  function AgentDetail({ e, id, activity, close, stale }) {
+    const base = `/runs/${e.arc}/invocations/${id}`;
+    const [history, setHistory] = useState(null), [error, setError] = useState(''), [brief, setBrief] = useState(null), [result, setResult] = useState(null);
+    const [following, setFollowing] = useState(true), [earlier, setEarlier] = useState(false);
+    const scroll = useRef(null), follow = useRef(true);
+    useEffect(() => {
+      const c = new AbortController(); setHistory(null); setBrief(null); setError(''); setResult(null); setEarlier(false);
+      get(`${base}/prompt?after=0`, c.signal).then(r => setBrief(r.data)).catch(err => { if (!c.signal.aborted) setError(err.message); });
+      get(`${base}/history`, c.signal).catch(err => { if (!c.signal.aborted) setError(err.message); });
+      const stream = new EventSource(`${api}/runs/${e.arc}/events?invocation=${id}`);
+      stream.addEventListener('history', ev => {
+        const next = JSON.parse(ev.data);
+        setHistory(old => {
+          if (!old || next.reset || old.identity !== next.identity) return { ...next, events: next.events.slice(-50) };
+          if (!follow.current) return { ...old, state: next.state, endedAt: next.endedAt, unseen: (old.unseen || 0) + next.events.length };
+          const events = new Map(old.events.map(event => [event.id, event]));
+          for (const event of next.events) events.set(event.id, event);
+          const kept = [...events.values()].slice(-200);
+          return { ...old, ...next, before: kept[0]?.id === '0:0' ? null : kept[0]?.id, events: kept };
+        }); setError('');
+      });
+      stream.addEventListener('history-error', ev => { if (ev.data) setError(JSON.parse(ev.data).message); });
+      return () => { c.abort(); stream.close(); };
+    }, [base]);
+    useEffect(() => { if (follow.current && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [history]);
+    const back = () => { location.hash = link(e.arc, 'overview', 'units', activity.unit).slice(1); };
+    const more = () => {
+      follow.current = false; setFollowing(false);
+      get(`${base}/history?before=${history.before}&identity=${encodeURIComponent(history.identity)}`).then(r => {
+        setEarlier(true); setHistory(old => ({ ...old, before: r.data.before, events: [...new Map([...r.data.events, ...old.events].map(event => [event.id, event])).values()].slice(0, 200) }));
+      }).catch(err => setError(err.message));
+    };
+    const latest = () => get(`${base}/history`).then(r => { setEarlier(false); follow.current = true; setFollowing(true); setHistory(r.data); }).catch(err => setError(err.message));
+    const completed = history?.endedAt != null || ['success', 'pass', 'fail', 'fault', 'lost'].includes(history?.state);
+    const live = history?.state === 'running' && !completed && !stale;
+    const model = [...(history?.events || [])].reverse().find(event => event.model)?.model || activity.model;
+    const usage = [...(history?.events || [])].reverse().find(event => event.tokens != null)?.tokens;
+    return h(Dialog, { title: `Agent history · ${activity.stage}`, close },
+      h('button', { onClick: back }, `‹ Back to unit ${activity.unit}`),
+      h('div', { className: 'history-meta' }, h('strong', null, live ? 'Running' : completed ? 'Finished' : history?.state || 'Connecting'),
+        h('span', null, model || 'Model unrecorded'), usage != null && h('span', null, `${usage} recorded tokens`)),
+      h('details', { className: 'history-brief' }, h('summary', null, 'Brief · recorded seat prompt'),
+        brief ? h(R.Fragment, null, h('pre', null, brief.lines.join('\n')), brief.end < brief.size && h('button', { onClick: () => get(`${base}/prompt?after=${brief.end}`).then(r => setBrief(r.data)).catch(err => setError(err.message)) }, `Next brief page (${brief.end} of ${brief.size} bytes)`)) : h('p', null, 'Reading retained brief…')),
+      error && h('p', { role: 'alert' }, error),
+      h('div', { className: 'history-controls' }, history?.before != null && h('button', { onClick: more }, 'Show earlier'), h('button', { onClick: latest }, following ? 'Following live tail' : `Follow live tail${history?.unseen ? ` (${history.unseen} updates)` : ''}`), earlier && h('span', null, 'Earlier history · latest 200 events retained in view')),
+      h('div', { className: 'history-scroll', ref: scroll, tabIndex: 0, 'aria-label': 'Agent transcript', onScroll: ev => { follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48; setFollowing(follow.current); } },
+        history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity, base, identity: history.identity })),
+        history && !history.events.length && h('p', null, 'Waiting for complete transcript records…'),
+        live && h('p', { className: 'history-live', role: 'status' }, 'Agent is working', h('span', { className: 'atlas-settle-caret', 'aria-hidden': true }))),
+      h('p', { className: 'history-links' }, h('a', { href: `${api}${base}/result`, onClick: ev => { ev.preventDefault(); get(`${base}/result`).then(r => setResult(r.data.lines.join('\n'))).catch(err => setError(err.message)); } }, 'Final verdict / report'), ' · ',
+        h('a', { href: `${api}${base}/log?source=stdout&after=0` }, 'Raw transcript (64 KiB pages)')),
+      result && h('pre', { className: 'record' }, result));
+  }
+  function InvocationDetail(props) {
+    const activity = props.e.data.console.activities.find(a => a.routeId === props.id);
+    return activity?.kind === 'agentic' ? h(AgentDetail, { ...props, activity }) : h(CommandDetail, props);
+  }
+  function CommandDetail({ e, id, close, stale }) {
     const activity = e.data.console.activities.find((a) => a.routeId === id);
     const [source, setSource] = useState('stdout'), [page, setPage] = useState(null), [error, setError] = useState('');
     const [result, setResult] = useState(null);

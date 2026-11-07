@@ -13,7 +13,7 @@ export const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
 };
-type Notice = { kind: string; arc?: string; epoch?: string; revision?: number; checkedAt?: string; error?: { code: ConsoleCode; message: string } };
+type Notice = { kind: string; invocation?: string; data?: unknown; arc?: string; epoch?: string; revision?: number; checkedAt?: string; error?: { code: ConsoleCode; message: string } };
 export type ConsoleServerArgs = Readonly<{ repo: AbsPath; common: AbsPath; hostDir: AbsPath; host: string; port: number; instance?: string; onObservation?: (at: string) => void }>;
 export async function serveConsole(args: ConsoleServerArgs) {
   const instance = args.instance ?? randomUUID();
@@ -23,7 +23,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
   let failed: Error | null = null;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   const coalesced = new Map<string, Promise<unknown>>();
-  const streams = new Map<ServerResponse, { arc: string; last: string; blocked: boolean }>();
+  const streams = new Map<ServerResponse, { arc: string; last: string; blocked: boolean; invocation?: string }>();
   function send(res: ServerResponse, event: string, data: unknown, id?: string) {
     const stream = streams.get(res)!;
     if (stream.blocked) { res.end(`event: reset\ndata: {"reason":"slow consumer"}\n\n`); streams.delete(res); return; }
@@ -40,7 +40,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
     if (m.checkedAt) args.onObservation?.(m.checkedAt);
     for (const [res, s] of streams) {
       if (m.arc && m.arc !== s.arc) continue;
-      if (m.kind === 'error') send(res, 'error', m.error);
+      if (m.kind === 'history' || m.kind === 'history-error') { if (m.invocation === s.invocation) send(res, m.kind, m.data ?? m.error); }
+      else if (m.kind === 'error') send(res, 'error', m.error);
       else if (m.kind === 'checked') {
         const id = `${m.epoch}:${m.revision}`;
         send(res, s.last === id ? 'heartbeat' : s.last && !s.last.startsWith(`${m.epoch}:`) ? 'reset' : 'revision', m, id);
@@ -80,14 +81,22 @@ export async function serveConsole(args: ConsoleServerArgs) {
         if (path.length === 3 && path[0] === 'runs' && path[2] === 'events') {
           const arc = path[1]!;
           const initial = await ask({ path: ['runs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string };
+          const invocation = params['invocation'];
+          const page = invocation ? await ask({ path: ['runs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
           if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(); return; }
+          if (invocation) await ask({ history: { arc, invocation } });
           await ask({ subscribe: arc });
           res.writeHead(200, { 'content-type': 'text/event-stream', 'x-accel-buffering': 'no' });
           const id = `${initial.epoch}:${initial.revision}`;
           const previous = req.headers['last-event-id'];
-          streams.set(res, { arc, last: id, blocked: false });
+          streams.set(res, { arc, last: id, blocked: false, ...(invocation ? { invocation } : {}) });
+          req.once('close', () => {
+            streams.delete(res);
+            if (invocation && ![...streams.values()].some(s => s.arc === arc && s.invocation === invocation)) void ask({ history: { arc, invocation, remove: true } }).catch(() => {});
+            if (![...streams.values()].some(s => s.arc === arc)) void ask({ unsubscribe: arc }).catch(() => {});
+          });
           send(res, previous && previous !== id ? 'reset' : 'revision', initial, id);
-          req.once('close', () => { streams.delete(res); if (![...streams.values()].some((s) => s.arc === arc)) void ask({ unsubscribe: arc }).catch(() => {}); });
+          if (page) send(res, 'history', { ...page.data, reset: true });
           return;
         }
         json(200, await ask({ path, params })); return;

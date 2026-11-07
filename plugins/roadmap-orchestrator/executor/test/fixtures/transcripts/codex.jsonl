@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"thread-fixture"}
+{"type":"item.completed","item":{"id":"reason_1","type":"reasoning","text":"I’ll check the test output."}}
+{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"node check.js","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"node check.js","aggregated_output":"failed check","exit_code":1,"status":"completed"}}
+{"type":"item.completed","item":{"id":"msg_1","type":"agent_message","text":"The check needs a fix."}}
+{"type":"turn.completed","usage":{"input_tokens":20,"cached_input_tokens":10,"output_tokens":30}}
+{"type":"turn.failed","error":{"message":"quota exceeded"}}

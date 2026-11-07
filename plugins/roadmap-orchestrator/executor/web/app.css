@@ -49,3 +49,16 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-data-sm);
 .empty-effort { color: var(--ink-3); padding: 12px 0; }
 .owner-notice { display: grid; gap: 10px; margin: 12px 0; }
 .owner-notice > p { margin: 0; padding-left: 10px; }
+.history-meta, .history-controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
+.history-brief { padding: 12px; border: 1px solid var(--line-2); }
+.history-brief pre { margin: 12px 0; }
+.history-scroll { height: min(60vh, 720px); overflow-y: auto; overflow-anchor: none; padding: 12px 8px; border-block: 1px solid var(--line-2); }
+.history-event { margin-bottom: 14px; }
+.history-event > section > header { display: none !important; }
+.history-event > section { gap: 0 !important; }
+.history-expansion, .failed-output { margin: 8px 0 12px 88px; }
+.failed-output { color: var(--critical); }
+.history-expansion pre { margin-top: 10px; }
+.history-links { padding-top: 16px; }
+.history-live { font: var(--type-companion-sm); color: var(--ink-2); padding-left: 88px; }
+.history-live span { display: inline-block; width: 7px; height: 14px; margin-left: 6px; background: var(--firmament-bright); }

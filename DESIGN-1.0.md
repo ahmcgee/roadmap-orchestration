@@ -220,6 +220,12 @@ payload and corrupt evidence failures remain loud. Watch's actionable filtering,
 Envelopes bind package-version protocol, service instance, repo, arc, epoch, highWater and revision with observation
 and verification timestamps. They describe a verified journal prefix plus sampled external state, not a filesystem
 transaction. SSE invalidates snapshots; five seconds without verification marks content stale and freezes timers.
+Agentic activities expose deep-linked AgentHistory views using the same structured transcript decoder as
+TUI text rendering. A bounded complete-line byte tail sends per-invocation event upserts on SSE, resets on
+replacement/truncation and settles on recorded completion. The retained seat brief is collapsed first;
+tool calls pair with results, errors stay visible, and earlier history/long fields load explicitly.
+Deterministic activities retain StepLog. This observation surface never changes agent invocation or arc flow.
+
 
 The browser uses vendored React 18.3.1 and supplied square-geometry components with Roadmap names throughout.
 UnitGraph has explicit milestone gate nodes; member completion cannot infer gate passage. Waiting totals allocate

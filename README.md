@@ -72,6 +72,11 @@ summed and mixed-category waiting stays unallocated. CPU shows recorded reservat
 run/wall averages, without invented utilization histories, peaks or test-case counts. Assets ship with
 the plugin; there is no runtime package installation or asset download.
 
+Open an agentic activity's history from its unit to read the retained brief, thoughts, tool inputs/results
+and final report. Active histories grow over SSE and follow the tail until you scroll up. Show earlier
+and explicit expansion keep long transcripts bounded; deterministic activities keep their step logs.
+
+
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
 ## How an arc runs

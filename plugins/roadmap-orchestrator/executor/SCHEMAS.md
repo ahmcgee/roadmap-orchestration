@@ -1154,7 +1154,10 @@ All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 4
 | `/runs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
 | `/runs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
 | `/runs/:arc/invocations/:id/log?source=stdout|stderr|runner.log&after=N` | At most 64 KiB of source bytes, next cursor, identity, text and lossless base64 bytes |
-| `/runs/:arc/events` | SSE revision/heartbeat/reset/error events with epoch:revision IDs |
+| `/runs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
+| `/runs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
+| `/runs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
+| `/runs/:arc/events?invocation=ID` | Existing revision/heartbeat/reset/error stream; optional history subscription sends `history` upserts and `history-error` |
 
 Invocation route IDs are the existing `seq-ordinal` directory keys: canonical invocation IDs contain `/`
 and `#`, while routes deliberately reject encoded separators. Keys resolve only to journal-recorded
@@ -1185,6 +1188,38 @@ runMs/wallMs; demand is separate. Continuous utilization, peaks, sparklines and 
 case bars are not inferred. Certification shows recorded lane verdicts. Attention includes blocking and
 nonblocking subjects, recommendations/options/evidence without response controls. StepLog has one phase per
 recorded invocation, neutral info lines and no inferred timestamps/levels.
+
+Agentic activity rows open a deep link at `#/runs/:arc/overview/invocations/:id` and return to their
+unit. Deterministic activities retain StepLog. The seat brief is first and collapsed. `decodeTranscript`
+in `src/tui/transcript.ts` is the single presentation decoder; `normalize` renders its structured events
+through the legacy text projection, guarded by unchanged TUI tests and phase-4 text goldens. This does
+not change backend execution/result parsers. Claude stream-json is first-class; Codex JSONL command,
+reasoning, message, result and error events use the same event layer. Known events are readable prose;
+unknown events retain their original escaped JSON text. Recorded parent tool IDs label subagent work.
+Tools pair by `(parent, tool_use id)` with call input and result output. A separate bounded index retains
+up to 256 pending calls while subagent traffic moves beyond the displayed window;
+a result whose call precedes the available window and pending-call index is explicitly labelled as such. Model, usage,
+timestamps and duration appear only when recorded. Tokens attached to a multi-block message appear
+once; no per-tool cost or elapsed time is inferred.
+
+Each history subscription tails complete newline-terminated records from a byte cursor. Partial UTF-8
+and JSON tails remain pending by byte range, without unbounded carry buffers. Inode replacement,
+shrinkage, same-size rewrite, prefix/previous-tail changes reset the identity; a new reader lifetime
+also gets a fresh identity. History reconnect always starts with a reset page rather than replaying
+missed transcript events under a journal revision ID. Upserts carry stable byte/block event IDs;
+paired tool outputs update their existing event. Terminal invocation state arrives on the same stream
+and removes the running caret without reloading. Scrolling up freezes the displayed events and counts
+updates; Follow live tail reloads the latest page. The browser retains at most 200 events, offers Show
+earlier and explicit field expansion, opens failed outputs, and otherwise collapses tool output.
+
+History limits: 16 subscribed/cached invocation readers, 200 retained event previews per reader,
+50 events per page, 1 MiB forward scan per poll or normal backward page window (up to 8 MiB to recover a long record), and 1,000 characters per
+preview field. Expansion returns at most 4,096 characters. Individual JSON records decode up to
+8 MiB; a larger record becomes an explicit oversize notice linking the existing lossless 64 KiB raw
+byte pages, never a silently clipped record. A backward byte window may be shorter than 50 events;
+its cursor allows continuing earlier. Prompt and transcript absence/pruning are explicit. Evidence
+paths are selected from validated invocation records and opened with the same descriptor containment
+checks as the existing log endpoint. No agent or executor writes are exposed.
 
 ### dev.42 publication adoption and item settlement
 

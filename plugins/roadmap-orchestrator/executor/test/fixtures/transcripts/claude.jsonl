@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","model":"claude-sonnet-4-5","session_id":"session-fixture"}
+{"type":"assistant","timestamp":"2026-11-07T10:00:01Z","message":{"role":"assistant","model":"claude-sonnet-4-5","usage":{"input_tokens":40,"output_tokens":12},"content":[{"type":"thinking","thinking":"I’ll inspect the implementation before changing it."},{"type":"tool_use","id":"tool_1","name":"Read","input":{"file_path":"src/main.ts"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"export const ready = true;"}]}}
+{"type":"assistant","parent_tool_use_id":"agent_1","message":{"role":"assistant","content":[{"type":"tool_use","id":"nested_1","name":"Bash","input":{"command":"false"}}]}}
+{"type":"user","parent_tool_use_id":"agent_1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"nested_1","is_error":true,"content":"Exit code 1"}]}}
+{"type":"future.event","payload":"<script>never execute</script>"}
+{"type":"result","duration_ms":1234,"usage":{"input_tokens":40,"output_tokens":22},"is_error":false,"structured_output":{"decision":"pass","summary":"Verified the change."}}
