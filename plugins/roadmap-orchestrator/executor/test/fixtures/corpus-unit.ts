@@ -5,6 +5,7 @@
 // candidate is green. Everything a child needs is the `ArcDescriptor`; `contextFor` records revision 1 with the corpus
 // files kept (stage-common `recordFirstPlan`).
 import assert from 'node:assert/strict';
+import type { JsonValue } from '../../src/core/json.ts';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { corpusPin } from '../../src/commands/corpus.ts';
@@ -26,6 +27,8 @@ export type CorpusUnitArc = Readonly<{ d: ArcDescriptor; planDir: string; pin: C
 export const VISION_PATH = `${DEFAULT_CORPUS_ROOT}/${VISION_DOC}`;
 
 export type CorpusUnitOptions = Readonly<{
+  systemsMap?: JsonValue;
+  webConsole?: Readonly<{ host: string; port: number }>;
   /** Extra files of the baseline commit (a published `.roadmap/debt.md`). */
   baseline?: FileSet;
   /** Fields over the minimal Phase-0 record (its debt dispositions). */
@@ -38,7 +41,7 @@ export type CorpusUnitOptions = Readonly<{
 
 /** The corpus arc over u1 with `steps` scripted; nothing recorded yet (`contextFor` records revision 1). */
 export async function setupCorpusArc(steps: readonly Step[], opts: CorpusUnitOptions = {}): Promise<CorpusUnitArc> {
-  const d = setupArc({ steps, ...(opts.units === undefined ? {} : { units: opts.units }) });
+  const d = setupArc({ steps, ...(opts.systemsMap === undefined ? {} : { systemsMap: opts.systemsMap }), ...(opts.webConsole === undefined ? {} : { webConsole: opts.webConsole }), ...(opts.units === undefined ? {} : { units: opts.units }) });
   const planDir = planDirOf(d);
   const corpus = sampleCorpus(opts.corpus);
   writeFiles(d.repo, { ...corpus.files, '.roadmap/vision.json': `${JSON.stringify(visionRecord(corpus.files[VISION_PATH]!), null, 2)}\n`, ...opts.baseline });

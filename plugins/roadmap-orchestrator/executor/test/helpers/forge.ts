@@ -10,7 +10,14 @@ import { tmpDir } from './repo.ts';
 
 export const DEFAULT_REPO: RepoIdentity = { host: 'forge.test', owner: 'tidewater', name: 'harbour' };
 
-export type ForgeInit = Readonly<{ repo?: RepoIdentity; originPath?: string }>;
+export type ForgeInit = Readonly<{
+  repo?: RepoIdentity;
+  originPath?: string;
+  /** Persistent fixture location; absent: a test-owned temporary directory. */
+  dir?: string;
+  /** Bulk seed a large retained run without rewriting the store once per PR. */
+  pulls?: readonly GhPull[];
+}>;
 
 export type Forge = Readonly<{
   dir: string;
@@ -29,12 +36,12 @@ export type Forge = Readonly<{
 }>;
 
 export function makeForge(init: ForgeInit = {}): Forge {
-  const dir = tmpDir('forge');
+  const dir = init.dir ?? tmpDir('forge');
   const storePath = join(dir, STORE_FILE);
   const binDir = join(dir, 'bin');
   mkdirSync(dir, { recursive: true });
   const empty: GhStore = {
-    repo: init.repo ?? DEFAULT_REPO, originPath: init.originPath ?? null, nextNumber: 1, pulls: [], mutations: [],
+    repo: init.repo ?? DEFAULT_REPO, originPath: init.originPath ?? null, nextNumber: Math.max(0, ...(init.pulls ?? []).map(p => p.number)) + 1, pulls: [...(init.pulls ?? [])], mutations: [],
   };
   writeFileSync(storePath, `${JSON.stringify(empty)}\n`);
   writeGhShim(binDir, storePath);
