@@ -210,7 +210,7 @@ test('roles.arm: --risk picks the built-in gate seat (Opus at every tier since d
   const r = contextFor({ ...d, config: config! });
   try {
     assert.deepEqual(r.ctx.routing(null).table.verifier.low, { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'high' });
-    assert.deepEqual(r.ctx.routingBase.config, { ...config, systemsMap: d.config!.systemsMap });
+    assert.deepEqual(r.ctx.routingBase.config, { ...config, systemsMap: d.config!.systemsMap, webConsole: d.config!.webConsole });
   } finally {
     r.journal.close();
   }

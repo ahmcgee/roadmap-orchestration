@@ -1,3 +1,4 @@
+import type { ConsoleRequest } from './messages.ts';
 import { existsSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
@@ -93,20 +94,25 @@ function integer(raw: string) {
   if (!/^(0|[1-9][0-9]*)$/.test(raw) || !Number.isSafeInteger(n)) throw new ConsoleError('invalid', 'cursor must be a non-negative safe integer');
   return n;
 }
-parentPort!.on('message', (m: { id: number; path?: string[]; params?: Record<string, string>; subscribe?: string; unsubscribe?: string; history?: { arc: string; invocation: string; remove?: boolean } }) => {
-  try {
-    if (m.history) {
-      const key = `${m.history.arc}:${m.history.invocation}`;
-      if (m.history.remove) historySubscriptions.delete(key);
-      else {
-        if (!historySubscriptions.has(key) && historySubscriptions.size >= 16) throw new ConsoleError('unavailable', 'sixteen open histories already subscribed');
-        histories.selected(read(m.history.arc), m.history.invocation);
-        historySubscriptions.set(key, { arc: m.history.arc, invocation: m.history.invocation });
-      }
+function request(m: ConsoleRequest): unknown {
+  switch (m.kind) {
+    case 'read': return route(m.path, m.params);
+    case 'subscribe': subscribed.add(m.arc); cache.pin(m.arc); break;
+    case 'unsubscribe': subscribed.delete(m.arc); if (!maintained.has(m.arc)) cache.unpin(m.arc); break;
+    case 'history-unsubscribe': historySubscriptions.delete(`${m.arc}:${m.invocation}`); break;
+    case 'history-subscribe': {
+      const key = `${m.arc}:${m.invocation}`;
+      if (!historySubscriptions.has(key) && historySubscriptions.size >= 16) throw new ConsoleError('unavailable', 'sixteen open histories already subscribed');
+      histories.selected(read(m.arc), m.invocation);
+      historySubscriptions.set(key, { arc: m.arc, invocation: m.invocation });
+      break;
     }
-    if (m.subscribe) { subscribed.add(m.subscribe); cache.pin(m.subscribe); }
-    if (m.unsubscribe) { subscribed.delete(m.unsubscribe); if (!maintained.has(m.unsubscribe)) cache.unpin(m.unsubscribe); }
-    parentPort!.postMessage({ id: m.id, value: m.path ? route(m.path, m.params ?? {}) : null });
+  }
+  return null;
+}
+parentPort!.on('message', (m: ConsoleRequest & { id: number }) => {
+  try {
+    parentPort!.postMessage({ id: m.id, value: request(m) });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     parentPort!.postMessage({ id: m.id, error: code === 'ENOENT' ? { code: 'not-found', message: 'evidence is absent or pruned' } : err(error) });

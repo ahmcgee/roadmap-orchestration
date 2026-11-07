@@ -1103,9 +1103,10 @@ without rewriting the file. Host must be an IPv4/IPv6 literal; port is an intege
 are refused. This is the devcontainer default: the wildcard interface makes the console reachable from
 the host through the container network. No auth is provided. On exposed hosts, choose loopback (`127.0.0.1`
 or `::1`); plans, state, spend, questions and selected logs/results can contain sensitive text. Port 4318 is
-reserved for OTLP/HTTP, not the console. On automatic startup, any console bind failure (including EADDRINUSE)
-prints a loud warning naming the address and `.roadmap/config.json` webConsole.port; arc execution proceeds.
-Direct `console start` still refuses bind failures. Invalid configuration refuses startup. Nonzero ports never fall back. A zero setting reuses a live console on the same host. Other binding changes require console stop/start;
+reserved for OTLP/HTTP, not the console. On automatic startup, console operational failures (bind errors,
+startup/mutex timeouts, live settings conflicts and failed termination) print one loud warning naming the
+cause and `.roadmap/config.json` webConsole.port or `roadmap console stop`; arc execution proceeds.
+Direct `console start` refuses these failures. Corruption and programming errors still propagate. Invalid configuration refuses startup. Nonzero ports never fall back. A zero setting reuses a live console on the same host. Other binding changes require console stop/start;
 conflicting worktree settings name the startup config source.
 
 `console start|stop|status --repo` prints the same console status/URL line to stderr only. `status` also

@@ -206,9 +206,11 @@ Actionable watch wakes the architect on durable work/questions, death or timed c
 The Roadmap web console is a detached repo service, keyed by realpath Git common directory and kept outside
 supervisor/workload containment and arc GC. Start/resume and direct supervisor entry attempt console readiness before
 host claim; normal executor exit leaves it running. Explicit console start/stop/status manage an identity-checked
-lease; version replacement waits for death under an abstract-socket mutex. A bind failure during automatic startup prints one loud warning naming the address and
-`.roadmap/config.json` webConsole.port; arc work proceeds because the console is an optional read-only observer.
-Direct `roadmap console start` still refuses bind failures; invalid configuration also refuses startup.
+lease; version replacement waits for death under an abstract-socket mutex. Operational console unavailability
+(bind failure, ten-second startup deadline, settings conflict, twenty-second mutex deadline, or survival of
+SIGKILL) prints one loud warning naming the cause and `webConsole.port` or `roadmap console stop`; arc work
+continues. Only this typed operational error is caught. Direct `roadmap console start` refuses these failures;
+invalid configuration, corrupt records and programming errors still propagate.
 A nonzero configured port never falls back to another port. Defaults remain
 0.0.0.0:4747: devcontainers need the wildcard interface for access from the host. Set `webConsole.port: 0`
 to bind any free port when several repos share one container. The lease records the actual bound port,

@@ -11,7 +11,12 @@ export function consoleUrl(host: string, port: number, connect = true): string {
   return `http://${h.includes(':') ? `[${h}]` : h}:${port}`;
 }
 
-export class ConsoleBindError extends Error {
+/** Expected operational failure of the optional console; defects and invalid records are not this type. */
+export class ConsoleUnavailableError extends Error {
+  constructor(message: string) { super(message); this.name = 'ConsoleUnavailableError'; }
+}
+
+export class ConsoleBindError extends ConsoleUnavailableError {
   readonly host: string; readonly port: number;
   constructor(host: string, port: number, detail: string) {
     super(`.roadmap/config.json webConsole.port: console bind ${host}:${port} failed: ${detail}`);

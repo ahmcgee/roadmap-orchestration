@@ -7,6 +7,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, type ConsoleCode } from '../observation/protocol.ts';
 import { consoleUrl, ConsoleBindError } from './settings.ts';
 import { SseWriter, errorNotice } from './sse.ts';
+import type { ConsoleRequest } from './messages.ts';
 import { staticResponse } from './static.ts';
 
 const statuses: Record<ConsoleCode, number> = { reset: 409, conflict: 409, unavailable: 503, corruption: 500, protocol: 409, 'not-found': 404, invalid: 400 };
@@ -52,10 +53,10 @@ export async function serveConsole(args: ConsoleServerArgs) {
   const fail = (e: Error) => { failed = e; for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
   worker.on('error', fail);
   worker.on('exit', (code) => fail(new Error(`observation worker exited ${code}`)));
-  function ask(message: object): Promise<unknown> {
+  function ask(message: ConsoleRequest): Promise<unknown> {
     if (failed) return Promise.reject(new ConsoleError('unavailable', failed.message));
     // Coalesce reads only. Subscription mutations must preserve add/remove/add order.
-    const key = 'path' in message ? canonicalJson(message) : `control:${next + 1}`;
+    const key = message.kind === 'read' ? canonicalJson(message) : `control:${next + 1}`;
     const known = coalesced.get(key); if (known) return known;
     const id = ++next;
     const task = new Promise<unknown>((resolve, reject) => {
@@ -85,8 +86,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
           connections.set(res, { arc, ...(invocation ? { invocation } : {}) });
           const cleanup = () => {
             streams.delete(res); connections.delete(res);
-            if (invocation && ![...connections.values()].some(s => s.arc === arc && s.invocation === invocation)) void ask({ history: { arc, invocation, remove: true } }).catch(() => {});
-            if (![...connections.values()].some(s => s.arc === arc)) void ask({ unsubscribe: arc }).catch(() => {});
+            if (invocation && ![...connections.values()].some(s => s.arc === arc && s.invocation === invocation)) void ask({ kind: 'history-unsubscribe', arc, invocation }).catch(() => {});
+            if (![...connections.values()].some(s => s.arc === arc)) void ask({ kind: 'unsubscribe', arc }).catch(() => {});
           };
           const closed = () => req.destroyed || res.closed;
           // Catch disconnects even while the worker is still catching up. A completed await can have
@@ -94,14 +95,14 @@ export async function serveConsole(args: ConsoleServerArgs) {
           res.once('close', cleanup);
           let ready = false;
           try {
-            const initial = await ask({ path: ['runs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string; highWater: number };
+            const initial = await ask({ kind: 'read', path: ['runs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string; highWater: number };
             if (closed()) return;
-            const page = invocation ? await ask({ path: ['runs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
+            const page = invocation ? await ask({ kind: 'read', path: ['runs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
             if (closed()) return;
             if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(); return; }
-            if (invocation) await ask({ history: { arc, invocation } });
+            if (invocation) await ask({ kind: 'history-subscribe', arc, invocation });
             if (closed()) return;
-            await ask({ subscribe: arc });
+            await ask({ kind: 'subscribe', arc });
             if (closed()) return;
             res.writeHead(200, { 'content-type': 'text/event-stream', 'x-accel-buffering': 'no' });
             const id = `${initial.epoch}:${initial.revision}`;
@@ -113,7 +114,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
             return;
           } finally { if (!ready || closed()) cleanup(); }
         }
-        json(200, await ask({ path, params })); return;
+        json(200, await ask({ kind: 'read', path, params })); return;
       }
       if (await staticResponse(decoded, req, res)) return;
       throw new ConsoleError('not-found', 'unknown console asset');

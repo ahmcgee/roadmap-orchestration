@@ -53,10 +53,11 @@ never overwritten. Keep the plugin installed; refresh the launcher after updates
 
 The console is a detached, read-only service. `roadmap console start|stop|status --repo <path>` controls
 it independently of executor/watch; normal stop, completion, parking and supervisor death leave it
-available. Explicit console stop persists until another start. If automatic console startup cannot bind,
-arc work proceeds with a loud warning naming the address and `.roadmap/config.json` `webConsole.port`.
-Direct `roadmap console start` still refuses bind failures. Invalid configuration refuses startup;
-the console never chooses another port.
+available. Explicit console stop persists until another start. Console bind failures, startup or mutex
+timeouts, conflicts with a running console and failed termination leave arc work running with one loud
+warning naming the cause and `.roadmap/config.json` `webConsole.port` or `roadmap console stop`.
+Direct `roadmap console start` refuses these failures. Invalid configuration and programming errors still
+refuse startup; a nonzero configured port never falls back to another port.
 
 Start on Overview for the run state, current work, waiting reasons and open requests. Units lists every
 unit and sorts by elapsed time, failed checks or spend. Open a unit to see its purpose and rounds, then
