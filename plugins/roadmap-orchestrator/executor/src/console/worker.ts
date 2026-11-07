@@ -10,6 +10,7 @@ import { ObservationCache } from '../observation/cache.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, type Admission, type Envelope } from '../observation/protocol.ts';
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
+import { consoleModel } from './model.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
@@ -46,7 +47,7 @@ function route(path: string[], params: Record<string, string>) {
     if (error instanceof ConsoleError && error.code === 'not-found' && (section === 'snapshot' || section === 'status')) throw new ConsoleError('unavailable', 'run has no retained observation yet');
     throw error;
   }
-  if (path.length === 3 && section === 'snapshot') return e;
+  if (path.length === 3 && section === 'snapshot') return { ...e, data: { ...e.data, console: consoleModel(e) } };
   if (path.length === 3 && section === 'status') {
     if (params['summary'] !== undefined && params['summary'] !== '0' && params['summary'] !== '1') throw new ConsoleError('invalid', 'summary is 0 or 1');
     return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };
@@ -56,7 +57,7 @@ function route(path: string[], params: Record<string, string>) {
     if (!unit) throw new ConsoleError('not-found', 'unit is not in the applied plan');
     const activities = e.data.display.invocations.filter((i) => i.unit === id || i.relatedUnits?.includes(id));
     return { ...e, data: { unit, activities, attempts: [...new Set(activities.map((i) => i.attempt))],
-      records: e.data.display.estate.filter((r) => r.id === id || r.parentId === `unit:${id}` || r.id === `unit:${id}`),
+      records: e.data.display.estate.filter((r) => r.id === id || r.parentId === id || r.id === `unit:${id}`),
       lines: project(unit).map((r) => r.text) } };
   }
   if (path.length === 5 && section === 'invocations' && id) {

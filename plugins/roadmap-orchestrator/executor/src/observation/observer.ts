@@ -24,7 +24,7 @@ import { type Display, type Entry, type Invocation, type ObserveRequest, type Ob
 const entry = (id: string, label: string, state: string, value: unknown): Entry => ({ id, label, state, body: pretty(value), links: [], provenance: 'validated runtime snapshot' });
 
 export class Observer {
-  captured: (ReturnType<typeof captureStatus> & { summary: ReturnType<typeof summarize> }) | null = null;
+  captured: (ReturnType<typeof captureStatus> & { summary: ReturnType<typeof summarize>; requests: ReturnType<typeof recordOf>[] }) | null = null;
   get cursor() { return this.#journal?.cursor ?? null; }
   #run: Run | null = null;
   #journal: ObserverJournal | null = null;
@@ -82,7 +82,7 @@ export class Observer {
       }
       const display: Display = { run, at: new Date().toISOString(), seq: snapshot.view.highWater(), status: s, invocations,
         estate: this.#estate.entries, exceptions, milestoneUnits };
-      this.captured = { ...captured, summary: summarize(captured.core, captured.events, captured.plan) };
+      this.captured = { ...captured, summary: summarize(captured.core, captured.events, captured.plan), requests: s.needsUser.map((n) => recordOf(run.runDir, n.id)) };
       return { token: request.token, display, error: null };
     } catch (error) {
       // Retain the last published model on the UI thread, never publish a partial observation.

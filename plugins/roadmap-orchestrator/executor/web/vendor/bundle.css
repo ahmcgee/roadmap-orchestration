@@ -1,0 +1,316 @@
+/* Atlas Design System — the stylesheet the components load after tokens.css.
+   Every value the tokens page owns (colors per theme, type, spacing, radii,
+   shadows, tracking, the focus ring) lives in tokens.json and is compiled to
+   tokens.css. What stays here is what tokens.json cannot hold: the color-mix
+   tints, the font shorthands the components set with `font: var(--type-…)`,
+   motion timing, and the brand treatments. */
+
+:root {
+  /* Tints are made with color-mix(... 9–14%, transparent), never new hexes. */
+  --polar-tint: color-mix(in oklab, var(--polar) 11%, transparent);
+  --firmament-tint: color-mix(in oklab, var(--firmament) 14%, transparent);
+  --radiance-tint: color-mix(in oklab, var(--radiance) 12%, transparent);
+  --attested-tint: color-mix(in oklab, var(--attested) 10%, transparent);
+  --capture-tint: color-mix(in oklab, var(--capture) 9%, transparent);
+
+  /* Companion register — serif-led */
+  --type-display: 500 2.75rem/1.18 var(--font-serif);   /* 44px — review headlines */
+  --type-title: 500 1.75rem/1.25 var(--font-serif);     /* 28px — view titles */
+  --type-heading: 500 1.25rem/1.35 var(--font-serif);   /* 20px — card titles, container names */
+  --type-body: 400 1rem/1.6 var(--font-serif);          /* 16px — narrative, the why */
+  --type-body-lg: 400 1.125rem/1.6 var(--font-serif);   /* 18px — dialogue in focus */
+  --type-companion: italic 400 0.9375rem/1.5 var(--font-serif);    /* 15px — the italic "why"/caption under a task or event line */
+  --type-companion-sm: italic 400 0.8125rem/1.5 var(--font-serif); /* 13px — dense companion caption / fine print */
+
+  /* Instrument register — sans-led */
+  --type-ui: 400 0.875rem/1.5 var(--font-sans);         /* 14px — controls, dense UI */
+  --type-ui-strong: 600 0.875rem/1.5 var(--font-sans);
+  --type-ui-sm: 400 0.8125rem/1.5 var(--font-sans);     /* 13px — metadata rows */
+  --type-label: 500 0.6875rem/1.2 var(--font-sans);     /* 11px — ALL-CAPS labels, badges */
+
+  /* Attested / data — mono */
+  --type-data: 400 0.8125rem/1.55 var(--font-mono);     /* 13px — ledger, codes */
+  --type-data-sm: 400 0.75rem/1.5 var(--font-mono);     /* 12px — timestamps, caps */
+
+  /* Motion — fades and settles, ease-out, nothing springy */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
+  --duration-fast: 120ms;   /* hover, press */
+  --duration-base: 200ms;   /* state changes, badge transitions */
+  --duration-slow: 320ms;   /* proposal → fact confirmation moment */
+}
+
+/* Print / e-ink: the tint the light theme re-mixes. */
+[data-theme="light"] {
+  --radiance-tint: color-mix(in oklab, var(--radiance) 14%, transparent);
+}
+
+/* Atlas — brand treatments. "Observatory" identity.
+   The wordmark, the Horizon mark, and the signature surface treatments
+   (proposal / attested / capture / plate). Use these classes verbatim so the
+   treatments stay identical everywhere. */
+
+/* ———— Wordmark ————
+   One title treatment for the word "Atlas", everywhere: Space Grotesk 500,
+   spaced caps. Scale with font-size; tracking and weight never change. */
+.atlas-wordmark {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 1.5rem;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wordmark);
+  margin-right: calc(-1 * var(--tracking-wordmark)); /* optical: trailing track */
+  color: var(--text-body);
+  line-height: 1;
+}
+
+/* ———— The Cradle mark ————
+   The world, held. Evolved from the Horizon mark (a world borne on a line):
+   the line curls up into a cup, so the mark now says what Atlas does — it holds
+   the weight so you don't. Inlined as a data-URI mask so it takes currentColor
+   and ships self-contained. Standalone files live in assets/marks/ for
+   export/favicon use (mark-cradle.svg, mark-cradle-crest.svg). The legacy
+   Horizon files remain there for reference.
+   Default = DOUBLE cradle (palm + heel — the everywhere mark, 20–64px).
+   --bold (single cradle, heavier) is the cut for ≤18px / favicon, where the
+   faint heel arc would muddy.
+   --crest = double cradle + meridian, for hero/grand register at ≥40px only. */
+.atlas-mark {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.2em;
+  transform: translateY(0.05em);
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8.5' r='4.8'/%3E%3Cpath d='M6 12.5 Q 12 19 18 12.5'/%3E%3Cpath d='M3.5 11 Q 12 23 20.5 11' stroke-width='1.3' opacity='.55'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8.5' r='4.8'/%3E%3Cpath d='M6 12.5 Q 12 19 18 12.5'/%3E%3Cpath d='M3.5 11 Q 12 23 20.5 11' stroke-width='1.3' opacity='.55'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.atlas-mark--bold {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='9' r='5.4'/%3E%3Cpath d='M5.5 13 Q 12 19.5 18.5 13'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='9' r='5.4'/%3E%3Cpath d='M5.5 13 Q 12 19.5 18.5 13'/%3E%3C/svg%3E");
+}
+.atlas-mark--crest {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.7 A 2.5 4.8 0 0 0 12 13.3' opacity='.5'/%3E%3Ccircle cx='12' cy='8.5' r='4.8'/%3E%3Cpath d='M6 12.5 Q 12 19 18 12.5'/%3E%3Cpath d='M3.5 11 Q 12 23 20.5 11' opacity='.55'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.7 A 2.5 4.8 0 0 0 12 13.3' opacity='.5'/%3E%3Ccircle cx='12' cy='8.5' r='4.8'/%3E%3Cpath d='M6 12.5 Q 12 19 18 12.5'/%3E%3Cpath d='M3.5 11 Q 12 23 20.5 11' opacity='.55'/%3E%3C/svg%3E");
+}
+
+/* ———— Proposal vs. fact ————
+   Anything the agent proposes but has not been enacted at a check-in wears
+   this: dashed polar border on an ice-tinted ground. Facts are plain cards.
+   The confirmation moment transitions dashed → solid over --duration-slow. */
+.atlas-proposal {
+  border: 1px dashed color-mix(in oklab, var(--polar) 50%, transparent);
+  background: var(--polar-tint);
+  border-radius: var(--radius-3);
+  transition: border-color var(--duration-slow) var(--ease-out),
+              background var(--duration-slow) var(--ease-out);
+}
+.atlas-proposal.is-enacted {
+  border: 1px solid var(--border-card);
+  background: var(--surface-card);
+}
+
+/* ———— Server-attested ————
+   State only the Trust API can assert (clock, lockout, ledger, phase) wears a
+   double rule and mono type. The agent cannot draw this treatment. */
+.atlas-attested {
+  border: 1px solid color-mix(in oklab, var(--attested) 45%, transparent);
+  outline: 1px solid color-mix(in oklab, var(--attested) 18%, transparent);
+  outline-offset: 2px;
+  background: var(--attested-tint);
+  border-radius: var(--radius-2);
+}
+
+/* ———— Capture: raw, unprocessed ————
+   Un-understood items are conspicuous, not tidy: warm paper tone on the cold
+   ground, dashed, deliberately unpolished until substantiated at a check-in. */
+.atlas-capture {
+  border: 1px dashed color-mix(in oklab, var(--capture) 55%, transparent);
+  background: var(--capture-tint);
+  border-radius: var(--radius-1);
+  color: var(--ink-1);
+}
+
+/* ———— Plate: the astral instrument frame ————
+   Four crosshair registration ticks floating just OUTSIDE the corners — the
+   observatory's signature, as in the brand exploration. Emphasis only: reserve
+   for the few surfaces that earn the user's attention (highest-stakes click,
+   danger confirmation, the live attested clock). Ticks are drawn with two
+   pseudo strips (top + bottom), each carrying a tick at both ends; steel color
+   baked in since plates sit on the dark ground. The plated element must not
+   clip overflow. */
+.atlas-plate {
+  position: relative;
+  /* The star-ticks overhang 11px on every side; reserve clearance above and
+     below so a plated surface never collides with its neighbors in a stack.
+     (Plates are emphasis surfaces — they earn the breathing room.) */
+  margin-block: var(--space-4);
+}
+.atlas-plate::before,
+.atlas-plate::after {
+  content: "";
+  position: absolute;
+  left: -11px;
+  right: -11px;
+  height: 11px;
+  pointer-events: none;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 11 11'%3E%3Cpath d='M5.5 0V11M0 5.5H11' stroke='%238CA0C8' stroke-width='1.25'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 11 11'%3E%3Cpath d='M5.5 0V11M0 5.5H11' stroke='%238CA0C8' stroke-width='1.25'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: 11px 11px;
+  background-position: left center, right center;
+}
+.atlas-plate::before { top: -11px; }
+.atlas-plate::after { bottom: -11px; }
+
+/* ———— Dotted hairline ————
+   The observatory's connective tissue: a 1px dotted steel rule. Use as a
+   divider (border-top) between an instrument panel's regions, or above an
+   action row. Solid rules stay for structural card edges. */
+.atlas-rule {
+  border: 0;
+  border-top: 1px dotted var(--line-2);
+}
+
+/* ———— Motion: the autonomous phase, made visible ————
+   The orbit traces the agent circling its work while you're away — calm and
+   slow (a 9s revolution), never a spinner. The starfield twinkles faintly.
+   Both stand down entirely under prefers-reduced-motion: the orbiting node
+   parks on its track, the stars hold a fixed brightness. Decorative motion is
+   always optional, never load-bearing. */
+@keyframes atlas-orbit-run { to { offset-distance: 100%; } }
+@keyframes atlas-twinkle { 0%, 100% { opacity: 0.18; } 50% { opacity: 0.9; } }
+
+.atlas-orbit-dot {
+  offset-path: path("M 6 24 A 18 7 0 1 1 42 24 A 18 7 0 1 1 6 24");
+  offset-rotate: 0deg;
+  animation: atlas-orbit-run 9s linear infinite;
+}
+.atlas-star {
+  animation: atlas-twinkle var(--tw-dur, 4s) ease-in-out var(--tw-delay, 0s) infinite;
+}
+
+/* ———— The transit moment ————
+   Plays once when a check-in opens: the world rises along its arc and crosses
+   the meridian — the one appointed moment of the day. A soft pulse marks the
+   crossing; nothing loops. Under reduced-motion the world simply rests on the
+   meridian, already arrived. */
+@keyframes atlas-transit-rise { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+@keyframes atlas-transit-meridian { 0%, 35% { opacity: 0; } 100% { opacity: 0.5; } }
+@keyframes atlas-transit-pulse {
+  0%, 60% { opacity: 0; transform: scale(0.5); }
+  74% { opacity: 0.7; }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+.atlas-transit-world {
+  offset-path: path("M 44 92 Q 64 32 100 30");
+  offset-rotate: 0deg;
+  animation: atlas-transit-rise 1.7s cubic-bezier(0.25, 0.6, 0.2, 1) forwards;
+}
+.atlas-transit-meridian { animation: atlas-transit-meridian 1.7s ease-out forwards; }
+.atlas-transit-pulse {
+  transform-box: fill-box; transform-origin: center;
+  animation: atlas-transit-pulse 2.3s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-orbit-dot { animation: none; offset-distance: 76%; }
+  .atlas-star { animation: none; }
+  .atlas-transit-world { animation: none; offset-distance: 100%; }
+  .atlas-transit-meridian { animation: none; opacity: 0.5; }
+  .atlas-transit-pulse { animation: none; opacity: 0; }
+  .atlas-radiate { animation: none; }
+  .atlas-typing-dot { animation: none; opacity: 0.6; }
+  .atlas-settle-caret { animation: none; opacity: 0.7; }
+  .atlas-agenda-rise { animation: none; opacity: 1; transform: none; }
+}
+
+/* ———— Typing ————
+   The agent's thinking state in the check-in conversation: three dots breathing
+   in sequence. Calm, not a frantic bounce. */
+@keyframes atlas-typing {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 0.9; transform: translateY(-2px); }
+}
+.atlas-typing-dot {
+  animation: atlas-typing 1.2s ease-in-out infinite;
+}
+
+/* ———— Settling caret ————
+   The executor's composing state (no spinner): a text caret settling into
+   place — a slow, weighted blink beside the autonomous orbit. Reads as a
+   mind coming to rest on the next word, not a machine churning. */
+@keyframes atlas-settle-caret {
+  0%, 100% { opacity: 1; transform: scaleY(1); }
+  50% { opacity: 0.28; transform: scaleY(0.86); }
+}
+.atlas-settle-caret {
+  transform-origin: center;
+  animation: atlas-settle-caret 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* ———— Agenda rise ————
+   The day's shape unveiling at agenda-set: each section rises a few pixels into
+   place, once, gently staggered. Meaningful motion — the plan arriving — not
+   decoration; it plays a single time and rests. The base (end) state is fully
+   visible, so print, reduced-motion, and no-JS all show the agenda as-arrived. */
+@keyframes atlas-agenda-rise {
+  from { opacity: 0; transform: translateY(9px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.atlas-agenda-rise {
+  animation: atlas-agenda-rise var(--duration-slow, 420ms) var(--ease-out, cubic-bezier(0.2,0.7,0.2,1)) both;
+  animation-delay: var(--rise-delay, 0ms);
+}
+
+/* ———— Radiance ————
+   The celebratory motif: a slow breathing glow for "bright spot" suns — what
+   the period got right, rendered as light rather than another star. Gentle,
+   never a throb; stands down under reduced-motion. */
+@keyframes atlas-radiate {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 0.95; transform: scale(1.14); }
+}
+.atlas-radiate {
+  transform-box: fill-box; transform-origin: center;
+  animation: atlas-radiate var(--rad-dur, 3.6s) ease-in-out var(--rad-delay, 0s) infinite;
+}
+
+/* ———— Base ground ———— */
+.atlas-ground {
+  background: var(--surface-page);
+  color: var(--text-body);
+  font: var(--type-ui);
+}
+
+/* ———— Keyboard focus for the data and activity components ————
+   A solid ring at the system's focus width and offset, keyboard only. */
+.atlas-focusable:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+.atlas-dag-focus { opacity: 0; }
+.atlas-dag-node:focus-visible .atlas-dag-focus { opacity: 1; }
+
+/* ———— Active unit ————
+   A unit that is working carries a short polar trace travelling its frame:
+   calm and slow (one lap in 4s), meaning "in progress", never a spinner. It
+   stands down under prefers-reduced-motion — the ringed status dot and the
+   word "Active" still say it. */
+@keyframes atlas-unit-trace { to { stroke-dashoffset: -100; } }
+.atlas-unit-trace { animation: atlas-unit-trace 4s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .atlas-unit-trace { animation: none; opacity: 0; }
+}
+
+/* ———— Open details on a graph node ————
+   The ↗ control shows on the selected node, and on any node hovered or
+   tabbed into; on touch, select first and it appears. */
+.atlas-dag-open { opacity: 0; transition: opacity var(--duration-fast) var(--ease-out); }
+.atlas-dag-open.is-shown,
+.atlas-dag-node:hover .atlas-dag-open,
+.atlas-dag-node:focus-within .atlas-dag-open,
+.atlas-dag-open:focus-visible,
+g:hover > .atlas-dag-open { opacity: 1; }
+.atlas-dag-open:focus-visible .atlas-dag-focus { opacity: 1; }
+@media (hover: none) { .atlas-dag-open.is-shown { opacity: 1; } }

@@ -56,7 +56,7 @@ export class ObservationCache {
         const captured = observer.captured;
         const generation = observer.cursor!.generation;
         const epoch = !c || c.generation !== generation ? randomUUID() : c.epoch;
-        const data: ObservationData = structuredClone({ display: reply.display, summary: captured.summary, events: captured.events, plan: captured.plan,
+        const data: ObservationData = structuredClone({ display: reply.display, summary: captured.summary, requests: captured.requests, events: captured.events, plan: captured.plan,
           capture: { clock: captured.clock, foldMs: captured.foldMs, source: stable + journal, materializations: (c?.base.capture.materializations ?? 0) + 1 } });
         const at = new Date(captured.clock).toISOString();
         c = { observer, stable, volatile, journal, epoch, generation, base: data, envelope: {

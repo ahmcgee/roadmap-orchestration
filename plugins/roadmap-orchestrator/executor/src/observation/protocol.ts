@@ -13,6 +13,7 @@ export class ConsoleError extends Error {
   constructor(code: ConsoleCode, message: string) { super(message); this.name = 'ConsoleError'; this.code = code; }
 }
 export type ObservationData = Readonly<{
+  requests: readonly import('../core/records.ts').NeedsUserRecord[];
   display: Display; summary: ReturnType<typeof summarize>; events: readonly Event[]; plan: PlanM1 | null;
   capture: Readonly<{ clock: number; foldMs: number; source: string; materializations: number }>;
 }>;

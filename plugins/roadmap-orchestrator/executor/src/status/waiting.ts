@@ -1,4 +1,4 @@
-import type { Event, IntentOf } from '../core/events.ts';
+import type { Event, IntentOf, Parent } from '../core/events.ts';
 import { type JobId, type JobKind, type UnitId, parseJobId } from '../core/ids.ts';
 import type { Stage } from '../core/records.ts';
 import type { Waited, WaitReason } from '../core/waiting.ts';
@@ -9,12 +9,31 @@ export type WaitingTotals = Readonly<{
   byJobStage: readonly (Waited & Readonly<{ job: JobId; stage: JobKind }>)[];
 }>;
 
+export type WaitingMeasurement = Readonly<{ source: 'admission'; unit: UnitId; stage: Stage; at: string; waited: Waited }>
+  | Readonly<{ source: 'reservation'; parent: Parent; at: string; waited: Waited }>;
+
+/** Expose individual completed measurements before aggregation: overlapping reasons cannot be partitioned afterward. */
+export function completedWaiting(events: readonly Event[]) {
+  const measurements: WaitingMeasurement[] = [];
+  const pending = new Map<string, IntentOf<'resource.transition'>>();
+  let unmeasuredReservations = 0;
+  for (const e of events) {
+    if (e.type === 'fact' && e.fact.kind === 'stage-admitted') measurements.push({ source: 'admission', unit: e.fact.unit, stage: e.fact.stage, at: e.at, waited: e.fact.waited });
+    if (e.type === 'intent' && e.kind === 'resource.transition' && e.expect.edge.type === 'reserve') pending.set(e.op, e);
+    if (e.type !== 'done' || e.kind !== 'resource.transition') continue;
+    const grant = pending.get(e.op);
+    if (!grant) continue;
+    pending.delete(e.op);
+    if (grant.expect.waited === undefined) unmeasuredReservations++;
+    else measurements.push({ source: 'reservation', parent: grant.parent, at: e.at, waited: grant.expect.waited });
+  }
+  return { measurements, unmeasuredReservations };
+}
+
 /** Completed grants and admissions only; a crash loses unrecorded measurements, never invents downtime. */
 export function waitingTotals(events: readonly Event[]): WaitingTotals {
   const units = new Map<string, Waited & { unit: UnitId; stage: Stage }>();
   const jobs = new Map<string, Waited & { job: JobId; stage: JobKind }>();
-  const pending = new Map<string, IntentOf<'resource.transition'>>();
-  let unmeasuredReservations = 0;
   const add = <T extends Waited>(old: T, value: Waited): T => {
     const byReasonMs: Partial<Record<WaitReason, number>> = { ...old.byReasonMs };
     for (const reason of Object.keys(value.byReasonMs) as WaitReason[]) byReasonMs[reason] = (byReasonMs[reason] ?? 0) + value.byReasonMs[reason]!;
@@ -24,20 +43,13 @@ export function waitingTotals(events: readonly Event[]): WaitingTotals {
     const key = `${id}/${stage}`;
     units.set(key, add(units.get(key) ?? { unit: id, stage, totalMs: 0, byReasonMs: {} }, value));
   };
-  for (const event of events) {
-    if (event.type === 'fact' && event.fact.kind === 'stage-admitted') unit(event.fact.unit, event.fact.stage, event.fact.waited);
-    if (event.type === 'intent' && event.kind === 'resource.transition' && event.expect.edge.type === 'reserve') pending.set(event.op, event);
-    if (event.type !== 'done' || event.kind !== 'resource.transition') continue;
-    const grant = pending.get(event.op);
-    if (grant === undefined) continue;
-    pending.delete(event.op);
-    const value = grant.expect.waited;
-    if (value === undefined) { unmeasuredReservations++; continue; }
-    const parent = grant.parent;
-    if (parent.type === 'stage') unit(parent.unit, parent.stage, value);
-    if (parent.type === 'job') {
-      const stage = parseJobId(parent.job).kind;
-      jobs.set(parent.job, add(jobs.get(parent.job) ?? { job: parent.job, stage, totalMs: 0, byReasonMs: {} }, value));
+  const { measurements, unmeasuredReservations } = completedWaiting(events);
+  for (const m of measurements) {
+    if (m.source === 'admission') unit(m.unit, m.stage, m.waited);
+    else if (m.parent.type === 'stage') unit(m.parent.unit, m.parent.stage, m.waited);
+    else if (m.parent.type === 'job') {
+      const job = m.parent.job, stage = parseJobId(job).kind;
+      jobs.set(job, add(jobs.get(job) ?? { job, stage, totalMs: 0, byReasonMs: {} }, m.waited));
     }
   }
   return { unmeasuredReservations, byUnitStage: [...units.values()], byJobStage: [...jobs.values()] };
