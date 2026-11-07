@@ -11,7 +11,7 @@ import { heartbeat } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { ownerState } from '../status.ts';
 import { supervision } from '../watch-lease.ts';
-import { dependencyStamp, fileStamp } from './dependencies.ts';
+import { observationStamp, fileStamp } from './dependencies.ts';
 import { checkRunContainment } from './containment.ts';
 import { Observer } from './observer.ts';
 import { type Admission, type Envelope, type ObservationData, CONSOLE_PROTOCOL, ConsoleError } from './protocol.ts';
@@ -33,11 +33,9 @@ export class ObservationCache {
       const startPath = join(run.runDir, 'start.json');
       const common = existsSync(startPath) ? gitCommonDir(runStart(readJson(startPath), startPath).repo) : commonDirOfRun(run.runDir);
       const heart = join(run.runDir, 'heartbeat.json');
-      const watch = join(run.runDir, 'watch.lease.json');
       const journalPath = join(run.runDir, EVENTS_FILE);
-      const paths = [run.runDir, join(common, 'roadmap-runtime'), join(common, 'roadmap'), join(common, 'refs'), join(common, 'packed-refs'), join(common, 'HEAD'), this.hostDir];
-      const excluded = new Set([heart, watch, journalPath]);
-      const stable = dependencyStamp(paths, excluded) + JSON.stringify(ownerState(run.runDir, this.hostDir));
+      const stableStamp = () => observationStamp(run.runDir, common, this.hostDir) + JSON.stringify(ownerState(run.runDir, this.hostDir));
+      const stable = stableStamp();
       const volatile = fileStamp(heart) + JSON.stringify(supervision(run.runDir));
       const journal = fileStamp(journalPath);
       let c = this.#runs.get(run.runDir);
@@ -48,11 +46,6 @@ export class ObservationCache {
         if (c && c.stable !== stable) observer.invalidateEvidence();
         const reply = observer.observe({ locator: { type: 'host' }, pinned: run, hostDir: this.hostDir, token: 0 });
         if (reply.error || !reply.display || !observer.captured) throw new ConsoleError('corruption', reply.error ?? 'no captured observation');
-        // Check every sampled dependency again before publishing. A changed input is retried, never mixed.
-        if (stable !== dependencyStamp(paths, excluded) + JSON.stringify(ownerState(run.runDir, this.hostDir)) || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
-          if (Date.now() < deadline) continue;
-          throw new ConsoleError('unavailable', 'observation inputs changed throughout bounded catch-up');
-        }
         const captured = observer.captured;
         const generation = observer.cursor!.generation;
         const epoch = !c || c.generation !== generation ? randomUUID() : c.epoch;
@@ -83,7 +76,7 @@ export class ObservationCache {
           invocations: base.display.invocations.map((i) => i.endedAt !== null || i.quietMs === null ? i : { ...i, quietMs: i.quietMs + delta }) },
           summary: { ...base.summary, supervision: supervision(run.runDir) } };
       }
-      if (stable !== dependencyStamp(paths, excluded) + JSON.stringify(ownerState(run.runDir, this.hostDir)) || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
+      if (stable !== stableStamp() || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
         if (Date.now() < deadline) continue;
         throw new ConsoleError('unavailable', 'observation dependencies changed at request admission');
       }

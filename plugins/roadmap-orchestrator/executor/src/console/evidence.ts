@@ -4,7 +4,12 @@ import { ConsoleError } from '../observation/protocol.ts';
 /** Verify the opened descriptor, not merely a path checked before an open. No directory listings or arbitrary paths. */
 export function openEvidence(root: string, path: string): number {
   const base = realpathSync(root);
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let fd: number;
+  try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new ConsoleError('invalid', 'evidence symlink escapes permitted descriptor traversal');
+    throw error;
+  }
   try {
     const actual = realpathSync(`/proc/self/fd/${fd}`);
     const rel = relative(base, actual);
