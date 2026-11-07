@@ -1129,7 +1129,7 @@ adoption of dev.54 state.
 A dedicated observation worker polls every second without browser clients; filesystem notices accelerate
 polling. It discovers retained (including refused) arcs, maintains active/latest/subscribed arcs and an LRU
 of eight older captures. Default browser selection follows this repo's claim, otherwise latest retained;
-`/#/runs/<arc>/overview` pins a run. Only ObserverJournal.read verifies journal prefixes, retaining incomplete
+`/#/arcs/<arc>/overview` pins a run. Only ObserverJournal.read verifies journal prefixes, retaining incomplete
 tails without repair; inode/truncation/anchor resets change epoch. Derived materialized values are detached
 from the cursor before another read. Dependency stamps include identity/size/mtime/ctime and membership;
 refs, owner/liveness, scheduler, heartbeat, needs-user, answers, receipts and retained result/exit records
@@ -1153,17 +1153,17 @@ All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 4
 
 | Path after version | Response data |
 |---|---|
-| `/runs` | Retained runs and current selection |
-| `/runs/:arc/snapshot` | Envelope with canonical status/summary, observer detail and display adapters |
-| `/runs/:arc/activity?offset=N&housekeeping=0\|1` | Thirty plain-language journal entries, newest first, and a `more` flag. Successful housekeeping is excluded before paging by default; `housekeeping=1` includes it. Failed housekeeping always remains. |
-| `/runs/:arc/status?summary=0|1` | Envelope containing the unchanged canonical CLI object |
-| `/runs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
-| `/runs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
-| `/runs/:arc/invocations/:id/log?source=stdout|stderr|runner.log&after=N` | At most 64 KiB of source bytes, next cursor, identity, text and lossless base64 bytes |
-| `/runs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
-| `/runs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
-| `/runs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
-| `/runs/:arc/events?invocation=ID` | Existing revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
+| `/arcs` | Retained runs and current selection |
+| `/arcs/:arc/snapshot` | Envelope with canonical status/summary, observer detail and display adapters |
+| `/arcs/:arc/activity?offset=N&housekeeping=0\|1` | Thirty plain-language journal entries, newest first, and a `more` flag. Successful housekeeping is excluded before paging by default; `housekeeping=1` includes it. Failed housekeeping always remains. |
+| `/arcs/:arc/status?summary=0|1` | Envelope containing the unchanged canonical CLI object |
+| `/arcs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
+| `/arcs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
+| `/arcs/:arc/invocations/:id/log?source=stdout|stderr|runner.log&after=N` | At most 64 KiB of source bytes, next cursor, identity, text and lossless base64 bytes |
+| `/arcs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
+| `/arcs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
+| `/arcs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
+| `/arcs/:arc/events?invocation=ID` | Existing revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
 
 Invocation route IDs are the existing `seq-ordinal` directory keys: canonical invocation IDs contain `/`
 and `#`, while routes deliberately reject encoded separators. Keys resolve only to journal-recorded
@@ -1174,18 +1174,21 @@ arc/epoch/revision/checkedAt/highWater, and history notices carry invocation/ide
 and changed count. Snapshots, event pages and expanded content are fetched through ordinary GETs. A full
 socket waits for drain for up to two seconds; pending notices coalesce by event kind, and a persistently
 blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt;
-after five seconds without verification the browser shows “Disconnected/stale”, retaining timestamped
+after five seconds without verification the browser shows “Stale”, retaining timestamped
 content and freezing displayed timers. A browser on another package protocol requires reload.
 
 Static paths come only from an explicit content-hashed manifest. HTML revalidates; immutable assets include
-locally vendored React/ReactDOM 18.3.1 UMD, supplied component bundle/tokens/fonts and plain createElement app.js.
-`web/vendor/VENDOR.md` records origins, licences as supplied, registry tarball integrity and per-file SHA-256.
-No runtime dependency, build, install or download is required. Roadmap product names/accessibility labels
+prebuilt React, shadcn/ui components, Tailwind styles, Cytoscape/dagre and Latin Barlow/JetBrains fonts.
+Sources live in `web-src/`; `npm run build:console` writes committed `web/` assets and a sorted manifest.
+`web/THIRD-PARTY-NOTICES.txt` records every bundled package version and licence text. A byte-for-byte drift
+test guards the output. No runtime dependency, build, install or download is required. Roadmap product names/accessibility labels
 exclude supplied branding and marks. Evidence is text only. Traversal, encoded separators and symlink escapes
 are refused; evidence reads verify containment of the opened descriptor. CSP is same-origin with nosniff;
 there are no commands, credential reads, shell actions or arbitrary filesystem browsing.
 
-The graph is UnitGraph with explicit executor milestone gates (never MilestoneGraph's inferred verdict).
+The graph uses Cytoscape with dagre milestone bands and explicit executor milestone gates. Feed edges
+are solid; waits-on-gate edges are dashed. Station focus, search, selection chains and level of detail
+keep every unit navigable without a list below the graph. Route-driven drawers overlay the canvas.
 Merged maps to passed; preparing/running to active; held/blocked/parked to held; waiting/ready to pending;
 cut/superseded stay labelled withdrawn, never passed. `completedWaiting` exposes each completed measurement
 before aggregation. Reservation waits are queued; dependency/contingent-edge/milestone/host-pressure/compare/
@@ -1199,7 +1202,7 @@ case bars are not inferred. Certification shows recorded lane verdicts. Attentio
 nonblocking subjects, recommendations/options/evidence without response controls. StepLog has one phase per
 recorded invocation, neutral info lines and no inferred timestamps/levels.
 
-Agentic activity rows open a deep link at `#/runs/:arc/overview/invocations/:id` and return to their
+Agentic activity rows open a deep link at `#/arcs/:arc/overview/invocations/:id` and return to their
 unit. Deterministic activities retain StepLog. The seat brief is first and collapsed. `decodeTranscript`
 in `src/tui/transcript.ts` is the single presentation decoder; `normalize` renders its structured events
 through the legacy text projection, guarded by unchanged TUI tests and phase-4 text goldens. This does
@@ -1365,9 +1368,11 @@ revision. Apply validation, resume validation and the fold use the same eligibil
 at pre-build with the new spec revision and retains branch, worktree, counters and implementer session.
 Other build design parks still require re-entry.
 
-The console-only presentation adapter preserves canonical status bytes. Overview leads with run state,
-relative timestamps (local absolute time on hover), active work, specific waiting reasons and open requests;
-a recorded completion shows the outcome. Units is sortable by elapsed time, red checks and recorded spend.
+The console-only presentation adapter preserves canonical status bytes. Graph is the landing view:
+a segmented state strip, milestone stations and the complete dependency graph. The arc bar shows the state,
+day, recorded spend and verification status; completion adds the recorded outcome. Unit and invocation
+drawers overlay the current tab without blocking the graph. Other tabs currently use plain recorded lists
+and tables pending their next design phase. Short presentation titles are separate from full intent.
 Unit journeys use recorded specifications, stage-local attempt numbers and successive build rounds, with
 validated review reports and finding titles. Retirement completion comes from its settled operations;
 zero-duration and reasonless waits do not create waiting rows. Activity pages the journal in plain words,
