@@ -14,7 +14,7 @@ export type TranscriptEvent = {
   /** Internal presentation instructions retain the terminal's exact historical text. Never sent over HTTP. */
   legacy: { heading?: string; body?: unknown; literal?: string[] }[];
 };
-const readable = (v: unknown): string => typeof v === 'string' ? v : project(decodeReport(v)).map(r => r.text).join('\n');
+const readable = (v: unknown): string => typeof v === 'string' ? v : project(decodeReport(v), { fieldFirstEmpty: true }).map(r => r.text).join('\n');
 export function decodeTranscript(line: string): TranscriptEvent[] {
   let value: unknown;
   try { value = JSON.parse(line); } catch {
@@ -66,7 +66,7 @@ export function decodeTranscript(line: string): TranscriptEvent[] {
   }
   if (type === 'result') {
     const report = decodeReport(e['structured_output'] ?? e['result'] ?? e);
-    const out = event({ type: e['is_error'] === true ? 'error' : 'result', title: summary(report), text: readable(report), status: e['is_error'] === true ? 'failed' : 'passed' }, `final report: ${summary(report)}`, report);
+    const out = event({ type: e['is_error'] === true ? 'error' : 'result', title: summary(report, { fieldFirstEmpty: true }), text: readable(report), status: e['is_error'] === true ? 'failed' : 'passed' }, `final report: ${summary(report)}`, report);
     if (e['is_error'] === true) out.legacy.unshift({ literal: ['Agent reported an error'] });
     return [out];
   }

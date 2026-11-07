@@ -23,7 +23,8 @@ const scalar = (value: unknown): string => value === null ? 'Not recorded' : typ
 const empty = (value: unknown): boolean => value === null || value === '' || (Array.isArray(value) && value.length === 0) || (value !== null && typeof value === 'object' && !Object.keys(value).length);
 
 /** A deterministic display projection, never a schema conversion or a change to the recorded values. */
-export function project(value: unknown): ProjectionRow[] {
+export type ProjectionOptions = { fieldFirstEmpty?: boolean };
+export function project(value: unknown, options: ProjectionOptions = {}): ProjectionRow[] {
   const out: ProjectionRow[] = [];
   const add = (kind: ProjectionRow['kind'], text: string, depth: number): void => {
     for (const part of safe(text).split('\n')) out.push({ kind, text: '  '.repeat(Math.min(depth, 8)) + part });
@@ -34,7 +35,8 @@ export function project(value: unknown): ProjectionRow[] {
     const ordered = keys.filter((key) => !metadata.has(key)).sort((a, b) => priority(a) - priority(b));
     const vacant = ordered.filter((key) => obj[key] !== null && typeof obj[key] === 'object' && !Object.keys(obj[key] as object).length);
     for (const key of ordered.filter((key) => !vacant.includes(key))) visit(obj[key], label(key), depth, key);
-    if (vacant.length) add('field', `None recorded: ${vacant.map(label).join(', ')}`, depth);
+    if (options.fieldFirstEmpty) for (const key of vacant) add('field', `${label(key)}: none recorded`, depth);
+    else if (vacant.length) add('field', `None recorded: ${vacant.map(label).join(', ')}`, depth);
     const extra = keys.filter((key) => metadata.has(key));
     if (extra.length && depth === 0) add('heading', 'Record details', depth);
     for (const key of extra) visit(obj[key], label(key), depth, key);
@@ -84,7 +86,7 @@ export function decodeReport(value: unknown): unknown {
   try { return JSON.parse(value); } catch { return value; }
 }
 /** Compact activity/selection text prioritises human content rather than the last JSON property. */
-export function summary(value: unknown): string {
+export function summary(value: unknown, options: ProjectionOptions = {}): string {
   value = decodeReport(value);
   if (atom(value)) return scalar(value).replace(/\s+/g, ' ');
   if (Array.isArray(value)) return `${value.length} items`;
@@ -100,6 +102,6 @@ export function summary(value: unknown): string {
   if (!parts.length) for (const key of ['acceptance', 'units', 'milestones', 'obligations', 'clauses', 'witnesses', 'lanes']) {
     if (Array.isArray(obj[key])) parts.push(`${obj[key].length} ${label(key).toLowerCase()}`);
   }
-  if (!parts.length) return project(obj).filter((r) => r.kind !== 'heading').slice(0, 2).map((r) => r.text.trim()).join(' · ');
+  if (!parts.length) return project(obj, options).filter((r) => r.kind !== 'heading').slice(0, 2).map((r) => r.text.trim()).join(' · ');
   return safe(parts.join(' · ')).replace(/\s+/g, ' ');
 }

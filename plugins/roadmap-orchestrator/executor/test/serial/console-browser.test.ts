@@ -136,7 +136,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await browser.evaluate('() => { document.querySelector(".history-scroll").scrollTop = 0; return true; }');
   await until(async () => /Follow live tail/.test(await text()), 5000, 'reader pauses following');
   agent.append('Queued while the reader is scrolled up.');
-  await until(async () => /Follow live tail \(1 updates\)/.test(await text()), 10_000, 'paused reader receives update count');
+  await until(async () => /Follow live tail \(1 update\)/.test(await text()), 10_000, 'paused reader receives update count');
   assert.doesNotMatch(await browser.evaluate<string>('() => document.querySelector(".history-scroll").textContent'), /Queued while the reader/);
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent.startsWith("Follow live tail")).click(); return true; }');
   await until(async () => /Queued while the reader/.test(await text()), 10_000, 'resume tail');

@@ -85,7 +85,7 @@ export function presentation(e:Envelope){
    else if(f.kind==='arc-completed')feed.push({id:ev.seq,at:ev.at,text:'Arc completed'});
    else if(f.kind==='stop-completed')feed.push({id:ev.seq,at:ev.at,text:'Arc stopped'});
    else if(f.kind==='needs-user-acked')feed.push({id:ev.seq,at:ev.at,text:`Human request ${f.id} acknowledged`,tab:'attention'});
-   else if(f.kind==='audit-ended')feed.push({id:ev.seq,at:ev.at,text:`Holistic audit ${f.outcome}: ${f.findings.length} findings`,tab:'activity'});
+   else if(f.kind==='audit-ended')feed.push({id:ev.seq,at:ev.at,text:`Holistic audit ${f.outcome}: ${f.findings.length} ${f.findings.length===1?'finding':'findings'}`,tab:'activity'});
   }
   if(ev.type==='intent'&&ev.kind==='needsuser.raise'){
    const open=e.data.requests.find(r=>r.id===ev.expect.id);let summary=open?.summary;

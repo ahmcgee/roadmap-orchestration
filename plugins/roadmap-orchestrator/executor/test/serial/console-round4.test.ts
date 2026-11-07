@@ -43,7 +43,7 @@ test('round 4: readable recorded journeys and responsive console',{timeout:48000
   await b.evaluate('()=>{document.querySelector(".tool-input > details.history-expansion").open=true;return true;}');await wait(/Next input page/);assert.match(await b.evaluate<string>('()=>document.querySelector(".tool-input > details.history-expansion pre").textContent'),/long-a/);await b.evaluate('()=>{document.querySelector(".tool-input > details.history-expansion").open=false;return true;}');await shot('round4-agent-history-live');
  });
  await t.test('L3 stage CPU rows grouped by short unit, L4 waiting table and booking text',async()=>{
-  await go();await click('link','Time & resources');await wait(/CPU evidence/);assert.match(await body(),/measured stages used under 10%/);assert.match(await body(),/Build · attempt 1 — used 5% of 4 reserved cores/);
+  await go();await click('link','Time & resources');await wait(/CPU evidence/);assert.match(await body(),/1 of 1 measured stage used under 10%/);assert.match(await body(),/Build · attempt 1 — used 5% of 4 reserved cores/);
   assert.doesNotMatch(await b.evaluate<string>(`()=>document.querySelector('table[aria-label="CPU evidence"]').innerText`),/\d+#\d+|Heavy over-reservation/);
   assert.equal(await b.evaluate(`()=>document.querySelectorAll('table[aria-label="Waiting by reason"] thead th').length`),3);assert.match(await body(),/u10 (held|holds) integration-slot .* at /);await shot('round4-time-resources');
  });

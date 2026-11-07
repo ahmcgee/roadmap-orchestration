@@ -125,3 +125,6 @@ th button { border: 0; padding: 0; text-align: left; background: transparent; }
 .tool-output[open] summary { margin-bottom:6px; }
 .detailpanel { overflow-wrap:anywhere; }
 @media(max-width:800px){ .agent-detail {padding:12px;gap:6px;} .agent-detail .detailhead h2 {font-size:20px;} .agent-detail .history-meta {font-size:12px;} .history-live {padding-left:12px;} .cpu-intent {max-width:70vw;} }
+/* Keep event kind labels intact when the title and usage compete for narrow space. */
+.history-event li > div > div:first-child > span:first-child { flex-shrink:0; min-width:max-content; white-space:nowrap; }
+.unit-list .unit-card-text { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; min-width:0; }
