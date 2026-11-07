@@ -54,6 +54,18 @@ export class ConsoleBrowser {
     await this.call('browser_snapshot', { filename: path });
     return readFileSync(path, 'utf8');
   }
+  /** Use the public graph search and keyboard selection to open a record. */
+  async openUnit(id: string): Promise<void> {
+    await this.evaluate(`() => { document.querySelector('[aria-label="Close details"]')?.click(); return true; }`);
+    await this.call('browser_press_key', { key: '/' });
+    const snapshot = await this.call('browser_snapshot', {});
+    const row = snapshot.split('\n').find(line => line.includes('textbox "Search units"'));
+    if (!row) throw new Error('Graph search is not available');
+    const ref = /\[ref=(\w+)\]/.exec(row)![1];
+    await this.call('browser_type', { element: 'Search units', target: ref, text: id });
+    await this.call('browser_press_key', { key: 'Enter' });
+    await this.call('browser_press_key', { key: 'Enter' });
+  }
   async close() {
     for (const p of this.#pending.values()) { clearTimeout(p.timer); p.reject(new Error('browser closed')); } this.#pending.clear();
     if (this.child.exitCode !== null || this.child.signalCode !== null) return;

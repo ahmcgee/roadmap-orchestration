@@ -21,10 +21,10 @@ test('R2 abort during delayed catch-up releases histories; seventeen subsequent 
  for(let n=0;n<17;n++){let launch!:LaunchFile;const spawned=j.begin({kind:'proc.spawn',key:opKey(`disconnect-${n}`),parent:source.parent,deadlineAt:null,body:(op,inv)=>{launch={...template,op,inv};return {expect:{...source.expect,launchSha256:launchSha256(launch)},post:null};}});const dir=invocationDir(f.runDir,spawned.inv);mkdirSync(dir,{recursive:true});writeFileSync(join(dir,'launch.json'),JSON.stringify(launch));writeFileSync(join(dir,'stdout'),'');ids.push(invocationDirName(spawned.inv));}
  const original=Worker.prototype.postMessage;let gate:((send:()=>void)=>void)|null=null;let removes=0,unpins=0;
  t.mock.method(Worker.prototype,'postMessage',function(this:Worker,m:any,...rest:any[]){if(m.kind==='history-unsubscribe')removes++;if(m.kind==='unsubscribe')unpins++;if(m.kind==='subscribe'&&gate){const g=gate;gate=null;g(()=>original.call(this,m,...rest));return;}return original.call(this,m,...rest);});
- const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());const base=`${s.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}`;
+ const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());const base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
  for(const id of ids.slice(0,16)){
   const c=new AbortController();let release!:()=>void;const delayed=new Promise<void>(r=>{gate=send=>{release=send;r();};});const response=fetch(`${base}/events?invocation=${id}`,{signal:c.signal}).catch(()=>null);
-  await delayed;c.abort();await response;await new Promise(r=>setTimeout(r,15));release();await s.ask({kind:'read',path:['runs'],params:{}});await new Promise(r=>setTimeout(r,10));
+  await delayed;c.abort();await response;await new Promise(r=>setTimeout(r,15));release();await s.ask({kind:'read',path:['arcs'],params:{}});await new Promise(r=>setTimeout(r,10));
  }
  for(const id of ids){const c=new AbortController();try{const response=await fetch(`${base}/events?invocation=${id}`,{signal:c.signal});assert.equal(response.status,200,await (response.status===200?Promise.resolve(''):response.text()));await response.body!.getReader().read();}finally{c.abort();}await new Promise(r=>setTimeout(r,15));}
  assert.ok(removes>=17,'history subscriptions released');assert.ok(unpins>=17,'arc subscriptions released');

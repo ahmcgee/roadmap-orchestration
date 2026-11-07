@@ -498,7 +498,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
   test('evals-m4a.adjudication-tree: the adjudicator\'s tree holds the run\'s evidence and nothing that names the key or this repository', () => {
     const tree = join(tmpDir('m4a-adjudication'), 'tree');
     stageTree(story.dir, tree);
-    for (const d of ['vision', 'raw-corpus', 'curated-corpus', 'extraction', 'plan', 'product', 'witness/runs']) assert.ok(existsSync(join(tree, d)), `the tree holds ${d}`);
+    for (const d of ['vision', 'raw-corpus', 'curated-corpus', 'extraction', 'plan', 'product', 'witness/arcs']) assert.ok(existsSync(join(tree, d)), `the tree holds ${d}`);
     assert.ok(existsSync(join(tree, 'product', 'src', 'confirm.js')), 'the product snapshot is arc 1\'s head');
     assert.ok(!existsSync(join(tree, 'product', '.git')));
     for (const e of readdirSync(tree, { recursive: true, withFileTypes: true })) {

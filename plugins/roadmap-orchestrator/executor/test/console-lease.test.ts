@@ -55,7 +55,7 @@ test('CLI transport bytes equal the same captured observation; stopped/dead serv
   t.after(() => stopConsole(f.repo));
   const lease = await ensureConsole(f.repo, f.hostDir);
   const diagnostics: string[] = [];
-  const e = await (await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}/snapshot`)).json() as Envelope;
+  const e = await (await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/snapshot`)).json() as Envelope;
   const full = await consoleStatus(f, f.hostDir, false, (l) => diagnostics.push(l));
   const summary = await consoleStatus(f, f.hostDir, true, (l) => diagnostics.push(l));
   const { canonicalJson } = await import('../src/core/json.ts');

@@ -20,7 +20,7 @@ test('native history has a safe structured brief, compact tools, closed unforese
   emit({ type: 'system', subtype: 'thinking_tokens', estimated_tokens: 50 });
   emit({ type: 'system', subtype: 'permission_denied', tool_name: 'Read', decision_reason: 'Outside allowed working directories' });
   emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'edit', name: 'Edit', input: { file_path: 'src/main.ts', old_string: 'return false;', new_string: 'return true;' } }] } });
-  await b.initialize(); await b.call('browser_navigate', { url: `${s.url}/#/runs/${f.arc}/overview/invocations/${f.routeId}` });
+  await b.initialize(); await b.call('browser_navigate', { url: `${s.url}/#/arcs/${f.arc}/graph/invocations/${f.routeId}` });
   const text = () => b.evaluate<string>('() => document.body.innerText');
   const wait = (pattern: RegExp) => until(async () => pattern.test(await text()), 12_000, pattern.source);
   await wait(/Agent is working/); await wait(/Outside allowed working directories/);
@@ -31,7 +31,7 @@ test('native history has a safe structured brief, compact tools, closed unforese
   assert.doesNotMatch(await text(), /Unknown|estimated_tokens|"file_path"|<script>/);
   assert.equal(await b.evaluate('() => document.querySelector(".history-unforeseen details").open'), false);
   assert.match(await b.evaluate<string>('() => document.querySelector(".history-diff").textContent'), /- return false;\n\+ return true;/);
-  assert.match(await text(), /Read · src\/main.ts/); assert.match(await text(), /Exit code 1/);
+  assert.match(await text(), /Read\s+src\/main.ts/); assert.match(await text(), /Exit code 1/);
   await b.evaluate('() => { document.querySelector(".history-brief").open=true; return true; }');
   await wait(/Mode: Pre build/);
   assert.equal(await b.evaluate('() => document.querySelector(".history-document").open'), false);
@@ -83,7 +83,7 @@ test('all surveyed report families render as lists and evidence with empty field
     const f = await consoleAgentFixture(); f.finish(row.value);
     const s = await serveConsole({ repo: absPath(f.d.repo), common: gitCommonDir(absPath(f.d.repo)), hostDir: f.hostDir, host: '127.0.0.1', port: 0 });
     try {
-      await b.call('browser_navigate', { url: `${s.url}/#/runs/${f.arc}/overview/invocations/${f.routeId}` });
+      await b.call('browser_navigate', { url: `${s.url}/#/arcs/${f.arc}/graph/invocations/${f.routeId}` });
       await until(async () => (await b.evaluate<string>('() => document.querySelector(".history-verdict")?.innerText||""')).includes(row.phrase), 12_000, row.name);
       assert.equal(await b.evaluate('() => document.querySelector(".history-status").textContent'), row.status);
       const report = await b.evaluate<string>('() => document.querySelector(".history-verdict").innerText');

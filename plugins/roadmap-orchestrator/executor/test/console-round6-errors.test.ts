@@ -8,7 +8,7 @@ import {consoleFixture} from './fixtures/console.ts';
 test('R5 a 100 KiB observation error is a bounded notice and does not terminate the console', {timeout:15000},async t=>{
  const f=consoleFixture(),s=await serveConsole({...f,host:'127.0.0.1',port:0});t.after(()=>s.close());
  const controller=new AbortController();t.after(()=>controller.abort());
- const response=await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}/events`,{signal:controller.signal});
+ const response=await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/events`,{signal:controller.signal});
  const reader=response.body!.getReader();await reader.read();
  const config=join(f.common,'config'),original=readFileSync(config,'utf8');t.after(()=>writeFileSync(config,original));
  writeFileSync(config,original+'\n[core]\nbare = '+ 'x'.repeat(100*1024)+'\n');

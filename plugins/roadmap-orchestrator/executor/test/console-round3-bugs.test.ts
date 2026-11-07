@@ -28,7 +28,7 @@ test('B1 a finished hundreds-of-KB transcript yields small notices and a readabl
  const f=await consoleAgentFixture();t.after(()=>f.close());
  for(let n=0;n<350;n++) f.append(`message ${n}: `+'readable '.repeat(150)); f.finish();
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());
- const base=`${s.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}`;const c=new AbortController();t.after(()=>c.abort());
+ const base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;const c=new AbortController();t.after(()=>c.abort());
  const response=await fetch(`${base}/events?invocation=${f.routeId}`,{signal:c.signal});const reader=response.body!.getReader();let text='';
  while(!text.includes('event: history\n')) {const r=await reader.read();assert.equal(r.done,false);text+=new TextDecoder().decode(r.value);}
  for(const frame of text.split('\n\n').filter(Boolean)){assert.ok(Buffer.byteLength(frame)<4096);assert.doesNotMatch(frame,/"events"|"display"|"console"|slow consumer/);}

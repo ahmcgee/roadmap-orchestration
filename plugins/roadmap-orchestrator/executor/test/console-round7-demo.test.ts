@@ -29,7 +29,7 @@ for (const change of ['record', 'process death'] as const) test(`F2 demo ${chang
   } };
   writeDemoRecord(f.hostDir, record);
   const server = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => server.close());
-  const read = async () => { const response = await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}/status`); assert.equal(response.status, 200); return await response.json() as { revision: number; data: ReturnType<typeof status> }; };
+  const read = async () => { const response = await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/status`); assert.equal(response.status, 200); return await response.json() as { revision: number; data: ReturnType<typeof status> }; };
   const before = await read(); assert.equal(before.data.demo?.serving, promoted);
   const journalBytes = readFileSync(join(f.runDir, 'events.jsonl'));
   if (change === 'record') writeDemoRecord(f.hostDir, { ...record, ports: { [web]: 23456 } });

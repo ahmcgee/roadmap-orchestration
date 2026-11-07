@@ -37,7 +37,7 @@ test('dev.54 records are adopted read-only by the console with identical canonic
   const runDir = join(common, 'roadmap-runtime', f.d.arc); mkdirSync(join(common, 'roadmap-runtime'), { recursive: true }); cpSync(f.runDir, runDir, { recursive: true });
   setConsolePort(repo, 0); const before = contents(runDir);
   t.after(() => stopConsole(repo)); const lease = await ensureConsole(repo, hostDir);
-  const response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/runs/${arcId(f.d.arc)}/status`); assert.equal(response.status, 200);
+  const response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${arcId(f.d.arc)}/status`); assert.equal(response.status, 200);
   const e = await response.json() as { data: unknown };
   const { portableStatus } = await import('../fixtures/status-parity.ts');
   assert.deepEqual(portableStatus(e.data), f.full); assert.deepEqual(contents(runDir), before);

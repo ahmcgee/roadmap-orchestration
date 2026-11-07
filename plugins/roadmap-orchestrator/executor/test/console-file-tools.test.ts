@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import { tmpDir } from './helpers/repo.ts';
 import { join } from 'node:path';
 import { consoleTranscript } from '../src/console/agent-history.ts';
 import { HistoryTail, pairEvents, type HistoryEvent } from '../src/tui/history.ts';
 
-// Exercise the same dependency-free helpers used by the classic browser script.
-const source = readFileSync(new URL('../web/app.js', import.meta.url), 'utf8');
-const helpers = source.slice(source.indexOf('  // File history helpers:'), source.indexOf('  // End file history helpers.'));
-const { fileDiff, fileHistory, shellWritePath } = runInNewContext(helpers + '\n({fileDiff,fileHistory,shellWritePath})') as {
+// Exercise the exact source helpers compiled into the committed browser bundle.
+const { fileDiff, fileHistory, shellWritePath } = await import(new URL('../web-src/app/file-history.ts', import.meta.url).href) as {
   fileDiff: (a: string, b: string, start?: number) => { rows: { kind: string; text: string; old: number | null; next: number | null; mark?: number[] }[]; added: number; removed: number };
   fileHistory: (events: HistoryEvent[]) => Map<string, any>;
   shellWritePath: (command: string) => string | null;

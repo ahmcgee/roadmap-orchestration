@@ -17,7 +17,7 @@ test('file tools render real diffs, numbered code, compact Reads, open errors an
   await b.initialize();
   const open = async (name: string) => {
     writeFileSync(f.transcript, fixture(name));
-    await b.call('browser_navigate', { url: `${s.url}/#/runs/${f.arc}/overview/invocations/${f.routeId}` });
+    await b.call('browser_navigate', { url: `${s.url}/#/arcs/${f.arc}/graph/invocations/${f.routeId}` });
     await until(async () => await b.evaluate<boolean>('() => Boolean(document.querySelector(".history-code-line"))'), 12_000, 'hydrated file content');
   };
   await open('plain4');
@@ -38,7 +38,7 @@ test('file tools render real diffs, numbered code, compact Reads, open errors an
   assert.match(await b.evaluate<string>(`() => ${row('edit-error')}.innerText`), /string not found/);
   assert.equal(await b.evaluate(`() => getComputedStyle(${row('edit-error')}.querySelector('.tool-output pre')).color === getComputedStyle(${row('edit-error')}.querySelector('.history-tool-error')).color`), true);
   assert.equal(await b.evaluate(`() => ${row('read-existing')}.querySelector('details').open`), false);
-  assert.match(await b.evaluate<string>(`() => ${row('read-existing')}.querySelector('summary').textContent`), /Read · src\/existing.ts.*lines 1–2/);
+  assert.match(await b.evaluate<string>(`() => ${row('read-existing')}.querySelector('summary').textContent`), /Read\s+src\/existing.ts.*lines 1–2/);
   assert.equal(await b.evaluate(`() => ${row('read-existing')}.querySelectorAll('header').length`), 0);
   assert.ok(await b.evaluate<number>(`() => ${row('read-existing')}.querySelector('summary').getBoundingClientRect().height`) <= 28, 'Read stays on one compact row');
   assert.equal(await b.evaluate(`() => { ${row('read-existing')}.querySelector('details').open=true; return true; }`), true);
@@ -65,7 +65,7 @@ test('file tools render real diffs, numbered code, compact Reads, open errors an
   for (const id of ['tee', 'python', 'node', 'sed']) assert.ok(await b.evaluate<string>(`() => ${row(id)}.querySelector('.history-command code').textContent`));
   assert.match(await b.evaluate<string>(`() => ${row('edit-result-patch')}.querySelector('.history-diff-hunk').textContent`), /@@ -7,2 \+7,2 @@/);
   assert.match(await b.evaluate<string>(`() => ${row('edit-result-patch')}.querySelector('.history-diff-remove').textContent`), /const ready = false;/);
-  assert.equal(await b.evaluate('() => getComputedStyle(document.querySelector(".history-event")).marginBottom'), '5px');
+  assert.equal(await b.evaluate('() => getComputedStyle(document.querySelector(".history-event")).marginBottom'), '4px');
   assert.equal(await b.evaluate('() => Boolean(document.querySelector(".history-scroll script"))'), false);
   assert.equal(await b.evaluate('() => Boolean(window.fileToolExecuted)'), false);
   assert.match(await b.evaluate<string>(`() => ${row('html-content')}.querySelector('.history-code').textContent`), /<script>window.fileToolExecuted=true<\/script>/);

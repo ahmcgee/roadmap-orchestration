@@ -70,7 +70,7 @@ test('a real start on an occupied configured port warns, proceeds, and never cho
 test('SSE invalidates side-file changes, verifies heartbeats, reconnects with explicit reset and keeps HTTP responsive', { timeout: 20_000 }, async (t) => {
   const f = consoleFixture(); const s = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => s.close());
   const controller = new AbortController(); t.after(() => controller.abort());
-  const url = `${s.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}/events`;
+  const url = `${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/events`;
   const response = await fetch(url, { signal: controller.signal }); assert.match(response.headers.get('content-type')!, /text\/event-stream/);
   const reader = response.body!.getReader(); let carry = '';
   const event = async () => {
@@ -88,6 +88,6 @@ test('SSE invalidates side-file changes, verifies heartbeats, reconnects with ex
   assert.match(changed, /highWater/);
   const reconnect = await fetch(url, { headers: { 'last-event-id': id }, signal: controller.signal });
   const second = await reconnect.body!.getReader().read(); assert.match(new TextDecoder().decode(second.value), /event: reset/);
-  const quick = await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/runs`, { signal: AbortSignal.timeout(1000) }); assert.equal(quick.status, 200);
+  const quick = await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs`, { signal: AbortSignal.timeout(1000) }); assert.equal(quick.status, 200);
   controller.abort();
 });

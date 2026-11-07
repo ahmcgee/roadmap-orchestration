@@ -12,7 +12,7 @@ test('finished history browser regressions with a real-sized retained stream',{t
  const f=await consoleAgentFixture();
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});const evidence=tmpDir('console-finished');const b=new ConsoleBrowser(evidence);
  t.after(async()=>{await b.close();await s.close();f.close();});await b.initialize();
- const url=`${s.url}/#/runs/${f.arc}/overview/invocations/${f.routeId}`;const text=()=>b.evaluate<string>('() => document.body.innerText');
+ const url=`${s.url}/#/arcs/${f.arc}/graph/invocations/${f.routeId}`;const text=()=>b.evaluate<string>('() => document.body.innerText');
  const shots='/tmp/claude-1000/-workspaces-roadmap-orchestration/3acd3311-8eb9-44be-8704-d39a10a293c6/scratchpad/webui/shots';
  await t.test('live tail and its working caret fit inside the default browser viewport',async()=>{
   await b.call('browser_navigate',{url});await until(async()=>/Agent is working/.test(await text()),12000,'live caret');f.append('Live message arrived while the agent is still working.');await until(async()=>/Live message arrived/.test(await text()),10000,'live append');
@@ -33,14 +33,14 @@ test('finished history browser regressions with a real-sized retained stream',{t
  });
  await t.test('unstructured check output keeps search and omits invented severity counts',async()=>{
   const version=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).version;
-  const e=await(await fetch(`${s.url}/api/${version}/runs/${f.arc}/snapshot`)).json() as {data:{console:{activities:{kind:string;unit:string;routeId:string}[]}}};
+  const e=await(await fetch(`${s.url}/api/${version}/arcs/${f.arc}/snapshot`)).json() as {data:{console:{activities:{kind:string;unit:string;routeId:string}[]}}};
   const command=e.data.console.activities.find(a=>a.kind==='deterministic'&&a.unit==='u1')!;
   writeFileSync(`${f.runDir}/inv/${command.routeId}/stdout`,'Warning: recorded text, severity metadata unavailable\n');
-  await b.call('browser_navigate',{url:`${s.url}/#/runs/${f.arc}/overview/invocations/${command.routeId}`});
+  await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/graph/invocations/${command.routeId}`});
   await until(async()=>/First output on this page/.test(await text()),10000,'readable command output');
   assert.match(await text(),/severity metadata unavailable/);assert.match(await b.call('browser_snapshot',{}),/Search log lines/);
   assert.doesNotMatch(await b.call('browser_snapshot',{}),/group "Levels"/);
-  assert.equal(await b.evaluate('() => document.querySelector("[aria-label=Levels]").getClientRects().length'),0);
+  assert.equal(await b.evaluate('() => document.querySelectorAll("[aria-label=Levels]").length'),0);
  });
 
 });

@@ -20,7 +20,7 @@ test('recorded result verdicts validate identity and hash; valid-schema tamperin
   const path = join(dir, 'result.json'), original = readFileSync(path);
   j.done(spawn.op, 'proc.spawn', { kind: 'result', resultSha256: sha256(sha256Hex(original)), summary: { type: 'command', verdict: 'pass' }, pressure: null }, null); j.close();
   const s = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => s.close());
-  const api = `${s.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}`;
+  const api = `${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
   const response = await fetch(`${api}/invocations/${invocationDirName(spawn.inv)}/result`); assert.equal(response.status, 200);
   const body = await response.json() as { data: { record: { verdict: string }; lines: string[] } };
   assert.equal(body.data.record.verdict, 'pass'); assert.ok(body.data.lines.some((l) => l.includes('pass')));

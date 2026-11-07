@@ -14,7 +14,7 @@ import { until } from './fixtures/exec-common.ts';
 test('active stage maps active; history SSE appends complete events, pairs tools, settles, resets and bounds expansion', { timeout: 30_000 }, async t => {
   const f = await consoleAgentFixture(); t.after(() => f.close());
   const s = await serveConsole({ repo: absPath(f.d.repo), common: gitCommonDir(absPath(f.d.repo)), hostDir: f.hostDir, host: '127.0.0.1', port: 0 }); t.after(() => s.close());
-  const base = `${s.url}/api/${CONSOLE_PROTOCOL}/runs/${f.arc}`;
+  const base = `${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
   const snapshot = await (await fetch(`${base}/snapshot`)).json() as Envelope & { data: { console: ReturnType<typeof consoleModel> } };
   assert.equal(snapshot.data.display.status.units.find((u: { unit: string }) => u.unit === 'u3')!.state, 'running');
   assert.equal(snapshot.data.console.graph.units.find((u: { id: string }) => u.id === 'u3')!.status, 'active');
