@@ -94,6 +94,7 @@ export function consoleModel(e: Envelope) {
     average: w.measured && w.measured.wallMs > 0 ? w.measured.runMs / w.measured.wallMs : null,
     demand: w.cpuBasis?.value ?? null, basis: w.cpuBasis?.kind ?? 'unrecorded' }));
   const origin = Date.parse(events[0]?.at ?? e.observedAt);
+  const endAt = [...events].reverse().find(event => event.type === 'fact' && ['arc-completed','stop-completed'].includes(event.fact.kind))?.at ?? null;
   const resourceRows = bookings(events, origin);
   const resources = new Map<string, { id: string; label: string; capacity: number }>();
   for (const [id, pool] of Object.entries(s.host.pools)) if (id !== '@cpu') resources.set(id, { id, label: id, capacity: pool.size });
@@ -113,7 +114,7 @@ export function consoleModel(e: Envelope) {
     holds: s.holds,
     time: { rows: [...timeRows.values()], total: [...timeRows.values()].reduce((t, r) => ({ agent: t.agent + r.agent, deterministic: t.deterministic + r.deterministic, held: t.held + r.held, queued: t.queued + r.queued }), { agent: 0, deterministic: 0, held: 0, queued: 0 }), unallocated, byReasonMs, unmeasuredReservations: waiting.unmeasuredReservations, caption: 'partial recorded effort · completed work and recorded waiting; not wall-time coverage' },
     cpu, tokenOccupancy: s.host.pools['@cpu']?.used ?? 0,
-    resources: { resources: [...resources.values()], bookings: resourceRows, origin, now: Math.max(0, (Date.parse(e.checkedAt) - origin) / 1000), unknownQueueStarts: queue.filter((q) => q.queuedAt === undefined).length },
+    resources: { resources: [...resources.values()], bookings: resourceRows, origin, endAt, now: Math.max(0, (Date.parse(endAt ?? e.checkedAt) - origin) / 1000), unknownQueueStarts: queue.filter((q) => q.queuedAt === undefined).length },
     attention: requests.map((r) => ({ id: r.id, blocking: r.blocking, summary: r.summary, recommendation: r.recommendation, options: r.options, subject: r.subject, evidence: r.evidence, evidenceLinks: r.evidence.map((path) => { const key = /\/inv\/([1-9][0-9]*-[1-9][0-9]*)(?:\/|$)/.exec(path)?.[1]; return activities.some((a) => a.routeId === key) ? key! : null; }), reason: r.reason })),
   };
 }
@@ -127,7 +128,7 @@ export class ConsoleModels {
     if (!model) model = consoleModel(e);
     this.#models.delete(key); this.#models.set(key, model);
     while (this.#models.size > 8) this.#models.delete(this.#models.keys().next().value!);
-    const now = Math.max(0, (Date.parse(e.checkedAt) - model.resources.origin) / 1000);
+    const now = Math.max(0, (Date.parse(model.resources.endAt ?? e.checkedAt) - model.resources.origin) / 1000);
     return { ...model, resources: { ...model.resources, now, bookings: model.resources.bookings.map((b) => b.state === 'waiting' ? { ...b, to: now } : b) } };
   }
 }

@@ -32,7 +32,12 @@ test('active stage maps active; history SSE appends complete events, pairs tools
       const end = carry.indexOf('\n\n');
       if (end < 0) { const chunk = await reader.read(); assert.equal(chunk.done, false); carry += new TextDecoder().decode(chunk.value); continue; }
       const frame = carry.slice(0, end); carry = carry.slice(end + 2);
-      if (frame.includes('event: history\n')) return JSON.parse(/^data: (.+)$/m.exec(frame)![1]!);
+      assert.ok(Buffer.byteLength(frame) < 4096, 'SSE carries bounded notices');
+      if (frame.includes('event: history\n')) {
+        const notice = JSON.parse(/^data: (.+)$/m.exec(frame)![1]!); assert.equal(notice.events, undefined, 'history content travels over GET');
+        const page = await (await fetch(`${base}/invocations/${f.routeId}/history`)).json() as { data: ReturnType<ConsoleHistories['page']> };
+        return { ...notice, ...page.data, reset: notice.reset };
+      }
     }
   }
   const first = await history(); assert.equal(first.reset, true); assert.equal(first.state, 'running');

@@ -54,6 +54,8 @@ function decode(fd: number, start: number, end: number): HistoryEvent[] {
 export class HistoryTail {
   #identity = ''; #generation = randomUUID(); #size = 0; #mtime = 0; #prefix = Buffer.alloc(0); #anchor = Buffer.alloc(0);
   #scan = 0; #line = 0; #events: HistoryEvent[] = [];
+  #session: {model?:string;tools:string[];notices:string[]} = {tools:[],notices:[]};
+  #metadata(events: HistoryEvent[]) { for (const e of events) if(e.session){ if(e.session.model)this.#session.model=e.session.model; if(e.session.tools?.length)this.#session.tools=e.session.tools; if(e.session.notice)this.#session.notices=[...new Set([...this.#session.notices,e.session.notice])].slice(-8); } return events.filter(e=>!e.session); }
   #pendingTools = new Map<string, HistoryEvent>();
   get retained() { return this.#events.length; }
   get identity() { return `${this.#identity}:${this.#generation}`; }
@@ -67,7 +69,9 @@ export class HistoryTail {
         || !this.#anchor.equals(bytes(fd, Math.max(0, this.#scan - this.#anchor.length), this.#scan))
         || (st.size === this.#size && st.mtimeMs !== this.#mtime) || !this.#prefix.equals(prefix.subarray(0, this.#prefix.length)));
       if (!this.#identity || reset) {
-        this.#generation = randomUUID(); this.#events = []; this.#pendingTools.clear(); this.#scan = Math.max(0, st.size - WINDOW); this.#line = this.#scan;
+        this.#generation = randomUUID(); this.#events = []; this.#pendingTools.clear(); this.#session={tools:[],notices:[]};
+        const header=bytes(fd,0,Math.min(st.size,65536));let begin=0;for(let nl=header.indexOf(10);nl>=0;nl=header.indexOf(10,begin)){this.#metadata(decode(fd,begin,nl));begin=nl+1;}
+        this.#scan = Math.max(0, st.size - WINDOW); this.#line = this.#scan;
         if (this.#scan > 0) { const head = bytes(fd, this.#scan, st.size); const nl = head.indexOf(10); this.#scan = nl < 0 || nl === head.length - 1 ? 0 : this.#scan + nl + 1; this.#line = this.#scan; }
       }
       this.#identity = identity; this.#size = st.size; this.#mtime = st.mtimeMs; this.#prefix = prefix;
@@ -80,7 +84,7 @@ export class HistoryTail {
       this.#scan += chunk.length; this.#anchor = bytes(fd, Math.max(0, this.#scan - 128), this.#scan);
       const previous = new Map(this.#events.map(e => [e.id, e]));
       const staged: HistoryEvent[] = [];
-      for (const event of fresh) {
+      for (const event of this.#metadata(fresh)) {
         if (event.type === 'tool' && event.toolId) {
           const key = `${event.parent ?? ''}:${event.toolId}`;
           if (event.resultFor) {
@@ -104,7 +108,7 @@ export class HistoryTail {
     try {
       if (before === undefined) {
         const events = this.#events.slice(-HISTORY_PAGE); const first = events[0]?.id;
-        return { identity: this.identity, cursor: this.cursor, events: events.map(previewEvent), before: first && first !== '0:0' ? first : null };
+        return { session:this.#session, identity: this.identity, cursor: this.cursor, events: events.map(previewEvent), before: first && first !== '0:0' ? first : null };
       }
       if (!/^(0|[1-9][0-9]*)(:(0|[1-9][0-9]*))?$/.test(String(before))) throw new Error('invalid history cursor');
       const [byte = 0, part = 0] = String(before).split(':').map(Number);
@@ -131,9 +135,9 @@ export class HistoryTail {
           text: 'This record crosses the bounded history page. Inspect its full bytes through the paged raw transcript.', legacy: [] });
       }
       const eligible = decoded.filter(e => { const [at = 0, index = 0] = e.id.split(':').map(Number); return at < byte || at === byte && index < part; });
-      const events = pairEvents(eligible).slice(-HISTORY_PAGE);
+      const events = pairEvents(this.#metadata(eligible)).slice(-HISTORY_PAGE);
       const first = events[0]?.id ?? (start ? `${start}:0` : undefined);
-      return { identity: this.identity, cursor: this.cursor, events: events.map(previewEvent), before: first && first !== '0:0' ? first : null };
+      return { session:this.#session, identity: this.identity, cursor: this.cursor, events: events.map(previewEvent), before: first && first !== '0:0' ? first : null };
     } finally { if (opened === undefined) closeSync(fd); }
   }
   expand(path: string, ref: string, field: string, after: number, opened?: number) {

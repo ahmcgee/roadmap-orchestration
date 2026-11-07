@@ -6,6 +6,7 @@ import type { AbsPath } from '../core/values.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, type ConsoleCode } from '../observation/protocol.ts';
 import { consoleUrl } from './settings.ts';
+import { SseWriter } from './sse.ts';
 import { staticResponse } from './static.ts';
 
 const statuses: Record<ConsoleCode, number> = { reset: 409, conflict: 409, unavailable: 503, corruption: 500, protocol: 409, 'not-found': 404, invalid: 400 };
@@ -23,13 +24,12 @@ export async function serveConsole(args: ConsoleServerArgs) {
   let failed: Error | null = null;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   const coalesced = new Map<string, Promise<unknown>>();
-  const streams = new Map<ServerResponse, { arc: string; last: string; blocked: boolean; invocation?: string }>();
-  function send(res: ServerResponse, event: string, data: unknown, id?: string) {
-    const stream = streams.get(res)!;
-    if (stream.blocked) { res.end(`event: reset\ndata: {"reason":"slow consumer"}\n\n`); streams.delete(res); return; }
-    stream.blocked = !res.write(`${id ? `id: ${id}\n` : ''}event: ${event}\ndata: ${canonicalJson(data)}\n\n`);
-    if (stream.blocked) res.once('drain', () => { stream.blocked = false; });
-  }
+  const streams = new Map<ServerResponse, { arc: string; last: string; writer: SseWriter; invocation?: string }>();
+  function send(res: ServerResponse, event: string, data: unknown, id?: string) { streams.get(res)?.writer.send(event,data,id); }
+  const historyNotice = (data: unknown) => {
+    const d=data as {invocation:string;identity:string;cursor:number;state:string;endedAt:string|null;reset?:boolean;events?:unknown[]};
+    return {invocation:d.invocation,identity:d.identity,cursor:d.cursor,state:d.state,endedAt:d.endedAt,reset:d.reset??false,changed:d.events?.length??0};
+  };
   worker.on('message', (m: Notice & { id?: number; value?: unknown }) => {
     if (m.id !== undefined) {
       const p = pending.get(m.id); if (!p) return;
@@ -40,7 +40,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
     if (m.checkedAt) args.onObservation?.(m.checkedAt);
     for (const [res, s] of streams) {
       if (m.arc && m.arc !== s.arc) continue;
-      if (m.kind === 'history' || m.kind === 'history-error') { if (m.invocation === s.invocation) send(res, m.kind, m.data ?? m.error); }
+      if (m.kind === 'history' || m.kind === 'history-error') { if (m.invocation === s.invocation) send(res, m.kind, m.kind === 'history' ? historyNotice(m.data) : m.error); }
       else if (m.kind === 'error') send(res, 'error', m.error);
       else if (m.kind === 'checked') {
         const id = `${m.epoch}:${m.revision}`;
@@ -80,7 +80,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
         for (const [key, value] of url.searchParams) { if (Object.hasOwn(params, key)) throw new ConsoleError('invalid', 'duplicate query parameter'); params[key] = value; }
         if (path.length === 3 && path[0] === 'runs' && path[2] === 'events') {
           const arc = path[1]!;
-          const initial = await ask({ path: ['runs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string };
+          const initial = await ask({ path: ['runs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string; highWater: number };
           const invocation = params['invocation'];
           const page = invocation ? await ask({ path: ['runs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
           if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(); return; }
@@ -89,14 +89,14 @@ export async function serveConsole(args: ConsoleServerArgs) {
           res.writeHead(200, { 'content-type': 'text/event-stream', 'x-accel-buffering': 'no' });
           const id = `${initial.epoch}:${initial.revision}`;
           const previous = req.headers['last-event-id'];
-          streams.set(res, { arc, last: id, blocked: false, ...(invocation ? { invocation } : {}) });
+          streams.set(res, { arc, last: id, writer: new SseWriter(res), ...(invocation ? { invocation } : {}) });
           req.once('close', () => {
             streams.delete(res);
             if (invocation && ![...streams.values()].some(s => s.arc === arc && s.invocation === invocation)) void ask({ history: { arc, invocation, remove: true } }).catch(() => {});
             if (![...streams.values()].some(s => s.arc === arc)) void ask({ unsubscribe: arc }).catch(() => {});
           });
-          send(res, previous && previous !== id ? 'reset' : 'revision', initial, id);
-          if (page) send(res, 'history', { ...page.data, reset: true });
+          send(res, previous && previous !== id ? 'reset' : 'revision', {arc,epoch:initial.epoch,revision:initial.revision,checkedAt:initial.checkedAt,highWater:initial.highWater}, id);
+          if (page) send(res, 'history', historyNotice({ ...page.data, reset: true }));
           return;
         }
         json(200, await ask({ path, params })); return;

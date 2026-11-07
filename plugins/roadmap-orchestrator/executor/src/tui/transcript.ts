@@ -10,7 +10,7 @@ export type TranscriptEvent = {
   type: 'prompt' | 'thinking' | 'tool' | 'message' | 'handoff' | 'result' | 'error';
   at?: string; elapsedMs?: number; tokens?: number; model?: string; tool?: string; toolId?: string; parent?: string;
   title?: string; text?: string; input?: string; output?: string; status?: 'passed' | 'failed';
-  resultFor?: string; unknown?: boolean; literalOnly?: boolean;
+  resultFor?: string; unknown?: boolean; literalOnly?: boolean; session?: { model?: string; tools?: string[]; notice?: string };
   /** Internal presentation instructions retain the terminal's exact historical text. Never sent over HTTP. */
   legacy: { heading?: string; body?: unknown; literal?: string[] }[];
 };
@@ -81,7 +81,8 @@ export function decodeTranscript(line: string): TranscriptEvent[] {
   if (type === 'turn.completed') return [event({ type: 'result', title: 'Turn completed', text: readable(e['usage'] ?? e), status: 'passed' }, 'Turn completed', e['usage'] ?? e)];
   if (type === 'turn.failed' || type === 'error') return [event({ type: 'error', text: readable(e['error'] ?? e['message'] ?? e), status: 'failed' }, 'Agent error', e['error'] ?? e['message'] ?? e)];
   // Init is known metadata for the console, with the same historical terminal projection.
-  if (type === 'system' && e['subtype'] === 'init') return [event({ type: 'handoff', title: 'Session started', text: typeof model === 'string' ? `Model: ${model}` : 'Model unrecorded' }, `Event: ${type}`, e)];
+  if (type === 'system' && e['subtype'] === 'init') return [event({ type: 'handoff', session: { ...(typeof model === 'string' ? { model } : {}), tools: Array.isArray(e['tools']) ? e['tools'].filter((v): v is string => typeof v === 'string') : [] }, title: 'Session started', text: typeof model === 'string' ? `Model: ${model}` : 'Model unrecorded' }, `Event: ${type}`, e)];
+  if (type === 'rate_limit_event') return [event({ type: 'message', session: { notice: `Rate limit status: ${String(record(e['rate_limit_info'])['status'] ?? 'recorded')}` } }, `Event: ${type}`, e)];
   return [event({ type: 'message', title: `Unknown ${type}`, text: line, unknown: true }, `Event: ${type}`, e)];
 }
 
