@@ -45,17 +45,17 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   }
   await brandAudit('overview');
   assert.match(await text(), /[1-9][0-9]+ ms recorded/);
-  assert.match(await text(), /Applied work/); assert.match(await text(), /milestone gate/i);
+  assert.match(await text(), /Units/); assert.match(await text(), /milestone gate/i);
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'overview.png'), fullPage: true });
   copyFileSync(join(evidence, 'overview.png'), join(SHOTS, 'overview.png'));
 
   // Use actual keyboard activation. Escape must close and restore the invoking control.
   await browser.evaluate('() => { const b = document.querySelector("[aria-label=\\"Open u1 details\\"]"); b.focus(); return document.activeElement.getAttribute("aria-label"); }');
   await browser.call('browser_press_key', { key: 'Enter' });
-  await until(async () => /Lane certification/.test(await text()), 10_000, 'deep-linked unit detail');
-  await until(async () => /Readable records/.test(await text()) && !/Reading unit records/.test(await text()), 10_000, 'unit detail records');
+  await until(async () => /Journey/.test(await text()), 10_000, 'deep-linked unit detail');
+  await until(async () => /Acceptance/.test(await text()) && !/Reading unit records/.test(await text()), 10_000, 'unit detail records');
   const dialog = await browser.evaluate<{ title: string; role: string; focus: string; url: string }>('() => ({ title: document.querySelector("#detail-title").textContent, role: document.activeElement.closest("[role=dialog]").getAttribute("role"), focus: document.activeElement.getAttribute("aria-label"), url: location.hash })');
-  assert.equal(dialog.title, 'Unit u1'); assert.equal(dialog.role, 'dialog'); assert.equal(dialog.focus, 'Close details'); assert.match(dialog.url, /units\/u1/);
+  assert.equal(dialog.title, 'mul(2, 3) is 6'); assert.match(await text(), /Unit u1/); assert.equal(dialog.role, 'dialog'); assert.equal(dialog.focus, 'Close details'); assert.match(dialog.url, /units\/u1/);
   await brandAudit('unit-detail');
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'unit-detail.png'), fullPage: false });
   copyFileSync(join(evidence, 'unit-detail.png'), join(SHOTS, 'unit-detail.png'));
@@ -68,7 +68,6 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await until(async () => /Unit u3/.test(await text()), 10_000, 'empty unit detail');
   assert.match(await browser.evaluate<string>('() => document.querySelector("[role=dialog]").textContent'), /No recorded effort yet/);
   assert.equal(await browser.evaluate<number>('() => document.querySelectorAll("[role=dialog] .recorded-effort").length'), 0);
-  assert.equal(await browser.evaluate<boolean>('() => [...document.querySelectorAll(".owner-notice > p")].some(p => p.textContent.startsWith("After reviewing"))'), true, 'automatic follow-up is its own paragraph');
   await browser.call('browser_press_key', { key: 'Escape' });
 
   // Open a retained invocation's real stdout. HTML-like evidence remains plain text, with no invented line timestamps.
@@ -88,14 +87,15 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await browser.evaluate(`() => { location.hash = '#/runs/${f.d.arc}/attention'; return true; }`);
   await until(async () => /Nonblocking/.test(await text()), 10_000, 'nonblocking attention');
   assert.match(await text(), /Review the plan/);
+  assert.equal(await browser.evaluate<boolean>('() => [...document.querySelectorAll(".owner-notice > p")].some(p => p.textContent.startsWith("After reviewing"))'), true, 'automatic follow-up is its own paragraph');
   await brandAudit('attention');
   await browser.evaluate(`() => { location.hash = '#/runs/${f.d.arc}/resources'; return true; }`);
-  await until(async () => /Measured cores/i.test(await text()), 10_000, 'CPU and time evidence');
+  await until(async () => /CPU evidence/i.test(await text()), 10_000, 'CPU and time evidence');
   await brandAudit('resources');
   assert.doesNotMatch(await text(), /peak 0|0% utilization/i);
   await browser.call('browser_resize', { width: 390, height: 844 });
   await browser.evaluate(`() => { location.hash = '#/runs/${f.d.arc}/overview'; return true; }`);
-  await until(async () => /Applied work/.test(await text()), 10_000, 'narrow overview');
+  await until(async () => /Units/.test(await text()), 10_000, 'narrow overview');
   assert.equal(await browser.evaluate<boolean>('() => document.documentElement.scrollWidth <= innerWidth'), true, 'no horizontal page overflow');
   assert.equal(await browser.evaluate<boolean>('() => [...document.querySelectorAll(".unit-list a")].some(e => e.getClientRects().length)'), true, 'narrow graph has keyboard-accessible record alternatives');
   await brandAudit('narrow');
@@ -104,9 +104,9 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   const agent = await consoleAgentFixture(f); t.after(() => agent.close());
   await browser.call('browser_resize', { width: 1280, height: 1000 });
   await browser.evaluate(`() => { location.hash = '#/runs/${f.d.arc}/overview/units/u3'; return true; }`);
-  await until(async () => /build · attempt 1 · running/.test(await text()), 10_000, 'active agentic activity');
-  await browser.evaluate('() => { [...document.querySelectorAll("[role=dialog] button")].find(b => /history/i.test(b.textContent)).click(); return true; }');
-  await until(async () => /Agent history · build/.test(await text()) && /Agent is working/.test(await text()), 10_000, 'live AgentHistory');
+  await until(async () => /Build · attempt 1/.test(await text()), 10_000, 'active agentic activity');
+  await browser.evaluate('() => { [...document.querySelectorAll("[role=dialog] a")].find(b => /history/i.test(b.textContent)).click(); return true; }');
+  await until(async () => /Agent history · Build/.test(await text()) && /Agent is working/.test(await text()), 10_000, 'live AgentHistory');
   assert.match(await browser.evaluate<string>('() => location.hash'), new RegExp(`invocations/${agent.routeId}`));
   assert.equal(await browser.evaluate<boolean>('() => document.querySelector(".history-brief").open'), false, 'brief is collapsed by default');
   assert.doesNotMatch(await browser.evaluate<string>('() => document.querySelector(".history-scroll").textContent'), /\"tool_use\"/);
@@ -158,7 +158,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await server.close();
   await until(async () => /Disconnected\/stale/.test(await text()), 15_000, 'unverified connection becomes stale');
   const stale = await browser.evaluate<string>('() => document.querySelector("main").textContent');
-  assert.match(await text(), /Observed 20/);
+  assert.match(await text(), /Last updated/);
   await new Promise((r) => setTimeout(r, 1_100));
   assert.equal(await browser.evaluate<string>('() => document.querySelector("main").textContent'), stale, 'stale content and counters remain frozen');
   server = await serveConsole({ ...args, port });

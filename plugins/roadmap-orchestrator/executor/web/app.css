@@ -62,3 +62,36 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-data-sm);
 .history-links { padding-top: 16px; }
 .history-live { font: var(--type-companion-sm); color: var(--ink-2); padding-left: 88px; }
 .history-live span { display: inline-block; width: 7px; height: 14px; margin-left: 6px; background: var(--firmament-bright); }
+.run-state { font: 400 32px/1.2 'Spectral',serif; margin: 14px 0 8px; }
+.run-times, time { color: var(--ink-3); font: var(--type-ui-sm); }
+.metrics > a { color: inherit; text-decoration: none; }
+.now-row { padding: 14px 0; border-bottom: 1px solid var(--line-1); }
+.now-row:last-child { border-bottom: 0; }
+small { display: block; font: var(--type-data-sm); color: var(--ink-3); margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font: var(--type-ui-sm); }
+th, td { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid var(--line-2); }
+th { font: var(--type-label); color: var(--ink-3); }
+th button { border: 0; padding: 0; text-align: left; background: transparent; }
+.activity-feed { list-style: none; margin: 0; padding: 0; }
+.activity-feed li { display: grid; grid-template-columns: 85px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-1); }
+.unit-state { font: var(--type-heading); }
+.unit-facts, .journey-heading { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
+.journey-round { margin: 22px 0; }
+.journey-round ol { list-style: none; padding-left: 16px; border-left: 2px solid var(--line-3); }
+.journey-round li { padding: 4px 0 14px 12px; border-bottom: 1px solid var(--line-1); }
+.finding { color: var(--caution); }
+.reason-list > div { display: flex; justify-content: space-between; max-width: 650px; padding: 8px 0; }
+.history-session { margin: 12px 0; color: var(--ink-3); }
+.history-links { display: flex; flex-wrap: wrap; gap: 12px; }
+.history-links details { width: 100%; }
+@media (max-width:800px) { .runbar label {min-width:0;max-width:100%;} .runbar select {max-width:100%;} .topline>div {min-width:0;max-width:100%;} .metrics > * {min-width:0;overflow-wrap:anywhere;} .now-row {min-width:0;overflow-wrap:anywhere;} .unit-list a {min-width:0;overflow-wrap:anywhere;} .activity-feed li {grid-template-columns:1fr;} }
+.unit-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); margin-top:18px; }
+.unit-list a {align-items:baseline;gap:12px;}
+@media(max-width:800px){.unit-list{grid-template-columns:1fr;}}
+.now-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 24px;margin-bottom:16px;}
+.now-grid .now-row {margin:0;padding:12px 0;}
+@media(max-width:800px){.now-grid{grid-template-columns:1fr;}}
+/* Command streams carry bytes, not structured severities. Keep search, omit invented level counts. */
+.detailpanel section[aria-label^="Step log:"] [aria-label="Levels"] { display:none !important; }
+
+.history-scroll { height:clamp(180px,calc(100dvh - 470px),720px); }

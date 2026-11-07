@@ -56,6 +56,7 @@ function route(path: string[], params: Record<string, string>) {
     const { events: _events, ...displayData } = e.data;
     return { ...e, data: { ...displayData, console: models.read(e) } };
   }
+  if (path.length === 3 && section === 'activity') { const offset=integer(params['offset']??'0');const rows=models.read(e).presentation.feed;return {...e,data:{rows:rows.slice(offset,offset+30),more:offset+30<rows.length}}; }
   if (path.length === 3 && section === 'status') {
     if (params['summary'] !== undefined && params['summary'] !== '0' && params['summary'] !== '1') throw new ConsoleError('invalid', 'summary is 0 or 1');
     return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };

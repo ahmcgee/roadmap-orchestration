@@ -38,56 +38,104 @@
       recommendation && h('p', null, h('strong', null, 'Recommendation: '), recommendation),
       rest.length > 0 && h('p', null, `After reviewing${rest.join(' After reviewing')}`));
   }
-  function Attention({ model, arc, tab }) {
-    const rows = model.attention;
-    return h(Panel, { title: 'Attention', subtitle: 'Open questions, holds and recorded evidence' },
-      h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Owner attention', rows, empty: 'No open owner requests.', columns: [
-        { key: 'blocking', label: 'Impact', render: (row) => row.blocking ? 'Blocking' : 'Nonblocking' },
-        { key: 'summary', label: 'Request' },
-        { key: 'subject', label: 'Affected', render: (row) => row.subject.type === 'unit' ? h('a', { href: link(arc, tab, 'units', row.subject.unit) }, row.subject.unit) : words(row.subject) },
-        { key: 'reason', label: 'Reason' },
-      ] })),
-      rows.map((r) => h('article', { key: r.id, id: `attention-${r.id}`, className: 'detailsection' },
-        h(Notice, { hold: { reason: r.blocking ? 'query' : 'manual', label: r.blocking ? 'Owner decision needed' : 'Owner notice', question: r.summary, detail: r.recommendation } }),
-        r.options.length > 0 && h('p', null, `Recorded options: ${r.options.map((o) => `${o.id}: ${o.label}`).join(' · ')}`),
-        h('div', { className: 'evidence' }, r.evidence.map((e, i) => h('p', { key: i, className: 'mono' }, r.evidenceLinks?.[i] ? h('a', { href: link(arc, tab, 'invocations', r.evidenceLinks[i]) }, e) : e))))),
-      model.holds.length > 0 && h('div', { className: 'detailsection' }, h('h3', null, 'Current holds'), model.holds.map((v, i) => h('pre', { key: i }, words(v)))));
+  const Clock = R.createContext(Date.now());
+  function relativeTime(at,now) {const n=Math.max(0,Math.floor((now-Date.parse(at))/1000));return n<2?'just now':n<60?`${n}s ago`:n<3600?`${Math.floor(n/60)}m ago`:n<86400?`${Math.floor(n/3600)}h ago`:`${Math.floor(n/86400)}d ago`;}
+  function Time({at,prefix=''}) { const now=R.useContext(Clock);if(!at)return h('span',null,'Time unrecorded');const ms=Math.max(0,now-Date.parse(at)),n=Math.floor(ms/1000);return h('time',{dateTime:at,title:new Date(at).toLocaleString()},prefix+(n<2?'just now':n<60?`${n}s ago`:n<3600?`${Math.floor(n/60)}m ago`:n<86400?`${Math.floor(n/3600)}h ago`:`${Math.floor(n/86400)}d ago`)); }
+  const wordsState=s=>({pass:'Passed',success:'Succeeded',fail:'Failed',running:'Running',pending:'Ready',held:'On hold',unowned:'Stopped'}[s]||s);
+  const stageName=s=>({'pre-build':'Plan review',build:'Build',lanes:'Checks',gate:'Review',candidate:'Integration check',ff:'Merge',snapshot:'Publish snapshot',verifier:'Review'}[s]||(s.startsWith('lane:')?`Check: ${s.slice(5)}`:s));
+  const info=(e,a)=>e.data.console.presentation.activityInfo.find(i=>i.id===a.id)||{label:stageName(a.stage),attempt:a.attempt,round:1,spend:0,findings:[]};
+  function UnitLink({e,unit,children}){const u=e.data.console.presentation.units.find(u=>u.id===unit);return h('a',{href:link(e.arc,'overview','units',unit),'aria-label':`Open ${unit} details`},children||u?.title||unit);}
+  function Attention({model,arc,tab}) {
+    const rows=[...model.attention].sort((a,b)=>Number(b.blocking)-Number(a.blocking));
+    return h(Panel,{title:'Attention',subtitle:`${rows.length} open human requests`},!rows.length&&h('p',null,'Nothing needs a human response.'),rows.map(r=>h('article',{key:r.id,className:'detailsection'},h('h3',null,r.summary),h('p',null,r.blocking?'Blocking · Waiting for a human':'Nonblocking · For your information'),h('p',null,r.subject.type==='unit'?h('a',{href:link(arc,tab,'units',r.subject.unit)},`Affected unit: ${r.subject.unit}`):'Affected: whole arc'),h(Notice,{hold:{reason:'query',label:r.blocking?'Owner decision needed':'Owner notice',detail:r.recommendation}}),r.options.length>0&&h('ul',null,r.options.map(o=>h('li',{key:o.id},h('p',null,o.label),h('code',null,`roadmap ack ${r.id} --choice ${o.id}`)))),!r.options.length&&h('p',null,'To respond in your terminal:'),!r.options.length&&h('code',null,`roadmap ack ${r.id}`),r.evidence.map((path,i)=>h('p',{key:i},r.evidenceLinks?.[i]?h('a',{href:link(arc,tab,'invocations',r.evidenceLinks[i])},`Evidence: ${path.split('/').slice(-2).join('/')}`):path)))));
   }
-  function Overview({ e, selected, setSelected, open }) {
-    const m = e.data.console, s = e.data.display.status, summary = e.data.summary;
-    const focus = m.graph.units.find((u) => u.id === selected) || m.graph.units.find((u) => u.status === 'active') || m.graph.units[0];
-    const withdrawn = s.units.filter((u) => ['cut', 'superseded'].includes(u.state)).length;
-    const total = summary.progress.total - withdrawn;
-    return h(R.Fragment, null,
-      h('div', { className: 'metrics' },
-        h(D.MetricTile, { label: 'Progress', value: `${summary.progress.merged} / ${total}`, caption: `${withdrawn} withdrawn · applied plan ${s.plan?.rev ?? 'unrecorded'}` }),
-        h(D.MetricTile, { label: 'Recorded spend', value: money(summary.spend.costUsd), caption: summary.spend.unavailableCalls ? `${summary.spend.unavailableCalls} calls with unavailable usage` : 'From recorded usage' }),
-        h(D.MetricTile, { label: 'Open items', value: m.attention.length, caption: `${m.attention.filter((r) => r.blocking).length} blocking owner requests` }),
-        h(D.MetricTile, { label: 'CPU tokens occupied', value: m.tokenOccupancy, caption: 'Current recorded reservation occupancy' })),
-      h(Panel, { title: 'Applied work', subtitle: 'Units and explicit milestone gates · select a node to explore', extra: h('span', { className: 'eyebrow' }, s.run.state) },
-        focus && h('div', { className: 'selection' }, h('strong', null, focus.label), h('span', { className: 'muted' }, focus.meta), h('button', { onClick: () => open(focus.id), 'aria-label': `Open ${focus.label} details` }, 'Details ↗')),
-        h('div', { className: 'graph' }, h(D.UnitGraph, { ...m.graph, selectedId: focus?.id, onSelect: setSelected, onOpen: open, height: 400 })),
-        h('div', { className: 'unit-list' }, m.graph.units.map((u) => h('a', { key: u.id, href: link(e.arc, 'overview', 'units', u.id) }, h('strong', null, u.label), h('span', null, u.meta))))),
-      h('div', { className: 'columns' }, h(Panel, { title: 'Recorded effort', subtitle: m.time.caption },
-        h(Effort, { row: m.time.total }), h('p', { className: 'backlog' }, `${elapsed(m.time.unallocated)} unallocated waiting · ${m.time.unmeasuredReservations} unmeasured reservations`)),
-      h(Panel, { title: 'Milestone gates', subtitle: 'Passing member units alone does not pass a gate.' },
-        s.milestones.length ? s.milestones.map((gate) => h('p', { key: gate.id }, h('a', { href: link(e.arc, 'overview', 'units', `milestone:${gate.id}`) }, gate.id), ` · ${gate.state} · ${gate.passed ? 'gate passed' : 'gate not passed'}`)) : h('p', { className: 'muted' }, 'No milestone gates in this plan.'))));
+  function Overview({e,selected,setSelected,open}){
+    const m=e.data.console,s=e.data.display.status,p=m.presentation,now=R.useContext(Clock);
+    const withdrawn=s.units.filter(u=>['cut','superseded'].includes(u.state)).length;
+    const active=p.units.filter(u=>['Running','Preparing'].includes(u.state)),waiting=p.units.filter(u=>u.reasons.length&&!['Merged','Withdrawn','Replaced'].includes(u.state));
+    const focus=m.graph.units.find(u=>u.id===selected)||m.graph.units.find(u=>u.status==='active')||m.graph.units[0];
+    const visible=new Set([focus?.id,...active.map(u=>u.id),...m.graph.units.filter(u=>u.id.startsWith('milestone:')).map(u=>u.id)]);
+    m.graph.edges.forEach(([a,b])=>{if(a===focus?.id||b===focus?.id){visible.add(a);visible.add(b);}});
+    const nodes=m.graph.units.length>20?m.graph.units.filter(u=>visible.has(u.id)).slice(0,16):m.graph.units;
+    return h(R.Fragment,null,h('div',{className:'metrics'},
+      h(D.MetricTile,{label:'Progress',value:`${e.data.summary.progress.merged} / ${e.data.summary.progress.total-withdrawn}`,caption:`${withdrawn} withdrawn · plan revision ${s.plan?.rev??'unrecorded'}`}),
+      h(D.MetricTile,{label:'Recorded spend',value:money(e.data.summary.spend.costUsd),caption:'From recorded usage'}),
+      h('a',{href:link(e.arc,'attention'),'aria-label':`Attention: ${m.attention.length} open items`},h(D.MetricTile,{label:'Open items',value:m.attention.length,caption:`${m.attention.filter(r=>r.blocking).length} waiting on you`})),
+      h(D.MetricTile,{label:'CPU in use',value:`${m.tokenOccupancy} / ${p.cpuCapacity??'?'}`,caption:'CPU cores in use'})),
+      h(Panel,{title:p.run.endedAt?'Outcome':'Now'},p.run.endedAt?h('p',{className:'outcome'},`${p.run.state}. ${e.data.summary.progress.merged} units merged; ${withdrawn} withdrawn. Recorded spend ${money(e.data.summary.spend.costUsd)}. Elapsed ${elapsed(p.run.elapsedMs)}.`):h('div',{className:'now-grid'},!active.length&&h('p',null,'No unit is currently running.'),active.map(u=>{const a=m.activities.find(a=>a.unit===u.id&&a.status==='active');return h('article',{className:'now-row',key:u.id},h(UnitLink,{e,unit:u.id},h(R.Fragment,null,h('strong',null,u.title),h('small',null,u.id))),h('p',null,`${u.stage==='Build'?'Building':u.stage==='Checks'?'Running checks':u.stage} · ${a?info(e,a).label:'Between recorded operations'} · ${elapsed(a?.startedAt?now-Date.parse(a.startedAt):u.elapsedMs)}`),a&&h('a',{href:link(e.arc,'overview','invocations',a.routeId)},a.kind==='agentic'?`Live agent history: ${u.id}`:`Current check: ${u.id}`));}),waiting.map(u=>h('article',{key:u.id,className:'now-row'},h(UnitLink,{e,unit:u.id},`${u.title} (${u.id})`),h('p',null,u.reasons.join(' · ')),h('p',{className:'muted'},u.waitSince?`Waiting ${elapsed(now-Date.parse(u.waitSince))}`:'Wait start not recorded')))),h('a',{href:link(e.arc,'attention')},`${m.attention.length} open items · View Attention`)),
+      h(Panel,{title:'Units',subtitle:nodes.length<m.graph.units.length?`Activity neighborhood · ${p.units.length} units in the Units table`:'Select a unit to explore its journey'},focus&&h('div',{className:'selection'},h('strong',null,p.units.find(u=>u.id===focus.id)?.title||focus.label),h('span',{className:'muted'},focus.id),h('button',{onClick:()=>open(focus.id),'aria-label':`Open ${focus.id} details`},'Details ↗')),
+        h('div',{className:'graph'},h(D.UnitGraph,{units:nodes.map(n=>({...n,label:p.units.find(u=>u.id===n.id)?.title||n.label,meta:p.units.find(u=>u.id===n.id)?`${n.id} · ${p.units.find(u=>u.id===n.id).state}`:n.meta})),edges:m.graph.edges.filter(([a,b])=>nodes.some(u=>u.id===a)&&nodes.some(u=>u.id===b)),selectedId:focus?.id,onSelect:setSelected,onOpen:open,height:380})),
+        h('div',{className:'unit-list'},p.units.filter(u=>m.graph.units.length<=20||nodes.some(n=>n.id===u.id)).map(u=>h(UnitLink,{key:u.id,e,unit:u.id},`${u.title} · ${u.state} (${u.id})`))),p.units.length>20&&h('p',null,h('a',{href:link(e.arc,'units')},`All ${p.units.length} units`))),
+      h('div',{className:'columns'},h(Panel,{title:'Recorded effort',subtitle:'Recorded work and waiting, not wall-clock time'},h(Effort,{row:m.time.total})),h(Panel,{title:'Milestone gates'},s.milestones.length?s.milestones.map(g=>h('p',{key:g.id},h('a',{href:link(e.arc,'overview','units',`milestone:${g.id}`)},e.data.plan?.milestones.find(m=>m.id===g.id)?.text||g.id),` · ${g.id} · ${g.passed?'gate passed':'gate not passed'}`)):h('p',null,'No milestone gates.'))),
+      h(Panel,{title:'Recent activity',extra:h('a',{href:link(e.arc,'activity')},'View all activity')},h(ActivityRows,{e,rows:p.feed.slice(0,6)})));
   }
-  function Resources({ e, open }) {
-    const m = e.data.console;
-    return h(R.Fragment, null,
-      h(Panel, { title: 'Time', subtitle: m.time.caption }, effortTotal(m.time.total) === 0 ? h(Effort, { row: m.time.total }) : h(D.TimeBreakdown, { rows: m.time.rows, title: 'Recorded effort by subject', caption: m.time.caption, onSelect: (id) => e.data.display.status.units.some((u) => u.unit === id) && open(id) }),
-        h('p', { className: 'backlog' }, `Unallocated waiting: ${elapsed(m.time.unallocated)}. Unmeasured reservations: ${m.time.unmeasuredReservations}. Reason totals overlap and are not added.`),
-        h('details', null, h('summary', null, 'Waiting reason totals'), h('pre', null, Object.entries(m.time.byReasonMs).map(([reason, ms]) => `${reason}: ${elapsed(ms)}`).join('\n') || 'No recorded waiting.'))),
-      h(Panel, { title: 'Resources', subtitle: `${m.resources.unknownQueueStarts} current queue entries have an unknown start.` },
-        m.resources.resources.length ? h(D.ResourceSchedule, { ...m.resources, end: Math.max(m.resources.now, 1), tickEvery: Math.max(1, Math.ceil(m.resources.now / 6)), title: 'Recorded resource bookings', timeFormat: (n) => elapsed(n * 1000), onSelect: open }) : h('p', { className: 'muted' }, 'No named-resource or integration-slot bookings have been recorded.'),
-        h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Resource bookings', rows: m.resources.bookings, columns: [{ key: 'resource', label: 'Resource' }, { key: 'label', label: 'Subject' }, { key: 'state', label: 'State' }, { key: 'from', label: 'From', render: (row) => elapsed(row.from * 1000) }, { key: 'to', label: 'To', render: (row) => row.to === undefined ? 'open' : elapsed(row.to * 1000) }] }))),
-      h(Panel, { title: 'CPU evidence', subtitle: 'Measured run time / measured wall time, compared with the recorded reservation. Demand is shown separately.' },
-        h('div', { className: 'tablewrap' }, h(D.DataTable, { caption: 'Recorded CPU evidence', rows: m.cpu, empty: 'No measured CPU or reservations are recorded.', columns: [
-          { key: 'unit', label: 'Subject' }, { key: 'reserved', label: 'Reserved tokens', render: (row) => row.reserved ?? 'unrecorded' },
-          { key: 'average', label: 'Measured cores', render: (row) => row.average == null ? 'unmeasured' : h('div', { role: 'img', 'aria-label': `Measured average ${row.average.toFixed(2)} cores; reserved ${row.reserved ?? 'unrecorded'} tokens` }, h('span', { className: 'mono' }, row.average.toFixed(2)), h('div', { 'aria-hidden': 'true' }, h(D.BudgetMeter, { budget: row.reserved || 0, avg: row.average, showText: false }))) },
-          { key: 'demand', label: 'Demand basis', render: (row) => `${row.demand ?? 'unrecorded'} · ${row.basis}` },
-        ] })), h('p', { className: 'backlog' }, 'Continuous CPU utilization, peaks and test-case counts are not recorded.')));
+  function Units({e}){const now=R.useContext(Clock);const [sort,setSort]=useState('id'),[desc,setDesc]=useState(false);const p=e.data.console.presentation;
+    const rows=p.units.map(u=>({...u,elapsedMs:u.startedAt&&!u.endedAt&&!p.run.endedAt?Math.max(0,now-Date.parse(u.startedAt)):u.elapsedMs})).sort((a,b)=>(typeof a[sort]==='number'?a[sort]-b[sort]:String(a[sort]??'').localeCompare(String(b[sort]??'')))*(desc?-1:1));
+    const cols=[['id','Unit'],['state','State'],['stage','Current stage'],['elapsedMs','Elapsed'],['rounds','Rounds'],['attempts','Stage attempts'],['redChecks','Red checks'],['spend','Spend'],['reasons','Waiting reason']];
+    return h(Panel,{title:'Units',subtitle:'Every unit · select a column to sort'},h('div',{className:'tablewrap'},h('table',{'aria-label':'All units'},h('thead',null,h('tr',null,cols.map(([key,label])=>h('th',{key,'aria-sort':sort===key?(desc?'descending':'ascending'):'none'},h('button',{onClick:()=>{setDesc(sort===key?!desc:['elapsedMs','redChecks','spend'].includes(key));setSort(key);},'aria-label':`Sort by ${label.toLowerCase()}`},label))))),h('tbody',null,rows.map(u=>h('tr',{key:u.id},h('td',null,h(UnitLink,{e,unit:u.id},u.title),h('small',null,u.id)),h('td',null,u.state),h('td',null,u.stage),h('td',null,elapsed(u.elapsedMs)),h('td',null,u.rounds),h('td',null,u.attempts),h('td',null,u.redChecks),h('td',null,money(u.spend)),h('td',null,u.reasons.join('; ')||'—',u.reasons.length>0&&h('small',null,u.waitSince?`Waiting ${elapsed(now-Date.parse(u.waitSince))}`:'Wait start not recorded'))))))));
+  }
+  function ActivityRows({e,rows}){return h('ol',{className:'activity-feed'},rows.map(row=>h('li',{key:row.id},h(Time,{at:row.at}),h('a',{href:row.unit?link(e.arc,'overview','units',row.unit):link(e.arc,row.tab||'activity')},row.text))));}
+  function Activity({e}){const [page,setPage]=useState(0),[rows,setRows]=useState(null),[error,setError]=useState('');useEffect(()=>{get(`/runs/${e.arc}/activity?offset=${page*30}`).then(r=>setRows(r.data)).catch(err=>setError(err.message));},[e.arc,e.revision,page]);const p=e.data.console.presentation;
+    return h(Panel,{title:'Activity',subtitle:'What happened, newest first'},error&&h('p',{role:'alert'},error),rows&&h(ActivityRows,{e,rows:rows.rows}),h('div',{className:'runbar'},page>0&&h('button',{onClick:()=>setPage(page-1)},'Newer activity'),rows?.more&&h('button',{onClick:()=>setPage(page+1)},'Earlier activity')),
+      h('section',{className:'detailsection'},h('h3',null,'Holistic review'),p.holistic.enabled?h(R.Fragment,null,h('p',null,`Holistic audit: ${p.holistic.audit?.running?'Running':p.holistic.audits.length?'Completed':'No audit recorded'}. ${p.holistic.activeFindings.length} active findings.`),p.holistic.activeFindings.map((f,i)=>h('p',{key:i},`${f.id}: ${f.claim||f.what||f.title||f.summary||'Finding recorded'} · ${f.state||'active'}`)),h('p',null,`Root decisions: ${p.holistic.checkpoint.length} recorded. Checkpoint job detail is not included in this console yet.`)):h('p',null,'No holistic layer is enabled for this arc.')));
+  }
+  function Resources({e,open}){const m=e.data.console,p=m.presentation,[all,setAll]=useState(false),now=R.useContext(Clock);const openStarts=m.resources.bookings.filter(b=>b.state!=='done').map(b=>b.waitFrom??b.from);const end=m.resources.endAt?m.resources.now:Math.max(m.resources.now,(now-m.resources.origin)/1000),start=all||m.resources.endAt?0:Math.max(0,Math.min(end-120,...openStarts));const slots=m.resources.bookings.filter(b=>b.resource==='integration-slot');
+    return h(R.Fragment,null,h(Panel,{title:'Integration slot'},slots.some(b=>b.state==='holding')?slots.filter(b=>b.state==='holding').map(b=>h('p',{key:b.id},`${b.label} holds the integration slot · held ${elapsed((end-b.from)*1000)}`)):h('p',null,'Integration slot is free.'),slots.filter(b=>b.state==='waiting').sort((a,b)=>a.from-b.from).map((b,i)=>h('p',{key:b.id},`Queue position ${i+1}: ${b.label} · waiting ${elapsed((end-b.from)*1000)}`))),
+      h(Panel,{title:'Time & resources',subtitle:'Recorded work and waiting, not wall-clock time'},h(Effort,{row:m.time.total}),h('h3',null,'Waiting by reason'),Object.keys(p.waitReasons).length?h('dl',{className:'reason-list'},Object.entries(p.waitReasons).map(([reason,ms])=>h('div',{key:reason},h('dt',null,reason),h('dd',null,elapsed(ms))))):h('p',null,'No completed waiting measurements.'),m.time.unmeasuredReservations>0&&h('p',null,`${m.time.unmeasuredReservations} unmeasured reservations · duration not recorded`),m.time.unallocated>0&&h('p',null,`${elapsed(m.time.unallocated)} waiting spans overlapping reasons.`),m.resources.unknownQueueStarts>0&&h('p',null,`${m.resources.unknownQueueStarts} queue entries have an unrecorded start.`),
+      h('div',{className:'runbar'},h('button',{onClick:()=>setAll(v=>!v),'aria-pressed':all},all?'Recent window':'ALL'),h('span',null,m.resources.endAt?`Finished run · ${elapsed(end*1000)}`:'Recent activity window')),
+      m.resources.resources.length?h(D.ResourceSchedule,{...m.resources,start,end:Math.max(end,1),now:end,tickEvery:Math.max(1,Math.ceil((end-start)/6)),timeFormat:n=>elapsed(n*1000),title:'Resource bookings',onSelect:open}):h('p',null,'No named resource bookings.')),
+      h(CpuEvidence,{e}));
+  }
+  function CpuEvidence({e}) {
+    const m=e.data.console,p=m.presentation;
+    const groups=new Map();
+    for(const row of m.cpu){const a=p.activityInfo.find(a=>a.id===row.id);const key=`${row.unit}:${a?.stage}:${a?.attempt}`;if(!groups.has(key))groups.set(key,{unit:row.unit,activity:a,rows:[]});groups.get(key).rows.push(row);}
+    const measurement=row=>{
+      const ratio=row.average!=null&&row.reserved>0?row.average/row.reserved:null;
+      return h('tr',{key:row.id},h('td',null,h('small',null,row.id.split('/').at(-1))),
+        h('td',{title:`Reservation basis: ${row.basis}; demand ${row.demand??'unrecorded'}`},ratio==null?'CPU measurement or reservation unrecorded':`Used ${Math.round(ratio*100)}% of ${row.reserved} reserved cores`),
+        h('td',null,ratio==null?'Not enough recorded evidence':ratio<0.1?'Heavy over-reservation':ratio>1.25?'Heavy under-reservation':'Within recorded reservation'));
+    };
+    return h(Panel,{title:'CPU evidence',subtitle:`CPU in use: ${m.tokenOccupancy} of ${p.cpuCapacity??'unrecorded'} cores`},
+      p.units.filter(u=>u.reasons.some(r=>/pressure/i.test(r))).map(u=>h('p',{key:u.id},`${u.id}: ${u.reasons.filter(r=>/pressure/i.test(r)).join(', ')}`)),
+      h('div',{className:'tablewrap'},h('table',{'aria-label':'CPU evidence'},
+        h('thead',null,h('tr',null,['Unit / stage / attempt','Used vs reserved','Assessment'].map(x=>h('th',{key:x},x)))),
+        [...groups].map(([key,g])=>h('tbody',{key,'data-cpu-group':key},
+          h('tr',null,h('th',{colSpan:3,scope:'rowgroup'},p.units.some(u=>u.id===g.unit)?h(UnitLink,{e,unit:g.unit}):'Arc work',` · ${g.activity?.label||'Recorded work'} · attempt ${g.activity?.attempt??'unrecorded'}`)),
+          g.rows.map(measurement))))));
+  }
+  function UnitDetail({e,id,close,stale}) {
+    const m=e.data.console,p=m.presentation,u=p.units.find(u=>u.id===id);
+    const gate=e.data.display.status.milestones.find(g=>`milestone:${g.id}`===id);
+    const now=R.useContext(Clock);
+    if(gate)return h(Dialog,{title:`Milestone ${gate.id}`,close},h('p',null,`${gate.passed?'Gate passed':'Gate not passed'} · ${gate.state}`));
+    if(!u)return h(Dialog,{title:'Unit unavailable',close},h('p',null,'This unit is absent from the applied plan.'));
+    const activities=m.activities.filter(a=>a.unit===id);
+    const rounds=[...new Set(u.journey.map(r=>r.round))];
+    const activityRow=routeId=>{
+      const a=activities.find(a=>a.routeId===routeId);if(!a)return null;
+      const ai=info(e,a);
+      return h('p',{key:routeId},h('a',{href:link(e.arc,'overview','invocations',routeId),'aria-label':`${ai.label} attempt ${ai.attempt}: ${a.kind==='agentic'?'agent history':'check log'}`},`${a.kind==='agentic'?'Agent history':'Check log'} · ${a.kind==='agentic'?(a.model||'model unrecorded'):ai.label}`),` · ${money(ai.spend)} · ${a.elapsedMs==null?'In progress':elapsed(a.elapsedMs)}`);
+    };
+    const waiting=w=>h('div',{key:w.at,className:'journey-wait'},h('strong',null,'Waiting during '+w.stage),h(Time,{at:w.at}),w.reasons.map(r=>h('p',{key:r.reason},`${r.reason}: ${elapsed(r.ms)}`)));
+    const stageRow=step=>h('li',{key:step.id},
+      h('div',{className:'journey-heading'},h('strong',null,`${step.label} · attempt ${step.attempt}`),h('span',null,step.outcome),h(Time,{at:step.endedAt||step.at})),
+      step.findingTitles.map((title,i)=>h('p',{key:i,className:'finding'},title)),step.notes.map(n=>h('p',{key:n},n)),
+      u.waiting.filter(w=>w.stage===step.label&&Date.parse(w.at)>=Date.parse(step.at)&&(!step.endedAt||Date.parse(w.at)<=Date.parse(step.endedAt))).map(waiting),
+      step.activities.map(activityRow));
+    return h(Dialog,{title:u.title,close},
+      h('p',{className:'muted'},`Unit ${id}`),h('p',{className:'unit-state'},`${u.state} · ${u.stage}`),u.summary!==u.title&&h('p',null,u.summary),
+      h('div',{className:'unit-facts'},h('span',null,`${u.rounds} rounds · ${u.attempts} stage attempts`),h('span',null,`Spend ${money(u.spend)}`),h('span',null,`Elapsed ${elapsed(u.startedAt?Math.max(0,(u.endedAt||p.run.endedAt?Date.parse(u.endedAt||p.run.endedAt):now)-Date.parse(u.startedAt)):null)}`)),
+      u.reasons.length>0&&h('p',{className:'notice'},u.reasons.join(' · ')),
+      u.lineage&&h('p',null,'Re-entry from ',h(UnitLink,{e,unit:u.lineage.reenters},u.lineage.reenters)),
+      m.attention.filter(r=>r.subject.type==='unit'&&r.subject.unit===id).map(r=>h('section',{key:r.id},h('h3',null,r.summary),h(Notice,{hold:{reason:'query',label:r.blocking?'Waiting on a human':'Owner notice',detail:r.recommendation}}),h('a',{href:link(e.arc,'attention')},'View request and evidence'))),
+      h('h3',null,'Journey'),
+      rounds.length?rounds.map(round=>h('section',{className:'journey-round',key:round},h('h3',null,`Round ${round}`),h('ol',null,u.journey.filter(s=>s.round===round).map(stageRow)))):h('p',null,'No stage attempts recorded yet.'),
+      h(Effort,{row:m.time.rows.find(row=>row.id===id)||{}}),
+      u.waiting.length>0&&h('section',{className:'detailsection'},h('h3',null,'Recorded waiting'),u.waiting.map(waiting)),
+      h('section',{className:'detailsection'},h('h3',null,'Acceptance'),h('ul',null,u.acceptance.map((text,i)=>h('li',{key:i},text)))),
+      h('section',{className:'detailsection'},h('h3',null,'Checks'),e.data.display.status.units.find(v=>v.unit===id)?.certification?.lanes.map((l,i)=>h('p',{key:i},`Check: ${l.id} · ${l.verdict==='pass'?'Passed':l.verdict==='fail'?'Failed':l.state}`)))
+    );
   }
   function Dialog({ title, close, children }) {
     const ref = useRef(null);
@@ -110,35 +158,6 @@
     return h('div', { className: 'detail', onClick: (ev) => ev.target === ev.currentTarget && close() }, h('section', { ref, className: 'detailpanel', role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'detail-title' },
       h('div', { className: 'detailhead' }, h('div', null, h('div', { className: 'eyebrow' }, 'Roadmap · recorded detail'), h('h2', { id: 'detail-title' }, title)), h('button', { onClick: close, 'aria-label': 'Close details' }, 'Close ✕')), children));
   }
-  function UnitDetail({ e, id, close, stale }) {
-    const [detail, setDetail] = useState(null), [error, setError] = useState('');
-    useEffect(() => {
-      setDetail(null); setError('');
-      if (id.startsWith('milestone:')) return;
-      const c = new AbortController();
-      get(`/runs/${e.arc}/units/${encodeURIComponent(id)}?epoch=${e.epoch}&minHighWater=${e.highWater}`, c.signal).then((d) => setDetail(d.data)).catch((err) => { if (!c.signal.aborted) setError(err.message); });
-      return () => c.abort();
-    }, [id, e.revision, e.epoch]);
-    const m = e.data.console, unit = e.data.display.status.units.find((u) => u.unit === id);
-    const gate = e.data.display.status.milestones.find((v) => `milestone:${v.id}` === id);
-    const activities = m.activities.filter((a) => a.unit === id);
-    const groups = [...new Set(activities.map((a) => `${a.stage} · attempt ${a.attempt}`))];
-    const row = m.time.rows.find((r) => r.id === id);
-    const onOpenHistory = a => { location.hash = link(e.arc, 'overview', 'invocations', a.routeId).slice(1); };
-    return h(Dialog, { title: gate ? `Milestone ${gate.id}` : `Unit ${id}`, close },
-      error && h('p', { role: 'alert', className: 'notice' }, error),
-      gate ? h(R.Fragment, null, h('p', null, `Executor milestone gate: ${gate.state} · ${gate.passed ? 'passed' : 'not passed'}`), h('pre', { className: 'record' }, JSON.stringify(gate, null, 2)),
-        (e.data.plan?.milestones.find((v) => v.id === gate.id)?.units || []).map((u) => h('p', { key: u }, h('a', { href: link(e.arc, 'overview', 'units', u) }, u)))) : unit ? h(R.Fragment, null,
-        h('p', { className: 'kv' }, h('strong', null, unit.state), `Stage ${unit.stage} · ${unit.attempts} recorded attempts`),
-        h(Effort, { row }),
-        unit.waitingFor && h(Notice, { hold: { reason: 'manual', label: 'Current admission or reservation reasons', detail: JSON.stringify(unit.waitingFor) } }),
-        m.attention.filter((r) => r.subject.type !== 'unit' || r.subject.unit === id).map((r) => h(Notice, { key: r.id, hold: { reason: 'query', label: r.blocking ? 'Blocking owner request' : 'Owner notice', question: r.summary, detail: r.recommendation } })),
-        h('section', { className: 'detailsection' }, h('h3', null, 'Activity by stage and attempt'), groups.length ? groups.map((group) => h('div', { key: group }, h('h3', null, group), stale ? activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group).map((a, i, all) => h(D.ActivityRow, { key: a.id, activity: a, onOpenHistory, now: Date.parse(e.checkedAt), last: i === all.length - 1 })) : h(D.ActivityTimeline, { onOpenHistory, activities: activities.filter((a) => `${a.stage} · attempt ${a.attempt}` === group) }))) : h('p', { className: 'muted' }, 'No recorded invocations for this unit.'),
-          activities.map((a) => h('p', { key: a.id }, h('a', { href: link(e.arc, 'overview', 'invocations', a.routeId) }, `${a.stage} attempt ${a.attempt}: logs and result`)))),
-        h('section', { className: 'detailsection' }, h('h3', null, 'Lane certification'), unit.certification ? h(R.Fragment, null, h('p', null, `${unit.certification.used} used · ${unit.certification.left} left of ${unit.certification.allowance}`), unit.certification.lanes.map((l, i) => h('p', { key: i }, `${l.set} / ${l.id}: ${l.state}${l.verdict ? ` (${l.verdict})` : ''}`))) : h('p', { className: 'muted' }, 'No current certification series.')),
-        h('section', { className: 'detailsection' }, h('h3', null, 'Readable records'), detail ? h('pre', { className: 'record' }, detail.lines.join('\n')) : h('p', null, 'Reading unit records…'),
-          detail?.records.map((r) => h('details', { key: r.id }, h('summary', null, r.label), h('pre', { className: 'record' }, r.body))))) : h('p', null, 'This unit is absent from the applied plan.'));
-  }
   function HistoryField({ event, field, base, identity }) {
     const [pages, setPages] = useState([]), [cursor, setCursor] = useState(0), [size, setSize] = useState(null), [error, setError] = useState('');
     const load = () => get(`${base}/history-field?identity=${encodeURIComponent(identity)}&ref=${encodeURIComponent(event.refs?.[field] || event.id)}&field=${field}&after=${cursor}`)
@@ -150,10 +169,11 @@
       size !== null && cursor < size && h('button', { onClick: load }, `Next ${field} page`));
   }
   function AgentEvent({ event, activity, base, identity }) {
-    const display = { ...event, at: /^\d{4}-\d{2}-\d{2}T/.test(event.at || '') ? event.at.slice(11, 19) : event.at, title: [event.parent ? `Subagent of ${event.parent}` : '', event.title].filter(Boolean).join(' · ') };
+    const now=R.useContext(Clock);
+    const display = { ...event, at: event.at ? relativeTime(event.at,now) : undefined, title: [event.parent ? `Subagent of ${event.parent}` : '', event.title].filter(Boolean).join(' · ') };
     // The supplied tool renderer collapses every output, including failures. Render failed output openly.
     if (event.status === 'failed') display.output = undefined;
-    return h('article', { className: 'history-event', 'data-event-id': event.id, title: event.at },
+    return h('article', { className: 'history-event', 'data-event-id': event.id, title: event.at ? new Date(event.at).toLocaleString() : undefined },
       h(D.AgentHistory, { activity: { ...activity, status: 'pending' }, events: [display] }),
       event.status === 'failed' && event.output != null && h('div', { className: 'failed-output' }, h('strong', null, 'Output · error'), h('pre', null, event.output)),
       (event.truncated || []).map(field => h(HistoryField, { key: `${event.id}:${field}:${identity}`, event, field, base, identity })));
@@ -166,19 +186,22 @@
     useEffect(() => {
       const c = new AbortController(); setHistory(null); setBrief(null); setError(''); setResult(null); setEarlier(false);
       get(`${base}/prompt?after=0`, c.signal).then(r => setBrief(r.data)).catch(err => { if (!c.signal.aborted) setError(err.message); });
-      get(`${base}/history`, c.signal).catch(err => { if (!c.signal.aborted) setError(err.message); });
+      let fetching=false, again=false;
+      const load = async (notice) => {
+        if(fetching){again=true;return;} fetching=true;
+        try {
+          const next=(await get(`${base}/history`,c.signal)).data;
+          setHistory(old=>{
+            if(!old||notice?.reset||old.identity!==next.identity)return next;
+            if(!follow.current)return {...old,state:next.state,endedAt:next.endedAt,unseen:(old.unseen||0)+(notice?.changed||0)};
+            const events=new Map(old.events.map(event=>[event.id,event]));for(const event of next.events)events.set(event.id,event);
+            const kept=[...events.values()].slice(-200);return {...next,events:kept,before:kept[0]?.id==='0:0'?null:kept[0]?.id};
+          });setError('');
+        }catch(err){if(!c.signal.aborted)setError(err.message);}finally{fetching=false;if(again&&!c.signal.aborted){again=false;load();}}
+      };
+      load();
       const stream = new EventSource(`${api}/runs/${e.arc}/events?invocation=${id}`);
-      stream.addEventListener('history', ev => {
-        const next = JSON.parse(ev.data);
-        setHistory(old => {
-          if (!old || next.reset || old.identity !== next.identity) return { ...next, events: next.events.slice(-50) };
-          if (!follow.current) return { ...old, state: next.state, endedAt: next.endedAt, unseen: (old.unseen || 0) + next.events.length };
-          const events = new Map(old.events.map(event => [event.id, event]));
-          for (const event of next.events) events.set(event.id, event);
-          const kept = [...events.values()].slice(-200);
-          return { ...old, ...next, before: kept[0]?.id === '0:0' ? null : kept[0]?.id, events: kept };
-        }); setError('');
-      });
+      stream.addEventListener('history', ev => load(JSON.parse(ev.data)));
       stream.addEventListener('history-error', ev => { if (ev.data) setError(JSON.parse(ev.data).message); });
       return () => { c.abort(); stream.close(); };
     }, [base]);
@@ -193,23 +216,29 @@
     const latest = () => get(`${base}/history`).then(r => { setEarlier(false); follow.current = true; setFollowing(true); setHistory(r.data); }).catch(err => setError(err.message));
     const completed = history?.endedAt != null || ['success', 'pass', 'fail', 'fault', 'lost'].includes(history?.state);
     const live = history?.state === 'running' && !completed && !stale;
-    const model = [...(history?.events || [])].reverse().find(event => event.model)?.model || activity.model;
+    const model = history?.session?.model || [...(history?.events || [])].reverse().find(event => event.model)?.model || activity.model;
     const usage = [...(history?.events || [])].reverse().find(event => event.tokens != null)?.tokens;
-    return h(Dialog, { title: `Agent history · ${activity.stage}`, close },
+    return h(Dialog, { title: `Agent history · ${info(e,activity).label}`, close },
       h('button', { onClick: back }, `‹ Back to unit ${activity.unit}`),
       h('div', { className: 'history-meta' }, h('strong', null, live ? 'Running' : completed ? 'Finished' : history?.state || 'Connecting'),
         h('span', null, model || 'Model unrecorded'), usage != null && h('span', null, `${usage} recorded tokens`)),
+      history?.session && h('details', { className:'history-session' }, h('summary',null,'Session · '+(history.session.model || model || 'model unrecorded')), h('p',null,`Tools: ${history.session.tools.join(', ') || 'unrecorded'}`),history.session.notices.map(n=>h('p',{key:n},n))),
       h('details', { className: 'history-brief' }, h('summary', null, 'Brief · recorded seat prompt'),
         brief ? h(R.Fragment, null, h('pre', null, brief.lines.join('\n')), brief.end < brief.size && h('button', { onClick: () => get(`${base}/prompt?after=${brief.end}`).then(r => setBrief(r.data)).catch(err => setError(err.message)) }, `Next brief page (${brief.end} of ${brief.size} bytes)`)) : h('p', null, 'Reading retained brief…')),
       error && h('p', { role: 'alert' }, error),
       h('div', { className: 'history-controls' }, history?.before != null && h('button', { onClick: more }, 'Show earlier'), h('button', { onClick: latest }, following ? 'Following live tail' : `Follow live tail${history?.unseen ? ` (${history.unseen} updates)` : ''}`), earlier && h('span', null, 'Earlier history · latest 200 events retained in view')),
       h('div', { className: 'history-scroll', ref: scroll, tabIndex: 0, 'aria-label': 'Agent transcript', onScroll: ev => { follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48; setFollowing(follow.current); } },
-        history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity, base, identity: history.identity })),
+        history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity:{...activity,name:`${info(e,activity).label} · attempt ${info(e,activity).attempt}`}, base, identity: history.identity })),
         history && !history.events.length && h('p', null, 'Waiting for complete transcript records…'),
         live && h('p', { className: 'history-live', role: 'status' }, 'Agent is working', h('span', { className: 'atlas-settle-caret', 'aria-hidden': true }))),
       h('p', { className: 'history-links' }, h('a', { href: `${api}${base}/result`, onClick: ev => { ev.preventDefault(); get(`${base}/result`).then(r => setResult(r.data.lines.join('\n'))).catch(err => setError(err.message)); } }, 'Final verdict / report'), ' · ',
-        h('a', { href: `${api}${base}/log?source=stdout&after=0` }, 'Raw transcript (64 KiB pages)')),
+        h(TranscriptText,{base})),
       result && h('pre', { className: 'record' }, result));
+  }
+  function TranscriptText({base}) {
+    const [page,setPage]=useState(null),[error,setError]=useState('');
+    const load=after=>get(`${base}/log?source=stdout&after=${after}`).then(r=>setPage(r.data)).catch(e=>setError(e.message));
+    return h('details',{onToggle:ev=>{if(ev.currentTarget.open&&!page)load(0);}},h('summary',null,'Transcript text'),error&&h('p',{role:'alert'},error),page&&h(R.Fragment,null,h('pre',{className:'record'},page.text),h('p',null,`Bytes ${page.after}–${page.next} of ${page.size}`),page.after>0&&h('button',{onClick:()=>load(Math.max(0,page.after-65536))},'Show earlier text'),page.next<page.size&&h('button',{onClick:()=>load(page.next)},'Next text page')));
   }
   function InvocationDetail(props) {
     const activity = props.e.data.console.activities.find(a => a.routeId === props.id);
@@ -226,13 +255,15 @@
       return () => c.abort();
     }, [id, source]);
     const more = () => get(`/runs/${e.arc}/invocations/${id}/log?source=${source}&after=${page.next}&identity=${page.identity}`).then((r) => setPage(r.data)).catch((err) => setError(err.message));
-    const phase = activity && { id: activity.id, name: activity.name, status: activity.status === 'held' ? 'pending' : activity.status,
+    const phase = activity && { id: activity.id, name: info(e,activity).label, status: activity.status === 'held' ? 'pending' : activity.status,
       ...(activity.elapsedMs == null ? {} : { elapsedMs: activity.elapsedMs }), summary: `${source} · ${page ? `bytes ${page.after}–${page.next} of ${page.size}` : 'recorded output'}`, lines: (page?.text || '').split('\n').map((text) => ({ level: 'info', text })) };
-    return h(Dialog, { title: activity ? activity.name : `Invocation ${id}`, close },
+    return h(Dialog, { title: activity ? info(e,activity).label : `Invocation ${id}`, close },
       h('div', { className: 'runbar' }, ['stdout', 'stderr', 'runner.log', 'result'].map((s) => h('button', { key: s, onClick: () => setSource(s), 'aria-pressed': source === s }, s))),
       error && h('p', { role: 'alert', className: 'notice' }, error),
       result && h('pre', { className: 'record' }, result.lines.join('\n')),
-      page && activity && h(D.StepLog, { activity: { ...activity, status: stale && activity.status === 'active' ? 'pending' : activity.status, kind: 'deterministic' }, log: { summary: 'Text-only recorded output; timestamps and levels are not inferred.', phases: [phase] } }),
+      page?.text && h('p',{className:'log-summary'},h('strong',null,'First output on this page: '),page.text.split('\n')[0]),
+      page && activity && h(D.StepLog, { activity: { ...activity, name: info(e,activity).label, startedAt: undefined, status: stale && activity.status === 'active' ? 'pending' : activity.status, kind: 'deterministic' }, log: { summary: 'Text-only recorded output; timestamps and levels are not inferred.', phases: [phase] } }),
+      page && page.after > 0 && h('button', { onClick: () => get(`/runs/${e.arc}/invocations/${id}/log?source=${source}&after=${Math.max(0,page.after-65536)}&identity=${page.identity}`).then(r=>setPage(r.data)).catch(err=>setError(err.message)) }, 'Show earlier log'),
       page && page.next < page.size && h('button', { onClick: more }, 'Next log page'));
   }
   function App() {
@@ -276,20 +307,21 @@
       return () => { c.abort(); stream.close(); clearInterval(retry); };
     }, [selectedArc]);
     const stale = !checkedAt || now - Date.parse(checkedAt) > 5000 || Boolean(error);
-    const arc = selectedArc, tab = ['overview', 'resources', 'attention'].includes(where.tab) ? where.tab : 'overview';
+    const arc = selectedArc, tab = ['overview', 'units', 'activity', 'resources', 'attention'].includes(where.tab) ? where.tab : 'overview';
     const open = (id) => { location.hash = link(arc, tab, 'units', id).slice(1); };
     const close = () => { location.hash = link(arc, tab).slice(1); };
-    const header = h('header', { className: 'topline' }, h('div', { className: 'identity' }, h('h1', null, 'Roadmap'), h('span', { className: 'eyebrow' }, 'Run console')),
-      h('div', { className: 'connection', role: 'status', 'aria-live': 'polite' }, h(D.StatusIndicator, { status: stale ? 'down' : 'operational', label: stale ? 'Disconnected/stale' : 'Connected' }),
-        h('a', { href: location.origin }, location.origin), h('span', { className: 'mono' }, `Run ${arc || 'none'}`), h('span', null, `Observed ${e?.observedAt || 'not yet'}`), h('span', null, `Verified ${checkedAt || 'not yet'}`)));
-    return h(R.Fragment, null, h('a', { className: 'skip', href: '#content', onClick: (ev) => { ev.preventDefault(); document.getElementById('content').focus(); } }, 'Skip to content'), h('div', { className: 'shell', 'data-stale': stale }, header,
-      h('div', { className: 'runbar' }, h('label', null, 'Run ', h('select', { 'aria-label': 'Run', value: arc || '', onChange: (ev) => { location.hash = link(ev.target.value).slice(1); } }, runs.length ? runs.map((r) => h('option', { key: r.arc, value: r.arc }, r.arc)) : h('option', { value: '' }, 'No retained runs'))),
+    const p=e?.data.console.presentation,clock=stale?Date.parse(checkedAt||e?.observedAt||new Date(now).toISOString()):now;
+    const hostUrl=new URL(location.origin);if(hostUrl.hostname==='127.0.0.1'||hostUrl.hostname==='[::1]')hostUrl.hostname='localhost';
+    const header=h('header',{className:'topline',inert:where.unit||where.inv?'':undefined,'aria-hidden':where.unit||where.inv?true:undefined},h('div',null,h('div',{className:'identity'},h('h1',null,'Roadmap'),h('span',{className:'eyebrow'},arc||'Run console')),h('p',{className:'run-state'},p?.run.state||'Connecting'),p&&h('p',{className:'run-times'},h(Time,{at:p.run.startedAt,prefix:'Started '}),' · ',`Elapsed ${elapsed(p.run.endedAt?p.run.elapsedMs:clock-Date.parse(p.run.startedAt))}`,p.run.endedAt&&h(R.Fragment,null,' · ',h(Time,{at:p.run.endedAt,prefix:'Ended '})))),
+      h('div',{className:'connection',role:'status'},h(D.StatusIndicator,{status:stale?'down':'operational',label:stale?'Disconnected/stale':'Connected'}),checkedAt&&h(Time,{at:checkedAt,prefix:stale?'Last updated ':'Updated '}),h('a',{href:hostUrl.origin},hostUrl.origin)));
+    return h(Clock.Provider, {value:clock}, h(R.Fragment, null, h('a', { className: 'skip', href: '#content', onClick: (ev) => { ev.preventDefault(); document.getElementById('content').focus(); } }, 'Skip to content'), h('div', { className: 'shell', 'data-stale': stale }, header,
+      h('div', { className: 'runbar', inert:where.unit||where.inv?'':undefined,'aria-hidden':where.unit||where.inv?true:undefined }, h('label', null, 'Run ', h('select', { 'aria-label': 'Run', value: arc || '', onChange: (ev) => { location.hash = link(ev.target.value).slice(1); } }, runs.length ? runs.map((r) => h('option', { key: r.arc, value: r.arc }, r.arc)) : h('option', { value: '' }, 'No retained runs'))),
         h('a', { href: '#/' }, where.arc ? 'Follow current run' : 'Following current run'),
-        h('nav', { className: 'nav', 'aria-label': 'Roadmap views' }, [['overview', 'Overview'], ['resources', 'Time & resources'], ['attention', 'Attention']].map(([key, text]) => h('a', { key, href: arc ? link(arc, key) : '#/', 'aria-current': key === tab ? 'page' : undefined }, text)))),
+        h('nav', { className: 'nav', 'aria-label': 'Roadmap views' }, [['overview', 'Overview'], ['units','Units'], ['activity','Activity'], ['resources', 'Time & resources'], ['attention', 'Attention']].map(([key, text]) => h('a', { key, href: arc ? link(arc, key) : '#/', 'aria-current': key === tab ? 'page' : undefined }, text)))),
       error && h('p', { role: 'alert', className: 'notice' }, error),
-      h('main', { id: 'content', tabIndex: -1 }, e ? tab === 'resources' ? h(Resources, { e, open }) : tab === 'attention' ? h(Attention, { model: e.data.console, arc, tab }) : h(Overview, { e, selected, setSelected, open }) : h('p', { className: 'empty' }, arc ? 'Waiting for a verified observation…' : 'No retained runs in this repository.')),
+      h('main', { id: 'content', tabIndex: -1, inert:where.unit||where.inv?'':undefined,'aria-hidden':where.unit||where.inv?true:undefined }, e ? tab === 'units' ? h(Units,{e}) : tab === 'activity' ? h(Activity,{e}) : tab === 'resources' ? h(Resources, { e, open }) : tab === 'attention' ? h(Attention, { model: e.data.console, arc, tab }) : h(Overview, { e, selected, setSelected, open }) : h('p', { className: 'empty' }, arc ? 'Waiting for a verified observation…' : 'No retained runs in this repository.')),
       e && where.unit && h(UnitDetail, { e, id: where.unit, close, stale }),
-      e && where.inv && h(InvocationDetail, { e, id: where.inv, close, stale })));
+      e && where.inv && h(InvocationDetail, { e, id: where.inv, close, stale }))));
   }
   class ErrorBoundary extends R.Component {
     constructor(props) { super(props); this.state = { error: null }; }

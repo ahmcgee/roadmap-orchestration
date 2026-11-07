@@ -6,6 +6,7 @@ import { completedWaiting } from '../status/waiting.ts';
 import type { UnitRunState } from '../status.ts';
 import { activityState } from '../tui/outcome.ts';
 import type { Envelope } from '../observation/protocol.ts';
+import { presentation } from './presentation.ts';
 import { project } from '../tui/projection.ts';
 
 export type GraphStatus = 'passed' | 'active' | 'held' | 'pending' | 'failed';
@@ -110,6 +111,7 @@ export function consoleModel(e: Envelope) {
     }
   }
   return {
+    presentation: presentation(e),
     graph: { units: [...units, ...gates], edges }, activities,
     holds: s.holds,
     time: { rows: [...timeRows.values()], total: [...timeRows.values()].reduce((t, r) => ({ agent: t.agent + r.agent, deterministic: t.deterministic + r.deterministic, held: t.held + r.held, queued: t.queued + r.queued }), { agent: 0, deterministic: 0, held: 0, queued: 0 }), unallocated, byReasonMs, unmeasuredReservations: waiting.unmeasuredReservations, caption: 'partial recorded effort · completed work and recorded waiting; not wall-time coverage' },
