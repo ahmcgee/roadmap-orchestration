@@ -35,15 +35,23 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await until(async () => /Connected/.test(await text()), 20_000, 'verified console overview');
 
   async function brandAudit(name: string) {
-    const dom = await browser.evaluate<{ title: string; text: string; names: string[]; brands: number }>(`() => ({ title: document.title, text: document.body.textContent,
-      names: [...document.querySelectorAll('[aria-label], [alt], [title]')].flatMap(e => ['aria-label','alt','title'].map(k => e.getAttribute(k) || '')),
+    const dom = await browser.evaluate<{ title: string; text: string; names: string[]; brands: number }>(`() => ({ title: document.title, text: document.body.innerText,
+      names: [...document.querySelectorAll('*')].flatMap(e => [...e.attributes].map(a => a.name+'='+a.value)),
       brands: document.querySelectorAll('.atlas-mark,.atlas-glyph,.atlas-orbit,.atlas-starfield,.atlas-transit,[data-atlas-glyph]').length })`);
     assert.equal(dom.title, 'Roadmap'); assert.doesNotMatch(dom.text, FORBIDDEN); assert.doesNotMatch(dom.names.join('\n'), FORBIDDEN); assert.equal(dom.brands, 0);
     const accessible = await browser.accessibleSnapshot(join(evidence, `${name}.yml`));
     assert.doesNotMatch(accessible, FORBIDDEN, 'real accessible names exclude all supplied branding');
     return dom;
   }
+  for(const tab of ['graph','timeline','activity','effort','resources','attention']){
+    await browser.evaluate(`()=>{location.hash='#/arcs/${f.d.arc}/${tab}';return true;}`);
+    await until(async()=>await browser.evaluate(`()=>document.querySelector('.tabs [aria-current]')?.textContent.startsWith('${tab[0]!.toUpperCase()+tab.slice(1)}')`),5000,`${tab} visible`);
+    await brandAudit(tab);
+  }
+  await browser.evaluate(`()=>{location.hash='#/arcs/${f.d.arc}/graph';return true;}`);
+  await until(async()=>await browser.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),5000,'return to graph');
   await brandAudit('overview');
+  assert.equal(await browser.evaluate('()=>typeof window.React'), 'undefined');
   assert.ok(await browser.evaluate<number>('() => document.querySelectorAll(".progress-strip > span").length') > 0);
   assert.equal(await browser.evaluate('() => document.querySelectorAll(".dag-canvas canvas").length > 0'), true); assert.match(await browser.evaluate<string>('() => document.querySelector(".line-map").getAttribute("aria-label")'), /Milestone/);
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'overview.png'), fullPage: true });
@@ -97,7 +105,12 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await browser.evaluate(`() => { location.hash = '#/arcs/${f.d.arc}/graph'; return true; }`);
   await until(async () => await browser.evaluate('() => document.querySelector(".dag-canvas").getBoundingClientRect().height > 100'), 10_000, 'narrow graph');
   assert.equal(await browser.evaluate<boolean>('() => document.documentElement.scrollWidth <= innerWidth'), true, 'no horizontal page overflow');
-  assert.equal(await browser.evaluate<boolean>('() => document.querySelector(".dag-canvas").tabIndex === 0 && Boolean(document.querySelector(".graph-search input").getClientRects().length)'), true, 'narrow graph has keyboard-accessible record alternatives');
+  assert.equal(await browser.evaluate<boolean>('() => document.querySelector(".dag-canvas").tabIndex === 0 && Boolean(document.querySelector(".search-toggle").getClientRects().length)'), true, 'narrow graph has an expandable keyboard-accessible search');
+  await browser.call('browser_press_key',{key:'/'});
+  await until(async()=>await browser.evaluate('()=>document.activeElement.getAttribute("aria-label")=="Search units"'),5000,'expanded phone search takes focus');
+  assert.equal(await browser.evaluate('()=>document.activeElement.getAttribute("aria-label")'), 'Search units');
+  assert.equal(await browser.evaluate('()=>document.querySelector(".graph-search input").getClientRects().length>0'),true);
+  await browser.call('browser_press_key',{key:'Escape'});
   await brandAudit('narrow');
 
   // Real owner/launch records and scripted stream bytes: no external backend is run.
@@ -106,7 +119,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await browser.evaluate(`() => { location.hash = '#/arcs/${f.d.arc}/graph/units/u3'; return true; }`);
   await until(async () => /Build/.test(await text()), 10_000, 'active agentic activity');
   await browser.evaluate('() => { [...document.querySelectorAll("[role=dialog] a")].find(b => /history/i.test(b.textContent)).click(); return true; }');
-  await until(async () => /Agent history\s+Build/.test(await text()) && /Agent is working/.test(await text()), 10_000, 'live AgentHistory');
+  await until(async () => /Build, attempt 1/.test(await text()) && /Agent is working/.test(await text()), 10_000, 'live AgentHistory');
   assert.match(await browser.evaluate<string>('() => location.hash'), new RegExp(`invocations/${agent.routeId}`));
   assert.equal(await browser.evaluate<boolean>('() => document.querySelector(".history-brief").open'), false, 'brief is collapsed by default');
   assert.doesNotMatch(await browser.evaluate<string>('() => document.querySelector(".history-scroll").textContent'), /\"tool_use\"/);

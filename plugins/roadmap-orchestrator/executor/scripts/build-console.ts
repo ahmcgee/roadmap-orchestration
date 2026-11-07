@@ -12,13 +12,7 @@ const out = resolve(root, args[1] ?? 'web');
 await mkdir(out, { recursive: true });
 // Remove only generated files from a previous build, including retired fonts.
 try { for (const file of JSON.parse(await readFile(join(out, 'manifest.json'), 'utf8')) as string[]) await rm(join(out, file), { force: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-// Keep the library's internal texture-cache names distinct from the retired UI
-// namespace. This is a consistent lexical rename of private identifiers/keys and
-// debug strings in the pinned browser distribution; rendering behaviour is unchanged.
-const textureNames = { name: 'cytoscape-texture-names', setup(builder: import('esbuild').PluginBuild) {
-  builder.onLoad({ filter: /cytoscape\/dist\/cytoscape\.esm\.mjs$/ }, async args => ({ contents: (await readFile(args.path, 'utf8')).replace(/atlas/gi, word => word === 'ATLAS' ? 'TEXTURE_PAGE' : word[0] === 'A' ? 'TexturePage' : 'texturePage'), loader: 'js' }));
-} } satisfies import('esbuild').Plugin;
-const result = await build({ plugins: [textureNames], absWorkingDir: root, entryPoints: ['web-src/main.tsx'], outfile: join(out, 'app.js'), bundle: true, minify: true, format: 'iife', target: 'es2022', platform: 'browser', legalComments: 'external', metafile: true, write: true, define: { 'process.env.NODE_ENV': '"production"' } });
+const result = await build({ absWorkingDir: root, entryPoints: ['web-src/main.tsx'], outfile: join(out, 'app.js'), bundle: true, minify: true, format: 'iife', target: 'es2022', platform: 'browser', legalComments: 'external', metafile: true, write: true, define: { 'process.env.NODE_ENV': '"production"' } });
 const css = spawnSync(process.execPath, ['node_modules/@tailwindcss/cli/dist/index.mjs', '-i', 'web-src/styles.css', '-o', join(out, 'app.css'), '--minify'], { cwd: root, encoding: 'utf8' });
 if (css.status !== 0) throw new Error(css.stderr || css.stdout);
 const packages = new Map<string, { name: string; version: string; license: string; text: string }>();

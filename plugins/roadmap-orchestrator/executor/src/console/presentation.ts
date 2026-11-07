@@ -35,7 +35,13 @@ export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): stri
   .split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
   .replace(/\s+/g, ' ').replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '').trim();
  const value = prose || fallback;
- return value.length <= 60 ? value : value.slice(0, 57).replace(/\s+\S*$/, '').trimEnd() + '…';
+ // Keep both the action and the subject: sibling intents often differ only at the end.
+ if (value.length <= 60) return value;
+ const words=value.split(' ');let tail='';
+ while(words.length){const candidate=words.at(-1)!+(tail?' '+tail:'');if(candidate.length>36)break;tail=candidate;words.pop();}
+ const budget=60-tail.length-2;
+ const head=words.join(' ').slice(0,budget).replace(/\s+\S*$/, '').trimEnd();
+ return `${head}… ${tail}`;
 }
 export function presentation(e:Envelope){
  const s=e.data.display.status,events=e.data.events;

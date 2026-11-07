@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { serveConsole } from '../../src/console/http.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
@@ -16,6 +18,18 @@ test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size
  await until(async()=>await b.evaluate('()=>document.querySelectorAll(".dag-canvas canvas").length>0'),10_000,'canvas rendered');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".station").length'),7);
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".unit-list").length'),0);
+ assert.equal(await b.evaluate('()=>document.querySelector(".focus-control button:first-child").getAttribute("aria-pressed")'),'true','Active is the default');
+ const activeFrame=await b.evaluate<{zoom:number;visible:boolean;labels:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;await document.fonts.ready;const active=cy.nodes('[state="active"][gate=0]');return {zoom:cy.zoom(),visible:active.every(n=>{const p=n.renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();}),labels:active.every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=10)};}`);
+ assert.ok(activeFrame.visible,'live units are visible on landing');assert.ok(activeFrame.labels,'active labels are rendered at a legible size');
+ await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.panBy({x:47,y:-23});cy.zoom({level:cy.zoom()*1.1,renderedPosition:{x:720,y:450}});return true;}`);
+ const beforeRevision=await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {pan:cy.pan(),zoom:cy.zoom()};}`);
+ f.finishLive();
+ const schedPath=join(f.runDir,'sched.json'),sched=JSON.parse(readFileSync(schedPath,'utf8'));sched.tasks=sched.tasks.filter((task:{unit:string})=>task.unit!=='u3');writeFileSync(schedPath,JSON.stringify(sched));
+ await until(async()=>await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u3').data('state')!=='active'`),10_000,'real journal revision reaches graph');
+ assert.deepEqual(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {pan:cy.pan(),zoom:cy.zoom()};}`),beforeRevision,'a live revision never moves a panned and zoomed viewport');
+ await b.call('browser_press_key',{key:'a'});
+ assert.equal(await b.evaluate('()=>document.querySelector(".focus-control button:first-child").getAttribute("aria-pressed")'),'true');
+
  await b.evaluate('()=>{document.querySelector(".station").click();return true;}');
  await until(async()=>await b.evaluate('()=>document.querySelector(".station").getAttribute("aria-pressed")==="true"'),5000,'station focus');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".band-focused").length'),1);
@@ -40,7 +54,7 @@ test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size
  assert.deepEqual(await b.evaluate('()=>{const cy=document.querySelector(".dag-canvas")._cyreg.cy;return{pan:cy.pan(),zoom:cy.zoom()};}'),viewport,'opening and closing keeps the graph viewport');
  await b.openUnit('u60');assert.equal(await b.evaluate('()=>document.querySelector(".drawer").getBoundingClientRect().width'),560,'width persists');
  await b.call('browser_press_key',{key:'Escape'});
- await b.evaluate('()=>{[...document.querySelectorAll(".status-filters button")].find(e=>e.getAttribute("aria-label")==="Filter held").click();document.querySelector(".arc-bar>button:last-child").click();return true;}');
+ await b.evaluate('()=>{document.querySelector(".filter-popover").open=true;[...document.querySelectorAll(".status-filters button")].find(e=>e.getAttribute("aria-label")==="Filter held").click();document.querySelector(".arc-bar>button:last-child").click();return true;}');
  assert.equal(await b.evaluate('()=>[...document.querySelectorAll(".status-filters button")].find(e=>e.getAttribute("aria-label")==="Filter held").getAttribute("aria-pressed")'),'true');
  await until(async()=>await b.evaluate('()=>document.documentElement.dataset.theme===\"light\"'),5000,'light theme');
  await b.evaluate('()=>{document.querySelector(\".arc-bar>button:last-child\").click();return true;}');
@@ -58,9 +72,38 @@ test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size
  assert.match(await b.evaluate<string>('()=>location.hash'),/\/activity$/);
  await b.call('browser_resize',{width:390,height:844});
  await b.evaluate(`()=>{location.hash='#/arcs/${f.arc}/graph';return true;}`);
- await until(async()=>await b.evaluate('()=>document.querySelector(".dag-canvas")?.getBoundingClientRect().height>200'),5000,'phone canvas');
+ await until(async()=>await b.evaluate('()=>document.querySelector(".dag-canvas")?.getBoundingClientRect().height>=innerHeight*.7'),5000,'phone canvas');
  assert.equal(await b.evaluate('()=>document.documentElement.scrollWidth<=innerWidth'),true);
  assert.equal(await b.evaluate('()=>document.querySelector(".arc-switcher").getBoundingClientRect().width>0'),true);
  await b.openUnit('u60');assert.equal(await b.evaluate('()=>document.querySelector(".drawer").getBoundingClientRect().width'),390);
  assert.equal(await b.evaluate('()=>document.querySelector(".drawer").scrollWidth<=390'),true);
+});
+
+test('scale Graph frames every active unit, preserves every dependency, bundles gate fan-out, and pages phone contexts', {timeout:120_000},async t=>{
+ const {generateScaleArc,ownScaleArc}=await import('../helpers/scale-arc.ts');
+ const fixture=await generateScaleArc(tmpDir('graph-scale-live')),release=await ownScaleArc(fixture),b=new ConsoleBrowser(tmpDir('graph-scale-browser'));
+ const s=await serveConsole({repo:absPath(fixture.repo),common:gitCommonDir(absPath(fixture.repo)),hostDir:absPath(fixture.hostDir),host:'127.0.0.1',port:0});
+ t.after(async()=>{await b.close();await s.close();release();});await b.initialize();
+ await b.call('browser_resize',{width:1440,height:900});await b.call('browser_navigate',{url:s.url});
+ await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),10_000,'scale graph canvas');
+ const landing=await b.evaluate<{active:number;visible:boolean;dependency:number;waits:number;bundles:number;hiddenWaits:boolean;labels:boolean}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,active=cy.nodes('[state="active"][gate=0]');return {active:active.length,visible:active.every(n=>{const p=n.renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()-40;}),labels:active.every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=12),dependency:cy.edges('[kind="dependency"]').length,waits:cy.edges('[kind="waits"]').length,bundles:cy.edges('[kind="bundle"]').length,hiddenWaits:cy.edges('[kind="waits"]').every(e=>e.style('display')==='none')};}`);
+ assert.ok(landing.active>=4);assert.ok(landing.visible,'all active units are visible at scale');assert.ok(landing.labels,'active labels stay legible');
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(.62);return true;}`);
+ await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=9.5);}`),5000,'62 percent renders readable label pixels instead of hiding labels');
+ assert.equal(landing.dependency,663);assert.equal(landing.waits,1004);assert.ok(landing.hiddenWaits);assert.ok(landing.bundles>0&&landing.bundles<100,'only milestone fan-out is bundled');
+ await b.evaluate(`()=>{document.querySelector('.focus-control button:last-child').click();return true;}`);
+ const all=await b.evaluate<{dependencies:number;visible:boolean;endpoints:boolean;ratio:number;viewRatio:number}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,deps=cy.edges('[kind="dependency"]'),box=cy.nodes('[gate]').boundingBox();return {dependencies:deps.length,visible:deps.every(e=>e.visible()),endpoints:deps.every(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return a&&b&&[a.x,a.y,b.x,b.y].every(Number.isFinite);}),ratio:box.w/box.h,viewRatio:cy.width()/cy.height()};}`);
+ assert.equal(all.dependencies,663);assert.ok(all.visible);assert.ok(all.endpoints,'every unit dependency has drawable endpoints');assert.ok(Math.abs(Math.log(all.ratio/all.viewRatio))<.45,'All fits the viewport aspect');
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u226').select();return true;}`);
+ await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.exact').length===cy.getElementById('u226').incomers('edge[kind="waits"]').length&&cy.edges('.exact').length>0;}`),5000,'unit exact wait relations');
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").innerText'),/MS-3/);
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('milestone:MS-3').select();return true;}`);
+ await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.exact').length===cy.getElementById('milestone:MS-3').outgoers('edge[kind="waits"]').length&&cy.edges('.exact').length>30;}`),5000,'gate exact waiting units');
+ await b.call('browser_resize',{width:390,height:844});
+ await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.nodes().unselect();cy.emit('tap');document.querySelector('.focus-control button:first-child').click();return true;}`);
+ await until(async()=>await b.evaluate('()=>!!document.querySelector(".active-pager")'),5000,'phone active context pager');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,p=cy.getElementById('u167').renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()&&cy.height()>=innerHeight*.7;}`),true);
+ await b.evaluate(`()=>{document.querySelector('[aria-label="Next active cluster"]').click();return true;}`);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".active-pager").textContent'),/2\/6/);
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,p=cy.getElementById('u226').renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();}`),true);
 });

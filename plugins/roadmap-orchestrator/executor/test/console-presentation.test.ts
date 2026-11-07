@@ -52,6 +52,15 @@ test('short human titles strip paths, identifiers and later clauses, retain pros
  assert.equal(shortUnitTitle('Validate contract:identity/session: cookie checks and token refresh.'),'Validate cookie checks and token refresh');
  assert.equal(shortUnitTitle('`src/a.ts`','u42'),'u42');
  const title=shortUnitTitle('Provide consistent keyboard navigation across every account settings section and every nested form field in the application');
- assert.ok(title.length<=60);assert.ok(title.endsWith('…'));assert.doesNotMatch(title,/form field/);
+ assert.ok(title.length<=60);assert.match(title,/^Provide consistent/);assert.match(title,/application$/);assert.match(title,/…/);
  const f=await investigationFixture();try{const p=consoleModel(read(f)).presentation;assert.equal(p.units.find(u=>u.id==='u7')!.title,'Review edge cases');assert.ok(p.units.every(u=>typeof u.intent==='string'));}finally{f.close();}
 });
+
+ test('short titles preserve distinguishing subjects after long shared prefixes',async()=>{
+ const {shortUnitTitle}=await import('../src/console/presentation.ts');
+ const titles=['catalog','billing','search'].map(subject=>shortUnitTitle(`Implement optimistic concurrency checks for the ${subject} service`));
+ assert.equal(new Set(titles).size,3);
+ for(const [i,title] of titles.entries()){assert.ok(title.length<=60);assert.ok(title.endsWith(`${['catalog','billing','search'][i]} service`));}
+ const short='Implement optimistic concurrency checks for the catalog';
+ assert.equal(shortUnitTitle(short),short,'a complete title inside the budget has no ellipsis');
+ });

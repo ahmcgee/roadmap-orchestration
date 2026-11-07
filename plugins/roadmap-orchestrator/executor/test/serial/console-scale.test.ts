@@ -22,7 +22,7 @@ test('scale arc: real server serves the manifest, attempts and four active histo
   const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});
   let disposed=false;
   t.after(async()=>{if(!disposed){await server.close();release();}});
-  const base=`${server.url}/api/${CONSOLE_PROTOCOL}/runs/${m.arc}`;
+  const base=`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}`;
   async function get<T>(route:string):Promise<T> {const response=await fetch(`${base}/${route}`);assert.equal(response.status,200,`${route}: ${await response.clone().text().then(s=>s.slice(0,500))}`);return await response.json() as T;}
   const status=await get<{data:Envelope['data']['display']['status']}>('status');
   const snapshot=await get<Envelope & {data:{console:ReturnType<typeof consoleModel>}}>('snapshot');
@@ -49,7 +49,7 @@ test('scale arc: real server serves the manifest, attempts and four active histo
   }
   const finished=snapshot.data.console.activities.find(i=>i.kind==='agentic'&&i.status==='passed')!;
   const history=await get<{data:ReturnType<ConsoleHistories['page']>}>(`invocations/${finished.routeId}/history`);assert.equal(history.data.state,'success');
-  assert.equal((await fetch(`${server.url}/#/runs/${m.arc}/overview`)).status,200);
+  assert.equal((await fetch(`${server.url}/#/arcs/${m.arc}/graph`)).status,200);
   await server.close();release();disposed=true;
   rmSync(dir,{recursive:true});
   const repeat=await generateScaleArc(dir,{units:40,days:2,seed:'small-week'});
@@ -75,6 +75,6 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
   assert.ok(facts.some(f=>f.kind==='stage-outcome'&&'outcome' in f&&f.outcome==='red'));
   assert.ok(facts.some(f=>f.kind==='stage-outcome'&&'outcome' in f&&f.outcome==='revise'));
   const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
-  const response=await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/runs/${m.arc}/snapshot`);assert.equal(response.status,200);
+  const response=await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`);assert.equal(response.status,200);
   const snapshot=await response.json() as Envelope;assert.equal(snapshot.data.display.status.units.length,300);
 });

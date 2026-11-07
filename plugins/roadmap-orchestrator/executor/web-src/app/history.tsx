@@ -380,7 +380,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
   const verdictEvent = [...history?.events || []].reverse().find((event: any) => event.report || event.tool === "StructuredOutput" && event.status !== "failed");
   return h(
     Dialog,
-    { title: `Agent history  ${info(e, activity).label}`, close, className: "agent-detail" },
+    { title: `${info(e, activity).label}, attempt ${info(e, activity).attempt}`, close, className: "agent-detail", headingLink: h("a", { className: "invocation-unit-link", href: link(e.arc, route().tab, "units", activity.unit) }, e.data.console.presentation.units.find((u: { id: string; title: string }) => u.id === activity.unit)?.title || activity.unit) },
     h("button", { onClick: back }, `\u2039 Back to unit ${activity.unit}`),
     h(
       "div",

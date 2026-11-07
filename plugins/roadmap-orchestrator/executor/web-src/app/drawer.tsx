@@ -4,7 +4,7 @@ import { Button } from '../components/ui/button.tsx';
 import { Clock, elapsed, glyph, info, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
 import type { Envelope } from './types.ts';
 
-export function Drawer({ title, close, children, className = '' }: { title: string; close: () => void; children?: ReactNode; className?: string }) {
+export function Drawer({ title, close, children, headingLink, className = '' }: { title: string; close: () => void; children?: ReactNode; headingLink?: ReactNode; className?: string }) {
   const panel = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(() => { try { return Math.max(360, Math.min(960, Number(localStorage.getItem('roadmap.drawer-width')) || 520)); } catch { return 520; } });
   useEffect(() => {
@@ -22,7 +22,7 @@ export function Drawer({ title, close, children, className = '' }: { title: stri
   }
   return <aside ref={panel} role="dialog" aria-modal="false" aria-labelledby="detail-title" className={`drawer ${className}`} style={{ width }}>
     <div className="drawer-resize" role="separator" aria-label="Resize details" aria-orientation="vertical" tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { const next = Math.max(360, Math.min(960, width + (e.key === 'ArrowLeft' ? 40 : -40))); setWidth(next); try { localStorage.setItem('roadmap.drawer-width', String(next)); } catch {} } }}/>
-    <header className="drawer-head"><h2 id="detail-title">{title}</h2><Button variant="ghost" size="icon" onClick={close} aria-label="Close details"><X size={18}/></Button></header>
+    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><Button variant="ghost" size="icon" onClick={close} aria-label="Close details"><X size={18}/></Button></header>
     <div className="drawer-body">{children}</div>
   </aside>;
 }

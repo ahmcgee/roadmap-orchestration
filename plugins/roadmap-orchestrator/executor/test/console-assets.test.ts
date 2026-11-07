@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { test } from 'node:test';
 import { serveConsole } from '../src/console/http.ts';
 import { consoleFixture } from './fixtures/console.ts';
@@ -16,7 +16,12 @@ test('prebuilt assets have complete package provenance and no runtime package de
     assert.ok(notices.includes(`${name} ${pkg.devDependencies[name]}`), name);
   }
   assert.match(notices, /Permission is hereby granted/); assert.match(notices, /SIL OPEN FONT LICENSE/);
-  assert.doesNotMatch(readFileSync(new URL('../web/app.js', import.meta.url), 'utf8'), /AtlasDesignSystem|window\.React/);
+  // Audit code we own and emitted selectors; vendor implementation bytes are out of scope.
+  const forbidden=/atlas|AtlasGlyph|AutonomousOrbit|Starfield|TransitMoment/i;
+  function audit(dir:URL){for(const entry of readdirSync(dir,{withFileTypes:true})){assert.doesNotMatch(entry.name,forbidden);const path=new URL(entry.name+(entry.isDirectory()?'/':''),dir);if(entry.isDirectory())audit(path);else assert.doesNotMatch(readFileSync(path,'utf8'),forbidden,String(path));}}
+  audit(new URL('../web-src/',import.meta.url));
+  const css=readFileSync(new URL('../web/app.css',import.meta.url),'utf8');
+  for(const selector of css.matchAll(/[^{}]+(?=\{)/g))assert.doesNotMatch(selector[0],forbidden,'generated CSS selector');
 });
 
 test('HTML revalidates; explicit content-hashed scripts, CSS and fonts are immutable; undeclared files are absent', async (t) => {
