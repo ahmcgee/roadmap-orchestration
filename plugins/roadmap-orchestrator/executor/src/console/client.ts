@@ -10,7 +10,7 @@ import { ObservationCache } from '../observation/cache.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, statusBytes, validateStatusEnvelope } from '../observation/protocol.ts';
 import { consoleStatusLine, readConsoleLease } from './lease.ts';
 
-/** Absence, death and bounded transport failure alone fall back. Evidence/protocol failures are never concealed. */
+/** Absence, death, transport failure and version mismatch fall back. Evidence/identity failures remain errors. */
 export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean, diagnostic: (line: string) => void): Promise<string> {
   const common = commonDirOfRun(run.runDir);
   const lease = readConsoleLease(common);
@@ -20,7 +20,7 @@ export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean
     return statusBytes(new ObservationCache(hostDir, 'local', sha256Hex(common)).read(run), summary);
   };
   if (!lease || !isAlive(lease, lease.bootId)) return local(lease ? 'server identity is dead' : 'server is absent');
-  if (lease.executorVersion !== CONSOLE_PROTOCOL) throw new ConsoleError('protocol', 'console protocol/version mismatch; start the current console');
+  if (lease.executorVersion !== CONSOLE_PROTOCOL) return local('console protocol/version mismatch');
   const query = new URLSearchParams();
   const path = join(run.runDir, EVENTS_FILE);
   if (existsSync(path)) { const st = statSync(path); query.set('fenceIdentity', `${st.dev}:${st.ino}`); query.set('fenceSize', String(st.size)); }
@@ -31,9 +31,11 @@ export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean
   try { raw = await response.json(); } catch { throw new ConsoleError('protocol', 'malformed console JSON payload'); }
   if (!response.ok) {
     const error = (raw as { error?: { code?: string; message?: string } }).error;
+    if (response.status === 409 && error?.code === 'protocol' && error.message?.includes('protocol/version mismatch')) return local(error.message);
     if (response.status === 503 && error?.code === 'unavailable') return local(error.message ?? 'catch-up timed out');
     throw new ConsoleError('protocol', `console ${error?.code ?? response.status}: ${error?.message ?? 'invalid error payload'}`);
   }
+  if (raw && typeof raw === 'object' && 'protocol' in raw && typeof raw.protocol === 'string' && raw.protocol !== CONSOLE_PROTOCOL) return local('console protocol/version mismatch');
   const e = validateStatusEnvelope(raw, { instance: lease.nonce, repoId: sha256Hex(common), arc: run.arc }, summary);
   if (Date.now() - Date.parse(e.checkedAt) > 5_000) throw new ConsoleError('protocol', 'server returned an unchecked stale observation');
   return canonicalJson(e.data) + '\n';

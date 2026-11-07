@@ -25,7 +25,7 @@ export type Fence = Readonly<{ identity: string; size: number }>;
 export type Admission = Readonly<{ minHighWater?: number; epoch?: string; revision?: number; fence?: Fence }>;
 export const statusBytes = (e: Envelope, summary: boolean): string => canonicalJson(summary ? e.data.summary : e.data.display.status) + '\n';
 
-/** Transport validation is intentionally strict: an incompatible or malformed server never triggers local fallback. */
+/** Transport validation is strict. The status client handles version mismatch before validation; malformed data still fails. */
 export function validateEnvelope(raw: unknown, expected: Readonly<{ instance: string; repoId: string; arc: ArcId }>): Envelope {
   const e = raw as Envelope | null;
   if (!e || e.protocol !== CONSOLE_PROTOCOL) throw new ConsoleError('protocol', 'console protocol/version mismatch; reload required');

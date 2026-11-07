@@ -1103,8 +1103,9 @@ without rewriting the file. Host must be an IPv4/IPv6 literal; port is an intege
 are refused. This is the devcontainer default: the wildcard interface makes the console reachable from
 the host through the container network. No auth is provided. On exposed hosts, choose loopback (`127.0.0.1`
 or `::1`); plans, state, spend, questions and selected logs/results can contain sensitive text. Port 4318 is
-reserved for OTLP/HTTP, not the console. EADDRINUSE or invalid config refuses startup with a message naming
-`.roadmap/config.json` webConsole.port, without a fallback port. Binding changes require console stop/start;
+reserved for OTLP/HTTP, not the console. On automatic startup, any console bind failure (including EADDRINUSE)
+prints a loud warning naming the address and `.roadmap/config.json` webConsole.port; arc execution proceeds.
+Direct `console start` still refuses bind failures. Invalid configuration refuses startup. No fallback port is selected. Binding changes require console stop/start;
 conflicting worktree settings name the startup config source.
 
 `console start|stop|status --repo` prints the same console status/URL line to stderr only. `status` also
@@ -1115,9 +1116,11 @@ explicit console stop persists until another start; normal stop/drain/park/compl
 
 `<common>/roadmap-console/lease.json` is outside arc GC, shared across worktrees and keyed by realpath
 Git common directory. Its closed schema is `{pid,start,bootId,nonce,executorVersion,repo,common,hostDir,
-configSource,host,port,bindUrl,url,ready,startedAt,lastObservation}`. Identity is bootId/PID/start, not PID
-alone. Nonce identifies the instance. An abstract-socket mutex serializes concurrent starters, stop and
-replacement. Readiness is published only after bind. Dead identities are reclaimed; a version replacement
+configSource,host,port,bindUrl,url,ready,startedAt}`. Identity is bootId/PID/start, not PID
+alone. Older leases may retain `lastObservation`; it is ignored, and checks never rewrite the lease.
+Nonce identifies the instance. An abstract-socket mutex serializes concurrent starters, stop and
+replacement. Readiness is published only after bind. Dead identities are reclaimed even if their recorded common directory
+differs; a live foreign-common identity is refused with the lease path, pid, and stop guidance; a version replacement
 identity-checks SIGTERM then bounded SIGKILL, awaits death and rebuilds caches. Stopping never signals the
 executor or actionable watch. Only console lease/log metadata is written; schema remains 2, including
 adoption of dev.54 state.
@@ -1128,8 +1131,9 @@ of eight older captures. Default browser selection follows this repo's claim, ot
 `/#/runs/<arc>/overview` pins a run. Only ObserverJournal.read verifies journal prefixes, retaining incomplete
 tails without repair; inode/truncation/anchor resets change epoch. Derived materialized values are detached
 from the cursor before another read. Dependency stamps include identity/size/mtime/ctime and membership;
-refs, owner/liveness, scheduler, heartbeat, needs-user, answers, receipts and outputs invalidate independently
-of the journal. A heartbeat updates volatile fields without rebuilding expensive evidence. Existing hash-keyed
+refs, owner/liveness, scheduler, heartbeat, needs-user, answers, receipts and retained result/exit records
+invalidate independently of the journal. Streaming stdout/stderr/runner logs, supervisor logs and unrelated
+run directories are excluded; paged log/history readers track stream changes separately. A heartbeat updates volatile fields without rebuilding expensive evidence. Existing hash-keyed
 Git/snapshot and ended-invocation/transcript caches remain in use.
 
 An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
@@ -1140,8 +1144,8 @@ transaction. Capture checks dependency stamps before/after and retries changed i
 from the journal. The cursor must inspect through that fence, excluding incomplete trailing lines. Request
 admission rechecks dependencies and coalesces catch-up, bounded to two seconds. Reset/conflict (409),
 unavailable (503) and corruption (500) are explicit; old epochs/lower watermarks/unchecked caches are not
-silently returned. Absent/dead/unreachable servers or unavailable catch-up fall back locally with a stderr
-diagnostic. Protocol/version/identity mismatch, malformed payload and corrupt evidence do not fall back.
+silently returned. Absent/dead/unreachable servers, unavailable catch-up and console protocol/version mismatch fall back locally
+with a stderr diagnostic. Identity mismatch, malformed payload and corrupt evidence do not fall back.
 `host.log.foldMs` and compactionDue retain measured fold semantics; elapsed time is not zeroed for parity.
 
 All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 405), no-store, no CORS:

@@ -7,11 +7,9 @@ const [repoArg, commonArg, hostArg, host, portArg, nonceArg] = process.argv.slic
 if (!repoArg || !commonArg || !hostArg || !host || !portArg || !nonceArg) throw new Error('console service needs repo, common, hostDir, host, port, nonce');
 const repo = absPath(repoArg), common = absPath(commonArg), hostDir = absPath(hostArg), port = Number(portArg);
 let lease: import('../console/lease.ts').ConsoleLease | null = null;
-const console = await serveConsole({ repo, common, hostDir, host, port, instance: nonceArg, onObservation(at) {
-  if (lease) { lease = { ...lease, lastObservation: at }; publishConsoleLease(lease); }
-} });
+const console = await serveConsole({ repo, common, hostDir, host, port, instance: nonceArg });
 lease = { ...selfIdentity(), bootId: readBootId(), nonce: nonce(nonceArg), executorVersion: CONSOLE_PROTOCOL, repo, common, hostDir, configSource: `${repo}/.roadmap/config.json`,
-  host, port, bindUrl: consoleUrl(host, port, false), url: console.url, ready: true, startedAt: new Date().toISOString(), lastObservation: null };
+  host, port, bindUrl: consoleUrl(host, port, false), url: console.url, ready: true, startedAt: new Date().toISOString() };
 publishConsoleLease(lease);
 let closing = false;
 for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => {

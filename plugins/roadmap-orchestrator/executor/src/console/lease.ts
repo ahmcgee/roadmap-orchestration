@@ -16,24 +16,28 @@ import { gitCommonDir } from '../git/git.ts';
 import { isAlive } from '../host/liveness.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
 import { CONSOLE_PROTOCOL } from '../observation/protocol.ts';
-import { consoleSettings, consolePort, literalHost, consoleUrl } from './settings.ts';
+import { consoleSettings, consolePort, literalHost, consoleUrl, ConsoleBindError } from './settings.ts';
 
 export type ConsoleLease = ProcIdentity & Readonly<{
   bootId: BootId; nonce: Nonce; executorVersion: string; repo: AbsPath; common: AbsPath; hostDir: AbsPath; configSource: string;
-  host: string; port: number; bindUrl: string; url: string; ready: boolean; startedAt: string; lastObservation: string | null;
+  host: string; port: number; bindUrl: string; url: string; ready: boolean; startedAt: string;
 }>;
-export const consoleLease = object((f): ConsoleLease => ({
-  pid: f.get('pid', positive), start: f.get('start', nat), bootId: f.get('bootId', bootId), nonce: f.get('nonce', nonce),
-  executorVersion: f.get('executorVersion', str), repo: f.get('repo', (v, p) => absPath(str(v, p))), common: f.get('common', (v, p) => absPath(str(v, p))),
-  hostDir: f.get('hostDir', (v, p) => absPath(str(v, p))), configSource: f.get('configSource', str), host: f.get('host', literalHost), port: f.get('port', consolePort),
-  bindUrl: f.get('bindUrl', str), url: f.get('url', str), ready: f.get('ready', bool), startedAt: f.get('startedAt', str), lastObservation: f.get('lastObservation', nullable(str)),
-}));
+export const consoleLease = object((f): ConsoleLease => {
+  // Older consoles published this unused check timestamp. Accept it during replacement.
+  f.optional('lastObservation', nullable(str));
+  return {
+    pid: f.get('pid', positive), start: f.get('start', nat), bootId: f.get('bootId', bootId), nonce: f.get('nonce', nonce),
+    executorVersion: f.get('executorVersion', str), repo: f.get('repo', (v, p) => absPath(str(v, p))), common: f.get('common', (v, p) => absPath(str(v, p))),
+    hostDir: f.get('hostDir', (v, p) => absPath(str(v, p))), configSource: f.get('configSource', str), host: f.get('host', literalHost), port: f.get('port', consolePort),
+    bindUrl: f.get('bindUrl', str), url: f.get('url', str), ready: f.get('ready', bool), startedAt: f.get('startedAt', str),
+  };
+});
 export const serviceDir = (common: AbsPath): string => join(common, 'roadmap-console');
 export function readConsoleLease(common: AbsPath): ConsoleLease | null {
   const path = join(serviceDir(common), 'lease.json');
   if (!existsSync(path)) return null;
   const lease = consoleLease(readJson(path), path);
-  if (lease.common !== realpathSync(common)) throw new Error('console lease common-directory identity mismatch');
+  if (lease.common !== realpathSync(common) && isAlive(lease, lease.bootId)) throw new Error(`${path}: live console pid ${lease.pid} has a different common directory (${lease.common}); use roadmap console stop in its recorded repository, or stop pid ${lease.pid}`);
   if (lease.url !== consoleUrl(lease.host, lease.port) || lease.bindUrl !== consoleUrl(lease.host, lease.port, false)) throw new Error('console lease URL/binding identity mismatch');
   return lease;
 }
@@ -84,7 +88,10 @@ export async function ensureConsole(repo: AbsPath, hostDir: AbsPath): Promise<Co
       if (lease?.nonce === instance && lease.ready && isAlive(lease, lease.bootId)) return lease;
       if (died || Date.now() >= deadline) {
         if (child.pid && !died) child.kill('SIGTERM');
-        throw new Error(`.roadmap/config.json webConsole.port: console failed startup: ${(spawnError as Error | null)?.message ?? readFileSync(outPath, 'utf8')}`);
+        const detail = (spawnError as Error | null)?.message ?? readFileSync(outPath, 'utf8');
+        const binding = detail.split('\n').find(line => line.startsWith('ConsoleBindError: '));
+        if (binding) throw new ConsoleBindError(settings.host, settings.port, binding.slice(binding.indexOf('failed: ') + 8));
+        throw new Error(`.roadmap/config.json webConsole.port: console failed startup: ${detail}`);
       }
       await sleep(25);
     }
@@ -108,4 +115,14 @@ export function consoleStatusLine(lease: ConsoleLease | null): string {
 export function publishConsoleLease(lease: ConsoleLease): void { atomicJson(join(serviceDir(lease.common), 'lease.json'), lease); }
 export function releaseConsoleLease(lease: ConsoleLease): void {
   if (readConsoleLease(lease.common)?.nonce === lease.nonce) durableUnlink(join(serviceDir(lease.common), 'lease.json'));
+}
+
+/** Console binding is optional for arc execution; direct console start still propagates the error. */
+export async function ensureArcConsole(repo: AbsPath, hostDir: AbsPath): Promise<ConsoleLease | null> {
+  try { return await ensureConsole(repo, hostDir); }
+  catch (error) {
+    if (!(error instanceof ConsoleBindError)) throw error;
+    process.stderr.write(`WARNING: Roadmap console unavailable at ${error.host}:${error.port}; arc work continues. Change ${repo}/.roadmap/config.json webConsole.port. ${error.message.replace(/\s+/g, ' ')}\n`);
+    return null;
+  }
 }
