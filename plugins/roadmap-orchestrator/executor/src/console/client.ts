@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { AbsPath } from '../core/values.ts';
 import { isAlive } from '../host/liveness.ts';
-import { ObservationCache } from '../observation/cache.ts';
-import { CONSOLE_PROTOCOL, ConsoleError, statusBytes, validateStatusEnvelope } from '../observation/protocol.ts';
+import { Observer } from '../observation/observer.ts';
+import { checkRunContainment } from '../observation/containment.ts';
+import { CONSOLE_PROTOCOL, ConsoleError, validateStatusEnvelope } from '../observation/protocol.ts';
 import { consoleStatusLine, readConsoleLease } from './lease.ts';
 
 /** Absence, death, transport failure and version mismatch fall back. Evidence/identity failures remain errors. */
@@ -17,7 +18,13 @@ export async function consoleStatus(run: Run, hostDir: AbsPath, summary: boolean
   diagnostic(consoleStatusLine(lease));
   const local = (reason: string): string => {
     diagnostic(`Roadmap console: ${reason}; using local observation`);
-    return statusBytes(new ObservationCache(hostDir, 'local', sha256Hex(common)).read(run), summary);
+    // The authoritative local capture must not depend on a quiet interval for the console cache.
+    // Journal and evidence readers still validate their inputs; containment is identical to the server's.
+    checkRunContainment(run.runDir);
+    const observer = new Observer();
+    const reply = observer.observe({ locator: { type: 'host' }, pinned: run, hostDir, token: 0 });
+    if (reply.error || !reply.display || !observer.captured) throw new ConsoleError('corruption', reply.error ?? 'no captured observation');
+    return canonicalJson(summary ? observer.captured.summary : reply.display.status) + '\n';
   };
   if (!lease || !isAlive(lease, lease.bootId)) return local(lease ? 'server identity is dead' : 'server is absent');
   if (lease.executorVersion !== CONSOLE_PROTOCOL) return local('console protocol/version mismatch');
