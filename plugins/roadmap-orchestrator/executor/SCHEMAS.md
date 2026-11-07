@@ -1150,6 +1150,7 @@ All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 4
 |---|---|
 | `/runs` | Retained runs and current selection |
 | `/runs/:arc/snapshot` | Envelope with canonical status/summary, observer detail and display adapters |
+| `/runs/:arc/activity?offset=N` | Thirty plain-language journal entries, newest first, and a `more` flag |
 | `/runs/:arc/status?summary=0|1` | Envelope containing the unchanged canonical CLI object |
 | `/runs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
 | `/runs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
@@ -1157,13 +1158,17 @@ All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 4
 | `/runs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
 | `/runs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
 | `/runs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
-| `/runs/:arc/events?invocation=ID` | Existing revision/heartbeat/reset/error stream; optional history subscription sends `history` upserts and `history-error` |
+| `/runs/:arc/events?invocation=ID` | Existing revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
 
 Invocation route IDs are the existing `seq-ordinal` directory keys: canonical invocation IDs contain `/`
 and `#`, while routes deliberately reject encoded separators. Keys resolve only to journal-recorded
 invocations of the named run. Log requests can echo `identity` to detect replacement; after beyond the
 current end returns reset. SSE reconnects with Last-Event-ID; missed revisions reset rather than replaying
-unbounded history. Slow consumers receive reset, not unbounded buffering. Heartbeats carry checkedAt;
+unbounded history. Every SSE frame is at most 4 KiB: revision notices carry only
+arc/epoch/revision/checkedAt/highWater, and history notices carry invocation/identity/cursor/state/end/reset
+and changed count. Snapshots, event pages and expanded content are fetched through ordinary GETs. A full
+socket waits for drain for up to two seconds; pending notices coalesce by event kind, and a persistently
+blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt;
 after five seconds without verification the browser shows “Disconnected/stale”, retaining timestamped
 content and freezing displayed timers. A browser on another package protocol requires reload.
 
@@ -1354,3 +1359,15 @@ state is draining, or stopping after escalation. This is separate from holistic 
 revision. Apply validation, resume validation and the fold use the same eligibility rule. Reopen starts
 at pre-build with the new spec revision and retains branch, worktree, counters and implementer session.
 Other build design parks still require re-entry.
+
+The console-only presentation adapter preserves canonical status bytes. Overview leads with run state,
+relative timestamps (local absolute time on hover), active work, specific waiting reasons and open requests;
+a recorded completion shows the outcome. Units is sortable by elapsed time, red checks and recorded spend.
+Unit journeys use recorded specifications, stage-local attempt numbers and successive build rounds, with
+validated review reports and finding titles. Activity pages the journal in plain words. CPU evidence compares
+measured average cores with recorded reservations; absent measurements stay unknown. Finished resource axes
+end at the recorded completion/stop; a live view shows recent work and open queues, with ALL to widen.
+Current admission wait starts are not reconstructed from queue order. Legacy unmeasured reservations are
+explicit. Holistic audit outcomes/findings are shown; checkpoint job detail remains outside this console.
+Claude init/rate-limit records become collapsed session metadata, while the canonical TUI text remains
+unchanged. Transcript text is decoded, escaped and byte-paged in the browser, never a link to base64 JSON.

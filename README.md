@@ -56,6 +56,13 @@ it independently of executor/watch; normal stop, completion, parking and supervi
 available. Explicit console stop persists until another start. Startup refuses an occupied port or invalid
 configuration and names `.roadmap/config.json` `webConsole.port`; it never chooses another port.
 
+Start on Overview for the run state, current work, waiting reasons and open requests. Units lists every
+unit and sorts by elapsed time, failed checks or spend. Open a unit to see its purpose and rounds, then
+an agent activity for its live history or a check for its output. Activity shows recent journal events;
+Time & resources explains recorded waiting and CPU reservations; Attention lists the exact terminal
+commands for human responses. Times are relative, with local time on hover. Missing measurements are
+labelled, and stopped or completed runs retain their recorded time range. All views are read-only.
+
 The executor normally runs in a devcontainer. The intended default, `0.0.0.0:4747`, makes the console
 reachable from the host through the container's network interface. There is **no authentication**: it
 exposes plans, state, spend, questions and selected logs/results. On an exposed host, use loopback in the

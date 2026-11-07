@@ -220,8 +220,18 @@ payload and corrupt evidence failures remain loud. Watch's actionable filtering,
 Envelopes bind package-version protocol, service instance, repo, arc, epoch, highWater and revision with observation
 and verification timestamps. They describe a verified journal prefix plus sampled external state, not a filesystem
 transaction. SSE invalidates snapshots; five seconds without verification marks content stale and freezes timers.
+
+The overview answers what is running, what is waiting and why, and what needs a human. Units offers sortable
+elapsed time, failures and spend; unit details lead with their recorded purpose and ordered rounds with
+stage-local attempt numbering. Activity pages plain-language journal events and audit findings. Timestamps
+are relative with local absolute time on hover. Resource timelines stop at recorded completion, and CPU
+measurements are compared with reserved cores. Missing wait starts and measurements remain explicit;
+checkpoint job drill-down is not included. No presentation adapter changes canonical status or arc flow.
+
 Agentic activities expose deep-linked AgentHistory views using the same structured transcript decoder as
-TUI text rendering. A bounded complete-line byte tail sends per-invocation event upserts on SSE, resets on
+TUI text rendering. A bounded complete-line byte tail sends small per-invocation invalidations on SSE;
+clients fetch event pages through GET. Frames stay below 4 KiB, and backpressure waits for bounded drain rather than resetting on the
+first full buffer. The tail resets on
 replacement/truncation and settles on recorded completion. The retained seat brief is collapsed first;
 tool calls pair with results, errors stay visible, and earlier history/long fields load explicitly.
 Deterministic activities retain StepLog. This observation surface never changes agent invocation or arc flow.
