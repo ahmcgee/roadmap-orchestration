@@ -86,7 +86,7 @@ test('stable graph, formatted activities and effort survive heartbeat-only check
   const models = new ConsoleModels(); const first = models.read(e);
   const later = models.read({ ...e, checkedAt: new Date(Date.parse(e.checkedAt) + 2000).toISOString() });
   assert.equal(later.graph, first.graph); assert.equal(later.time, first.time); assert.equal(later.activities, first.activities);
-  assert.equal(later.resources.now - first.resources.now, 2);
+  assert.equal(Math.round((later.resources.now - first.resources.now) * 1000), 2000);
 });
 
 test('completed lane fixture is ready between stages despite unfinished-unit status active', async () => {
