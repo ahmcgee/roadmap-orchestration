@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowLeft, X } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, elapsed, glyph, info, link, money, route, SignalMark, Time } from './shared.tsx';
+import { Clock, elapsed, glyph, info, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
 import type { Envelope } from './types.ts';
 
 export function Drawer({ title, close, children, className = '' }: { title: string; close: () => void; children?: ReactNode; className?: string }) {
@@ -43,7 +43,7 @@ export function UnitDetail({ e, id, close }: { e: Envelope; id: string; close: (
   return <Drawer title={u.title} close={close}>
     <div className="unit-meta"><span>{id}</span><span><SignalMark state={signal}/>{u.state}</span><span>{u.stage}</span></div>
     <dl className="unit-gates"><div><dt>Feeds</dt><dd>{feeds.map(g => g.id).join(', ') || 'No milestone'}</dd></div><div><dt>Waits on</dt><dd>{waits.map(g => g.type === 'milestone' ? g.milestone : '').join(', ') || 'No milestone gates'}</dd></div></dl>
-    <div className="unit-facts"><span>{u.rounds} {u.rounds===1?'round':'rounds'}</span><span>{u.attempts} stage attempts</span><span>{money(u.spend)} recorded</span><span>{elapsed(u.startedAt&&!u.endedAt&&!m.presentation.run.endedAt?now-Date.parse(u.startedAt):u.elapsedMs)}</span></div>
+    <div className="unit-facts"><span>{u.rounds} {u.rounds===1?'round':'rounds'}</span><span>{pluralise(u.attempts,'stage attempt')}</span><span>{money(u.spend)} recorded</span><span>{elapsed(u.startedAt&&!u.endedAt&&!m.presentation.run.endedAt?now-Date.parse(u.startedAt):u.elapsedMs)}</span></div>
     {u.reasons.length > 0 && <p className="notice">{u.reasons.join('; ')}{u.waitSince&&<small>Waiting {elapsed(now-Date.parse(u.waitSince))}</small>}</p>}
     {u.lineage && <p>Re-entry from <a href={link(e.arc, route().tab, 'units', u.lineage.reenters)}>{u.lineage.reenters}</a></p>}
     <section><h3>Journey</h3><label className="housekeeping-toggle"><input type="checkbox" checked={housekeeping} onChange={ev=>setHousekeeping(ev.target.checked)}/> Show housekeeping steps</label><div className="journey-pipeline">{u.journey.filter(step=>housekeeping||!step.housekeeping).map(step => {const state=!step.endedAt?'active':/fail|fault/i.test(step.outcome)?'failed':/changes|hold|park/i.test(step.outcome)?'held':'passed';return <a key={step.id} className="journey-block" data-state={state} href={step.activities[0] ? link(e.arc, route().tab, 'invocations', step.activities[0]) : `#step-${step.id}`} onClick={ev => { if (!step.activities.length) { ev.preventDefault(); const details=ev.currentTarget.closest('section')?.querySelector('details');if(details)details.open=true;requestAnimationFrame(()=>document.getElementById(`step-${step.id}`)?.scrollIntoView({block:'nearest'})); } }} title={`${step.label}, attempt ${step.attempt}: ${step.outcome}`}><span>{step.label}</span><small>{step.attempt} {glyph[state]}</small></a>;})}</div>{!u.journey.length && <p className="muted">No stage attempts recorded yet.</p>}
