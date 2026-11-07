@@ -12,6 +12,7 @@ import type { AbsPath } from '../core/values.ts';
 import { ownerState } from '../status.ts';
 import { supervision } from '../watch-lease.ts';
 import { dependencyStamp, fileStamp } from './dependencies.ts';
+import { checkRunContainment } from './containment.ts';
 import { Observer } from './observer.ts';
 import { type Admission, type Envelope, type ObservationData, CONSOLE_PROTOCOL, ConsoleError } from './protocol.ts';
 
@@ -22,6 +23,9 @@ export class ObservationCache {
   readonly instance: string;
   readonly repoId: string;
   #runs = new Map<string, Cached>();
+  #pinned = new Set<string>();
+  pin(arc: string): void { this.#pinned.add(arc); }
+  unpin(arc: string): void { this.#pinned.delete(arc); }
   constructor(hostDir: AbsPath, instance: string, repoId: string) { this.hostDir = hostDir; this.instance = instance; this.repoId = repoId; }
   read(run: Run, admission: Admission = {}): Envelope {
     const deadline = Date.now() + 2_000;
@@ -40,6 +44,7 @@ export class ObservationCache {
       const observer = c?.observer ?? new Observer();
       const materialize = !c || c.stable !== stable || c.journal !== journal;
       if (materialize) {
+        checkRunContainment(run.runDir);
         if (c && c.stable !== stable) observer.invalidateEvidence();
         const reply = observer.observe({ locator: { type: 'host' }, pinned: run, hostDir: this.hostDir, token: 0 });
         if (reply.error || !reply.display || !observer.captured) throw new ConsoleError('corruption', reply.error ?? 'no captured observation');
@@ -78,12 +83,20 @@ export class ObservationCache {
           invocations: base.display.invocations.map((i) => i.endedAt !== null || i.quietMs === null ? i : { ...i, quietMs: i.quietMs + delta }) },
           summary: { ...base.summary, supervision: supervision(run.runDir) } };
       }
+      if (stable !== dependencyStamp(paths, excluded) + JSON.stringify(ownerState(run.runDir, this.hostDir)) || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
+        if (Date.now() < deadline) continue;
+        throw new ConsoleError('unavailable', 'observation dependencies changed at request admission');
+      }
       const changed = data !== c.envelope.data;
       const envelope: Envelope = { ...c.envelope, checkedAt: new Date(now).toISOString(), data,
         revision: c.envelope.revision + (changed ? 1 : 0), observedAt: changed ? new Date(now).toISOString() : c.envelope.observedAt };
       c = { ...c, volatile, envelope };
       this.#runs.delete(run.runDir); this.#runs.set(run.runDir, c);
-      while (this.#runs.size > 8) this.#runs.delete(this.#runs.keys().next().value!);
+      while (this.#runs.size > 8 + this.#pinned.size) {
+        const oldest = [...this.#runs].find(([, value]) => !this.#pinned.has(value.envelope.arc));
+        if (!oldest) break;
+        this.#runs.delete(oldest[0]);
+      }
       if (admission.epoch !== undefined && admission.epoch !== envelope.epoch) throw new ConsoleError('reset', `journal epoch changed to ${envelope.epoch}`);
       if ((admission.minHighWater ?? 0) > envelope.highWater) throw new ConsoleError('unavailable', 'requested watermark is not yet verified');
       if ((admission.revision ?? 0) > envelope.revision) throw new ConsoleError('conflict', 'requested revision is ahead of this server');

@@ -29,8 +29,8 @@ import { CliError,type Command,type RunLocator,parseCommand } from '../input/cli
 import { arcRolesOf,readInputFiles,revisionManifestOf } from '../input/inforce.ts';
 import { readRepoConfig } from '../preflight/checks.ts';
 import { EXIT_HOST_BUSY,EXIT_REFUSED,type StartupRejection } from '../preflight/startup.ts';
-import { status } from '../status.ts';
-import { statusSummary } from '../status/summary.ts';
+import { consoleStatus } from '../console/client.ts';
+import { ensureConsole, stopConsole, readConsoleLease, consoleCommon, consoleStatusLine } from '../console/lease.ts';
 import { START_WAIT_MS,launchSupervisor } from '../supervisor.ts';
 import { tui } from '../tui/main.ts';
 import { stopWatch } from '../watch-lease.ts';
@@ -126,7 +126,14 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return;
     case 'status': {
       const run = locate(command.run, hostDir);
-      process.stdout.write(`${canonicalJson(command.summary ? statusSummary(run.runDir, run.arc, hostDir) : status(run.runDir, run.arc, hostDir))}\n`);
+      process.stdout.write(await consoleStatus(run, hostDir, command.summary === true, (line) => process.stderr.write(`${line}\n`)));
+      return;
+    }
+    case 'console': {
+      const repo = repoOf(command.repo);
+      if (command.action === 'stop') await stopConsole(repo);
+      const lease = command.action === 'start' ? await ensureConsole(repo, hostDir) : readConsoleLease(consoleCommon(repo));
+      process.stderr.write(`${consoleStatusLine(lease)}\n`);
       return;
     }
     case 'reverse':

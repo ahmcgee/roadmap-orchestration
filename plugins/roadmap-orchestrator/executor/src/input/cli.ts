@@ -32,6 +32,7 @@ export type RunLocator = Readonly<{ type: 'host' }> | Readonly<{ type: 'explicit
 
 export type Command =
   | Readonly<{ command: 'version' }>
+  | Readonly<{ command: 'console'; action: 'start' | 'stop' | 'status'; repo: string }>
   | Readonly<{ command: 'start'; args: StartArgs }>
   | Readonly<{ command: 'status'; run: RunLocator; summary?: boolean }>
   | Readonly<{ command: 'tui'; run: RunLocator }>
@@ -199,6 +200,14 @@ export function parseCommand(argv: readonly string[]): Command {
     case '--version': {
       if (rest.length > 0) throw new CliError('--version takes no arguments');
       return { command: 'version' };
+    }
+    case 'console': {
+      const p = parseRest(rest, { repo: 'value' }, command);
+      const action = onePositional(p, command, 'start|stop|status');
+      if (action !== 'start' && action !== 'stop' && action !== 'status') throw new CliError('console: expected start|stop|status');
+      const repo = value(p, 'repo');
+      if (repo === undefined) throw new CliError('console: --repo <path> is required');
+      return { command, action, repo };
     }
     case 'start':
       return { command: 'start', args: parseStartArgs(rest) };

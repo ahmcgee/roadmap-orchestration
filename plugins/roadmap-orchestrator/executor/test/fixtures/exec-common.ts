@@ -3,6 +3,8 @@
 // processes through exec-cli.ts against the arc's own host directory. The descriptor's `runDir` is the run
 // dir the executor derives (`<git common dir>/roadmap-runtime/<arc>`), so unit-common's readers
 // (`outcomes`, `events`) read what the executor wrote.
+import { stopConsole } from '../../src/console/lease.ts';
+import { freeConsolePort } from '../helpers/console-port.ts';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,7 +47,7 @@ export type ExecRun = ArcDescriptor & Readonly<{ stateDir: string }>;
  * (`{ ...setupExec(t, o), hostDir }`) still owns what it starts.
  */
 export function setupExec(t: Owner, opts: ExecOptions): ExecRun {
-  const d = setupArc(opts);
+  const d = setupArc({ ...opts, webConsole: opts.webConsole ?? { host: '127.0.0.1', port: freeConsolePort() } });
   const stateDir = tmpDir('exec-res');
   if (opts.resource === true) {
     const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[]; spec: string }[] };
@@ -64,7 +66,7 @@ export function setupExec(t: Owner, opts: ExecOptions): ExecRun {
   const common = git(d.repo, 'rev-parse', '--path-format=absolute', '--git-common-dir');
   mkdirSync(d.hostDir, { recursive: true });
   const r = { ...d, runDir: join(common, 'roadmap-runtime', d.arc), stateDir };
-  own(t, { paths: [r.hostDir, r.repo], stop: () => cli(r, ['stop']) });
+  own(t, { paths: [r.hostDir, r.repo], stop: async () => { await cli(r, ['stop']); await stopConsole(absPath(r.repo)); } });
   return r;
 }
 
