@@ -48,8 +48,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { type TestContext, after, test } from 'node:test';
 import { type Event, type IntentOf, type Parent, parseEventLine, prevHash, recordUnit } from '../../src/core/events.ts';
-import { INTEGRATION_SLOT, arcId, invocationId, parseInvocationId, unitId } from '../../src/core/ids.ts';
+import { INTEGRATION_SLOT, type OpId, arcId, invocationId, parseInvocationId, unitId } from '../../src/core/ids.ts';
 import type { JournalView } from '../../src/core/interfaces.ts';
+import type { CommandBody } from '../../src/core/records.ts';
+import { readCommand, readReceipt, receiptSha256 } from '../../src/commands/queue.ts';
 import type { LogSnapshot } from '../../src/core/log.ts';
 import { Fold } from '../../src/core/state.ts';
 import { absPath } from '../../src/core/values.ts';
@@ -192,8 +194,11 @@ function assertOneAttemptPerUnit(snap: LogSnapshot): void {
 /** One of A's crash-point occurrences in the recording: how many of A's records were durable then. */
 type Reached = Readonly<{ occurrence: number; aRecords: number }>;
 
+type InitialAdmission = Readonly<{ seq: number; body: Extract<CommandBody, { type: 'resolve-edge' }> }>;
+
 type Reference = Readonly<{
   peer: Peer;
+  initialAdmission: InitialAdmission;
   reached: ReadonlyMap<string, readonly Reached[]>;
   snap: LogSnapshot;
   aRecords: readonly Event[];
@@ -227,6 +232,30 @@ function readReached(file: string): ReadonlyMap<string, readonly Reached[]> {
 const baselineOf = (r: ExecRun): string => (JSON.parse(readFileSync(r.planPath, 'utf8')) as { baseline: string }).baseline;
 const unitsOf = (peer: Peer): readonly string[] => (peer === 'publication' ? [A, B, C] : [A, B]);
 
+/** The new admission measurement precedes command completion; the first workload record still follows it. */
+function initialAdmission(r: ExecRun, snap: LogSnapshot): InitialAdmission {
+  const records = eventsOf(snap, A);
+  const first = records[0];
+  assert.ok(first?.type === 'fact' && first.fact.kind === 'stage-admitted' && first.fact.stage === 'pre-build');
+  const before = viewAt(r, first.seq - 1).openIntents().filter((i) => i.kind === 'command.apply');
+  const after = viewAt(r, first.seq).openIntents().filter((i) => i.kind === 'command.apply');
+  assert.equal(before.length, 1, 'the reference proves one command open at initial admission');
+  assert.deepEqual(after, before, 'all three admission append boundaries leave that same command open');
+  const command = before[0]!;
+  const durable = readCommand(absPath(r.runDir), command.expect.command, snap.view.arc);
+  assert.equal(command.expect.commandSha256, durable.sha256);
+  const body = durable.file.body;
+  assert.ok(body.type === 'resolve-edge' && body.edge === 'a-go', 'only the fixture edge-unlocking command may overlap initial admission');
+  const edges = snap.events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'edge-resolved' && e.fact.edge === body.edge ? [e] : []);
+  assert.equal(edges.length, 1);
+  assert.deepEqual(edges[0]!.fact, { kind: 'edge-resolved', edge: body.edge, command: command.expect.command, evidence: body.evidence });
+  assert.ok(edges[0]!.seq < first.seq, 'the reference edge is resolved before admission');
+  const judgment = records.find((e) => e.type === 'fact' && e.fact.kind === 'judgment-inputs');
+  assert.ok(judgment !== undefined);
+  assert.deepEqual(viewAt(r, judgment.seq).openIntents().filter((i) => i.kind === 'command.apply'), [], 'the command is closed before the first workload record');
+  return { seq: first.seq, body };
+}
+
 async function reference(t: Owner, peer: Peer): Promise<Reference> {
   const c = layoutConcurrent(t, peer);
   const { r } = c.laid;
@@ -236,6 +265,7 @@ async function reference(t: Owner, peer: Peer): Promise<Reference> {
   const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
   const ref: Reference = {
     peer,
+    initialAdmission: initialAdmission(r, snap),
     reached: readReached(record),
     snap,
     aRecords: eventsOf(snap, A),
@@ -476,11 +506,40 @@ function assertPublicationSafe(r: ExecRun, snap: LogSnapshot): number {
 
 type CellOptions = Readonly<{ hooks?: (r: ExecRun) => readonly Hook[]; check?: (r: ExecRun, crash: AtCrash, end: LogSnapshot) => void | Promise<void> }>;
 
-/** Trace entries per unit: the recoveredBy values of the dones of that unit's ops. */
-function recoveredBy(snap: LogSnapshot): ReadonlyMap<string, readonly string[]> {
+/** Account for only the reference-proven command; all other non-unit recovery remains the peer oracle's. */
+function assertAdmissionRecovery(ref: Reference, r: ExecRun, label: string, crashed: Event, crash: LogSnapshot, end: LogSnapshot): OpId | null {
+  if (!label.startsWith('log.append.') || crashed.seq !== ref.initialAdmission.seq) return null;
+  assert.ok(crashed.type === 'fact' && crashed.fact.kind === 'stage-admitted' && crashed.fact.unit === A && crashed.fact.stage === 'pre-build');
+  const commands = crash.view.openIntents().filter((i) => i.kind === 'command.apply');
+  assert.equal(commands.length, 1, 'the crash has exactly the command proven open by the reference');
+  const command = commands[0]!;
+  const durable = readCommand(absPath(r.runDir), command.expect.command, crash.view.arc);
+  assert.equal(command.expect.commandSha256, durable.sha256);
+  assert.deepEqual(durable.file.body, ref.initialAdmission.body, 'the actual open command matches the reference edge, evidence and command type');
+  const { edge, evidence } = ref.initialAdmission.body;
+  const edgeFacts = (snap: LogSnapshot) => snap.events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'edge-resolved' && e.fact.edge === edge ? [e.fact] : []);
+  const expected = [{ kind: 'edge-resolved', edge, command: command.expect.command, evidence }];
+  assert.deepEqual(edgeFacts(crash), expected, 'the crash already has the one command-linked edge fact');
+  assert.deepEqual(edgeFacts(end), expected, 'recovery never resolves the edge a second time');
+  const dones = end.events.filter((e) => e.type === 'done' && e.op === command.op);
+  assert.equal(dones.length, 1, 'the edge command completes exactly once');
+  const done = dones[0]!;
+  assert.ok(done.type === 'done' && done.kind === 'command.apply');
+  assert.equal(done.recoveredBy, 'reconciled');
+  const receipt = readReceipt(absPath(r.runDir), command.expect.command, 'applied');
+  assert.ok(receipt?.state === 'applied');
+  assert.equal(receipt.command, command.expect.command);
+  assert.equal(receipt.op, command.op);
+  assert.deepEqual(done.outcome, { kind: 'applied', receiptSha256: receiptSha256(absPath(r.runDir), command.expect.command, 'applied') });
+  assert.deepEqual(end.events.flatMap((e) => e.type === 'done' && e.kind === 'command.apply' && e.recoveredBy !== null ? [e.op] : []), [command.op], 'no other command recovery is permitted');
+  return command.op;
+}
+
+/** Trace entries per unit, excluding only the command already proved reconciled exactly once. */
+function recoveredBy(snap: LogSnapshot, accountedCommand: OpId | null): ReadonlyMap<string, readonly string[]> {
   const out = new Map<string, string[]>();
   for (const e of snap.events) {
-    if (e.type !== 'done' || e.recoveredBy === null) continue;
+    if (e.type !== 'done' || e.recoveredBy === null || e.op === accountedCommand) continue;
     const u = eventUnit(snap.view, e) ?? '-';
     out.set(u, [...(out.get(u) ?? []), `${e.kind}:${e.recoveredBy}`]);
   }
@@ -522,7 +581,8 @@ async function crashCell(t: Owner, ref: Reference, label: string, occurrence: nu
   const aTrace = label.startsWith('log.append.') ? appendTrace(label, crashed) : LABEL_TRACE[label];
   if (aTrace === undefined) throw new Error(`no recovery trace is declared for ${label}`);
   const end = journalOf(r);
-  const by = recoveredBy(end);
+  const admissionCommand = assertAdmissionRecovery(ref, r, label, crashed, atCrash.snap, end);
+  const by = recoveredBy(end, admissionCommand);
   const aBy = (by.get(A) ?? []).map((x) => x.split(':')[1]!);
   for (const v of aBy) assert.ok((aTrace.recoveredBy as readonly string[]).includes(v), `A's op recovered ${v}; ${label} allows ${aTrace.recoveredBy.join('|') || 'nothing'}: ${by.get(A)?.join(', ')}`);
   if (aTrace.required) assert.ok(aBy.length > 0, `A's cut-short op is recovered (${aTrace.recoveredBy.join('|')})`);
@@ -532,8 +592,8 @@ async function crashCell(t: Owner, ref: Reference, label: string, occurrence: nu
     for (const v of values) assert.ok(peerOpen && (PEER_RECOVERY as readonly string[]).includes(v.split(':')[1]!), `${u}: recovered ${v}, but only a pinned peer's open runner is adopted`);
   }
   const trace: Trace = {
-    recoveredBy: [...new Set([...aTrace.recoveredBy, ...(peerOpen ? PEER_RECOVERY : [])])],
-    required: aTrace.required || peerOpen,
+    recoveredBy: [...new Set([...aTrace.recoveredBy, ...(peerOpen ? PEER_RECOVERY : []), ...(admissionCommand === null ? [] : ['reconciled' as const])])],
+    required: aTrace.required || peerOpen || admissionCommand !== null,
     tailDiscarded: aTrace.tailDiscarded,
   };
   const run = oracleRun(absPath(r.repo), absPath(r.runDir), arcId(r.arc));
