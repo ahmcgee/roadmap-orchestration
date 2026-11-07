@@ -1099,13 +1099,13 @@ admission. Closing it leaves the executor running; status/usage observation is b
 ### Roadmap web console
 
 `.roadmap/config.json` accepts `webConsole:{host?,port?}`. Missing fields default to `0.0.0.0:4747`
-without rewriting the file. Host must be an IPv4/IPv6 literal; port is an integer 1–65535; unknown keys
+without rewriting the file. Host must be an IPv4/IPv6 literal; port is an integer 0–65535; zero requests any free port and the lease records the actual positive bound port; unknown keys
 are refused. This is the devcontainer default: the wildcard interface makes the console reachable from
 the host through the container network. No auth is provided. On exposed hosts, choose loopback (`127.0.0.1`
 or `::1`); plans, state, spend, questions and selected logs/results can contain sensitive text. Port 4318 is
 reserved for OTLP/HTTP, not the console. On automatic startup, any console bind failure (including EADDRINUSE)
 prints a loud warning naming the address and `.roadmap/config.json` webConsole.port; arc execution proceeds.
-Direct `console start` still refuses bind failures. Invalid configuration refuses startup. No fallback port is selected. Binding changes require console stop/start;
+Direct `console start` still refuses bind failures. Invalid configuration refuses startup. Nonzero ports never fall back. A zero setting reuses a live console on the same host. Other binding changes require console stop/start;
 conflicting worktree settings name the startup config source.
 
 `console start|stop|status --repo` prints the same console status/URL line to stderr only. `status` also

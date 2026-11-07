@@ -129,8 +129,9 @@ export async function serveConsole(args: ConsoleServerArgs) {
     await worker.terminate();
     throw new ConsoleBindError(args.host, args.port, (error as Error).message);
   }
-  const url = consoleUrl(args.host, (server.address() as AddressInfo).port);
-  return { server, url, instance, repoId, ask, async close() {
+  const port = (server.address() as AddressInfo).port;
+  const url = consoleUrl(args.host, port);
+  return { server, port, url, instance, repoId, ask, async close() {
     for (const res of streams.keys()) res.end(); streams.clear();
     server.closeAllConnections();
     await Promise.all([new Promise<void>((r) => server.close(() => r())), worker.terminate()]);

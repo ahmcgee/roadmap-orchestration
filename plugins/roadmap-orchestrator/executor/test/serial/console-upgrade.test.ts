@@ -12,7 +12,6 @@ import { sha256Hex } from '../../src/core/json.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { setConsolePort } from '../fixtures/console.ts';
-import { freeConsolePort, withConsolePort } from '../helpers/console-port.ts';
 import { tmpDir } from '../helpers/repo.ts';
 
 const PREVIOUS_REF = 'c1cd2413';
@@ -36,8 +35,8 @@ test('dev.54 records are adopted read-only by the console with identical canonic
   const f = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...process.env, TMPDIR: root }, timeout: 30_000 })) as { d: { repo: string; arc: string }; runDir: string; hostDir: string; full: unknown };
   const repo = absPath(f.d.repo), hostDir = absPath(f.hostDir), common = gitCommonDir(repo);
   const runDir = join(common, 'roadmap-runtime', f.d.arc); mkdirSync(join(common, 'roadmap-runtime'), { recursive: true }); cpSync(f.runDir, runDir, { recursive: true });
-  setConsolePort(repo, freeConsolePort()); const before = contents(runDir);
-  t.after(() => stopConsole(repo)); const lease = await withConsolePort(port => { setConsolePort(repo, port); return ensureConsole(repo, hostDir); });
+  setConsolePort(repo, 0); const before = contents(runDir);
+  t.after(() => stopConsole(repo)); const lease = await ensureConsole(repo, hostDir);
   const response = await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/runs/${arcId(f.d.arc)}/status`); assert.equal(response.status, 200);
   const e = await response.json() as { data: unknown };
   const { portableStatus } = await import('../fixtures/status-parity.ts');

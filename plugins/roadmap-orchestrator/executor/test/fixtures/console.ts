@@ -7,6 +7,7 @@ import { parityArc } from './status-parity.ts';
 export function consoleFixture() {
   const f = parityArc();
   const repo = absPath(f.d.repo);
+  setConsolePort(repo, 0);
   const common = gitCommonDir(repo);
   const runDir = absPath(join(common, 'roadmap-runtime', f.d.arc));
   mkdirSync(join(common, 'roadmap-runtime'), { recursive: true });

@@ -28,7 +28,7 @@ export const consoleLease = object((f): ConsoleLease => {
   return {
     pid: f.get('pid', positive), start: f.get('start', nat), bootId: f.get('bootId', bootId), nonce: f.get('nonce', nonce),
     executorVersion: f.get('executorVersion', str), repo: f.get('repo', (v, p) => absPath(str(v, p))), common: f.get('common', (v, p) => absPath(str(v, p))),
-    hostDir: f.get('hostDir', (v, p) => absPath(str(v, p))), configSource: f.get('configSource', str), host: f.get('host', literalHost), port: f.get('port', consolePort),
+    hostDir: f.get('hostDir', (v, p) => absPath(str(v, p))), configSource: f.get('configSource', str), host: f.get('host', literalHost), port: f.get('port', (v, p) => consolePort(positive(v, p), p)),
     bindUrl: f.get('bindUrl', str), url: f.get('url', str), ready: f.get('ready', bool), startedAt: f.get('startedAt', str),
   };
 });
@@ -69,7 +69,7 @@ export async function ensureConsole(repo: AbsPath, hostDir: AbsPath): Promise<Co
   return locked(common, async () => {
     const old = readConsoleLease(common);
     if (old && isAlive(old, old.bootId)) {
-      if (old.host !== settings.host || old.port !== settings.port) throw new Error(`.roadmap/config.json webConsole.port conflicts with console settings from ${old.configSource}; console stop/start is required`);
+      if (old.host !== settings.host || (settings.port !== 0 && old.port !== settings.port)) throw new Error(`.roadmap/config.json webConsole.port conflicts with console settings from ${old.configSource}; console stop/start is required`);
       if (old.executorVersion === CONSOLE_PROTOCOL && old.ready) return old;
       await terminate(old);
     }

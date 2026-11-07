@@ -14,13 +14,13 @@ import { isAlive } from '../src/host/liveness.ts';
 import { absPath } from '../src/core/values.ts';
 
 for (const [name, setup, product] of [['m1', m1, 'repo'], ['m2', m2, 'repo'], ['m3', m3, 'repo'], ['m4a', (dir: string) => m4a(dir, { visionSilent: false, fakePace: true }), 'tidewater'], ['m5', m5, 'tidewater']] as const) {
-  test(`console isolation: ${name} fixture config uses a free loopback port`, async () => {
+  test(`console isolation: ${name} fixture config uses an automatic loopback port`, async () => {
     const dir = join(tmpDir(`console-${name}`), 'fx');
     const result = await setup(dir);
     const repo = (name === 'm5' || name === 'm4a') ? (result as ReturnType<typeof m5>).product : join(dir, product);
     const config = JSON.parse(readFileSync(join(repo, '.roadmap/config.json'), 'utf8'));
     assert.equal(config.webConsole?.host, '127.0.0.1');
-    assert.ok(Number.isInteger(config.webConsole.port) && config.webConsole.port > 0);
+    assert.equal(config.webConsole.port, 0);
     assert.notEqual(config.webConsole.port, 4747);
   });
 }

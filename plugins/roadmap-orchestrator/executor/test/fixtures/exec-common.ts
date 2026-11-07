@@ -4,7 +4,6 @@
 // dir the executor derives (`<git common dir>/roadmap-runtime/<arc>`), so unit-common's readers
 // (`outcomes`, `events`) read what the executor wrote.
 import { stopConsole } from '../../src/console/lease.ts';
-import { freeConsolePort } from '../helpers/console-port.ts';
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -47,7 +46,7 @@ export type ExecRun = ArcDescriptor & Readonly<{ stateDir: string }>;
  * (`{ ...setupExec(t, o), hostDir }`) still owns what it starts.
  */
 export function setupExec(t: Owner, opts: ExecOptions): ExecRun {
-  const d = setupArc({ ...opts, webConsole: opts.webConsole ?? { host: '127.0.0.1', port: freeConsolePort() } });
+  const d = setupArc({ ...opts, webConsole: opts.webConsole ?? { host: '127.0.0.1', port: 0 } });
   const stateDir = tmpDir('exec-res');
   if (opts.resource === true) {
     const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as { resources: unknown[]; units: { resources: string[]; spec: string }[] };

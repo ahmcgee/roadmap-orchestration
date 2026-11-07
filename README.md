@@ -67,10 +67,12 @@ tabulates recorded waiting by reason. Attention lists the exact terminal command
 Times are relative, with local time on hover. Missing measurements are labelled, and stopped or completed runs retain their recorded time range. All views are read-only.
 
 The executor normally runs in a devcontainer. The intended default, `0.0.0.0:4747`, makes the console
-reachable from the host through the container's network interface. There is **no authentication**: it
+reachable from the host through the container's network interface. Set `webConsole.port` to `0` to bind
+any free port, useful when several repos share one container. The lease records the actual bound port;
+`roadmap console status` and the start/resume console line show its URL. There is **no authentication**: it
 exposes plans, state, spend, questions and selected logs/results. On an exposed host, use loopback in the
 existing `.roadmap/config.json`: `{"webConsole":{"host":"127.0.0.1","port":4747}}`. Hosts must be IP
-literals; missing fields default without rewriting config. Binding changes need console stop/start, and
+literals; missing fields default without rewriting config. A zero port reuses the current live console; other binding changes need console stop/start, and
 conflicting settings across worktrees are refused. For LAN sharing, replace the printed loopback address
 with the host's reachable hostname/IP. Service metadata lives under the realpath Git common directory's
 `roadmap-console/`, shared across worktrees and outside arc GC.

@@ -99,7 +99,7 @@ export function setupArc(opts: ArcOptions): ArcDescriptor {
   cpSync(REPO_FILES, repo, { recursive: true });
   writeFileSync(join(repo, '.gitignore'), 'out/\n');
   writeFileSync(join(repo, 'src', 'add.js'), opts.base === 'red' ? ADD_BROKEN : ADD_FIXED);
-  makeRepo(repo, { files: { '.roadmap/config.json': JSON.stringify({ ...(opts.webConsole === undefined ? {} : { webConsole: opts.webConsole }), systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] }, lib: { paths: ['lib/**'] }, mul: { paths: ['src/mul.js'] }, div: { paths: ['src/div.js'] }, documentation: { paths: ['docs/**'] } } } }) } });
+  makeRepo(repo, { files: { '.roadmap/config.json': JSON.stringify({ webConsole: opts.webConsole ?? { host: '127.0.0.1', port: 0 }, systemsMap: opts.systemsMap ?? { systems: { app: { paths: ['src/**', 'test/**', 'contracts/**', 'ARCHITECTURE.md'] }, lib: { paths: ['lib/**'] }, mul: { paths: ['src/mul.js'] }, div: { paths: ['src/div.js'] }, documentation: { paths: ['docs/**'] } } } }) } });
 
   const planDir = tmpDir('unit-plan');
   const units = opts.units ?? [{ id: 'u1' }];

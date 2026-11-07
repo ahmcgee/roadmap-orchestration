@@ -20,7 +20,6 @@
 // test/unit/clock.js (TICKS × TICK_MS, about a minute each), so a serial run takes about six minutes and one at six
 // files a time about one. `--fake-pace` (fake runs and the free tests only) sets TICK_MS to FAKE_TICK_MS, so the same
 // files take seconds; nothing else differs, and the paid product carries no pace knob.
-import { freeConsolePort } from '../../test/helpers/console-port.ts';
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -108,7 +107,7 @@ export async function setup(dir: string, opts: Readonly<{ visionSilent: boolean;
     else if (text.split(PAID_TICK).length !== 2) throw new Error(`${CLOCK_FILE} does not hold ${PAID_TICK} exactly once`);
     else write(join(l.product, path), text.replace(PAID_TICK, `export const TICK_MS = ${FAKE_TICK_MS};`));
   }
-  write(join(l.product, '.roadmap', 'config.json'), json({ webConsole: { host: '127.0.0.1', port: freeConsolePort() } }));
+  write(join(l.product, '.roadmap', 'config.json'), json({ webConsole: { host: '127.0.0.1', port: 0 } }));
   const visionText = readFileSync(join(l.product, CORPUS_ROOT, VISION_DOC), 'utf8');
   write(join(l.product, '.roadmap', 'vision.json'), json(visionRecord(visionText, opts.visionSilent)));
   git(l.product, '-c', `init.defaultBranch=${MAIN}`, 'init', '--quiet');

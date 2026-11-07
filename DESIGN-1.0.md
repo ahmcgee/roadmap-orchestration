@@ -209,8 +209,11 @@ host claim; normal executor exit leaves it running. Explicit console start/stop/
 lease; version replacement waits for death under an abstract-socket mutex. A bind failure during automatic startup prints one loud warning naming the address and
 `.roadmap/config.json` webConsole.port; arc work proceeds because the console is an optional read-only observer.
 Direct `roadmap console start` still refuses bind failures; invalid configuration also refuses startup.
-The console never selects another port. Defaults are
-0.0.0.0:4747: devcontainers need the wildcard interface for access from the host. No authentication is provided;
+A nonzero configured port never falls back to another port. Defaults remain
+0.0.0.0:4747: devcontainers need the wildcard interface for access from the host. Set `webConsole.port: 0`
+to bind any free port when several repos share one container. The lease records the actual bound port,
+which supplies the URL printed by `roadmap console status` and start/resume. A zero setting reuses an
+existing live console on the same host; its concrete bound port remains positive. No authentication is provided;
 loopback binding is the option for exposed hosts, and logs/results can contain sensitive text.
 
 One observation worker continuously maintains the active/latest and subscribed runs with bounded older-run

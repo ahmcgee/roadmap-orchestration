@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { consoleCommon, ensureConsole, serviceDir, readConsoleLease, stopConsole } from '../src/console/lease.ts';
+import { consoleCommon, ensureConsole, readConsoleLease, stopConsole } from '../src/console/lease.ts';
 import { serveConsole } from '../src/console/http.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { isAlive } from '../src/host/liveness.ts';
@@ -11,21 +11,19 @@ import { absPath } from '../src/core/values.ts';
 import { setupExec, cli, until, hostLockHeld } from './fixtures/exec-common.ts';
 import { startCli, startLine, pausedFromTheStart, idle, smokes, supervisorOf, kill, launchDirect, ownerOf } from './fixtures/sup-common.ts';
 import { assertNoSurvivors } from './helpers/reap.ts';
-import { withConsolePort } from './helpers/console-port.ts';
 import { commitAll } from './helpers/repo.ts';
 import { consoleFixture } from './fixtures/console.ts';
 
 after(assertNoSurvivors);
 test('automatic startup precedes claim; explicit console stop survives ticks, another start restores it; executor stop/death leave it running', { timeout: 90_000 }, async (t) => {
-  await withConsolePort(async port => {
-  const r = setupExec(t, { steps: smokes(1), webConsole: { host: '127.0.0.1', port } });
+  const r = setupExec(t, { steps: smokes(1), webConsole: { host: '127.0.0.1', port: 0 } });
   await pausedFromTheStart(r);
   const started = await startCli(r);
-  if (/EADDRINUSE/.test(started.stderr)) { await cli(r, ['stop']); await until(() => !hostLockHeld(r), 15_000, 'retry stop'); throw new Error(started.stderr); }
   const line = startLine(started); assert.equal(line.kind, 'ready');
   await idle(r, line.generation!);
   const common = consoleCommon(absPath(r.repo)); const first = readConsoleLease(common)!;
   assert.ok(first.ready && isAlive(first, first.bootId));
+  assert.ok(first.port > 0); assert.ok(started.stderr.includes(first.url));
   await stopConsole(absPath(r.repo));
   await new Promise((resolve) => setTimeout(resolve, 1500));
   assert.equal(readConsoleLease(common), null, 'supervisor ticks never restore an explicitly stopped console');
@@ -38,27 +36,19 @@ test('automatic startup precedes claim; explicit console stop survives ticks, an
   process.kill(restored.pid, 'SIGKILL');
   await until(() => !isAlive(restored, restored.bootId), 5000, 'console death');
   const next = await ensureConsole(absPath(r.repo), absPath(r.hostDir)); assert.notEqual(next.nonce, restored.nonce);
-  });
 });
 
 test('direct supervisor entry also ensures readiness; supervisor death does not terminate the console', { timeout: 60_000 }, async (t) => {
-  await withConsolePort(async port => {
-  const r = setupExec(t, { steps: smokes(1), webConsole: { host: '127.0.0.1', port } });
+  const r = setupExec(t, { steps: smokes(1), webConsole: { host: '127.0.0.1', port: 0 } });
   await pausedFromTheStart(r);
   const supervisor = launchDirect(r, 300_000);
   await until(() => ownerOf(r)?.executor !== null && ownerOf(r)?.executor !== undefined, 15_000, 'direct supervisor owner');
   await idle(r, ownerOf(r)!.generation);
   const lease = readConsoleLease(consoleCommon(absPath(r.repo)));
-  if (!lease) {
-    const dir = serviceDir(consoleCommon(absPath(r.repo)));
-    const errors = readdirSync(dir).filter(n => n.endsWith('.log')).map(n => readFileSync(join(dir, n), 'utf8')).join('\n');
-    if (/EADDRINUSE/.test(errors)) { await kill(supervisor); await cli(r, ['stop']); await until(() => !hostLockHeld(r), 15_000, 'retry stop'); throw new Error(errors); }
-  }
   assert.ok(lease); assert.ok(lease.ready && isAlive(lease, lease.bootId));
   await kill(supervisor);
   assert.equal(isAlive(lease, lease.bootId), true);
   await cli(r, ['stop']);
-  });
 });
 
 test('a real start on an occupied configured port warns, proceeds, and never chooses another console port', { timeout: 30_000 }, async (t) => {

@@ -29,7 +29,6 @@
 //   any other wake (a unit merged while the run runs: its timing is the backends') needs nothing: "Nothing for me"
 //
 // Every command's failure is loud (the process exits non-zero; the driver records the session failed).
-import { freeConsolePort } from '../../test/helpers/console-port.ts';
 import { spawn,spawnSync } from 'node:child_process';
 import { createHash,randomUUID } from 'node:crypto';
 import { closeSync,cpSync,existsSync,mkdirSync,openSync,readFileSync,rmSync,writeFileSync } from 'node:fs';
@@ -388,7 +387,7 @@ const RUNNING = (a: ArcState) => `Arc ${a.arc} is running. No Monitor here: endi
 function bootstrapArc1(c: Ctx, k: string): ArcState {
   const l = layout(c.dir);
   c.t.git('switch', '--quiet', '-c', 'roadmap-work', MAIN);
-  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) }, systemsMap: FIXTURE_SYSTEMS, webConsole: { host: '127.0.0.1', port: freeConsolePort() } }));
+  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) }, systemsMap: FIXTURE_SYSTEMS, webConsole: { host: '127.0.0.1', port: 0 } }));
   writeCorpus(c, 1);
   cpSync(join(FILES, 'golden', 'journeys'), join(l.product, 'journeys'), { recursive: true });
   c.t.git('add', '--all');

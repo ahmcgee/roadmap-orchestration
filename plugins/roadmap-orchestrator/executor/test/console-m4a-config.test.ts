@@ -6,7 +6,7 @@ import { makeRepo, tmpDir, commitAll, writeFiles } from './helpers/repo.ts';
 
 const grade = CRITERIA.find(([name]) => name === 'config')![1];
 const required = { chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['**'] } } } };
-const webConsole = { host: '127.0.0.1', port: 49123 };
+const webConsole = { host: '127.0.0.1', port: 0 };
 async function check(config: unknown, systems = ['app']) {
   const repo = makeRepo(tmpDir('console-m4a-config'), { files: { 'seed.txt': 'seed' } });
   writeFiles(repo, { '.roadmap/config.json': JSON.stringify(config) });

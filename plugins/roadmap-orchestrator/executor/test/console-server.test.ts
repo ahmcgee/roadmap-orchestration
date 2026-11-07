@@ -16,7 +16,7 @@ import { CONSOLE_PROTOCOL, type Envelope } from '../src/observation/protocol.ts'
 test('console config defaults, literal addresses, strict ports/keys and CLI surface', () => {
   assert.deepEqual(consoleSettings(null), { host: '0.0.0.0', port: 4747 });
   assert.deepEqual(consoleSettings(parseRepoConfig({ webConsole: { host: '::1' } })), { host: '::1', port: 4747 });
-  for (const webConsole of [{ host: 'localhost' }, { port: 0 }, { port: 65536 }, { port: 1.2 }, { host: ':::' }, { typo: true }]) assert.throws(() => parseRepoConfig({ webConsole }));
+  for (const webConsole of [{ host: 'localhost' }, { port: -1 }, { port: 65536 }, { port: 1.2 }, { host: ':::' }, { typo: true }]) assert.throws(() => parseRepoConfig({ webConsole }));
   for (const action of ['start', 'stop', 'status']) assert.deepEqual(parseCommand(['console', action, '--repo', '/repo']), { command: 'console', action, repo: '/repo' });
   assert.throws(() => parseCommand(['console', 'restart', '--repo', '/repo']));
 });
