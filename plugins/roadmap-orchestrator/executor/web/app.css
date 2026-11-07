@@ -52,12 +52,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-data-sm);
 .history-meta, .history-controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 16px 0; }
 .history-brief { padding: 12px; border: 1px solid var(--line-2); }
 .history-brief pre { margin: 12px 0; }
-.history-scroll { height: min(60vh, 720px); overflow-y: auto; overflow-anchor: none; padding: 12px 8px; border-block: 1px solid var(--line-2); }
+.history-scroll { overflow-y: auto; overflow-anchor: none; padding: 12px 8px; border-block: 1px solid var(--line-2); }
 .history-event { margin-bottom: 14px; }
 .history-event > section > header { display: none !important; }
 .history-event > section { gap: 0 !important; }
-.history-expansion, .failed-output { margin: 8px 0 12px 88px; }
-.failed-output { color: var(--critical); }
+.history-expansion { margin: 6px 0; }
 .history-expansion pre { margin-top: 10px; }
 .history-links { padding-top: 16px; }
 .history-live { font: var(--type-companion-sm); color: var(--ink-2); padding-left: 88px; }
@@ -94,4 +93,35 @@ th button { border: 0; padding: 0; text-align: left; background: transparent; }
 /* Command streams carry bytes, not structured severities. Keep search, omit invented level counts. */
 .detailpanel section[aria-label^="Step log:"] [aria-label="Levels"] { display:none !important; }
 
-.history-scroll { height:clamp(180px,calc(100dvh - 470px),720px); }
+/* Bounded labels preserve the graph's node geometry; the selection strip carries the full intent. */
+.graph g[role="button"] text { font-size:12px !important; }
+.selection-intent, .cpu-intent { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.selection-intent { flex:1; }
+.unit-intent { min-width:180px; max-width:300px; }
+.unit-intent > a { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.cpu-intent { display:block; max-width:65vw; margin-top:6px; font:var(--type-ui-sm); text-transform:none; letter-spacing:normal; }
+.housekeeping-toggle { display:block; margin:12px 0; color:var(--ink-2); }
+.waiting-table { margin:28px 0 18px; }
+.booking-list { padding-left:20px; line-height:1.8; overflow-wrap:anywhere; }
+.unit-purpose { font:var(--type-ui); line-height:1.6; }
+.journey-wait { margin:12px 0; }
+.agent-detail { display:flex; flex-direction:column; gap:8px; padding:20px; overflow:hidden; }
+.agent-detail > * { flex-shrink:0; min-width:0; }
+.agent-detail .detailhead { padding-bottom:8px; margin:0; }
+.agent-detail .detailhead h2 { font-size:24px; margin:0; }
+.agent-detail > button { align-self:flex-start; padding:4px 8px; }
+.agent-detail .history-meta { margin:0; gap:8px 16px; }
+.agent-detail .history-session { margin:0; max-height:100px; overflow:auto; }
+.agent-detail .history-brief { padding:6px 10px; max-height:180px; overflow:auto; }
+.agent-detail .history-controls { margin:0; flex-wrap:nowrap; gap:8px; overflow-x:auto; }
+.agent-detail .history-controls button { padding:4px 8px; flex-shrink:0; }
+.agent-detail .history-scroll { flex:1 1 auto; height:auto; min-height:160px; }
+.agent-detail .history-links { padding:0; margin:0; gap:8px 20px; max-height:180px; overflow:auto; }
+.agent-detail .history-links details { width:auto; }
+.agent-detail .history-links details[open] { width:100%; }
+.agent-detail > pre { max-height:180px; overflow:auto; }
+.tool-input, .tool-output { min-width:0; margin-top:8px; }
+.tool-input pre, .tool-output pre { padding:6px 8px; background:var(--ground-1); border:1px solid var(--line-1); }
+.tool-output[open] summary { margin-bottom:6px; }
+.detailpanel { overflow-wrap:anywhere; }
+@media(max-width:800px){ .agent-detail {padding:12px;gap:6px;} .agent-detail .detailhead h2 {font-size:20px;} .agent-detail .history-meta {font-size:12px;} .history-live {padding-left:12px;} .cpu-intent {max-width:70vw;} }

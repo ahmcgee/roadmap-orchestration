@@ -1150,7 +1150,7 @@ All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 4
 |---|---|
 | `/runs` | Retained runs and current selection |
 | `/runs/:arc/snapshot` | Envelope with canonical status/summary, observer detail and display adapters |
-| `/runs/:arc/activity?offset=N` | Thirty plain-language journal entries, newest first, and a `more` flag |
+| `/runs/:arc/activity?offset=N&housekeeping=0\|1` | Thirty plain-language journal entries, newest first, and a `more` flag. Successful housekeeping is excluded before paging by default; `housekeeping=1` includes it. Failed housekeeping always remains. |
 | `/runs/:arc/status?summary=0|1` | Envelope containing the unchanged canonical CLI object |
 | `/runs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
 | `/runs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
@@ -1364,8 +1364,11 @@ The console-only presentation adapter preserves canonical status bytes. Overview
 relative timestamps (local absolute time on hover), active work, specific waiting reasons and open requests;
 a recorded completion shows the outcome. Units is sortable by elapsed time, red checks and recorded spend.
 Unit journeys use recorded specifications, stage-local attempt numbers and successive build rounds, with
-validated review reports and finding titles. Activity pages the journal in plain words. CPU evidence compares
-measured average cores with recorded reservations; absent measurements stay unknown. Finished resource axes
+validated review reports and finding titles. Retirement completion comes from its settled operations;
+zero-duration and reasonless waits do not create waiting rows. Activity pages the journal in plain words,
+hiding successful housekeeping by default while keeping failures visible. CPU evidence groups measurements
+by unit and stage attempt: utilization is summed CPU time divided by reserved core-time, and reserved cores
+are weighted by measured duration. Absent measurements stay unknown. Finished resource axes
 end at the recorded completion/stop; a live view shows recent work and open queues, with ALL to widen.
 Current admission wait starts are not reconstructed from queue order. Legacy unmeasured reservations are
 explicit. Holistic audit outcomes/findings are shown; checkpoint job detail remains outside this console.

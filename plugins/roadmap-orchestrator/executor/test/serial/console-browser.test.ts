@@ -55,7 +55,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await until(async () => /Journey/.test(await text()), 10_000, 'deep-linked unit detail');
   await until(async () => /Acceptance/.test(await text()) && !/Reading unit records/.test(await text()), 10_000, 'unit detail records');
   const dialog = await browser.evaluate<{ title: string; role: string; focus: string; url: string }>('() => ({ title: document.querySelector("#detail-title").textContent, role: document.activeElement.closest("[role=dialog]").getAttribute("role"), focus: document.activeElement.getAttribute("aria-label"), url: location.hash })');
-  assert.equal(dialog.title, 'mul(2, 3) is 6'); assert.match(await text(), /Unit u1/); assert.equal(dialog.role, 'dialog'); assert.equal(dialog.focus, 'Close details'); assert.match(dialog.url, /units\/u1/);
+  assert.equal(dialog.title, 'u1'); assert.equal(await browser.evaluate<string>('() => document.querySelector(".unit-purpose").textContent'), 'mul(2, 3) is 6'); assert.equal(dialog.role, 'dialog'); assert.equal(dialog.focus, 'Close details'); assert.match(dialog.url, /units\/u1/);
   await brandAudit('unit-detail');
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'unit-detail.png'), fullPage: false });
   copyFileSync(join(evidence, 'unit-detail.png'), join(SHOTS, 'unit-detail.png'));
@@ -65,7 +65,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   assert.equal(await browser.evaluate<string>('() => document.activeElement.getAttribute("aria-label")'), 'Open u1 details');
 
   await browser.evaluate(`() => { location.hash = '#/runs/${f.d.arc}/overview/units/u3'; return true; }`);
-  await until(async () => /Unit u3/.test(await text()), 10_000, 'empty unit detail');
+  await until(async () => await browser.evaluate('() => document.querySelector("#detail-title")?.textContent === "u3" && Boolean(document.querySelector(".unit-purpose"))'), 10_000, 'empty unit detail');
   assert.match(await browser.evaluate<string>('() => document.querySelector("[role=dialog]").textContent'), /No recorded effort yet/);
   assert.equal(await browser.evaluate<number>('() => document.querySelectorAll("[role=dialog] .recorded-effort").length'), 0);
   await browser.call('browser_press_key', { key: 'Escape' });
@@ -151,7 +151,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await browser.evaluate('() => { [...document.querySelectorAll("a")].find(a => a.textContent === "Final verdict / report").click(); return true; }');
   await until(async () => /Verified the change/.test(await browser.evaluate<string>('() => document.querySelector("[role=dialog] > .record")?.textContent || ""')), 10_000, 'linked final report');
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => /Back to unit/.test(b.textContent)).click(); return true; }');
-  await until(async () => /Unit u3/.test(await text()), 10_000, 'back to unit activity');
+  await until(async () => await browser.evaluate('() => document.querySelector("#detail-title")?.textContent === "u3" && Boolean(document.querySelector(".unit-purpose"))'), 10_000, 'back to unit activity');
   await browser.call('browser_press_key', { key: 'Escape' });
 
   const port = (server.server.address() as AddressInfo).port;

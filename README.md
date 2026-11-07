@@ -58,10 +58,11 @@ configuration and names `.roadmap/config.json` `webConsole.port`; it never choos
 
 Start on Overview for the run state, current work, waiting reasons and open requests. Units lists every
 unit and sorts by elapsed time, failed checks or spend. Open a unit to see its purpose and rounds, then
-an agent activity for its live history or a check for its output. Activity shows recent journal events;
-Time & resources explains recorded waiting and CPU reservations; Attention lists the exact terminal
-commands for human responses. Times are relative, with local time on hover. Missing measurements are
-labelled, and stopped or completed runs retain their recorded time range. All views are read-only.
+an agent activity for its live history or a check for its output. Activity shows recent journal events.
+Successful housekeeping steps stay behind a toggle in Activity and unit journeys; failures remain visible.
+Time & resources groups CPU measurements by unit and stage attempt, lists resource holds in words, and
+tabulates recorded waiting by reason. Attention lists the exact terminal commands for human responses.
+Times are relative, with local time on hover. Missing measurements are labelled, and stopped or completed runs retain their recorded time range. All views are read-only.
 
 The executor normally runs in a devcontainer. The intended default, `0.0.0.0:4747`, makes the console
 reachable from the host through the container's network interface. There is **no authentication**: it

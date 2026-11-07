@@ -8,7 +8,7 @@
   const protocol = document.querySelector('meta[name="roadmap-protocol"]').content;
   const api = `/api/${protocol}`;
   const money = (n) => `$${n.toFixed(2)}`;
-  const elapsed = (ms) => ms == null ? 'unrecorded' : ms < 1000 ? `${ms} ms` : D.formatElapsed(ms);
+  const elapsed = (ms) => ms == null ? 'unrecorded' : ms < 1000 ? `${Math.round(ms)} ms` : D.formatElapsed(ms);
   const words = (value) => typeof value === 'string' ? value : JSON.stringify(value);
   function route() {
     const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
@@ -44,7 +44,7 @@
   const wordsState=s=>({pass:'Passed',success:'Succeeded',fail:'Failed',running:'Running',pending:'Ready',held:'On hold',unowned:'Stopped'}[s]||s);
   const stageName=s=>({'pre-build':'Plan review',build:'Build',lanes:'Checks',gate:'Review',candidate:'Integration check',ff:'Merge',snapshot:'Publish snapshot',verifier:'Review'}[s]||(s.startsWith('lane:')?`Check: ${s.slice(5)}`:s));
   const info=(e,a)=>e.data.console.presentation.activityInfo.find(i=>i.id===a.id)||{label:stageName(a.stage),attempt:a.attempt,round:1,spend:0,findings:[]};
-  function UnitLink({e,unit,children}){const u=e.data.console.presentation.units.find(u=>u.id===unit);return h('a',{href:link(e.arc,'overview','units',unit),'aria-label':`Open ${unit} details`},children||u?.title||unit);}
+  function UnitLink({e,unit,children}){const u=e.data.console.presentation.units.find(u=>u.id===unit);return h('a',{title:u?.title,href:link(e.arc,'overview','units',unit),'aria-label':`Open ${unit} details`},children||u?.title||unit);}
   function Attention({model,arc,tab}) {
     const rows=[...model.attention].sort((a,b)=>Number(b.blocking)-Number(a.blocking));
     return h(Panel,{title:'Attention',subtitle:`${rows.length} open human requests`},!rows.length&&h('p',null,'Nothing needs a human response.'),rows.map(r=>h('article',{key:r.id,className:'detailsection'},h('h3',null,r.summary),h('p',null,r.blocking?'Blocking · Waiting for a human':'Nonblocking · For your information'),h('p',null,r.subject.type==='unit'?h('a',{href:link(arc,tab,'units',r.subject.unit)},`Affected unit: ${r.subject.unit}`):'Affected: whole arc'),h(Notice,{hold:{reason:'query',label:r.blocking?'Owner decision needed':'Owner notice',detail:r.recommendation}}),r.options.length>0&&h('ul',null,r.options.map(o=>h('li',{key:o.id},h('p',null,o.label),h('code',null,`roadmap ack ${r.id} --choice ${o.id}`)))),!r.options.length&&h('p',null,'To respond in your terminal:'),!r.options.length&&h('code',null,`roadmap ack ${r.id}`),r.evidence.map((path,i)=>h('p',{key:i},r.evidenceLinks?.[i]?h('a',{href:link(arc,tab,'invocations',r.evidenceLinks[i])},`Evidence: ${path.split('/').slice(-2).join('/')}`):path)))));
@@ -63,51 +63,50 @@
       h('a',{href:link(e.arc,'attention'),'aria-label':`Attention: ${m.attention.length} open items`},h(D.MetricTile,{label:'Open items',value:m.attention.length,caption:`${m.attention.filter(r=>r.blocking).length} waiting on you`})),
       h(D.MetricTile,{label:'CPU in use',value:`${m.tokenOccupancy} / ${p.cpuCapacity??'?'}`,caption:'CPU cores in use'})),
       h(Panel,{title:p.run.endedAt?'Outcome':'Now'},p.run.endedAt?h('p',{className:'outcome'},`${p.run.state}. ${e.data.summary.progress.merged} units merged; ${withdrawn} withdrawn. Recorded spend ${money(e.data.summary.spend.costUsd)}. Elapsed ${elapsed(p.run.elapsedMs)}.`):h('div',{className:'now-grid'},!active.length&&h('p',null,'No unit is currently running.'),active.map(u=>{const a=m.activities.find(a=>a.unit===u.id&&a.status==='active');return h('article',{className:'now-row',key:u.id},h(UnitLink,{e,unit:u.id},h(R.Fragment,null,h('strong',null,u.title),h('small',null,u.id))),h('p',null,`${u.stage==='Build'?'Building':u.stage==='Checks'?'Running checks':u.stage} · ${a?info(e,a).label:'Between recorded operations'} · ${elapsed(a?.startedAt?now-Date.parse(a.startedAt):u.elapsedMs)}`),a&&h('a',{href:link(e.arc,'overview','invocations',a.routeId)},a.kind==='agentic'?`Live agent history: ${u.id}`:`Current check: ${u.id}`));}),waiting.map(u=>h('article',{key:u.id,className:'now-row'},h(UnitLink,{e,unit:u.id},`${u.title} (${u.id})`),h('p',null,u.reasons.join(' · ')),h('p',{className:'muted'},u.waitSince?`Waiting ${elapsed(now-Date.parse(u.waitSince))}`:'Wait start not recorded')))),h('a',{href:link(e.arc,'attention')},`${m.attention.length} open items · View Attention`)),
-      h(Panel,{title:'Units',subtitle:nodes.length<m.graph.units.length?`Activity neighborhood · ${p.units.length} units in the Units table`:'Select a unit to explore its journey'},focus&&h('div',{className:'selection'},h('strong',null,p.units.find(u=>u.id===focus.id)?.title||focus.label),h('span',{className:'muted'},focus.id),h('button',{onClick:()=>open(focus.id),'aria-label':`Open ${focus.id} details`},'Details ↗')),
-        h('div',{className:'graph'},h(D.UnitGraph,{units:nodes.map(n=>({...n,label:p.units.find(u=>u.id===n.id)?.title||n.label,meta:p.units.find(u=>u.id===n.id)?`${n.id} · ${p.units.find(u=>u.id===n.id).state}`:n.meta})),edges:m.graph.edges.filter(([a,b])=>nodes.some(u=>u.id===a)&&nodes.some(u=>u.id===b)),selectedId:focus?.id,onSelect:setSelected,onOpen:open,height:380})),
+      h(Panel,{title:'Units',subtitle:nodes.length<m.graph.units.length?`Activity neighborhood · ${p.units.length} units in the Units table`:'Select a unit to explore its journey'},focus&&h('div',{className:'selection'},h('strong',null,focus.id),h('span',{className:'selection-intent',title:p.units.find(u=>u.id===focus.id)?.title},p.units.find(u=>u.id===focus.id)?.title||focus.label),h('button',{onClick:()=>open(focus.id),'aria-label':`Open ${focus.id} details`},'Details ↗')),
+        h('div',{className:'graph'},h(D.UnitGraph,{units:nodes.map(n=>({...n,label:n.id.length>14?n.id.slice(0,13)+'…':n.id,meta:undefined,elapsedMs:undefined,hold:n.status==='held'?{short:'see details'}:undefined})),edges:m.graph.edges.filter(([a,b])=>nodes.some(u=>u.id===a)&&nodes.some(u=>u.id===b)),selectedId:focus?.id,onSelect:setSelected,onOpen:open,height:380})),
         h('div',{className:'unit-list'},p.units.filter(u=>m.graph.units.length<=20||nodes.some(n=>n.id===u.id)).map(u=>h(UnitLink,{key:u.id,e,unit:u.id},`${u.title} · ${u.state} (${u.id})`))),p.units.length>20&&h('p',null,h('a',{href:link(e.arc,'units')},`All ${p.units.length} units`))),
       h('div',{className:'columns'},h(Panel,{title:'Recorded effort',subtitle:'Recorded work and waiting, not wall-clock time'},h(Effort,{row:m.time.total})),h(Panel,{title:'Milestone gates'},s.milestones.length?s.milestones.map(g=>h('p',{key:g.id},h('a',{href:link(e.arc,'overview','units',`milestone:${g.id}`)},e.data.plan?.milestones.find(m=>m.id===g.id)?.text||g.id),` · ${g.id} · ${g.passed?'gate passed':'gate not passed'}`)):h('p',null,'No milestone gates.'))),
-      h(Panel,{title:'Recent activity',extra:h('a',{href:link(e.arc,'activity')},'View all activity')},h(ActivityRows,{e,rows:p.feed.slice(0,6)})));
+      h(Panel,{title:'Recent activity',extra:h('a',{href:link(e.arc,'activity')},'View all activity')},h(ActivityRows,{e,rows:p.feed.filter(row=>!row.housekeeping).slice(0,6)})));
   }
   function Units({e}){const now=R.useContext(Clock);const [sort,setSort]=useState('id'),[desc,setDesc]=useState(false);const p=e.data.console.presentation;
     const rows=p.units.map(u=>({...u,elapsedMs:u.startedAt&&!u.endedAt&&!p.run.endedAt?Math.max(0,now-Date.parse(u.startedAt)):u.elapsedMs})).sort((a,b)=>(typeof a[sort]==='number'?a[sort]-b[sort]:String(a[sort]??'').localeCompare(String(b[sort]??'')))*(desc?-1:1));
     const cols=[['id','Unit'],['state','State'],['stage','Current stage'],['elapsedMs','Elapsed'],['rounds','Rounds'],['attempts','Stage attempts'],['redChecks','Red checks'],['spend','Spend'],['reasons','Waiting reason']];
-    return h(Panel,{title:'Units',subtitle:'Every unit · select a column to sort'},h('div',{className:'tablewrap'},h('table',{'aria-label':'All units'},h('thead',null,h('tr',null,cols.map(([key,label])=>h('th',{key,'aria-sort':sort===key?(desc?'descending':'ascending'):'none'},h('button',{onClick:()=>{setDesc(sort===key?!desc:['elapsedMs','redChecks','spend'].includes(key));setSort(key);},'aria-label':`Sort by ${label.toLowerCase()}`},label))))),h('tbody',null,rows.map(u=>h('tr',{key:u.id},h('td',null,h(UnitLink,{e,unit:u.id},u.title),h('small',null,u.id)),h('td',null,u.state),h('td',null,u.stage),h('td',null,elapsed(u.elapsedMs)),h('td',null,u.rounds),h('td',null,u.attempts),h('td',null,u.redChecks),h('td',null,money(u.spend)),h('td',null,u.reasons.join('; ')||'—',u.reasons.length>0&&h('small',null,u.waitSince?`Waiting ${elapsed(now-Date.parse(u.waitSince))}`:'Wait start not recorded'))))))));
+    return h(Panel,{title:'Units',subtitle:'Every unit · select a column to sort'},h('div',{className:'tablewrap'},h('table',{'aria-label':'All units'},h('thead',null,h('tr',null,cols.map(([key,label])=>h('th',{key,'aria-sort':sort===key?(desc?'descending':'ascending'):'none'},h('button',{onClick:()=>{setDesc(sort===key?!desc:['elapsedMs','redChecks','spend'].includes(key));setSort(key);},'aria-label':`Sort by ${label.toLowerCase()}`},label))))),h('tbody',null,rows.map(u=>h('tr',{key:u.id},h('td',{className:'unit-intent'},h(UnitLink,{e,unit:u.id},u.title),h('small',null,u.id)),h('td',null,u.state),h('td',null,u.stage),h('td',null,elapsed(u.elapsedMs)),h('td',null,u.rounds),h('td',null,u.attempts),h('td',null,u.redChecks),h('td',null,money(u.spend)),h('td',null,u.reasons.join('; ')||'—',u.reasons.length>0&&h('small',null,u.waitSince?`Waiting ${elapsed(now-Date.parse(u.waitSince))}`:'Wait start not recorded'))))))));
   }
   function ActivityRows({e,rows}){return h('ol',{className:'activity-feed'},rows.map(row=>h('li',{key:row.id},h(Time,{at:row.at}),h('a',{href:row.unit?link(e.arc,'overview','units',row.unit):link(e.arc,row.tab||'activity')},row.text))));}
-  function Activity({e}){const [page,setPage]=useState(0),[rows,setRows]=useState(null),[error,setError]=useState('');useEffect(()=>{get(`/runs/${e.arc}/activity?offset=${page*30}`).then(r=>setRows(r.data)).catch(err=>setError(err.message));},[e.arc,e.revision,page]);const p=e.data.console.presentation;
-    return h(Panel,{title:'Activity',subtitle:'What happened, newest first'},error&&h('p',{role:'alert'},error),rows&&h(ActivityRows,{e,rows:rows.rows}),h('div',{className:'runbar'},page>0&&h('button',{onClick:()=>setPage(page-1)},'Newer activity'),rows?.more&&h('button',{onClick:()=>setPage(page+1)},'Earlier activity')),
+  function Activity({e}){const [housekeeping,setHousekeeping]=useState(false);const [page,setPage]=useState(0),[rows,setRows]=useState(null),[error,setError]=useState('');useEffect(()=>{get(`/runs/${e.arc}/activity?offset=${page*30}&housekeeping=${housekeeping?1:0}`).then(r=>setRows(r.data)).catch(err=>setError(err.message));},[e.arc,e.revision,page,housekeeping]);const p=e.data.console.presentation;
+    return h(Panel,{title:'Activity',subtitle:'What happened, newest first'},h('label',{className:'housekeeping-toggle'},h('input',{type:'checkbox',checked:housekeeping,onChange:ev=>{setPage(0);setHousekeeping(ev.target.checked);}}),' Show housekeeping steps'),error&&h('p',{role:'alert'},error),rows&&h(ActivityRows,{e,rows:rows.rows}),h('div',{className:'runbar'},page>0&&h('button',{onClick:()=>setPage(page-1)},'Newer activity'),rows?.more&&h('button',{onClick:()=>setPage(page+1)},'Earlier activity')),
       h('section',{className:'detailsection'},h('h3',null,'Holistic review'),p.holistic.enabled?h(R.Fragment,null,h('p',null,`Holistic audit: ${p.holistic.audit?.running?'Running':p.holistic.audits.length?'Completed':'No audit recorded'}. ${p.holistic.activeFindings.length} active findings.`),p.holistic.activeFindings.map((f,i)=>h('p',{key:i},`${f.id}: ${f.claim||f.what||f.title||f.summary||'Finding recorded'} · ${f.state||'active'}`)),h('p',null,`Root decisions: ${p.holistic.checkpoint.length} recorded. Checkpoint job detail is not included in this console yet.`)):h('p',null,'No holistic layer is enabled for this arc.')));
   }
   function Resources({e,open}){const m=e.data.console,p=m.presentation,[all,setAll]=useState(false),now=R.useContext(Clock);const openStarts=m.resources.bookings.filter(b=>b.state!=='done').map(b=>b.waitFrom??b.from);const end=m.resources.endAt?m.resources.now:Math.max(m.resources.now,(now-m.resources.origin)/1000),start=all||m.resources.endAt?0:Math.max(0,Math.min(end-120,...openStarts));const slots=m.resources.bookings.filter(b=>b.resource==='integration-slot');
     return h(R.Fragment,null,h(Panel,{title:'Integration slot'},slots.some(b=>b.state==='holding')?slots.filter(b=>b.state==='holding').map(b=>h('p',{key:b.id},`${b.label} holds the integration slot · held ${elapsed((end-b.from)*1000)}`)):h('p',null,'Integration slot is free.'),slots.filter(b=>b.state==='waiting').sort((a,b)=>a.from-b.from).map((b,i)=>h('p',{key:b.id},`Queue position ${i+1}: ${b.label} · waiting ${elapsed((end-b.from)*1000)}`))),
-      h(Panel,{title:'Time & resources',subtitle:'Recorded work and waiting, not wall-clock time'},h(Effort,{row:m.time.total}),h('h3',null,'Waiting by reason'),Object.keys(p.waitReasons).length?h('dl',{className:'reason-list'},Object.entries(p.waitReasons).map(([reason,ms])=>h('div',{key:reason},h('dt',null,reason),h('dd',null,elapsed(ms))))):h('p',null,'No completed waiting measurements.'),m.time.unmeasuredReservations>0&&h('p',null,`${m.time.unmeasuredReservations} unmeasured reservations · duration not recorded`),m.time.unallocated>0&&h('p',null,`${elapsed(m.time.unallocated)} waiting spans overlapping reasons.`),m.resources.unknownQueueStarts>0&&h('p',null,`${m.resources.unknownQueueStarts} queue entries have an unrecorded start.`),
+      h(Panel,{title:'Time & resources',subtitle:'Recorded work and waiting, not wall-clock time'},h(Effort,{row:m.time.total}),h('section',{className:'waiting-table'},h('h3',null,'Waiting by reason'),Object.keys(p.waitReasons).length?h('table',{'aria-label':'Waiting by reason'},h('thead',null,h('tr',null,['Reason','Total','Count'].map(v=>h('th',{key:v},v)))),h('tbody',null,Object.entries(p.waitReasons).filter(([,ms])=>ms>0).map(([reason,ms])=>h('tr',{key:reason},h('td',null,reason),h('td',null,elapsed(ms)),h('td',null,p.waitReasonCounts[reason]))))):h('p',null,'No completed waiting measurements.')),m.time.unmeasuredReservations>0&&h('p',null,`${m.time.unmeasuredReservations} unmeasured reservations · duration not recorded`),m.time.unallocated>0&&h('p',null,`${elapsed(m.time.unallocated)} waiting spans overlapping reasons.`),m.resources.unknownQueueStarts>0&&h('p',null,`${m.resources.unknownQueueStarts} queue entries have an unrecorded start.`),
       h('div',{className:'runbar'},h('button',{onClick:()=>setAll(v=>!v),'aria-pressed':all},all?'Recent window':'ALL'),h('span',null,m.resources.endAt?`Finished run · ${elapsed(end*1000)}`:'Recent activity window')),
-      m.resources.resources.length?h(D.ResourceSchedule,{...m.resources,start,end:Math.max(end,1),now:end,tickEvery:Math.max(1,Math.ceil((end-start)/6)),timeFormat:n=>elapsed(n*1000),title:'Resource bookings',onSelect:open}):h('p',null,'No named resource bookings.')),
+      m.resources.resources.length?h(D.ResourceSchedule,{...m.resources,start,end:Math.max(end,1),now:end,tickEvery:Math.max(1,Math.ceil((end-start)/6)),timeFormat:n=>elapsed(n*1000),title:'Resource bookings',onSelect:open}):h('p',null,'No named resource bookings.'),h('ul',{className:'booking-list','aria-label':'Resource booking details'},m.resources.bookings.filter(b=>b.state!=='waiting').map(b=>h('li',{key:b.id},h('a',{title:new Date(m.resources.origin+b.from*1000).toLocaleString(),href:link(e.arc,'overview','units',b.unitId||b.label)},`${b.label} ${b.state==='done'?'held':'holds'} ${b.resource} ${elapsed(((b.to??end)-b.from)*1000)} at ${elapsed(b.from*1000)}`))))),
       h(CpuEvidence,{e}));
   }
   function CpuEvidence({e}) {
-    const m=e.data.console,p=m.presentation;
-    const groups=new Map();
-    for(const row of m.cpu){const a=p.activityInfo.find(a=>a.id===row.id);const key=`${row.unit}:${a?.stage}:${a?.attempt}`;if(!groups.has(key))groups.set(key,{unit:row.unit,activity:a,rows:[]});groups.get(key).rows.push(row);}
-    const measurement=row=>{
-      const ratio=row.average!=null&&row.reserved>0?row.average/row.reserved:null;
-      return h('tr',{key:row.id},h('td',null,h('small',null,row.id.split('/').at(-1))),
-        h('td',{title:`Reservation basis: ${row.basis}; demand ${row.demand??'unrecorded'}`},ratio==null?'CPU measurement or reservation unrecorded':`Used ${Math.round(ratio*100)}% of ${row.reserved} reserved cores`),
-        h('td',null,ratio==null?'Not enough recorded evidence':ratio<0.1?'Heavy over-reservation':ratio>1.25?'Heavy under-reservation':'Within recorded reservation'));
-    };
+    const m=e.data.console,p=m.presentation,stages=new Map(),units=new Map();
+    for(const row of m.cpu){const a=p.activityInfo.find(a=>a.id===row.id),key=`${row.unit}:${a?.stage}:${a?.attempt}`;if(!stages.has(key))stages.set(key,{key,unit:row.unit,activity:a,rows:[]});stages.get(key).rows.push(row);}
+    for(const g of stages.values()){
+      const measured=g.rows.filter(r=>r.measured?.wallMs>0&&r.reserved>0),wall=measured.reduce((n,r)=>n+r.measured.wallMs,0),reservedTime=measured.reduce((n,r)=>n+r.reserved*r.measured.wallMs,0);
+      g.ratio=reservedTime?measured.reduce((n,r)=>n+r.measured.runMs,0)/reservedTime:null;
+      g.reserved=wall?reservedTime/wall:null;
+      if(!units.has(g.unit))units.set(g.unit,[]);units.get(g.unit).push(g);
+    }
+    const measured=[...stages.values()].filter(g=>g.ratio!=null),over=measured.filter(g=>g.ratio<.1).length,under=measured.filter(g=>g.ratio>1.25).length;
     return h(Panel,{title:'CPU evidence',subtitle:`CPU in use: ${m.tokenOccupancy} of ${p.cpuCapacity??'unrecorded'} cores`},
       p.units.filter(u=>u.reasons.some(r=>/pressure/i.test(r))).map(u=>h('p',{key:u.id},`${u.id}: ${u.reasons.filter(r=>/pressure/i.test(r)).join(', ')}`)),
-      h('div',{className:'tablewrap'},h('table',{'aria-label':'CPU evidence'},
-        h('thead',null,h('tr',null,['Unit / stage / attempt','Used vs reserved','Assessment'].map(x=>h('th',{key:x},x)))),
-        [...groups].map(([key,g])=>h('tbody',{key,'data-cpu-group':key},
-          h('tr',null,h('th',{colSpan:3,scope:'rowgroup'},p.units.some(u=>u.id===g.unit)?h(UnitLink,{e,unit:g.unit}):'Arc work',` · ${g.activity?.label||'Recorded work'} · attempt ${g.activity?.attempt??'unrecorded'}`)),
-          g.rows.map(measurement))))));
+      h('p',null,measured.length?`${over} of ${measured.length} measured stages used under 10% of the cores they reserved${under?`; ${under} used over 125%`:''}.`:'No measured CPU reservations.'),
+      h('table',{'aria-label':'CPU evidence'},[...units].map(([unit,groups])=>h('tbody',{key:unit,'data-cpu-group':unit},
+        h('tr',null,h('th',{scope:'rowgroup'},h(UnitLink,{e,unit},unit),h('span',{className:'cpu-intent',title:p.units.find(u=>u.id===unit)?.title},p.units.find(u=>u.id===unit)?.title||'Arc work'))),
+        groups.map(g=>h('tr',{key:g.key},h('td',{title:g.rows.map(r=>`${r.id}: reservation basis ${r.basis}; demand ${r.demand??'unrecorded'}`).join('; ')},`${stageName(g.activity?.stage||'Recorded work')} · attempt ${g.activity?.attempt??'unrecorded'} — ${g.ratio==null?'CPU measurement or reservation unrecorded':`used ${Math.round(g.ratio*100)}% of ${Number(g.reserved.toFixed(2))} reserved cores`}`)))))));
   }
   function UnitDetail({e,id,close,stale}) {
     const m=e.data.console,p=m.presentation,u=p.units.find(u=>u.id===id);
     const gate=e.data.display.status.milestones.find(g=>`milestone:${g.id}`===id);
-    const now=R.useContext(Clock);
+    const now=R.useContext(Clock);const [housekeeping,setHousekeeping]=useState(false);
     if(gate)return h(Dialog,{title:`Milestone ${gate.id}`,close},h('p',null,`${gate.passed?'Gate passed':'Gate not passed'} · ${gate.state}`));
     if(!u)return h(Dialog,{title:'Unit unavailable',close},h('p',null,'This unit is absent from the applied plan.'));
     const activities=m.activities.filter(a=>a.unit===id);
@@ -115,29 +114,29 @@
     const activityRow=routeId=>{
       const a=activities.find(a=>a.routeId===routeId);if(!a)return null;
       const ai=info(e,a);
-      return h('p',{key:routeId},h('a',{href:link(e.arc,'overview','invocations',routeId),'aria-label':`${ai.label} attempt ${ai.attempt}: ${a.kind==='agentic'?'agent history':'check log'}`},`${a.kind==='agentic'?'Agent history':'Check log'} · ${a.kind==='agentic'?(a.model||'model unrecorded'):ai.label}`),` · ${money(ai.spend)} · ${a.elapsedMs==null?'In progress':elapsed(a.elapsedMs)}`);
+      return h('p',{key:routeId,className:'journey-activity'},`${a.kind==='agentic'?`Agent · ${a.model||'model unrecorded'}`:ai.label} · ${money(ai.spend)} · ${a.elapsedMs==null?'In progress':elapsed(a.elapsedMs)} · `,h('a',{href:link(e.arc,'overview','invocations',routeId),'aria-label':`${ai.label} attempt ${ai.attempt}: ${a.kind==='agentic'?'agent history':'check log'}`},a.kind==='agentic'?'Agent history ›':'Check log ›'));
     };
-    const waiting=w=>h('div',{key:w.at,className:'journey-wait'},h('strong',null,'Waiting during '+w.stage),h(Time,{at:w.at}),w.reasons.map(r=>h('p',{key:r.reason},`${r.reason}: ${elapsed(r.ms)}`)));
+    const waiting=w=>h('div',{key:w.at,className:'journey-wait'},h('strong',null,'Waiting during '+w.stage),' · ',h(Time,{at:w.at}),w.reasons.map(r=>h('p',{key:r.reason},`${r.reason}: ${elapsed(r.ms)}`)));
     const stageRow=step=>h('li',{key:step.id},
       h('div',{className:'journey-heading'},h('strong',null,`${step.label} · attempt ${step.attempt}`),h('span',null,step.outcome),h(Time,{at:step.endedAt||step.at})),
       step.findingTitles.map((title,i)=>h('p',{key:i,className:'finding'},title)),step.notes.map(n=>h('p',{key:n},n)),
       u.waiting.filter(w=>w.stage===step.label&&Date.parse(w.at)>=Date.parse(step.at)&&(!step.endedAt||Date.parse(w.at)<=Date.parse(step.endedAt))).map(waiting),
       step.activities.map(activityRow));
-    return h(Dialog,{title:u.title,close},
-      h('p',{className:'muted'},`Unit ${id}`),h('p',{className:'unit-state'},`${u.state} · ${u.stage}`),u.summary!==u.title&&h('p',null,u.summary),
-      h('div',{className:'unit-facts'},h('span',null,`${u.rounds} rounds · ${u.attempts} stage attempts`),h('span',null,`Spend ${money(u.spend)}`),h('span',null,`Elapsed ${elapsed(u.startedAt?Math.max(0,(u.endedAt||p.run.endedAt?Date.parse(u.endedAt||p.run.endedAt):now)-Date.parse(u.startedAt)):null)}`)),
+    return h(Dialog,{title:id,close},
+      h('p',{className:'unit-purpose'},u.title),h('p',{className:'unit-state'},`${u.state} · ${u.stage}`),u.summary!==u.title&&h('p',null,u.summary),
+      h('div',{className:'unit-facts'},h('span',null,`${u.rounds} ${u.rounds===1?'round':'rounds'} · ${u.attempts} stage ${u.attempts===1?'attempt':'attempts'}`),h('span',null,`Spend ${money(u.spend)}`),h('span',null,`Elapsed ${elapsed(u.startedAt?Math.max(0,(u.endedAt||p.run.endedAt?Date.parse(u.endedAt||p.run.endedAt):now)-Date.parse(u.startedAt)):null)}`)),
       u.reasons.length>0&&h('p',{className:'notice'},u.reasons.join(' · ')),
       u.lineage&&h('p',null,'Re-entry from ',h(UnitLink,{e,unit:u.lineage.reenters},u.lineage.reenters)),
       m.attention.filter(r=>r.subject.type==='unit'&&r.subject.unit===id).map(r=>h('section',{key:r.id},h('h3',null,r.summary),h(Notice,{hold:{reason:'query',label:r.blocking?'Waiting on a human':'Owner notice',detail:r.recommendation}}),h('a',{href:link(e.arc,'attention')},'View request and evidence'))),
-      h('h3',null,'Journey'),
-      rounds.length?rounds.map(round=>h('section',{className:'journey-round',key:round},h('h3',null,`Round ${round}`),h('ol',null,u.journey.filter(s=>s.round===round).map(stageRow)))):h('p',null,'No stage attempts recorded yet.'),
+      h('h3',null,'Journey'),h('label',{className:'housekeeping-toggle'},h('input',{type:'checkbox',checked:housekeeping,onChange:ev=>setHousekeeping(ev.target.checked)}),' Show housekeeping steps'),
+      rounds.length?rounds.map(round=>h('section',{className:'journey-round',key:round},h('h3',null,`Round ${round}`),h('ol',null,u.journey.filter(s=>s.round===round&&(housekeeping||!s.housekeeping)).map(stageRow)))):h('p',null,'No stage attempts recorded yet.'),
       h(Effort,{row:m.time.rows.find(row=>row.id===id)||{}}),
       u.waiting.length>0&&h('section',{className:'detailsection'},h('h3',null,'Recorded waiting'),u.waiting.map(waiting)),
       h('section',{className:'detailsection'},h('h3',null,'Acceptance'),h('ul',null,u.acceptance.map((text,i)=>h('li',{key:i},text)))),
       h('section',{className:'detailsection'},h('h3',null,'Checks'),e.data.display.status.units.find(v=>v.unit===id)?.certification?.lanes.map((l,i)=>h('p',{key:i},`Check: ${l.id} · ${l.verdict==='pass'?'Passed':l.verdict==='fail'?'Failed':l.state}`)))
     );
   }
-  function Dialog({ title, close, children }) {
+  function Dialog({ title, close, children, className='' }) {
     const ref = useRef(null);
     useEffect(() => {
       const previous = document.activeElement;
@@ -155,7 +154,7 @@
       panel.addEventListener('keydown', key);
       return () => { panel.removeEventListener('keydown', key); previous?.focus(); };
     }, []);
-    return h('div', { className: 'detail', onClick: (ev) => ev.target === ev.currentTarget && close() }, h('section', { ref, className: 'detailpanel', role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'detail-title' },
+    return h('div', { className: 'detail', onClick: (ev) => ev.target === ev.currentTarget && close() }, h('section', { ref, className: `detailpanel ${className}`, role: 'dialog', 'aria-modal': true, 'aria-labelledby': 'detail-title' },
       h('div', { className: 'detailhead' }, h('div', null, h('div', { className: 'eyebrow' }, 'Roadmap · recorded detail'), h('h2', { id: 'detail-title' }, title)), h('button', { onClick: close, 'aria-label': 'Close details' }, 'Close ✕')), children));
   }
   function HistoryField({ event, field, base, identity }) {
@@ -171,13 +170,17 @@
   function AgentEvent({ event, activity, base, identity }) {
     const now=R.useContext(Clock);
     const display = { ...event, at: event.at ? relativeTime(event.at,now) : undefined, title: [event.parent ? `Subagent of ${event.parent}` : '', event.title].filter(Boolean).join(' · ') };
-    // The supplied tool renderer collapses every output, including failures. Render failed output openly.
-    if (event.status === 'failed') display.output = undefined;
+    const expansion=field=>(event.truncated||[]).includes(field)?h(HistoryField,{key:`${event.id}:${field}:${identity}`,event,field,base,identity}):null;
+    // Compose bounded fields inside their event; keep the design system's event typography and rail.
+    if(event.type==='tool'){
+      display.input=undefined;display.output=undefined;
+      display.text=h(R.Fragment,null,event.text,expansion('text'),event.input!=null&&h('div',{className:'tool-input'},h('strong',{className:'eyebrow'},'Input'),h('pre',null,event.input),expansion('input')),
+        event.output!=null&&h('details',{className:'tool-output',open:event.status==='failed'},h('summary',null,event.status==='failed'?'Output · error':'Show output'),h('pre',null,event.output),expansion('output')));
+    }else display.text=h(R.Fragment,null,event.text,expansion('text'));
     return h('article', { className: 'history-event', 'data-event-id': event.id, title: event.at ? new Date(event.at).toLocaleString() : undefined },
-      h(D.AgentHistory, { activity: { ...activity, status: 'pending' }, events: [display] }),
-      event.status === 'failed' && event.output != null && h('div', { className: 'failed-output' }, h('strong', null, 'Output · error'), h('pre', null, event.output)),
-      (event.truncated || []).map(field => h(HistoryField, { key: `${event.id}:${field}:${identity}`, event, field, base, identity })));
+      h(D.AgentHistory, { activity: { ...activity, status: 'pending' }, events: [display] }),expansion('title'));
   }
+
   function AgentDetail({ e, id, activity, close, stale }) {
     const base = `/runs/${e.arc}/invocations/${id}`;
     const [history, setHistory] = useState(null), [error, setError] = useState(''), [brief, setBrief] = useState(null), [result, setResult] = useState(null);
@@ -218,7 +221,7 @@
     const live = history?.state === 'running' && !completed && !stale;
     const model = history?.session?.model || [...(history?.events || [])].reverse().find(event => event.model)?.model || activity.model;
     const usage = [...(history?.events || [])].reverse().find(event => event.tokens != null)?.tokens;
-    return h(Dialog, { title: `Agent history · ${info(e,activity).label}`, close },
+    return h(Dialog, { title: `Agent history · ${info(e,activity).label}`, close, className:'agent-detail' },
       h('button', { onClick: back }, `‹ Back to unit ${activity.unit}`),
       h('div', { className: 'history-meta' }, h('strong', null, live ? 'Running' : completed ? 'Finished' : history?.state || 'Connecting'),
         h('span', null, model || 'Model unrecorded'), usage != null && h('span', null, `${usage} recorded tokens`)),
@@ -226,12 +229,12 @@
       h('details', { className: 'history-brief' }, h('summary', null, 'Brief · recorded seat prompt'),
         brief ? h(R.Fragment, null, h('pre', null, brief.lines.join('\n')), brief.end < brief.size && h('button', { onClick: () => get(`${base}/prompt?after=${brief.end}`).then(r => setBrief(r.data)).catch(err => setError(err.message)) }, `Next brief page (${brief.end} of ${brief.size} bytes)`)) : h('p', null, 'Reading retained brief…')),
       error && h('p', { role: 'alert' }, error),
-      h('div', { className: 'history-controls' }, history?.before != null && h('button', { onClick: more }, 'Show earlier'), h('button', { onClick: latest }, following ? 'Following live tail' : `Follow live tail${history?.unseen ? ` (${history.unseen} updates)` : ''}`), earlier && h('span', null, 'Earlier history · latest 200 events retained in view')),
+      h('div', { className: 'history-controls' }, history?.before != null && h('button', { onClick: more }, 'Show earlier'), live && h('button', { onClick: latest }, following ? 'Following live tail' : `Follow live tail${history?.unseen ? ` (${history.unseen} updates)` : ''}`), completed && (earlier||!following||history?.unseen) && h('button',{onClick:latest},'Show latest'), earlier && h('span', null, 'Earlier history · latest 200 events retained in view')),
       h('div', { className: 'history-scroll', ref: scroll, tabIndex: 0, 'aria-label': 'Agent transcript', onScroll: ev => { follow.current = ev.currentTarget.scrollHeight - ev.currentTarget.scrollTop - ev.currentTarget.clientHeight < 48; setFollowing(follow.current); } },
         history?.events.map(event => h(AgentEvent, { key: `${history.identity}:${event.id}`, event, activity:{...activity,name:`${info(e,activity).label} · attempt ${info(e,activity).attempt}`}, base, identity: history.identity })),
         history && !history.events.length && h('p', null, 'Waiting for complete transcript records…'),
         live && h('p', { className: 'history-live', role: 'status' }, 'Agent is working', h('span', { className: 'atlas-settle-caret', 'aria-hidden': true }))),
-      h('p', { className: 'history-links' }, h('a', { href: `${api}${base}/result`, onClick: ev => { ev.preventDefault(); get(`${base}/result`).then(r => setResult(r.data.lines.join('\n'))).catch(err => setError(err.message)); } }, 'Final verdict / report'), ' · ',
+      h('div', { className: 'history-links' }, h('a', { href: `${api}${base}/result`, onClick: ev => { ev.preventDefault(); get(`${base}/result`).then(r => setResult(r.data.lines.join('\n'))).catch(err => setError(err.message)); } }, 'Final verdict / report'),
         h(TranscriptText,{base})),
       result && h('pre', { className: 'record' }, result));
   }
