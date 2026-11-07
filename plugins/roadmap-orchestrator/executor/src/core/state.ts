@@ -1,3 +1,5 @@
+import { workloadCpu } from './cpu.ts';
+import { parseResourceUnit } from './ids.ts';
 import { candidateRedDefault } from './events.ts';
 // The fold: the one derivation of run state from the event log. Everything the executor knows about ops,
 // units, spend and needs-user comes from folding events.jsonl in order. `state.json` exists only in
@@ -317,7 +319,7 @@ export type ResourceStatus =
   | Readonly<{ state: HeldState | 'cleanup-failed'; holder: Holder }>;
 
 /** A resource unit's state after its last done transition, and the transition still open on it, if any. */
-export type ResourceEntry = Readonly<{ status: ResourceStatus; pending: IntentOf<'resource.transition'> | null }>;
+export type ResourceEntry = Readonly<{ status: ResourceStatus; pending: IntentOf<'resource.transition'> | null; workload?: true }>;
 
 export const FREE_RESOURCE: ResourceEntry = { status: { state: 'free' }, pending: null };
 
@@ -855,7 +857,7 @@ export class Fold implements JournalView {
     }
     if (r.kind === 'docs.commit') this.#seeJob(r.expect.pub);
     if (r.kind === 'resource.transition') {
-      for (const res of r.expect.resources) this.#resources.set(res, { status: (this.#resources.get(res) ?? FREE_RESOURCE).status, pending: r });
+      for (const res of r.expect.resources) this.#resources.set(res, { ...(this.#resources.get(res) ?? FREE_RESOURCE), pending: r });
     }
     this.#open.set(r.op, r);
     this.#openByKey.set(r.key, r.op);
@@ -915,15 +917,21 @@ export class Fold implements JournalView {
     if (r.kind !== intent.kind) fail(`done of kind ${r.kind} for ${r.op}, an intent of kind ${intent.kind}`);
     const moved: [ResourceUnit, ResourceStatus][] = [];
     if (intent.kind === 'resource.transition') {
-      const { holder, resources, edge } = intent.expect;
+      const { holder, resources, edge, slotHolder } = intent.expect;
       for (const res of resources) {
-        const next = afterEdge((this.#resources.get(res) ?? FREE_RESOURCE).status, holder, edge);
+        const next = afterEdge((this.#resources.get(res) ?? FREE_RESOURCE).status, edge.type === 'reserve' && res === 'integration-slot' && slotHolder !== undefined ? slotHolder : holder, edge);
         if (typeof next === 'string') return fail(`${r.op} is illegal for ${res}: ${next}`);
         moved.push([res, next]);
       }
     }
     this.#close(entry, { type: 'done', record: r });
-    for (const [res, status] of moved) this.#resources.set(res, { status, pending: null });
+    for (const [res, status] of moved) {
+      const previous = this.#resources.get(res) ?? FREE_RESOURCE;
+      const workload = intent.kind === 'resource.transition' && intent.expect.edge.type === 'reserve'
+        ? workloadCpu(intent.expect.holder, parseResourceUnit(res).type === 'cpu' ? 1 : 0, intent.expect.cpuBasis)
+        : previous.workload === true;
+      this.#resources.set(res, { status, pending: null, ...(status.state !== 'free' && workload ? { workload: true } : {}) });
+    }
     if (intent.kind === 'resource.transition') this.#residuesAfter(intent, at, fail);
     if (intent.kind === 'spec.patch') {
       const history = this.#patchedSpecs.get(intent.expect.path) ?? [];
@@ -975,7 +983,7 @@ export class Fold implements JournalView {
     // An aborted transition never happened.
     const intent = entry.latest;
     if (intent.kind === 'resource.transition') {
-      for (const res of intent.expect.resources) this.#resources.set(res, { status: (this.#resources.get(res) ?? FREE_RESOURCE).status, pending: null });
+      for (const res of intent.expect.resources) this.#resources.set(res, { ...(this.#resources.get(res) ?? FREE_RESOURCE), pending: null });
     }
   }
 
@@ -1418,6 +1426,11 @@ export class Fold implements JournalView {
         this.#lastReopenSeq = at.seq;
         this.#propagationFacts.push({ seq: at.seq, at: at.at, fact: f });
         return;
+      case 'candidate-entry-planned':
+        return;
+      case 'stage-admitted':
+        if (this.#planApplied?.specs[f.unit] === undefined) fail(`admission of unknown unit ${f.unit}`);
+        return; // Measurement only: admission does not advance attempts.
       default:
         this.#holisticFact(f, fail, at);
     }

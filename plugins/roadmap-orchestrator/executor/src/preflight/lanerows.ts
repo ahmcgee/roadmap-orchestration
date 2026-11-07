@@ -1,3 +1,4 @@
+import { reservedLaneEnv } from '../input/ci.ts';
 // The one lane validator: the row `spec-lane-unrunnable` (SCHEMAS.md "Startup rejection table"). Every path a spec
 // enters runs it: a start (`specLaneCheck`, src/preflight/checks.ts, over every live unit) and the apply core
 // (src/commands/apply.ts `evaluateRevision`, over the units a revision changes), which every revision passes through:
@@ -29,7 +30,8 @@ function commandProblems(command: Declared, env: Env): CommandProblem[] {
 
 /** argv[0], the declared host variables, and (dev.17) the environment the lane names, which the plan must declare. */
 function laneProblems(plan: PlanM1, unit: UnitId | null, lane: LaneDef, env: Env): LaneRow[] {
-  const out: LaneRow[] = commandProblems(lane, env).map((problem) => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem }));
+  const out: LaneRow[] = commandProblems(lane, env).filter((p) => !(p.type === 'env-missing' && p.name === 'ROADMAP_CPU')).map((problem) => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem }));
+  if (reservedLaneEnv(lane)) out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'env-reserved', name: 'ROADMAP_CPU' } });
   if (lane.capture !== undefined) for (const argv of [lane.capture.up, lane.capture.script]) out.push(...commandProblems({ argv, env: lane.env }, env).map((problem): LaneRow => ({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem })));
   if (lane.environment !== undefined && environmentOf(plan, lane.environment) === null) {
     out.push({ kind: 'spec-lane-unrunnable', unit, lane: lane.id, problem: { type: 'unknown-environment', environment: lane.environment } });

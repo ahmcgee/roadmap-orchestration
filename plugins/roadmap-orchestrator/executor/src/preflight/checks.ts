@@ -672,9 +672,12 @@ export async function runChecks(input: StartInput): Promise<StartChecks> {
   } catch (error) {
     routingRows = [schemaRejection(error)];
   }
+  const laneRowsNow = await specLaneCheck(input.env).check(context);
+  // Compatibility: kept collisions are diagnosed after recovery, without refusing arc adoption.
+  const adopted = view !== null && view.planApplied() !== null;
   const environment = [
     ...(await worktreeRootCheck.check(context)),
-    ...(await specLaneCheck(input.env).check(context)),
+    ...laneRowsNow.filter((row) => !(adopted && row.problem.type === 'env-reserved')),
     ...(await walkToolsCheck(input.env, readRepoConfig(input.repo)).check(context)),
     ...routingRows,
     ...(await residueCheck(context, view)),

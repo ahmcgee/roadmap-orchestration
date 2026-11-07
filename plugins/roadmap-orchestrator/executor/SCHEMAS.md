@@ -137,6 +137,8 @@ Pins in `src/core/pins.ts` bind linked requirement revisions and contract blobs.
 
 ### Lanes
 
+Every lane launch (unit, candidate, capture, rerun and job journey) receives executor-owned `ROADMAP_CPU`, the decimal count of actually granted `@cpu` tokens, including zero. It is persisted in launch.env. Authoring and preflight refuse env.set/env.pass collisions; persisted legacy lane readers remain compatible. Startup adopts kept collisions, and the scheduler raises a blocking arc plan-defect before any stage starts; correcting the declaration through apply --resolves releases it. Retired units are excluded from this diagnosis.
+
 Required LaneDef fields: id, nonempty argv, cwd, env `{set:Record<string,string>,pass:string[]}`, expectedExit,
 cadence, resources, evidenceGlobs. EvidenceExcludes defaults to []. Pass/set names cannot overlap. Optional fields:
 inputs (nonempty unique patterns), cost cheap|expensive, placement local|shared-resource|cross-system, cpu, timeoutMin,
@@ -362,6 +364,20 @@ Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for ex
 
 ## Commands, receipts and needs-user
 
+`apply --resolves nu-ID[,nu-ID...]` names unique nonempty journal item ids. Malformed, duplicate, host-* and sup-*
+ids refuse. Optional `CommandBody.apply.resolves` and applied `Receipt.resolved` are additive; readers preserve absence and consumers default it to an
+empty list. Validation never writes defaults or emits upgrade warnings. Disk reads of absent legacy apply fields
+warn once per process; non-apply receipts have no resolution field by design. Original content-addressed bytes are preserved.
+One eligibility predicate runs at submission, dry-run, fenced precommit (after queueing and smokes), and successful
+finish. Items must be canonical open journal items, including ack-file and supersession checks. A changed apply may
+explicitly answer arc subjects (the architect's assertion); unit subjects require that unit's change or re-entry;
+finding subjects require all named findings settled or answered by the prospective repair predicate. Host/file-only
+subjects and no-op applies refuse. Rejected/stale applies close nothing.
+After planAppliedBy(command) exists, explicit and automatic closures reuse acknowledge, writing choice:null to the
+existing ack file/fact. Recovery resumes after commit, each ack file/fact and receipt without a second closure fact.
+Another command's acknowledgement wins without overwrite. Receipt.command identifies the apply and resolved lists
+only journal ids actually closed by it, rebuilt from acknowledgement facts on replay.
+
 CLI parsing is pure and closes over Command kinds; run locator is host or paired repo/arc. Complete forms are in the
 skill reference and parsed by skill-lint. The persisted CommandBody union appears below; host acts such as export and
 brief are not queued command bodies. Brief/note evidence is hashed before submit, so later changed bytes refuse.
@@ -415,6 +431,11 @@ root requests, never executable plan changes. ExperienceVerdict holds a tagged w
 readers for their complete nested schema; those fields are validated against real ids and evidence rather than prose.
 
 ## Event log and effect contracts
+
+Throughput additions retain schema 2: reserve transitions may carry `expect.waited` and candidate reserves may
+carry `expect.slotHolder`. `stage-admitted {unit,stage,waited}` records admission measurement without advancing an
+attempt; `candidate-entry-planned {unit,attempt,tip,request}` records candidate selection and tip-driven refresh.
+The Scheduling and Residues sections define their validation and ownership contracts. No wait-episode facts or ids exist.
 
 Events are hash-chained records. Envelope is `{v,seq,prev,at,arc}`; prev binds the preceding record hash (null at seq 1); body is intent,
 done, abort or fact. Intents carry op id/kind, resource, parent and exact expect payload; done binds kind-specific outcome
@@ -478,6 +499,12 @@ candidates uncharged. Completion binds planRev/head/highWater and can reopen und
 remains immutable. GC preserves needed verified snapshots while compacting eligible old runtime/evidence.
 
 ## Status and brief projections
+
+Full status and summary share `waiting` through StatusCore:
+`{unmeasuredReservations,byUnitStage:[{unit,stage,totalMs,byReasonMs}],byJobStage:[{job,stage:JobKind,totalMs,byReasonMs}]}`.
+It sums completed reserve and stage-admitted measurements. Simultaneous reason totals are non-additive; absent
+legacy measurements remain unmeasured. Current blockers stay in sched.json; no active tail or recovery downtime is
+extrapolated. Summary retains the lightweight shared projection.
 
 Status is read-only without a lock. Summary fields: arc, state, planRev, supervision, progress `{total,merged,states,held,remaining}`,
 spend `{costUsd,expectedUsd,differenceUsd,estimatedCalls,unavailableCalls}`, milestones, caught, verdicts, captures,
@@ -621,7 +648,7 @@ export type CommandBody =
   | Readonly<{ type: 'ack'; needsUser: NeedsUserId; choice: string | null }>
   | Readonly<{ type: 'resume'; target: ResumeTarget }>
   | Readonly<{ type: 'sweep'; resource: ResourceName | null }>
-  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest }>
+  | Readonly<{ type: 'apply'; planFile: AbsPath; rev: PlanRev; reason: string; base: RevisionManifest; manifest: RevisionManifest; resolves?: readonly NeedsUserId[] }>
   | Readonly<{ type: 'resolve-edge'; edge: EdgeId; evidence: string }>
   | Readonly<{ type: 'run-only'; units: readonly UnitId[] | null }>
   | Readonly<{ type: 'reverse'; divergence: DivergenceId }>
@@ -771,7 +798,20 @@ Stop removes a stale lease too and succeeds when absent. Poll renewal fails loud
 
 ## Residues and reservation states
 
-`resource.transition` moves an all-or-none set under a holder:
+`resource.transition` moves an all-or-none set under a holder. A candidate-stage reserve containing integration-slot
+may additionally name `expect.slotHolder: publication{unit,attempt}` matching its stage holder. All units become
+pending in one intent and settle in one done: the slot belongs to slotHolder; every other resource belongs to the
+candidate stage. Later transitions are ordinary per-owner transitions; recovery settles both partitions. Absent
+slotHolder keeps legacy single-holder behavior. It is illegal on any other edge/stage, without the slot, or with
+mismatched unit/attempt.
+
+`candidate-entry-planned {unit,attempt,tip,request}` records the initial candidate entry and each changed tip/request.
+Selection uses the merged tree: first scheduled candidate spec lane, else first selected suite lane. Refresh is
+synchronous before allocation/precedence inspection. A tip change after grant releases entry and slot before retry.
+The first owning series consumes the reservation, releasing it unused on reuse or preparation/refusal/cancellation.
+The publication alone retains its slot through green ff/snapshot; workload CPU never carries across those stages.
+
+The ordinary transitions are:
 
 | From | Edge | To |
 |---|---|---|
@@ -794,14 +834,34 @@ it. Its dirty instance remains unavailable. Cleaned/isolated/transferred disposi
 
 ## Scheduling
 
+The arbiter accumulates waiting milliseconds in memory at each re-evaluation, counting each interval once in
+`totalMs` and once for each simultaneous blocker in `byReasonMs` (non-additive). A grant writes optional
+`resource.transition.expect.waited: {totalMs,byReasonMs}` on its reserve intent. Immediate grants, including sweep reserves, record zero.
+Closed keys are `cpu-pressure`, `memory-pressure`, `cpu-tokens`, `named-resource:<declared name or pool>`,
+`publication-slot`, `queue-precedence`, and `admission-hold:<kind>`. Admission kinds are the constraint variants
+plus dependency, contingent-edge, milestone, baseline, pack-review and repair-batch. Resource inspection collects
+all blockers even when pressure or a dirty instance prevents allocation.
+
+Scheduler admission accumulation runs from first refusal to admission, including undispatched units. A measurement-only
+`stage-admitted {unit,stage,waited}` fact records it when the stage is admitted; it never advances attempts.
+`status.waiting` and summary's identical shared-core field sum completed measurements by unit/stage and job/stage;
+`unmeasuredReservations` counts legacy grants without a measurement. Missing measurements are never zero historical
+waiting; readers log one ROADMAP_UPGRADE warning per process. Current blockers stay in sched.json's queue/jobQueue
+`reasons` and `admissions` rows. A crash loses only in-flight measurements; downtime is excluded. No wait episodes,
+wait ids, recovery closure facts or active-tail extrapolation exist.
+
 Admission rechecks pause, pending mutation drain, run-only, backend parks, breakers, base-red, blocking items, findings,
 known defects, pressure, compare and deflake holds before prepare/reproduce/pre-build/build/lanes/gate/candidate.
+Dependency, contingent-edge and milestone constraints gate initial task dispatch only; tasks already in flight retain
+the original stage-admission rules. Waiting reasons are measured only from the constraints each path enforces.
 Quiesce/evidence/salvage/teardown and ff/snapshot are mandatory chains despite pause/drain.
 
 The arbiter serves docs/batch/job waiters first in arrival order, then units: high priority; promoted waiters by age;
 otherwise repair=deflake, polish, planned; wait-start sequence then plan index break ties. A unit promotes after **three
 other unit publications** in its waiting interval. Backfill may pass a blocked higher rank only with a disjoint request
 (CPU and any shared pool count as overlap). Environment/pressure-blocked requests are set aside.
+Slot-blocked combined entrants contribute only publication-slot precedence, including through other queued requests. The durable publication owner maps unit/attempt to candidate, docs to its job, and batch to the originating reserve parent job. Only its workload requests bypass CPU pressure. Memory pressure still brakes them while another workload holds or has reserved CPU tokens; a lone workload progresses under either pressure cause. Tokens, dirty instances and independent precedence still apply. Blocked docs callbacks run despite other simultaneous blockers.
+Task-fault recovery closes a compound reserve atomically but settles only holders selected by its scope; full recovery settles both owners.
 Docs publications outrank unit publications and may request candidate preemption before green. Red/preempted or
 finding-blocked candidates abandon and release their reservations; green publication finishes ff/snapshot under its holder.
 
@@ -844,10 +904,9 @@ within one hour trip an admission breaker and raise `env-blocked` (`src/park/sch
 
 `src/host/pressure.ts` samples `/proc/schedstat` CPU totals: delta wait / (delta run + delta wait), over a minute.
 Memory PSI full avg10 contributes; available RAM below 5% supplies a saturated backstop. Missing schedstat makes CPU
-pressure unavailable, never invented. Scheduler ticks are retained for 30 minutes in memory.
+pressure unavailable, never invented. Latest memory readings remain independently available without schedstat or a full CPU window; `hostCpuPressure` and `PressureTicks.memory()` keep the causes separate, with `hostPressure` the combined wrapper. Scheduler ticks are retained for 30 minutes in memory.
 
-At pressure >= 0.5 (saturated) the arbiter holds new builds/lanes while CPU is already reserved. Judgments bypass this brake,
-and one workload always progresses. A deadline/stall under saturation is uncharged starved work; an ordinary red gets
+At CPU or memory pressure >= 0.5 the arbiter holds new workloads only while workload CPU tokens are already held or pending. Positive CPU with cpuBasis, or a build/lanes/candidate stage, is workload CPU; uncalibrated judgments never arm the brake. This derived classification follows its originating reserve through running and cleaning until release, including replay of old records. The first workload always progresses under either CPU or memory pressure, even when an external workload saturates the shared host. Memory readings remain independent of the CPU window; judgments retain their exemption. A deadline/stall under saturation is uncharged starved work; an ordinary red gets
 one pressure rerun. Holds wait for a clear minute or 30 minutes, with at most three pressure holds per unit; after that bound
 ordinary charging applies. This does not assert every job/witness path has pressure-aware charging.
 

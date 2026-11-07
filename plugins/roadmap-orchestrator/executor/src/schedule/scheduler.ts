@@ -1,3 +1,8 @@
+import { reservedLaneEnv } from '../input/ci.ts';
+import { loadUnitSpec } from '../pipeline/stages.ts';
+import { resourceRequest } from '../core/events.ts';
+import { WaitAccumulator } from './waits.ts';
+import { type WaitReason, waitReason } from '../core/waiting.ts';
 import { stopAborts,stopKills } from '../pipeline/stop.ts';
 import { raiseWasteFindings } from '../flow/waste.ts';
 // The scheduler (M2 "Scheduler model"; A12, A17, F5, F13, F19, G2; M3 B7): runs every unit of the arc that may run,
@@ -147,7 +152,7 @@ import { isActive,raiseFindingItems } from '../holistic/findings.ts';
 import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
-import { PressureTicks,readHostCpu } from '../host/pressure.ts';
+import { PressureTicks,readHostCpuAt,HOST_SCHEDSTAT,readHostMemory } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
 import type { RoutingBase } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,hasMilestones } from '../input/plan.ts';
@@ -176,8 +181,8 @@ import { raiseWalkItems,runWalk,settleWalks,walkPending } from '../walk/walk.ts'
 import type { Arbiter,FirstHolder } from './arbiter.ts';
 import { faultJob,faultUnit,jobFaultOpen } from './fault.ts';
 import { holdCycle } from './graph.ts';
-import { admitter,findingBlock,nextStage,rankOf,ready } from './ready.ts';
-import { type AdmissionStage,type CommandScope,PARK_ESCALATE_MS,PROBE_BACKOFF_MIN,type ResourceRequest,type TaskState } from './types.ts';
+import { admitter,findingBlock,nextStage,rankOf,readyDecisions } from './ready.ts';
+import { ADMISSION_STAGES,type AdmissionConstraint,type AdmissionStage,type CommandScope,PARK_ESCALATE_MS,PROBE_BACKOFF_MIN,type ResourceRequest,type TaskState } from './types.ts';
 
 // ---------------------------------------------------------------------------------------------------
 // sched.json: the scheduler's in-memory view, for `status` only
@@ -188,10 +193,10 @@ export const SCHED_FILE = 'sched.json';
 const TASK_STATES = ['idle', 'awaiting-admission', 'in-stage', 'in-chain'] as const satisfies readonly TaskState[];
 
 /** One waiter of the arbiter, in the order it serves them: the unit, the stage attempt it waits for, what it asks. */
-export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number }>;
+export type QueueEntry = Readonly<{ unit: UnitId; stage: Stage; attempt: number; publication: boolean; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number; reasons?: readonly WaitReason[] }>;
 
 /** M3 (B7): one job's waiter, served before every unit's: a docs publication's or a batch's slot, or a job's lanes. */
-export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number }>;
+export type JobQueueEntry = Readonly<{ holder: FirstHolder; request: ResourceRequest; envBlocked: boolean; pressureBlocked?: boolean; queuedAt?: number; reasons?: readonly WaitReason[] }>;
 
 /**
  * `sched.json`: written by the executor process `pid` (status trusts it only while that executor owns the
@@ -207,17 +212,12 @@ export type SchedFile = Readonly<{
   queue: readonly QueueEntry[];
   jobQueue: readonly JobQueueEntry[];
   drains: readonly Readonly<{ command: CommandId; scope: CommandScope }>[];
+  admissions?: readonly Readonly<{ unit: UnitId; stage: AdmissionStage; reasons: readonly WaitReason[] }>[];
 }>;
 
 const units: Read<readonly UnitId[]> = arrayOf((v, p) => unitId(v, p));
-const request: Read<ResourceRequest> = object((f) => {
-  const basis = f.optional('cpuBasis', cpuBasis);
-  return {
-    named: f.get('named', arrayOf((v, p) => resourceName(v, p))), pools: f.get('pools', arrayOf((v, p) => resourceName(v, p))),
-    cpu: f.get('cpu', nat), publication: f.get('publication', bool),
-    ...(basis === undefined ? {} : { cpuBasis: basis }),
-  };
-});
+const request = resourceRequest;
+
 const scope: Read<CommandScope> = tagged('type', {
   arc: object((f): CommandScope => ({ type: f.get('type', literal('arc')) })),
   units: object((f): CommandScope => ({ type: f.get('type', literal('units')), units: f.get('units', units) })),
@@ -233,14 +233,17 @@ export const schedFile: Read<SchedFile> = object((f) => ({
   v: f.get('v', version),
   arc: f.get('arc', (v, p) => arcId(v, p)),
   pid: f.get('pid', positive),
+  ...((admissions) => admissions === undefined ? {} : { admissions })(f.optional('admissions', arrayOf(object((g) => ({ unit: g.get('unit', unitId), stage: g.get('stage', oneOf(ADMISSION_STAGES)), reasons: g.get('reasons', arrayOf(waitReason)) }))))),
   tasks: f.get('tasks', arrayOf(object((g) => ({ unit: g.get('unit', (v, p) => unitId(v, p)), state: g.get('state', oneOf(TASK_STATES)) })))),
   queue: f.get('queue', arrayOf(object((g): QueueEntry => ({
     unit: g.get('unit', (v, p) => unitId(v, p)), stage: g.get('stage', oneOf(STAGES)), attempt: g.get('attempt', positive),
     publication: g.get('publication', bool), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.get('pressureBlocked', bool),
+    ...((reasons) => reasons === undefined ? {} : { reasons })(g.optional('reasons', arrayOf(waitReason))),
     ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.get('queuedAt', nat)),
   })))),
   jobQueue: f.get('jobQueue', arrayOf(object((g): JobQueueEntry => ({
     holder: g.get('holder', firstHolder), request: g.get('request', request), envBlocked: g.get('envBlocked', bool), pressureBlocked: g.get('pressureBlocked', bool),
+    ...((reasons) => reasons === undefined ? {} : { reasons })(g.optional('reasons', arrayOf(waitReason))),
     ...((queuedAt) => queuedAt === undefined ? {} : { queuedAt })(g.get('queuedAt', nat)),
   })))),
   drains: f.get('drains', arrayOf(object((g) => ({ command: g.get('command', (v, p) => commandId(v, p)), scope: g.get('scope', scope) })))),
@@ -721,6 +724,19 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     settleWalks(x.stage);
   }
 
+  // Upgrade-in-place: persisted lane readers accept the old declaration; hold it as an actionable plan defect.
+  const legacyCollisions = [
+    ...plan().suite.lanes.map((lane) => ({ lane, source: 'suite' })),
+    ...plan().units.filter((u) => u.cut === undefined && !TERMINAL.includes(view().unit(u.id).status)).flatMap((unit) => loadUnitSpec(x.stage, unit).spec.lanes.filter((l) => l.state === 'active').map((lane) => ({ lane, source: `unit ${unit.id}` }))),
+    ...(holistic() ? holisticInForce(x.stage).obligations?.lanes ?? [] : []).map((lane) => ({ lane, source: 'arc witness' })),
+  ].filter(({ lane }) => reservedLaneEnv(lane));
+  if (legacyCollisions.length > 0) {
+    const summary = `Kept lanes declare executor-owned ROADMAP_CPU: ${legacyCollisions.map(({ lane, source }) => `${source}/${lane.id}`).join(', ')}. Remove it from env.set and env.pass before execution.`;
+    const existing = openBlocking(view()).some((id) => readNeedsUser(runDir, id)?.summary === summary);
+    if (!existing) raiseNeedsUser(journal, runDir, { blocking: true, subject: { type: 'arc' }, reason: 'plan-defect', summary, recommendation: 'Export the inputs, remove the reserved variable declarations and apply the corrected revision with --resolves naming this item.', options: [], evidence: [] }, { type: 'arc' });
+    process.emitWarning('kept ROADMAP_CPU declaration adopted as an actionable plan-defect, execution held until corrected', { code: 'ROADMAP_UPGRADE' });
+  }
+
   const tasks = new Map<UnitId, Task>();
   const jobs = new Map<string, Promise<void>>();
   /** Probe targets a running `resume` job probes (or smokes): no scheduled probe job starts on them meanwhile. */
@@ -844,9 +860,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The scheduler's holds: arc-wide (the baseline, the pack review) and repair batches (R7)
 
-  type Holds = Readonly<{ arc: boolean; batch: ReadonlySet<UnitId> }>;
-  const heldBack = (holds: Holds, unit: UnitId, stage: AdmissionStage): boolean =>
-    holds.arc || (stage === 'candidate' && holds.batch.has(unit));
+  type Holds = Readonly<{ arc: readonly ArcHold[]; batch: ReadonlySet<UnitId> }>;
+
 
   const approvalKey = (unit: UnitId): string => canonicalJson(view().unit(unit).approval);
 
@@ -910,8 +925,23 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   const admissionInput = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>) => ({
     view: view(), plan: plan(), blocking, drains: mutations.map((m) => ({ command: m.command.id, scope: m.scope })), tripped: trippedTargets(view()),
-    pressure: { ticks: pressure.ticks(), nowMs: Date.now() },
+    pressure: { ticks: pressure.ticks(), nowMs: Date.now(), memory: pressure.memory() },
   });
+
+  const admissionWaits = new Map<string, WaitAccumulator>();
+  const admissionReasons = (unit: UnitId, stage: AdmissionStage, constraints: readonly AdmissionConstraint[], blocking: readonly BlockingItem[], holds: Holds): readonly WaitReason[] => [
+    ...constraints.map((c): WaitReason => `admission-hold:${c.type}`),
+    ...holds.arc.map((hold): WaitReason => `admission-hold:${hold}`),
+    ...(stage === 'candidate' && holds.batch.has(unit) ? ['admission-hold:repair-batch' as const] : []),
+    ...(blocking.some((b) => holdsUnit(b, unit)) ? ['admission-hold:blocking-item' as const] : []),
+  ];
+  const observeAdmission = (unit: UnitId, stage: AdmissionStage, reasons: readonly WaitReason[]): WaitAccumulator => {
+    const key = `${unit}/${stage}`;
+    const wait = admissionWaits.get(key) ?? new WaitAccumulator();
+    admissionWaits.set(key, wait);
+    wait.observe(reasons);
+    return wait;
+  };
 
   const admitWaiting = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>, holds: Holds): void => {
     const admit = admitter((u) => x.stage.routing(u).table, specOf);
@@ -923,15 +953,20 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const next = upcoming(u, specOf(planUnit(task.unit)).reproduces, specOf(planUnit(task.unit)).review);
       // Ended at this boundary: a pause or stop, or the unit moved on without it (cut, superseded, re-opened, retired).
       if (stopping !== null || task.abort.signal.aborted || u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) {
+        if (u.status !== 'active' || next?.kind !== 'admission' || next.stage !== w.stage) admissionWaits.delete(`${task.unit}/${w.stage}`);
         endTask(task);
         continue;
       }
       const a = admit({ ...input, unit: planUnit(task.unit), stage: w.stage });
+      const reasons = admissionReasons(task.unit, w.stage, a.kind === 'wait' ? a.constraints : [], blocking, holds);
+      const measurement = observeAdmission(task.unit, w.stage, reasons);
       if (a.kind === 'wait' && a.constraints.some((c) => c.type === 'paused')) {
         endTask(task);
         continue;
       }
-      if (a.kind !== 'admit' || blocking.some((b) => holdsUnit(b, task.unit)) || heldBack(holds, task.unit, w.stage)) continue;
+      if (reasons.length > 0) continue;
+      journal.fact({ kind: 'stage-admitted', unit: task.unit, stage: w.stage, waited: measurement.measured() });
+      admissionWaits.delete(`${task.unit}/${w.stage}`);
       task.waiting = null;
       task.state = 'in-stage';
       w.resolve(true);
@@ -957,8 +992,14 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   };
 
   const startReady = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>, holds: Holds): void => {
-    for (const r of ready({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table, spec: specOf })) {
-      if (tasks.has(r.unit.id) || blocking.some((b) => holdsUnit(b, r.unit.id)) || heldBack(holds, r.unit.id, r.stage)) continue;
+    const decisions = readyDecisions({ ...admissionInput(blocking, mutations), routing: (u) => x.stage.routing(u).table, spec: specOf });
+    const current = new Set(decisions.map((r) => `${r.unit.id}/${r.stage}`));
+    for (const key of admissionWaits.keys()) if (!current.has(key)) admissionWaits.delete(key);
+    for (const r of decisions) {
+      if (tasks.has(r.unit.id)) continue;
+      const reasons = admissionReasons(r.unit.id, r.stage, r.constraints, blocking, holds);
+      observeAdmission(r.unit.id, r.stage, reasons);
+      if (reasons.length > 0) continue;
       startTask(r.unit);
     }
   };
@@ -1095,8 +1136,6 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   // -------------------------------------------------------------------------------------------------
   // The holistic jobs
 
-  /** Whether every admission is held (`arcHolds`; the baseline job running counts as owed). */
-  const arcHeld = (blocking: readonly BlockingItem[]): boolean => holistic() && arcHolds(h, blocking, jobs.has('holistic:baseline')).length > 0;
 
   /** The holistic jobs (baseline, review, experience verdict, audit), the batch and the close-out, each started when due. */
   const startHolistic = (holds: Holds, batch: BatchPlan): void => {
@@ -1134,7 +1173,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       }
     }
     const ready = batch.ready;
-    if (ready !== null && !holds.arc && due('batch') && heldBatch(view()) === null) {
+    if (ready !== null && holds.arc.length === 0 && due('batch') && heldBatch(view()) === null) {
       trackRetrying('batch', 'batch', async () => {
         const out = await publishBatch({ ...x.stage, acquireFirst: arbiter.acquireFirst }, ready.findings, ready.members);
         const settled = settleBatch(x.stage, ready.findings, ready.members, out);
@@ -1230,11 +1269,17 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       v: SCHEMA_VERSION, arc: view().arc, pid: process.pid,
       tasks: [...tasks.values()].map((t) => ({ unit: t.unit, state: t.state })).sort((a, b) => (a.unit < b.unit ? -1 : 1)),
       queue: arbiter.waiting().map((w) => ({
-        unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.holder.type === 'publication', request: w.request,
-        envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt,
+        unit: w.holder.unit, stage: holderStage(w.holder), attempt: w.holder.attempt, publication: w.request.publication, request: w.request,
+        envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt, reasons: w.reasons ?? [],
       })),
-      jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt })),
+      jobQueue: arbiter.waitingFirst().map((w) => ({ holder: w.holder, request: w.request, envBlocked: w.envBlocked, pressureBlocked: w.pressureBlocked, queuedAt: w.queuedAt, reasons: w.reasons ?? [] })),
       drains: pending,
+      admissions: plan().units.flatMap((unit) => {
+        const next = nextStage(view().unit(unit.id), specOf(unit).reproduces, specOf(unit).review);
+        if (next?.kind !== 'admission') return [];
+        const wait = admissionWaits.get(`${unit.id}/${next.stage}`);
+        return wait === undefined ? [] : [{ unit: unit.id, stage: next.stage, reasons: wait.reasons() }];
+      }),
     };
     const text = canonicalJson(file);
     if (text === published) return;
@@ -1276,7 +1321,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   for (;;) {
     if (failures.length > 0) throw failures[0];
-    pressure.record(readHostCpu());
+    pressure.record(readHostCpuAt(HOST_SCHEDSTAT, Date.now()));
+    pressure.recordMemory(readHostMemory());
     const arc = view().arc;
     /** The pending mutations' scopes, for sched.json: none while stopping (nothing will apply). */
     let drains: SchedFile['drains'] = [];
@@ -1324,7 +1370,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       demo.tick();
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
-      const holds: Holds = { arc: arcHeld(blocking), batch: batch.held };
+      const holds: Holds = { arc: holistic() ? arcHolds(h, blocking, jobs.has('holistic:baseline')) : [], batch: batch.held };
       startHolistic(holds, batch);
       startDeflake();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {

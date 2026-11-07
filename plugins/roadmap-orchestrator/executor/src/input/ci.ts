@@ -1,9 +1,12 @@
 import type { LaneDef, SpecM1 } from '../core/records.ts';
 import type { PlanM1, PlanUnit } from './plan.ts';
 
+export const reservedLaneEnv = (lane: Pick<LaneDef, 'env'>): boolean => Object.hasOwn(lane.env.set, 'ROADMAP_CPU') || lane.env.pass.includes('ROADMAP_CPU');
+
 /** Lane placement is an authoring constraint, also applied to executor-authored revisions. */
 export function lanePlacementReasons(lane: LaneDef, unit?: PlanUnit): readonly string[] {
   const out: string[] = [];
+  if (reservedLaneEnv(lane)) out.push(`lane ${lane.id}: ROADMAP_CPU is executor-owned; remove it from env.set and env.pass`);
   const local = lane.cadence === 'build' || lane.cadence === 'unit';
   const whole = lane.inputs?.some((p) => p === '**' || p === '**/*' || p === '*') ?? false;
   if (local && (lane.cost === 'expensive' || whole || (unit?.spike === undefined && (lane.placement === 'shared-resource' || lane.placement === 'cross-system')))) out.push(`lane ${lane.id}: expensive or whole-repo lanes must move to candidate`);

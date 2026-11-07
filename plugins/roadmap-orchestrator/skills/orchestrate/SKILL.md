@@ -86,6 +86,8 @@ Diagnosis is due after **8 builds or 20 judged build/lanes/gate attempts**, incl
 
 `default` mixes eligible low/medium-risk builds on Codex with Claude judgments. High risk, M2 and design units use Claude; M1 and capture-only units remain eligible for Codex. `claude-only` keeps every seat on Claude. Change a profile through a normal routing revision; records preserve the effective routing revision.
 
+After an audit’s arc-subject requests, resolve them with the apply that answers them: apply --from DIR --rev N --reason LINE --resolves nu-ID[,nu-ID...].
+
 A milestone runs its selected lanes after its units retire, then a fresh experience verdict walks the journeys and proposes fixes/polish. One experience role also judges before/after polish. Campaign audits cover the whole selected range at milestones, on request and at the final boundary: invariants, vacuity, cross-unit interactions and document drift together. They report findings and root requests. Admit repairs through revised inputs; only the root changes obligation dispositions. Dismiss a false-positive open finding, including P1, with `roadmap dismiss <finding> --counter-evidence "<line>"`. Counter-evidence must be non-empty; the root decision records `{role:root,routingRev}`. Audit dismissal requests require root review and never apply themselves. Dismissal closes settled finding items and suppresses re-raising on unchanged cited code; never edit the journal.
 
 ## Supervision and intervention
@@ -128,6 +130,8 @@ Apply queues at safe boundaries when necessary; read the durable receipt through
 ## Evidence, memory and recovery
 
 Lane reuse hashes declared `inputs`, else the appropriate systems input; it also binds command/environment identity. Keep witness ids stable across lane moves and refresh proof only when its test ids/files or statement change. Run targeted development checks; let the executor certify full lanes. A repeated red is compared at diffBase: green there supplies regression evidence to the fix round; red there follows the base-red protocol. Never weaken tests to make a lane green. Declare deterministic fixtures for clocks and time zones.
+
+Lanes may read executor-owned ROADMAP_CPU, the granted CPU-token count, to size worker pools; never declare it in env.set or env.pass.
 
 Capture lanes bring up a contained stack and repo capture script on a leased port and retain every declared PNG state. Gate capture evidence is supplied only to the milestone's design/member units. Resource probe/teardown commands must label their own workload and clean it; declare pools and environment lifecycle honestly. Evidence globs must not hide tracked product/test files or protected paths.
 

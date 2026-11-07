@@ -94,7 +94,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    and encode supported field constraints; property descriptions state remaining semantic rules.
    Walk and comparison evidence entries are exact saved file paths; explanations belong in report text.
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
-4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
+4. **Publish the tested head.** An approved unit plans a candidate on the current integration tip and atomically takes the publication slot plus the first scheduled lane’s resources (spec first, otherwise the selected suite). A moved tip reselects the entry; unused entry resources are cleaned and released. Candidate lanes
    retain unit attribution; only a green exact head is fast-forwarded. Candidate reds durably name their cause,
    grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. Every successful integration fast-forward
    (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
@@ -129,7 +129,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
-   their notices. Arc items stay open until named with `ack <id>`; read and resolve or explicitly accept each one first.
+   their notices. Resolve an audit’s arc requests with the apply that answers them: add `--resolves nu-ID[,nu-ID...]`. Unit requests require that unit’s change/re-entry and grouped findings require every named repair. No-op/stale applies close nothing; the receipt lists actual closures. Other arc items accept named `ack <id>` after review.
    A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests
    close when their findings settle or a root apply supplies all named repairs. Dismissal suppresses the same finding
    on unchanged code. Supplied ack choices must be offered. External witnesses are explicit root attestations

@@ -94,6 +94,15 @@ export function enqueueCommand(runDir: AbsPath, file: CommandFile): boolean {
 
 export type IncomingCommand = Readonly<{ file: CommandFile; sha256: Sha256Hex }>;
 
+let legacyResolutionsWarned = false;
+/** Only disk reads of apply records can identify legacy resolution fields; write validation stays pure. */
+function warnLegacyResolutions(): void {
+  if (legacyResolutionsWarned) return;
+  legacyResolutionsWarned = true;
+  process.emitWarning('defaulting absent apply resolves/receipt resolved to an empty list when used (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+}
+
+
 /** One incoming command and the sha256 of its canonical content (what `command.apply` records). */
 export function readCommand(runDir: AbsPath, id: CommandId, arc: ArcId): IncomingCommand {
   const path = incomingPath(runDir, id);
@@ -101,6 +110,7 @@ export function readCommand(runDir: AbsPath, id: CommandId, arc: ArcId): Incomin
   const file = commandFile(JSON.parse(bytes.toString('utf8')), `${INCOMING}/${id}.json`);
   if (file.id !== id) throw new Error(`${path} carries id ${file.id}`);
   if (file.arc !== arc) throw new Error(`${path} is a command for arc ${file.arc}, in the run dir of arc ${arc}`);
+  if (file.body.type === 'apply' && file.body.resolves === undefined) warnLegacyResolutions();
   return { file, sha256: sha256(sha256Hex(canonicalRecordBytes(bytes))) };
 }
 
@@ -109,6 +119,11 @@ export function readReceipt(runDir: AbsPath, id: CommandId, state: ReceiptState)
   if (!existsSync(path)) return null;
   const r = receipt(JSON.parse(readFileSync(path, 'utf8')), `${RECEIPTS}/${id}.${state}.json`);
   if (r.command !== id || r.state !== state) throw new Error(`${path} holds a ${r.state} receipt of ${r.command}`);
+  if (!legacyResolutionsWarned && r.state === 'applied' && r.resolved === undefined) {
+    // Non-apply receipts have no resolution field by design, including on fresh arcs.
+    const commandPath = incomingPath(runDir, id);
+    if (existsSync(commandPath) && commandFile(JSON.parse(readFileSync(commandPath, 'utf8')), commandPath).body.type === 'apply') warnLegacyResolutions();
+  }
   return r;
 }
 

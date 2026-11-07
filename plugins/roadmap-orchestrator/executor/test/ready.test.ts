@@ -5,7 +5,7 @@ import { describe,it } from 'node:test';
 import { type Event,type Fact,type LogRecord,type ProbeTarget,prevHash,serializeEvent } from '../src/core/events.ts';
 import {
 type CommandId,type NeedsUserId,type UnitId,commandId,edgeId,invocationId,jobId,knownDefectIdOf,laneId,needsUserId,opId,opKey,planRev,seatRev,sha,
-sha256,specRev,unitId,visionClauseId,
+sha256,specRev,unitId,visionClauseId,milestoneId,
 } from '../src/core/ids.ts';
 import type { NeedsUserReason } from '../src/core/records.ts';
 import { Fold } from '../src/core/state.ts';
@@ -13,7 +13,7 @@ import { absPath,branchName,isoTime,planPath,refName,repoPath } from '../src/cor
 import { type KnownDefect,PLAN_SCHEMA,type PlanM1,type PlanUnit } from '../src/input/plan.ts';
 import { arcStack,resolveRouting } from '../src/routing/layers.ts';
 import { type RiskTier,routingLayer } from '../src/routing/types.ts';
-import { type ReadyInput,type SpecFactsOf,activeKnownDefects,admitter,knownDefectActive,rankOf,ready } from '../src/schedule/ready.ts';
+import { type ReadyInput,type SpecFactsOf,activeKnownDefects,admitter,knownDefectActive,rankOf,ready,readyDecisions } from '../src/schedule/ready.ts';
 import { type AdmissionStage,type AdmitInput,type CommandScope,type Rank,PROMOTION_BYPASS,compareRank } from '../src/schedule/types.ts';
 import type { PressureTick } from '../src/host/pressure.ts';
 import { packReviewHold } from '../src/holistic/packreview.ts';
@@ -561,5 +561,24 @@ describe('host-pressure holds (M4b rev 3, RC-11)', () => {
     assert.equal(u.pressureHold, null);
     assert.equal(u.pressureHolds, 1);
     assert.deepEqual(admitLanes(log, [], HELD_AT), { kind: 'admit' });
+  });
+});
+
+describe('review.in-flight-admission-preserves-dispatch-boundary', () => {
+  it('dependencies and contingent edges hold initial dispatch, but do not re-gate an in-flight stage', () => {
+    const log = new Log([A, B]);
+    const pending = unit(B, { after: [A], contingent: [{ id: edgeId('upstream'), condition: 'upstream landed' }] });
+    const milestone = milestoneId('MS-1');
+    const plan: PlanM1 = { ...planOf([unit(A), pending]), milestones: [{ id: milestone, text: 'upstream experience', units: [A], design: { supplied: true }, references: [], bringUp: { setup: [], serve: [], env: {}, seed: [] }, journeys: [], resources: [] }] };
+    const input = inputOf(log, plan);
+    assert.equal(ready(input).some((r) => r.unit.id === B), false, 'new dispatch still waits for its graph constraints');
+    assert.deepEqual(readyDecisions(input).find((r) => r.unit.id === B)?.constraints, [
+      { type: 'dependency', unit: A }, { type: 'contingent-edge', edge: edgeId('upstream') }, { type: 'milestone', milestone },
+    ], 'initial wait measurements keep all graph blockers');
+    const admit = admitter(input.routing, input.spec);
+    assert.deepEqual(admit({ ...input, unit: pending, stage: 'lanes' }), { kind: 'admit' }, 'in-flight admission uses the original stage constraints only');
+    log.add(fact({ kind: 'paused', command: CMD, target: { type: 'unit', unit: B } }));
+    const held = admit({ ...inputOf(log, plan), unit: pending, stage: 'lanes' });
+    assert.deepEqual(held, { kind: 'wait', constraints: [{ type: 'paused', scope: 'unit' }] }, 'wait reasons still reflect the enforced pause');
   });
 });

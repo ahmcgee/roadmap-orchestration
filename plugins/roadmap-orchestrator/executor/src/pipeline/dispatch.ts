@@ -1,3 +1,4 @@
+import type { CandidateEntry } from '../schedule/types.ts';
 import { appliedRevisions } from '../holistic/coverage.ts';
 import { arcScopeOf,provenanceStack,resolveRouting } from '../routing/layers.ts';
 import { hasMilestones } from '../input/plan.ts';
@@ -928,11 +929,11 @@ export const nonEmpty = (r: ResourceRequest): ResourceRequest | null =>
  * the grant's `reserve` transition is that op, parented by the attempt. `entered` once it is granted (at once
  * when `request` is null); `cancelled` when the task's signal is aborted first, with nothing journaled.
  */
-export async function enter(ctx: StageContext, holder: UnitAcquiringHolder, request: ResourceRequest | null): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
+export async function enter(ctx: StageContext, holder: UnitAcquiringHolder, request: ResourceRequest | null, entry?: CandidateEntry): Promise<Readonly<{ kind: 'entered' }> | Cancelled> {
   const cancelled = cancelledNow(ctx);
   if (cancelled !== null) return cancelled;
   if (request === null) return { kind: 'entered' };
-  const grant = await ctx.acquire(request, holder, () => ctx.rank(holder.unit), ctx.signal);
+  const grant = await ctx.acquire(request, holder, () => ctx.rank(holder.unit), ctx.signal, entry);
   return grant.kind === 'cancelled' ? { kind: 'cancelled', reason: abortReason(ctx.signal) } : { kind: 'entered' };
 }
 

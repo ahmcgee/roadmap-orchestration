@@ -119,6 +119,7 @@ describe('status.subset', () => {
       knownDefects: [],
       demo: null,
       milestones: [],
+      waiting: { unmeasuredReservations: 0, byUnitStage: [], byJobStage: [] },
     });
   });
 
@@ -127,7 +128,7 @@ describe('status.subset', () => {
     assert.deepEqual(Object.keys(s).sort(), [
       'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
       'divergences', 'edges', 'findings', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
-      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waived',
+      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waiting', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
@@ -401,7 +402,7 @@ test('status.resources: CPU-only builds leave the pool free; one executor lane h
   assert.ok(waiter.waitingFor!.tokenWaitMs! >= 0);
   assert.deepEqual(waiter.waitingFor, { tokenWaitMs: waiter.waitingFor!.tokenWaitMs!, deps: [], milestones: [], edges: [], resources: want, envBlocked: false, pressureBlocked: false, admission: [], drainFor: [] });
   assert.ok(s.host.queue[0]!.queuedAt! > 0);
-  assert.deepEqual(s.host.queue, [{ queuedAt: s.host.queue[0]!.queuedAt, unit: waiter.unit, stage: 'lanes', attempt: waiter.attempts + 1, publication: false, request: want, envBlocked: false, pressureBlocked: false }]);
+  assert.deepEqual(s.host.queue, [{ queuedAt: s.host.queue[0]!.queuedAt, unit: waiter.unit, stage: 'lanes', attempt: waiter.attempts + 1, publication: false, request: want, envBlocked: false, pressureBlocked: false, reasons: ['named-resource:est'] }]);
   assert.equal(compactState({ ...waiter, waitingFor: { ...waiter.waitingFor!, pressureBlocked: true } }), 'waiting:resources(host-pressure)');
   assert.deepEqual(s.host.pools['est'], { size: 1, used: 1, dirty: 0 });
   assert.ok(holder.holds.some((h) => h === 'est#1'), JSON.stringify(holder.holds));

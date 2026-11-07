@@ -187,7 +187,7 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
-    for (const b of blocking) if (b.subject === 'host' || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
+    for (const b of blocking) if (b.subject === 'host' || (b.subject === 'arc' && b.reason === 'plan-defect') || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };
 }
@@ -272,28 +272,36 @@ export type ReadyUnit = Readonly<{ unit: PlanUnit; stage: AdmissionStage; rank: 
  * D1: every `after` dependency, followed to its lineage head once that prepared (F15), is merged; every contingent edge
  * resolved; (dev.13) no milestone node it descends from is unpassed (`waits`, src/walk/node.ts `milestoneWaits`).
  */
-function dependenciesMet(view: JournalView, unit: PlanUnit, waits: ReadonlyMap<UnitId, readonly unknown[]>): boolean {
-  return unit.after.every((d) => view.unit(effectiveDependency(view, d)).status === 'retired')
-    && unit.contingent.every((e) => view.edgeResolved(e.id) !== null)
-    && !waits.has(unit.id);
-}
 
 /**
  * The dispatchable units in rank order, each with the admission stage it runs next: every active unit whose
  * dependencies are met and whose next stage is an admission stage that `admit` lets in.
  */
-export function ready(input: ReadyInput): readonly ReadyUnit[] {
+export function readyDecisions(input: ReadyInput): readonly (ReadyUnit & Readonly<{ constraints: readonly AdmissionConstraint[] }>)[] {
   const { view, plan } = input;
   const admit = admitter(input.routing, input.spec);
-  const out: ReadyUnit[] = [];
+  const out: (ReadyUnit & Readonly<{ constraints: readonly AdmissionConstraint[] }>)[] = [];
   const waits = milestoneWaits(view, plan);
-  for (const unit of plan.units.filter((u) => dependenciesMet(view, u, waits))) {
+  for (const unit of plan.units) {
     const u = view.unit(unit.id);
     if (u.status !== 'active') continue;
     const next = nextStage(u, input.spec(unit).reproduces, input.spec(unit).review);
     if (next?.kind !== 'admission') continue;
-    if (admit({ ...input, unit, stage: next.stage }).kind !== 'admit') continue;
-    out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id) });
+    const constraints: AdmissionConstraint[] = [];
+    for (const dependency of unit.after) {
+      const effective = effectiveDependency(view, dependency);
+      if (view.unit(effective).status !== 'retired') constraints.push({ type: 'dependency', unit: effective });
+    }
+    for (const edge of unit.contingent) if (view.edgeResolved(edge.id) === null) constraints.push({ type: 'contingent-edge', edge: edge.id });
+    for (const milestone of waits.get(unit.id) ?? []) constraints.push({ type: 'milestone', milestone });
+    const decision = admit({ ...input, unit, stage: next.stage });
+    if (decision.kind === 'wait') constraints.push(...decision.constraints);
+    out.push({ unit, stage: next.stage, rank: rankOf(view, plan, unit.id), constraints });
   }
   return out.sort((a, b) => compareRank(a.rank, b.rank));
+}
+
+/** Dispatchable projection; blocked decisions remain available to the scheduler's measurements. */
+export function ready(input: ReadyInput): readonly ReadyUnit[] {
+  return readyDecisions(input).filter((r) => r.constraints.length === 0).map(({ constraints: _constraints, ...r }) => r);
 }

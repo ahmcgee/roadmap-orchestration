@@ -244,3 +244,35 @@ test('res.sweep-cannot-fail', T, async () => {
   assert.ok(status.state === 'cleaning' && status.holder.type === 'sweep');
   journal.close();
 });
+
+test('review.sweep-reserve-is-measured-zero', T, async () => {
+  const { ctx, journal } = openRun(newRun());
+  try {
+    const sweep: SweepHolder = { type: 'sweep', command: commandId('cmd-00000000000000bb') };
+    const got = reserveForSweep(ctx, sweep, stageRecipes(ctx.plan(), ctx.repo, UNIT, [QUEUE]), { type: 'command', command: sweep.command });
+    assert.equal(got.state, 'reserved');
+    assert.deepEqual(journal.view.opsOf('resource.transition')[0]!.expect.waited, { totalMs: 0, byReasonMs: {} });
+    const { readJournal } = await import('../src/core/log.ts');
+    const { waitingTotals } = await import('../src/status/waiting.ts');
+    assert.equal(waitingTotals(readJournal(ctx.runDir, journal.view.arc).events).unmeasuredReservations, 0);
+  } finally { journal.close(); }
+});
+
+test('review.fault-recovery-keeps-excluded-compound-publication', T, async () => {
+  const { newRun, openPoolRun } = await import('./fixtures/pool-plan.ts');
+  const { cpuToken, opKey } = await import('../src/core/ids.ts');
+  const { settleHolders, recoverReservations } = await import('../src/recover/resource.ts');
+  const { ctx, journal } = openPoolRun(newRun());
+  try {
+    const holder = { type: 'stage', unit: unitId('u1'), stage: 'candidate', attempt: 1 } as const;
+    const slotHolder = { type: 'publication', unit: holder.unit, attempt: 1 } as const;
+    journal.begin({ kind: 'resource.transition', key: opKey('review:compound'), parent: holder, deadlineAt: null,
+      body: () => ({ expect: { holder, slotHolder, resources: [cpuToken(1), INTEGRATION_SLOT], edge: { type: 'reserve' }, waited: { totalMs: 0, byReasonMs: {} } }, post: null }) });
+    await settleHolders(ctx, (h) => h.type === 'stage' && h.unit === holder.unit);
+    assert.equal(journal.view.openIntents().length, 0, 'the atomic reserve is closed');
+    assert.equal(resourceTable(journal.view).get(cpuToken(1))?.status.state, 'free', 'fault-owned stage resources are settled');
+    assert.deepEqual(resourceTable(journal.view).get(INTEGRATION_SLOT)?.status, { state: 'reserved', holder: slotHolder }, 'fault scope excludes the publication slot');
+    await recoverReservations(ctx);
+    assert.equal(resourceTable(journal.view).get(INTEGRATION_SLOT)?.status.state, 'free', 'full recovery still settles both partitions');
+  } finally { journal.close(); }
+});

@@ -410,10 +410,10 @@ describe('arbiter.pressure-brake', () => {
     release(ctx, first);
     arb.wake();
     await tick();
-    assert.equal(queued.box.grant, null, 'the judgment still holds CPU');
+    assert.equal((await queued.done).kind, 'granted', 'a judgment token alone no longer arms the workload brake');
     release(ctx, judge);
     arb.wake();
-    assert.equal((await queued.done).kind, 'granted', 'the oldest workload advances when the CPU pool is empty');
+    assert.equal((await queued.done).kind, 'granted', 'the oldest workload remains granted after the judgment releases');
     release(ctx, lane);
     journal.close();
   });
@@ -491,4 +491,195 @@ test('arbiter.pressure-brake: restart rebuilds job and unit waits over actual re
   transition(ctx, job, held, { type: 'clean', from: 'reserved' }, { type: 'job', job: job.job });
   transition(ctx, job, held, { type: 'release' }, { type: 'job', job: job.job });
   journal.close();
+});
+
+test('judgments-alone-do-not-arm CPU braking', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx);
+  const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+  const lane = holderOf('lane'); const abort = new AbortController();
+  try {
+    reserve(ctx, judge, req({ cpu: 1 }), stageParent(judge));
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+    arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const pending = wait(arb, req({ cpu: 1 }), lane, rank('lane', 1), abort.signal);
+    await tick();
+    assert.equal(pending.box.grant?.kind, 'granted', 'only workload tokens arm the brake');
+  } finally { abort.abort(); journal.close(); }
+});
+
+test('memory pressure blocks a second workload independently of CPU braking', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0, memory: 0.8 });
+    const pending = wait(arb, req({ cpu: 1 }), holderOf('lane'), rank('lane', 1), abort.signal);
+    await tick();
+    assert.equal(pending.box.grant, null);
+    assert.ok(arb.waiting()[0]?.reasons?.includes('memory-pressure'));
+    assert.equal((await wait(arb, req({ cpu: 1 }), { ...holderOf('judge'), stage: 'gate' }, rank('judge', 2)).done).kind, 'granted');
+    abort.abort(); await pending.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+for (const state of ['running', 'cleaning'] as const) test(`classification-survives-${state}-replay for job lanes`, T, async () => {
+  const descriptor = newRun(); const before = openPoolRun(descriptor);
+  const job = { type: 'job', job: jobId('audit', 1) } as const;
+  const parent = { type: 'job', job: job.job } as const;
+  const held = reserve(before.ctx, job, req({ cpu: 1, cpuBasis: { kind: 'explicit', value: 1 } }), parent);
+  assert.equal(held.state, 'reserved');
+  if (held.state !== 'reserved') throw new Error('not reserved');
+  run(before.ctx, held, parent);
+  if (state === 'cleaning') transition(before.ctx, job, held.resources, { type: 'clean', from: 'running' }, parent);
+  before.journal.close();
+  const { ctx, journal } = openPoolRun(descriptor); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    assert.equal(journal.view.resources().get(held.resources[0]!)?.workload, true);
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 });
+    arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const waiting = wait(arb, req({ cpu: 1 }), holderOf('next'), rank('next', 1), abort.signal);
+    await tick(); assert.equal(waiting.box.grant, null);
+    assert.ok(arb.waiting()[0]?.reasons?.includes('cpu-pressure'));
+    abort.abort(); await waiting.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+for (const ownerKind of ['unit', 'docs', 'batch'] as const) test(`slot-holder-not-deadlocked-by-combined-entrant: ${ownerKind} owner only`, T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
+    const pub = ownerKind === 'unit' ? { type: 'publication', unit: unitId('owner'), attempt: 1 } as const
+      : ownerKind === 'docs' ? { type: 'docs', pub: jobId('docs', 1) } as const : { type: 'batch', finding: 'F-1' as never, attempt: 1 } as const;
+    const parent = ownerKind === 'unit' ? { type: 'stage', unit: unitId('owner'), stage: 'candidate', attempt: 1 } as const : { type: 'job', job: jobId(ownerKind === 'docs' ? 'docs' : 'batch', 1) } as const;
+    reserve(ctx, pub, req({ publication: true }), parent);
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const entrant = wait(arb, req({ cpu: 3, publication: true }), { ...holderOf('entrant'), stage: 'candidate' }, rank('entrant', 1), abort.signal);
+    const own = ownerKind === 'unit' ? wait(arb, req({ cpu: 1 }), { ...holderOf('owner'), stage: 'candidate' }, rank('owner', 2), abort.signal)
+      : (() => { const box: { grant: Grant | null } = { grant: null }; const done = arb.acquireFirst(req({ cpu: 1, cpuBasis: { kind: 'explicit', value: 1 } }), { type: 'job', job: parent.type === 'job' ? parent.job : jobId('docs', 1) }, abort.signal).then((g) => box.grant = g); return { box, done }; })();
+    await tick();
+    assert.equal(own.box.grant?.kind, 'granted');
+    assert.equal(entrant.box.grant, null);
+    const unrelated = wait(arb, req({ cpu: 1 }), holderOf('other'), rank('other', 3), abort.signal);
+    await tick(); assert.equal(unrelated.box.grant, null);
+    abort.abort(); await Promise.all([entrant.done, own.done, unrelated.done]);
+  } finally { abort.abort(); journal.close(); }
+});
+
+test('slot-blocked entrant contributes slot-only precedence without CPU pressure', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const pub = { type: 'publication', unit: unitId('owner'), attempt: 1 } as const;
+    reserve(ctx, pub, req({ publication: true }), { type: 'stage', unit: pub.unit, stage: 'candidate', attempt: 1 });
+    const entrant = wait(arb, req({ cpu: 3, publication: true }), { ...holderOf('entrant'), stage: 'candidate' }, rank('entrant', 1), abort.signal);
+    const owner = wait(arb, req({ cpu: 1 }), { ...holderOf('owner'), stage: 'candidate' }, rank('owner', 2), abort.signal);
+    await tick(); assert.equal(owner.box.grant?.kind, 'granted'); assert.equal(entrant.box.grant, null);
+    abort.abort(); await Promise.all([owner.done, entrant.done]);
+  } finally { abort.abort(); journal.close(); }
+});
+
+test('publication owner CPU exemption still blocks on memory and tokens simultaneously', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: CPU }), stageParent(active));
+    const pub = { type: 'publication', unit: unitId('owner'), attempt: 1 } as const;
+    reserve(ctx, pub, req({ publication: true }), { type: 'stage', unit: pub.unit, stage: 'candidate', attempt: 1 });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0, memory: 0.8 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9, memory: 0.8 });
+    const owner = wait(arb, req({ cpu: 1 }), { ...holderOf('owner'), stage: 'candidate' }, rank('owner', 1), abort.signal);
+    await tick(); assert.equal(owner.box.grant, null);
+    assert.deepEqual(arb.waiting()[0]?.reasons, ['memory-pressure', 'cpu-tokens']);
+    abort.abort(); await owner.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+for (const stage of ['build', 'gate'] as const) test(`pending-workload classification: ${stage}`, T, async () => {
+  const { cpuToken, opKey } = await import('../src/core/ids.ts');
+  const { ctx, journal } = openPoolRun(newRun()); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const h = { ...holderOf('pending'), stage };
+    journal.begin({ kind: 'resource.transition', key: opKey('pending-cpu'), parent: stageParent(h), deadlineAt: null,
+      body: () => ({ expect: { holder: h, resources: [cpuToken(1)], edge: { type: 'reserve' } }, post: null }) });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const next = wait(arb, req({ cpu: 1 }), holderOf('next'), rank('next', 1), abort.signal);
+    await tick();
+    assert.equal(next.box.grant?.kind ?? null, stage === 'build' ? null : 'granted');
+    if (stage === 'build') assert.ok(arb.waiting()[0]?.reasons?.includes('cpu-pressure'));
+    abort.abort(); await next.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+test('classification survives an aborted transition until release', T, async () => {
+  const { opKey } = await import('../src/core/ids.ts');
+  const descriptor = newRun(); const before = openPoolRun(descriptor); const holder = holderOf('aborted');
+  const got = reserve(before.ctx, holder, req({ cpu: 1 }), stageParent(holder));
+  assert.equal(got.state, 'reserved'); if (got.state !== 'reserved') throw new Error('not reserved');
+  const { op } = before.journal.begin({ kind: 'resource.transition', key: opKey('aborted-run'), parent: stageParent(holder), deadlineAt: null,
+    body: () => ({ expect: { holder, resources: got.resources, edge: { type: 'run' } }, post: null }) });
+  before.journal.abort(op, 'cancelled', 'run did not happen'); before.journal.close();
+  const { journal } = openPoolRun(descriptor);
+  try {
+    const entry = journal.view.resources().get(got.resources[0]!);
+    assert.equal(entry?.status.state, 'reserved');
+    assert.equal(entry?.workload, true, 'aborting a transition preserves the originating workload reserve');
+  } finally { journal.close(); }
+});
+
+test('publication owner CPU exemption never bypasses dirty pools', T, async () => {
+  const descriptor = newRun(); const { ctx, journal } = openPoolRun(descriptor); const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    for (let attempt = 1; attempt <= ESTATE_SIZE; attempt++) {
+      const h = holderOf('u1', attempt); const got = reserve(ctx, h, req({ pools: [ESTATE] }), stageParent(h));
+      assert.ok(got.state === 'reserved');
+      writeFileSync(join(descriptor.stateDir, `${ESTATE}.teardown-fails-once`), '');
+      assert.equal((await cleanup(ctx, got, stageParent(h))).kind, 'cleanup-failed');
+    }
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
+    const pub = { type: 'publication', unit: unitId('owner'), attempt: 1 } as const;
+    reserve(ctx, pub, req({ publication: true }), { type: 'stage', unit: pub.unit, stage: 'candidate', attempt: 1 });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const own = wait(arb, req({ cpu: 1, pools: [ESTATE] }), { ...holderOf('owner'), stage: 'candidate' }, rank('owner', 1), abort.signal);
+    await tick(); assert.equal(own.box.grant, null);
+    assert.equal(arb.waiting()[0]?.envBlocked, true); assert.equal(arb.waiting()[0]?.pressureBlocked, false);
+    assert.deepEqual(arb.waiting()[0]?.reasons, ['named-resource:estate']);
+    abort.abort(); await own.done;
+  } finally { abort.abort(); journal.close(); }
+});
+
+for (const publication of [false, true]) test(`review.memory-first-workload-escape: publication=${publication}`, T, async () => {
+  const { ctx, journal } = openPoolRun(newRun());
+  const arb = createArbiter(ctx), abort = new AbortController();
+  const h = { ...holderOf('first'), stage: publication ? 'candidate' : 'lanes' } as const;
+  try {
+    const judge = { ...holderOf('judge'), stage: 'gate' } as const;
+    reserve(ctx, judge, req({ cpu: 1 }), stageParent(judge));
+    if (publication) reserve(ctx, { type: 'publication', unit: h.unit, attempt: h.attempt }, req({ publication: true }), stageParent(h));
+    arb.pressure.recordMemory(0.8);
+    const pending = wait(arb, req({ cpu: 1 }), h, rank('first', 1), abort.signal);
+    await tick();
+    assert.equal(pending.box.grant?.kind, 'granted', 'external memory saturation and judgment tokens cannot stall the first workload');
+    const next = wait(arb, req({ cpu: 1 }), holderOf('next'), rank('next', 2), abort.signal);
+    await tick();
+    assert.equal(next.box.grant, null, 'a held workload arms the memory brake despite spare tokens');
+    assert.deepEqual(arb.waiting()[0]?.reasons, ['memory-pressure']);
+    release(ctx, h); arb.wake();
+    assert.equal((await next.done).kind, 'granted', 'the next workload progresses once only judgment tokens remain');
+  } finally { abort.abort(); journal.close(); }
+});
+
+test('review.batch-owner-is-read-once-per-wake', T, async () => {
+  const { ctx, journal } = openPoolRun(newRun()); const abort = new AbortController();
+  try {
+    const active = holderOf('active'); reserve(ctx, active, req({ cpu: 1 }), stageParent(active));
+    reserve(ctx, { type: 'batch', finding: 'F-1' as never, attempt: 1 }, req({ publication: true }), { type: 'job', job: jobId('batch', 1) });
+    let scans = 0;
+    const view = new Proxy(journal.view, { get(target, property) {
+      if (property === 'opsOf') return (kind: Parameters<typeof target.opsOf>[0]) => { if (kind === 'resource.transition') scans++; return target.opsOf(kind); };
+      const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const arb = createArbiter({ ...ctx, journal: { ...journal, view } });
+    arb.pressure.record({ atMs: 0, runNs: 0, waitNs: 0 }); arb.pressure.record({ atMs: 60_000, runNs: 0, waitNs: 1e9 });
+    const waits = ['one', 'two', 'three'].map((u, n) => wait(arb, req({ cpu: 1 }), holderOf(u), rank(u, n), abort.signal));
+    scans = 0; arb.wake();
+    assert.equal(scans, 1, 'one batch-owner lookup for the entire wake, independent of waiter count');
+    assert.ok(waits.every((w) => w.box.grant === null));
+    abort.abort(); await Promise.all(waits.map((w) => w.done));
+  } finally { abort.abort(); journal.close(); }
 });
