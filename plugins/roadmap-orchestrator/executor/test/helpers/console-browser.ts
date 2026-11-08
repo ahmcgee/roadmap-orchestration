@@ -11,10 +11,11 @@ export class ConsoleBrowser {
   #next = 0;
   #buf = '';
   #pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
-  constructor(evidence: string) {
+  constructor(evidence: string, options: { settleMs?: number } = {}) {
     const config = JSON.parse(walkMcpConfig(CONFIG.walkthrough!.mcp, absPath(evidence))) as { mcpServers: { playwright: { command: string; args: string[]; env: Record<string, string> } } };
     const s = config.mcpServers.playwright;
-    this.child = spawn(s.command, s.args, { env: { ...process.env, ...s.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+    const args = options.settleMs === undefined ? s.args : [...s.args, '--timeout-settle', String(options.settleMs)];
+    this.child = spawn(s.command, args, { env: { ...process.env, ...s.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     this.child.stderr.setEncoding('utf8').on('data', (d: string) => this.stderr.push(d));
     this.child.stdout.setEncoding('utf8').on('data', (d: string) => {
       this.#buf += d;
