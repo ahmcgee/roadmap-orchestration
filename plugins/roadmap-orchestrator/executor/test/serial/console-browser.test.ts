@@ -126,11 +126,17 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   assert.equal(await browser.evaluate<number>('() => document.querySelectorAll(".history-scroll script, .history-scroll img").length'), 0);
   assert.match(await browser.evaluate<string>('()=>document.querySelector(".history-boundary").textContent'),/events loaded/);
   assert.doesNotMatch(await browser.evaluate<string>('()=>document.querySelector(".history-boundary").textContent'),/of [0-9]/,'unknown session totals are not invented');
+  assert.equal(await browser.evaluate(`()=>{const d=document.querySelector('.thinking-disclosure');return d.querySelector('button').getAttribute('aria-expanded')==='false'&&getComputedStyle(d.querySelector('.thinking-preview')).webkitLineClamp==='3';}`),true,'Thinking starts with a three-line disclosure');
+  await browser.evaluate(`()=>{document.querySelector('.thinking-disclosure button').click();return true;}`);
+  assert.equal(await browser.evaluate(`()=>document.querySelector('.thinking-disclosure button').getAttribute('aria-expanded')`),'true');
+  assert.match(await browser.evaluate<string>(`()=>document.querySelector('.thinking-disclosure').textContent`),/I’ll inspect the implementation before changing it/);
+  await browser.evaluate(`()=>{document.querySelector('.thinking-disclosure button').click();return true;}`);
   assert.match(await text(), /Show output/); assert.match(await text(), /Exit code 1/); assert.match(await text(), /Subagent of agent_1/);
+  await browser.evaluate('() => { document.querySelector(".session-details").open = true; return true; }');
   assert.match(await text(), /claude-sonnet-4-5/); assert.match(await text(), /52 recorded tokens/);
   await browser.evaluate('() => { document.querySelector(".history-brief").open = true; return true; }');
   assert.match(await text(), /Implement the unit contract/);
-  await browser.evaluate('() => { document.querySelector(".history-brief").open = false; window.historyDocumentSentinel = "same document"; return true; }');
+  await browser.evaluate('() => { document.querySelector(".history-brief").open = false; document.querySelector(".session-details").open = false; window.historyDocumentSentinel = "same document"; return true; }');
   agent.append('Live streamed message arrived without a reload.');
   await until(async () => /Live streamed message arrived without a reload/.test(await text()), 10_000, 'SSE appends a visible agent event');
   assert.equal(await browser.evaluate<string>('() => window.historyDocumentSentinel'), 'same document');
@@ -139,10 +145,11 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   copyFileSync(join(evidence, 'agent-history-live.png'), join(SHOTS, 'agent-history-live.png'));
   for (let n = 0; n < 60; n++) agent.append(`Paged agent event ${n}`);
   await until(async () => /Paged agent event 59/.test(await text()), 10_000, 'more than one history page');
-  await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent === "Following live tail").click(); return true; }');
+  await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent === "Following live").click(); return true; }');
   await until(async () => /Load 50 earlier events/.test(await text()), 10_000, 'bounded latest history page');
-  await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent === "Load 50 earlier events").click(); return true; }');
+  await browser.evaluate('() => { const s=document.querySelector(".history-scroll"),top=s.getBoundingClientRect().top,n=[...s.querySelectorAll("[data-event-id]")].find(n=>!n.closest("details:not([open])")&&n.getBoundingClientRect().height>0&&n.getBoundingClientRect().bottom>top); window.pagingAnchor={id:n.dataset.eventId,offset:n.getBoundingClientRect().top-top}; [...document.querySelectorAll("button")].find(b => b.textContent === "Load 50 earlier events").click(); return true; }');
   await until(async () => /I’ll inspect the implementation/.test(await text()), 10_000, 'earlier history page');
+  assert.equal(await browser.evaluate('()=>{const s=document.querySelector(".history-scroll"),a=window.pagingAnchor,n=[...s.querySelectorAll("[data-event-id]")].find(n=>n.dataset.eventId===a.id);return Math.abs(n.getBoundingClientRect().top-s.getBoundingClientRect().top-a.offset)<1;}'),true,"loading earlier history preserves the visible event position");
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent.startsWith("Follow live tail")).click(); return true; }');
   agent.append('Long evidence with explicit expansion. '.repeat(500));
   await until(async () => /Expand full text/.test(await text()), 10_000, 'explicit truncation control');
@@ -165,10 +172,10 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'agent-history-finished.png'), fullPage: false });
   copyFileSync(join(evidence, 'agent-history-finished.png'), join(SHOTS, 'agent-history-finished.png'));
   assert.equal(await browser.evaluate('() => document.querySelectorAll(".history-verdict").length'), 1, 'one canonical report');
-  await browser.evaluate('() => { [...document.querySelectorAll("summary")].find(s => s.textContent === "Raw result.json").parentElement.open = true; return true; }');
+  await browser.evaluate('() => { document.querySelector(".session-details").open = true; [...document.querySelectorAll("summary")].find(s => s.textContent === "Raw result.json").parentElement.open = true; return true; }');
   await until(async () => /Verified the change/.test(await browser.evaluate<string>('() => [...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Raw result.json")?.querySelector("pre")?.textContent || ""')), 10_000, 'pretty printed raw result disclosure');
   assert.equal(await browser.evaluate('() => { const p=[...document.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Raw result.json").querySelector("pre"); return JSON.parse(p.textContent).outcome.value.summary; }'), 'Verified the change.');
-  await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => /Back to unit/.test(b.textContent)).click(); return true; }');
+  await browser.evaluate('() => { document.querySelector(".back-to-unit").click(); return true; }');
   await until(async () => await browser.evaluate('() => document.querySelector(".unit-meta > span")?.textContent === "u3"'), 10_000, 'back to unit activity');
   await browser.call('browser_press_key', { key: 'Escape' });
 

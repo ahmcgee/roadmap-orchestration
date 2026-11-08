@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, X } from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
 import { Clock, elapsed, glyph, info, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
 import type { Envelope } from './types.ts';
@@ -22,7 +22,7 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
   }
   return <aside ref={panel} role="dialog" aria-modal="false" aria-labelledby="detail-title" className={`drawer ${className}`} style={{ width }}>
     <div className="drawer-resize" role="separator" aria-label="Resize details" aria-orientation="vertical" tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { const next = Math.max(360, Math.min(960, width + (e.key === 'ArrowLeft' ? 40 : -40))); setWidth(next); try { localStorage.setItem('roadmap.drawer-width', String(next)); } catch {} } }}/>
-    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><Button variant="ghost" size="icon" onClick={close} aria-label="Close details"><X size={18}/></Button></header>
+    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><Button variant="ghost" size="icon" onClick={close} aria-label="Close details" title="Close to graph"><X size={18}/></Button></header>
     <div className="drawer-body">{children}</div>
   </aside>;
 }
@@ -56,4 +56,7 @@ export function UnitDetail({ e, id, close }: { e: Envelope; id: string; close: (
     <section><h3>Checks</h3>{e.data.display.status.units.find(v => v.unit === id)?.certification?.lanes.map((l,i) => <p key={i}>{l.id}: {l.verdict || l.state}</p>)}</section>
   </Drawer>;
 }
-export function BackToUnit({ e, unit }: { e: Envelope; unit: string }) { return <Button variant="ghost" asChild><a href={link(e.arc, route().tab, 'units', unit)}><ArrowLeft size={14}/>Back to unit {unit}</a></Button>; }
+export function BackToUnit({ e, unit }: { e: Envelope; unit: string }) {
+  const u=e.data.console.presentation.units.find(v=>v.id===unit), systems=e.data.plan?.units.find(v=>v.id===unit)?.systems??[];
+  return <div className="invocation-breadcrumb"><Button variant="ghost" asChild><a className="back-to-unit" href={link(e.arc, route().tab, 'units', unit)}><ChevronLeft size={16}/>Unit {unit}</a></Button><a className="invocation-unit-link" href={link(e.arc,route().tab,'units',unit)}>{u?.title||unit}</a><span className="invocation-identity">{unit}{systems.length?`  ${systems.join(', ')}`:''}</span></div>;
+}

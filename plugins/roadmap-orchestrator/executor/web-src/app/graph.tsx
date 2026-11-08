@@ -17,7 +17,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   opener.current=open;
   const [selected,setSelected]=useState<string|null>(null), [query,setQuery]=useState(''), [searching,setSearching]=useState(false), [filters,setFilters]=useState<Signal[]>([]), [station,setStation]=useState<string|null>(null);
   const [fontsReady,setFontsReady]=useState(false);
-  useEffect(()=>{let disposed=false;void Promise.all([document.fonts.load('500 10px "Barlow Semi Condensed"'),document.fonts.load('600 16px "Barlow Semi Condensed"')]).then(()=>{if(!disposed)setFontsReady(true);});return()=>{disposed=true;};},[]);
+  useEffect(()=>{let disposed=false;void Promise.all([document.fonts.load('500 11px "Barlow Semi Condensed"'),document.fonts.load('600 16px "Barlow Semi Condensed"')]).then(()=>{if(!disposed)setFontsReady(true);});return()=>{disposed=true;};},[]);
   const [focus,setFocus]=useState<FocusMode>('active'), [cluster,setCluster]=useState(0), [keyOpen,setKeyOpen]=useState(false), [mobileSearch,setMobileSearch]=useState(false);
   const touchCard=useRef<string|null>(null), hoverTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const [hover,setHover]=useState<{id:string;x:number;y:number}|null>(null), [view,setView]=useState({zoom:1,x:0,y:0});
@@ -64,14 +64,14 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
     const graph=cy.current;if(!graph)return;
     graph.resize();
     if(m.presentation.units.length<=10){place(baseline);frame(m.graph.units.map(u=>u.id),false);return;}
-    const context=document.createElement('canvas').getContext('2d')!;context.font='500 10px "Barlow Semi Condensed"';
+    const context=document.createElement('canvas').getContext('2d')!;context.font='500 11px "Barlow Semi Condensed"';
     const next=overviewLayout(e,baseline,graph.width()-16,graph.height()-116,text=>context.measureText(text).width);
     place(next,next.sizes);
     const zoom=1/8;
     graph.viewport({zoom,pan:{x:graph.width()<=640?16:(graph.width()-next.width*zoom)/2,y:graph.width()<=640?80:64}});
   }
   function focusStation(id:string){const band=baseline.bands.find(b=>b.id===id);if(!band)return;setFocus('milestone');setStation(id);setHover(null);touchCard.current=null;cy.current?.style().selector('edge').style({'taxi-direction':'auto'}).update();if((canvas.current?.clientWidth??innerWidth)<=640){
-    const graph=cy.current!;const context=document.createElement('canvas').getContext('2d')!;context.font='500 10px \"Barlow Semi Condensed\"';
+    const graph=cy.current!;const context=document.createElement('canvas').getContext('2d')!;context.font='500 11px \"Barlow Semi Condensed\"';
     const next=overviewLayout(e,baseline,graph.width()-16,graph.height()-116,text=>context.measureText(text).width);place(next,next.sizes);
     const target=next.bands.find(b=>b.id===id)!;graph.viewport({zoom:1/8,pan:{x:16-target.x/8,y:80-target.y/8}});
     }else{
@@ -105,14 +105,14 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
       {selector:'node[aux=1]',style:{'width':6,'height':6,'border-width':0,'background-color':color('--line'),'label':'','events':'no'}},
       {selector:'edge',style:{'curve-style':'taxi','taxi-direction':'auto','taxi-turn':24,'line-color':color('--muted-ink'),'width':1,'opacity':.32,'target-arrow-shape':'triangle','target-arrow-color':color('--muted-ink'),'arrow-scale':.65}},
       {selector:'edge[kind="waits"]',style:{'display':'none','line-style':'dashed'}},
-      {selector:'edge[kind="bundle"]',style:{'curve-style':'unbundled-bezier','control-point-distances':-100,'control-point-weights':.5,'line-color':color('--line'),'line-style':'dashed','opacity':.24,'target-arrow-shape':'none'}},
+      {selector:'edge[kind="bundle"]',style:{'display':'none','curve-style':'unbundled-bezier','control-point-distances':-100,'control-point-weights':.5,'line-color':color('--line'),'line-style':'dashed','opacity':.24,'target-arrow-shape':'none'}},
       {selector:'edge[kind="feeds"]',style:{'curve-style':'bezier','opacity':.14}},
       {selector:'.dim',style:{'opacity':.25}},
       {selector:'node.dim',style:{'text-opacity':1,'text-background-color':color('--paper'),'text-background-opacity':1,'text-background-padding':1}},
       {selector:'edge.chain,edge.trace',style:{'opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
       {selector:'edge.exact',style:{'display':'element','opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
       {selector:'node:selected, node.match',style:{'border-color':color('--line'),'border-width':4,'background-opacity':1}},
-      {selector:'node.overview',style:{'label':'data(compact)','font-weight':500,'font-size':80,'text-max-width':10000,'text-wrap':'none','text-halign':'left-inside','text-margin-x':0,'text-margin-y':0,'width':'data(compactWidth)','height':'data(compactHeight)','border-width':1}},
+      {selector:'node.overview',style:{'label':'data(compact)','line-height':14/11,'font-weight':500,'font-size':88,'text-max-width':10000,'text-wrap':'none','text-halign':'left-inside','text-margin-x':0,'text-margin-y':0,'width':'data(compactWidth)','height':'data(compactHeight)','border-width':1}},
       {selector:'node[gate=1].overview',style:{'shape':'round-rectangle','text-wrap':'wrap','text-max-width':1000}},
       {selector:'node.extreme',style:{'label':''}},
       {selector:'node[gate=0].overview[state="pending"]',style:{'border-width':4,'background-opacity':1}}
@@ -153,11 +153,11 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
           graph.edges().style('width',1/zoom);graph.edges('.chain,.trace,.exact').style({'width':2/zoom,'arrow-scale':Math.max(.65,.6/Math.sqrt(zoom))});
           const compact=LABEL_PX*zoom<MIN_LABEL_PX;
           graph.batch(()=>{
-            graph.nodes('[gate]').toggleClass('overview',compact).toggleClass('extreme',zoom<.035);
+            graph.nodes('[gate]').toggleClass('overview',compact).removeClass('extreme');
             // Replace font bypasses instead of appending stylesheet contexts on
             // every viewport event. Panning needs no label-style work at all.
-            graph.nodes('[gate=0]').style({'font-size':compact?10/zoom:LABEL_PX,'text-margin-x':compact?20/zoom:12,'text-margin-y':compact?0:-10});
-            graph.nodes('[gate=1]').forEach(node=>{node.style({'width':compact?Math.max(node.data('compactWidth'),72/zoom):160,'height':compact?Math.max(node.data('compactHeight'),28/zoom):80,'border-width':Math.max(2,1/zoom),'font-size':compact?10/zoom:Math.max(12,11/zoom),'text-margin-x':compact?20/zoom:20,'text-margin-y':compact?0:-6});});
+            graph.nodes('[gate=0]').style({'font-size':compact?11/zoom:LABEL_PX,'text-margin-x':compact?14/zoom:12,'text-margin-y':compact?0:-10});
+            graph.nodes('[gate=1]').forEach(node=>{node.style({'width':compact?Math.max(node.data('compactWidth'),72/zoom):160,'height':compact?Math.max(node.data('compactHeight'),28/zoom):80,'border-width':Math.max(2,1/zoom),'font-size':compact?11/zoom:Math.max(12,11/zoom),'text-margin-x':compact?14/zoom:20,'text-margin-y':compact?0:-6});});
           });
         }
       });
@@ -202,11 +202,33 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   useEffect(()=>{const key=(ev:KeyboardEvent)=>{if(ev.target instanceof HTMLElement&&(ev.target.matches('input,textarea,select')||ev.target.isContentEditable)||document.querySelector('[role="dialog"]')?.contains(ev.target as Node))return;if(ev.key==='/'){ev.preventDefault();setMobileSearch(true);requestAnimationFrame(()=>search.current?.focus());}if(ev.key==='f'){ev.preventDefault();fitFocus();}if(ev.key==='a'){ev.preventDefault();focusActive();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);});
   const selectedUnit=m.presentation.units.find(u=>u.id===selected),hovered=m.presentation.units.find(u=>u.id===hover?.id);
   const exactWaits=selected?.startsWith('milestone:')?m.graph.edges.filter(([a])=>a===selected).map(([,b])=>b):(waits.get(selected??'')??[]);
+  // Wait membership stays in the graph as exact edges. Only its background
+  // presentation uses one orthogonal bus per source gate and destination band.
+  const waitBuses = new Map<string,{source:string;band:string;targets:string[]}>();
+  for(const [source,target] of m.graph.edges)if(source.startsWith('milestone:')){
+    const band=layout.bands.find(b=>b.ids.includes(target));if(!band)continue;
+    const key=`${source}:${band.id}`,bus=waitBuses.get(key)??{source,band:band.id,targets:[]};bus.targets.push(target);waitBuses.set(key,bus);
+  }
+  const busGeometry=[...waitBuses].map(([key,bus])=>{
+    const source=layout.positions.get(bus.source)!;
+    const targets=bus.targets.map(id=>{const p=layout.positions.get(id)!,node=cy.current?.getElementById(id);return {id,x:p.x*view.zoom+view.x-(node?.width()??NODE_WIDTH)*view.zoom/2,y:p.y*view.zoom+view.y};});
+    const x=Math.min(...targets.map(p=>p.x))-12,top=Math.min(...targets.map(p=>p.y)),bottom=Math.max(...targets.map(p=>p.y));
+    return {key,...bus,targets,x,top,bottom,sx:source.x*view.zoom+view.x,sy:source.y*view.zoom+view.y};
+  });
+  const currentMilestone=baseline.bands.find(b=>b.id.startsWith("milestone:")&&b.state!=="passed")?.id;
   return <div className={`graph-view ${focus==='all'?'graph-all':''}`}>
-    <nav className="line-map" aria-label="Milestone stations">{baseline.bands.map(band=><button key={band.id} className={`station ${band.id==='unbound'?'station-unbound':''}`} aria-pressed={station===band.id} onClick={()=>focusStation(band.id)} title={`${e.data.plan?.milestones?.find(g=>`milestone:${g.id}`===band.id)?.text||band.label}: ${band.passed}/${band.total} units passed`}><span className="station-track"><span className="track-fill" style={{width:`${band.total?band.passed/band.total*100:0}%`}}/><span className="gate-glyph" aria-label={band.state}>{glyph[band.state as Signal]}</span></span><span className="station-caption"><strong>{band.id==='unbound'?'No milestone':`${band.id.slice(10)}${band.label!==band.id.slice(10)?` ${band.label}`:''}`}</strong><span>{band.passed}/{band.total}</span></span><span className="station-name">{band.label}</span></button>)}</nav>
+    <nav className="line-map" aria-label="Milestone stations">{baseline.bands.map(band=><button key={band.id} className={`station ${band.id==='unbound'?'station-unbound':''} ${band.id===currentMilestone?'station-current':''}`} aria-description={band.id===currentMilestone?'Current milestone':undefined} aria-pressed={station===band.id} onClick={()=>focusStation(band.id)} title={`${e.data.plan?.milestones?.find(g=>`milestone:${g.id}`===band.id)?.text||band.label}: ${band.passed}/${band.total} units passed`}><span className="station-track"><span className="track-fill" style={{width:`${band.total?band.passed/band.total*100:0}%`}}/><span className="gate-glyph" aria-label={band.state}>{glyph[band.state as Signal]}</span></span><span className="station-caption"><strong>{band.id==='unbound'?'No milestone':`${band.id.slice(10)}${band.label!==band.id.slice(10)?` ${band.label}`:''}`}</strong><span>{band.passed}/{band.total}</span></span><span className="station-name">{band.label}</span></button>)}</nav>
     <div className="graph-stage">
       <div ref={canvas} className="dag-canvas" role="application" tabIndex={0} aria-label={`Unit dependency graph, ${m.presentation.units.length} units. Arrow keys select, Enter opens details. ${selectedUnit?`Selected ${selectedUnit.title}`:''}`} onKeyDown={ev=>{const nodes=cy.current?.nodes('[gate]');if(!nodes?.length)return;if(ev.key==='Enter'&&selected){ev.preventDefault();open(selected);}if(ev.key.startsWith('Arrow')){ev.preventDefault();const index=nodes.toArray().findIndex(n=>n.id()===selected),next=(index+(ev.key==='ArrowLeft'||ev.key==='ArrowUp'?-1:1)+nodes.length)%nodes.length;focusNode(nodes[next]!.id());}}}/>
-      <div className="node-signals" aria-hidden="true">{m.graph.units.map(u=>{const p=layout.positions.get(u.id),node=cy.current?.getElementById(u.id);if(!p||!node?.length)return null;const compact=view.zoom*LABEL_PX<MIN_LABEL_PX,w=node.width()*view.zoom,h=node.height()*view.zoom,x=p.x*view.zoom+view.x-w/2+4,y=p.y*view.zoom+view.y+(compact?-6:h/2-15);if(x< -160||x>(canvas.current?.clientWidth??innerWidth)||y<0||y>(canvas.current?.clientHeight??innerHeight))return null;const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;return <span key={u.id} className="node-signal" style={{left:x,top:y}}><SignalMark state={state}/>{!compact&&u.id.startsWith('milestone:')===false&&<span className="node-identity">{u.id}  {e.data.plan?.units.find(v=>v.id===u.id)?.systems.join(' ')}</span>}</span>;})}</div>
+      <svg className="wait-buses" aria-hidden="true">{busGeometry.map(bus=><g key={bus.key} className="wait-bus">
+        <path className="wait-bus-line" d={`M ${bus.sx} ${bus.sy} H ${bus.x} V ${bus.top} M ${bus.x} ${bus.top} V ${bus.bottom}`}/>
+        {bus.targets.map(p=><path key={p.id} className="wait-target-tick" d={`M ${bus.x} ${p.y} h 6`}/>)}
+      </g>)}</svg>
+      <div className="wait-bus-labels">{busGeometry.map(bus=><details key={bus.key} className="wait-bus-label" onMouseEnter={ev=>{setHover(null);ev.currentTarget.open=true;}} onMouseLeave={ev=>{if(!ev.currentTarget.contains(document.activeElement))ev.currentTarget.open=false;}} onFocus={ev=>{setHover(null);ev.currentTarget.open=true;}} onBlur={ev=>{if(!ev.currentTarget.contains(ev.relatedTarget))ev.currentTarget.open=false;}} onKeyDown={ev=>{if(ev.key==='Escape'){ev.currentTarget.open=false;ev.currentTarget.querySelector('summary')?.focus();ev.stopPropagation();}}} style={{left:bus.x,top:bus.top-20}}>
+        <summary onClick={ev=>{ev.preventDefault();ev.currentTarget.parentElement!.setAttribute('open','');}} aria-label={`${bus.source.slice(10)}: ${bus.targets.length} waiting units in ${bus.band.replace('milestone:','')}`} title={`Waits on ${bus.source.slice(10)}`}>{bus.source.slice(10)}: {bus.targets.length} waiting</summary>
+        <div className="wait-bus-targets"><strong>Waits on {bus.source.slice(10)}</strong>{bus.targets.map(p=><button key={p.id} onClick={()=>focusNode(p.id)}>{p.id}</button>)}</div>
+      </details>)}</div>
+      <div className="node-signals" aria-hidden="true">{m.graph.units.map(u=>{const p=layout.positions.get(u.id),node=cy.current?.getElementById(u.id);if(!p||!node?.length)return null;const compact=view.zoom*LABEL_PX<MIN_LABEL_PX,w=node.width()*view.zoom,h=node.height()*view.zoom,x=p.x*view.zoom+view.x-w/2+4,y=p.y*view.zoom+view.y+(compact?-7:h/2-15);if(x< -160||x>(canvas.current?.clientWidth??innerWidth)||y<0||y>(canvas.current?.clientHeight??innerHeight))return null;const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;return <span key={u.id} className={`node-signal ${compact?'node-signal-compact':''}`} style={{left:x,top:y}}><SignalMark state={state}/>{!compact&&u.id.startsWith('milestone:')===false&&<span className="node-identity">{u.id}  {e.data.plan?.units.find(v=>v.id===u.id)?.systems.join(' ')}</span>}</span>;})}</div>
       <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${station===b.id?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}><span style={{left:Math.max(0,8-(b.x*view.zoom+view.x))}}>{b.id==='unbound'?'No milestone':b.id==='active-context'?'Active + direct neighbours':b.id.slice(10)} {b.id!=='active-context'&&`${b.passed}/${b.total}`}</span></div>)}</div>
       {view.zoom*LABEL_PX>=MIN_LABEL_PX&&<div className="wait-badges">{[...unmet].map(([id,gates])=>{const p=layout.positions.get(id);if(!p)return null;const x=(p.x-NODE_WIDTH/2)*view.zoom+view.x,y=(p.y+NODE_HEIGHT/2)*view.zoom+view.y;if(x< -150||x>(canvas.current?.clientWidth??innerWidth)||y<0||y>(canvas.current?.clientHeight??innerHeight))return null;return <button key={id} title={`Waits on ${gates.map(g=>g.slice(10)).join(', ')}`} style={{left:x,top:y}} onClick={()=>cy.current?.getElementById(id).select()}>{gates.length===1?`Waits on ${gates[0]!.slice(10)}`:`${gates.length} unmet gates`}</button>;})}</div>}
       <div className={`graph-toolbar ${mobileSearch?'search-expanded':''}`} role="toolbar" aria-label="Graph controls">

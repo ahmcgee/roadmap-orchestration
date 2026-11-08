@@ -107,14 +107,14 @@ export function overviewLayout(e: Envelope, base: ReturnType<typeof graphLayout>
   // A phone is a window into the same two-dimensional overview, never a
   // reason to reflow hundreds of identifiers into viewport-width paragraphs.
   width=Math.max(1100,width);
-  const scale=8, gap=12, row=20, bandGap=24;
+  const scale=8, gap=12, row=23, bandGap=24;
   const columns=Math.min(5,Math.max(1,Math.floor(width/260)));
   const bandWidth=(width-bandGap*(columns-1))/columns;
   const positions=new Map<string,{x:number;y:number}>(), sizes=new Map<string,{width:number;height:number}>();
   const packed=base.bands.map(b=>{
     const rows: {used:number;items:{id:string;width:number}[]}[]=[{used:0,items:[]}];
     // Stable width-first packing avoids wasting a whole row on a long system name.
-    const items=b.ids.map(id=>({id,width:Math.ceil(measure(compactIdentifier(e,id)))+32})).sort((a,b)=>b.width-a.width||a.id.localeCompare(b.id,undefined,{numeric:true}));
+    const items=b.ids.map(id=>({id,width:Math.ceil(measure(compactIdentifier(e,id)))+18})).sort((a,b)=>b.width-a.width||a.id.localeCompare(b.id,undefined,{numeric:true}));
     for(const item of items){let r=rows.find(r=>r.used+item.width<=bandWidth);if(!r){r={used:0,items:[]};rows.push(r);}r.items.push(item);r.used+=item.width+gap;}
     return {band:b,rows,height:rows.length*row+56};
   });
@@ -127,7 +127,7 @@ export function overviewLayout(e: Envelope, base: ReturnType<typeof graphLayout>
     const group=packed.slice(i,i+columns),groupHeight=Math.max(...group.map(b=>b.height));
     group.forEach(({band,rows},column)=>{
       const x=column*(bandWidth+bandGap), header=56;
-      rows.forEach((r,j)=>{let cursor=0;for(const item of r.items){positions.set(item.id,{x:(x+cursor+item.width/2)*scale,y:(y+header+j*row+row/2)*scale});sizes.set(item.id,{width:(item.width-gap)*scale,height:(row-6)*scale});cursor+=item.width+gap;}});
+      rows.forEach((r,j)=>{let cursor=0;for(const item of r.items){positions.set(item.id,{x:(x+cursor+item.width/2)*scale,y:(y+header+j*row+row/2)*scale});sizes.set(item.id,{width:item.width*scale,height:18*scale});cursor+=item.width+gap;}});
       if(band.id!=='unbound'){positions.set(band.id,{x:(x+bandWidth/2)*scale,y:(y+30)*scale});sizes.set(band.id,{width:Math.min(bandWidth-16,Math.max(128,measure(band.label)+32))*scale,height:36*scale});}
       bands.push({...band,x:x*scale,y:y*scale,width:bandWidth*scale,height:groupHeight*scale});
     });

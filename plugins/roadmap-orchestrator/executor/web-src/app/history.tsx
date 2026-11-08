@@ -2,7 +2,7 @@
 import * as R from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { Clock, api, elapsed, get, info, link, money, pluralise, relativeTime, route } from './shared.tsx';
-import { Drawer as Dialog } from './drawer.tsx';
+import { Drawer as Dialog, BackToUnit } from './drawer.tsx';
 import { fileHistory, shellWritePath, fileLines, readFilePreview } from './file-history.ts';
 import { changedFiles, historyGroups } from './history-presentation.ts';
 const h: any = R.createElement;
@@ -265,6 +265,18 @@ function NativeTool({ event, base, identity, onLayout }: any) {
     !fileTool && event.status !== "failed" && event.output != null && h("details", { className: "tool-output" }, h("summary", null, "Show output"), h("pre", null, event.output), expansion("output"))
   );
 }
+const ThinkingState = R.createContext(new Map<string, boolean>());
+function Thinking({ event, base, identity }: any) {
+  const retained = R.useContext(ThinkingState), key = `${identity}:${event.id}`;
+  const [open, setOpen] = useState(() => retained.get(key) ?? false);
+  const value = useHistoryText(open ? event : { ...event, truncated: [] }, "text", base, identity);
+  return h("div", { className: "thinking-disclosure" },
+    h("div", { id: `thinking-${event.id}`, className: open ? "" : "thinking-preview" }, h(HistoryMarkdown, { text: value.text }),
+      open && !value.ready && h("p", { className:"muted", role:"status" }, "Reading full thinking…"),
+      value.error && h("p", {role:"alert"}, value.error),
+      value.error && event.truncated?.includes("text") && h(HistoryField, { event, field: "text", base, identity })),
+    h("button", { "aria-expanded": open, "aria-controls": `thinking-${event.id}`, onClick: () => { retained.set(key, !open); setOpen(!open); } }, `${open ? "Hide thinking" : "Show thinking"} (1 event)`));
+}
 function AgentEvent({ event, base, identity, onLayout }: any) {
   const now = R.useContext(Clock), unknown = event.unknown;
   const expansion = (field: any) => event.truncated?.includes(field) ? h(HistoryField, { event, field, base, identity }) : null;
@@ -278,7 +290,7 @@ function AgentEvent({ event, base, identity, onLayout }: any) {
       R.Fragment,
       null,
       h("header", { className: "history-event-head" }, h("strong", null, title), event.at && h("time", null, relativeTime(event.at, now))),
-      unknown ? h("details", null, h("summary", null, "Raw event payload"), h("pre", null, historyJson(event.text) ? JSON.stringify(historyJson(event.text), null, 2) : event.text), expansion("text")) : structured && event.status === "failed" ? h("details", { open: true, className: "tool-output" }, h("summary", null, "Output  error"), h("pre", null, event.output), expansion("output")) : !structured && event.type !== "result" && h(R.Fragment, null, h(HistoryMarkdown, { text: event.text }), expansion("text"))
+      unknown ? h("details", null, h("summary", null, "Raw event payload"), h("pre", null, historyJson(event.text) ? JSON.stringify(historyJson(event.text), null, 2) : event.text), expansion("text")) : structured && event.status === "failed" ? h("details", { open: true, className: "tool-output" }, h("summary", null, "Output  error"), h("pre", null, event.output), expansion("output")) : !structured && event.type !== "result" && (event.type === "thinking" ? h(Thinking, { event, base, identity }) : h(R.Fragment, null, h(HistoryMarkdown, { text: event.text }), expansion("text")))
     ),
     (event.tokens != null || event.elapsedMs != null) && h("small", { className: "muted history-event-meta" }, [event.tokens != null ? `${pluralise(event.tokens, "token")}` : "", event.elapsedMs != null ? elapsed(event.elapsedMs) : ""].filter(Boolean).join("  "))
   );
@@ -295,7 +307,7 @@ function TranscriptVerdict({ event, base, identity, onLayout, summary=false }: a
 }
 function ChangedFiles({onJump}:any){
   const {views,events=[]}=R.useContext(FileHistory),files=changedFiles(events,views);
-  return h("details",{className:"changed-files"},h("summary",null,`Changed files ${files.length}`,h("small",{className:"muted"}," in loaded history")),h("div",null,files.map(file=>h("button",{key:file.path,onClick:()=>onJump(file.id)},h("code",null,file.path),file.counts?h("span",null,`+${file.added} −${file.removed}`):h("small",null,"Change counts unrecorded")))),!files.length&&h("p",{className:"muted"},"No file changes in the loaded events."));
+  return h("details",{className:"changed-files"},h("summary",null,`Changed files (${files.length} loaded)`),h("div",null,files.map(file=>h("button",{key:file.path,onClick:()=>onJump(file.id)},h("code",null,file.path),file.counts?h("span",null,`+${file.added} −${file.removed}`):h("small",null,"Change counts unrecorded")))),!files.length&&h("p",{className:"muted"},"No file changes in the loaded events."));
 }
 function HistoryEvents({events,live,...props}:any){
   const groups=historyGroups(events,live);
@@ -369,13 +381,10 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
     placedScroll.current = scroll.current.scrollTop;
   };
   R.useLayoutEffect(followLayout, [history, result]);
-  const back = () => {
-    location.hash = link(e.arc, route().tab, "units", activity.unit).slice(1);
-  };
   const more = () => {
     follow.current = false;
     setFollowing(false);
-    const top=scroll.current.getBoundingClientRect().top,first=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.getBoundingClientRect().bottom>top) as HTMLElement|undefined;
+    const top=scroll.current.getBoundingClientRect().top,first=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>!node.closest('details:not([open])')&&node.getBoundingClientRect().height>0&&node.getBoundingClientRect().bottom>top) as HTMLElement|undefined;
     if(first)anchor.current={id:first.dataset['eventId']!,offset:first.getBoundingClientRect().top-top};
     get(`${base}/history?before=${history.before}&identity=${encodeURIComponent(history.identity)}`).then((r: any) => {
       setEarlier(true);
@@ -401,32 +410,33 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
     return () => c.abort();
   }, [base, completed]);
   const verdictEvent = [...history?.events || []].reverse().find((event: any) => event.report || event.tool === "StructuredOutput" && event.status !== "failed");
-  return h(FileHistoryProvider,{identity:history?.identity,events:history?.events||[]},h(
+  const thinking = useRef(new Map<string, boolean>());
+  return h(ThinkingState.Provider,{value:thinking.current},h(FileHistoryProvider,{identity:history?.identity,events:history?.events||[]},h(
     Dialog,
-    { title: `${info(e, activity).label}, attempt ${info(e, activity).attempt}`, close, className: "agent-detail", headingLink: h("a", { className: "invocation-unit-link", href: link(e.arc, route().tab, "units", activity.unit) }, e.data.console.presentation.units.find((u: { id: string; title: string }) => u.id === activity.unit)?.title || activity.unit) },
+    { title: `${info(e, activity).label}, attempt ${info(e, activity).attempt}`, close, className: "agent-detail", headingLink: h(BackToUnit, {e, unit:activity.unit}) },
+    h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,money(info(e,activity).spend))))),
     result?.report != null ? h(VerdictStatus,{value:result.report}) : h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,summary:true}),
-    h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,money(info(e,activity).spend))))),
-    h("div",{className:"invocation-context"},h("button", { onClick: back }, `\u2039 Back to unit ${activity.unit}`),
-    h(
-      "div",
-      { className: "history-meta" },
-      h("strong", null, live ? "Running" : completed ? "Finished" : history?.state || "Connecting"),
-      h("span", null, model || "Model unrecorded"),
-      usage != null && h("span", null, `${pluralise(usage, "recorded token")}`)
-    ),
-    ),
-    h("div",{className:"history-disclosures"},history?.session && h("details", { className: "history-session" }, h("summary", null, "Session  " + (history.session.model || model || "model unrecorded")), h("p", null, `Tools: ${history.session.tools.join(", ") || "unrecorded"}`), history.session.notices.map((n: any) => h("p", { key: n }, n))),
-    h(
-      "details",
-      { className: "history-brief" },
-      h("summary", null, "Brief  recorded seat prompt"),
-      brief?.brief ? h(SeatBrief, { brief: brief.brief }) : brief ? h(R.Fragment, null, h(HistoryMarkdown, { text: brief.lines.join("\n") }), brief.end < brief.size && h("button", { onClick: () => get(`${base}/prompt?after=${brief.end}`).then((r: any) => setBrief(r.data)).catch((err: any) => setError(err.message)) }, `Next brief page (${brief.end} of ${pluralise(brief.size, "byte")})`)) : h("p", null, "Reading retained brief\u2026")
-    ),
-    ),
     error && h("p", { role: "alert" }, error),
     h("div",{className:"history-navigation"},h("div", {className:"history-heading"},"History"),h(ChangedFiles,{onJump:(id:string)=>{follow.current=false;setFollowing(false);const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset.eventId===id) as HTMLElement|undefined;if(target){let parent=target.parentElement;while(parent&&parent!==scroll.current){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top;placedScroll.current=scroll.current.scrollTop;setAbove(scroll.current.scrollTop>8);}}}),
     ),
-    h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more }, history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live tail" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,above?"Earlier events above":history.before!=null?"Earlier events available":"Start of session"))),
+    h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more }, history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,above?"Earlier events above":history.before!=null?"Earlier events available":"Start of session"))),
+    h(
+      "details",
+      { className: "session-details" },
+      h("summary", null, "Session details"),
+      h("div", {className:"history-meta"}, h("span",null,model||"Model unrecorded"), usage != null && h("span",null,pluralise(usage,"recorded token"))),
+      history?.session && h("div", null, h("p", null, `Tools: ${history.session.tools.join(", ") || "unrecorded"}`), history.session.notices.map((n:any)=>h("p",{key:n},n))),
+      h("details",{className:"history-brief"},h("summary",null,"Recorded instructions"),brief?.brief?h(SeatBrief,{brief:brief.brief}):brief?h(R.Fragment,null,h(HistoryMarkdown,{text:brief.lines.join("\n")}),brief.end<brief.size&&h("button",{onClick:()=>get(`${base}/prompt?after=${brief.end}`).then((r:any)=>setBrief(r.data)).catch((err:any)=>setError(err.message))},`Next brief page (${brief.end} of ${pluralise(brief.size,"byte")})`)):h("p",null,"Reading retained brief…")),
+      h(
+        "details",
+        { onToggle: (ev: any) => {
+          if (ev.currentTarget.open && !result) get(`${base}/result`).then((r: any) => setResult(r.data)).catch((err: any) => setResult({ unavailable: err.message }));
+        } },
+        h("summary", null, "Raw result.json"),
+        result?.raw ? h("pre", { className: "record" }, result.raw) : h("p", { className: "muted" }, result?.unavailable || "Reading retained result\u2026")
+      ),
+      h(TranscriptText, { base })
+    ),
     h(
       "div",
       { className: `history-scroll ${above?"history-above":""}`, ref: scroll, tabIndex: 0, "aria-label": "Agent transcript", onScroll: (ev: any) => {
@@ -444,20 +454,8 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
       history && !history.events.length && h("p", null, "Waiting for complete transcript records\u2026"),
       live && h("p", { className: "history-live", role: "status" }, "Agent is working", h("span", { className: "history-caret", "aria-hidden": true }))
     ),
-    h(
-      "div",
-      { className: "history-links" },
-      h(
-        "details",
-        { onToggle: (ev: any) => {
-          if (ev.currentTarget.open && !result) get(`${base}/result`).then((r: any) => setResult(r.data)).catch((err: any) => setResult({ unavailable: err.message }));
-        } },
-        h("summary", null, "Raw result.json"),
-        result?.raw ? h("pre", { className: "record" }, result.raw) : h("p", { className: "muted" }, result?.unavailable || "Reading retained result\u2026")
-      ),
-      h(TranscriptText, { base })
-    )
-  ));
+
+  )));
 }
 function TranscriptText({ base }: any) {
   const [page, setPage] = useState<any>(null), [error, setError] = useState<any>("");
