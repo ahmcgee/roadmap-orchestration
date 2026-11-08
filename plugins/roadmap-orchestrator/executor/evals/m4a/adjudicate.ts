@@ -111,7 +111,7 @@ export function stageTree(dir: string, tree: string): Readonly<{ one: ArcRef }> 
   for (const e of one.events) {
     if (e.type !== 'fact' || e.fact.kind !== 'witnessed') continue;
     const src = witnessDir(run, e.fact);
-    if (existsSync(src)) cpSync(src, join(tree, 'witness', 'runs', relative(run, src)), { recursive: true });
+    if (existsSync(src)) cpSync(src, join(tree, 'witness', 'arcs', one.arc, relative(run, src)), { recursive: true });
   }
   write(join(tree, 'RUBRIC.md'), ['# Rubric', '', ...RUBRIC.map(([id, text]) => `- **${id}** ${text}`), ''].join('\n'));
   // Read-only: the adjudicator's tools cannot write anyway; this keeps a slip from changing the evidence.
