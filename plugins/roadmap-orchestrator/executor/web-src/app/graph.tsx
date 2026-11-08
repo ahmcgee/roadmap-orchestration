@@ -2,19 +2,20 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import cytoscape, { type Core, type NodeSingular } from 'cytoscape';
 import { Focus, Minus, Plus, Search } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { activeFocus, activeLayout, graphLayout, LABEL_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH } from './graph-layout.ts';
+import { activeFocus, activeLayout, compactIdentifier, overviewLayout, graphLayout, LABEL_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH } from './graph-layout.ts';
 import { Clock, elapsed, glyph, pluralise, SignalMark } from './shared.tsx';
 import type { Envelope, Signal } from './types.ts';
 const states: Signal[] = ['passed','active','held','failed','pending','withdrawn'];
 type FocusMode = 'active' | 'milestone' | 'all';
 export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) {
   const now=useContext(Clock), m=e.data.console;
-  const canvas=useRef<HTMLDivElement>(null), cy=useRef<Core|null>(null), search=useRef<HTMLInputElement>(null), opener=useRef(open), saved=useRef<{arc:string;zoom:number;pan:{x:number;y:number};positions:Map<string,{x:number;y:number}>}|null>(null);
+  const canvas=useRef<HTMLDivElement>(null), cy=useRef<Core|null>(null), search=useRef<HTMLInputElement>(null), opener=useRef(open), saved=useRef<{arc:string;zoom:number;pan:{x:number;y:number};positions:Map<string,{x:number;y:number}>;sizes:Map<string,{width:number;height:number}>}|null>(null);
   opener.current=open;
   const [selected,setSelected]=useState<string|null>(null), [query,setQuery]=useState(''), [searching,setSearching]=useState(false), [filters,setFilters]=useState<Signal[]>([]), [station,setStation]=useState<string|null>(null);
   const [fontsReady,setFontsReady]=useState(false);
   useEffect(()=>{let disposed=false;void document.fonts.load('500 16px "Barlow Semi Condensed"').then(()=>{if(!disposed)setFontsReady(true);});return()=>{disposed=true;};},[]);
   const [focus,setFocus]=useState<FocusMode>('active'), [cluster,setCluster]=useState(0), [keyOpen,setKeyOpen]=useState(false), [mobileSearch,setMobileSearch]=useState(false);
+  const touchCard=useRef<string|null>(null), hoverTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const [hover,setHover]=useState<{id:string;x:number;y:number}|null>(null), [view,setView]=useState({zoom:1,x:0,y:0});
   const structure=JSON.stringify([e.arc,m.graph.units.map(u=>u.id),m.graph.edges,e.data.plan?.milestones]);
   const baseline=useMemo(()=>graphLayout(e),[structure]);
@@ -25,16 +26,17 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   const waits=useMemo(()=>{
     const map=new Map<string,string[]>();for(const [a,b] of m.graph.edges)if(a.startsWith('milestone:'))map.set(b,[...map.get(b)??[],a]);return map;
   },[structure]);
-  function place(next:typeof baseline){
+  function place(next:typeof baseline, sizes?:Map<string,{width:number;height:number}>){
     const graph=cy.current;if(!graph)return;
     graph.batch(()=>{
-      for(const [id,p] of next.positions)graph.getElementById(id).position(p);
+      for(const [id,p] of next.positions){const node=graph.getElementById(id);node.position(p);const size=sizes?.get(id);node.data({compactWidth:size?.width??(node.data('gate')?48:NODE_WIDTH),compactHeight:size?.height??(node.data('gate')?48:NODE_HEIGHT)});}
       for(const band of next.bands)graph.getElementById(`bus:${band.id}`).position({x:band.x+12,y:band.y+32});
     });arrangement.current=next;setArranged(next);
   }
   function frame(ids:string[], readable:boolean, centers:string[]=ids){
     const graph=cy.current;if(!graph)return;
     const nodes=graph.nodes().filter(n=>ids.includes(n.id()));if(!nodes.length)return;
+    graph.resize();
     const w=graph.width(),h=graph.height(),padding=w<=640?28:90;
     const box=nodes.boundingBox(),fit=Math.min((w-padding*2)/Math.max(1,box.w),(h-160)/Math.max(1,box.h));
     const zoom=Math.min(1,Math.max(readable?12/LABEL_PX:graph.minZoom(),fit));
@@ -43,15 +45,25 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
     graph.viewport({zoom,pan:{x:w/2-(center.x1+center.x2)/2*zoom,y:(h+60)/2-(center.y1+center.y2)/2*zoom}});
   }
   function focusActive(index=0){
-    setFocus('active');setStation(null);setCluster(index);
+    setFocus('active');setStation(null);setCluster(index);setHover(null);touchCard.current=null;
     const narrow=(canvas.current?.clientWidth??innerWidth)<=640;
     const ids=narrow?(active.clusters[index]??active.ids):active.ids;
     place(activeLayout(e,baseline,ids,narrow));
     cy.current?.style().selector('edge').style({'taxi-direction':'auto'}).update();
     frame(ids,true,narrow?[active.seeds[index]!]:active.seeds);
   }
-  function focusAll(){setFocus('all');setStation(null);cy.current?.style().selector('edge').style({'taxi-direction':'auto'}).update();const graph=cy.current;if(!graph)return;const next=graphLayout(e,graph.width()/Math.max(1,graph.height()-100));place(next);frame(m.graph.units.map(u=>u.id),false);}
-  function focusStation(id:string){const band=baseline.bands.find(b=>b.id===id);if(!band)return;setFocus('milestone');setStation(id);cy.current?.style().selector('edge').style({'taxi-direction':'auto'}).update();place(baseline);frame([...band.ids,band.id],false);}
+  function focusAll(){
+    setFocus('all');setStation(null);setHover(null);touchCard.current=null;
+    const graph=cy.current;if(!graph)return;
+    graph.resize();
+    if(m.presentation.units.length<=10){place(baseline);frame(m.graph.units.map(u=>u.id),false);return;}
+    const context=document.createElement('canvas').getContext('2d')!;context.font='500 10px "Barlow Semi Condensed"';
+    const next=overviewLayout(e,baseline,graph.width()-16,graph.height()-116,text=>context.measureText(text).width);
+    place(next,next.sizes);
+    const zoom=Math.min(1/8,(graph.height()-116)/next.height,(graph.width()-16)/next.width);
+    graph.viewport({zoom,pan:{x:(graph.width()-next.width*zoom)/2,y:56}});
+  }
+  function focusStation(id:string){const band=baseline.bands.find(b=>b.id===id);if(!band)return;setFocus('milestone');setStation(id);setHover(null);touchCard.current=null;cy.current?.style().selector('edge').style({'taxi-direction':'auto'}).update();place(baseline);frame([...band.ids,band.id],false);}
   function fitFocus(){if(focus==='active')focusActive(cluster);else if(focus==='milestone'&&station)focusStation(station);else focusAll();}
   function focusNode(id:string){const graph=cy.current,node=graph?.getElementById(id);if(!graph||!node?.length)return;node.select();setSearching(false);setMobileSearch(false);frame([id],true);canvas.current?.focus();}
   useLayoutEffect(()=>{
@@ -59,7 +71,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
     performance.mark('roadmap-graph-start');
     const styles=getComputedStyle(document.documentElement),color=(token:string)=>styles.getPropertyValue(token).trim();
     const fill=(state:string)=>{const current=getComputedStyle(document.documentElement),paint=(t:string)=>current.getPropertyValue(t).trim(),expand=(hex:string)=>hex.length===4?'#'+[...hex.slice(1)].map(c=>c+c).join(''):hex,a=expand(paint('--surface')),b=expand(paint(`--sig-${state==='withdrawn'?'pending':state}`)),mix=state==='pending'?0:state==='withdrawn'?.04:.16;return '#'+[1,3,5].map(i=>Math.round(parseInt(a.slice(i,i+2),16)*(1-mix)+parseInt(b.slice(i,i+2),16)*mix).toString(16).padStart(2,'0')).join('');};
-    const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;return {id:u.id,label:u.id.startsWith('milestone:')?`${glyph[state]}\n${u.id.slice(10)}`:`${glyph[state]} ${m.presentation.units.find(v=>v.id===u.id)?.title||u.label}`,state,gate:u.id.startsWith('milestone:')?1:0};};
+    const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,gate=u.id.startsWith('milestone:');return {id:u.id,label:gate?`${glyph[state]}\n${u.id.slice(10)}`:`${glyph[state]} ${m.presentation.units.find(v=>v.id===u.id)?.title||u.label}`,compact:compactIdentifier(e,u.id),compactWidth:gate?48:NODE_WIDTH,compactHeight:gate?48:NODE_HEIGHT,state,gate:gate?1:0};};
     const bundles=new Map<string,{source:string;target:string;count:number}>();
     for(const [source,target] of m.graph.edges)if(source.startsWith('milestone:')){const band=baseline.bands.find(b=>b.ids.includes(target));if(band){const key=`${source}:${band.id}`,existing=bundles.get(key);bundles.set(key,{source,target:`bus:${band.id}`,count:(existing?.count??0)+1});}}
     const graph=cytoscape({container:canvas.current,pixelRatio:Math.min(devicePixelRatio,2),minZoom:.025,maxZoom:2.5,textureOnViewport:true,elements:[
@@ -78,40 +90,73 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
       {selector:'edge[kind="waits"]',style:{'display':'none','line-style':'dashed'}},
       {selector:'edge[kind="bundle"]',style:{'curve-style':'unbundled-bezier','control-point-distances':-100,'control-point-weights':.5,'line-color':color('--line'),'line-style':'dashed','opacity':.24,'target-arrow-shape':'none'}},
       {selector:'edge[kind="feeds"]',style:{'curve-style':'bezier','opacity':.14}},
-      {selector:'.dim',style:{'opacity':.09}},
+      {selector:'.dim',style:{'opacity':.25}},
+      {selector:'node.dim',style:{'text-opacity':1,'text-background-color':color('--paper'),'text-background-opacity':1,'text-background-padding':1}},
       {selector:'edge.chain',style:{'opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
       {selector:'edge.exact',style:{'display':'element','opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
       {selector:'node:selected, node.match',style:{'border-color':color('--line'),'border-width':4,'background-opacity':1}},
-      {selector:'node.overview',style:{'label':''}},
+      {selector:'node.overview',style:{'label':'data(compact)','font-size':80,'text-max-width':10000,'text-wrap':'none','width':'data(compactWidth)','height':'data(compactHeight)','border-width':1}},
+      {selector:'node[gate=1].overview',style:{'shape':'round-rectangle'}},
+      {selector:'node.extreme',style:{'label':''}},
       {selector:'node.overview[state="pending"]',style:{'border-width':4,'background-opacity':1}}
     ] as cytoscape.StylesheetJson,autoungrabify:true,boxSelectionEnabled:false});
     cy.current=graph;setArranged(null);
     if(saved.current?.arc===e.arc){
       const previous=saved.current;
-      graph.batch(()=>{for(const [id,p] of previous.positions)graph.getElementById(id).position(p);});
+      graph.batch(()=>{for(const [id,p] of previous.positions){const node=graph.getElementById(id),size=previous.sizes.get(id);node.position(p);if(size)node.data({compactWidth:size.width,compactHeight:size.height});}});
       if(arrangement.current){const retained={...arrangement.current,positions:new Map([...baseline.positions,...previous.positions])};arrangement.current=retained;setArranged(retained);}
       graph.viewport({zoom:previous.zoom,pan:previous.pan});
     }else focusActive();
     graph.on('select','node',ev=>{const node=ev.target as NodeSingular;graph.nodes().not(node).unselect();setSelected(node.id());canvas.current?.focus({preventScroll:true});});
-    graph.on('tap',ev=>{if(ev.target===graph){graph.nodes().unselect();setSelected(null);}});
-    graph.on('dbltap','node',ev=>opener.current(ev.target.id()));
-    graph.on('mouseover','node',ev=>{const p=ev.target.renderedPosition();setHover({id:ev.target.id(),x:p.x,y:p.y});});
-    graph.on('mouseout','node',()=>setHover(null));
-    let frameId=0;
-    const viewport=()=>{cancelAnimationFrame(frameId);frameId=requestAnimationFrame(()=>{const p=graph.pan();setView({zoom:graph.zoom(),x:p.x,y:p.y});const hide=LABEL_PX*graph.zoom()<MIN_LABEL_PX;if(graph.nodes('[gate]').first().hasClass('overview')!==hide)graph.nodes('[gate]').toggleClass('overview',hide);});};
+    const showCard=(node:NodeSingular)=>{if(hoverTimer.current)clearTimeout(hoverTimer.current);const p=node.renderedPosition();setHover(previous=>previous?.id===node.id()&&previous.x===p.x&&previous.y===p.y?previous:{id:node.id(),x:p.x,y:p.y});};
+    const hideCard=()=>{if(hoverTimer.current)clearTimeout(hoverTimer.current);hoverTimer.current=setTimeout(()=>{if(!touchCard.current)setHover(null);},180);};
+    graph.on('tap',ev=>{if(ev.target===graph){graph.nodes().unselect();setSelected(null);setHover(null);touchCard.current=null;}});
+    const isTouch=(ev:cytoscape.EventObject)=>{const original=ev.originalEvent as TouchEvent|PointerEvent|undefined;return original?.type.startsWith('touch')||('pointerType' in (original??{})&&(original as PointerEvent).pointerType==='touch');};
+    graph.on('tap','node[gate]',ev=>{
+      if(isTouch(ev)){
+        // The renderer adds 8 screen pixels of touch slop. At All that can
+        // include several rows, so prefer the actual box beneath the finger.
+        const point=ev.renderedPosition;
+        const hit=graph.nodes('[gate]').filter(n=>{const box=n.renderedBoundingBox({includeLabels:false});return point.x>=box.x1&&point.x<=box.x2&&point.y>=box.y1&&point.y<=box.y2;}).sort((a,b)=>{const p=(a as NodeSingular).renderedPosition(),q=(b as NodeSingular).renderedPosition();return Math.hypot(p.x-point.x,p.y-point.y)-Math.hypot(q.x-point.x,q.y-point.y);});
+        const node=(hit[0]??ev.target) as NodeSingular;
+        // Native selection follows tap emission; keep it on the resolved unit.
+        queueMicrotask(()=>{if(!graph.destroyed())node.select();});
+        if(touchCard.current===node.id()){opener.current(node.id());touchCard.current=null;setHover(null);}else{touchCard.current=node.id();showCard(node);}
+      }
+    });
+    graph.on('dbltap','node[gate]',ev=>{if(!isTouch(ev))opener.current(ev.target.id());});
+    graph.on('mouseover mousemove','node[gate]',ev=>showCard(ev.target as NodeSingular));
+    graph.on('mouseout','node[gate]',hideCard);
+    let frameId=0,labelZoom=-1;
+    const viewport=()=>{
+      cancelAnimationFrame(frameId);frameId=requestAnimationFrame(()=>{
+        const p=graph.pan(),zoom=graph.zoom();setView({zoom,x:p.x,y:p.y});
+        if(zoom!==labelZoom){
+          labelZoom=zoom;
+          const compact=LABEL_PX*zoom<MIN_LABEL_PX;
+          graph.batch(()=>{
+            graph.nodes('[gate]').toggleClass('overview',compact).toggleClass('extreme',zoom<.035);
+            // Replace font bypasses instead of appending stylesheet contexts on
+            // every viewport event. Panning needs no label-style work at all.
+            graph.nodes('[gate=0]').style('font-size',compact?10/zoom:LABEL_PX);
+            graph.nodes('[gate=1]').style('font-size',compact?10/zoom:Math.max(12,11/zoom));
+          });
+        }
+      });
+    };
     graph.on('pan zoom',viewport);viewport();
     const theme=()=>{
       const style=getComputedStyle(document.documentElement),token=(n:string)=>style.getPropertyValue(n).trim();
       const sheet=graph.style().selector('node').style({'color':token('--ink'),'background-color':token('--surface')});
       for(const state of states)sheet.selector(`node[state="${state}"]`).style({'border-color':token(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':fill(state)});
-      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--line'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--muted-ink'),'target-arrow-color':token('--muted-ink')}).selector('edge.chain,edge.exact,edge[kind="bundle"]').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
+      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--line'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--muted-ink'),'target-arrow-color':token('--muted-ink')}).selector('edge.chain,edge.exact,edge[kind="bundle"]').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node.dim').style({'text-background-color':token('--paper')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
     };
     window.addEventListener('roadmap-theme',theme);
     void document.fonts.ready.then(()=>{if(!graph.destroyed())graph.resize();});
     const resize=new ResizeObserver(()=>graph.resize());resize.observe(canvas.current);
     const measure=requestAnimationFrame(()=>{performance.mark('roadmap-graph-painted');performance.measure('roadmap-graph-first-render','roadmap-graph-start','roadmap-graph-painted');});
     performance.measure('roadmap-graph-layout',{start:performance.now()-baseline.elapsed,duration:baseline.elapsed});
-    return()=>{saved.current={arc:e.arc,zoom:graph.zoom(),pan:graph.pan(),positions:new Map(graph.nodes().map(n=>[n.id(),{...n.position()}] as const))};cancelAnimationFrame(frameId);cancelAnimationFrame(measure);resize.disconnect();window.removeEventListener('roadmap-theme',theme);graph.destroy();cy.current=null;};
+    return()=>{saved.current={arc:e.arc,zoom:graph.zoom(),pan:graph.pan(),positions:new Map(graph.nodes().map(n=>[n.id(),{...n.position()}] as const)),sizes:new Map(graph.nodes('[gate]').map(n=>[n.id(),{width:n.data('compactWidth'),height:n.data('compactHeight')}] as const))};if(hoverTimer.current)clearTimeout(hoverTimer.current);cancelAnimationFrame(frameId);cancelAnimationFrame(measure);resize.disconnect();window.removeEventListener('roadmap-theme',theme);graph.destroy();cy.current=null;};
   },[structure,fontsReady]);
   useEffect(()=>{const graph=cy.current;if(!graph)return;graph.batch(()=>{for(const u of m.graph.units){const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;graph.getElementById(u.id).data({state,label:u.id.startsWith('milestone:')?`${glyph[state]}\n${u.id.slice(10)}`:`${glyph[state]} ${m.presentation.units.find(v=>v.id===u.id)?.title||u.label}`});}});},[e.revision,structure,fontsReady]);
   useEffect(()=>{
@@ -132,11 +177,11 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   useEffect(()=>{const key=(ev:KeyboardEvent)=>{if(ev.target instanceof HTMLElement&&(ev.target.matches('input,textarea,select')||ev.target.isContentEditable)||document.querySelector('[role="dialog"]')?.contains(ev.target as Node))return;if(ev.key==='/'){ev.preventDefault();setMobileSearch(true);requestAnimationFrame(()=>search.current?.focus());}if(ev.key==='f'){ev.preventDefault();fitFocus();}if(ev.key==='a'){ev.preventDefault();focusActive();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);});
   const selectedUnit=m.presentation.units.find(u=>u.id===selected),hovered=m.presentation.units.find(u=>u.id===hover?.id);
   const exactWaits=selected?.startsWith('milestone:')?m.graph.edges.filter(([a])=>a===selected).map(([,b])=>b):(waits.get(selected??'')??[]);
-  return <div className="graph-view">
+  return <div className={`graph-view ${focus==='all'?'graph-all':''}`}>
     <nav className="line-map" aria-label="Milestone stations">{baseline.bands.map(band=><button key={band.id} className={`station ${band.id==='unbound'?'station-unbound':''}`} aria-pressed={station===band.id} onClick={()=>focusStation(band.id)} title={`${band.label}: ${band.passed}/${band.total} units passed`}><span className="station-track"><span className="track-fill" style={{width:`${band.total?band.passed/band.total*100:0}%`}}/><span className="gate-glyph" aria-label={band.state}>{glyph[band.state as Signal]}</span></span><span className="station-caption"><strong>{band.id==='unbound'?'No milestone':band.id.slice(10)}</strong><span>{band.passed}/{band.total}</span></span><span className="station-name">{band.label}</span></button>)}</nav>
     <div className="graph-stage">
       <div ref={canvas} className="dag-canvas" role="application" tabIndex={0} aria-label={`Unit dependency graph, ${m.presentation.units.length} units. Arrow keys select, Enter opens details. ${selectedUnit?`Selected ${selectedUnit.title}`:''}`} onKeyDown={ev=>{const nodes=cy.current?.nodes('[gate]');if(!nodes?.length)return;if(ev.key==='Enter'&&selected){ev.preventDefault();open(selected);}if(ev.key.startsWith('Arrow')){ev.preventDefault();const index=nodes.toArray().findIndex(n=>n.id()===selected),next=(index+(ev.key==='ArrowLeft'||ev.key==='ArrowUp'?-1:1)+nodes.length)%nodes.length;focusNode(nodes[next]!.id());}}}/>
-      <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${station===b.id?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}><span>{b.id==='unbound'?'No milestone':b.id==='active-context'?'Active + direct neighbours':b.id.slice(10)}</span></div>)}</div>
+      <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${station===b.id?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}><span style={{left:Math.max(0,8-(b.x*view.zoom+view.x))}}>{b.id==='unbound'?'No milestone':b.id==='active-context'?'Active + direct neighbours':b.id.slice(10)} {b.id!=='active-context'&&`${b.passed}/${b.total}`}</span></div>)}</div>
       {view.zoom*LABEL_PX>=MIN_LABEL_PX&&<div className="wait-badges">{[...waits].map(([id,gates])=>{const p=layout.positions.get(id);if(!p)return null;const x=(p.x-NODE_WIDTH/2)*view.zoom+view.x,y=(p.y+NODE_HEIGHT/2)*view.zoom+view.y;if(x< -150||x>(canvas.current?.clientWidth??innerWidth)||y<0||y>(canvas.current?.clientHeight??innerHeight))return null;return <button key={id} title={`Waits on ${gates.map(g=>g.slice(10)).join(', ')}`} style={{left:x,top:y}} onClick={()=>cy.current?.getElementById(id).select()}>◇ {gates.length} {gates.length===1?'gate':'gates'}</button>;})}</div>}
       <div className={`graph-toolbar ${mobileSearch?'search-expanded':''}`} role="toolbar" aria-label="Graph controls">
         <div className="graph-search"><Button className="search-toggle" size="icon" variant="ghost" aria-label="Find a unit" onClick={()=>{setMobileSearch(!mobileSearch);requestAnimationFrame(()=>search.current?.focus());}}><Search size={16}/></Button><input ref={search} aria-label="Search units" value={query} onFocus={()=>setSearching(true)} onChange={ev=>{setQuery(ev.target.value);setSearching(true);}} placeholder="Find a unit  /" onKeyDown={ev=>{if(ev.key==='Enter'&&results[0])focusNode(results[0].id);if(ev.key==='Escape'){setQuery('');setMobileSearch(false);canvas.current?.focus();}}}/>{query&&searching&&<div className="search-results">{results.length?results.map(u=><button key={u.id} onClick={()=>focusNode(u.id)} onDoubleClick={()=>open(u.id)}>{u.title}<small>{u.id}</small></button>):<p>No matching units</p>}</div>}</div>
@@ -145,8 +190,8 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
         <div className="zoom-controls"><Button size="icon" variant="ghost" aria-label="Fit graph" title="Fit current focus (f)" onClick={fitFocus}><Focus size={16}/></Button><Button className="zoom-step" size="icon" variant="ghost" aria-label="Zoom out" onClick={()=>cy.current?.zoom({level:cy.current.zoom()/1.35,renderedPosition:{x:canvas.current!.clientWidth/2,y:canvas.current!.clientHeight/2}})}><Minus size={15}/></Button><Button className="zoom-step" size="icon" variant="ghost" aria-label="Zoom in" onClick={()=>cy.current?.zoom({level:cy.current.zoom()*1.35,renderedPosition:{x:canvas.current!.clientWidth/2,y:canvas.current!.clientHeight/2}})}><Plus size={15}/></Button></div>
       </div>
       {focus==='active'&&phone&&active.seeds.length>1&&<div className="active-pager" aria-label="Active clusters"><button aria-label="Previous active cluster" onClick={()=>focusActive((cluster-1+active.seeds.length)%active.seeds.length)}>‹</button><span>{active.recent?'Recent':'Active'} {cluster+1}/{active.seeds.length}</span><button aria-label="Next active cluster" onClick={()=>focusActive((cluster+1)%active.seeds.length)}>›</button></div>}
-      {selected&&<div className="graph-selection"><div><strong>{selectedUnit?.title||selected}</strong><small>{selectedUnit?.state} {selectedUnit?.stage}</small><details className="exact-relations" open={exactWaits.length<=6}><summary>{selected.startsWith('milestone:')?'Waiting units':'Waits on gates'} ({exactWaits.length})</summary><div>{exactWaits.map(id=><button key={id} onClick={()=>focusNode(id)}>{id.replace('milestone:','')}</button>)}{!exactWaits.length&&<small>None</small>}</div></details></div><Button onClick={()=>open(selected)} aria-label={`Open ${selected} details`}>Details</Button></div>}
-      {hover&&hovered&&<div className="graph-hover" style={{left:Math.max(8,Math.min(hover.x+24,(canvas.current?.clientWidth??400)-260)),top:Math.max(84,Math.min(hover.y+24,(canvas.current?.clientHeight??500)-150))}}><strong>{hovered.title}</strong><span>{hovered.state} {hovered.stage}</span><span>{elapsed(hovered.startedAt&&!hovered.endedAt&&!m.presentation.run.endedAt?Math.max(0,now-Date.parse(hovered.startedAt)):hovered.elapsedMs)} {pluralise(hovered.attempts,'attempt')}</span></div>}
+      {selected&&!(phone&&hovered&&hover?.id===selected)&&<div className="graph-selection"><div><strong>{selectedUnit?.title||selected}</strong><small>{selectedUnit?.state} {selectedUnit?.stage}</small><details className="exact-relations" open={exactWaits.length<=6}><summary>{selected.startsWith('milestone:')?'Waiting units':'Waits on gates'} ({exactWaits.length})</summary><div>{exactWaits.map(id=><button key={id} onClick={()=>focusNode(id)}>{id.replace('milestone:','')}</button>)}{!exactWaits.length&&<small>None</small>}</div></details></div><Button onClick={()=>open(selected)} aria-label={`Open ${selected} details`}>Details</Button></div>}
+      {hover&&hovered&&<div className="graph-hover" role="group" aria-label="Unit title card" onMouseEnter={()=>{if(hoverTimer.current)clearTimeout(hoverTimer.current);}} onMouseLeave={()=>{if(!touchCard.current)setHover(null);}} style={{left:Math.max(8,Math.min(hover.x+24,(canvas.current?.clientWidth??400)-260)),top:Math.max(64,hover.y+180<(canvas.current?.clientHeight??500)?hover.y+20:hover.y-180)}}><strong>{hovered.title}</strong><span>{hovered.state} {hovered.stage}</span><span>{elapsed(hovered.startedAt&&!hovered.endedAt&&!m.presentation.run.endedAt?Math.max(0,now-Date.parse(hovered.startedAt)):hovered.elapsedMs)} {pluralise(hovered.attempts,'attempt')}</span><Button onClick={()=>{open(hovered.id);setHover(null);touchCard.current=null;}}>Details</Button></div>}
       <button className="key-toggle" aria-expanded={keyOpen} onClick={()=>setKeyOpen(!keyOpen)}>Key</button><div className={`graph-legend ${keyOpen?'key-open':''}`} aria-label="Graph legend">{states.map(state=><span key={state}><SignalMark state={state}/>{state}</span>)}<span className="edge-key">Solid: unit dependency / feeds gate</span><span className="edge-key dashed">Dashed: gate bundle; ◇ waiting unit</span></div>
       <svg className="graph-minimap" viewBox={`0 0 ${layout.width||100} ${layout.height||100}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Graph overview. Click to pan." onClick={ev=>{const graph=cy.current;if(!graph)return;const bounds=ev.currentTarget.getBoundingClientRect(),scale=Math.min(bounds.width/layout.width,bounds.height/layout.height),x=(ev.clientX-bounds.left-(bounds.width-layout.width*scale)/2)/scale,y=(ev.clientY-bounds.top-(bounds.height-layout.height*scale)/2)/scale;graph.pan({x:graph.width()/2-x*graph.zoom(),y:graph.height()/2-y*graph.zoom()});}}>{layout.bands.map(b=><rect key={b.id} x={b.x} y={b.y} width={b.width} height={b.height} fill="var(--surface)" stroke="var(--rule)" strokeWidth={8}/>)}{m.graph.units.map(n=>{const p=layout.positions.get(n.id);return p&&<rect key={n.id} x={p.x-60} y={p.y-18} width={120} height={36} fill={`var(--sig-${n.status})`}/>;})}<rect x={-view.x/view.zoom} y={-view.y/view.zoom} width={(canvas.current?.clientWidth??0)/view.zoom} height={(canvas.current?.clientHeight??0)/view.zoom} fill="var(--line)" fillOpacity={.08} stroke="var(--line)" strokeWidth={12}/></svg>
       <span className="graph-scale">{Math.round(view.zoom*100)}% <span>{m.presentation.units.length} units</span></span>

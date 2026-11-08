@@ -10,6 +10,31 @@ import { ConsoleBrowser } from '../helpers/console-browser.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import { until } from '../fixtures/exec-common.ts';
 
+async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all',width:number){
+ const result=await b.evaluate<{count:number;bad:unknown[];offscreen:string[];overlaps:string[];captions:boolean}>(`()=>{
+  const cy=document.querySelector('.dag-canvas')._cyreg.cy,all=cy.nodes('[gate]'),extent=cy.extent();
+  const nodes=${mode==='all'?'all':"all.filter(n=>{const box=n.boundingBox({includeLabels:false});return box.x2>extent.x1&&box.x1<extent.x2&&box.y2>extent.y1&&box.y1<extent.y2;})"};
+  const bad=nodes.filter(n=>{const label=n.style('label'),px=parseFloat(n.style('font-size'))*cy.zoom(),box=n.boundingBox({includeNodes:false,includeLabels:true});return !label.trim()||px<${mode==='all'?10:11}-.001||box.h<=0||n.style('text-opacity')==='0'||n.hasClass('extreme')${mode==='all'?"||(!n.hasClass('overview')&&cy.nodes('[gate=0]').length>10)||n.hasClass('overview')&&label!==n.data('compact')||n.data('gate')===0&&!label.endsWith(' '+n.id().slice(1))":''};}).map(n=>({id:n.id(),label:n.style('label'),px:parseFloat(n.style('font-size'))*cy.zoom()}));
+  const offscreen=all.filter(n=>{const p=n.renderedPosition();return p.x<0||p.x>cy.width()||p.y<48||p.y>cy.height()-48;}).map(n=>n.id());
+  const boxes=all.map(n=>({id:n.id(),box:n.renderedBoundingBox({includeLabels:false})})),overlaps=[];
+  for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){const a=boxes[i],b=boxes[j];if(a.box.x1<b.box.x2-.5&&a.box.x2>b.box.x1+.5&&a.box.y1<b.box.y2-.5&&a.box.y2>b.box.y1+.5)overlaps.push(a.id+':'+b.id);}
+  const captions=[...document.querySelectorAll('.band-caption>span')].every(n=>new RegExp('^MS-[0-9]+ [0-9]+/30$').test(n.textContent)&&parseFloat(getComputedStyle(n).fontSize)>=10&&n.getBoundingClientRect().top>=document.querySelector('.dag-canvas').getBoundingClientRect().top+48);
+  return {count:nodes.length,bad,offscreen,overlaps,captions};
+ }`);
+ assert.ok(result.count>0,`${width} ${mode}: nodes rendered`);
+ assert.deepEqual(result.bad,[],`${width} ${mode}: every rendered label is nonempty and at least ${mode==='all'?10:11}px`);
+ if(mode==='all'){assert.equal(result.count,310);assert.deepEqual(result.offscreen,[],`${width}: all units and gates fit`);assert.deepEqual(result.overlaps,[],`${width}: compact boxes do not overlap`);assert.ok(result.captions,`${width}: band milestone and progress captions are readable`);}
+}
+async function hoverNode(b:ConsoleBrowser,id:string){
+ const point=await b.evaluate<{x:number;y:number}>(`()=>{const el=document.querySelector('.dag-canvas'),p=el._cyreg.cy.getElementById('${id}').renderedPosition(),r=el.getBoundingClientRect();return {x:r.left+p.x,y:r.top+p.y};}`);
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.mouse.move(${point.x},${point.y});}`});
+ await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-hover')?.textContent.includes('slice ${id.slice(1)}')`),5000,'real pointer hover title card');
+ assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/attempt/);
+ return point;
+}
+
+
 test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size and themes work at desktop and phone widths', {timeout:120_000},async t=>{
  const f=await investigationFixture(60),b=new ConsoleBrowser(tmpDir('console-graph'));
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});
@@ -19,7 +44,7 @@ test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".station").length'),7);
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".unit-list").length'),0);
  assert.equal(await b.evaluate('()=>document.querySelector(".focus-control button:first-child").getAttribute("aria-pressed")'),'true','Active is the default');
- const activeFrame=await b.evaluate<{zoom:number;visible:boolean;labels:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;await document.fonts.ready;const active=cy.nodes('[state="active"][gate=0]');return {zoom:cy.zoom(),visible:active.every(n=>{const p=n.renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();}),labels:active.every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=10)};}`);
+ const activeFrame=await b.evaluate<{zoom:number;visible:boolean;labels:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;await document.fonts.ready;const active=cy.nodes('[state="active"][gate=0]');return {zoom:cy.zoom(),visible:active.every(n=>{const p=n.renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();}),labels:active.every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=11)};}`);
  assert.ok(activeFrame.visible,'live units are visible on landing');assert.ok(activeFrame.labels,'active labels are rendered at a legible size');
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.panBy({x:47,y:-23});cy.zoom({level:cy.zoom()*1.1,renderedPosition:{x:720,y:450}});return true;}`);
  const beforeRevision=await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {pan:cy.pan(),zoom:cy.zoom()};}`);
@@ -79,7 +104,7 @@ test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size
  assert.equal(await b.evaluate('()=>document.querySelector(".drawer").scrollWidth<=390'),true);
 });
 
-test('scale Graph frames every active unit, preserves every dependency, bundles gate fan-out, and pages phone contexts', {timeout:120_000},async t=>{
+test('scale Graph frames every active unit, preserves every dependency, bundles gate fan-out, and pages phone contexts', {timeout:180_000},async t=>{
  const {generateScaleArc,ownScaleArc}=await import('../helpers/scale-arc.ts');
  const fixture=await generateScaleArc(tmpDir('graph-scale-live')),release=await ownScaleArc(fixture),b=new ConsoleBrowser(tmpDir('graph-scale-browser'));
  const s=await serveConsole({repo:absPath(fixture.repo),common:gitCommonDir(absPath(fixture.repo)),hostDir:absPath(fixture.hostDir),host:'127.0.0.1',port:0});
@@ -87,12 +112,24 @@ test('scale Graph frames every active unit, preserves every dependency, bundles 
  await b.call('browser_resize',{width:1440,height:900});await b.call('browser_navigate',{url:s.url});
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),10_000,'scale graph canvas');
  const landing=await b.evaluate<{active:number;visible:boolean;dependency:number;waits:number;bundles:number;hiddenWaits:boolean;labels:boolean}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,active=cy.nodes('[state="active"][gate=0]');return {active:active.length,visible:active.every(n=>{const p=n.renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()-40;}),labels:active.every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=12),dependency:cy.edges('[kind="dependency"]').length,waits:cy.edges('[kind="waits"]').length,bundles:cy.edges('[kind="bundle"]').length,hiddenWaits:cy.edges('[kind="waits"]').every(e=>e.style('display')==='none')};}`);
+ await assertRenderedLabels(b,'active',1440);
  assert.ok(landing.active>=4);assert.ok(landing.visible,'all active units are visible at scale');assert.ok(landing.labels,'active labels stay legible');
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(.62);return true;}`);
- await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>!n.hasClass('overview')&&parseFloat(n.style('font-size'))*cy.zoom()>=9.5);}`),5000,'62 percent renders readable label pixels instead of hiding labels');
+ await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>n.style('label').trim()&&parseFloat(n.style('font-size'))*cy.zoom()>=10);}`),5000,'62 percent renders readable label pixels instead of hiding labels');
  assert.equal(landing.dependency,663);assert.equal(landing.waits,1004);assert.ok(landing.hiddenWaits);assert.ok(landing.bundles>0&&landing.bundles<100,'only milestone fan-out is bundled');
  await b.evaluate(`()=>{document.querySelector('.focus-control button:last-child').click();return true;}`);
  const all=await b.evaluate<{dependencies:number;visible:boolean;endpoints:boolean;ratio:number;viewRatio:number}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,deps=cy.edges('[kind="dependency"]'),box=cy.nodes('[gate]').boundingBox();return {dependencies:deps.length,visible:deps.every(e=>e.visible()),endpoints:deps.every(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return a&&b&&[a.x,a.y,b.x,b.y].every(Number.isFinite);}),ratio:box.w/box.h,viewRatio:cy.width()/cy.height()};}`);
+ await assertRenderedLabels(b,'all',1440);
+ await hoverNode(b,'u226');
+ assert.equal(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u226').selected()`),false,'unselected zoomed-out hover does not select');
+ await b.evaluate(`()=>{document.querySelector('[aria-label="Active focus"]').click();document.querySelector('[aria-label="All focus"]').click();return true;}`);
+ await hoverNode(b,'u226');
+ await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.getElementById('u226').select();return true;}`);
+ await hoverNode(b,'u299');
+ assert.equal(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u299').hasClass('dim')`),true,'hover works on a dimmed node');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.graph-hover button').click();}`});
+ await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u299"'),5000,'hover Details opens its unit');
+ await b.call('browser_press_key',{key:'Escape'});
  assert.equal(all.dependencies,663);assert.ok(all.visible);assert.ok(all.endpoints,'every unit dependency has drawable endpoints');assert.ok(Math.abs(Math.log(all.ratio/all.viewRatio))<.45,'All fits the viewport aspect');
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u226').select();return true;}`);
  await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.exact').length===cy.getElementById('u226').incomers('edge[kind="waits"]').length&&cy.edges('.exact').length>0;}`),5000,'unit exact wait relations');
@@ -103,7 +140,20 @@ test('scale Graph frames every active unit, preserves every dependency, bundles 
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.nodes().unselect();cy.emit('tap');document.querySelector('.focus-control button:first-child').click();return true;}`);
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".active-pager")'),5000,'phone active context pager');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,p=cy.getElementById('u167').renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()&&cy.height()>=innerHeight*.7;}`),true);
+ await assertRenderedLabels(b,'active',390);
  await b.evaluate(`()=>{document.querySelector('[aria-label="Next active cluster"]').click();return true;}`);
  assert.match(await b.evaluate<string>('()=>document.querySelector(".active-pager").textContent'),/2\/6/);
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,p=cy.getElementById('u226').renderedPosition();return p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();}`),true);
+ await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);
+ await until(async()=>await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u226').hasClass('overview')`),5000,'phone All compact tier');
+ await assertRenderedLabels(b,'all',390);
+ const point=await b.evaluate<{x:number;y:number}>(`()=>{const el=document.querySelector('.dag-canvas'),p=el._cyreg.cy.getElementById('u226').renderedPosition(),r=el.getBoundingClientRect();return{x:p.x+r.left,y:p.y+r.top};}`);
+ const touch=async()=>b.call('browser_run_code_unsafe',{code:`async(page)=>{const client=await page.context().newCDPSession(page);await client.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:${point.x},y:${point.y}}]});await client.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await client.detach();}`});
+ await touch();
+ await until(async()=>await b.evaluate('()=>!!document.querySelector(".graph-hover")'),5000,'first real touch shows card');
+ assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0,'first tap never opens the drawer');
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/catalog system, slice 226/);
+ await touch();
+ await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u226"'),5000,'second real touch opens the drawer');
+
 });

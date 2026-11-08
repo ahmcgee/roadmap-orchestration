@@ -170,7 +170,13 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
  .key-toggle{display:block;position:absolute;z-index:4;left:12px;bottom:24px;border:1px solid var(--rule);background:var(--surface);padding:4px 8px;}
  .band-caption>span{top:60px;}.graph-selection{top:60px;left:auto;right:8px;max-width:240px;padding:6px 8px;gap:6px;}.graph-selection strong{font-size:12px;line-height:16px;}.graph-selection .ui-button{padding-inline:6px;}
  .graph-minimap{bottom:50px;right:12px;}.active-pager{bottom:72px;}
- .graph-hover{display:none;}
+ .graph-hover{display:grid;}
 }
 
 .band-caption>span{top:8px;}
+
+/* Captions sit above the canvas; identifiers and popovers remain readable at All. */
+.band-captions{z-index:3;}.band-caption{background:none!important;border-color:transparent;}.band-caption>span{top:0;left:0;font-size:12px;line-height:12px;padding:0 2px;color:var(--ink);}
+.graph-hover{pointer-events:auto;}.graph-hover .ui-button{justify-self:start;min-height:28px;padding:2px 10px;}
+.graph-all .graph-minimap{display:none;}
+@media(max-width:640px){.graph-all .band-caption>span{font-size:10px;line-height:11px;}.graph-hover{max-width:calc(100% - 16px);}}

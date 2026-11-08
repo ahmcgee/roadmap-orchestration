@@ -35,13 +35,10 @@ export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): stri
   .split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
   .replace(/\s+/g, ' ').replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '').trim();
  const value = prose || fallback;
- // Keep both the action and the subject: sibling intents often differ only at the end.
- if (value.length <= 60) return value;
- const words=value.split(' ');let tail='';
- while(words.length){const candidate=words.at(-1)!+(tail?' '+tail:'');if(candidate.length>36)break;tail=candidate;words.pop();}
- const budget=60-tail.length-2;
- const head=words.join(' ').slice(0,budget).replace(/\s+\S*$/, '').trimEnd();
- return `${head}… ${tail}`;
+ // Three condensed lines can carry the complete action and its system/slice.
+ // Only genuinely long prose is elided, at the tail rather than in the middle.
+ if (value.length <= 96) return value;
+ return value.slice(0,95).replace(/\s+\S*$/, '').trimEnd()+'…';
 }
 export function presentation(e:Envelope){
  const s=e.data.display.status,events=e.data.events;
@@ -89,7 +86,7 @@ export function presentation(e:Envelope){
   const acceptance=Array.isArray(spec['acceptance'])?spec['acceptance'].map(a=>String(record(a)['clause']??'')).filter(Boolean):[];
   const intent=typeof spec['intent']==='string'?spec['intent']:acceptance.join('\n');
   const existingTitle=typeof spec['title']==='string'&&spec['title'].trim()?spec['title']:acceptance[0];
-  const title=existingTitle&&existingTitle.length<=60?existingTitle:shortUnitTitle(intent,String(u.unit));
+  const title=existingTitle&&existingTitle.length<=96?existingTitle:shortUnitTitle(intent,String(u.unit));
   const journey=[...steps.values()].filter(st=>st.id.startsWith(`${u.unit}:`));
   const invs=e.data.display.invocations.filter(i=>i.unit===u.unit);const first=journey[0]?.at??invs.at(-1)?.startedAt??null;
   const last=u.state==='merged'||u.state==='cut'||u.state==='superseded'||u.state==='parked'?journey.at(-1)?.endedAt??null:null;

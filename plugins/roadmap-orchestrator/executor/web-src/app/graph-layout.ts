@@ -1,6 +1,6 @@
 import dagre from '@dagrejs/dagre';
 import type { Envelope } from './types.ts';
-export const NODE_WIDTH = 208, NODE_HEIGHT = 76, LABEL_PX = 16, MIN_LABEL_PX = 9.5;
+export const NODE_WIDTH = 248, NODE_HEIGHT = 80, LABEL_PX = 16, MIN_LABEL_PX = 11;
 export type Band = { id: string; label: string; ids: string[]; passed: number; total: number; state: string; x: number; y: number; width: number; height: number };
 export function graphLayout(e: Envelope, aspect?: number) {
   const started = performance.now(), m = e.data.console;
@@ -62,7 +62,7 @@ export function graphLayout(e: Envelope, aspect?: number) {
     for(const band of row){band.x=x;band.y=y+(rowHeight-band.height)/2;for(const id of [...band.ids,band.id]){const p=positions.get(id);if(p){p.x+=x;p.y+=band.y;}}x+=band.width+56;}
     width=Math.max(width,x-56);y+=rowHeight+96;
   }
-  return { bands, positions, width, height: Math.max(0,y-96), elapsed: performance.now()-started };
+  return { compact: false, bands, positions, width, height: Math.max(0,y-96), elapsed: performance.now()-started };
 }
 /** The live units and only their direct unit neighbours, never transitive gate fan-out. */
 export function activeFocus(e: Envelope) {
@@ -92,4 +92,43 @@ export function activeLayout(e: Envelope, base: ReturnType<typeof graphLayout>, 
   for(const id of ids){const p=graph.node(id);positions.set(id,{x:p.x,y:p.y});}
   const focused:Band={id:'active-context',label:'Active and direct neighbours',ids,passed:0,total:ids.length,state:'active',x:0,y:0,width,height};
   return {...base,positions,bands:[focused,...base.bands.map(b=>({...b,y:b.y+height+160,ids:b.ids.filter(id=>!ids.includes(id))}))],width:Math.max(width,base.width),height:base.height+height+160};
+}
+
+/** Compact identifiers use the recorded system, never a guessed title fragment. */
+export function compactIdentifier(e: Envelope, id: string) {
+  if (id.startsWith('milestone:')) return id.slice(10);
+  const systems=e.data.plan?.units.find(u=>u.id===id)?.systems??[];
+  return [...systems, /^u\d+$/.test(id)?id.slice(1):id].join(' ');
+}
+/** Pack the All view by readable identifier widths. Only positions change; every
+ * dependency remains an individual edge. Eight model pixels per screen pixel
+ * leave room for full titles when the user zooms back in. */
+export function overviewLayout(e: Envelope, base: ReturnType<typeof graphLayout>, width: number, height: number, measure: (text: string)=>number) {
+  const narrow=width<=640, scale=8, gap=narrow?2:12, row=narrow?12:28, bandGap=narrow?0:24;
+  const columns=narrow?1:Math.min(5,Math.max(1,Math.floor(width/260)));
+  const bandWidth=(width-bandGap*(columns-1))/columns;
+  const positions=new Map<string,{x:number;y:number}>(), sizes=new Map<string,{width:number;height:number}>();
+  const packed=base.bands.map(b=>{
+    const rows: {used:number;items:{id:string;width:number}[]}[]=[{used:narrow?88:0,items:[]}];
+    // Stable width-first packing avoids wasting a whole row on a long system name.
+    const items=b.ids.map(id=>({id,width:Math.ceil(measure(compactIdentifier(e,id)))+(narrow?4:16)})).sort((a,b)=>b.width-a.width||a.id.localeCompare(b.id,undefined,{numeric:true}));
+    for(const item of items){let r=rows.find(r=>r.used+item.width<=bandWidth);if(!r){r={used:0,items:[]};rows.push(r);}r.items.push(item);r.used+=item.width+gap;}
+    return {band:b,rows,height:rows.length*row+(narrow?0:26)};
+  });
+  const naturalHeight=Array.from({length:Math.ceil(packed.length/columns)},(_,i)=>Math.max(...packed.slice(i*columns,(i+1)*columns).map(b=>b.height))).reduce((a,b)=>a+b+bandGap,0)-bandGap;
+  // Use spare vertical room between bands, keeping the last row above the controls.
+  const extra=Math.max(0,(height-naturalHeight)/Math.max(1,Math.ceil(packed.length/columns)-1));
+  let y=0;
+  const bands:Band[]=[];
+  for(let i=0;i<packed.length;i+=columns){
+    const group=packed.slice(i,i+columns),groupHeight=Math.max(...group.map(b=>b.height));
+    group.forEach(({band,rows},column)=>{
+      const x=column*(bandWidth+bandGap), header=narrow?0:26;
+      rows.forEach((r,j)=>{let cursor=j===0&&narrow?88:0;for(const item of r.items){positions.set(item.id,{x:(x+cursor+item.width/2)*scale,y:(y+header+j*row+row/2)*scale});sizes.set(item.id,{width:(item.width-gap)*scale,height:(row-(narrow?1:6))*scale});cursor+=item.width+gap;}});
+      if(band.id!=='unbound'){positions.set(band.id,{x:(x+(narrow?72:bandWidth-20))*scale,y:(y+(narrow?row/2:10))*scale});sizes.set(band.id,{width:28*scale,height:11*scale});}
+      bands.push({...band,x:x*scale,y:y*scale,width:bandWidth*scale,height:groupHeight*scale});
+    });
+    y+=groupHeight+bandGap+extra;
+  }
+  return {...base,compact:true,bands,positions,sizes,width:width*scale,height:(y-bandGap-extra)*scale};
 }

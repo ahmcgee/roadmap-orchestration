@@ -52,7 +52,7 @@ test('short human titles strip paths, identifiers and later clauses, retain pros
  assert.equal(shortUnitTitle('Validate contract:identity/session: cookie checks and token refresh.'),'Validate cookie checks and token refresh');
  assert.equal(shortUnitTitle('`src/a.ts`','u42'),'u42');
  const title=shortUnitTitle('Provide consistent keyboard navigation across every account settings section and every nested form field in the application');
- assert.ok(title.length<=60);assert.match(title,/^Provide consistent/);assert.match(title,/application$/);assert.match(title,/…/);
+ assert.ok(title.length<=96);assert.match(title,/^Provide consistent/);assert.ok(title.endsWith('…'));assert.equal(title.indexOf('…'),title.length-1,'long actions are only elided at the tail');
  const f=await investigationFixture();try{const p=consoleModel(read(f)).presentation;assert.equal(p.units.find(u=>u.id==='u7')!.title,'Review edge cases');assert.ok(p.units.every(u=>typeof u.intent==='string'));}finally{f.close();}
 });
 
@@ -60,7 +60,15 @@ test('short human titles strip paths, identifiers and later clauses, retain pros
  const {shortUnitTitle}=await import('../src/console/presentation.ts');
  const titles=['catalog','billing','search'].map(subject=>shortUnitTitle(`Implement optimistic concurrency checks for the ${subject} service`));
  assert.equal(new Set(titles).size,3);
- for(const [i,title] of titles.entries()){assert.ok(title.length<=60);assert.ok(title.endsWith(`${['catalog','billing','search'][i]} service`));}
+ for(const [i,title] of titles.entries()){assert.ok(title.length<=96);assert.ok(title.endsWith(`${['catalog','billing','search'][i]} service`));}
  const short='Implement optimistic concurrency checks for the catalog';
  assert.equal(shortUnitTitle(short),short,'a complete title inside the budget has no ellipsis');
  });
+
+test('three-line title budget preserves the full action, system and slice',async()=>{
+ const {shortUnitTitle}=await import('../src/console/presentation.ts');
+ for(const system of ['analytics','catalog','notifications']){
+  const title=`Implement optimistic concurrency checks for the ${system} system, slice 167`;
+  assert.equal(shortUnitTitle(title+'. Read src/service.ts before editing.'),title);
+ }
+});
