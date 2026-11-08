@@ -202,3 +202,25 @@ test('continuously changing capture dependencies yield without caching an unadmi
   assert.equal(e.data.display.status.arc, run.arc);
   assert.equal(e.data.capture.materializations, 1, 'failed admissions did not publish their staged captures');
 });
+
+
+test('background maintenance defers a raced capture to the next check without publishing partial data', (t) => {
+  const { run, cache } = fixture(t);
+  const path = join(run.runDir, 'heartbeat.json');
+  fs.writeFileSync(path, heartbeat);
+  const read = fs.readFileSync;
+  const captures = t.mock.method(Observer.prototype, 'capture');
+  let raced = 0;
+  t.mock.method(fs, 'readFileSync', ((...args: Parameters<typeof read>) => {
+    if (args[0] === path && raced++ === 0) fs.unlinkSync(path);
+    return read(...args);
+  }) as typeof read);
+  syncBuiltinESMExports();
+  assert.throws(() => cache.maintain(run), (error: unknown) => error instanceof ConsoleError && error.code === 'unavailable');
+  assert.equal(captures.mock.callCount(), 1, 'no background recapture competes with the writer');
+  const e = cache.maintain(run);
+  assert.equal(captures.mock.callCount(), 2, 'the next scheduled check captures the now-stable run');
+  assert.equal(e.data.display.status.run.heartbeatAt, null);
+  assert.equal(e.data.capture.materializations, 1, 'a failed maintenance pass did not publish partial data');
+  assert.equal(cache.read(run).data, e.data, 'requests reuse the verified maintenance capture');
+});

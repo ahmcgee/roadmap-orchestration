@@ -27,7 +27,10 @@ export class ObservationCache {
   pin(arc: string): void { this.#pinned.add(arc); }
   unpin(arc: string): void { this.#pinned.delete(arc); }
   constructor(hostDir: AbsPath, instance: string, repoId: string) { this.hostDir = hostDir; this.instance = instance; this.repoId = repoId; }
-  read(run: Run, admission: Admission = {}): Envelope {
+  read(run: Run, admission: Admission = {}): Envelope { return this.#capture(run, admission, true); }
+  /** A background check yields races to the next watch/poll instead of competing with the writer. */
+  maintain(run: Run): Envelope { return this.#capture(run, {}, false); }
+  #capture(run: Run, admission: Admission, retry: boolean): Envelope {
     const deadline = Date.now() + 2_000;
     // A changing run must yield CPU to its writer. One immediate retry handles an atomic
     // rename without turning admission into two seconds of repeated cold captures.
@@ -82,7 +85,7 @@ export class ObservationCache {
             summary: { ...base.summary, supervision: supervision(run.runDir) } };
         }
         if (stable !== stableStamp() || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
-          if (attempt === 0 && Date.now() < deadline) continue;
+          if (retry && attempt === 0 && Date.now() < deadline) continue;
           throw new ConsoleError('unavailable', 'observation dependencies changed at request admission');
         }
         const changed = data !== c.envelope.data;
@@ -108,7 +111,7 @@ export class ObservationCache {
         // Enumeration, containment and record reads can race an atomic publication/removal.
         // This covers capture only; explicit evidence reads still report absence as not-found.
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        if (attempt === 0 && Date.now() < deadline) continue;
+        if (retry && attempt === 0 && Date.now() < deadline) continue;
         throw new ConsoleError('unavailable', 'observation file disappeared during request admission');
       }
     }

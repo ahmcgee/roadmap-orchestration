@@ -135,7 +135,7 @@ function tick() {
     const arcs = new Set([...defaults, ...subscribed]);
     for (const arc of arcs) {
       try {
-        const e = read(arc); parentPort!.postMessage({ kind: 'checked', arc, epoch: e.epoch, highWater: e.highWater, revision: e.revision, checkedAt: e.checkedAt });
+        const e = cache.maintain(retainedRun(args.common, args.hostDir, arc)); parentPort!.postMessage({ kind: 'checked', arc, epoch: e.epoch, highWater: e.highWater, revision: e.revision, checkedAt: e.checkedAt });
         for (const subscription of historySubscriptions.values()) if (subscription.arc === arc) {
           try {
             const delta = histories.poll(e, subscription.invocation);
