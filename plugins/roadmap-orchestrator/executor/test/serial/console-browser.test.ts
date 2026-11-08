@@ -62,7 +62,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   await until(async () => /Journey/.test(await text()), 10_000, 'deep-linked unit detail');
   await until(async () => /Acceptance/.test(await text()) && !/Reading unit records/.test(await text()), 10_000, 'unit detail records');
   const dialog = await browser.evaluate<{ title: string; role: string; focus: string; url: string }>('() => ({ title: document.querySelector("#detail-title").textContent, role: document.activeElement.closest("[role=dialog]").getAttribute("role"), focus: document.activeElement.getAttribute("aria-label"), url: location.hash })');
-  assert.equal(dialog.title, 'mul(2, 3) is 6'); assert.equal(await browser.evaluate<string>('() => document.querySelector(".unit-meta > span").textContent'), 'u1'); assert.equal(dialog.role, 'dialog'); assert.equal(dialog.focus, 'Close details'); assert.match(dialog.url, /units\/u1/);
+  assert.equal(dialog.title, 'Implement the stated acceptance'); assert.equal(await browser.evaluate<string>('() => document.querySelector(".unit-meta > span").textContent'), 'u1'); assert.equal(dialog.role, 'dialog'); assert.equal(dialog.focus, 'Close details'); assert.match(dialog.url, /units\/u1/);
   await brandAudit('unit-detail');
   await browser.call('browser_take_screenshot', { type: 'png', filename: join(evidence, 'unit-detail.png'), fullPage: false });
   copyFileSync(join(evidence, 'unit-detail.png'), join(SHOTS, 'unit-detail.png'));
@@ -124,6 +124,8 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   assert.equal(await browser.evaluate<boolean>('() => document.querySelector(".history-brief").open'), false, 'brief is collapsed by default');
   assert.doesNotMatch(await browser.evaluate<string>('() => document.querySelector(".history-scroll").textContent'), /\"tool_use\"/);
   assert.equal(await browser.evaluate<number>('() => document.querySelectorAll(".history-scroll script, .history-scroll img").length'), 0);
+  assert.match(await browser.evaluate<string>('()=>document.querySelector(".history-boundary").textContent'),/events loaded/);
+  assert.doesNotMatch(await browser.evaluate<string>('()=>document.querySelector(".history-boundary").textContent'),/of [0-9]/,'unknown session totals are not invented');
   assert.match(await text(), /Show output/); assert.match(await text(), /Exit code 1/); assert.match(await text(), /Subagent of agent_1/);
   assert.match(await text(), /claude-sonnet-4-5/); assert.match(await text(), /52 recorded tokens/);
   await browser.evaluate('() => { document.querySelector(".history-brief").open = true; return true; }');
@@ -138,8 +140,8 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   for (let n = 0; n < 60; n++) agent.append(`Paged agent event ${n}`);
   await until(async () => /Paged agent event 59/.test(await text()), 10_000, 'more than one history page');
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent === "Following live tail").click(); return true; }');
-  await until(async () => /Show earlier/.test(await text()), 10_000, 'bounded latest history page');
-  await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent === "Show earlier").click(); return true; }');
+  await until(async () => /Load 50 earlier events/.test(await text()), 10_000, 'bounded latest history page');
+  await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent === "Load 50 earlier events").click(); return true; }');
   await until(async () => /I’ll inspect the implementation/.test(await text()), 10_000, 'earlier history page');
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent.startsWith("Follow live tail")).click(); return true; }');
   agent.append('Long evidence with explicit expansion. '.repeat(500));
@@ -151,6 +153,7 @@ test('console browser: vendored overview/detail, accessible names, keyboard, ine
   agent.append('Queued while the reader is scrolled up.');
   await until(async () => /Follow live tail \(1 update\)/.test(await text()), 10_000, 'paused reader receives update count');
   assert.doesNotMatch(await browser.evaluate<string>('() => document.querySelector(".history-scroll").textContent'), /Queued while the reader/);
+  assert.equal(await browser.evaluate('()=>document.querySelector(".history-scroll").scrollTop'),0,'live updates preserve the paused reading position');
   await browser.evaluate('() => { [...document.querySelectorAll("button")].find(b => b.textContent.startsWith("Follow live tail")).click(); return true; }');
   await until(async () => /Queued while the reader/.test(await text()), 10_000, 'resume tail');
   await browser.evaluate('() => { document.querySelectorAll(".history-expansion").forEach(el => el.open = false); return true; }');

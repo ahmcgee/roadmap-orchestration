@@ -31,6 +31,21 @@ test('file tools render real diffs, numbered code, compact Reads, open errors an
   assert.doesNotMatch(await b.evaluate<string>('() => document.querySelector(".history-scroll").innerText'), /File created successfully|file state is current|"old_string"/);
   assert.equal(await b.evaluate('() => document.querySelectorAll("[data-tool=Write] .history-tool-ok, [data-tool=Edit] .history-tool-ok").length'), 5);
 
+  assert.ok(await b.evaluate<number>('()=>document.querySelectorAll(".changed-files button").length')>0,'identified files have whole-row navigation targets');
+  await b.evaluate('()=>{document.querySelector(".changed-files").open=true;document.querySelector(".changed-files button").click();return true;}');
+  assert.equal(await b.evaluate('()=>document.querySelector(".history-controls").textContent.includes("Following live tail")'),false,'file navigation pauses following');
+  for(const theme of ['light','dark']){
+    const contrast=await b.evaluate<{code:number;marker:number;font:string;lineHeight:string}[]>(`()=>{
+      document.documentElement.dataset.theme='${theme}';
+      const context=document.createElement('canvas').getContext('2d',{willReadFrequently:true});context.canvas.width=context.canvas.height=1;
+      const rgba=color=>{context.clearRect(0,0,1,1);context.fillStyle=color;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data];};
+      const lum=color=>{const c=color.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return .2126*c[0]+.7152*c[1]+.0722*c[2];};
+      const ratio=(a,b)=>(Math.max(lum(a),lum(b))+.05)/(Math.min(lum(a),lum(b))+.05);
+      return ['add','remove'].map(kind=>{const row=document.querySelector('.history-diff-'+kind),code=row.querySelector('code'),marker=row.querySelector('.history-diff-marker'),style=getComputedStyle(code),background=rgba(getComputedStyle(row).backgroundColor);return {code:ratio(rgba(style.color),background),marker:ratio(rgba(getComputedStyle(marker).color),background),font:style.fontSize,lineHeight:style.lineHeight};});
+    }`);
+    for(const row of contrast){assert.ok(row.code>=4.5,`${theme} code contrast ${row.code}`);assert.ok(row.marker>=3,`${theme} gutter contrast ${row.marker}`);assert.equal(row.font,'12px');assert.equal(row.lineHeight,'18px');}
+  }
+
   await open('edge-cases');
   const row = (id: string) => `document.querySelector('[data-tool-id="${id}"]')`;
   await until(async () => await b.evaluate<boolean>(`() => ${row('overwrite-write')}.querySelector('.history-diff') !== null`), 12_000, 'long overwrite diff');

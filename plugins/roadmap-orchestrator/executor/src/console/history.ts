@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
 import { ConsoleError, type Envelope } from '../observation/protocol.ts';
-import { HistoryTail } from '../tui/history.ts';
+import { HISTORY_PAGE, HistoryTail } from '../tui/history.ts';
 import { LogReader } from '../tui/log-reader.ts';
 import { consoleTranscript, parseSeatBrief } from './agent-history.ts';
 import { openEvidence } from './evidence.ts';
@@ -47,7 +47,7 @@ export class ConsoleHistories {
     try {
       this.#capture(key, tail, path, fd);
       if (identity && identity !== tail.identity) throw new ConsoleError('reset', 'transcript replaced or truncated; reload history');
-      try { return { invocation: id, ...tail.page(path, before, fd), state: i.state, endedAt: i.endedAt }; }
+      try { return { invocation: id, pageSize:HISTORY_PAGE, ...tail.page(path, before, fd), state: i.state, endedAt: i.endedAt }; }
       catch (error) { throw new ConsoleError('invalid', (error as Error).message); }
     } finally { closeSync(fd); }
   }

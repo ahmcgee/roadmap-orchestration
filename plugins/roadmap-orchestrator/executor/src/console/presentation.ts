@@ -85,8 +85,8 @@ export function presentation(e:Envelope){
   const specEntry=e.data.display.estate.find(r=>r.kind==='specification'&&r.id===u.unit);const spec=specEntry?record(JSON.parse(specEntry.body)):{};
   const acceptance=Array.isArray(spec['acceptance'])?spec['acceptance'].map(a=>String(record(a)['clause']??'')).filter(Boolean):[];
   const intent=typeof spec['intent']==='string'?spec['intent']:acceptance.join('\n');
-  const existingTitle=typeof spec['title']==='string'&&spec['title'].trim()?spec['title']:acceptance[0];
-  const title=existingTitle&&existingTitle.length<=96?existingTitle:shortUnitTitle(intent,String(u.unit));
+  const existingTitle=typeof spec['title']==='string'&&spec['title'].trim()?spec['title']:null;
+  const title=existingTitle??shortUnitTitle(intent,String(u.unit));
   const journey=[...steps.values()].filter(st=>st.id.startsWith(`${u.unit}:`));
   const invs=e.data.display.invocations.filter(i=>i.unit===u.unit);const first=journey[0]?.at??invs.at(-1)?.startedAt??null;
   const last=u.state==='merged'||u.state==='cut'||u.state==='superseded'||u.state==='parked'?journey.at(-1)?.endedAt??null:null;

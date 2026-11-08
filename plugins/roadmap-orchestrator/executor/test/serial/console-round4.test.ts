@@ -20,7 +20,7 @@ test('round 4: readable recorded journeys and responsive console',{timeout:48000
  await b.call('browser_resize',{width:1440,height:900});
  await t.test('C1 complete is Done; C2 meaningful waiting and labelled activity; C3 singular; L6 compact heading',async()=>{
   await go();await click('link','Open u1 details');await wait(/Journey/);const text=await dialog();
-  assert.match(text,/Complete attempt 1\s+Done/);assert.doesNotMatch(text,/In progress|1 rounds/);assert.match(text,/1 round\b/);
+  assert.match(text,/Complete attempt 1\s+Done/);assert.doesNotMatch(text,/In progress|1 rounds/);assert.equal(await b.evaluate('()=>[...document.querySelectorAll(".unit-facts>div")].find(row=>row.querySelector("dt").textContent==="Round").querySelector("dd").textContent'),'1');
   assert.equal(await b.evaluate<string>('()=>document.querySelector("#detail-title").textContent'),'Implement the stated acceptance');assert.ok(await b.evaluate('()=>document.querySelector("#detail-title").textContent.length<=60'));assert.match(text,/Publish multiplication support/);
   assert.match(text,/\$1.25/);assert.match(text,/Agent history/);assert.match(text,/Attempt 1/);
   const waits=await b.evaluate<string[]>('()=>[...document.querySelectorAll(".journey-wait")].map(e=>e.innerText)');assert.ok(waits.length>0);assert.ok(waits.every(w=>/Dependency: 1m 20s/.test(w)));await shot('round4-unit-detail');
@@ -34,7 +34,7 @@ test('round 4: readable recorded journeys and responsive console',{timeout:48000
     await click('link','Activity');await wait(/What happened/);await until(async()=>/Cleanup failed/.test(await body()),10000,'failed housekeeping visible');assert.doesNotMatch(await body(),/Stop workloads|Collect evidence|Save changes/);await click('checkbox','Show housekeeping steps');await wait(/Collect evidence/);assert.match(await body(),/Resources released/);await shot('round4-activity');
  });
  await t.test('C4 finished agent has no live control or dangling separator',async()=>{
-  await go();await click('link','Open u1 details');await click('link','Build attempt 1: agent history');await wait(/Verified the change/);assert.doesNotMatch(await dialog(),/Follow(ing)? live tail/);assert.equal(await b.evaluate('()=>document.querySelector(".history-links").childNodes[1]?.textContent?.trim()==="·"'),false);await click('button','Show earlier');await wait(/Earlier history/);assert.doesNotMatch(await dialog(),/Follow(ing)? live tail/);await click('button','Show latest');await until(async()=>!/Earlier history/.test(await dialog()),10000,'finished history returns to latest page');await shot('round4-agent-history-finished');
+  await go();await click('link','Open u1 details');await click('link','Build attempt 1: agent history');await wait(/Verified the change/);assert.doesNotMatch(await dialog(),/Follow(ing)? live tail/);assert.equal(await b.evaluate('()=>document.querySelector(".history-links").childNodes[1]?.textContent?.trim()==="·"'),false);await click('button','Load 50 earlier events');await wait(/Earlier history/);assert.doesNotMatch(await dialog(),/Follow(ing)? live tail/);await click('button','Latest');await until(async()=>!/Earlier history/.test(await dialog()),10000,'finished history returns to latest page');await shot('round4-agent-history-finished');
  });
  await t.test('L2 transcript uses at least 60% of drawer, tool disclosures attach once per input',async()=>{
   await go();await click('link','Live agent history: u3');await wait(/Expand full input/);
@@ -60,7 +60,7 @@ test('round 4: readable recorded journeys and responsive console',{timeout:48000
  });
  await t.test('C4 an invocation settling while the reader is paused can show its latest finished page',async()=>{
   await go();await click('link','Live agent history: u3');await wait(/Agent is working/);for(let n=0;n<55;n++)f.live.append(`Settling history paragraph ${n}`);await wait(/Settling history paragraph 54/);
-  await b.evaluate('()=>{document.querySelector(".history-scroll").scrollTop=0;return true;}');await wait(/Follow live tail/);f.finishLive();await wait(/Finished/);await wait(/Show latest/);assert.doesNotMatch(await dialog(),/Follow(ing)? live tail/);await click('button','Show latest');await wait(/Verified the change/);
+  await b.evaluate('()=>{document.querySelector(".history-scroll").scrollTop=0;return true;}');await wait(/Follow live tail/);f.finishLive();await wait(/Finished/);await wait(/Latest/);assert.doesNotMatch(await dialog(),/Follow(ing)? live tail/);await click('button','Latest');await wait(/Verified the change/);
  });
  f.complete();
  await t.test('finished overview fits desktop and phone',async()=>{for(const [width,height] of [[1440,900],[1024,768],[390,844]]){await b.call('browser_resize',{width,height});await go();await wait(/Complete/);assert.equal(await b.evaluate('()=>document.documentElement.scrollWidth<=innerWidth'),true);await shot(`round4-overview-finished-${width}`);}});

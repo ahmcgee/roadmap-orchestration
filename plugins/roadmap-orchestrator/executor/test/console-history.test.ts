@@ -40,7 +40,7 @@ test('active stage maps active; history SSE appends complete events, pairs tools
       }
     }
   }
-  const first = await history(); assert.equal(first.reset, true); assert.equal(first.state, 'running');
+  const first = await history(); assert.equal(first.pageSize, 50); assert.equal(first.reset, true); assert.equal(first.state, 'running');
   assert.equal(first.events.find((e: { toolId: string }) => e.toolId === 'tool_1').output, 'export const ready = true;');
   const partial = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Live appended reasoning' }] } });
   appendFileSync(f.transcript, partial.slice(0, -2));

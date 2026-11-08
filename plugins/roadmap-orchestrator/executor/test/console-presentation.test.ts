@@ -10,7 +10,7 @@ test('recorded executor states become plain journeys, stage-local attempts, verd
  const f=await investigationFixture();t.after(()=>f.close());const e=read(f),m=consoleModel(e),p=m.presentation;
  assert.equal(p.run.state,'Running');assert.equal(p.units.length,14);
  assert.equal(p.units.find(u=>u.id==='u3')!.state,'Running');assert.equal(m.graph.units.find(u=>u.id==='u3')!.status,'active');
- const u=p.units.find(u=>u.id==='u7')!;assert.equal(u.title,'Review edge cases');assert.equal(u.rounds,3);assert.equal(u.spend,2.25);assert.equal(u.redChecks,1);
+ const u=p.units.find(u=>u.id==='u7')!;assert.equal(u.title,'Implement the stated acceptance');assert.ok(u.acceptance.includes('Review edge cases'),'acceptance stays available separately from the intent title');assert.equal(u.rounds,3);assert.equal(u.spend,2.25);assert.equal(u.redChecks,1);
  assert.deepEqual(u.journey.filter(s=>s.stage==='build').map(s=>[s.attempt,s.round,s.outcome]),[[1,1,'Succeeded'],[2,2,'Succeeded'],[3,3,'Succeeded']]);
  const review=u.journey.find(s=>s.stage==='gate')!;assert.equal(review.attempt,1);assert.equal(review.outcome,'Changes requested');assert.deepEqual(review.findingTitles,['Handle empty input before multiplying']);
  assert.deepEqual(u.reasons,['Baseline hold: baseline checks are failing']);assert.equal(u.waitSince,null,'admission wait starts are not invented');
@@ -53,7 +53,7 @@ test('short human titles strip paths, identifiers and later clauses, retain pros
  assert.equal(shortUnitTitle('`src/a.ts`','u42'),'u42');
  const title=shortUnitTitle('Provide consistent keyboard navigation across every account settings section and every nested form field in the application');
  assert.ok(title.length<=96);assert.match(title,/^Provide consistent/);assert.ok(title.endsWith('…'));assert.equal(title.indexOf('…'),title.length-1,'long actions are only elided at the tail');
- const f=await investigationFixture();try{const p=consoleModel(read(f)).presentation;assert.equal(p.units.find(u=>u.id==='u7')!.title,'Review edge cases');assert.ok(p.units.every(u=>typeof u.intent==='string'));}finally{f.close();}
+ const f=await investigationFixture();try{const p=consoleModel(read(f)).presentation;assert.equal(p.units.find(u=>u.id==='u7')!.title,'Implement the stated acceptance');assert.ok(p.units.every(u=>typeof u.intent==='string'));}finally{f.close();}
 });
 
  test('short titles preserve distinguishing subjects after long shared prefixes',async()=>{

@@ -56,7 +56,7 @@ test('native history has a safe structured brief, compact tools, closed unforese
   await wait(/A single canonical reason/);
   assert.equal(await b.evaluate('() => document.querySelectorAll(".history-verdict").length'), 1);
   f.finish(report); await wait(/Finished/);
-  await until(async () => await b.evaluate('() => document.querySelector(".history-status")?.textContent === "Approve"'), 12_000, 'verified verdict');
+  await until(async () => await b.evaluate('() => document.querySelector(".history-status")?.textContent === "✓Verdict: Approved"'), 12_000, 'verified verdict');
   assert.equal(await b.evaluate('() => { const card=document.querySelector(".history-verdict").getBoundingClientRect(); const scroller=document.querySelector(".history-scroll").getBoundingClientRect(); return card.top>=scroller.top-1 && card.top<scroller.top+30; }'),true,'finished report opens at its verdict and reasons');
   const log = await b.evaluate<string>('() => document.querySelector(".history-scroll").innerText');
   assert.equal(log.split('A single canonical reason').length - 1, 1);
@@ -85,7 +85,7 @@ test('all surveyed report families render as lists and evidence with empty field
     try {
       await b.call('browser_navigate', { url: `${s.url}/#/arcs/${f.arc}/graph/invocations/${f.routeId}` });
       await until(async () => (await b.evaluate<string>('() => document.querySelector(".history-verdict")?.innerText||""')).includes(row.phrase), 12_000, row.name);
-      assert.equal(await b.evaluate('() => document.querySelector(".history-status").textContent'), row.status);
+      assert.equal(await b.evaluate('() => document.querySelector(".history-status").textContent'), row.status==='Keep'?'○Verdict: Kept':row.status);
       const report = await b.evaluate<string>('() => document.querySelector(".history-verdict").innerText');
       assert.doesNotMatch(report, /none recorded|Spec wrong|Too big\s*\n/);
       assert.equal(await b.evaluate('() => document.querySelectorAll(".history-verdict").length'), 1);
