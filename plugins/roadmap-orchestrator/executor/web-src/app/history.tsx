@@ -1,3 +1,4 @@
+import { mergeHistoryPages } from './history-pages.ts';
 import { HistoryMarkdown } from './markdown.tsx';
 // Recorded agent-history rendering, ported intact from the original console.
 import * as R from 'react';
@@ -301,11 +302,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
         setHistory((old: any) => {
           if (!old || notice?.reset || old.identity !== next.identity){if(next.endedAt||next.state!=="running"){follow.current=false;setFollowing(false);}return next;}
           if (!follow.current) return { ...old, state: next.state, endedAt: next.endedAt, unseen: (old.unseen || 0) + (notice?.changed || 0) };
-          const events = new Map<string, any>(old.events.map((event: any) => [event.id, event]));
-          for (const event of next.events) events.set(event.id, event);
-          const kept = [...events.values()].slice(-200);
-          const dropped=events.size>kept.length;
-          return { ...next, events: kept, before:dropped?kept[0]?.id:old.before, hasMore:dropped?true:old.hasMore };
+          return mergeHistoryPages(old,next);
         });
         setError("");
       } catch (err: any) {

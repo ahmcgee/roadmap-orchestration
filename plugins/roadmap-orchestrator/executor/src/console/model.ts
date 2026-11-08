@@ -8,6 +8,7 @@ import { activityState } from '../tui/outcome.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import { presentation } from './presentation.ts';
 import { project } from '../tui/projection.ts';
+import { cpuStageGroups, resourceQueue } from './resources.ts';
 
 export type GraphStatus = 'passed' | 'active' | 'held' | 'pending' | 'failed';
 export function graphStatus(state: UnitRunState): GraphStatus {
@@ -28,7 +29,7 @@ export function waitingBreakdown(waited: Waited, source: 'admission' | 'reservat
   return { held: kind === 'held' ? waited.totalMs : 0, queued: kind === 'queued' ? waited.totalMs : 0, unallocated: kind === null ? waited.totalMs : 0 };
 }
 const resourceId = (r: ResourceUnit): string | null => { const p = parseResourceUnit(r); return p.type === 'cpu' ? null : p.type === 'instance' ? p.pool : p.name; };
-type Booking = { id: string; resource: string; label: string; unitId?: string; from: number; to?: number; state: 'done' | 'holding' | 'waiting'; waitFrom?: number; waitedMs?: number };
+type Booking = { id: string; resource: string; instance?: string; startedAt?: string; durationMs?: number; label: string; unitId?: string; from: number; to?: number; state: 'done' | 'holding' | 'waiting'; waitFrom?: number; waitedMs?: number };
 function bookings(events: readonly Event[], origin: number) {
   const intents = new Map<string, IntentOf<'resource.transition'>>();
   const active = new Map<string, Booking>();
@@ -42,13 +43,13 @@ function bookings(events: readonly Event[], origin: number) {
       const resource = resourceId(r); if (!resource) continue;
       if (x.edge.type === 'reserve' || x.edge.type === 'reclaim') {
         const previous = active.get(r);
-        if (previous) { previous.to = (Date.parse(e.at) - origin) / 1000; previous.state = 'done'; }
-        const row: Booking = { id: `${e.op}:${r}`, resource, label: 'unit' in x.holder ? x.holder.unit : x.holder.type,
+        if (previous) { previous.to = (Date.parse(e.at) - origin) / 1000; previous.state = 'done'; previous.durationMs = Date.parse(e.at) - Date.parse(previous.startedAt!); }
+        const row: Booking = { id: `${e.op}:${r}`, resource, ...(parseResourceUnit(r).type === 'instance' ? { instance: r } : {}), startedAt: e.at, label: 'unit' in x.holder ? x.holder.unit : x.holder.type,
           ...('unit' in x.holder ? { unitId: x.holder.unit } : {}), from: (Date.parse(e.at) - origin) / 1000, state: 'holding' };
         active.set(r, row); rows.push(row);
       } else if (x.edge.type === 'release') {
         const row = active.get(r);
-        if (row) { row.to = (Date.parse(e.at) - origin) / 1000; row.state = 'done'; active.delete(r); }
+        if (row) { row.to = (Date.parse(e.at) - origin) / 1000; row.state = 'done'; row.durationMs = Date.parse(e.at) - Date.parse(row.startedAt!); active.delete(r); }
       }
     }
   }
@@ -100,7 +101,7 @@ export function consoleModel(e: Envelope) {
   const resources = new Map<string, { id: string; label: string; capacity: number }>();
   for (const [id, pool] of Object.entries(s.host.pools)) if (id !== '@cpu') resources.set(id, { id, label: id, capacity: pool.size });
   for (const b of resourceRows) if (!resources.has(b.resource)) resources.set(b.resource, { id: b.resource, label: b.resource, capacity: 1 });
-  const queue = [...s.host.queue.map((q) => ({ ...q, label: q.unit, unit: q.unit })), ...s.host.jobQueue.map((q) => ({ ...q, label: q.holder.type === 'job' ? q.holder.job : q.holder.type === 'docs' ? q.holder.pub : `batch:${q.holder.finding}:${q.holder.attempt}`, unit: undefined }))];
+  const queue = resourceQueue(s.host);
   for (const q of queue) {
     if (q.queuedAt === undefined) continue; // Missing historical starts remain unknown.
     const requested = [...q.request.named, ...q.request.pools, ...(q.request.publication ? ['integration-slot'] : [])];
@@ -115,8 +116,8 @@ export function consoleModel(e: Envelope) {
     graph: { units: [...units, ...gates], edges }, activities,
     holds: s.holds,
     time: { rows: [...timeRows.values()], total: [...timeRows.values()].reduce((t, r) => ({ agent: t.agent + r.agent, deterministic: t.deterministic + r.deterministic, held: t.held + r.held, queued: t.queued + r.queued }), { agent: 0, deterministic: 0, held: 0, queued: 0 }), unallocated, byReasonMs, unmeasuredReservations: waiting.unmeasuredReservations, caption: 'partial recorded effort · completed work and recorded waiting; not wall-time coverage' },
-    cpu, tokenOccupancy: s.host.pools['@cpu']?.used ?? 0,
-    resources: { resources: [...resources.values()], bookings: resourceRows, origin, endAt, now: Math.max(0, (Date.parse(endAt ?? e.checkedAt) - origin) / 1000), unknownQueueStarts: queue.filter((q) => q.queuedAt === undefined).length },
+    cpu, cpuGroups: cpuStageGroups(work), tokenOccupancy: s.host.pools['@cpu']?.used ?? 0,
+    resources: { resources: [...resources.values()], bookings: resourceRows, queue, origin, endAt, now: Math.max(0, (Date.parse(endAt ?? e.checkedAt) - origin) / 1000), unknownQueueStarts: queue.filter((q) => q.queuedAt === undefined).length },
     attention: requests.map((r) => ({ id: r.id, blocking: r.blocking, summary: r.summary, recommendation: r.recommendation, options: r.options, subject: r.subject, evidence: r.evidence, evidenceLinks: r.evidence.map((path) => { const key = /\/inv\/([1-9][0-9]*-[1-9][0-9]*)(?:\/|$)/.exec(path)?.[1]; return activities.some((a) => a.routeId === key) ? key! : null; }), reason: r.reason })),
   };
 }

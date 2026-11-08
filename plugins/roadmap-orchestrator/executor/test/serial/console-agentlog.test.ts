@@ -32,7 +32,7 @@ test('native history has a safe structured brief, compact tools, closed unforese
   assert.equal(await b.evaluate('() => document.querySelector(".history-unforeseen details").open'), false);
   assert.match(await b.evaluate<string>('() => document.querySelector(".history-diff").textContent'), /- return false;\n\+ return true;/);
   assert.match(await text(), /Read\s+src\/main.ts/); assert.match(await text(), /Exit code 1/);
-  await b.evaluate('() => { document.querySelector(".history-brief").open=true; return true; }');
+  await b.evaluate('() => { document.querySelector(".session-details").open=true; document.querySelector(".history-brief").open=true; return true; }');
   await wait(/Mode: Pre build/);
   assert.equal(await b.evaluate('() => document.querySelector(".history-document").open'), false);
   await b.evaluate('() => { document.querySelector(".history-document").open=true; return true; }');
@@ -65,7 +65,7 @@ test('native history has a safe structured brief, compact tools, closed unforese
   assert.equal(await b.evaluate('() => document.querySelectorAll(".history-empty").length'), 1);
   assert.equal(await b.evaluate('() => document.querySelectorAll(".history-live").length'), 0);
   assert.equal(await b.evaluate('() => [...document.querySelectorAll("details")].find(d=>d.querySelector("summary")?.textContent==="Raw result.json").open'), false);
-  await b.evaluate('() => { [...document.querySelectorAll("summary")].find(s=>s.textContent==="Raw result.json").parentElement.open=true;return true; }');
+  await b.evaluate('() => { document.querySelector(".session-details").open=true; [...document.querySelectorAll("summary")].find(s=>s.textContent==="Raw result.json").parentElement.open=true;return true; }');
   const raw = await b.evaluate<string>('() => [...document.querySelectorAll("details")].find(d=>d.querySelector("summary")?.textContent==="Raw result.json").querySelector("pre").textContent');
   assert.ok(raw.includes('\n  "')); assert.deepEqual(JSON.parse(raw).outcome.value, report);
 });

@@ -10,6 +10,8 @@ import { sha256Hex } from '../core/json.ts';
 import { ConsoleError } from '../observation/protocol.ts';
 import { needsUserPath } from '../needsuser.ts';
 import { completedWaiting } from '../status/waiting.ts';
+import { resourceQueue } from './resources.ts';
+import { meterOf } from '../meter.ts';
 export const stageWords = (stage:string):string => ({'pre-build':'Plan review',build:'Build',lanes:'Checks',gate:'Review',candidate:'Integration check',ff:'Merge',snapshot:'Publish snapshot',retire:'Complete',prepare:'Prepare re-entry',quiesce:'Stop workloads',evidence:'Collect evidence',salvage:'Save changes',teardown:'Release resources',reproduce:'Reproduce finding',verifier:'Review',baseline:'Baseline checks','campaign-audit':'Holistic audit','experience-verdict':'Experience review'}[stage] ?? (stage.startsWith('lane:')?(!stage.slice(5)||stage.slice(5)==='null'?'Checks':`Check: ${stage.slice(5)}`):stage.replaceAll('-',' ')));
 export const stateWords = (state:string):string => ({running:'Running',preparing:'Preparing',ready:'Ready',waiting:'Waiting',held:'On hold',blocked:'Blocked',parked:'Parked',merged:'Merged',cut:'Withdrawn',superseded:'Replaced','awaiting-admission':'Waiting',complete:'Complete',draining:'Draining',stopping:'Stopping','no-owner':'Stopped',refused:'Refused'}[state] ?? state);
 export const reasonWords = (reason:string):string => ({'cpu-tokens':'CPU capacity','cpu-pressure':'CPU pressure','memory-pressure':'Memory pressure','publication-slot':'Integration slot','admission-hold:base-red':'Baseline hold','admission-hold:dependency':'Dependency','admission-hold:milestone':'Milestone gate','admission-hold:paused':'Paused','admission-hold:host-pressure':'Host pressure'}[reason] ?? reason.replace(/^admission-hold:/,'').replace(/^named-resource:/,'Resource: ').replaceAll('-',' '));
@@ -45,7 +47,20 @@ export function presentation(e:Envelope){
  const s=e.data.display.status,events=e.data.events;
  const startedAt=events[0]?.at??e.observedAt;
  const ended= [...events].reverse().find(ev=>ev.type==='fact'&&['arc-completed','stop-completed'].includes(ev.fact.kind));
- const meters=new Map<string,number>();for(const ev of events)if(ev.type==='fact'&&ev.fact.kind==='meter')meters.set(ev.fact.inv,(meters.get(ev.fact.inv)??0)+(ev.fact.usage.costUsd??0));
+ const usage=meterOf(events);
+ const meters=new Map<string,number>(),costCoverage=new Map<string,{recorded:number;estimated:number}>(),meteredInvocations=new Set<string>();
+ for(const ev of events){
+  if(ev.type!=='fact'||(ev.fact.kind!=='meter'&&ev.fact.kind!=='usage-unavailable'))continue;
+  const f=ev.fact;meteredInvocations.add(f.inv);
+  if(f.kind!=='meter')continue;
+  meters.set(f.inv,(meters.get(f.inv)??0)+(f.usage.costUsd??0));
+  if(f.subject.type==='seat'){
+   const coverage=costCoverage.get(f.subject.unit)??{recorded:0,estimated:0};
+   if(f.usage.costUsd!=null)coverage.recorded++;
+   if(f.usage.costEstimated)coverage.estimated++;
+   costCoverage.set(f.subject.unit,coverage);
+  }
+ }
  const reports=new Map<string,Record<string,unknown>>();
  for(const inv of e.data.display.invocations)if(inv.execution==='agent'){
   const settlement=record(record(JSON.parse(inv.body))['settlement']);
@@ -93,8 +108,10 @@ export function presentation(e:Envelope){
   const last=u.state==='merged'||u.state==='cut'||u.state==='superseded'||u.state==='parked'?journey.at(-1)?.endedAt??null:null;
   const queue=s.host.queue.find(q=>q.unit===u.unit);
   const reasons=waitWords(u.waitingFor);if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${journey.at(-1)?`: ${journey.at(-1)!.outcome}`:''}`);
-  if(queue?.request.publication)reasons.push(`Integration queue position ${s.host.queue.filter(q=>q.request.publication).findIndex(q=>q.unit===u.unit)+1}`);
-  return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:first?Math.max(0,Date.parse(last??ended?.at??e.checkedAt)-Date.parse(first)):null,rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,redChecks:invs.filter(i=>i.execution==='command'&&(/fail/.test(i.state)||record(record(JSON.parse(i.body))['settlement'])['outcome']&&JSON.stringify(JSON.parse(i.body).settlement).includes('"verdict":"fail"'))).length,spend:invs.reduce((n,i)=>n+(meters.get(i.id)??0),0),reasons,waitSince:queue?.queuedAt?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
+  if(queue?.request.publication)reasons.push(`Integration queue position ${resourceQueue(s.host).filter(q=>q.request.publication).findIndex(q=>q.unit===u.unit)+1}`);
+  const charged=usage.byUnit.filter(t=>t.unit===u.unit);
+  const spendCoverage={...(costCoverage.get(u.unit)??{recorded:0,estimated:0}),unavailable:charged.reduce((n,t)=>n+t.unavailable,0)+invs.filter(i=>i.execution==='agent'&&!meteredInvocations.has(i.id)).length};
+  return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:first?Math.max(0,Date.parse(last??ended?.at??e.checkedAt)-Date.parse(first)):null,rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,redChecks:invs.filter(i=>i.execution==='command'&&(/fail/.test(i.state)||record(record(JSON.parse(i.body))['settlement'])['outcome']&&JSON.stringify(JSON.parse(i.body).settlement).includes('"verdict":"fail"'))).length,spend:charged.reduce((n,t)=>n+t.costUsd,0),spendCoverage,reasons,waitSince:queue?.queuedAt!==undefined?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
  });
  const feed:{id:number;at:string;text:string;unit?:string;invocation?:string;tab?:string;housekeeping?:boolean}[]=[];
  for(const ev of events){
@@ -112,5 +129,5 @@ export function presentation(e:Envelope){
    feed.push({id:ev.seq,at:ev.at,text:`Question raised: ${summary??'request no longer retained'}`,tab:'attention',...(open?.subject.type==='unit'?{unit:open.subject.unit}:{})});
   }
  }
- return {run:{state:stateWords(ended?.type==='fact'&&ended.fact.kind==='stop-completed'?'no-owner':s.run.state),startedAt,endedAt:ended?.at??null,elapsedMs:Math.max(0,Date.parse(ended?.at??e.checkedAt)-Date.parse(startedAt))},units,activityInfo,feed:feed.reverse(),cpuCapacity:s.host.pools['@cpu']?.size??null,holistic:{enabled:s.holistic,activeFindings:s.findings.active,audit:s.audit,audits:events.filter(ev=>ev.type==='fact'&&ev.fact.kind==='audit-ended').map(ev=>({at:ev.at,...(ev.type==='fact'?ev.fact:{})})),checkpoint:s.decisionsSince},waitReasonCounts:waits.flatMap(w=>Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0)).reduce<Record<string,number>>((out,[reason])=>{const key=reasonWords(reason);out[key]=(out[key]??0)+1;return out;},{}),waitReasons:waits.flatMap(w=>Object.entries(w.waited.byReasonMs)).reduce<Record<string,number>>((out,[reason,ms])=>{const key=reasonWords(reason);out[key]=(out[key]??0)+(ms??0);return out;},{})};
+ return {run:{state:stateWords(ended?.type==='fact'&&ended.fact.kind==='stop-completed'?'no-owner':s.run.state),startedAt,endedAt:ended?.at??null,elapsedMs:Math.max(0,Date.parse(ended?.at??e.checkedAt)-Date.parse(startedAt))},units,activityInfo,feed:feed.reverse(),cpuCapacity:s.host.pools['@cpu']?.size??null,holistic:{enabled:s.holistic,activeFindings:s.findings.active,audit:s.audit,audits:events.flatMap(ev=>ev.type==='fact'&&ev.fact.kind==='audit-ended'?[{at:ev.at,...ev.fact}]:[]),checkpoint:s.decisionsSince},waitReasonCounts:waits.flatMap(w=>Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0)).reduce<Record<string,number>>((out,[reason])=>{const key=reasonWords(reason);out[key]=(out[key]??0)+1;return out;},{}),waitReasons:waits.flatMap(w=>Object.entries(w.waited.byReasonMs)).reduce<Record<string,number>>((out,[reason,ms])=>{const key=reasonWords(reason);out[key]=(out[key]??0)+(ms??0);return out;},{})};
 }

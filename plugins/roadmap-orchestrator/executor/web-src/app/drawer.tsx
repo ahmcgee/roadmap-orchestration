@@ -28,7 +28,7 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
       }
     };
     window.addEventListener('keydown', key);
-    return () => { window.removeEventListener('keydown', key); const target=document.querySelector<HTMLElement>('.dag-canvas')??(previous?.isConnected?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true }); };
+    return () => { window.removeEventListener('keydown', key); const target=route().tab==='graph'?document.querySelector<HTMLElement>('.dag-canvas'):(previous?.isConnected?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true }); };
   }, []);
   function resize(e: React.PointerEvent<HTMLDivElement>) {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -38,7 +38,7 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
   }
   return <aside ref={panel} role="dialog" aria-modal="false" aria-labelledby="detail-title" className={`drawer ${className}`} style={{ width }}>
     <div className="drawer-resize" role="separator" aria-label="Resize details" aria-orientation="vertical" tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { const next = Math.max(360, Math.min(960, width + (e.key === 'ArrowLeft' ? 40 : -40))); setWidth(next); try { localStorage.setItem('roadmap.drawer-width', String(next)); } catch {} } }}/>
-    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><Button variant="ghost" size="icon" onClick={close} aria-label="Close details" title="Close to graph"><X size={18}/></Button></header>
+    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><Button variant="ghost" size="icon" onClick={close} aria-label="Close details" title="Close details"><X size={18}/></Button></header>
     <div className="drawer-body">{children}</div>
   </aside>;
 }

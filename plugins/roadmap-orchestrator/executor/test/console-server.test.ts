@@ -84,3 +84,21 @@ test('logs use recorded invocation IDs, bounded byte pages, explicit pruning and
   assert.equal(escaped.status, 400);
   assert.match(await escaped.text(), /symlink escapes/);
 });
+
+test('retained older Arcs remain readable through the API while discovery selects only current',async t=>{
+  const {enrichedParityArc}=await import('./fixtures/status-parity.ts');
+  const {gitCommonDir}=await import('../src/git/git.ts');
+  const {absPath}=await import('../src/core/values.ts');
+  const f=await enrichedParityArc();
+  const console=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>console.close());
+  const api=`${console.url}/api/${CONSOLE_PROTOCOL}`;
+  const selection=await (await fetch(`${api}/arcs`)).json() as {selected:string};
+  assert.equal(selection.selected,f.d.arc);
+  const older=await fetch(`${api}/arcs/earlier/status`);assert.equal(older.status,200);
+  const envelope=await older.json() as {arc:string;data:{arc:string;units:unknown[]}};
+  assert.equal(envelope.arc,'earlier');assert.equal(envelope.data.arc,'earlier');assert.ok(envelope.data.units.length>0);
+  assert.equal((await fetch(`${api}/arcs/earlier/units/missing`)).status,404);
+  assert.equal((await fetch(`${api}/arcs/earlier/invocations/999999-1/log`)).status,404);
+  assert.equal((await fetch(`${api}/arcs/earlier/units/a%2fb`)).status,400);
+  assert.equal((await (await fetch(`${api}/arcs`)).json() as {selected:string}).selected,f.d.arc);
+});

@@ -1,9 +1,15 @@
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { absPath } from '../../src/core/values.ts';
 import { investigationFixture } from './console-investigations.ts';
 import { opKey, unitId, sha256 } from '../../src/core/ids.ts';
 export async function round4Fixture(){
  const f=await investigationFixture(14,{u1:'Publish multiplication support with clear handling of empty inputs, negative operands, decimal values, and boundary cases, together with readable checks that explain the result to a colleague who has never read the implementation.'});const j=f.journal;
+ // C4 inspects real earlier-page navigation. Keep the terminal report last, with
+ // enough retained context before it to require more than one 50-event page.
+ const finished=readFileSync(f.finished.transcript,'utf8').trimEnd().split('\n');
+ const terminal=finished.pop()!;
+ const context=Array.from({length:55},(_,n)=>JSON.stringify({type:'assistant',message:{role:'assistant',content:[{type:'text',text:`Recorded finished-history context ${n}`}]}}));
+ writeFileSync(f.finished.transcript,[...finished,...context,terminal].join('\n')+'\n');
  const parent={type:'stage' as const,unit:unitId('u1'),stage:'retire' as const,attempt:3};
  const evidence=j.begin({kind:'evidence.snapshot',key:opKey('round4-evidence'),parent:{type:'arc'},deadlineAt:null,body:()=>({expect:{source:absPath(f.d.repo+'/retired-checkout'),dest:absPath(f.runDir+'/evidence/retired'),globs:[]},post:{manifest:absPath(f.runDir+'/evidence/retired/manifest.json')}})});j.done(evidence.op,'evidence.snapshot',{kind:'captured',files:0,manifestSha256:sha256('0'.repeat(64))},null);
  const retired=j.begin({kind:'worktree.remove',key:opKey('round4-retire'),parent,deadlineAt:null,body:()=>({expect:{path:absPath(f.d.repo+'/retired-checkout'),evidence:evidence.op},post:null})});j.done(retired.op,'worktree.remove',{kind:'removed'},null);

@@ -306,3 +306,6 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .graph-edge.edge-traced{stroke:var(--line);stroke-width:2;opacity:1;}
 
 .node-signal-tiny,.node-signal-tiny .signal{width:8px;min-width:8px;height:8px;}
+
+/* Restore readable comparisons in the existing plain tab ports. */
+.panel{min-width:0;overflow-wrap:anywhere;}.table-wrap{max-width:100%;}th.number{text-align:right;white-space:nowrap;}.cell-line{display:block;}.local-tabs{display:flex;gap:8px;margin-bottom:16px;}.unit-identity{min-width:320px;width:340px;}.unit-identity a{display:block;line-height:18px;overflow-wrap:anywhere;}.unit-identity strong{margin-right:8px;}.unit-blockers{min-width:260px;}.unit-blockers ul{list-style:disc;margin:0 0 8px;padding-left:16px;}table ul{padding-left:16px;}th button{white-space:nowrap;}
