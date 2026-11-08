@@ -40,7 +40,7 @@ test('active stage maps active; history SSE appends complete events, pairs tools
       }
     }
   }
-  const first = await history(); assert.equal(first.pageSize, 50); assert.equal(first.reset, true); assert.equal(first.state, 'running');
+  const first = await history(); assert.equal(first.pageSize, 50); assert.equal(first.reset, true); assert.equal(first.hasMore,false,'init-only records do not claim earlier visible history'); assert.equal(first.before,null); assert.equal(first.state, 'running');
   assert.equal(first.events.find((e: { toolId: string }) => e.toolId === 'tool_1').output, 'export const ready = true;');
   const partial = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'thinking', thinking: 'Live appended reasoning' }] } });
   appendFileSync(f.transcript, partial.slice(0, -2));
@@ -57,3 +57,19 @@ test('active stage maps active; history SSE appends complete events, pairs tools
   const stale = await fetch(`${base}/invocations/${f.routeId}/history-field?identity=${first.identity}&ref=${long.id}&field=text&after=0`); assert.equal(stale.status, 409);
   abort.abort();
 });
+
+ test('earlier history has a verified cursor until exhausted, including an init-only prefix', {timeout:30_000}, async t => {
+  const f=await consoleAgentFixture();t.after(()=>f.close());
+  for(let n=0;n<125;n++)f.append(`Earlier history ${n}`);
+  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());
+  const base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/invocations/${f.routeId}/history`;
+  const seen=new Set<string>();let before:string|null|undefined,identity:string|undefined,pages=0;
+  do {
+    const r=await fetch(base+(before?`?before=${before}&identity=${encodeURIComponent(identity!)}`:''));assert.equal(r.status,200);
+    const {data}=await r.json() as {data:ReturnType<ConsoleHistories['page']>};
+    assert.equal(data.hasMore,data.before!==null);
+    for(const event of data.events){assert.ok(!seen.has(event.id),'pages do not repeat events');seen.add(event.id);}
+    identity=data.identity;before=data.before;pages++;assert.ok(pages<10);
+  }while(before);
+  assert.ok(pages>=3);assert.ok(seen.size>=125);
+ });

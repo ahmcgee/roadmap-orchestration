@@ -25,7 +25,7 @@ test('milestone bands include all units and gates, preserve gate waits, and prod
  assert.ok(a.elapsed>=0);
 });
 
-test('large equal ranks wrap into layout-only columns and All matches the viewport aspect',async t=>{
+test('large equal ranks wrap into layout-only columns without re-laying out focus contexts',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
  const observed=new ObservationCache(f.hostDir,'graph-wrap','graph').read({runDir:f.runDir,arc:f.arc});const {events:_,...data}=observed.data;
  const e={...observed,data:{...data,console:consoleModel(observed)}};
@@ -33,11 +33,10 @@ test('large equal ranks wrap into layout-only columns and All matches the viewpo
  const columns=new Map<number,number>();for(const id of unbound.ids){const x=a.positions.get(id)!.x;columns.set(x,(columns.get(x)??0)+1);}
  assert.ok(columns.size>1);assert.ok([...columns.values()].every(count=>count<=10),'no same-rank column becomes a tower');
  assert.equal(e.data.console.graph.edges.length,consoleModel(observed).graph.edges.length,'wrapping invents no semantic edges');
- const {graphLayout:layout,activeFocus,activeLayout}=await import(new URL('../web-src/app/graph-layout.ts',import.meta.url).href);
- const all=layout(e,1.8),repeat=layout(e,1.8);assert.deepEqual(all.positions,repeat.positions);
- assert.ok(Math.abs(Math.log(all.width/all.height/1.8))<Math.abs(Math.log(a.bands.reduce((n,b)=>n+b.width+56,0)/Math.max(...a.bands.map(b=>b.height))/1.8)),'All uses more of the viewport');
+ const {graphLayout:layout,activeFocus}=await import(new URL('../web-src/app/graph-layout.ts',import.meta.url).href);
+ const all=layout(e),repeat=layout(e);assert.deepEqual(all.positions,repeat.positions);
  const focus=activeFocus(e);assert.ok(focus.seeds.includes('u3'));assert.ok(focus.ids.includes('u4'),'direct downstream included');assert.ok(!focus.ids.includes('u60'),'unrelated work is outside the focus');
- const current=activeLayout(e,a,focus.ids,false);assert.equal(current.positions.size,a.positions.size);assert.equal(new Set(current.bands.flatMap((b:{ids:string[]})=>b.ids)).size,60);
+ assert.equal(all.positions.size,a.positions.size);assert.deepEqual(all.positions,a.positions,'Active derives a frame from the full layout');
  const idle=structuredClone(e);idle.data.console.graph.units.forEach(u=>{if(u.status==='active')u.status='pending';});
  assert.equal(activeFocus(idle).recent,true);assert.equal(activeFocus(idle).seeds.length,3);
 });

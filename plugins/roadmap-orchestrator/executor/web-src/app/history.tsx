@@ -1,3 +1,4 @@
+import { HistoryMarkdown } from './markdown.tsx';
 // Recorded agent-history rendering, ported intact from the original console.
 import * as R from 'react';
 import { useState, useEffect, useRef } from 'react';
@@ -35,61 +36,6 @@ const historyJson = (text: any) => {
   }
 };
 const historyEmpty = (value: any) => value == null || value === "" || (Array.isArray(value) ? !value.length : typeof value === "object" && Object.values(value).every(historyEmpty));
-function HistoryInline({ text }: any) {
-  return String(text).split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^\s)]+\))/g).map((part: any, i: any) => {
-    if (part.startsWith("`")) return h("code", { key: i }, part.slice(1, -1));
-    if (part.startsWith("**")) return h("strong", { key: i }, part.slice(2, -2));
-    const link2 = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(part);
-    if (link2 && /^https?:\/\//i.test(link2[2]!)) return h("a", { key: i, href: link2[2]!, target: "_blank", rel: "noreferrer" }, link2[1]!);
-    return part;
-  });
-}
-function HistoryMarkdown({ text }: any) {
-  const lines = String(text || "").replace(/\r/g, "").split("\n"), blocks = [];
-  for (let i = 0; i < lines.length; ) {
-    const line = lines[i]!, fence = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (fence) {
-      const code: any[] = [];
-      i++;
-      while (i < lines.length && !new RegExp(`^\\s{0,3}${fence[1]![0]}{${fence[1]!.length},}\\s*$`).test(lines[i]!)) code.push(lines[i++]!);
-      i++;
-      blocks.push(h("pre", { key: blocks.length }, h("code", null, code.join("\n"))));
-      continue;
-    }
-    if (!line.trim()) {
-      i++;
-      continue;
-    }
-    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
-    if (heading) {
-      blocks.push(h(`h${Math.min(6, heading[1]!.length + 2)}`, { key: blocks.length }, h(HistoryInline, { text: heading[2]! })));
-      i++;
-      continue;
-    }
-    const item = /^\s*(?:[-*+] |\d+[.)] )(.+)$/.exec(line);
-    if (item) {
-      const ordered = /^\s*\d/.test(line), items = [];
-      while (i < lines.length) {
-        const m = /^\s*(?:[-*+] |\d+[.)] )(.+)$/.exec(lines[i]!);
-        if (!m) break;
-        items.push(h("li", { key: i++ }, h(HistoryInline, { text: m[1] })));
-      }
-      blocks.push(h(ordered ? "ol" : "ul", { key: blocks.length }, items));
-      continue;
-    }
-    if (/^>\s?/.test(line)) {
-      const quote: any[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i]!)) quote.push(lines[i++]!.replace(/^>\s?/, ""));
-      blocks.push(h("blockquote", { key: blocks.length }, h(HistoryMarkdown, { text: quote.join("\n") })));
-      continue;
-    }
-    const paragraph = [line];
-    i++;
-    while (i < lines.length && lines[i]!.trim() && !/^\s*(?:#{1,6}\s|[-*+] |\d+[.)] |`{3,}|~{3,}|>)/.test(lines[i]!)) paragraph.push(lines[i++]!);
-    blocks.push(h("p", { key: blocks.length }, h(HistoryInline, { text: paragraph.join("\n") })));
-  }
-  return h("div", { className: "history-markdown" }, blocks);
-}
 function HistoryValue({ value, name = "" }: any) {
   if (historyEmpty(value)) return null;
   if (Array.isArray(value)) return name === "argv" ? h("pre", null, h("code", null, value.join(" "))) : h("ul", null, value.filter((v: any) => !historyEmpty(v)).map((v: any, i: any) => h("li", { key: i }, h(HistoryValue, { value: v, name: name === "evidence" ? "evidence" : "" }))));
@@ -317,7 +263,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
   const now=R.useContext(Clock);
   const base = `/arcs/${e.arc}/invocations/${id}`;
   const [history, setHistory] = useState<any>(null), [error, setError] = useState<any>(""), [brief, setBrief] = useState<any>(null), [result, setResult] = useState<any>(null);
-  const [following, setFollowing] = useState<any>(true), [earlier, setEarlier] = useState<any>(false), [above,setAbove]=useState(false);
+  const [following, setFollowing] = useState<any>(true), [earlier, setEarlier] = useState<any>(false), [above,setAbove]=useState(false), [loadingEarlier,setLoadingEarlier]=useState(false);
   const scroll = useRef<any>(null), follow = useRef<any>(true), placedScroll = useRef<any>(null), entered=useRef(false), anchor=useRef<{id:string;offset:number}|null>(null);
   useEffect(() => {
     const c = new AbortController();
@@ -325,7 +271,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
     setBrief(null);
     setError("");
     setResult(null);
-    setEarlier(false);
+    setEarlier(false);setLoadingEarlier(false);
     follow.current = true;
     setFollowing(true);
     placedScroll.current = null;entered.current=false;anchor.current=null;setAbove(false);
@@ -347,7 +293,8 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
           const events = new Map<string, any>(old.events.map((event: any) => [event.id, event]));
           for (const event of next.events) events.set(event.id, event);
           const kept = [...events.values()].slice(-200);
-          return { ...next, events: kept, before: kept[0]?.id === "0:0" ? null : kept[0]?.id };
+          const dropped=events.size>kept.length;
+          return { ...next, events: kept, before:dropped?kept[0]?.id:old.before, hasMore:dropped?true:old.hasMore };
         });
         setError("");
       } catch (err: any) {
@@ -382,14 +329,15 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
   };
   R.useLayoutEffect(followLayout, [history, result]);
   const more = () => {
+    if(loadingEarlier)return;setLoadingEarlier(true);
     follow.current = false;
     setFollowing(false);
     const top=scroll.current.getBoundingClientRect().top,first=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>!node.closest('details:not([open])')&&node.getBoundingClientRect().height>0&&node.getBoundingClientRect().bottom>top) as HTMLElement|undefined;
     if(first)anchor.current={id:first.dataset['eventId']!,offset:first.getBoundingClientRect().top-top};
     get(`${base}/history?before=${history.before}&identity=${encodeURIComponent(history.identity)}`).then((r: any) => {
       setEarlier(true);
-      setHistory((old: any) => ({ ...old, before: r.data.before, events: [...new Map([...r.data.events, ...old.events].map((event: any) => [event.id, event])).values()].slice(0, 200) }));
-    }).catch((err: any) => {anchor.current=null;setError(err.message);});
+      setHistory((old: any) => ({ ...old, before: r.data.before, hasMore:r.data.hasMore, events: [...new Map([...r.data.events, ...old.events].map((event: any) => [event.id, event])).values()].slice(0, 200) }));
+    }).catch((err: any) => {anchor.current=null;setError(err.message);}).finally(()=>setLoadingEarlier(false));
   };
   const latest = () => get(`${base}/history`).then((r: any) => {
     setEarlier(false);
@@ -419,7 +367,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
     error && h("p", { role: "alert" }, error),
     h("div",{className:"history-navigation"},h("div", {className:"history-heading"},"History"),h(ChangedFiles,{onJump:(id:string)=>{follow.current=false;setFollowing(false);const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset.eventId===id) as HTMLElement|undefined;if(target){let parent=target.parentElement;while(parent&&parent!==scroll.current){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top;placedScroll.current=scroll.current.scrollTop;setAbove(scroll.current.scrollTop>8);}}}),
     ),
-    h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more }, history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,above?"Earlier events above":history.before!=null?"Earlier events available":"Start of session"))),
+    h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more,disabled:loadingEarlier }, loadingEarlier?"Loading earlier history":history.hasMore!==true?"Check earlier history":history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,loadingEarlier?"Loading earlier history":history.hasMore===false?"Start of session":history.hasMore===true?"Earlier events available":"Earlier history not checked"))),
     h(
       "details",
       { className: "session-details" },

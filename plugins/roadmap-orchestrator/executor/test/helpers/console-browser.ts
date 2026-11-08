@@ -30,7 +30,7 @@ export class ConsoleBrowser {
   request(method: string, params: object): Promise<unknown> {
     const id = ++this.#next;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.#pending.delete(id); reject(new Error(`${method} timed out: ${this.stderr.join('')}`)); }, 30_000);
+      const timer = setTimeout(() => { this.#pending.delete(id); reject(new Error(`${method} ${JSON.stringify(params).slice(0,600)} timed out: ${this.stderr.join('')}`)); }, 30_000);
       this.#pending.set(id, { resolve, reject, timer });
       this.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
@@ -64,7 +64,7 @@ export class ConsoleBrowser {
     const ref = /\[ref=(\w+)\]/.exec(row)![1];
     await this.call('browser_type', { element: 'Search units', target: ref, text: id });
     await this.call('browser_press_key', { key: 'Enter' });
-    await this.call('browser_press_key', { key: 'Enter' });
+    if (!await this.evaluate('()=>!!document.querySelector(".drawer")')) await this.call('browser_press_key', { key: 'Enter' });
   }
   async close() {
     for (const p of this.#pending.values()) { clearTimeout(p.timer); p.reject(new Error('browser closed')); } this.#pending.clear();

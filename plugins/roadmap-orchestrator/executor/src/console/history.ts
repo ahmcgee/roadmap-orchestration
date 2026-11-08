@@ -47,7 +47,12 @@ export class ConsoleHistories {
     try {
       this.#capture(key, tail, path, fd);
       if (identity && identity !== tail.identity) throw new ConsoleError('reset', 'transcript replaced or truncated; reload history');
-      try { return { invocation: id, pageSize:HISTORY_PAGE, ...tail.page(path, before, fd), state: i.state, endedAt: i.endedAt }; }
+      try {
+        const page=tail.page(path,before,fd);
+        const preceding=page.before===null?null:tail.page(path,page.before,fd);
+        const hasMore=preceding===null?false:preceding.events.length>0?true:preceding.before===null?false:null;
+        return { invocation:id,pageSize:HISTORY_PAGE,...page,before:hasMore===false?null:page.before,hasMore,state:i.state,endedAt:i.endedAt };
+      }
       catch (error) { throw new ConsoleError('invalid', (error as Error).message); }
     } finally { closeSync(fd); }
   }

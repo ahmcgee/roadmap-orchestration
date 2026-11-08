@@ -245,3 +245,8 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 
 .node-signal-compact .signal{width:10px;min-width:10px;height:10px;font-size:10px;line-height:10px;}
 .node-signal-compact .signal-pending,.node-signal-compact .signal-withdrawn{font-size:0;margin:0;}
+
+/* Round 2: compact disclosures live above the graph or inside its overlay. */
+.station-caption{gap:6px;}.station-caption small{font:500 11px/14px 'Barlow Semi Condensed',sans-serif;color:var(--muted-ink);}.station-held{color:var(--sig-held)!important;}
+.station-health{position:fixed;z-index:25;width:272px;max-width:calc(100vw - 16px);padding:12px;background:var(--surface);border:1px solid var(--rule);border-radius:10px;box-shadow:0 3px 12px #0002;}.station-health p{font-size:12px;color:var(--muted-ink);margin:6px 0;}.station-health button{display:flex;gap:8px;width:100%;padding:6px;text-align:left;}.station-health button:hover,.station-health button:focus-visible{background:var(--paper);}.station-health button:disabled{color:var(--muted-ink);}
+.unit-dependencies{padding-block:8px!important;}.unit-dependencies details+details{margin-top:8px;}.unit-dependencies details>div{max-height:320px;overflow:auto;}.dependency-row{display:grid;grid-template-columns:40px 1fr auto;gap:8px;padding:8px 4px;color:var(--ink);text-decoration:none;border-bottom:1px solid var(--rule);}.dependency-row strong{font-weight:500;}.dependency-row:hover,.dependency-row:focus-visible{background:var(--paper);}.dependency-row small{display:block;color:var(--sig-held);}.dependency-row>span:last-child{font-size:12px;}.dependency-back{font-size:13px;}.intent>div{white-space:normal;}.search-results button[aria-selected=true]{background:var(--paper);outline:1px solid var(--line);outline-offset:-1px;}
