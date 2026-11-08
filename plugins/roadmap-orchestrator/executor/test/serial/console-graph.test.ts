@@ -14,9 +14,8 @@ const corpus = JSON.parse(readFileSync(new URL('../helpers/scale-corpus.json',im
 const scaleTitle = (id:string):string => corpus.systems[Object.keys(corpus.systems)[(Number(id.slice(1))-1)%8]!][Math.floor((Number(id.slice(1))-1)/8)].title;
 
 async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed',width:number){
- const result=await b.evaluate<{count:number;bad:unknown[];overlaps:string[];coordinates:Record<string,unknown>;tier?:string;groups?:string[];hidden?:boolean;aggregated?:number}>(`()=>{
+ const result=await b.evaluate<{count:number;bad:unknown[];overlaps:string[];coordinates:Record<string,unknown>;tier:string;hidden:string[];badEdges:string[]}>(`()=>{
   const cy=document.querySelector('.dag-canvas')._cyreg.cy,all=cy.nodes('[gate]'),extent=cy.extent();
-  if(document.querySelector('.graph-view').dataset.detailTier==='groups')return {tier:'groups',count:all.length,bad:[],overlaps:[],coordinates:Object.fromEntries(all.map(n=>[n.id(),n.position()])),groups:[...document.querySelectorAll('.collapsed-bands g')].map(n=>n.textContent),hidden:all.every(n=>!n.visible()),aggregated:document.querySelectorAll('.collapsed-bands path').length};
   const nodes=all.filter(n=>{const box=n.boundingBox({includeLabels:false});return box.x2>extent.x1&&box.x1<extent.x2&&box.y2>extent.y1&&box.y1<extent.y2;});
   const bad=nodes.filter(n=>{
     const label=n.style('label'),px=parseFloat(n.style('font-size'))*cy.zoom(),w=n.renderedWidth(),h=n.renderedHeight();
@@ -28,9 +27,11 @@ async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed
   }).map(n=>({id:n.id(),label:n.style('label'),px:parseFloat(n.style('font-size'))*cy.zoom(),w:n.renderedWidth(),h:n.renderedHeight()}));
   const boxes=all.map(n=>({id:n.id(),box:n.renderedBoundingBox({includeLabels:false})})),overlaps=[];
   for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){const a=boxes[i],b=boxes[j];if(a.box.x1<b.box.x2-.5&&a.box.x2>b.box.x1+.5&&a.box.y1<b.box.y2-.5&&a.box.y2>b.box.y1+.5)overlaps.push(a.id+':'+b.id);}
-  return {count:nodes.length,bad,overlaps,coordinates:Object.fromEntries(all.map(n=>[n.id(),n.position()]))};
+  return {tier:document.querySelector('.graph-view').dataset.detailTier,hidden:all.filter(n=>!n.visible()).map(n=>n.id()),badEdges:cy.edges('[kind="dependency"], [kind="feeds"]').filter(e=>!e.visible()).map(e=>e.id()),count:nodes.length,bad,overlaps,coordinates:Object.fromEntries(all.map(n=>[n.id(),n.position()]))};
  }`);
- if(result.tier==='groups'){assert.equal(mode,'all');assert.equal(result.count,310);assert.equal(result.groups?.length,10);assert.ok(result.groups?.every(g=>/MS-.*passed/.test(g)));assert.equal(result.hidden,true);assert.ok(result.aggregated!>0);return result.coordinates;}
+ assert.ok(['full','minimal','status'].includes(result.tier),'only in-place tiers exist');
+ assert.deepEqual(result.hidden,[],'every node stays drawn');
+ assert.deepEqual(result.badEdges,[],'every unit dependency and feed stays drawn');
  assert.ok(result.count>0,`${width} ${mode}: nodes rendered`);
  if(mode==='all')assert.equal(result.count,310,'All includes every unit and gate in the viewport');
  assert.deepEqual(result.bad,[],`${width} ${mode}: text fits boxes and meets the title/identifier legibility threshold`);
@@ -145,12 +146,21 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes(':selected')[0],p=n.renderedPosition();return n.data('state')==='active'&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()-40;}`),true,'first arrow selects a visible active unit');
  await b.call('browser_press_key',{key:'Enter'});await until(async()=>await b.evaluate('()=>!!document.querySelector(".drawer")'),5000,'keyboard details');await b.call('browser_press_key',{key:'Escape'});
  await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.activeElement===document.querySelector(".dag-canvas")'),5000,'keyboard focus returns');
- await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(.62);return true;}`);await new Promise(r=>setTimeout(r,100));
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(.62);return true;}`);await new Promise(r=>setTimeout(r,160));
  await assertRenderedLabels(b,'zoomed',1440);
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>n.hasClass('overview')&&n.style('label')===n.data('compact')&&parseFloat(n.style('font-size'))*cy.zoom()>=10);}`),true,'mid zoom uses only readable compact identifiers');
- await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,100));
+ await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,160));
  assert.deepEqual(await assertRenderedLabels(b,'all',1440),coordinates,'All changes the viewport, never node positions');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return document.querySelector('.graph-view').dataset.detailTier==='groups'&&cy.nodes('[gate]').every(n=>!n.visible())&&!!document.querySelector('.graph-minimap');}`),true,'All at 300 units uses named milestone groups and preserves the minimap');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return document.querySelector('.graph-view').dataset.detailTier==='status'&&cy.nodes('[gate]').every(n=>n.visible()&&n.style('label')===''&&parseFloat(n.style('text-opacity'))===0)&&!!document.querySelector('.graph-minimap');}`),true,'All at 300 units keeps status-only unit boxes in place and preserves the minimap');
+ const allZoom=await b.evaluate<number>(`()=>document.querySelector('.dag-canvas')._cyreg.cy.zoom()`);
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{const box=await page.locator('.dag-canvas').boundingBox();await page.mouse.move(box.x+box.width/2,box.y+box.height/2);for(let i=0;i<32;i++){await page.mouse.wheel(0,700);await page.waitForTimeout(80);}}`});
+ await new Promise(r=>setTimeout(r,160));
+ const minimum=await b.evaluate<{zoom:number;min:number;nodes:number;dependencies:number}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return{zoom:cy.zoom(),min:cy.minZoom(),nodes:cy.nodes('[gate=0]').filter(n=>n.visible()).length,dependencies:cy.edges('[kind="dependency"]').filter(e=>e.visible()).length};}`);
+ assert.ok(Math.abs(minimum.min/allZoom-.6)<.01,'minimum zoom is 0.6 × All framing');
+ assert.equal(minimum.zoom,minimum.min,'real wheel zoom stops at the minimum');
+ assert.equal(minimum.nodes,300,'every unit stays rendered at minimum zoom');
+ assert.equal(minimum.dependencies,663,'every unit dependency stays drawn at minimum zoom');
+ assert.deepEqual(await assertRenderedLabels(b,'all',1440),coordinates,'minimum zoom keeps the same layout');
  // Zoom back in: every original dependency is drawable, and gate surfaces occlude the buses.
  await b.call('browser_press_key',{key:'a'});
  const overviewState=await b.evaluate<{badEdges:string[];transparentGates:string[]}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {badEdges:cy.edges('[kind="dependency"]').filter(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return !e.visible()||!a||!b||![a.x,a.y,b.x,b.y].every(Number.isFinite);}).map(e=>e.id()),transparentGates:cy.nodes('[gate=1]').filter(n=>parseFloat(n.style('background-opacity'))!==1).map(n=>n.id())};}`);
@@ -160,7 +170,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  await b.evaluate(`()=>{document.querySelectorAll('.station')[1].click();return true;}`);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{const summary=page.locator('.wait-bus-label>summary').filter({hasText:'MS-1: 30 linked'}).first();await summary.hover();await summary.focus();await summary.locator('..').getByRole('button',{name:'u31',exact:true}).click();}`});
  await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.getElementById('u31').selected()&&cy.edges('.exact').length===1&&cy.edges('.exact').every(e=>e.visible());}`),5000,'passed gate links stay navigable');
- await b.evaluate(`()=>{document.querySelectorAll('.station')[5].click();return true;}`);await new Promise(r=>setTimeout(r,100));
+ await b.evaluate(`()=>{document.querySelectorAll('.station')[5].click();return true;}`);await new Promise(r=>setTimeout(r,160));
  assert.deepEqual(await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`),coordinates,'Milestone uses the identical full layout');
  await assertRenderedLabels(b,'active',1440);
  await b.evaluate(`()=>{document.querySelector('[aria-label="Active focus"]').click();const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.getElementById('u226');cy.viewport({zoom:.4,pan:{x:720-n.position('x')*.4,y:320-n.position('y')*.4}});cy.nodes().unselect();return true;}`);
@@ -183,7 +193,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  await b.evaluate(`()=>{document.querySelector('[aria-label="Next active cluster"]').click();return true;}`);assert.match(await b.evaluate<string>('()=>document.querySelector(".active-pager").textContent'),/2\/6/);
  await b.evaluate(`()=>{document.querySelectorAll('.station')[5].click();return true;}`);await assertRenderedLabels(b,'active',390);
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,p=cy.getElementById('milestone:MS-6').renderedPosition();return document.querySelectorAll('.band-focused').length===1&&p.x>0&&p.x<cy.width()&&p.y>48&&p.y<180;}`),true,'phone station frames its labelled gate');
- await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,100));assert.deepEqual(await assertRenderedLabels(b,'all',390),coordinates);
+ await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,160));assert.deepEqual(await assertRenderedLabels(b,'all',390),coordinates);
  await b.evaluate(`()=>{document.querySelector('[aria-label="Active focus"]').click();return true;}`);await until(async()=>await b.evaluate('()=>!!document.querySelector(".active-pager")'),5000,'restored phone pager');await b.evaluate(`()=>{document.querySelector('[aria-label="Next active cluster"]').click();return true;}`);
  const point=await b.evaluate<{x:number;y:number}>(`()=>{const el=document.querySelector('.dag-canvas'),p=el._cyreg.cy.getElementById('u226').renderedPosition(),r=el.getBoundingClientRect();return{x:p.x+r.left,y:p.y+r.top};}`);
  const touch=async()=>b.call('browser_run_code_unsafe',{code:`async(page)=>{const client=await page.context().newCDPSession(page);await client.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:${point.x},y:${point.y}}]});await client.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await client.detach();}`});
@@ -203,11 +213,24 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  }`});
  await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-view').dataset.detailTier==='minimal'`),5000,'50-unit All is identifiable');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),box=nodes.renderedBoundingBox({includeLabels:false});return nodes.length===55&&nodes.every(n=>n.visible()&&n.style('label').trim()&&parseFloat(n.style('font-size'))*cy.zoom()>=10)&&box.x1>=0&&box.x2<=cy.width()&&box.y1>=0&&box.y2<=cy.height();}`),true,'All fits every unit at tier 2 at 1440');
+ const geometry=await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>({id:n.id(),position:n.position(),width:n.width(),height:n.height()}))`);
+ const fade=await b.evaluate<{out:number;hidden:boolean;inside:number;shown:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes('[gate=0]')[0];cy.zoom(.62);await new Promise(r=>setTimeout(r,160));cy.zoom(.2);await new Promise(r=>setTimeout(r,60));const out=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));const hidden=n.style('label')===''&&parseFloat(n.style('text-opacity'))===0;cy.zoom(.62);await new Promise(r=>setTimeout(r,60));const inside=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));return{out,hidden,inside,shown:parseFloat(n.style('text-opacity'))===1};}`);
+ assert.ok(fade.out>0&&fade.out<1,'text fades out over the tier boundary');
+ assert.equal(fade.hidden,true,'status tier settles without text');
+ assert.ok(fade.inside>0&&fade.inside<1,'identifiers fade back in');
+ assert.equal(fade.shown,true,'identifiers finish appearing after 120 ms');
  for(const level of [.8,.62,.4,.3,.2]){
    await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(${level});return true;}`);
-   await new Promise(r=>setTimeout(r,80));
-   assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),tier=document.querySelector('.graph-view').dataset.detailTier;return tier==='groups'?nodes.every(n=>!n.visible()):nodes.every(n=>n.visible()&&!!n.style('label').trim()&&n.hasClass('overview')===(tier==='minimal'));}`),true,'LOD is uniform at '+level);
+   await new Promise(r=>setTimeout(r,160));
+   assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),tier=document.querySelector('.graph-view').dataset.detailTier;return ['full','minimal','status'].includes(tier)&&nodes.every(n=>n.visible()&&n.hasClass('overview')===(tier!=='full')&&(tier==='status'?n.style('label')===''&&parseFloat(n.style('text-opacity'))===0:!!n.style('label').trim()&&parseFloat(n.style('text-opacity'))===1));}`),true,'LOD is uniform at '+level);
+   assert.deepEqual(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>({id:n.id(),position:n.position(),width:n.width(),height:n.height()}))`),geometry,'node geometry stays fixed at '+level);
  }
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.emulateMedia({reducedMotion:'reduce'});}`});
+ for(const level of [.8,.2]){
+   assert.equal(await b.evaluate(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.zoom(${level});await new Promise(requestAnimationFrame);return cy.nodes('[gate]').every(n=>!n.animated()&&parseFloat(n.style('text-opacity'))===(${level}===.8?1:0));}`),true,'reduced motion switches text immediately');
+ }
+ assert.equal(await b.evaluate(`()=>getComputedStyle(document.querySelector('.node-signal')).transitionDuration`),'0s','reduced motion disables status text transitions');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.emulateMedia({reducedMotion:'no-preference'});}`});
  await b.call('browser_press_key',{key:'a'});
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{
    await page.locator('.station').filter({hasText:'MS-3 Concurrency'}).hover();

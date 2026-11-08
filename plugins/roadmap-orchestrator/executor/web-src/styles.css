@@ -266,12 +266,6 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .band-headings>div{position:absolute;display:flex;gap:8px;align-items:center;height:20px;padding:0 4px;background:var(--paper);pointer-events:auto;white-space:nowrap;overflow:hidden;}
 .band-headings strong{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;}
 .band-headings span{font-size:11px;color:var(--muted-ink);}
-.collapsed-bands{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;}
-.collapsed-bands g{pointer-events:auto;cursor:pointer;}
-.collapsed-bands rect{fill:var(--surface);stroke:var(--line);rx:3;}
-.collapsed-bands path{fill:none;stroke:var(--muted-ink);}
-.collapsed-bands foreignObject div{font-size:11px;line-height:15px;overflow:hidden;}
-.collapsed-bands strong,.collapsed-bands span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 .outstanding-units{max-height:45vh;overflow:auto;}
 .agent-detail .successful-command>summary{display:flex;align-items:center;gap:8px;height:30px;padding:0;cursor:pointer;}
@@ -285,7 +279,6 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .node-status-row .signal-pending,.node-status-row .signal-withdrawn{font-size:1em;width:1em;min-width:1em;height:1em;}
 .node-signal-compact .signal-pending,.node-signal-compact .signal-withdrawn{font-size:12px;width:12px;min-width:12px;height:12px;}
 
-[data-detail-tier=groups] .wait-bus-labels{display:none;}
 .unit-gates dd a{display:block;}
 .agent-detail .history-tool:has(.successful-command){padding-block:0;}
 
@@ -295,3 +288,7 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .node-status-row .signal{width:1em;min-width:1em;height:1em;}
 
 .node-status-row .signal svg{width:100%;height:100%;}
+
+.node-signal{transition:opacity 120ms ease;}
+.node-signal-status{opacity:0;}
+@media(prefers-reduced-motion:reduce){.node-signal{transition:none;}}
