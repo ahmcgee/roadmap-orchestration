@@ -72,3 +72,10 @@ test('three-line title budget preserves the full action, system and slice',async
   assert.equal(shortUnitTitle(title+'. Read src/service.ts before editing.'),title);
  }
 });
+
+test('an explicit intent heading preserves a human title and its domain terms',async()=>{
+  const { shortUnitTitle } = await import('../src/console/presentation.ts');
+  assert.equal(shortUnitTitle('# Validate sign-up payloads before persistence\n\nValidate src/identity/signup.ts.'),'Validate sign-up payloads before persistence');
+  const long=shortUnitTitle(`# ${'Tenant-scoped rollout checks '.repeat(10)}\n\nDetails.`);
+  assert.ok(long.length<=96);assert.ok(long.endsWith('…'));
+});

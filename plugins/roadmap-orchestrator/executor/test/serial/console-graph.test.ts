@@ -10,6 +10,9 @@ import { ConsoleBrowser } from '../helpers/console-browser.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import { until } from '../fixtures/exec-common.ts';
 
+const corpus = JSON.parse(readFileSync(new URL('../helpers/scale-corpus.json',import.meta.url),'utf8'));
+const scaleTitle = (id:string):string => corpus.systems[Object.keys(corpus.systems)[(Number(id.slice(1))-1)%8]!][Math.floor((Number(id.slice(1))-1)/8)].title;
+
 async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all',width:number){
  const result=await b.evaluate<{count:number;bad:unknown[];offscreen:string[];overlaps:string[];captions:boolean}>(`()=>{
   const cy=document.querySelector('.dag-canvas')._cyreg.cy,all=cy.nodes('[gate]'),extent=cy.extent();
@@ -28,7 +31,7 @@ async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all',width:n
 async function hoverNode(b:ConsoleBrowser,id:string){
  const point=await b.evaluate<{x:number;y:number}>(`()=>{const el=document.querySelector('.dag-canvas'),p=el._cyreg.cy.getElementById('${id}').renderedPosition(),r=el.getBoundingClientRect();return {x:r.left+p.x,y:r.top+p.y};}`);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.mouse.move(${point.x},${point.y});}`});
- await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-hover')?.textContent.includes('slice ${id.slice(1)}')`),5000,'real pointer hover title card');
+ await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-hover')?.textContent.includes(${JSON.stringify(scaleTitle(id))})`),5000,'real pointer hover title card');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0);
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.trace').length>0&&cy.edges('.trace').every(e=>parseFloat(e.style('width'))*cy.zoom()>=2);}`),true,'hover traces real routes at two rendered pixels');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/attempt/);
@@ -168,7 +171,7 @@ test('scale Graph frames every active unit, preserves every dependency, bundles 
  await touch();
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".graph-hover")'),5000,'first real touch shows card');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0,'first tap never opens the drawer');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/catalog system, slice 226/);
+ assert.ok((await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText')).includes(scaleTitle('u226')));
  await touch();
  await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u226"'),5000,'second real touch opens the drawer');
 

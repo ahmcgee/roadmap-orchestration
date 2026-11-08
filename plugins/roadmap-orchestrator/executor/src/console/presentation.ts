@@ -26,6 +26,7 @@ const outcomeWords=(outcome:string)=>({empty:'No workloads running',captured:'Ev
 type Step={housekeeping:boolean;id:string;stage:string;label:string;attempt:number;sequence:number;round:number;at:string;endedAt:string|null;outcome:string;findingTitles:string[];activities:string[];notes:string[]};
 /** Human display text is separate from the complete agent-facing intent. */
 export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): string {
+ const heading = /^# ([^\n]+)\n/.exec(intent)?.[1]?.trim();
  const prose = intent
   .replace(/\b(?:contract|spec):[\w:#./-]+/gi, '')
   .replace(/`[^`]+`/g, '')
@@ -34,7 +35,7 @@ export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): stri
   .replace(/\b(?:[a-z]+(?:[A-Z][a-z0-9]+)+|[a-z0-9]+(?:[_-][a-z0-9]+)+)\b/g, '')
   .split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
   .replace(/\s+/g, ' ').replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '').trim();
- const value = prose || fallback;
+ const value = heading || prose || fallback;
  // Three condensed lines can carry the complete action and its system/slice.
  // Only genuinely long prose is elided, at the tail rather than in the middle.
  if (value.length <= 96) return value;
