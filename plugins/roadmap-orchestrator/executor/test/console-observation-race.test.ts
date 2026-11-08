@@ -6,6 +6,7 @@ import { Worker } from 'node:worker_threads';
 import { test, type TestContext } from 'node:test';
 import { arcId } from '../src/core/ids.ts';
 import { ObservationCache } from '../src/observation/cache.ts';
+import { Observer } from '../src/observation/observer.ts';
 import { ConsoleError } from '../src/observation/protocol.ts';
 import { consoleFixture } from './fixtures/console.ts';
 import { parityArc } from './fixtures/status-parity.ts';
@@ -114,4 +115,90 @@ test('status worker reports exhausted capture races as unavailable, not pruned e
   const reply = await response;
   assert.equal(reply.error?.code, 'unavailable');
   assert.match(reply.error!.message, /observation file disappeared/);
+});
+
+
+test('persistent capture races yield after one retry even when the admission clock has not advanced', (t) => {
+  const { run, cache } = fixture(t);
+  const temp = join(run.runDir, 'heartbeat.json.race.tmp');
+  const readdir = fs.readdirSync, lstat = fs.lstatSync;
+  let raced = 0;
+  t.mock.method(fs, 'readdirSync', ((...args: Parameters<typeof readdir>) => {
+    if (args[0] === run.runDir) fs.writeFileSync(temp, heartbeat);
+    return readdir(...args);
+  }) as typeof readdir);
+  t.mock.method(fs, 'lstatSync', ((...args: Parameters<typeof lstat>) => {
+    if (args[0] === temp) { fs.unlinkSync(temp); raced++; }
+    return lstat(...args);
+  }) as typeof lstat);
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + (raced > 2 ? 2_000 : 0));
+  syncBuiltinESMExports();
+  assert.throws(() => cache.read(run), (error: unknown) => error instanceof ConsoleError && error.code === 'unavailable');
+  assert.equal(raced, 2, 'persistent churn yields to the writer without spending the entire admission budget');
+});
+
+test('a failed cold capture retains its verified journal cursor for the retry', (t) => {
+  const { run, cache } = fixture(t);
+  const path = join(run.runDir, 'heartbeat.json');
+  fs.writeFileSync(path, heartbeat);
+  const read = fs.readFileSync, capture = Observer.prototype.capture;
+  const observers: Observer[] = [];
+  const offsets: number[] = [];
+  t.mock.method(Observer.prototype, 'capture', function (this: Observer, ...args: Parameters<typeof capture>) {
+    observers.push(this); offsets.push(this.cursor?.offset ?? 0);
+    return capture.apply(this, args);
+  });
+  let raced = 0;
+  t.mock.method(fs, 'readFileSync', ((...args: Parameters<typeof read>) => {
+    if (args[0] === path && raced++ === 0) fs.unlinkSync(path);
+    return read(...args);
+  }) as typeof read);
+  syncBuiltinESMExports();
+  const e = cache.read(run);
+  assert.equal(observers.length, 2);
+  assert.equal(observers[1], observers[0], 'the retry reuses the observer that already verified the journal');
+  assert.equal(offsets[0], 0);
+  assert.ok(offsets[1]! > 0, 'the retry starts at the previously verified journal offset');
+  assert.equal(e.data.display.status.run.heartbeatAt, null);
+  assert.equal(cache.read(run).data, e.data, 'only a complete admitted observation is published');
+});
+
+
+test('volatile admission races reuse the staged capture without publishing a partial observation', (t) => {
+  const { run, cache } = fixture(t);
+  const capture = Observer.prototype.capture;
+  let captures = 0;
+  t.mock.method(Observer.prototype, 'capture', function (this: Observer, ...args: Parameters<typeof capture>) {
+    captures++;
+    const reply = capture.apply(this, args);
+    fs.writeFileSync(join(run.runDir, 'heartbeat.json'), heartbeat);
+    return reply;
+  });
+  const e = cache.read(run);
+  assert.equal(captures, 1, 'a heartbeat-only retry does not recapture immutable evidence');
+  assert.equal(e.data.display.status.run.heartbeatAt, '2026-06-01T00:00:00.000Z');
+  assert.equal(cache.read(run).data, e.data);
+});
+
+
+test('continuously changing capture dependencies yield without caching an unadmitted snapshot', (t) => {
+  const { run, cache } = fixture(t);
+  const receipt = join(run.runDir, 'commands', 'receipts', 'cmd-0000000000000001.rejected.json');
+  const value = JSON.parse(fs.readFileSync(receipt, 'utf8'));
+  const capture = Observer.prototype.capture;
+  let captures = 0;
+  const spy = t.mock.method(Observer.prototype, 'capture', function (this: Observer, ...args: Parameters<typeof capture>) {
+    const reply = capture.apply(this, args);
+    fs.writeFileSync(receipt, JSON.stringify({ ...value, reason: `Changed ${++captures}` }));
+    return reply;
+  });
+  const now = Date.now();
+  t.mock.method(Date, 'now', () => now + (captures > 2 ? 2_000 : 0));
+  assert.throws(() => cache.read(run), (error: unknown) => error instanceof ConsoleError && error.code === 'unavailable');
+  assert.equal(captures, 2, 'dependency changes get one retry, then yield to the writer');
+  spy.mock.restore();
+  const e = cache.read(run);
+  assert.equal(e.data.display.status.arc, run.arc);
+  assert.equal(e.data.capture.materializations, 1, 'failed admissions did not publish their staged captures');
 });

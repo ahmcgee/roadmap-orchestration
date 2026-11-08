@@ -29,7 +29,12 @@ export class ObservationCache {
   constructor(hostDir: AbsPath, instance: string, repoId: string) { this.hostDir = hostDir; this.instance = instance; this.repoId = repoId; }
   read(run: Run, admission: Admission = {}): Envelope {
     const deadline = Date.now() + 2_000;
-    for (;;) {
+    // A changing run must yield CPU to its writer. One immediate retry handles an atomic
+    // rename without turning admission into two seconds of repeated cold captures.
+    let c = this.#runs.get(run.runDir);
+    const observer = c?.observer ?? new Observer();
+    let evidenceStamp = c?.stable;
+    for (let attempt = 0; ; attempt++) {
       try {
         const startPath = join(run.runDir, 'start.json');
         const common = existsSync(startPath) ? gitCommonDir(runStart(readJson(startPath), startPath).repo) : commonDirOfRun(run.runDir);
@@ -39,12 +44,11 @@ export class ObservationCache {
         const stable = stableStamp();
         const volatile = fileStamp(heart) + JSON.stringify(supervision(run.runDir));
         const journal = fileStamp(journalPath);
-        let c = this.#runs.get(run.runDir);
-        const observer = c?.observer ?? new Observer();
         const materialize = !c || c.stable !== stable || c.journal !== journal;
         if (materialize) {
           checkRunContainment(run.runDir);
-          if (c && c.stable !== stable) observer.invalidateEvidence();
+          if (evidenceStamp !== undefined && evidenceStamp !== stable) observer.invalidateEvidence();
+          evidenceStamp = stable;
           const reply = observer.capture({ locator: { type: 'host' }, pinned: run, hostDir: this.hostDir, token: 0 });
           if (reply.error || !reply.display || !observer.captured) throw new ConsoleError('corruption', reply.error ?? 'no captured observation');
           const captured = observer.captured;
@@ -78,7 +82,7 @@ export class ObservationCache {
             summary: { ...base.summary, supervision: supervision(run.runDir) } };
         }
         if (stable !== stableStamp() || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
-          if (Date.now() < deadline) continue;
+          if (attempt === 0 && Date.now() < deadline) continue;
           throw new ConsoleError('unavailable', 'observation dependencies changed at request admission');
         }
         const changed = data !== c.envelope.data;
@@ -104,8 +108,7 @@ export class ObservationCache {
         // Enumeration, containment and record reads can race an atomic publication/removal.
         // This covers capture only; explicit evidence reads still report absence as not-found.
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        this.#runs.get(run.runDir)?.observer.invalidateEvidence();
-        if (Date.now() < deadline) continue;
+        if (attempt === 0 && Date.now() < deadline) continue;
         throw new ConsoleError('unavailable', 'observation file disappeared during request admission');
       }
     }

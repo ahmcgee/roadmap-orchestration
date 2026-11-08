@@ -1142,8 +1142,9 @@ Git/snapshot and ended-invocation/transcript caches remain in use.
 An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
 Protocol is the exact executor package version. HighWater is the verified event prefix; revision also changes
 with side files/liveness. This is a verified journal prefix plus sampled external state, not a filesystem
-transaction. Capture checks dependency stamps before/after and retries changed inputs and disappearing-file
-read races within the same admission deadline; exhaustion is unavailable, while explicit evidence routes retain
+transaction. Capture checks dependency stamps before/after and gives changed inputs and disappearing-file
+read races one immediate retry within the same admission deadline, retaining its observer and staged capture.
+Continued churn yields unavailable instead of spinning until the deadline; explicit evidence routes retain
 not-found for absent/pruned evidence. Requests accept
 `minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and `fenceSize` captured cheaply
 from the journal. The cursor must inspect through that fence, excluding incomplete trailing lines. Request
