@@ -26,8 +26,8 @@ test('real HTTP worker observes retained runs, enforces GET/HEAD, immutable stat
   const console = await serveConsole({ ...f, host: '127.0.0.1', port: 0, instance: 'test' });
   t.after(() => console.close());
   const api = `${console.url}/api/${CONSOLE_PROTOCOL}`;
-  const runs = await (await fetch(`${api}/arcs`)).json() as { selected: string; arcs: { arc: string }[]; runs?: unknown };
-  assert.ok(runs.arcs.some(a => a.arc === f.arc)); assert.equal(runs.runs, undefined);
+  const runs = await (await fetch(`${api}/arcs`)).json() as { selected: string; runs?: unknown };
+  assert.equal(runs.selected, f.arc); assert.equal('arcs' in runs, false); assert.equal(runs.runs, undefined);
   assert.equal((await fetch(`${api}/runs`)).status, 404, 'old API routes have no compatibility alias');
   assert.equal(runs.selected, f.arc);
   const response = await fetch(`${api}/arcs/${f.arc}/snapshot`);

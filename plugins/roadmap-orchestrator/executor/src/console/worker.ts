@@ -43,7 +43,7 @@ function result(e: Envelope, id: string) {
   return { record, report, raw: JSON.stringify(record, null, 2), lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
 }
 function route(path: string[], params: Record<string, string>) {
-  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, ...retainedRuns(args.common, args.hostDir) };
+  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, selected: retainedRuns(args.common, args.hostDir).selected };
   const [runs, arc, section, id, file] = path;
   if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
   const admission: Admission = {
@@ -128,7 +128,7 @@ function tick() {
   timer = null;
   try {
     const runs = retainedRuns(args.common, args.hostDir);
-    const defaults = new Set<string>([runs.selected, runs.arcs[0]?.arc].filter((a): a is ArcId => a !== null && a !== undefined));
+    const defaults = new Set<string>([runs.selected].filter((a): a is ArcId => a !== null && a !== undefined));
     for (const arc of maintained) if (!defaults.has(arc) && !subscribed.has(arc)) cache.unpin(arc);
     maintained.clear();
     for (const arc of defaults) { maintained.add(arc); cache.pin(arc); }

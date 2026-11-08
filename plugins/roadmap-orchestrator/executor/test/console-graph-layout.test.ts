@@ -38,5 +38,5 @@ test('large equal ranks wrap into layout-only columns without re-laying out focu
  const focus=activeFocus(e);assert.ok(focus.seeds.includes('u3'));assert.ok(focus.ids.includes('u4'),'direct downstream included');assert.ok(!focus.ids.includes('u60'),'unrelated work is outside the focus');
  assert.equal(all.positions.size,a.positions.size);assert.deepEqual(all.positions,a.positions,'Active derives a frame from the full layout');
  const idle=structuredClone(e);idle.data.console.graph.units.forEach(u=>{if(u.status==='active')u.status='pending';});
- assert.equal(activeFocus(idle).recent,true);assert.equal(activeFocus(idle).seeds.length,3);
+ assert.deepEqual(activeFocus(idle).seeds,[]);
 });

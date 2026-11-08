@@ -57,17 +57,13 @@ export function graphLayout(e: Envelope) {
 }
 /** The live units and only their direct unit neighbours, never transitive gate fan-out. */
 export function activeFocus(e: Envelope) {
-  const units=e.data.console.presentation.units, active=e.data.console.graph.units.filter(u=>!u.id.startsWith('milestone:')&&u.status==='active').map(u=>u.id);
-  const seeds=active.length?active:[...units].sort((a,b)=>{
-    const changed=(u:typeof a)=>Math.max(0,...u.journey.flatMap(s=>[Date.parse(s.at)||0,Date.parse(s.endedAt??'')||0]));
-    return changed(b)-changed(a)||a.id.localeCompare(b.id);
-  }).slice(0,3).map(u=>u.id);
+  const seeds=e.data.console.graph.units.filter(u=>!u.id.startsWith('milestone:')&&u.status==='active').map(u=>u.id);
   const neighbours=(ids:string[])=>{
     const result=new Set(ids);
     for(const [a,b] of e.data.console.graph.edges)if(!a.startsWith('milestone:')&&!b.startsWith('milestone:')&&(ids.includes(a)||ids.includes(b))){result.add(a);result.add(b);}
     return [...result];
   };
-  return { seeds, ids:neighbours(seeds), clusters:seeds.map(id=>neighbours([id])), recent:active.length===0 };
+  return { seeds, ids:neighbours(seeds) };
 }
 /** Compact identifiers use the recorded system, never a guessed title fragment. */
 export function compactIdentifier(e: Envelope, id: string) {
