@@ -238,7 +238,9 @@ Derived entries `{sources,outputs,regenerate?:ToolCommand}` only add determinist
 
 ### Milestones and bring-up
 
-Milestone `{id,text,units,design:{unit}|{supplied:true},lanes?,references,bringUp,journeys,resources}`. Units/references/
+The optional milestone `name` is a nonblank single-line display name, at most 32 characters, with no surrounding whitespace. Absent reads as no name, without a warning or schema-version change; never derive it from `text`. Console snapshots carry it unchanged.
+
+Milestone `{id,name?,text,units,design:{unit}|{supplied:true},lanes?,references,bringUp,journeys,resources}`. Units/references/
 journeys are nonempty where required; selected lanes default []. A design unit is planned and outside its members.
 Journeys have `{id,text,via:browser|shell,entry,budget:{steps,seconds}|null}`. BringUp has setup argv[], serve entries
 `{name,argv,ready:{http}|{log}}`, env map, seed argv[]. `{port:<serve-name>}` substitutes allocated ports consistently.

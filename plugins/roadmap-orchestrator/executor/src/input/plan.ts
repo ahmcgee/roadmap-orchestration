@@ -254,6 +254,8 @@ export type MilestoneDesign = Readonly<{ unit: UnitId }> | Readonly<{ supplied: 
  */
 export type Milestone = Readonly<{
   id: MilestoneId;
+  /** Optional display name; absent means no short name. Never derived from text. */
+  name?: string;
   text: string;
   units: readonly UnitId[];
   design: MilestoneDesign;
@@ -619,6 +621,11 @@ const milestoneDesign: Read<MilestoneDesign> = (value, path) => {
 const milestone: Read<Milestone> = object((f) => {
   const out: Milestone = {
     id: f.get('id', (v, p) => milestoneId(v, p)),
+    ...((name => name === undefined ? {} : { name })(f.optional('name', (v, p) => {
+      const name = str(v, p);
+      if (!name.trim() || name.length > 32 || name !== name.trim() || /[\r\n]/.test(name)) throw new SchemaError(p, 'a nonblank single-line name of at most 32 characters without surrounding whitespace', v);
+      return name;
+    }))),
     text: f.get('text', str),
     units: f.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
     design: f.get('design', milestoneDesign),

@@ -89,7 +89,7 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
   assert.ok(facts.some(f=>f.kind==='stage-outcome'&&'outcome' in f&&f.outcome==='revise'));
   const release=await ownScaleArc(m);t.after(release);
   const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
-  const response=await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`);assert.equal(response.status,200);
+  const response=await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`);assert.equal(response.status,200,await response.clone().text());
   const snapshot=await response.json() as Envelope & {data:{console:ReturnType<typeof consoleModel>}};
   assert.equal(snapshot.data.display.status.units.length,300);
   for(let i=1;i<=300;i++) {
@@ -132,4 +132,20 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
     assert.equal(request.recommendation,`Review ${title} and record whether to resume or defer it.`);
     if(request.subject.type==='unit') assert.equal(title,textFor(Number(request.subject.unit.slice(1)),m.systems).title);
   }
+});
+
+test('design preset spans the corpus through rollout in five named milestones', {timeout:90_000}, async t => {
+ const m=await generateScaleArc(tmpDir('console-design'),{preset:'design'});
+ assert.equal(m.units,50);assert.equal(m.milestones,5);assert.equal(m.live.length,4);assert.equal(m.openAttention,3);
+ const release=await ownScaleArc(m);t.after(release);
+ const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
+ const s=await (await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`)).json() as Envelope & {data:{console:ReturnType<typeof consoleModel>}};
+ assert.deepEqual(s.data.plan!.milestones!.map(g=>g.name),[0,2,5,7,9].map(i=>corpus.milestones[i].name));
+ for(let i=1;i<=50;i++) {
+  const expected=corpus.systems[m.systems[(i-1)%8]!][Math.floor((i-1)*38/50)];
+  assert.equal(s.data.console.presentation.units.find(u=>u.id===`u${i}`)!.title,expected.title);
+ }
+ assert.ok(s.data.console.graph.units.some(u=>u.status==='held'));
+ assert.ok(s.data.display.status.units.some(u=>u.state==='cut'||u.state==='superseded'));
+ assert.ok(s.data.console.activities.some(a=>a.status==='failed'));
 });

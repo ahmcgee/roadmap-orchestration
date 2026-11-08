@@ -271,3 +271,17 @@ describe('vision: the experience kind', () => {
     assert.throws(() => parseVision(vision({ rank: 1 })), SchemaError);
   });
 });
+
+ test('milestone display names are additive, explicit, and validated', async () => {
+  await onCorpusArc(r => {
+    withMilestones(MILESTONE)(r.d);
+    const raw = JSON.parse(readFileSync(r.d.planPath, 'utf8'));
+    assert.equal(parsePlan(raw).milestones![0]!.name, undefined);
+    raw.milestones[0].name = 'Concurrency and retries';
+    assert.equal(parsePlan(raw).milestones![0]!.name, 'Concurrency and retries');
+    for (const name of ['', ' ', 'a'.repeat(33), null, 42, 'bad\\nname'.replace('\\n','\n'), ' padded ']) {
+      raw.milestones[0].name = name;
+      assert.throws(() => parsePlan(raw), SchemaError);
+    }
+  });
+ });

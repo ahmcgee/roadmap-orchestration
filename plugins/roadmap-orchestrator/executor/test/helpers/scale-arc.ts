@@ -39,7 +39,7 @@ import { publishOwner } from '../../src/host/owner.ts';
 import { selfIdentity } from '../../src/host/liveness.ts';
 import { HOST_DIR, openHostDir } from '../../src/host/hostdir.ts';
 
-export type ScaleOptions = { units?: number; days?: number; seed?: string };
+export type ScaleOptions = { units?: number; days?: number; seed?: string; preset?: 'design' };
 export const SCALE_NOW = '2026-11-07T20:00:00.000Z';
 const DAY = 86_400_000;
 const SYSTEMS = ['identity', 'catalog', 'booking', 'billing', 'notifications', 'search', 'analytics', 'operations'];
@@ -51,7 +51,7 @@ type CorpusUnit = {
 const corpus = JSON.parse(readFileSync(new URL('./scale-corpus.json', import.meta.url), 'utf8')) as {
   milestones: { name: string; text: string; journey: string }[]; systems: Record<string, CorpusUnit[]>;
 };
-function unitText(i: number): CorpusUnit {
+function defaultUnitText(i: number): CorpusUnit {
   const entries = corpus.systems[SYSTEMS[(i - 1) % SYSTEMS.length]!]!;
   // The default week consumes ordinals 0–37; larger custom fixtures cycle the corpus.
   return entries[Math.floor((i - 1) / SYSTEMS.length) % entries.length]!;
@@ -88,9 +88,15 @@ function historicalClock(initial: number) {
 }
 
 export async function generateScaleArc(outDir: string, options: ScaleOptions = {}) {
-  const count = options.units ?? 300, days = options.days ?? 7, seed = options.seed ?? 'console-week';
+  const design = options.preset === 'design';
+  const count = options.units ?? (design ? 50 : 300), days = options.days ?? 7, seed = options.seed ?? 'console-week';
   if (!Number.isInteger(count) || count < 40 || count > 2000) throw new Error('--units must be an integer between 40 and 2000');
   if (!Number.isFinite(days) || days < 1 || days > 60) throw new Error('--days must be between 1 and 60');
+  const unitText = (i: number): CorpusUnit => {
+    if (!design) return defaultUnitText(i);
+    const entries = corpus.systems[SYSTEMS[(i - 1) % SYSTEMS.length]!]!;
+    return entries[Math.min(entries.length - 1, Math.floor((i - 1) * entries.length / count))]!;
+  };
   const out = resolve(outDir);
   if (existsSync(out) && readdirSync(out).length) throw new Error(`Refusing nonempty output directory: ${out}`);
   mkdirSync(out, { recursive: true });
@@ -137,8 +143,9 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
       spec.cites.contracts = text.files.filter(file => file.startsWith('contracts/'));
       writeFileSync(specPath, JSON.stringify(spec));
     }
-    const milestones = Math.min(10, Math.floor(count / 4)), passedMilestones = Math.floor(milestones / 2);
-    plan.milestones = Array.from({ length: milestones }, (_, m) => milestoneJson({ id: `MS-${m+1}`, text: corpus.milestones[m]!.text, units: Array.from({ length: Math.floor(count/milestones) }, (_, k) => `u${m * Math.floor(count/milestones)+k+1}`), journeys: [{ id: `J-${m+1}`, text: corpus.milestones[m]!.journey, via: 'shell', entry: unitText(m * Math.floor(count/milestones)+1).shell.command, budget: null }] }));
+    const milestones = design ? 5 : Math.min(10, Math.floor(count / 4)), passedMilestones = Math.floor(milestones / 2);
+    const milestoneText = (m: number) => corpus.milestones[design ? Math.round(m * (corpus.milestones.length - 1) / (milestones - 1)) : m]!;
+    plan.milestones = Array.from({ length: milestones }, (_, m) => ({ ...milestoneJson({ id: `MS-${m+1}`, text: milestoneText(m).text, units: Array.from({ length: Math.floor(count/milestones) }, (_, k) => `u${m * Math.floor(count/milestones)+k+1}`), journeys: [{ id: `J-${m+1}`, text: milestoneText(m).journey, via: 'shell', entry: unitText(m * Math.floor(count/milestones)+1).shell.command, budget: null }] }), name: milestoneText(m).name }));
     writeFileSync(planPath, JSON.stringify({...plan,units:plan.units.filter((u:{id:string})=>u.id!==`u${merged+2}`).map((u:{after:string[]})=>({...u,after:u.after.filter(id=>id!==`u${merged+2}`)})),milestones:plan.milestones.map((m:{units:string[]})=>({...m,units:m.units.filter(id=>id!==`u${merged+2}`)}))})); mkdirSync(runDir, { recursive: true });
     const d = { ...base.d, arc, repo, planPath, runDir, hostDir, config: readRepoConfig(absPath(repo))!, binDir: join(out,'forge','bin') };
     const r = contextFor(d), j = r.journal, head = sha(git(repo, 'rev-parse', 'HEAD')); closeJournal = () => j.close();
@@ -269,12 +276,12 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     setTime(now-30_000);
     for(const u of r.ctx.plan().units) if(u.contingent.length && Number(u.id.slice(1))%2===0) j.fact({kind:'edge-resolved',edge:edgeId(u.contingent[0]!.id),command:commandId('cmd-0000000000000500'),evidence:`Owner confirmed readiness for ${unitText(Number(u.id.slice(1))).title}.`});
     const finding=findingId('F-1'); j.fact({kind:'finding-opened',id:finding,key:sha256('1'.repeat(64)),lens:'invariants',severity:'P2',obligation:obligationId('I-1'),visionClauses:[visionClauseId('V-1')],claim:unitText(3).revise.reason,evidence:[{path:repoPath(unitText(3).edit.file),blob:null}],mutant:null,source:{type:'job',job:jobId('audit',1)},gateHadPassed:true});
-    for(let n=0;n<16;n++) { const affected=unitText(historicalCount+1+n%parkedCount); const request=raiseNeedsUser(j,runDir,{reason:n<5?'owner-request':'revision-notice',blocking:n<5,subject:n%2?{type:'arc'}:{type:'unit',unit:unitId(`u${historicalCount+1+n%parkedCount}`)},summary:`${n<5?'Resolve the hold on':'Review the clarification for'} ${affected.title}`,recommendation:`Review ${affected.title} and record whether to resume or defer it.`,options:[{id:'retry',label:`Resume ${affected.title}`},{id:'defer',label:`Defer ${affected.title}`} ],evidence:[absPath(live[n%4]!.transcript)]},{type:'arc'}); if(n>=11) j.fact({kind:'needs-user-acked',id:request,command:commandId(`cmd-${String(600+n).padStart(16,'0')}`),choice:'defer'}); }
+    for(let n=0;n<(design?3:16);n++) { const affected=unitText(historicalCount+1+n%parkedCount); const request=raiseNeedsUser(j,runDir,{reason:n<5?'owner-request':'revision-notice',blocking:n<5,subject:n%2?{type:'arc'}:{type:'unit',unit:unitId(`u${historicalCount+1+n%parkedCount}`)},summary:`${n<5?'Resolve the hold on':'Review the clarification for'} ${affected.title}`,recommendation:`Review ${affected.title} and record whether to resume or defer it.`,options:[{id:'retry',label:`Resume ${affected.title}`},{id:'defer',label:`Defer ${affected.title}`} ],evidence:[absPath(live[n%4]!.transcript)]},{type:'arc'}); if(n>=11) j.fact({kind:'needs-user-acked',id:request,command:commandId(`cmd-${String(600+n).padStart(16,'0')}`),choice:'defer'}); }
     const rev2=keptPayload(runDir,j.view.planApplied()!.payloadSha256); commitRevisionNow(j,runDir,{...rev2,source:{type:'command',command:commandId('cmd-0000000000000900')},base:planRev(2),rev:planRev(3),changes:[],dispositions:[],divergences:[]},{type:'arc'});
     makeForge({dir:join(out,'forge'),repo:{host:'forge.test',owner:'tidewater',name:'platform'},pulls});
     const queue = Array.from({length:Math.max(4,Math.floor(count*.06))},(_,n)=>({unit:`u${merged+3+n}`,stage:'candidate',attempt:1,publication:n%3!==2,request:{named:[],pools:[],cpu:n%3===2?4:0,publication:n%3!==2},envBlocked:false,pressureBlocked:n%3===2,queuedAt:now-(n+1)*600_000,reasons:[n%3===2?'cpu-pressure':n%2?'admission-hold:base-red':'publication-slot']}));
     writeFileSync(join(runDir,'sched.json'),JSON.stringify({v:2,arc,pid:process.pid,tasks:[...live.map(i=>({unit:i.unit,state:'in-stage'})),{unit:`u${activeStart+4}`,state:'in-stage'},{unit:slotUnit,state:'in-stage'}],queue,jobQueue:[],drains:[]}));
-    const manifest: ScaleManifest={arc,repo,runDir,hostDir,seed,days,now:SCALE_NOW,startedAt:new Date(origin).toISOString(),units:count,systems:SYSTEMS,milestones,passedMilestones,dependencies:plan.units.reduce((n:number,u:{after:string[]})=>n+u.after.length,0),contingentEdges:plan.units.reduce((n:number,u:{contingent?:unknown[]})=>n+(u.contingent?.length??0),0),invocations,agentInvocations,attempts:[...invokedAttempts.values()].reduce((n,a)=>n+a.size,0),stageAttempts:Object.values(j.derived().units).reduce((n,u)=>n+u.counters.attempts,0),buildRounds,live,merged,withdrawn:withdrawn+1,parked:parkedCount,openAttention:11,ackedAttention:5,costUsd:Math.round(costUsd*100)/100,events:j.view.highWater()};
+    const manifest: ScaleManifest={arc,repo,runDir,hostDir,seed,days,now:SCALE_NOW,startedAt:new Date(origin).toISOString(),units:count,systems:SYSTEMS,milestones,passedMilestones,dependencies:plan.units.reduce((n:number,u:{after:string[]})=>n+u.after.length,0),contingentEdges:plan.units.reduce((n:number,u:{contingent?:unknown[]})=>n+(u.contingent?.length??0),0),invocations,agentInvocations,attempts:[...invokedAttempts.values()].reduce((n,a)=>n+a.size,0),stageAttempts:Object.values(j.derived().units).reduce((n,u)=>n+u.counters.attempts,0),buildRounds,live,merged,withdrawn:withdrawn+1,parked:parkedCount,openAttention:design?3:11,ackedAttention:design?0:5,costUsd:Math.round(costUsd*100)/100,events:j.view.highWater()};
     writeFileSync(join(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
     j.close(); closeJournal=undefined;
     return manifest;
@@ -293,12 +300,13 @@ export async function ownScaleArc(manifest: ScaleManifest) {
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
   const [out,...args]=process.argv.slice(2), options: ScaleOptions={}; let live=false;
   if(!out) throw new Error('Usage: node test/helpers/scale-arc.ts <outDir> [--units N] [--days D] [--seed S] [--live]');
-  for(let i=0;i<args.length;i++) { const arg=args[i]; if(arg==='--live')live=true; else if(arg==='--units'||arg==='--days'||arg==='--seed') { const value=args[++i]; if(!value)throw new Error(`${arg} requires a value`); if(arg==='--seed')options.seed=value;else if(arg==='--units')options.units=Number(value);else options.days=Number(value); } else throw new Error(`Unknown option: ${arg}`); }
+  for(let i=0;i<args.length;i++) { const arg=args[i]; if(arg==='--live')live=true; else if(arg==='--preset') { if(args[++i]!=='design') throw new Error('--preset must be design'); options.preset='design'; } else if(arg==='--units'||arg==='--days'||arg==='--seed') { const value=args[++i]; if(!value)throw new Error(`${arg} requires a value`); if(arg==='--seed')options.seed=value;else if(arg==='--units')options.units=Number(value);else options.days=Number(value); } else throw new Error(`Unknown option: ${arg}`); }
   const started=performance.now(), manifest=await generateScaleArc(out,options);
   process.stdout.write(manifest.repo+'\n'); process.stderr.write(`${manifest.units} units, ${manifest.invocations} invocations, ${manifest.events} events, $${manifest.costUsd.toFixed(2)} in ${((performance.now()-started)/1000).toFixed(2)}s\n`);
   if(live) {
     const release=await ownScaleArc({...manifest,hostDir:HOST_DIR}); let n=0;
-    const text=unitText(Number(manifest.live[0]!.unit.slice(1)));
+    const entries=corpus.systems[manifest.systems[(Number(manifest.live[0]!.unit.slice(1))-1)%8]!]!;
+    const text=options.preset==='design'?entries[Math.floor((Number(manifest.live[0]!.unit.slice(1))-1)*entries.length/manifest.units)]!:defaultUnitText(Number(manifest.live[0]!.unit.slice(1)));
     writeFileSync(join(resolve(out),'live.json'),JSON.stringify({pid:process.pid,hostDir:HOST_DIR,startedAt:new Date().toISOString(),stopAt:new Date(Date.now()+2*60*60*1000).toISOString(),transcript:manifest.live[0]!.transcript},null,2)+'\n');
     const timer=setInterval(()=>{ const id=`tail_${++n}`, file=manifest.live[0]!.transcript; appendFileSync(file,JSON.stringify(n%2?{type:'assistant',message:{role:'assistant',content:[{type:'tool_use',id,name:'Bash',input:text.shell}]}}:{type:'user',message:{role:'user',content:[{type:'tool_result',tool_use_id:`tail_${n-1}`,content:text.testOutput.join('\n')+'\n'}]}})+'\n'); },4000);
     const stop=()=>{clearInterval(timer);clearTimeout(bound);release();}; const bound=setTimeout(stop,2*60*60*1000); process.once('SIGINT',stop);process.once('SIGTERM',stop);
