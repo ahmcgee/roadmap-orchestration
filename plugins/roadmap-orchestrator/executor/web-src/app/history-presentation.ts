@@ -28,6 +28,17 @@ export function historyGroups(events: any[], live: boolean) {
   }
   return groups;
 }
+/** Consecutive successful commands with the same recorded purpose share a disclosure.
+ * File writes, incomplete input and failures stay outside it so their evidence stays visible. */
+export function historyToolRuns(events: any[], live: boolean) {
+  const runs: ReturnType<typeof historyGroups> = [];
+  for (const group of historyGroups(events, live)) {
+    const previous=runs.at(-1),first=group.events[0],last=previous?.events.at(-1);
+    if(group.signature&&previous?.signature&&group.label===previous.label&&first.parent===last.parent) previous.events.push(...group.events);
+    else runs.push({...group,events:[...group.events]});
+  }
+  return runs;
+}
 /** This is an index of retained history evidence, not a worktree diff or a session total. */
 export function changedFiles(events: any[], views: Map<string, any>) {
   const files = new Map<string, { path: string; id: string; added: number; removed: number; counts: boolean }>();

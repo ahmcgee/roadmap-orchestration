@@ -9,11 +9,26 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
   const panel = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(() => { try { return Math.max(360, Math.min(960, Number(localStorage.getItem('roadmap.drawer-width')) || 520)); } catch { return 520; } });
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
+    const previous=document.activeElement as HTMLElement|null;
+    window.dispatchEvent(new Event('roadmap-dismiss-popovers'));
     panel.current?.querySelector<HTMLButtonElement>('[aria-label="Close details"]')?.focus({ preventScroll: true });
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    const key = (e: KeyboardEvent) => {
+      const sheet=panel.current;if(!sheet)return;
+      if(e.key==='Escape'){
+        e.preventDefault();e.stopImmediatePropagation();
+        const expanded=[...sheet.querySelectorAll<HTMLElement>('details[open],button[aria-expanded="true"]')].filter(el=>el.getClientRects().length>0).at(-1);
+        if(expanded instanceof HTMLDetailsElement){expanded.open=false;expanded.querySelector('summary')?.focus();}
+        else if(expanded)expanded.click();
+        else close();
+      }
+      if(e.key==='Tab'){
+        const targets=[...sheet.querySelectorAll<HTMLElement>('a[href],button,input,select,textarea,summary,[tabindex="0"]')].filter(el=>!el.matches(':disabled')&&el.getClientRects().length>0);
+        const index=targets.indexOf(document.activeElement as HTMLElement);
+        if(index<0||e.shiftKey&&index===0||!e.shiftKey&&index===targets.length-1){e.preventDefault();targets[e.shiftKey?targets.length-1:0]?.focus();}
+      }
+    };
     window.addEventListener('keydown', key);
-    return () => { window.removeEventListener('keydown', key); const target=previous?.isConnected&&previous!==document.body?previous:document.querySelector<HTMLElement>('.dag-canvas');target?.focus({ preventScroll: true }); };
+    return () => { window.removeEventListener('keydown', key); const target=document.querySelector<HTMLElement>('.dag-canvas')??(previous?.isConnected?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true }); };
   }, []);
   function resize(e: React.PointerEvent<HTMLDivElement>) {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -31,7 +46,7 @@ function Intent({ text, title }: { text: string; title: string }) {
   const [expanded, setExpanded] = useState(false);
   const heading=/^\s*#{1,6}\s+(.+)\r?\n/.exec(text);
   const display=!expanded&&heading?.[1]?.trim()===title?text.slice(heading[0].length).trimStart():text;
-  return <section className="intent"><h3>Intent</h3><div className={expanded?'':'intent-collapsed'}><HistoryMarkdown text={display}/></div>{(text.length>180||heading)&&<Button variant="ghost" onClick={()=>setExpanded(!expanded)}>{expanded?'Show less intent':'Show full intent'}</Button>}</section>;
+  return <section className="intent"><h3>Intent</h3><div className={expanded?'':'intent-collapsed'}><HistoryMarkdown text={display}/></div>{(text.length>180||heading)&&<Button variant="ghost" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'Show less intent':'Show full intent'}</Button>}</section>;
 }
 export function UnitDetail({ e, id, close }: { e: Envelope; id: string; close: () => void; stale?: boolean }) {
   const now=useContext(Clock);
@@ -42,15 +57,29 @@ export function UnitDetail({ e, id, close }: { e: Envelope; id: string; close: (
   const [housekeeping,setHousekeeping] = useState(false);
   const m = e.data.console, u = m.presentation.units.find(v => v.id === id);
   const gate = e.data.display.status.milestones.find(v => `milestone:${v.id}` === id);
-  if (gate) return <Drawer title={`Milestone ${gate.id}`} close={close}><p>{gate.passed ? 'Gate passed' : 'Gate not passed'} {gate.state}</p><p>{e.data.plan?.milestones?.find(v => v.id === gate.id)?.text}</p></Drawer>;
+  if (gate) {
+    const plan=e.data.plan?.milestones?.find(v=>v.id===gate.id),members=(plan?.units??[]).map(id=>({unit:m.presentation.units.find(u=>u.id===id)!,graph:m.graph.units.find(u=>u.id===id)!}));
+    const signal=(row:typeof members[number])=>/withdrawn/.test(row.graph.meta)?'withdrawn':row.graph.status;
+    const order=['held','failed','active','pending','withdrawn','passed'];
+    const outstanding=members.filter(row=>signal(row)!=='passed').sort((a,b)=>order.indexOf(signal(a))-order.indexOf(signal(b))||a.unit.id.localeCompare(b.unit.id,undefined,{numeric:true}));
+    return <Drawer title={`${gate.id}${plan?.name?` ${plan.name}`:''}`} close={close}>
+      <div className="unit-meta"><strong>{members.filter(row=>signal(row)==='passed').length}/{members.length} passed</strong><span><SignalMark state={gate.passed?'passed':'pending'}/>{gate.passed?'Passed':'Pending'} gate</span><span>{gate.state}</span></div>
+      <Button variant="outline" onClick={()=>{close();window.dispatchEvent(new CustomEvent('roadmap-focus-milestone',{detail:`milestone:${gate.id}`}));}}>Focus this milestone</Button>
+      <section><h3>Outstanding units ({outstanding.length})</h3><div className="outstanding-units">{outstanding.map(row=><a className="dependency-row" key={row.unit.id} href={link(e.arc,route().tab,'units',row.unit.id)}><span>{row.unit.id}</span><strong>{row.unit.title}</strong><span><SignalMark state={signal(row)}/>{row.unit.state}</span></a>)}</div>{outstanding.some(row=>signal(row)==='withdrawn')&&<p className="muted">Withdrawn units are included for context; this list does not diagnose the gate's blocker.</p>}</section>
+      <Intent text={plan?.text??''} title={plan?.name??gate.id}/>
+    </Drawer>;
+  }
   if (!u) return <Drawer title="Unit unavailable" close={close}><p>This unit is absent from the applied plan.</p></Drawer>;
   const activities = m.activities.filter(a => a.unit === id), signal = m.graph.units.find(v => v.id === id)!.status;
   const feeds = e.data.plan?.milestones?.filter(g => g.units.includes(id as never)) ?? [];
-  const waits = e.data.display.status.edges.filter(edge => edge.type === 'milestone' && edge.unit === id && !e.data.display.status.milestones.find(g=>g.id===edge.milestone)?.passed);
+  const waits = e.data.display.status.edges.filter(edge => edge.type === 'milestone' && edge.unit === id);
+  const runtime=e.data.display.status.units.find(v=>v.unit===id),blocker=runtime?.waitingFor;
   const related=(direction:'up'|'down')=>m.graph.edges.filter(([a,b])=>!a.startsWith('milestone:')&&!b.startsWith('milestone:')&&(direction==='up'?b===id:a===id)).map(([a,b])=>({source:a,target:b,unit:m.presentation.units.find(u=>u.id===(direction==='up'?a:b))!}));
   return <Drawer title={u.title} close={close} headingLink={trail.length>0&&<a className="dependency-back" href={link(e.arc,route().tab,'units',trail.at(-1)!)} onClick={()=>{setTrail(trail.slice(0,-1));clearTrace();}}>‹ Back to {trail.at(-1)}</a>}>
     <div className="unit-meta"><span>{id}</span><span><SignalMark state={signal}/>{u.state}</span><span>{u.stage}</span></div>
-    <dl className="unit-gates"><div><dt>Feeds</dt><dd>{feeds.length?feeds.map(g => <a key={g.id} href={link(e.arc,route().tab,'units',`milestone:${g.id}`)}>{g.id}{g.name?` ${g.name}`:''}</a>):'No milestone'}</dd></div><div><dt>Waits on</dt><dd>{waits.length?waits.map(g => g.type === 'milestone' ? <a key={g.milestone} href={link(e.arc,route().tab,'units',`milestone:${g.milestone}`)}>{g.milestone}{(()=>{const name=e.data.plan?.milestones?.find(v=>v.id===g.milestone)?.name;return name?` ${name}`:'';})()}</a> : null):'No unmet milestone gates'}</dd></div></dl>
+    <dl className="unit-gates"><div><dt>Feeds</dt><dd>{feeds.length?feeds.map(g => <a key={g.id} href={link(e.arc,route().tab,'units',`milestone:${g.id}`)}>{g.id}{g.name?` ${g.name}`:''}</a>):'No milestone'}</dd></div><div><dt>Declared gate prerequisites</dt><dd>{waits.length?waits.map(g => g.type === 'milestone' ? <a key={g.milestone} href={link(e.arc,route().tab,'units',`milestone:${g.milestone}`)}>{g.milestone} {e.data.display.status.milestones.find(v=>v.id===g.milestone)?.passed?'Passed':'Pending'}{(()=>{const name=e.data.plan?.milestones?.find(v=>v.id===g.milestone)?.name;return name?` ${name}`:'';})()}</a> : null):'No declared milestone gates'}</dd></div></dl>
+    {signal==='active'&&<p>{u.stage} is currently running.</p>}
+    {signal!=='active'&&blocker&&u.reasons.length>0&&<dl className="unit-gates"><div><dt>Current blocker</dt><dd>{u.reasons.join('; ')}</dd></div></dl>}
     <section className="unit-dependencies">{(['up','down'] as const).map(direction=>{const rows=related(direction);return <details key={`${id}:${direction}`}><summary>{direction==='up'?'Depends on':'Used by'} ({rows.length})</summary><div>{rows.map(row=>{const status=m.graph.units.find(u=>u.id===row.unit.id)!,unmet=direction==='up'&&e.data.display.status.units.find(u=>u.unit===id)?.waitingFor?.deps.includes(row.unit.id as never);return <a key={row.unit.id} className="dependency-row" href={link(e.arc,route().tab,'units',row.unit.id)} onMouseEnter={()=>trace(row.source,row.target)} onMouseLeave={clearTrace} onFocus={()=>trace(row.source,row.target)} onBlur={clearTrace} onClick={()=>{setTrail([...trail,id]);clearTrace();}}><span>{row.unit.id}</span><strong>{row.unit.title}</strong><span><SignalMark state={status.status}/>{row.unit.state}{unmet&&<small>Unmet</small>}</span></a>;})}{!rows.length&&<p className="muted">None</p>}</div></details>;})}</section>
     <dl className="unit-facts"><div><dt>Attempts</dt><dd>{u.attempts}</dd></div><div><dt>Elapsed</dt><dd>{elapsed(u.startedAt&&!u.endedAt&&!m.presentation.run.endedAt?now-Date.parse(u.startedAt):u.elapsedMs)}</dd></div><div><dt>Recorded spend</dt><dd>{money(u.spend)}</dd></div><div><dt>Round</dt><dd>{u.rounds}</dd></div></dl>
     {u.reasons.length > 0 && <p className="notice">{u.reasons.join('; ')}{u.waitSince&&<small>Waiting {elapsed(now-Date.parse(u.waitSince))}</small>}</p>}

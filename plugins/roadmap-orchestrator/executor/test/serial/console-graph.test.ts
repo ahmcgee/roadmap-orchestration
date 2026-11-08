@@ -14,8 +14,9 @@ const corpus = JSON.parse(readFileSync(new URL('../helpers/scale-corpus.json',im
 const scaleTitle = (id:string):string => corpus.systems[Object.keys(corpus.systems)[(Number(id.slice(1))-1)%8]!][Math.floor((Number(id.slice(1))-1)/8)].title;
 
 async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed',width:number){
- const result=await b.evaluate<{count:number;bad:unknown[];overlaps:string[];coordinates:Record<string,unknown>}>(`()=>{
+ const result=await b.evaluate<{count:number;bad:unknown[];overlaps:string[];coordinates:Record<string,unknown>;tier?:string;groups?:string[];hidden?:boolean;aggregated?:number}>(`()=>{
   const cy=document.querySelector('.dag-canvas')._cyreg.cy,all=cy.nodes('[gate]'),extent=cy.extent();
+  if(document.querySelector('.graph-view').dataset.detailTier==='groups')return {tier:'groups',count:all.length,bad:[],overlaps:[],coordinates:Object.fromEntries(all.map(n=>[n.id(),n.position()])),groups:[...document.querySelectorAll('.collapsed-bands g')].map(n=>n.textContent),hidden:all.every(n=>!n.visible()),aggregated:document.querySelectorAll('.collapsed-bands path').length};
   const nodes=all.filter(n=>{const box=n.boundingBox({includeLabels:false});return box.x2>extent.x1&&box.x1<extent.x2&&box.y2>extent.y1&&box.y1<extent.y2;});
   const bad=nodes.filter(n=>{
     const label=n.style('label'),px=parseFloat(n.style('font-size'))*cy.zoom(),w=n.renderedWidth(),h=n.renderedHeight();
@@ -29,6 +30,7 @@ async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed
   for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){const a=boxes[i],b=boxes[j];if(a.box.x1<b.box.x2-.5&&a.box.x2>b.box.x1+.5&&a.box.y1<b.box.y2-.5&&a.box.y2>b.box.y1+.5)overlaps.push(a.id+':'+b.id);}
   return {count:nodes.length,bad,overlaps,coordinates:Object.fromEntries(all.map(n=>[n.id(),n.position()]))};
  }`);
+ if(result.tier==='groups'){assert.equal(mode,'all');assert.equal(result.count,310);assert.equal(result.groups?.length,10);assert.ok(result.groups?.every(g=>/MS-.*passed/.test(g)));assert.equal(result.hidden,true);assert.ok(result.aggregated!>0);return result.coordinates;}
  assert.ok(result.count>0,`${width} ${mode}: nodes rendered`);
  if(mode==='all')assert.equal(result.count,310,'All includes every unit and gate in the viewport');
  assert.deepEqual(result.bad,[],`${width} ${mode}: text fits boxes and meets the title/identifier legibility threshold`);
@@ -137,7 +139,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  }
  assert.deepEqual([...scaleSeen].sort(),scaleActive.sort(),'every scale-arc active unit remains visible with readable titles through inline focus contexts');
  await b.evaluate(`()=>{document.querySelector('[aria-label="Active focus"]').click();return true;}`);
- assert.equal(await b.evaluate(`()=>{const marks=[...document.querySelectorAll('.node-signal .signal')];return marks.length>0&&marks.every(n=>{const w=n.getBoundingClientRect().width;return n.classList.contains("signal-pending")||n.classList.contains("signal-withdrawn")?w===10&&parseFloat(getComputedStyle(n).borderTopWidth)>=1.5:w===12;});}`),true,'status marks retain fixed screen-space slots');
+ assert.equal(await b.evaluate(`()=>{const marks=[...document.querySelectorAll('.node-status-row .signal')];return marks.length>0&&marks.every(n=>n.querySelector('svg path,svg circle')&&n.getBoundingClientRect().width>=8&&n.closest('.node-status-row').getBoundingClientRect().height>=15);}`),true,'full-card status rows keep a visible glyph and readable slot');
 
  await b.evaluate(`()=>{document.querySelector('.dag-canvas').focus();return true;}`);await b.call('browser_press_key',{key:'ArrowRight'});
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes(':selected')[0],p=n.renderedPosition();return n.data('state')==='active'&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()-40;}`),true,'first arrow selects a visible active unit');
@@ -148,14 +150,16 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>n.hasClass('overview')&&n.style('label')===n.data('compact')&&parseFloat(n.style('font-size'))*cy.zoom()>=10);}`),true,'mid zoom uses only readable compact identifiers');
  await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,100));
  assert.deepEqual(await assertRenderedLabels(b,'all',1440),coordinates,'All changes the viewport, never node positions');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,box=cy.nodes('[gate]').renderedBoundingBox({includeLabels:false});return cy.nodes('[gate=0]').every(n=>n.hasClass('extreme')&&n.style('label')==='')&&box.x1>=0&&box.x2<=cy.width()&&box.y1>=48&&box.y2<=cy.height()-48&&!!document.querySelector('.graph-minimap');}`),true,'explicit All fits the complete graph and uses status-only boxes below readable size');
- const overviewState=await b.evaluate<{badEdges:string[];loudGates:unknown[]}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {badEdges:cy.edges('[kind="dependency"]').filter(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return !e.visible()||!a||!b||![a.x,a.y,b.x,b.y].every(Number.isFinite);}).map(e=>e.id()),loudGates:cy.nodes('[gate=1][state="pending"]').filter(n=>parseFloat(n.style('background-opacity'))>.2).map(n=>({id:n.id(),opacity:n.style('background-opacity')}))};}`);
- assert.deepEqual(overviewState.badEdges,[],'every dependency remains drawable');assert.deepEqual(overviewState.loudGates,[],'pending gates retain a quiet background');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return document.querySelector('.graph-view').dataset.detailTier==='groups'&&cy.nodes('[gate]').every(n=>!n.visible())&&!!document.querySelector('.graph-minimap');}`),true,'All at 300 units uses named milestone groups and preserves the minimap');
+ // Zoom back in: every original dependency is drawable, and gate surfaces occlude the buses.
+ await b.call('browser_press_key',{key:'a'});
+ const overviewState=await b.evaluate<{badEdges:string[];transparentGates:string[]}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {badEdges:cy.edges('[kind="dependency"]').filter(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return !e.visible()||!a||!b||![a.x,a.y,b.x,b.y].every(Number.isFinite);}).map(e=>e.id()),transparentGates:cy.nodes('[gate=1]').filter(n=>parseFloat(n.style('background-opacity'))!==1).map(n=>n.id())};}`);
+ assert.deepEqual(overviewState.badEdges,[],'every dependency restores on zoom-in');assert.deepEqual(overviewState.transparentGates,[],'opaque gates mask connectors');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,buses=[...document.querySelectorAll('.wait-bus-label')];const actual=buses.flatMap(b=>[...b.querySelectorAll('button')].map(n=>'milestone:'+b.querySelector('summary').getAttribute('aria-label').split(':')[0]+'>'+n.textContent)).sort(),expected=cy.edges('[kind="waits"]').map(e=>e.source().id()+'>'+e.target().id()).sort();return JSON.stringify(actual)===JSON.stringify(expected)&&document.querySelectorAll('.wait-target-tick').length===1004;}`),true,'bus membership retains every exact gate relationship');
  assert.equal(await b.evaluate(`()=>document.querySelector('.station-current')?.getAttribute('aria-description')`),'First uncleared milestone');
  await b.evaluate(`()=>{document.querySelectorAll('.station')[1].click();return true;}`);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{const summary=page.locator('.wait-bus-label>summary').filter({hasText:'MS-1: 30 linked'}).first();await summary.hover();await summary.focus();await summary.locator('..').getByRole('button',{name:'u31',exact:true}).click();}`});
- await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.getElementById('u31').selected()&&cy.edges('.exact').length===1;}`),5000,'passed gate links stay navigable');
+ await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.getElementById('u31').selected()&&cy.edges('.exact').length===1&&cy.edges('.exact').every(e=>e.visible());}`),5000,'passed gate links stay navigable');
  await b.evaluate(`()=>{document.querySelectorAll('.station')[5].click();return true;}`);await new Promise(r=>setTimeout(r,100));
  assert.deepEqual(await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`),coordinates,'Milestone uses the identical full layout');
  await assertRenderedLabels(b,'active',1440);
@@ -171,7 +175,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
 
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.graph-hover button').click();}`});await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u226"'),5000,'hover details opens its unit');await b.call('browser_press_key',{key:'Escape'});
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.getElementById('u226').select();return true;}`);
- await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.exact').length===cy.getElementById('u226').incomers('edge[kind="waits"]').length&&cy.edges('.exact').length>0;}`),5000,'unit exact gate relations');assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").innerText'),/Gate prerequisites|MS-3/);
+ await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.exact').length===cy.getElementById('u226').incomers('edge[kind="waits"]').length&&cy.edges('.exact').length>0&&cy.edges('.exact').every(e=>e.visible());}`),5000,'unit exact gate relations');assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").innerText'),/Gate prerequisites|MS-3/);
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('milestone:MS-3').select();return true;}`);await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.exact').length===cy.getElementById('milestone:MS-3').outgoers('edge[kind="waits"]').length&&cy.edges('.exact').length>30;}`),5000,'gate exact linked units');
  await b.call('browser_resize',{width:390,height:844});await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.nodes().unselect();cy.emit('tap');document.querySelector('[aria-label="Active focus"]').click();return true;}`);
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".active-pager")'),5000,'phone pager');await assertRenderedLabels(b,'active',390);
@@ -194,7 +198,44 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  t.after(async()=>{await b.close();await server.close();release();});await b.initialize();await b.call('browser_resize',{width:1440,height:900});await b.call('browser_navigate',{url:server.url});
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),10_000,'design graph');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".station").length'),5);
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,origin=document.querySelector('.dag-canvas').getBoundingClientRect();const labels=[...document.querySelectorAll('.band-caption>span,.wait-bus-label>summary')].filter(n=>getComputedStyle(n).display!=='none'&&getComputedStyle(n.parentElement).display!=='none');return labels.every(n=>{const r=n.getBoundingClientRect();return cy.nodes('[gate]').every(node=>{const b=node.renderedBoundingBox({includeLabels:false});return r.right<=origin.left+b.x1||r.left>=origin.left+b.x2||r.bottom<=origin.top+b.y1||r.top>=origin.top+b.y2;});});}`),true,'band and bus captions never overlap a node');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{
+   await page.getByRole('button',{name:'All focus',exact:true}).click();
+ }`});
+ await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-view').dataset.detailTier==='minimal'`),5000,'50-unit All is identifiable');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),box=nodes.renderedBoundingBox({includeLabels:false});return nodes.length===55&&nodes.every(n=>n.visible()&&n.style('label').trim()&&parseFloat(n.style('font-size'))*cy.zoom()>=10)&&box.x1>=0&&box.x2<=cy.width()&&box.y1>=0&&box.y2<=cy.height();}`),true,'All fits every unit at tier 2 at 1440');
+ for(const level of [.8,.62,.4,.3,.2]){
+   await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(${level});return true;}`);
+   await new Promise(r=>setTimeout(r,80));
+   assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),tier=document.querySelector('.graph-view').dataset.detailTier;return tier==='groups'?nodes.every(n=>!n.visible()):nodes.every(n=>n.visible()&&!!n.style('label').trim()&&n.hasClass('overview')===(tier==='minimal'));}`),true,'LOD is uniform at '+level);
+ }
+ await b.call('browser_press_key',{key:'a'});
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{
+   await page.locator('.station').filter({hasText:'MS-3 Concurrency'}).hover();
+   await page.waitForSelector('.station-health');
+   await page.mouse.move(720,880);
+ }`});
+ await until(async()=>await b.evaluate('()=>!document.querySelector(".station-health")'),5000,'hover panel dismisses after pointer exit');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{
+   await page.locator('.station').filter({hasText:'MS-3 Concurrency'}).focus();
+   await page.keyboard.press('Tab');
+ }`});
+ // Focus can move into another station; leaving the entire station region dismisses it.
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.dag-canvas').focus();}`});
+ await until(async()=>await b.evaluate('()=>!document.querySelector(".station-health")'),5000,'focus panel dismisses on leaving region');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{
+   await page.locator('.station').filter({hasText:'MS-3 Concurrency'}).hover();
+   await page.locator('.dag-canvas').focus();await page.keyboard.press('ArrowRight');
+ }`});
+ assert.equal(await b.evaluate('()=>!document.querySelector(".station-health,.graph-hover")'),true,'selection dismisses graph popovers');
+ await b.call('browser_press_key',{key:'Enter'});
+ await until(async()=>await b.evaluate('()=>!!document.querySelector(".drawer")'),5000,'keyboard opens sheet');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{for(let i=0;i<30;i++){await page.keyboard.press('Tab');if(!await page.locator('.drawer').evaluate(el=>el.contains(document.activeElement)))throw new Error('Tab escaped at '+i);}for(let i=0;i<30;i++){await page.keyboard.press('Shift+Tab');if(!await page.locator('.drawer').evaluate(el=>el.contains(document.activeElement)))throw new Error('Shift+Tab escaped at '+i);}await page.locator('.unit-dependencies summary').first().click();await page.keyboard.press('Escape');}`});
+ assert.equal(await b.evaluate('()=>!!document.querySelector(".drawer")&&!document.querySelector(".unit-dependencies details").open'),true,'first Escape closes inner disclosure');
+ await b.call('browser_press_key',{key:'Escape'});
+ await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.activeElement===document.querySelector(".dag-canvas")'),5000,'hash route closes and restores focus');
+ assert.equal(await b.evaluate('()=>!document.querySelector(".drawer")&&document.activeElement===document.querySelector(".dag-canvas")'),true,'next Escape closes sheet and returns graph focus');
+
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,origin=document.querySelector('.dag-canvas').getBoundingClientRect();const labels=[...document.querySelectorAll('.band-headings>div,.wait-bus-label>summary')].filter(n=>getComputedStyle(n).display!=='none'&&getComputedStyle(n.parentElement).display!=='none');return labels.every(n=>{const r=n.getBoundingClientRect();return cy.nodes('[gate]').every(node=>{const b=node.renderedBoundingBox({includeLabels:false});return r.right<=origin.left+b.x1||r.left>=origin.left+b.x2||r.bottom<=origin.top+b.y1||r.top>=origin.top+b.y2;});});}`),true,'band and bus captions never overlap a node');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".station-current").textContent'),/MS-3 Concurrency and retries.*First uncleared/);
  const coords=await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`);
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u39').select();return true;}`);
@@ -209,6 +250,15 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".intent .history-markdown h3").length'),0,'repeated title heading is omitted in collapsed intent');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".intent code").length>0'),true,'intent keeps path chips');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer-body").textContent'),/No check results recorded/);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/Declared gate prerequisites[\s\S]*MS-3 Pending[\s\S]*Build is currently running/);
+ assert.doesNotMatch(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/Current blocker|Waits on/);
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.unit-gates a').filter({hasText:'MS-3 Pending'}).click();}`});
+ await until(async()=>await b.evaluate('()=>document.querySelector("#detail-title")?.textContent==="MS-3 Concurrency and retries"'),5000,'named gate sheet');
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8\/10 passed.*Pending gate[\s\S]*Outstanding units \(2\)[\s\S]*u30[\s\S]*u29/s);
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Focus this milestone',exact:true}).click();}`});
+ await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.querySelector(".station[aria-pressed=true]")?.textContent.includes("MS-3")'),5000,'gate focus control');
+ await b.openUnit('u39');
+
  assert.doesNotMatch(await b.evaluate<string>('()=>document.querySelector(".drawer-body").textContent'),/Check: null/);
  await b.evaluate('()=>{document.querySelector(".unit-dependencies details").open=true;document.querySelector(".dependency-row").focus();return true;}');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,edges=cy.edges('.trace');return edges.length===1&&edges[0].source().id()==='u27'&&edges[0].target().id()==='u39';}`),true,'dependency row highlights its one exact edge');
@@ -219,6 +269,16 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.deepEqual(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {zoom:cy.zoom(),pan:cy.pan()};}`),viewport,'drawer navigation preserves the underlying graph');
  await b.evaluate('()=>{[...document.querySelectorAll(".intent button")].find(b=>b.textContent==="Show full intent").click();return true;}');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".intent h3 + div").textContent'),/^Emit counters for ingest latency and drop rate/,'full original intent remains available');
- await b.call('browser_press_key',{key:'Escape'});await b.evaluate('()=>{document.querySelector(".dag-canvas")._cyreg.cy.getElementById("u39").select();return true;}');
+ await b.call('browser_press_key',{key:'Escape'});await b.call('browser_press_key',{key:'Escape'});await b.call('browser_press_key',{key:'Escape'});await b.evaluate('()=>{document.querySelector(".dag-canvas")._cyreg.cy.getElementById("u39").select();return true;}');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Gate prerequisites.*MS-1 Passed.*MS-2 Passed.*MS-3 Pending/s);
+ await b.openUnit('u10');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.invocation-row').filter({hasText:'Build'}).first().click();}`});
+ await until(async()=>await b.evaluate('()=>document.querySelectorAll(".successful-command").length>0&&document.querySelectorAll(".history-diff-line").length>0'),5000,'compact successful commands and visible diffs');
+ assert.equal(await b.evaluate(`()=>[...document.querySelectorAll('.successful-command')].every(d=>!d.open&&d.querySelector('summary').getBoundingClientRect().height>=28&&d.querySelector('summary').getBoundingClientRect().height<=32)`),true,'successful commands start as one 28–32px row');
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.successful-command>summary').first().click();}`});
+ assert.equal(await b.evaluate(`()=>document.querySelector('.successful-command').open&&document.querySelector('.successful-command .history-command').getBoundingClientRect().height>0`),true,'raw command expands on demand');
+ await b.call('browser_press_key',{key:'Escape'});
+ assert.equal(await b.evaluate('()=>!!document.querySelector(".drawer")&&!document.querySelector(".successful-command").open'),true,'Escape closes raw command before sheet');
+ await b.call('browser_press_key',{key:'Escape'});
+ await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.activeElement===document.querySelector(".dag-canvas")'),5000,'command sheet closes to graph');
 });

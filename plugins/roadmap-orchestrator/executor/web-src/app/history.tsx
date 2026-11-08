@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Clock, api, elapsed, get, info, link, money, pluralise, relativeTime, route } from './shared.tsx';
 import { Drawer as Dialog, BackToUnit } from './drawer.tsx';
 import { fileHistory, shellWritePath, fileLines, readFilePreview } from './file-history.ts';
-import { changedFiles, historyGroups } from './history-presentation.ts';
+import { changedFiles, historyToolRuns } from './history-presentation.ts';
 const h: any = R.createElement;
 function HistoryField({ event, field, base, identity }: any) {
   const [pages, setPages] = useState<any>([]), [cursor, setCursor] = useState<any>(0), [size, setSize] = useState<any>(null), [error, setError] = useState<any>("");
@@ -179,7 +179,7 @@ function FileLines({ rows, diff = false, path = "", start = 1 }: any) {
 }
 function NativeTool({ event, base, identity, onLayout }: any) {
   const input = useHistoryText(event, "input", base, identity), output = useHistoryText(event, "output", base, identity), patch = useHistoryText(event, "text", base, identity);
-  const { views, hydrate } = R.useContext(FileHistory), view = views.get(event.id) || {};
+  const { views, hydrate, events } = R.useContext(FileHistory), view = views.get(event.id) || {};
   const data = event.inputFormat === "json" ? historyJson(input.text) : null;
   useEffect(() => {
     if (input.ready && output.ready && patch.ready) hydrate(event.id, { input: input.text, output: output.text, text: patch.text });
@@ -198,6 +198,17 @@ function NativeTool({ event, base, identity, onLayout }: any) {
     return h(R.Fragment, null, h("details", { className: "history-read" }, h("summary", null, h("strong", { title: path }, title), h("small", { className: "muted" }, range), event.status === "passed" && h("small", { className: "muted" }, "Show output"), status), event.status !== "failed" && h("pre", null, h("code", null, read.text))), event.truncated?.includes("input") && h("div", { className: "tool-input" }, expansion("input")), errors);
   }
   const writes = shell && shellWritePath(data?.command || input.text || "");
+  if(shell&&event.status==='passed')return h(R.Fragment,null,
+    h("details",{className:"successful-command",onToggle:onLayout},
+      h("summary",null,h("strong",null,data?.description||data?.command?.split('\n')[0]||title),h("span",{className:"history-tool-ok"},"✓ Passed"),writes&&h("a",{href:`#diff-${event.id}`,onClick:(ev:any)=>{
+        ev.preventDefault();ev.stopPropagation();
+        const file=changedFiles(events,views).find(file=>file.path===writes),target=[...document.querySelectorAll<HTMLElement>('.history-scroll [data-event-id]')].find(node=>node.dataset['eventId']===(file?.id??event.id));
+        if(target){if(!views.get(file?.id)?.diff){const details=target.querySelector<HTMLDetailsElement>('.successful-command');if(details)details.open=true;}target.scrollIntoView({block:'nearest'});}
+      }},`writes ${writes}`)),
+      h("pre",{className:"history-command"},h("code",null,data?.command||input.text)),expansion("input"),
+      h("pre",{className:"tool-output"},output.text),expansion("output")),
+    input.error&&h("p",{role:"alert"},input.error),output.error&&h("p",{role:"alert"},output.error),
+    view.diff&&h("div",{id:`diff-${event.id}`},h(FileLines,{rows:view.diff.rows,diff:true})));
   return h(
     R.Fragment,
     null,
@@ -256,8 +267,8 @@ function ChangedFiles({onJump}:any){
   return h("details",{className:"changed-files"},h("summary",null,`Changed files (${files.length} loaded)`),h("div",null,files.map(file=>h("button",{key:file.path,onClick:()=>onJump(file.id)},h("code",null,file.path),file.counts?h("span",null,`+${file.added} −${file.removed}`):h("small",null,"Change counts unrecorded")))),!files.length&&h("p",{className:"muted"},"No file changes in the loaded events."));
 }
 function HistoryEvents({events,live,...props}:any){
-  const groups=historyGroups(events,live);
-  return groups.map(group=>group.events.length===1?h(AgentEvent,{key:group.key,event:group.events[0],...props}):h("details",{key:group.events.at(-1).id,className:"history-group",onToggle:props.onLayout},h("summary",null,`${group.label}, ${group.events.length} calls`,h("small",{className:"muted"},[group.events[0].at,group.events.at(-1).at].filter(Boolean).map(at=>new Date(at).toLocaleTimeString()).join(' – '))),group.events.map(event=>h(AgentEvent,{key:event.id,event,...props}))));
+  const groups=historyToolRuns(events,live);
+  return groups.map(group=>group.events.length===1?h(AgentEvent,{key:group.key,event:group.events[0],...props}):h("details",{key:group.events.at(-1).id,className:"history-group",onToggle:props.onLayout},h("summary",null,`${group.events.length} tool calls: ${group.label}`,h("small",{className:"muted"},[group.events[0].at,group.events.at(-1).at].filter(Boolean).map(at=>new Date(at).toLocaleTimeString()).join(' – '))),group.events.map(event=>h(AgentEvent,{key:event.id,event,...props}))));
 }
 function AgentDetail({ e, id, activity, close, stale }: any) {
   const now=R.useContext(Clock);
@@ -320,7 +331,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
   }, [base]);
   const followLayout = () => {
     if(!scroll.current)return;
-    if(anchor.current){const saved=anchor.current;anchor.current=null;const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset.eventId===saved.id) as HTMLElement|undefined;if(target)scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top-saved.offset;placedScroll.current=scroll.current.scrollTop;return;}
+    if(anchor.current){const saved=anchor.current;anchor.current=null;const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset['eventId']===saved.id) as HTMLElement|undefined;if(target)scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top-saved.offset;placedScroll.current=scroll.current.scrollTop;return;}
     if(!entered.current&&history?.events.length){entered.current=true;if(completed){scroll.current.scrollTop=0;placedScroll.current=0;return;}}
     if (!follow.current) return;
     const verdict = completed ? scroll.current.querySelector(".history-verdict") : null;
@@ -365,7 +376,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
     h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,money(info(e,activity).spend))))),
     result?.report != null ? h(VerdictStatus,{value:result.report}) : h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,summary:true}),
     error && h("p", { role: "alert" }, error),
-    h("div",{className:"history-navigation"},h("div", {className:"history-heading"},"History"),h(ChangedFiles,{onJump:(id:string)=>{follow.current=false;setFollowing(false);const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset.eventId===id) as HTMLElement|undefined;if(target){let parent=target.parentElement;while(parent&&parent!==scroll.current){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top;placedScroll.current=scroll.current.scrollTop;setAbove(scroll.current.scrollTop>8);}}}),
+    h("div",{className:"history-navigation"},h("div", {className:"history-heading"},"History"),h(ChangedFiles,{onJump:(id:string)=>{follow.current=false;setFollowing(false);const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset['eventId']===id) as HTMLElement|undefined;if(target){let parent=target.parentElement;while(parent&&parent!==scroll.current){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top;placedScroll.current=scroll.current.scrollTop;setAbove(scroll.current.scrollTop>8);}}}),
     ),
     h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more,disabled:loadingEarlier }, loadingEarlier?"Loading earlier history":history.hasMore!==true?"Check earlier history":history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,loadingEarlier?"Loading earlier history":history.hasMore===false?"Start of session":history.hasMore===true?"Earlier events available":"Earlier history not checked"))),
     h(

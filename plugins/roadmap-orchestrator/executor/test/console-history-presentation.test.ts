@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-const { historyGroups, changedFiles } = await import(new URL('../web-src/app/history-presentation.ts', import.meta.url).href);
+const { historyGroups, historyToolRuns, changedFiles } = await import(new URL('../web-src/app/history-presentation.ts', import.meta.url).href);
 const tool = (id: string, command: string, extra = {}) => ({ id, type: 'tool', tool: 'Bash', input: JSON.stringify({ command, description: 'Verify replay' }), status: 'passed', ...extra });
 test('successful repeated steps group without losing events, errors, active calls, or command meaning', () => {
   const events = [tool('1', 'node verify.js # first'), tool('2', 'node verify.js # second'), tool('3', 'node verify.js', { status: 'failed' }), tool('4', 'node verify.js'), tool('5', 'node verify.js'), tool('6', 'node verify.js')];
@@ -21,4 +21,11 @@ test('changed files index deduplicates successful edits, includes recognised she
   const laterDiff=changedFiles([edit('3','b.ts','Write'),edit('7','b.ts')],new Map([['3',{kind:'create'}],['7',{diff:{added:1,removed:1}}]]));
   assert.equal(laterDiff[0].id,'7','the file target prefers an available diff over its earlier creation');
   assert.equal(files[1].added, 1); assert.equal(files[2].counts, false); assert.equal(files[3].counts, false);
+});
+
+test('related successful commands group by recorded purpose with failures and file diffs retained outside', () => {
+  const events=[tool('1','node typecheck.js'),tool('2','node verify.js'),tool('3','node verify.js',{status:'failed'}),tool('4',"cat > out.ts <<'EOF'\nnew\nEOF"),tool('5','git diff'),tool('6','git status')];
+  const groups=historyToolRuns(events,false);
+  assert.deepEqual(groups.map((g:any)=>g.events.map((e:any)=>e.id)),[['1','2'],['3'],['4'],['5','6']]);
+  assert.deepEqual(groups.flatMap((g:any)=>g.events),events,'every original event remains in order');
 });

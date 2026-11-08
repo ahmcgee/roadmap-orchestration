@@ -250,3 +250,48 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .station-caption{gap:6px;}.station-caption small{font:500 11px/14px 'Barlow Semi Condensed',sans-serif;color:var(--muted-ink);}.station-held{color:var(--sig-held)!important;}
 .station-health{position:fixed;z-index:25;width:272px;max-width:calc(100vw - 16px);padding:12px;background:var(--surface);border:1px solid var(--rule);border-radius:10px;box-shadow:0 3px 12px #0002;}.station-health p{font-size:12px;color:var(--muted-ink);margin:6px 0;}.station-health button{display:flex;gap:8px;width:100%;padding:6px;text-align:left;}.station-health button:hover,.station-health button:focus-visible{background:var(--paper);}.station-health button:disabled{color:var(--muted-ink);}
 .unit-dependencies{padding-block:8px!important;}.unit-dependencies details+details{margin-top:8px;}.unit-dependencies details>div{max-height:320px;overflow:auto;}.dependency-row{display:grid;grid-template-columns:40px 1fr auto;gap:8px;padding:8px 4px;color:var(--ink);text-decoration:none;border-bottom:1px solid var(--rule);}.dependency-row strong{font-weight:500;}.dependency-row:hover,.dependency-row:focus-visible{background:var(--paper);}.dependency-row small{display:block;color:var(--sig-held);}.dependency-row>span:last-child{font-size:12px;}.dependency-back{font-size:13px;}.intent>div{white-space:normal;}.search-results button[aria-selected=true]{background:var(--paper);outline:1px solid var(--line);outline-offset:-1px;}
+
+/* Uniform graph detail tiers and opaque card anatomy. */
+.node-signal{color:var(--ink);}
+.node-status-row{display:flex;align-items:center;gap:4px;padding:0 6px;overflow:hidden;background:var(--surface);border-top:1px solid var(--rule);border-radius:0 0 2px 2px;white-space:nowrap;}
+.node-status-row[data-state]{background:color-mix(in srgb,var(--sig-pending) 12%,var(--surface));}
+.node-status-row[data-state=active]{background:color-mix(in srgb,var(--sig-active) 14%,var(--surface));}
+.node-status-row[data-state=passed]{background:color-mix(in srgb,var(--sig-passed) 14%,var(--surface));}
+.node-status-row[data-state=held]{background:color-mix(in srgb,var(--sig-held) 14%,var(--surface));}
+.node-status-row[data-state=failed]{background:color-mix(in srgb,var(--sig-failed) 14%,var(--surface));}
+.node-status-row .signal{font-size:1em;line-height:1;width:1em;min-width:1em;}
+.node-signal-compact .signal{font-size:12px;line-height:12px;width:12px;height:12px;}
+.node-signal-compact .signal-pending,.node-signal-compact .signal-withdrawn{font-size:12px;}
+.band-headings{position:absolute;inset:0;z-index:3;pointer-events:none;}
+.band-headings>div{position:absolute;display:flex;gap:8px;align-items:center;height:20px;padding:0 4px;background:var(--paper);pointer-events:auto;white-space:nowrap;overflow:hidden;}
+.band-headings strong{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;}
+.band-headings span{font-size:11px;color:var(--muted-ink);}
+.collapsed-bands{position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;}
+.collapsed-bands g{pointer-events:auto;cursor:pointer;}
+.collapsed-bands rect{fill:var(--surface);stroke:var(--line);rx:3;}
+.collapsed-bands path{fill:none;stroke:var(--muted-ink);}
+.collapsed-bands foreignObject div{font-size:11px;line-height:15px;overflow:hidden;}
+.collapsed-bands strong,.collapsed-bands span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+.outstanding-units{max-height:45vh;overflow:auto;}
+.agent-detail .successful-command>summary{display:flex;align-items:center;gap:8px;height:30px;padding:0;cursor:pointer;}
+.successful-command>summary strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;}
+.successful-command>summary a{max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.successful-command>summary::before{content:'›';}
+.successful-command[open]>summary::before{content:'⌄';}
+
+.node-signal .signal{border:0;border-radius:0;margin:0;font-family:Barlow,sans-serif;font-weight:600;overflow:visible;}
+.node-signal .signal-active{background:none;clip-path:none;}
+.node-status-row .signal-pending,.node-status-row .signal-withdrawn{font-size:1em;width:1em;min-width:1em;height:1em;}
+.node-signal-compact .signal-pending,.node-signal-compact .signal-withdrawn{font-size:12px;width:12px;min-width:12px;height:12px;}
+
+[data-detail-tier=groups] .wait-bus-labels{display:none;}
+.unit-gates dd a{display:block;}
+.agent-detail .history-tool:has(.successful-command){padding-block:0;}
+
+.signal svg{display:block;width:12px;height:12px;flex:none;}
+.signal{display:inline-flex;justify-content:center;align-items:center;}
+.node-signal .signal{width:12px;min-width:12px;height:12px;}
+.node-status-row .signal{width:1em;min-width:1em;height:1em;}
+
+.node-status-row .signal svg{width:100%;height:100%;}

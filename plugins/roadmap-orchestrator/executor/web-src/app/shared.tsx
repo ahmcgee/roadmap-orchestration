@@ -27,7 +27,11 @@ export function elapsed(ms: number | null | undefined): string { if (ms == null)
 export const Clock = createContext(Date.now());
 export function relativeTime(at: string, now: number) { const n = Math.max(0, Math.floor((now - Date.parse(at)) / 1000)); return n < 2 ? 'just now' : n < 60 ? `${n}s ago` : n < 3600 ? `${Math.floor(n / 60)}m ago` : n < 86400 ? `${Math.floor(n / 3600)}h ago` : `${Math.floor(n / 86400)}d ago`; }
 export function Time({ at, prefix = '' }: { at: string | null; prefix?: string }) { const now = useContext(Clock); return at ? <time dateTime={at} title={new Date(at).toLocaleString()}>{prefix}{relativeTime(at, now)}</time> : <span>Time unrecorded</span>; }
-export const glyph: Record<Signal, string> = { passed: '●', active: '◐', held: '▰', failed: '×', pending: '○', withdrawn: '–' };
-export function SignalMark({ state }: { state: Signal }) { return <span className={`signal signal-${state}`} aria-label={state}>{glyph[state]}</span>; }
+export const glyph: Record<Signal, string> = { passed: '✓', active: '◐', held: 'Ⅱ', failed: '×', pending: '○', withdrawn: '–' };
+export function SignalMark({ state }: { state: Signal }) {
+  return <span className={`signal signal-${state}`} aria-label={state}><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {state==='passed'?<path d="m3 8 3 3 7-7"/>:state==='active'?<><circle cx="8" cy="8" r="6"/><path d="M8 2a6 6 0 0 0 0 12Z" fill="currentColor" stroke="none"/></>:state==='held'?<path d="M5 3v10M11 3v10" strokeWidth="3"/>:state==='failed'?<path d="m4 4 8 8M12 4l-8 8"/>:state==='withdrawn'?<path d="M3 8h10"/>:<circle cx="8" cy="8" r="5"/>}
+  </svg></span>;
+}
 export const stageName = (stage: string) => ({ 'pre-build': 'Plan review', build: 'Build', lanes: 'Checks', gate: 'Review', candidate: 'Integration check', ff: 'Merge', snapshot: 'Publish snapshot', verifier: 'Review' }[stage] || (stage.startsWith('lane:') ? (!stage.slice(5)||stage.slice(5)==='null'?'Checks':`Check: ${stage.slice(5)}`) : stage));
 export const info = (e: Envelope, a: Activity) => e.data.console.presentation.activityInfo.find(i => i.id === a.id) || { label: stageName(a.stage), attempt: a.attempt, round: 1, spend: 0, findings: [] };
