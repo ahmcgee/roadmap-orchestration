@@ -41,54 +41,58 @@ export class Observer {
   }
 
   observe(request: ObserveRequest): ObserveReply {
-    try {
-      const run = request.pinned ?? (request.locator.type === 'host' && readClaim(request.hostDir) === null && this.#run !== null ? this.#run : locate(request.locator, request.hostDir));
-      if (run.runDir !== this.#run?.runDir) {
-        this.#run = run;
-        this.#journal = new ObserverJournal(run.runDir, run.arc);
-        this.#estate = null;
-        this.#ended.clear();
-      }
-      const began = performance.now();
-      const snapshot = this.#journal!.read();
-      const timing = { clock: Date.now(), foldMs: Math.round(performance.now() - began) };
-      if (snapshot.view !== this.#view) { this.#ended.clear(); this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view; }
-      const captured = captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing);
-      const s = captured.full;
-      const work = new Map([...s.host.work, ...s.units.flatMap((u) => u.work)].map((w) => [String(w.inv), w]));
-      const invocations = this.invocations(run, snapshot, s.run.owner.state === 'alive').map((i) => {
-        const metrics = work.get(i.id);
-        return metrics ? { ...i, work: metrics, body: pretty({ ...JSON.parse(i.body), work: metrics }) } : i;
-      });
-      const exceptions: Entry[] = [
-        ...s.needsUser.filter((n) => n.blocking).map((n) => entry(n.id, `Owner request ${n.id}: ${n.reason}`, 'waiting', recordOf(run.runDir, n.id))),
-        ...s.parkedBackends.map((b) => entry(`backend:${b}`, `Parked backend ${b}`, 'parked', b)),
-        ...s.host.jobQueue.filter((q) => q.pressureBlocked).map((q, i) => entry(`pressure-job:${i}`, `Pressure brake: host CPU saturated while other work holds tokens`, 'held', q)),
-        ...s.holds.map((h, i) => entry(`hold:${i}`, `Hold ${pretty(h)}`, 'held', h)),
-        ...s.units.filter((u) => u.state === 'blocked' || u.state === 'held' || u.state === 'parked' || u.waitingFor?.pressureBlocked || u.failures.length > 0)
-          .map((u) => entry(`unit:${u.unit}`, `${u.unit}: ${u.state}${u.failures.length ? ' / recorded failures' : ''}`, u.failures.length ? 'failed' : u.state, u)),
-        ...invocations.filter((i) => /fault|fail|lost|malformed|refusal|stall|timeout/.test(activityState(i))).map((i) => ({ ...i, state: activityState(i), label: `${i.unit} ${i.role}: ${activityState(i)}` })),
-      ];
-      const startPath = join(run.runDir, 'start.json');
-      const start = existsSync(startPath) ? runStart(readJson(startPath), startPath) : null;
-      const estateKey = `${snapshot.view.holistic().debt.length}:${snapshot.view.planApplied()?.payloadSha256}:${snapshot.view.integrationHead()}:${s.units.map((u) => {
-        const unit = snapshot.view.unit(u.unit); return `${unit.spec?.sha256}:${unit.status}`;
-      }).join(',')}`;
-      if (this.#estate?.key !== estateKey) this.#estate = { key: estateKey, entries: estate(run.runDir, snapshot.view, start?.repo ?? null) };
-      const plan = this.#estate.entries.find((e) => e.id === 'plan');
-      const milestoneUnits: Record<string, readonly string[]> = {};
-      if (plan) {
-        const parsed = JSON.parse(plan.body) as { milestones?: { id: string; units: string[] }[] };
-        for (const m of parsed.milestones ?? []) milestoneUnits[m.id] = m.units;
-      }
-      const display: Display = { run, at: new Date().toISOString(), seq: snapshot.view.highWater(), status: s, invocations,
-        estate: this.#estate.entries, exceptions, milestoneUnits };
-      this.captured = { ...captured, summary: summarize(captured.core, captured.events, captured.plan), requests: s.needsUser.map((n) => recordOf(run.runDir, n.id)) };
-      return { token: request.token, display, error: null };
-    } catch (error) {
+    try { return this.capture(request); }
+    catch (error) {
       // Retain the last published model on the UI thread, never publish a partial observation.
       return { token: request.token, display: null, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /** Throw read failures intact so bounded console admission can retry transient filesystem races. */
+  capture(request: ObserveRequest): ObserveReply {
+    const run = request.pinned ?? (request.locator.type === 'host' && readClaim(request.hostDir) === null && this.#run !== null ? this.#run : locate(request.locator, request.hostDir));
+    if (run.runDir !== this.#run?.runDir) {
+      this.#run = run;
+      this.#journal = new ObserverJournal(run.runDir, run.arc);
+      this.#estate = null;
+      this.#ended.clear();
+    }
+    const began = performance.now();
+    const snapshot = this.#journal!.read();
+    const timing = { clock: Date.now(), foldMs: Math.round(performance.now() - began) };
+    if (snapshot.view !== this.#view) { this.#ended.clear(); this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view; }
+    const captured = captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing);
+    const s = captured.full;
+    const work = new Map([...s.host.work, ...s.units.flatMap((u) => u.work)].map((w) => [String(w.inv), w]));
+    const invocations = this.invocations(run, snapshot, s.run.owner.state === 'alive').map((i) => {
+      const metrics = work.get(i.id);
+      return metrics ? { ...i, work: metrics, body: pretty({ ...JSON.parse(i.body), work: metrics }) } : i;
+    });
+    const exceptions: Entry[] = [
+      ...s.needsUser.filter((n) => n.blocking).map((n) => entry(n.id, `Owner request ${n.id}: ${n.reason}`, 'waiting', recordOf(run.runDir, n.id))),
+      ...s.parkedBackends.map((b) => entry(`backend:${b}`, `Parked backend ${b}`, 'parked', b)),
+      ...s.host.jobQueue.filter((q) => q.pressureBlocked).map((q, i) => entry(`pressure-job:${i}`, `Pressure brake: host CPU saturated while other work holds tokens`, 'held', q)),
+      ...s.holds.map((h, i) => entry(`hold:${i}`, `Hold ${pretty(h)}`, 'held', h)),
+      ...s.units.filter((u) => u.state === 'blocked' || u.state === 'held' || u.state === 'parked' || u.waitingFor?.pressureBlocked || u.failures.length > 0)
+        .map((u) => entry(`unit:${u.unit}`, `${u.unit}: ${u.state}${u.failures.length ? ' / recorded failures' : ''}`, u.failures.length ? 'failed' : u.state, u)),
+      ...invocations.filter((i) => /fault|fail|lost|malformed|refusal|stall|timeout/.test(activityState(i))).map((i) => ({ ...i, state: activityState(i), label: `${i.unit} ${i.role}: ${activityState(i)}` })),
+    ];
+    const startPath = join(run.runDir, 'start.json');
+    const start = existsSync(startPath) ? runStart(readJson(startPath), startPath) : null;
+    const estateKey = `${snapshot.view.holistic().debt.length}:${snapshot.view.planApplied()?.payloadSha256}:${snapshot.view.integrationHead()}:${s.units.map((u) => {
+      const unit = snapshot.view.unit(u.unit); return `${unit.spec?.sha256}:${unit.status}`;
+    }).join(',')}`;
+    if (this.#estate?.key !== estateKey) this.#estate = { key: estateKey, entries: estate(run.runDir, snapshot.view, start?.repo ?? null) };
+    const plan = this.#estate.entries.find((e) => e.id === 'plan');
+    const milestoneUnits: Record<string, readonly string[]> = {};
+    if (plan) {
+      const parsed = JSON.parse(plan.body) as { milestones?: { id: string; units: string[] }[] };
+      for (const m of parsed.milestones ?? []) milestoneUnits[m.id] = m.units;
+    }
+    const display: Display = { run, at: new Date().toISOString(), seq: snapshot.view.highWater(), status: s, invocations,
+      estate: this.#estate.entries, exceptions, milestoneUnits };
+    this.captured = { ...captured, summary: summarize(captured.core, captured.events, captured.plan), requests: s.needsUser.map((n) => recordOf(run.runDir, n.id)) };
+    return { token: request.token, display, error: null };
   }
 
   private invocations(run: Run, snapshot: LogSnapshot, alive: boolean): Invocation[] {
