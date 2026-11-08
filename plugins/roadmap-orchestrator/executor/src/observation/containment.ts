@@ -6,11 +6,29 @@ export function checkRunContainment(runDir: string): void {
   if (!existsSync(runDir)) return;
   const root = realpathSync(runDir);
   const visit = (path: string): void => {
-    const st = lstatSync(path);
+    // Writers may rename/unlink entries after enumeration; vanished entries are harmless.
+    let st;
+    try { st = lstatSync(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
     if (st.isSymbolicLink()) {
-      const target = relative(root, realpathSync(path));
+      let resolved;
+      try { resolved = realpathSync(path); }
+      catch (error) {
+        // A removed entry cannot escape containment. A surviving dangling link still fails.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          try { lstatSync(path); }
+          catch (recheck) { if ((recheck as NodeJS.ErrnoException).code === 'ENOENT') return; throw recheck; }
+        }
+        throw error;
+      }
+      const target = relative(root, resolved);
       if (target === '..' || target.startsWith(`..${sep}`) || isAbsolute(target)) throw new ConsoleError('invalid', 'evidence symlink escapes its retained run');
-    } else if (st.isDirectory()) for (const name of readdirSync(path)) visit(join(path, name));
+    } else if (st.isDirectory()) {
+      let names;
+      try { names = readdirSync(path); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+      for (const name of names) visit(join(path, name));
+    }
   };
   visit(runDir);
 }

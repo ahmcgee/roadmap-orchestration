@@ -20,20 +20,33 @@ function fixture(t: TestContext) {
 
 const heartbeat = JSON.stringify({ v: 2, generation: 1, at: '2026-06-01T00:00:00.000Z' });
 
-test('capture retries when atomic publication removes a temporary file after dependency stamping', (t) => {
+// Keep a real dependency present for each attempt, but remove it at the Observer's read.
+function disappearingHeartbeat(t: TestContext, runDir: string, onRace: () => void): void {
+  const path = join(runDir, 'heartbeat.json');
+  fs.writeFileSync(path, heartbeat);
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', ((...args: Parameters<typeof read>) => {
+    if (args[0] !== path) return read(...args);
+    fs.unlinkSync(path); onRace();
+    try { return read(...args); }
+    finally { fs.writeFileSync(path, heartbeat); }
+  }) as typeof read);
+}
+
+test('capture retries when a heartbeat dependency is republished during its read after stamping', (t) => {
   const { run, cache } = fixture(t);
   const temp = join(run.runDir, 'heartbeat.json.race.tmp');
   const published = join(run.runDir, 'heartbeat.json');
-  fs.writeFileSync(temp, heartbeat);
-  const lstat = fs.lstatSync;
+  fs.writeFileSync(published, heartbeat);
+  const read = fs.readFileSync;
   let raced = 0;
-  t.mock.method(fs, 'lstatSync', ((...args: Parameters<typeof lstat>) => {
-    if (args[0] === temp) {
-      // Dependency stamping excludes .tmp; containment has enumerated it, then the writer renames it.
-      fs.renameSync(temp, published); raced++;
-    }
-    return lstat(...args);
-  }) as typeof lstat);
+  t.mock.method(fs, 'readFileSync', ((...args: Parameters<typeof read>) => {
+    if (args[0] !== published || raced > 0) return read(...args);
+    // Containment has finished; this dependency disappears at the Observer's actual read.
+    fs.renameSync(published, temp); raced++;
+    try { return read(...args); }
+    finally { fs.renameSync(temp, published); }
+  }) as typeof read);
   syncBuiltinESMExports();
   const e = cache.read(run);
   assert.equal(raced, 1);
@@ -59,17 +72,8 @@ test('capture retries ENOENT inside Observer without converting it to corruption
 
 test('repeated disappearing files exhaust the existing admission deadline as unavailable', (t) => {
   const { run, cache } = fixture(t);
-  const temp = join(run.runDir, 'heartbeat.json.race.tmp');
-  const readdir = fs.readdirSync, lstat = fs.lstatSync;
   let raced = 0;
-  t.mock.method(fs, 'readdirSync', ((...args: Parameters<typeof readdir>) => {
-    if (args[0] === run.runDir) fs.writeFileSync(temp, heartbeat);
-    return readdir(...args);
-  }) as typeof readdir);
-  t.mock.method(fs, 'lstatSync', ((...args: Parameters<typeof lstat>) => {
-    if (args[0] === temp) { fs.unlinkSync(temp); raced++; }
-    return lstat(...args);
-  }) as typeof lstat);
+  disappearingHeartbeat(t, run.runDir, () => { raced++; });
   const now = Date.now();
   t.mock.method(Date, 'now', () => now + raced * 1_000);
   syncBuiltinESMExports();
@@ -86,18 +90,18 @@ test('status worker reports exhausted capture races as unavailable, not pruned e
   const worker = new Worker(`
     const fs = require('node:fs');
     const { workerData: args, parentPort } = require('node:worker_threads');
-    const temp = args.runDir + '/heartbeat.json.race.tmp';
-    const readdir = fs.readdirSync, lstat = fs.lstatSync;
+    const path = args.runDir + '/heartbeat.json';
+    const heartbeat = JSON.stringify({ v: 2, generation: 1, at: '2026-06-01T00:00:00.000Z' });
+    fs.writeFileSync(path, heartbeat);
+    const read = fs.readFileSync;
     let races = 0;
     const now = Date.now();
     Date.now = () => now + races * 1000;
-    fs.readdirSync = (...params) => {
-      if (params[0] === args.runDir && new Error().stack.includes('containment.ts')) fs.writeFileSync(temp, '{}');
-      return readdir(...params);
-    };
-    fs.lstatSync = (...params) => {
-      if (params[0] === temp && new Error().stack.includes('containment.ts')) { fs.unlinkSync(temp); races++; }
-      return lstat(...params);
+    fs.readFileSync = (...params) => {
+      if (params[0] !== path) return read(...params);
+      fs.unlinkSync(path); races++;
+      try { return read(...params); }
+      finally { fs.writeFileSync(path, heartbeat); }
     };
     require('node:module').syncBuiltinESMExports();
     import(args.worker).then(() => parentPort.postMessage({ ready: true }));
@@ -120,17 +124,8 @@ test('status worker reports exhausted capture races as unavailable, not pruned e
 
 test('persistent capture races yield after one retry even when the admission clock has not advanced', (t) => {
   const { run, cache } = fixture(t);
-  const temp = join(run.runDir, 'heartbeat.json.race.tmp');
-  const readdir = fs.readdirSync, lstat = fs.lstatSync;
   let raced = 0;
-  t.mock.method(fs, 'readdirSync', ((...args: Parameters<typeof readdir>) => {
-    if (args[0] === run.runDir) fs.writeFileSync(temp, heartbeat);
-    return readdir(...args);
-  }) as typeof readdir);
-  t.mock.method(fs, 'lstatSync', ((...args: Parameters<typeof lstat>) => {
-    if (args[0] === temp) { fs.unlinkSync(temp); raced++; }
-    return lstat(...args);
-  }) as typeof lstat);
+  disappearingHeartbeat(t, run.runDir, () => { raced++; });
   const now = Date.now();
   t.mock.method(Date, 'now', () => now + (raced > 2 ? 2_000 : 0));
   syncBuiltinESMExports();
