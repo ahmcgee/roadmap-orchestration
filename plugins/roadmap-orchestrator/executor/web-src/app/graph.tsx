@@ -2,7 +2,7 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import cytoscape, { type Core, type NodeSingular } from 'cytoscape';
 import { Minus, Plus, Search } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { activeFocus, compactIdentifier, graphLayout, LABEL_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH } from './graph-layout.ts';
+import { activeFocus, compactIdentifier, graphCurves, graphLayout, LABEL_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH } from './graph-layout.ts';
 import { Clock, elapsed, glyph, pluralise, route, SignalMark } from './shared.tsx';
 import type { Envelope, Signal } from './types.ts';
 function nodeTitle(title:string){
@@ -29,6 +29,8 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   const positioned=useMemo(()=>graphLayout(e),[structure]);
   const baseline={...positioned,bands:positioned.bands.map(b=>{const gate=e.data.plan?.milestones?.find(g=>`milestone:${g.id}`===b.id),state=e.data.display.status.milestones.find(g=>`milestone:${g.id}`===b.id);return gate?{...b,passed:gate.units.filter(id=>m.graph.units.find(u=>u.id===id)?.status==='passed').length,state:state?.passed?'passed':state?.state==='walking'?'active':state?.state==='blocked'?'held':'pending'}:b;})};
   const layout=baseline;
+  const routed=useMemo(()=>{const start=performance.now(),curves=graphCurves(e,positioned.positions);return {curves,elapsed:performance.now()-start};},[structure]);
+  const curves=routed.curves;
   useEffect(()=>{const close=()=>{setHealth(null);setHover(null);touchCard.current=null;document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open],.filter-popover[open]').forEach(d=>d.open=false);};window.addEventListener('hashchange',close);window.addEventListener('roadmap-dismiss-popovers',close);return()=>{window.removeEventListener('hashchange',close);window.removeEventListener('roadmap-dismiss-popovers',close);};},[]);
   const active=activeFocus(e), phone=(canvas.current?.clientWidth??innerWidth)<=640;
   const results=query.trim()?m.presentation.units.filter(u=>`${u.title} ${u.id}`.toLowerCase().includes(query.toLowerCase())).slice(0,12):[];
@@ -46,10 +48,6 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   }
   const reframe=useRef(()=>{});
   reframe.current=()=>{if(focus==='active')frame(activeIds(),false);else if(focus==='all')frame(m.graph.units.map(u=>u.id),false);else if(station){const band=baseline.bands.find(b=>b.id===station);if(band)frame([...band.ids,station],false);}};
-  function clipGraph(){
-    const r=unobscured(),graph=cy.current!;
-    region.current!.style.setProperty('--graph-clip',`inset(${r.top}px 0 ${Math.max(0,graph.height()-r.bottom)}px 0)`);
-  }
   function frameBox(nodes:cytoscape.NodeCollection){
     // Border thickness changes with LOD; frame the fixed geometry so repeated
     // focus actions yield exactly the same viewport at every starting zoom.
@@ -70,7 +68,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   function frame(ids:string[],animate=true){
     const graph=cy.current;if(!graph)return;
     const nodes=graph.nodes('[gate]').filter(n=>ids.includes(n.id()));if(!nodes.length)return;
-    graph.resize();clipGraph();const r=unobscured(),box=frameBox(nodes);
+    graph.resize();const r=unobscured(),box=frameBox(nodes);
     const zoom=Math.max(graph.minZoom(),fitZoom(nodes));
     viewport(zoom,{x:(r.left+r.right)/2-(box.x1+box.x2)/2*zoom,y:(r.top+r.bottom)/2-(box.y1+box.y2)/2*zoom},animate);
   }
@@ -111,25 +109,22 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
     const styles=getComputedStyle(document.documentElement),color=(token:string)=>styles.getPropertyValue(token).trim();
 
     const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,gate=u.id.startsWith('milestone:');return {id:u.id,label:gate?gateLabel(u.id):nodeTitle(m.presentation.units.find(v=>v.id===u.id)?.title||u.label),compact:gate?gateLabel(u.id):compactIdentifier(e,u.id),state,gate:gate?1:0};};
-    const bundles=new Map<string,{source:string;target:string;count:number}>();
-    for(const [source,target] of m.graph.edges)if(source.startsWith('milestone:')){const band=baseline.bands.find(b=>b.ids.includes(target));if(band){const key=`${source}:${band.id}`,existing=bundles.get(key);bundles.set(key,{source,target:`bus:${band.id}`,count:(existing?.count??0)+1});}}
+    // Cytoscape owns nodes, selection and navigation. The SVG below draws
+    // every dependency as a cubic with arrowheads that stay visible at All.
     const graph=cytoscape({container:canvas.current,pixelRatio:Math.min(devicePixelRatio,2),minZoom:.001,maxZoom:2.5,textureOnViewport:true,elements:[
       ...m.graph.units.map(u=>({data:unitData(u),position:{...baseline.positions.get(u.id)!}})),
-      ...baseline.bands.map(b=>({data:{id:`bus:${b.id}`,aux:1,label:''},position:{x:b.x+12,y:b.y+32},selectable:false})),
       ...m.graph.edges.map(([source,target],i)=>({data:{id:`edge:${i}`,source,target,kind:source.startsWith('milestone:')?'waits':target.startsWith('milestone:')?'feeds':'dependency'}})),
-      ...[...bundles].map(([id,data])=>({data:{id:`bundle:${id}`,...data,kind:'bundle'}}))
     ],layout:{name:'preset'},style:[
       {selector:'node',style:{'background-color':color('--surface'),'border-width':2,'border-color':color('--sig-pending'),'shape':'round-rectangle','corner-radius':3,'width':NODE_WIDTH,'height':NODE_HEIGHT,'label':'data(label)','font-family':'Barlow Semi Condensed','font-size':LABEL_PX,'line-height':1.1,'font-weight':600,'text-wrap':'wrap','text-max-width':NODE_WIDTH-24,'text-valign':'center','text-halign':'left-inside','text-justification':'left','text-margin-x':12,'text-margin-y':-10,'color':color('--ink')}},
       ...states.map(state=>({selector:`node[state="${state}"]`,style:{'border-color':color(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':color('--surface'),'background-opacity':1,'shape':'round-rectangle','border-style':state==='withdrawn'?'dashed':'solid'}})),
-      {selector:'node[gate=1]',style:{'shape':'cut-rectangle','width':160,'height':80,'background-color':color('--surface'),'border-color':color('--line'),'background-opacity':1,'font-size':12,'text-margin-y':-6,'text-max-width':136}},
+      {selector:'node[gate=1]',style:{'shape':'cut-rectangle','width':NODE_WIDTH,'height':NODE_HEIGHT,'background-color':color('--surface'),'border-color':color('--line'),'background-opacity':1,'font-size':12,'text-margin-y':-6,'text-max-width':136}},
       {selector:'node[gate=1][state="passed"]',style:{'background-opacity':1}},
       {selector:'node[gate=1][state="active"],node[gate=1][state="held"]',style:{'background-opacity':1}},
       {selector:'node[gate=1][state="pending"]',style:{'background-opacity':1}},
       {selector:'node[aux=1]',style:{'display':'none','width':6,'height':6,'border-width':0,'background-color':color('--line'),'label':'','events':'no'}},
-      {selector:'edge',style:{'curve-style':'taxi','taxi-direction':'auto','taxi-turn':24,'line-color':color('--muted-ink'),'width':1,'opacity':.32,'target-arrow-shape':'triangle','target-arrow-color':color('--muted-ink'),'arrow-scale':.65,'target-distance-from-node':3,'z-index':0}},
+      {selector:'edge',style:{'curve-style':'straight','line-opacity':0,'source-endpoint':'100% 0%','target-endpoint':'-100% 0%','line-color':color('--muted-ink'),'width':1,'opacity':.32,'target-arrow-shape':'none','target-arrow-color':color('--muted-ink'),'arrow-scale':.65,'target-distance-from-node':3,'z-index':0}},
       {selector:'edge[kind="waits"]',style:{'display':'none','line-style':'dashed'}},
-      {selector:'edge[kind="bundle"]',style:{'display':'none','curve-style':'unbundled-bezier','control-point-distances':-100,'control-point-weights':.5,'line-color':color('--line'),'line-style':'dashed','opacity':.24,'target-arrow-shape':'none'}},
-      {selector:'edge[kind="feeds"]',style:{'curve-style':'bezier','opacity':.14}},
+      {selector:'edge[kind="feeds"]',style:{'opacity':.14}},
       {selector:'.dim',style:{'opacity':.25}},
       {selector:'node.dim',style:{'opacity':1,'border-opacity':.35,'color':color('--ink'),'text-opacity':1}},
       {selector:'edge.chain,edge.trace',style:{'opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
@@ -179,9 +174,9 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
           const nodes=graph.nodes('[gate]');
           context.font='600 10px "Barlow Semi Condensed"';
           const compactFits=nodes.toArray().every(node=>context.measureText(node.data('gate')?node.id().slice(10):String(node.data('compact'))).width<=node.width()*zoom-24);
-          const identifiers=nodes.map(node=>compactFits?node.data('gate')?node.id().slice(10):String(node.data('compact')):node.data('gate')?node.id().slice(10):node.id());
+          const identifiers=nodes.map(node=>compactFits?node.data('gate')?node.id().slice(10):String(node.data('compact')):node.data('gate')?node.id().slice(10).replace(/^MS-/,'M'):node.id());
           context.font='600 1px "Barlow Semi Condensed"';
-          const minimalPx=Math.min(24,...nodes.map((node,i)=>Math.min((node.width()*zoom-24)/context.measureText(identifiers[i]!).width,(node.height()*zoom-8)/1.1)));
+          const minimalPx=Math.min(24,...nodes.map((node,i)=>Math.min((node.width()*zoom-(zoom<.25?10:24))/context.measureText(identifiers[i]!).width,(node.height()*zoom-2)/1.1)));
           const full=LABEL_PX*zoom>=MIN_LABEL_PX,nextTier=full?'full':minimalPx>=10?'minimal':'status',changed=detailTier!==nextTier,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
           if(changed){clearTimeout(fadeTimer);nodes.stop();}
           const fade=changed&&detailTier!==''&&!reduced;
@@ -190,7 +185,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
           graph.batch(()=>{
             nodes.forEach((node,i)=>{
               node.toggleClass('overview',!full).toggleClass('extreme',nextTier==='status');
-              node.style({'label':nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?node.data('label'):identifiers[i], 'font-size':full?LABEL_PX:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':full?'left-inside':'center','text-justification':full?'left':'center','text-margin-x':full?12:6/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,Math.max(2,(full?1:3)/zoom))});
+              node.style({'label':nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?node.data('label'):identifiers[i], 'font-size':full?LABEL_PX:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':full?'left-inside':'center','text-justification':full?'left':'center','text-margin-x':full?12:(zoom<.25?4:6)/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,Math.max(2,(full?1:3)/zoom))});
             });
           });
           if(changed){
@@ -211,7 +206,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
       const style=getComputedStyle(document.documentElement),token=(n:string)=>style.getPropertyValue(n).trim();
       const sheet=graph.style().selector('node').style({'color':token('--ink'),'background-color':token('--surface')});
       for(const state of states)sheet.selector(`node[state="${state}"]`).style({'border-color':token(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':token('--surface')});
-      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--surface'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--muted-ink'),'target-arrow-color':token('--muted-ink')}).selector('edge.chain,edge.trace,edge.exact,edge[kind="bundle"]').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node.dim').style({'color':token('--ink')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
+      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--surface'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--muted-ink'),'target-arrow-color':token('--muted-ink')}).selector('edge.chain,edge.trace,edge.exact').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node.dim').style({'color':token('--ink')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
     };
     window.addEventListener('roadmap-theme',theme);
     void document.fonts.ready.then(()=>{if(!graph.destroyed())graph.resize();});
@@ -236,9 +231,9 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
     root.addEventListener('pointerdown',interrupt,true);
     root.addEventListener('wheel',wheel,{passive:false,capture:true});
     for(const name of ['touchstart','touchmove','touchend','touchcancel'])root.addEventListener(name,touch as EventListener,{passive:false,capture:true});
-    const resize=new ResizeObserver(()=>{graph.resize();clipGraph();clampZoom();if(!moved.current&&!applying.current)reframe.current();});resize.observe(canvas.current);root.querySelectorAll('.graph-toolbar,.graph-legend,.key-toggle,.graph-minimap,.graph-scale').forEach(el=>resize.observe(el));
+    const resize=new ResizeObserver(()=>{graph.resize();clampZoom();if(!moved.current&&!applying.current)reframe.current();});resize.observe(canvas.current);root.querySelectorAll('.graph-toolbar,.graph-legend,.key-toggle,.graph-minimap,.graph-scale').forEach(el=>resize.observe(el));
     const measure=requestAnimationFrame(()=>{performance.mark('roadmap-graph-painted');performance.measure('roadmap-graph-first-render','roadmap-graph-start','roadmap-graph-painted');});
-    performance.measure('roadmap-graph-layout',{start:performance.now()-baseline.elapsed,duration:baseline.elapsed});
+    performance.measure('roadmap-graph-layout',{start:performance.now()-baseline.elapsed-routed.elapsed,duration:baseline.elapsed+routed.elapsed});
     return()=>{saved.current={arc:e.arc,zoom:graph.zoom(),pan:graph.pan()};if(hoverTimer.current)clearTimeout(hoverTimer.current);clearTimeout(fadeTimer);cancelAnimationFrame(frameId);cancelAnimationFrame(measure);resize.disconnect();root.removeEventListener('wheel',wheel,true);root.removeEventListener('pointerdown',interrupt,true);for(const name of ['touchstart','touchmove','touchend','touchcancel'])root.removeEventListener(name,touch as EventListener,true);window.removeEventListener('roadmap-theme',theme);graph.destroy();cy.current=null;};
   },[structure,fontsReady]);
   useEffect(()=>{
@@ -253,7 +248,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
       graph.elements().removeClass('dim chain match exact trace');
       if(selected&&!hover&&!edgeHover){
         const ids=new Set([selected]), edgeIds=new Set<string>();
-        for(const direction of ['up','down']){const queue=[selected],seen=new Set(queue);while(queue.length){const id=queue.shift()!;for(const edge of graph.edges('[kind="dependency"], [kind="feeds"]')){const from=direction==='up'?edge.target().id():edge.source().id(),to=direction==='up'?edge.source().id():edge.target().id();if(from!==id)continue;edgeIds.add(edge.id());ids.add(to);if(!seen.has(to)){seen.add(to);queue.push(to);}}}}
+        for(const edge of graph.edges('[kind="dependency"], [kind="feeds"]')) if(edge.source().id()===selected||edge.target().id()===selected){edgeIds.add(edge.id());ids.add(edge.source().id());ids.add(edge.target().id());}
         const chain=graph.elements().filter(el=>ids.has(el.id())||edgeIds.has(el.id()));
         const exact=graph.edges('[kind="waits"]').filter(edge=>edge.source().id()===selected||edge.target().id()===selected);
         const related=chain.union(exact).union(exact.connectedNodes());graph.elements().difference(related).addClass('dim');chain.edges().addClass('chain');exact.addClass('exact');
@@ -261,7 +256,7 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
       if(hover){
         graph.elements().removeClass('dim chain exact');
         const ids=new Set([hover.id]),edges=new Set<string>();
-        for(const direction of ['up','down']){const queue=[hover.id],seen=new Set(queue);while(queue.length){const id=queue.shift()!;for(const edge of graph.edges('[kind=\"dependency\"], [kind=\"feeds\"]')){const from=direction==='up'?edge.target().id():edge.source().id(),to=direction==='up'?edge.source().id():edge.target().id();if(from!==id)continue;edges.add(edge.id());ids.add(to);if(!seen.has(to)){seen.add(to);queue.push(to);}}}}
+        for(const edge of graph.edges('[kind="dependency"], [kind="feeds"]')) if(edge.source().id()===hover.id||edge.target().id()===hover.id){edges.add(edge.id());ids.add(edge.source().id());ids.add(edge.target().id());}
         const traced=graph.edges().filter(edge=>edges.has(edge.id()));graph.elements().difference(traced.union(traced.connectedNodes())).addClass('dim');traced.addClass('trace');
         graph.edges('[kind=\"waits\"]').filter(edge=>edge.source().id()===hover.id||edge.target().id()===hover.id).addClass('exact');
       }
@@ -280,21 +275,19 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
   useEffect(()=>{const key=(ev:KeyboardEvent)=>{if(ev.target instanceof HTMLElement&&(ev.target.matches('input,textarea,select')||ev.target.isContentEditable)||document.querySelector('[role="dialog"]')?.contains(ev.target as Node))return;if(ev.key==='/'){ev.preventDefault();setMobileSearch(true);requestAnimationFrame(()=>search.current?.focus());}if(ev.key==='f'){ev.preventDefault();focusAll();}if(ev.key==='Escape'){setStation(null);setHealth(null);}if(ev.key==='a'){ev.preventDefault();focusActive();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);});
   const selectedUnit=m.presentation.units.find(u=>u.id===selected),hovered=m.presentation.units.find(u=>u.id===hover?.id);
   const exactWaits=selected?.startsWith('milestone:')?m.graph.edges.filter(([a])=>a===selected).map(([,b])=>b):(waits.get(selected??'')??[]);
-  // Wait membership stays in the graph as exact edges. Only its background
-  // presentation uses one orthogonal bus per source gate and destination band.
-  const waitBuses = new Map<string,{source:string;band:string;targets:string[]}>();
+  // Exact wait membership remains available in the prerequisite disclosures.
+  // Its links are quiet until a unit or gate is hovered or selected.
+  const waitGroups = new Map<string,{source:string;band:string;targets:string[]}>();
   for(const [source,target] of m.graph.edges)if(source.startsWith('milestone:')){
     const band=layout.bands.find(b=>b.ids.includes(target));if(!band)continue;
-    const key=`${source}:${band.id}`,bus=waitBuses.get(key)??{source,band:band.id,targets:[]};bus.targets.push(target);waitBuses.set(key,bus);
+    const key=`${source}:${band.id}`,bus=waitGroups.get(key)??{source,band:band.id,targets:[]};bus.targets.push(target);waitGroups.set(key,bus);
   }
-  const busRows=new Map<string,number>(),freeTop=cy.current?unobscured().top:0;
-  const busGeometry=[...waitBuses].map(([key,bus])=>{
-    const band=layout.bands.find(b=>b.id===bus.band)!,row=busRows.get(bus.band)??0;busRows.set(bus.band,row+1);
-    const source=layout.positions.get(bus.source)!;
-    const targets=bus.targets.map(id=>{const p=layout.positions.get(id)!,node=cy.current?.getElementById(id);return {id,x:p.x*view.zoom+view.x-(node?.width()??NODE_WIDTH)*view.zoom/2,y:p.y*view.zoom+view.y};});
-    const x=Math.min(...targets.map(p=>p.x))-12,top=Math.min(...targets.map(p=>p.y)),bottom=Math.max(...targets.map(p=>p.y));
+  const waitRows=new Map<string,number>(),freeTop=cy.current?unobscured().top:0;
+  const waitLabels=[...waitGroups].map(([key,bus])=>{
+    const band=layout.bands.find(b=>b.id===bus.band)!,row=waitRows.get(bus.band)??0;waitRows.set(bus.band,row+1);
+    const targets=bus.targets.map(id=>({id}));
     const pending=!e.data.display.status.milestones.find(g=>`milestone:${g.id}`===bus.source)?.passed;
-    return {key,...bus,targets,pending,labelX:station===band.id?(layout.positions.get(band.id)?.x??band.x)*view.zoom+view.x-55:band.x*view.zoom+view.x+8,labelY:station===band.id?freeTop+4+row*16:band.y*view.zoom+view.y+24+row*16,x,top,bottom,sx:source.x*view.zoom+view.x,sy:source.y*view.zoom+view.y};
+    return {key,...bus,targets,pending,labelX:station===band.id?(layout.positions.get(band.id)?.x??band.x)*view.zoom+view.x-55:band.x*view.zoom+view.x+8,labelY:station===band.id?freeTop+4+row*16:band.y*view.zoom+view.y+24+row*16};
   });
   const currentMilestone=baseline.bands.find(b=>b.id.startsWith("milestone:")&&b.state!=="passed")?.id;
   return <div data-detail-tier={tier} ref={region} className={`graph-view ${focus==='all'?'graph-all':''}`}>
@@ -325,20 +318,29 @@ export function Graph({ e, open }: { e: Envelope; open: (id: string) => void }) 
         const ranked=candidates.filter(n=>n.id()!==selected).map(n=>{const q=(n as NodeSingular).renderedPosition(),dx=q.x-p.x,dy=q.y-p.y,along=(horizontal?dx:dy)*sign,across=Math.abs(horizontal?dy:dx);return {n,along,score:Math.hypot(dx,dy)+across*2};}).filter(v=>ev.altKey||v.along>1).sort((a,b)=>a.score-b.score);
         const next=ranked[0]?.n;if(next){if(ev.altKey)focusNode(next.id());else next.select();}
       }}/>
-      <svg className="wait-buses" aria-hidden="true">{busGeometry.map(bus=><g key={bus.key} className="wait-bus">
-        <path className="wait-bus-line" d={`M ${bus.sx} ${bus.sy} H ${bus.x} V ${bus.top} M ${bus.x} ${bus.top} V ${bus.bottom}`}/>
-        {bus.targets.map(p=><path key={p.id} className="wait-target-tick" d={`M ${bus.x} ${p.y} h 6`}/>)}
-      </g>)}</svg>
-      <div className="wait-bus-labels">{busGeometry.map(bus=><details key={bus.key} className="wait-bus-label" onMouseEnter={ev=>{setHover(null);setHealth(null);document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open]').forEach(d=>{if(d!==ev.currentTarget)d.open=false;});ev.currentTarget.open=true;}} onMouseLeave={ev=>{if(!ev.currentTarget.contains(document.activeElement))ev.currentTarget.open=false;}} onFocus={ev=>{setHover(null);setHealth(null);ev.currentTarget.open=true;}} onBlur={ev=>{if(!ev.currentTarget.contains(ev.relatedTarget))ev.currentTarget.open=false;}} onKeyDown={ev=>{if(ev.key==='Escape'){ev.currentTarget.open=false;ev.currentTarget.querySelector('summary')?.focus();ev.stopPropagation();}}} style={{left:bus.labelX,top:bus.labelY,display:view.zoom*LABEL_PX<MIN_LABEL_PX&&station!==bus.band?'none':undefined}}>
+      <svg className="graph-edges" aria-hidden="true">
+        <defs><marker id="dependency-arrow" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M 0 0 L 8 4 L 0 8 z" fill="context-stroke"/></marker></defs>
+        {curves.map((curve,i)=>{
+          const waits=curve.source.startsWith('milestone:'),feeds=curve.target.startsWith('milestone:');
+          const traced=edgeHover?edgeHover.source===curve.source&&edgeHover.target===curve.target:[curve.source,curve.target].includes(hover?.id??selected??'');
+          if(waits&&!traced)return null;
+          const dim=!!(hover||selected||edgeHover)&&!traced;
+          // Coordinates and marker dimensions are in screen pixels. Arrowheads
+          // remain visible at All, without inflating the curves at full zoom.
+          const path=curve.path.replace(/(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/g,(_,x,y)=>`${Number(x)*view.zoom+view.x} ${Number(y)*view.zoom+view.y}`);
+          return <path key={i} data-source={curve.source} data-target={curve.target} data-kind={waits?'waits':feeds?'feeds':'dependency'} className={`graph-edge ${traced?'edge-traced':''} ${dim?'edge-dim':''}`} d={path} fill="none" markerEnd="url(#dependency-arrow)"/>;
+        })}
+      </svg>
+      <div className="wait-bus-labels">{waitLabels.map(bus=><details key={bus.key} className="wait-bus-label" onMouseEnter={ev=>{setHover(null);setHealth(null);document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open]').forEach(d=>{if(d!==ev.currentTarget)d.open=false;});ev.currentTarget.open=true;}} onMouseLeave={ev=>{if(!ev.currentTarget.contains(document.activeElement))ev.currentTarget.open=false;}} onFocus={ev=>{setHover(null);setHealth(null);ev.currentTarget.open=true;}} onBlur={ev=>{if(!ev.currentTarget.contains(ev.relatedTarget))ev.currentTarget.open=false;}} onKeyDown={ev=>{if(ev.key==='Escape'){ev.currentTarget.open=false;ev.currentTarget.querySelector('summary')?.focus();ev.stopPropagation();}}} style={{left:bus.labelX,top:bus.labelY,display:view.zoom*LABEL_PX<MIN_LABEL_PX&&station!==bus.band?'none':undefined}}>
         <summary onClick={ev=>{ev.preventDefault();ev.currentTarget.parentElement!.setAttribute('open','');}} aria-label={`${bus.source.slice(10)}: ${bus.targets.length} ${bus.pending?'waiting':'linked'} units in ${bus.band.replace('milestone:','')}`} title={`${bus.source.slice(10)} ${bus.pending?'Pending':'Passed'}`}>{bus.source.slice(10)}: {bus.targets.length} {bus.pending?'waiting':'linked'}</summary>
         <div className="wait-bus-targets" style={{left:Math.min(0,(canvas.current?.clientWidth??innerWidth)-24-bus.labelX-220)}}><strong>{glyph[bus.pending?'pending':'passed']} {bus.source.slice(10)} {bus.pending?'Pending':'Passed'}</strong>{bus.targets.map(p=><button key={p.id} onClick={()=>focusNode(p.id)}>{p.id}</button>)}</div>
       </details>)}</div>
       <div className="node-signals" aria-hidden="true">{m.graph.units.map(u=>{
         const p=layout.positions.get(u.id),node=cy.current?.getElementById(u.id);if(!p||!node?.length)return null;
-        const compact=tier!=='full',w=node.width()*view.zoom,h=node.height()*view.zoom,x=p.x*view.zoom+view.x-w/2,y=p.y*view.zoom+view.y-h/2;
+        const compact=tier!=='full',tiny=compact&&view.zoom<.25,w=node.width()*view.zoom,h=node.height()*view.zoom,x=p.x*view.zoom+view.x-w/2,y=p.y*view.zoom+view.y-h/2;
         if(x+w<0||x>(canvas.current?.clientWidth??innerWidth)||y+h<0||y>(canvas.current?.clientHeight??innerHeight))return null;
         const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;
-        return <span key={u.id} data-state={state} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'}`} style={compact?{left:x+4,top:y+h/2-6}:{left:x+1,top:y+h-22*view.zoom,width:w-2,height:22*view.zoom,fontSize:12*view.zoom}}><SignalMark state={state}/>{!compact&&<span>{u.id.startsWith('milestone:')?'Gate':u.id} {({passed:'Passed',active:'Running',held:'Held',failed:'Failed',pending:'Pending',withdrawn:'Withdrawn'})[state]}</span>}</span>;
+        return <span key={u.id} data-state={state} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'} ${tiny?'node-signal-tiny':''}`} style={compact?{left:x+(tiny?1:4),top:y+h/2-(tiny?4:6)}:{left:x+1,top:y+h-22*view.zoom,width:w-2,height:22*view.zoom,fontSize:12*view.zoom}}><SignalMark state={state}/>{!compact&&<span>{u.id.startsWith('milestone:')?'Gate':u.id} {({passed:'Passed',active:'Running',held:'Held',failed:'Failed',pending:'Pending',withdrawn:'Withdrawn'})[state]}</span>}</span>;
       })}</div>
       <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${station===b.id?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}/>)}</div>
       <div className="band-headings">{layout.bands.map(b=>{

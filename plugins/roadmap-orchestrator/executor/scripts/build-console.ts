@@ -31,7 +31,7 @@ async function notice(path: string) {
   }
   throw new Error(`Package not found for ${relative(root, path)}`);
 }
-for (const pkg of ['react', 'react-dom', 'radix-ui', 'cmdk', 'cytoscape', '@dagrejs/dagre', 'lucide-react', 'class-variance-authority', 'clsx', 'tailwind-merge']) await notice(join(root, 'node_modules', pkg));
+for (const pkg of ['react', 'react-dom', 'radix-ui', 'cmdk', 'cytoscape', 'lucide-react', 'class-variance-authority', 'clsx', 'tailwind-merge']) await notice(join(root, 'node_modules', pkg));
 for (const input of Object.entries(Object.values(result.metafile.outputs).find(output => output.entryPoint)?.inputs ?? {}).filter(([path, info]) => path.includes('node_modules/') && info.bytesInOutput > 0).map(([path]) => path).sort()) await notice(dirname(resolve(root, input)));
 const fonts: [string, number[]][] = [['barlow', [400, 500, 600]], ['barlow-semi-condensed', [500, 600]], ['jetbrains-mono', [400, 500]]];
 await mkdir(join(out, 'fonts'), { recursive: true });

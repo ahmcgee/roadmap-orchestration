@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
 import { generateScaleArc, ownScaleArc } from '../helpers/scale-arc.ts';
+import { assertGraphGeometry } from '../helpers/graph-geometry.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import { serveConsole } from '../../src/console/http.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
@@ -91,6 +92,7 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
   const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
   const response=await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`);assert.equal(response.status,200,await response.clone().text());
   const snapshot=await response.json() as Envelope & {data:{console:ReturnType<typeof consoleModel>}};
+  const geometry=assertGraphGeometry(snapshot);t.diagnostic(`300-unit layout + direct curves: ${geometry.elapsed.toFixed(1)}ms; ${geometry.curves} complete edges`);
   assert.equal(snapshot.data.display.status.units.length,300);
   for(let i=1;i<=300;i++) {
     const text=textFor(i,m.systems),unit=snapshot.data.console.presentation.units.find(u=>u.id===`u${i}`)!;
@@ -145,6 +147,15 @@ test('design preset spans the corpus through rollout in five named milestones', 
   const expected=corpus.systems[m.systems[(i-1)%8]!][Math.floor((i-1)*38/50)];
   assert.equal(s.data.console.presentation.units.find(u=>u.id===`u${i}`)!.title,expected.title);
  }
+ const geometry=assertGraphGeometry(s);t.diagnostic(`50-unit layout + direct curves: ${geometry.elapsed.toFixed(1)}ms; ${geometry.curves} complete edges`);
+ const units=s.data.plan!.units,distribution=Object.fromEntries([0,1,2,3].map(n=>[n,units.filter(u=>u.after.length===n).length]));
+ assert.equal(m.dependencies,60);assert.deepEqual(distribution,{0:8,1:28,2:10,3:4});
+ assert.ok(units.every(u=>u.after.length<=3),'no integration fan-in above three');
+ const milestone=new Map(s.data.plan!.milestones!.flatMap((g,i)=>g.units.map(id=>[id,i] as const)));
+ const split={same:0,previous:0,older:0};
+ for(const u of units)for(const id of u.after){const distance=milestone.get(u.id)!-milestone.get(id)!;split[distance===0?'same':distance===1?'previous':'older']++;}
+ assert.deepEqual(split,{same:43,previous:16,older:1});
+ for(const gate of s.data.plan!.milestones!)assert.ok(gate.units.some(id=>units.find(u=>u.id===id)!.after.length===0),'each milestone contains an independent root');
  assert.ok(s.data.console.graph.units.some(u=>u.status==='held'));
  assert.ok(s.data.display.status.units.some(u=>u.state==='cut'||u.state==='superseded'));
  assert.ok(s.data.console.activities.some(a=>a.status==='failed'));

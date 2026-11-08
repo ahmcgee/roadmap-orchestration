@@ -12,7 +12,7 @@ test('prebuilt assets have complete package provenance and no runtime package de
   const notices = readFileSync(new URL('../web/THIRD-PARTY-NOTICES.txt', import.meta.url), 'utf8');
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(pkg.dependencies, undefined);
-  for (const name of ['react', 'react-dom', 'radix-ui', 'cmdk', 'cytoscape', '@dagrejs/dagre', 'lucide-react', 'class-variance-authority', 'clsx', 'tailwind-merge', '@fontsource/barlow', '@fontsource/barlow-semi-condensed', '@fontsource/jetbrains-mono', 'tailwindcss', 'tw-animate-css']) {
+  for (const name of ['react', 'react-dom', 'radix-ui', 'cmdk', 'cytoscape', 'lucide-react', 'class-variance-authority', 'clsx', 'tailwind-merge', '@fontsource/barlow', '@fontsource/barlow-semi-condensed', '@fontsource/jetbrains-mono', 'tailwindcss', 'tw-animate-css']) {
     assert.ok(notices.includes(`${name} ${pkg.devDependencies[name]}`), name);
   }
   assert.match(notices, /Permission is hereby granted/); assert.match(notices, /SIL OPEN FONT LICENSE/);

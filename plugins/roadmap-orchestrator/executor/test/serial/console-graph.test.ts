@@ -39,13 +39,13 @@ async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed
 }
 async function assertActiveFrame(b:ConsoleBrowser){
  await new Promise(r=>setTimeout(r,350));
- const result=await b.evaluate<{outside:string[];toolbar:string[];count:number;zoom:number;expected:number;clipTop:number;toolbarBottom:number}>(`()=>{
+ const result=await b.evaluate<{outside:string[];count:number;zoom:number;expected:number;clipped:string[]}>(`()=>{
    const el=document.querySelector('.dag-canvas'),cy=el._cyreg.cy,c=el.getBoundingClientRect(),t=document.querySelector('.graph-toolbar').getBoundingClientRect();
    const controls=[...document.querySelectorAll('.graph-legend,.key-toggle,.graph-scale,.graph-minimap,.filter-popover')].map(el=>el.getBoundingClientRect()).filter(r=>r.width&&r.height&&r.top>t.bottom),bottom=Math.min(c.bottom,...controls.map(r=>r.top));
    const nodes=cy.nodes('[state="active"][gate=0]'),width=Math.max(...nodes.map(n=>n.position().x+n.width()/2))-Math.min(...nodes.map(n=>n.position().x-n.width()/2)),height=Math.max(...nodes.map(n=>n.position().y+n.height()/2))-Math.min(...nodes.map(n=>n.position().y-n.height()/2));
-   return {zoom:cy.zoom(),expected:Math.max(cy.minZoom(),Math.min(1,(c.width-48-80)/width,(bottom-t.bottom-80)/height)),clipTop:parseFloat(getComputedStyle(el).clipPath.slice(6)),toolbarBottom:t.bottom-c.top,count:cy.nodes('[state="active"][gate=0]').length,outside:cy.nodes('[state="active"][gate=0]').filter(n=>{const b=n.renderedBoundingBox({includeLabels:false});return b.x1<24||b.x2>c.width-24||b.y1<t.bottom-c.top||b.y2>bottom-c.top;}).map(n=>n.id()),toolbar:cy.nodes('[gate]').filter(n=>{const b=n.renderedBoundingBox({includeLabels:false});const clip=getComputedStyle(el).clipPath,top=parseFloat(clip.slice(6));return b.x1+c.left<t.right&&b.x2+c.left>t.left&&Math.max(b.y1,top)+c.top<t.bottom&&b.y2+c.top>t.top;}).map(n=>n.id())};
+   return {zoom:cy.zoom(),expected:Math.max(cy.minZoom(),Math.min(1,(c.width-48-80)/width,(bottom-t.bottom-80)/height)),clipped:[...document.querySelectorAll('.dag-canvas,.graph-edges,.node-signals,.band-captions,.band-headings,.wait-bus-labels')].filter(el=>getComputedStyle(el).clipPath!=='none').map(el=>el.className),count:nodes.length,outside:nodes.filter(n=>{const b=n.renderedBoundingBox({includeLabels:false});return b.x1<24||b.x2>c.width-24||b.y1<t.bottom-c.top||b.y2>bottom-c.top;}).map(n=>n.id())};
  }`);
- assert.ok(result.count>0);assert.ok(Math.abs(result.zoom-result.expected)<1e-10,'Active uses the largest fitting zoom and excludes neighbours');assert.ok(result.clipTop>=result.toolbarBottom,'renderer clips before the toolbar');assert.deepEqual(result.outside,[],'every active box fits the unobscured rectangle');assert.deepEqual(result.toolbar,[],'no node starts beneath the toolbar');
+ assert.ok(result.count>0);assert.ok(Math.abs(result.zoom-result.expected)<1e-10,'Active uses the largest fitting zoom and excludes neighbours');assert.deepEqual(result.clipped,[],'nothing clips graph content into a full-width blank band');assert.deepEqual(result.outside,[],'every active box fits clear of the toolbar and bottom controls');
 }
 
 async function hoverNode(b:ConsoleBrowser,id:string){
@@ -53,7 +53,7 @@ async function hoverNode(b:ConsoleBrowser,id:string){
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.mouse.move(${point.x},${point.y});}`});
  await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-hover')?.textContent.includes(${JSON.stringify(scaleTitle(id))})`),5000,'real pointer hover title card');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0);
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.trace').length>0&&cy.edges('.trace').every(e=>parseFloat(e.style('width'))*cy.zoom()>=2);}`),true,'hover traces real routes at two rendered pixels');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.trace').length>0&&cy.edges('.trace').every(e=>parseFloat(e.style('width'))*cy.zoom()>=2&&(e.source().id()==='${id}'||e.target().id()==='${id}'));}`),true,'hover traces real routes at two rendered pixels');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/attempt/);
  return point;
 }
@@ -135,7 +135,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),10_000,'scale graph canvas');
  await new Promise(r=>setTimeout(r,350));const coordinates=await assertRenderedLabels(b,'active',1440);
  const counts=await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {active:cy.nodes('[state="active"][gate=0]').length,dependencies:cy.edges('[kind="dependency"]').length,waits:cy.edges('[kind="waits"]').length,feeds:cy.edges('[kind="feeds"]').length,bundles:cy.edges('[kind="bundle"]').length,hiddenWaits:cy.edges('[kind="waits"]').every(e=>e.style('display')==='none')};}`) as any;
- assert.ok(counts.active>=4);assert.equal(counts.dependencies,663);assert.equal(counts.waits,1004);assert.equal(counts.feeds,300);assert.ok(counts.hiddenWaits);assert.ok(counts.bundles>0&&counts.bundles<100);
+ assert.ok(counts.active>=4);assert.equal(counts.dependencies,663);assert.equal(counts.waits,1004);assert.equal(counts.feeds,300);assert.ok(counts.hiddenWaits);assert.equal(counts.bundles,0,'milestone waits have no bundled routes');
  await assertActiveFrame(b);
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.getElementById('u226');cy.viewport({zoom:.8,pan:{x:720-n.position('x')*.8,y:320-n.position('y')*.8}});return true;}`);await new Promise(r=>setTimeout(r,160));
  assert.equal(await b.evaluate(`()=>{const marks=[...document.querySelectorAll('.node-status-row .signal')];return marks.length>0&&marks.every(n=>n.querySelector('svg path,svg circle')&&n.getBoundingClientRect().width>=8&&n.closest('.node-status-row').getBoundingClientRect().height>=15);}`),true,'full-card status rows keep a visible glyph and readable slot');
@@ -163,7 +163,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  await b.call('browser_press_key',{key:'a'});
  const overviewState=await b.evaluate<{badEdges:string[];transparentGates:string[]}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {badEdges:cy.edges('[kind="dependency"]').filter(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return !e.visible()||!a||!b||![a.x,a.y,b.x,b.y].every(Number.isFinite);}).map(e=>e.id()),transparentGates:cy.nodes('[gate=1]').filter(n=>parseFloat(n.style('background-opacity'))!==1).map(n=>n.id())};}`);
  assert.deepEqual(overviewState.badEdges,[],'every dependency restores on zoom-in');assert.deepEqual(overviewState.transparentGates,[],'opaque gates mask connectors');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,buses=[...document.querySelectorAll('.wait-bus-label')];const actual=buses.flatMap(b=>[...b.querySelectorAll('button')].map(n=>'milestone:'+b.querySelector('summary').getAttribute('aria-label').split(':')[0]+'>'+n.textContent)).sort(),expected=cy.edges('[kind="waits"]').map(e=>e.source().id()+'>'+e.target().id()).sort();return JSON.stringify(actual)===JSON.stringify(expected)&&document.querySelectorAll('.wait-target-tick').length===1004;}`),true,'bus membership retains every exact gate relationship');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,buses=[...document.querySelectorAll('.wait-bus-label')];const actual=buses.flatMap(b=>[...b.querySelectorAll('button')].map(n=>'milestone:'+b.querySelector('summary').getAttribute('aria-label').split(':')[0]+'>'+n.textContent)).sort(),expected=cy.edges('[kind="waits"]').map(e=>e.source().id()+'>'+e.target().id()).sort();return JSON.stringify(actual)===JSON.stringify(expected)&&document.querySelectorAll('.wait-buses,.wait-target-tick').length===0;}`),true,'prerequisite disclosures retain every exact gate relationship without bus routes');
  assert.equal(await b.evaluate(`()=>document.querySelector('.station-current')?.getAttribute('aria-description')`),'First uncleared milestone');
  await b.evaluate(`()=>{document.querySelectorAll('.station')[1].click();return true;}`);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{const summary=page.locator('.wait-bus-label>summary').filter({hasText:'MS-1: 30 linked'}).first();await summary.hover();await summary.focus();await summary.locator('..').getByRole('button',{name:'u31',exact:true}).click();}`});
@@ -211,20 +211,25 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  }`});
  await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-view').dataset.detailTier==='minimal'&&!document.querySelector('.dag-canvas')._cyreg.cy.animated()`),5000,'50-unit All framing settles with identifiers');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),box=nodes.renderedBoundingBox({includeLabels:false});return nodes.length===55&&nodes.every(n=>n.visible()&&n.style('label').trim()&&parseFloat(n.style('font-size'))*cy.zoom()>=10)&&box.x1>=0&&box.x2<=cy.width()&&box.y1>=0&&box.y2<=cy.height();}`),true,'All fits every unit at tier 2 at 1440');
+ const ink=await b.evaluate<{count:number;outside:string[];badArrows:number;clipped:string[]}>(`()=>{
+   const stage=document.querySelector('.graph-stage').getBoundingClientRect(),paths=[...document.querySelectorAll('.graph-edge')];
+   return {count:paths.length,outside:paths.filter(p=>{const r=p.getBoundingClientRect();return r.left<stage.left||r.right>stage.right||r.top<stage.top||r.bottom>stage.bottom;}).map(p=>p.dataset.source+'>'+p.dataset.target),badArrows:paths.filter(p=>getComputedStyle(p).markerEnd==='none').length,clipped:[...document.querySelectorAll('.dag-canvas,.graph-edges,.node-signals')].filter(el=>getComputedStyle(el).clipPath!=='none').map(el=>el.className)};
+ }`);
+ assert.equal(ink.count,110,'all sixty dependencies and fifty gate feeds have actual SVG ink');assert.deepEqual(ink.outside,[],'every All-view curve stays on screen');assert.equal(ink.badArrows,0);assert.deepEqual(ink.clipped,[]);
  const geometry=await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>({id:n.id(),position:n.position(),width:n.width(),height:n.height()}))`);
- const fade=await b.evaluate<{out:number;hidden:boolean;inside:number;shown:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes('[gate=0]')[0];cy.zoom(.62);await new Promise(r=>setTimeout(r,160));cy.zoom(.2);await new Promise(r=>setTimeout(r,60));const out=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));const hidden=n.style('label')===''&&parseFloat(n.style('text-opacity'))===0;cy.zoom(.62);await new Promise(r=>setTimeout(r,60));const inside=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));return{out,hidden,inside,shown:parseFloat(n.style('text-opacity'))===1};}`);
+ const fade=await b.evaluate<{out:number;hidden:boolean;inside:number;shown:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes('[gate=0]')[0];cy.zoom(.62);await new Promise(r=>setTimeout(r,160));cy.zoom(.075);await new Promise(r=>setTimeout(r,60));const out=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));const hidden=n.style('label')===''&&parseFloat(n.style('text-opacity'))===0;cy.zoom(.62);await new Promise(r=>setTimeout(r,60));const inside=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));return{out,hidden,inside,shown:parseFloat(n.style('text-opacity'))===1};}`);
  assert.ok(fade.out>0&&fade.out<1,'text fades out over the tier boundary');
  assert.equal(fade.hidden,true,'status tier settles without text');
  assert.ok(fade.inside>0&&fade.inside<1,'identifiers fade back in');
  assert.equal(fade.shown,true,'identifiers finish appearing after 120 ms');
- for(const level of [.8,.62,.4,.3,.2]){
+ for(const level of [.8,.62,.4,.3,.075]){
    await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(${level});return true;}`);
    await new Promise(r=>setTimeout(r,160));
    assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),tier=document.querySelector('.graph-view').dataset.detailTier;return ['full','minimal','status'].includes(tier)&&nodes.every(n=>n.visible()&&n.hasClass('overview')===(tier!=='full')&&(tier==='status'?n.style('label')===''&&parseFloat(n.style('text-opacity'))===0:!!n.style('label').trim()&&parseFloat(n.style('text-opacity'))===1));}`),true,'LOD is uniform at '+level);
    assert.deepEqual(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>({id:n.id(),position:n.position(),width:n.width(),height:n.height()}))`),geometry,'node geometry stays fixed at '+level);
  }
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.emulateMedia({reducedMotion:'reduce'});}`});
- for(const level of [.8,.2]){
+ for(const level of [.8,.075]){
    assert.equal(await b.evaluate(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.zoom(${level});await new Promise(requestAnimationFrame);return cy.nodes('[gate]').every(n=>!n.animated()&&parseFloat(n.style('text-opacity'))===(${level}===.8?1:0));}`),true,'reduced motion switches text immediately');
  }
  assert.equal(await b.evaluate(`()=>getComputedStyle(document.querySelector('.node-signal')).transitionDuration`),'0s','reduced motion disables status text transitions');
@@ -264,9 +269,9 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.match(await b.evaluate<string>('()=>document.querySelector(".station-health").textContent'),/Show 2 held units/);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Show 2 held units',exact:true}).click();}`});
  assert.deepEqual(await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`),coords,'held targets frame units without re-layout');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return ['u37','u38'].every(id=>{const n=cy.getElementById(id),p=n.renderedPosition();return !n.hasClass('dim')&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();})&&cy.edges('[kind="dependency"]').length===87;}`),true,'exact held members stay highlighted with all dependencies retained');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return ['u37','u38'].every(id=>{const n=cy.getElementById(id),p=n.renderedPosition();return !n.hasClass('dim')&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();})&&cy.edges('[kind="dependency"]').length===60;}`),true,'exact held members stay highlighted with all dependencies retained');
  await b.openUnit('u39');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".unit-dependencies").textContent'),/Depends on \(1\).*Used by \(0\)/s);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".unit-dependencies").textContent'),/Depends on \(1\).*Used by \(1\)/s);
  assert.equal(await b.evaluate('()=>document.querySelector(".unit-dependencies details").open'),false);
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".intent .history-markdown h3").length'),0,'repeated title heading is omitted in collapsed intent');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".intent code").length>0'),true,'intent keeps path chips');
@@ -282,15 +287,17 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
 
  assert.doesNotMatch(await b.evaluate<string>('()=>document.querySelector(".drawer-body").textContent'),/Check: null/);
  await b.evaluate('()=>{document.querySelector(".unit-dependencies details").open=true;document.querySelector(".dependency-row").focus();return true;}');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,edges=cy.edges('.trace');return edges.length===1&&edges[0].source().id()==='u27'&&edges[0].target().id()==='u39';}`),true,'dependency row highlights its one exact edge');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,edges=cy.edges('.trace');return edges.length===1&&edges[0].source().id()==='u31'&&edges[0].target().id()==='u39';}`),true,'dependency row highlights its one exact edge');
  const viewport=await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {zoom:cy.zoom(),pan:cy.pan()};}`);
- await b.call('browser_press_key',{key:'Enter'});await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u27"'),5000,'dependency drawer navigation');
+ await b.call('browser_press_key',{key:'Enter'});await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u31"'),5000,'dependency drawer navigation');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".dependency-back").textContent'),/Back to u39/);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.dependency-back').click();}`});await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u39"'),5000,'back to dependent');
  assert.deepEqual(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {zoom:cy.zoom(),pan:cy.pan()};}`),viewport,'drawer navigation preserves the underlying graph');
  await b.evaluate('()=>{[...document.querySelectorAll(".intent button")].find(b=>b.textContent==="Show full intent").click();return true;}');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".intent h3 + div").textContent'),/^Emit counters for ingest latency and drop rate/,'full original intent remains available');
  await b.call('browser_press_key',{key:'Escape'});await b.call('browser_press_key',{key:'Escape'});await b.call('browser_press_key',{key:'Escape'});await b.evaluate('()=>{document.querySelector(".dag-canvas")._cyreg.cy.getElementById("u39").select();return true;}');
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Gate prerequisites \(1\).*MS-3 Pending/s);
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u37').select();return true;}`);
  assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Gate prerequisites.*MS-1 Passed.*MS-2 Passed.*MS-3 Pending/s);
  await b.openUnit('u10');
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.invocation-row').filter({hasText:'Build'}).first().click();}`});

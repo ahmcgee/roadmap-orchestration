@@ -122,17 +122,54 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     plan.arc = arc; plan.direction = `Deliver ${corpus.milestones.map(m => m.name).join(', ')}.`; plan.worktreeRoot = join(out, 'worktrees');
     const merged = Math.round(count * .55), withdrawn = Math.max(2, Math.round(count * .04)), parkedCount = Math.max(2, Math.round(count * .04));
     const reentryParent = merged + 1;
+    // The 50-unit corpus samples whole features, not consecutive steps of one
+    // eight-system mega-chain. These prerequisites follow the actual titles:
+    // tenant keys -> tenancy consumers; capacity -> listings; signed contracts
+    // -> webhooks; recoverable backfills -> checks; metrics -> guarded rollout.
+    const dependencyRng = random(`${seed}:design-dependencies`);
+    const designAfter = design ? [
+      [], [1], [], [1], [1], [dependencyRng() < .5 ? 1 : 2], [3], [dependencyRng() < .5 ? 2 : 3], [1], [2,4],
+      [], [4,10], [5], [6], [13], [], [9], [11], [11,17,18], [12,17],
+      [], [18], [21], [16], [17], [25], [25,26], [20], [21,25], [22],
+      [23], [], [32], [32], [32,34], [28,32], [33,34,36], [30,34], [31], [32],
+      [], [34], [35], [36], [], [41,42], [39,41], [41,46,47], [41], [25,41,49],
+    ] : [];
     for (let i = 1; i <= count; i++) {
       const u = plan.units[i - 1]; u.systems = [SYSTEMS[(i - 1) % 8]];
-      // A long same-system chain, cross-system layers, and periodic fan-in/fan-out hubs.
-      const after = new Set<number>();
-      if (i > 8) after.add(i - 8);
-      if (i > 16 && i % 8 === 1) for (let k = 1; k <= 8; k++) after.add(i - k);
-      if (i > 16 && i % 8 !== 1) after.add(Math.floor((i - 1) / 8) * 8 - 7);
-      u.after = [...after].sort((a,b) => a-b).map(n => `u${n}`);
       if (i > merged + 12 && i % 29 === 0) u.contingent = [{ id: `e-${i}`, condition: `Owner confirms readiness for ${unitText(i).title}.` }];
-      if (i === merged + 2) u.after = ['u8'];
-      if (i > Math.floor(count*.71) && i < count-withdrawn) u.after = [`u${8 + i % Math.max(1,merged-8)}`];
+      if (design) {
+        // Each milestone has an independent root, a small foundation wave and
+        // consumers of that wave. Earlier same-system work supplies occasional
+        // cross-milestone prerequisites; no eight-way integration hubs.
+        const size = Math.floor(count / 5), first = Math.floor((i - 1) / size) * size + 1;
+        const offset = i - first, after = new Set<number>();
+        const pick = (candidates: number[]) => {
+          const available = candidates.filter(n => n >= 1 && n < i && !after.has(n));
+          if (available.length) after.add(available[Math.floor(dependencyRng() * available.length)]!);
+        };
+        if (offset >= 3) {
+          // Foundations of this milestone supply its later integration work.
+          const foundations = Array.from({length: Math.min(offset, 3)}, (_, n) => first + n);
+          pick(foundations);
+          if (offset >= 4 && offset % 3 === 1) pick(foundations);
+          if (offset === size - 1) pick(foundations);
+          // Prefer the previous implementation in the same system. One sparse
+          // older contract link per arc exercises more distant lineage too.
+          if (first > 1 && offset === size - 2) pick([i - 8]);
+          if (first > size * 3 && offset === 4) pick([i - 16]);
+        }
+        if (first > 1 && (offset === 1 || offset === 2)) after.add(i - 8);
+        u.after = (count === 50 ? designAfter[i - 1]! : [...after]).sort((a,b) => a-b).map(n => `u${n}`);
+      } else {
+        // A long same-system chain, cross-system layers, and periodic fan-in/fan-out hubs.
+        const after = new Set<number>();
+        if (i > 8) after.add(i - 8);
+        if (i > 16 && i % 8 === 1) for (let k = 1; k <= 8; k++) after.add(i - k);
+        if (i > 16 && i % 8 !== 1) after.add(Math.floor((i - 1) / 8) * 8 - 7);
+        u.after = [...after].sort((a,b) => a-b).map(n => `u${n}`);
+        if (i === merged + 2) u.after = ['u8'];
+        if (i > Math.floor(count*.71) && i < count-withdrawn) u.after = [`u${8 + i % Math.max(1,merged-8)}`];
+      }
       const specPath = join(planDir, `u${i}.json`), spec = JSON.parse(readFileSync(specPath, 'utf8'));
       const text = unitText(i);
       // SpecM1 has no title field: an explicit heading preserves the corpus title in presentation.
