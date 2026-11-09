@@ -92,7 +92,7 @@ describe('console browser', { concurrency: false }, () => {
     await browser.call('browser_press_key', { key: 'Escape' });
 
     // Open a retained invocation's real stdout. HTML-like evidence remains plain text, with no invented line timestamps.
-    const inv = (await browser.evaluate<{ invocations: { id: string; unit: string }[] }>(`async () => { const r = await fetch('/api/${JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version}/arcs/${f.d.arc}/snapshot'); return (await r.json()).data.display; }`)).invocations.find((v) => v.unit === 'u1')!;
+    const inv = (await browser.evaluate<{ id: string; unit: string }[]>(`async () => { const r = await fetch('/api/${JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version}/arcs/${f.d.arc}/units/u1?section=invocations'); return (await r.json()).data.invocations.rows; }`)).find(v => v.unit === 'u1')!;
     const dir = invocationDir(f.runDir, invocationIdOf(inv.id)); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'stdout'), '<img src=x onerror="window.consoleEvidenceExecuted=true">\nRecorded lane output\n');
     const routeId = inv.id.split('/')[1]!.replace('#', '-');

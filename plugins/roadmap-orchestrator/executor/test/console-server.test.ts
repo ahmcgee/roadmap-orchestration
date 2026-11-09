@@ -29,16 +29,20 @@ test('real HTTP worker observes retained runs, enforces GET/HEAD, immutable stat
   const runs = await (await fetch(`${api}/arcs`)).json() as { selected: string; runs?: unknown };
   assert.equal(runs.selected, f.arc); assert.equal('arcs' in runs, false); assert.equal(runs.runs, undefined);
   assert.equal((await fetch(`${api}/runs`)).status, 404, 'old API routes have no compatibility alias');
+  for(const route of ['snapshot','snapshot?minHighWater=999999','activity-legacy']){
+    const response=await fetch(`${api}/arcs/${f.arc}/${route}`);assert.equal(response.status,404);
+    assert.equal((await fetch(`${api}/arcs/${f.arc}/${route}`,{method:'HEAD'})).status,404);
+  }
   assert.equal(runs.selected, f.arc);
-  const response = await fetch(`${api}/arcs/${f.arc}/snapshot`);
-  const e = await response.json() as Envelope;
+  const response = await fetch(`${api}/arcs/${f.arc}/status`);
+  const e = await response.json() as Omit<Envelope,'data'> & {data:Envelope['data']['display']['status']};
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.equal(e.data.display.status.arc, f.arc);
-  assert.equal(e.data.display.status.units.length, 3);
+  assert.equal(e.data.arc, f.arc);
+  assert.equal(e.data.units.length, 3);
   assert.ok(response.headers.get('content-security-policy')?.includes("default-src 'self'"));
   assert.equal((await fetch(`${api}/arcs/${f.arc}/status?summary=1`)).status, 200);
-  assert.equal((await fetch(`${api}/arcs/${f.arc}/snapshot?minHighWater=${e.highWater + 1}`)).status, 503);
-  assert.equal((await fetch(`${api}/arcs/${f.arc}/snapshot?epoch=old`)).status, 409);
+  assert.equal((await fetch(`${api}/arcs/${f.arc}/status?minHighWater=${e.highWater + 1}`)).status, 503);
+  assert.equal((await fetch(`${api}/arcs/${f.arc}/status?epoch=old`)).status, 409);
   assert.equal((await fetch(`${api}/arcs/${f.arc}/units/u1`)).status, 200);
   assert.equal((await fetch(`${api}/arcs/${f.arc}/units/missing`)).status, 404);
   assert.equal((await fetch(`${api}/arcs`, { method: 'POST' })).status, 405);

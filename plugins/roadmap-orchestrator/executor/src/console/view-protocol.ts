@@ -62,8 +62,8 @@ export type WaitMeasurement = {
   totalMs: number; heldMs: number; queuedMs: number; unallocatedMs: number;
   reasons: {reason: string; ms: number}[];
 };
-// Full query scope, anchors, keyset paging and backend-hold/activity indexes arrive in later passes.
-// These are bounded row contracts; their server-only collections are never sent as unpaged tab endpoints.
+// Query-specific scopes and anchors extend these row contracts in the tab protocols.
+// Server-only collections are never sent as unpaged tab endpoints.
 export type StageSummary = {
   id: string; unit: string; stage: string; attempt: number; round: number; at: string; endedAt: string | null;
   outcome: string; housekeeping: boolean; detail: DetailRef;

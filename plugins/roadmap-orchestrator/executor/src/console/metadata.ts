@@ -21,8 +21,8 @@ export class ConsoleMetadata {
         scope: i.scope ?? null, relatedUnits: i.relatedUnits ?? [], milestone: i.milestone ?? null, execution: i.execution ?? null,
         backend: i.backend ?? null, model: i.model ?? null, requestedModel: i.requestedModel ?? null,
         startedAt: i.startedAt, endedAt: i.endedAt, work: i.work ?? null}));
-      // Journal identity/order and captured side-file dependencies suffice for the future typed
-      // activity index. This is an invalidation token, not a page or another journal fold.
+      // Journal identity/order and captured side-file dependencies invalidate the typed
+      // activity index. This is a token, not a page or another journal fold.
       const journal = hash(e.data.events), identity = hash([...identities]);
       const stageVersion = hash([...stages.steps]);
       const parks = hash(e.data.events.filter(ev => ev.type === 'fact' && ['backend-park','resumed','probe','arc-completed','stop-completed'].includes(ev.fact.kind)));

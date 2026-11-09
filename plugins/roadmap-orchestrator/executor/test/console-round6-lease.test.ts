@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {ensureConsole,readConsoleLease,serviceDir,stopConsole} from '../src/console/lease.ts';
 import {consoleStatus} from '../src/console/client.ts';
 import {selfIdentity,isAlive} from '../src/host/liveness.ts';
+import {consoleGet} from './helpers/console-http.ts';
 import {CONSOLE_PROTOCOL} from '../src/observation/protocol.ts';
 import {consoleFixture,setConsolePort} from './fixtures/console.ts';
 test('R3 version mismatch falls back locally; automatic ensure replaces the old process',async t=>{
@@ -25,6 +26,6 @@ test('R4 dead foreign-common leases can be replaced/stopped; live foreign leases
 test('R7 checked observations never rewrite the service lease',async t=>{
  const f=consoleFixture();setConsolePort(f.repo,0);t.after(()=>stopConsole(f.repo));const lease=await ensureConsole(f.repo,f.hostDir);const path=join(serviceDir(f.common),'lease.json');
  const original=readFileSync(path,'utf8'),stamp=statSync(path,{bigint:true}).mtimeNs;
- await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/snapshot`);await new Promise(r=>setTimeout(r,1200));
+ assert.equal((await consoleGet(`${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/shell`)).status,200);await new Promise(r=>setTimeout(r,1200));
  assert.equal(readFileSync(path,'utf8'),original);assert.equal(statSync(path,{bigint:true}).mtimeNs,stamp);assert.equal(Object.hasOwn(JSON.parse(original),'lastObservation'),false);
 });

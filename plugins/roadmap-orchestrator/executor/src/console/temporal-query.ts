@@ -1,4 +1,4 @@
-// D1/D2/D3/D8/D10, independent of ConsoleModels and presentation/report sweeps.
+// D1/D2/D3/D8/D10, independent of selected-detail report enrichment.
 import { ConsoleError } from '../observation/protocol.ts';
 import { sha256Hex } from '../core/json.ts';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';

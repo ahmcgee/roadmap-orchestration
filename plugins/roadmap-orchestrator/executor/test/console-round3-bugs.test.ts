@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { SseWriter } from '../src/console/sse.ts';
 import { HistoryTail } from '../src/tui/history.ts';
 import { serveConsole } from '../src/console/http.ts';
-import { consoleModel } from '../src/console/model.ts';
+import { arcBounds } from '../src/console/views.ts';
 import { ObservationCache } from '../src/observation/cache.ts';
 import { absPath } from '../src/core/values.ts';
 import { arcId } from '../src/core/ids.ts';
@@ -39,8 +39,8 @@ test('B3 completed run resource axis stays at its recorded end across later obse
  const f=parityArc();const e=new ObservationCache(f.hostDir,'i','r').read({runDir:f.runDir,arc:arcId(f.d.arc)});
  const at=new Date(Date.parse(e.data.events[0]!.at)+120000).toISOString();
  const done={...e.data.events.at(-1)!,type:'fact',at,fact:{kind:'arc-completed'}} as unknown as typeof e.data.events[number];
- const model=consoleModel({...e,checkedAt:new Date(Date.parse(at)+7*3600000).toISOString(),data:{...e.data,events:[...e.data.events,done]}});
- assert.equal(model.resources.now,120);assert.equal(model.resources.endAt,at);
+ const bounds=arcBounds({...e,checkedAt:new Date(Date.parse(at)+7*3600000).toISOString(),data:{...e.data,events:[...e.data.events,done]}});
+ assert.equal((Date.parse(bounds.to!)-Date.parse(bounds.from!))/1000,120);assert.equal(bounds.to,at);
 });
 test('B4 CLI housekeeping is collapsed session metadata, never raw transcript events',()=>{
  const path=join(tmpDir('session-metadata'),'stdout');writeFileSync(path,JSON.stringify({type:'system',subtype:'init',model:'claude-test',tools:['Read','Bash']})+'\n');

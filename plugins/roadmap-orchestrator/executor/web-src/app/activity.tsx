@@ -14,6 +14,12 @@ export function Activity({arc}:{arc:string}) {
   const [changes,setChanges]=useState(0),[noticeError,setNoticeError]=useState(''),[retry,setRetry]=useState(0),[localError,setLocalError]=useState('');
   useEffect(()=>{store?.ui.set('query:activity',current.query.toString());},[store,current.query.toString()]);
   const metadataVersion=store?.metadata?.viewVersions.activity,request=useRef(0);
+  const requestVersion=store?.metadata?.viewVersions.attention,generation=store?.generation??0;
+  const [requestAnchor,setRequestAnchor]=useState<{generation:number;version:string}|null>(null);
+  useEffect(()=>{
+    if(requestVersion&&(!requestAnchor||requestAnchor.generation!==generation))setRequestAnchor({generation,version:requestVersion});
+  },[requestVersion,generation,requestAnchor]);
+  const requestsChanged=Boolean(requestVersion&&requestAnchor?.generation===generation&&requestAnchor.version!==requestVersion);
   useEffect(()=>{
     setChanges(0);setNoticeError('');
     if(view!=='events'||!data||!store||!metadataVersion)return;
@@ -46,6 +52,7 @@ export function Activity({arc}:{arc:string}) {
   function filters(form:HTMLFormElement){const values=new FormData(form),next=new URLSearchParams(current.query);for(const key of activityFields){if(!values.has(key)&&key!=='housekeeping')continue;const value=String(values.get(key)??'');if(value)next.set(key,value);else next.delete(key);}navigate(next,true);}
   return <section className="panel"><header><h2>Activity</h2><p className="muted">What happened, in recorded journal order</p></header>
     <div className="local-tabs" aria-label="Activity sections"><Button aria-pressed={view==='events'} onClick={()=>change('view','')}>Events</Button><Button aria-pressed={view==='holistic'} onClick={()=>change('view','holistic')}>Holistic review</Button></div>
+    <div className="activity-current-requests" aria-live="polite">{requestsChanged&&<p role="status">Current human requests may have changed. <a href={link(arc,'attention')}>View Attention</a> <Button onClick={()=>setRequestAnchor({generation,version:requestVersion!})}>Dismiss request notice</Button></p>}</div>
     {view==='holistic'?<Holistic arc={arc}/>:<>
       <form key={query} className="activity-filters" aria-label="Activity filters" onSubmit={ev=>{ev.preventDefault();filters(ev.currentTarget);}}>
         <label>Time window<select aria-label="Activity time window" value={params.get('window')??'range'} onChange={ev=>{const next=new URLSearchParams(current.query);next.delete('from');next.delete('to');next.set('window',ev.target.value);navigate(next,true);}}><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="arc">Whole arc</option>{!params.has('window')&&<option value="range">Selected range</option>}</select></label>

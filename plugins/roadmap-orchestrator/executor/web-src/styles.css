@@ -320,6 +320,9 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .activity-feed a > span { min-width:0; overflow-wrap:anywhere; }
 @media(max-width:640px) { .activity-filters label { flex:1 1 140px; } .activity-filters input:not([type=checkbox]), .activity-filters select { width:100%; } }
 .activity-updates { min-height:40px; }
+.activity-current-requests { min-height:40px; }
+.activity-current-requests p { margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+@media(max-width:640px) { .activity-current-requests { min-height:76px; } }
 .activity-feed a { grid-template-columns:200px minmax(0,1fr); }
 .event-context > div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; padding:8px 0; border-bottom:1px solid var(--rule); }
 .event-context dt { color:var(--muted-ink); }

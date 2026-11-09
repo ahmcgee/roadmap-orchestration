@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ObservationCache } from '../src/observation/cache.ts';
-import { consoleModel } from '../src/console/model.ts';
 import {graphView} from '../src/console/views.ts';
 const {graphData}=await import(new URL('../web-src/app/graph-data.ts',import.meta.url).href);
 const { graphLayout } = await import(new URL('../web-src/app/graph-layout.ts', import.meta.url).href) as {
@@ -13,10 +12,10 @@ import { investigationFixture } from './fixtures/console-investigations.ts';
 test('milestone bands include all units and gates, preserve gate waits, and produce deterministic non-overlapping blocks',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
  const observed=new ObservationCache(f.hostDir,'graph-layout','graph').read({runDir:f.runDir,arc:f.arc});
- const {events:_,...data}=observed.data;const e={...observed,data:{...data,console:consoleModel(observed)}};
+ const e=observed;
  assertGraphGeometry(e);
  const a=graphLayout(graphData({...observed,data:graphView(observed)})),b=graphLayout(graphData({...observed,data:graphView(observed)}));
- assert.deepEqual(a.positions,b.positions);assert.equal(a.positions.size,e.data.console.graph.units.length);
+ assert.deepEqual(a.positions,b.positions);assert.equal(a.positions.size,e.data.display.status.units.length+e.data.display.status.milestones.length);
  assert.equal(a.bands.filter(v=>v.id.startsWith('milestone:')).length,6);
  assert.ok(a.bands.some(v=>v.id==='unbound'),'units feeding no gate retain a final band');
  const all=a.bands.flatMap(v=>v.ids);assert.equal(all.length,60);assert.equal(new Set(all).size,60);
@@ -31,12 +30,11 @@ test('milestone bands include all units and gates, preserve gate waits, and prod
 
 test('equal ranks retain dependency columns and one layout across focus contexts',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
- const observed=new ObservationCache(f.hostDir,'graph-wrap','graph').read({runDir:f.runDir,arc:f.arc});const {events:_,...data}=observed.data;
- const e={...observed,data:{...data,console:consoleModel(observed)}};
+ const observed=new ObservationCache(f.hostDir,'graph-wrap','graph').read({runDir:f.runDir,arc:f.arc});
  const input=graphData({...observed,data:graphView(observed)}),a=graphLayout(input),unbound=a.bands.find(b=>b.id==='unbound')!;
  const columns=new Map<number,number>();for(const id of unbound.ids){const x=a.positions.get(id)!.x;columns.set(x,(columns.get(x)??0)+1);}
  assert.equal(columns.size,1,'unrelated equal-rank units do not invent wrapped dependency columns');assert.ok([...columns.values()].some(count=>count>10),'space remains available to a large rank');
- assert.equal(e.data.console.graph.edges.length,consoleModel(observed).graph.edges.length,'ordering invents no semantic edges');
+ assert.equal(input.graph.edges.length,observed.data.display.status.edges.filter(e=>e.type==='after'||e.type==='milestone').length+(observed.data.plan?.milestones??[]).reduce((n,g)=>n+g.units.length,0),'ordering invents no semantic edges');
  const {graphLayout:layout,activeFocus}=await import(new URL('../web-src/app/graph-layout.ts',import.meta.url).href);
  const all=layout(input),repeat=layout(input);assert.deepEqual(all.positions,repeat.positions);
  const focus=activeFocus(input);assert.ok(focus.seeds.includes('u3'));assert.ok(focus.ids.includes('u4'),'direct downstream included');assert.ok(!focus.ids.includes('u60'),'unrelated work is outside the focus');

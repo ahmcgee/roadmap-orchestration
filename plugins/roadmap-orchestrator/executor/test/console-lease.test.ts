@@ -55,12 +55,14 @@ test('CLI transport bytes equal the same captured observation; stopped/dead serv
   t.after(() => stopConsole(f.repo));
   const lease = await ensureConsole(f.repo, f.hostDir);
   const diagnostics: string[] = [];
-  const e = await (await fetch(`${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/snapshot`)).json() as Envelope;
+  const base = `${lease.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
+  const e = await (await fetch(`${base}/status`)).json() as {data:Envelope['data']['display']['status']};
+  const s = await (await fetch(`${base}/status?summary=1`)).json() as {data:Envelope['data']['summary']};
   const full = await consoleStatus(f, f.hostDir, false, (l) => diagnostics.push(l));
   const summary = await consoleStatus(f, f.hostDir, true, (l) => diagnostics.push(l));
   const { canonicalJson } = await import('../src/core/json.ts');
-  assert.equal(full, canonicalJson(e.data.display.status) + '\n');
-  assert.equal(summary, canonicalJson(e.data.summary) + '\n');
+  assert.equal(full, canonicalJson(e.data) + '\n');
+  assert.equal(summary, canonicalJson(s.data) + '\n');
   assert.ok(diagnostics.every((d) => d.includes(lease.url)));
   const path = join(serviceDir(f.common), 'lease.json');
   const bad = { ...readConsoleLease(f.common)!, executorVersion: 'incompatible' };

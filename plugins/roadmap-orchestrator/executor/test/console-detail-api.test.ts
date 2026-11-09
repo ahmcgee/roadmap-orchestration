@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import { investigationFixture } from './fixtures/console-investigations.ts';
 import { ObservationCache } from '../src/observation/cache.ts';
 import { unitView, milestoneView, invocationView, invocationSummaries } from '../src/console/details.ts';
-import { consoleModel } from '../src/console/model.ts';
+import { selectedUnitJourney } from '../src/console/unit-journey.ts';
+import { projectionIndex } from '../src/console/tab-projections.ts';
+import { stateWords, stageWords } from '../src/console/vocabulary.ts';
 import { unitShape, milestoneShape, invocationShape } from '../src/console/view-shapes.ts';
 import { statusBytes, CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { absPath } from '../src/core/values.ts';
@@ -20,12 +22,13 @@ import { consoleGet } from './helpers/console-http.ts';
 function noWorkingSet(value:unknown){if(value&&typeof value==='object')for(const [key,child] of Object.entries(value)){assert.ok(!['events','body','plan','display','estate','raw','report'].includes(key),key);noWorkingSet(child);}}
 test('selected unit, milestone and invocation preserve detail meaning without canonical working sets',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
- const e=new ObservationCache(f.hostDir,'detail','repo').read({runDir:f.runDir,arc:f.arc}),before=statusBytes(e,false),model=consoleModel(e);
- for(const original of model.presentation.units){
+ const e=new ObservationCache(f.hostDir,'detail','repo').read({runDir:f.runDir,arc:f.arc}),before=statusBytes(e,false);
+ for(const runtime of e.data.display.status.units){
+  const original=selectedUnitJourney(e,runtime.unit,new Set((projectionIndex(e).stages.byUnit.get(runtime.unit)??[]).slice(0,25).map(s=>s.id)));
   const detail=unitView(e,original.id,{}) as any;assert.ok(unitShape(detail));noWorkingSet(detail);
-  assert.equal(detail.unit.title,original.title);assert.equal(detail.unit.attempts,original.attempts);assert.equal(detail.unit.state,original.state);assert.equal(detail.unit.stage,original.stage);
+  assert.equal(detail.unit.title,original.title);assert.equal(detail.unit.state,stateWords(runtime.state));assert.equal(detail.unit.stage,stageWords(runtime.stage));assert.equal(detail.unit.attempts,original.attempts);assert.equal(detail.unit.state,original.state);assert.equal(detail.unit.stage,original.stage);
   assert.deepEqual(detail.journey.rows,original.journey.slice(0,25));assert.deepEqual(detail.acceptance.rows,original.acceptance.slice(0,25));
-  assert.equal(detail.invocations.total,model.activities.filter(a=>a.unit===original.id).length);
+  assert.equal(detail.invocations.total,e.data.display.invocations.filter(a=>a.unit===original.id).length);
   assert.ok(Buffer.byteLength(JSON.stringify({...e,data:detail}))<=64*1024);
  }
  for(const g of e.data.plan!.milestones!){const d=milestoneView(e,g.id,{});assert.ok(milestoneShape(d));assert.equal(d.total,g.units.length);assert.equal(d.members.rows.length,Math.min(25,g.units.length));noWorkingSet(d);}

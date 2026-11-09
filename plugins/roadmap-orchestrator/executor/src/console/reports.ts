@@ -1,5 +1,4 @@
-// Selected-detail enrichment. The legacy snapshot adapter explicitly calls the sweep below;
-// independent view projections never depend on retained agent results.
+// Selected-detail enrichment; independent view projections never depend on retained agent results.
 import { join } from 'node:path';
 import { invocationDir } from '../pipeline/invoke.ts';
 import { invocationIdOf, parseInvocationId } from '../core/ids.ts';
@@ -48,7 +47,7 @@ export function retainedReport(e: Envelope, id: string): Record<string, unknown>
   const terminal = e.data.events.find((ev): ev is Terminal => ev.type === 'done' && ev.kind === 'proc.spawn' && ev.op === op);
   return readReport(e, e.data.display.invocations.find(i => i.id === id), terminal);
 }
-export function enrichReports(e: Envelope, invocations: readonly import('../tui/types.ts').Invocation[] = e.data.display.invocations) {
+export function enrichReports(e: Envelope, invocations: readonly import('../tui/types.ts').Invocation[]) {
   const reports = new Map<string, Record<string, unknown>>();
   const terminals = new Map(e.data.events.flatMap(ev => ev.type === 'done' && ev.kind === 'proc.spawn' ? [[String(ev.op), ev] as const] : []));
   for (const inv of invocations) if (inv.execution === 'agent') {

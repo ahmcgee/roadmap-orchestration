@@ -16,7 +16,10 @@ import { CONSOLE_PROTOCOL, type Envelope } from '../../src/observation/protocol.
 import { consoleGet } from '../helpers/console-http.ts';
 import type { AttentionView, RequestView } from '../../src/console/attention-protocol.ts';
 import type { UnitView } from '../../src/console/detail-protocol.ts';
-import type { consoleModel } from '../../src/console/model.ts';
+import { ObservationCache } from '../../src/observation/cache.ts';
+import { invocationSummaries, unitView } from '../../src/console/details.ts';
+import type { GraphView } from '../../src/console/view-protocol.ts';
+import type { IntervalsView } from '../../src/console/temporal-protocol.ts';
 import type { ConsoleHistories } from '../../src/console/history.ts';
 
 const corpus = JSON.parse(readFileSync(new URL('../helpers/scale-corpus.json',import.meta.url),'utf8'));
@@ -30,26 +33,33 @@ test('scale arc: real server serves the manifest, attempts and four active histo
   let disposed=false;
   t.after(async()=>{if(!disposed){await server.close();release();}});
   const base=`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}`;
-  async function get<T>(route:string):Promise<T> {const response=await fetch(`${base}/${route}`);assert.equal(response.status,200,`${route}: ${await response.clone().text().then(s=>s.slice(0,500))}`);return await response.json() as T;}
+  async function get<T>(route:string):Promise<T> {const response=await consoleGet(`${base}/${route}`);assert.equal(response.status,200,`${route}: ${await response.clone().text().then(s=>s.slice(0,500))}`);return await response.json() as T;}
   const status=await get<{data:Envelope['data']['display']['status']}>('status');
-  const snapshot=await get<Envelope & {data:{console:ReturnType<typeof consoleModel>}}>('snapshot');
+  const capture=new ObservationCache(absPath(m.hostDir),'scale-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
+  const graph=(await get<{data:GraphView}>('graph')).data;
+  let intervals=(await get<{data:IntervalsView}>('timeline/intervals?window=arc')).data;const calls=[...intervals.rows];
+  while(intervals.page.next){intervals=(await get<{data:IntervalsView}>(`timeline/intervals?window=arc&cursor=${encodeURIComponent(intervals.page.next)}`)).data;calls.push(...intervals.rows);}
+  assert.equal(new Set(calls.map(i=>i.id)).size,calls.length);assert.equal(calls.length,intervals.page.matching);
+  const canonicalInvocations=new Map(capture.data.display.invocations.map(i=>[invocationDirName(invocationIdOf(i.id)),i]));
+  assert.equal(status.data.arc,m.arc);assert.equal(capture.arc,m.arc);
+  assert.deepEqual(calls.map(i=>i.invocation).sort(),[...canonicalInvocations.keys()].sort());
   const units=status.data.units;
   assert.equal(units.length,m.units);
-  assert.equal(snapshot.data.console.graph.units.length,m.units+m.milestones);
-  assert.equal(snapshot.data.console.activities.length,m.invocations);
-  assert.equal(snapshot.data.console.activities.filter(i=>i.kind==='agentic').length,m.agentInvocations);
+  assert.equal(graph.units.length+graph.milestones.length,m.units+m.milestones);
+  assert.equal(calls.length,m.invocations);
+  assert.equal(calls.filter(i=>canonicalInvocations.get(i.invocation)!.execution==='agent').length,m.agentInvocations);
   assert.equal(units.filter(u=>u.state==='merged').length,m.merged);
   assert.equal(units.filter(u=>u.state==='cut'||u.state==='superseded').length,m.withdrawn);
   const attention=await (await consoleGet(`${base}/attention`)).json() as {data:AttentionView};assert.equal(attention.data.counts.total,m.openAttention);assert.equal(attention.data.page.matching,m.openAttention);assert.equal(attention.data.rows.length,m.openAttention);
   assert.equal(status.data.milestones.filter(m=>m.passed).length,m.passedMilestones);
-  const active=snapshot.data.display.invocations.filter(i=>i.execution==='agent' && !i.endedAt);
+  const active=capture.data.display.invocations.filter(i=>i.execution==='agent' && !i.endedAt);
   assert.equal(active.length,4); assert.equal(active.length,m.live.length);
-  const attempts=units.reduce((n,u)=>n+new Set(snapshot.data.display.invocations.filter(i=>i.unit===u.unit).map(i=>i.attempt)).size,0);
+  const attempts=units.reduce((n,u)=>n+new Set(capture.data.display.invocations.filter(i=>i.unit===u.unit).map(i=>i.attempt)).size,0);
   assert.equal(attempts,m.attempts);
   const detail=await get<{data:UnitView}>('units/u7'),invocations=[...detail.data.invocations.rows];
   let cursor=detail.data.invocations.next;while(cursor){const next=await get<{data:UnitView}>(`units/u7?section=invocations&cursor=${encodeURIComponent(cursor)}`);invocations.push(...next.data.invocations.rows);cursor=next.data.invocations.next;}
-  assert.equal(invocations.length,snapshot.data.display.invocations.filter(i=>i.unit==='u7').length);
-  assert.deepEqual(invocations.map(i=>i.id).sort(),snapshot.data.display.invocations.filter(i=>i.unit==='u7').map(i=>i.id).sort());
+  assert.equal(invocations.length,capture.data.display.invocations.filter(i=>i.unit==='u7').length);
+  assert.deepEqual(invocations.map(i=>i.id).sort(),capture.data.display.invocations.filter(i=>i.unit==='u7').map(i=>i.id).sort());
   assert.ok(new Set(invocations.map(i=>i.attempt)).size>=2);
   for(const live of m.live) {
     const history=await get<{data:ReturnType<ConsoleHistories['page']>}>(`invocations/${live.routeId}/history`);
@@ -58,7 +68,7 @@ test('scale arc: real server serves the manifest, attempts and four active histo
     const text=textFor(Number(live.unit.slice(1)),m.systems), brief=prompt.data.lines.join('\n');
     for(const value of [text.title,text.intent,text.acceptance,...text.files]) assert.ok(brief.includes(value));
   }
-  const finished=snapshot.data.console.activities.find(i=>i.kind==='agentic'&&i.status==='passed')!;
+  const finished=invocationSummaries(capture).find(i=>i.kind==='agentic'&&i.status==='passed')!;
   const history=await get<{data:ReturnType<ConsoleHistories['page']>}>(`invocations/${finished.routeId}/history`);assert.equal(history.data.state,'success');
   assert.equal((await fetch(`${server.url}/#/arcs/${m.arc}/graph`)).status,200);
   await server.close();release();disposed=true;
@@ -95,20 +105,21 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
   assert.ok(facts.some(f=>f.kind==='stage-outcome'&&'outcome' in f&&f.outcome==='revise'));
   const release=await ownScaleArc(m);t.after(release);
   const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
-  const response=await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`);assert.equal(response.status,200,await response.clone().text());
-  const snapshot=await response.json() as Envelope & {data:{console:ReturnType<typeof consoleModel>}};
-  const geometry=assertGraphGeometry(snapshot);t.diagnostic(`300-unit layout + direct curves: ${geometry.elapsed.toFixed(1)}ms; ${geometry.curves} complete edges`);
-  assert.equal(snapshot.data.display.status.units.length,300);
+  const response=await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/graph`);assert.equal(response.status,200,await response.clone().text());
+  const graph=(await response.json() as {data:GraphView}).data;
+  const capture=new ObservationCache(absPath(m.hostDir),'scale-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
+  const geometry=assertGraphGeometry(capture);t.diagnostic(`300-unit layout + direct curves: ${geometry.elapsed.toFixed(1)}ms; ${geometry.curves} complete edges`);
+  assert.equal(capture.data.display.status.units.length,300);
   for(let i=1;i<=300;i++) {
-    const text=textFor(i,m.systems),unit=snapshot.data.console.presentation.units.find(u=>u.id===`u${i}`)!;
-    assert.equal(unit.title,text.title);
-    assert.equal(unit.intent,`# ${text.title}\n\n${text.intent}`);
-    assert.deepEqual(unit.acceptance,[text.acceptance]);
+    const text=textFor(i,m.systems),unit=unitView(capture,`u${i}`) as UnitView;
+    assert.equal(unit.unit.title,text.title);assert.equal(graph.units.find(u=>u.id===unit.unit.id)!.title,text.title);
+    assert.equal(unit.intent.text,`# ${text.title}\n\n${text.intent}`);
+    assert.deepEqual(unit.acceptance.rows,[text.acceptance]);
   }
-  assert.deepEqual(snapshot.data.plan!.milestones!.map(m=>({text:m.text,journey:m.journeys[0]!.text})),
+  assert.deepEqual(capture.data.plan!.milestones!.map(m=>({text:m.text,journey:m.journeys[0]!.text})),
     corpus.milestones.map((m:{text:string;journey:string})=>({text:m.text,journey:m.journey})));
   for(const [route,stage,state] of [['7459-1','build','running'],['42-1','build','success'],['23-1','gate','success']]) {
-    const invocation=snapshot.data.display.invocations.find(i=>invocationDirName(invocationIdOf(i.id))===route)!;
+    const invocation=capture.data.display.invocations.find(i=>invocationDirName(invocationIdOf(i.id))===route)!;
     assert.equal(invocation.state,state);
     assert.equal(JSON.parse(invocation.body).parent.stage,stage);
     const text=textFor(Number(invocation.unit!.slice(1)),m.systems);
@@ -126,7 +137,7 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
     if(stage==='gate') assert.deepEqual(rows.at(-1).structured_output,{decision:'approve',reasons:[text.approve],findings:[],directives:[]});
   }
   // Check retained revise reports independently of the projection's report summary shape.
-  const gates=snapshot.data.display.invocations.filter(i=>i.execution==='agent'&&JSON.parse(i.body).parent.stage==='gate'&&i.endedAt);
+  const gates=capture.data.display.invocations.filter(i=>i.execution==='agent'&&JSON.parse(i.body).parent.stage==='gate'&&i.endedAt);
   const reports=gates.map(i=>({i,result:JSON.parse(readFileSync(join(m.runDir,'inv',invocationDirName(invocationIdOf(i.id)),'result.json'),'utf8'))}));
   const revise=reports.find(({result})=>result.outcome.value.decision==='revise')!;
   const text=textFor(Number(revise.i.unit!.slice(1)),m.systems);
@@ -150,11 +161,12 @@ test('design preset spans the corpus through rollout in five named milestones', 
  assert.equal(m.units,50);assert.equal(m.milestones,5);assert.equal(m.live.length,4);assert.equal(m.openAttention,3);
  const release=await ownScaleArc(m);t.after(release);
  const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
- const s=await (await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/snapshot`)).json() as Envelope & {data:{console:ReturnType<typeof consoleModel>}};
+ const response=await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/graph`);assert.equal(response.status,200);const graph=(await response.json() as {data:GraphView}).data;
+ const s=new ObservationCache(absPath(m.hostDir),'design-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
  assert.deepEqual(s.data.plan!.milestones!.map(g=>g.name),[0,2,5,7,9].map(i=>corpus.milestones[i].name));
  for(let i=1;i<=50;i++) {
   const expected=corpus.systems[m.systems[(i-1)%8]!][Math.floor((i-1)*38/50)];
-  assert.equal(s.data.console.presentation.units.find(u=>u.id===`u${i}`)!.title,expected.title);
+  assert.equal(graph.units.find(u=>u.id===`u${i}`)!.title,expected.title);
  }
  const geometry=assertGraphGeometry(s);t.diagnostic(`50-unit layout + direct curves: ${geometry.elapsed.toFixed(1)}ms; ${geometry.curves} complete edges`);
  const units=s.data.plan!.units,distribution=Object.fromEntries([0,1,2,3].map(n=>[n,units.filter(u=>u.after.length===n).length]));
@@ -165,7 +177,7 @@ test('design preset spans the corpus through rollout in five named milestones', 
  for(const u of units)for(const id of u.after){const distance=milestone.get(u.id)!-milestone.get(id)!;split[distance===0?'same':distance===1?'previous':'older']++;}
  assert.deepEqual(split,{same:43,previous:16,older:1});
  for(const gate of s.data.plan!.milestones!)assert.ok(gate.units.some(id=>units.find(u=>u.id===id)!.after.length===0),'each milestone contains an independent root');
- assert.ok(s.data.console.graph.units.some(u=>u.status==='held'));
+ assert.ok(graph.units.some(u=>u.signal==='held'));
  assert.ok(s.data.display.status.units.some(u=>u.state==='cut'||u.state==='superseded'));
- assert.ok(s.data.console.activities.some(a=>a.status==='failed'));
+ assert.ok(invocationSummaries(s).some(a=>a.status==='failed'));
 });

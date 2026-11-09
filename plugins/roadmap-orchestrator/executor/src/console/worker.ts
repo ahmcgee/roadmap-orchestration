@@ -12,7 +12,6 @@ import { CONSOLE_PROTOCOL, ConsoleError, type Admission, type Envelope } from '.
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
 import { ConsoleHistories } from './history.ts';
-import { ConsoleModels } from './model.ts';
 import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
 import { ConsoleResources } from './resource-query.ts';
@@ -33,7 +32,6 @@ const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string
 const cache = new ObservationCache(args.hostDir, args.instance, args.repoId);
 const subscribed = new Set<string>();
 const maintained = new Set<string>();
-const models = new ConsoleModels(); // Temporary legacy UI adapter until the tab cutover.
 const views = new ConsoleViews();
 const metadata = new ConsoleMetadata();
 const activity = new ConsoleActivity();
@@ -79,21 +77,18 @@ function route(path: string[], params: Record<string, string>) {
   if (path.length === 3 && (section === 'shell' || section === 'graph' || section === 'metadata')) {
     for (const key of Object.keys(params)) if (!['epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown view query parameter');
   }
+  if (section === 'snapshot' || section === 'activity-legacy') throw new ConsoleError('not-found', 'unknown console route');
   const admission = admissionOf(params);
   let e: Envelope;
   try { e = read(arc, admission); }
   catch (error) {
-    if (error instanceof ConsoleError && error.code === 'not-found' && (section === 'snapshot' || section === 'status')) throw new ConsoleError('unavailable', 'arc has no retained observation yet');
+    if (error instanceof ConsoleError && error.code === 'not-found' && section === 'status') throw new ConsoleError('unavailable', 'arc has no retained observation yet');
     throw error;
   }
   if (path.length === 3 && (section === 'shell' || section === 'graph')) {
     return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : views.graph(e)}, section, e);
   }
   if (path.length === 3 && section === 'metadata') return notice(e);
-  if (path.length === 3 && section === 'snapshot') {
-    const { events: _events, ...displayData } = e.data;
-    return { ...e, data: { ...displayData, console: models.read(e) } };
-  }
   if (section === 'resources' && path.length === 5 && id === 'details' && file?.startsWith('effort-')) {
     const data = effort.detail(e, file, params, notice(e).viewVersions.effort);
     if (!effortScopeShape(data)) throw new ConsoleError('protocol', 'malformed selected Effort scope');

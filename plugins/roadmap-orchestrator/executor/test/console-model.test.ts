@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ConsoleModels, graphStatus, waitingCategory, waitingBreakdown, consoleModel } from '../src/console/model.ts';
+import { graphStatus } from '../src/console/signals.ts';
+import { waitingCategory, waitingBreakdown } from '../src/console/waiting.ts';
+import { ConsoleViews, graphView, arcBounds } from '../src/console/views.ts';
+import { ConsoleMetadata } from '../src/console/metadata.ts';
+import { effortRows, timelineIntervals, attentionSummaries, bookingSummaries, cpuSummaries } from '../src/console/tab-projections.ts';
+import { graphData } from '../web-src/app/graph-data.ts';
+import { invocationSummaries } from '../src/console/details.ts';
+import { ConsoleEffort } from '../src/console/effort-query.ts';
+import { ConsoleResources } from '../src/console/resource-query.ts';
 import { ObservationCache } from '../src/observation/cache.ts';
 import { arcId } from '../src/core/ids.ts';
 import { parityArc, enrichedParityArc } from './fixtures/status-parity.ts';
@@ -20,29 +28,40 @@ test('waiting totals are allocated once, never summed from overlapping reasons; 
   assert.deepEqual(waitingBreakdown({ totalMs: 40, byReasonMs: { 'admission-hold:paused': 40 } }, 'admission'), { held: 40, queued: 0, unallocated: 0 });
 });
 
-test('model uses explicit executor milestone gates and includes nonblocking owner attention', () => {
+test('typed views use explicit executor milestone gates and include nonblocking owner attention', () => {
   const f = parityArc();
   const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
-  const m = consoleModel(e);
-  assert.equal(m.graph.units.length, 4);
-  const gate = m.graph.units.find((u) => u.id.startsWith('milestone:'))!;
-  assert.equal(gate.status, 'pending');
-  assert.match(gate.meta, /gate/);
-  assert.equal(m.attention.length, 1);
-  assert.equal(m.attention[0]!.blocking, false);
-  assert.equal(m.attention[0]!.summary, 'Review the plan');
-  assert.equal(m.time.caption.includes('partial recorded effort'), true);
+  const graph = graphView(e), attention = attentionSummaries(e);
+  assert.equal(graph.units.length + graph.milestones.length, 4);
+  const gate = graph.milestones[0]!;
+  assert.equal(gate.passed, false);
+  assert.equal(graphData({...e,data:graph}).graph.units.find(u=>u.id===`milestone:${gate.id}`)!.status,'pending');
+  assert.equal(gate.state,e.data.display.status.milestones[0]!.state);
+  assert.ok(graph.edges.some(edge => edge.kind === 'feeds' && edge.target === `milestone:${gate.id}`), 'explicit milestone gate');
+  assert.equal(attention.length, 1);
+  assert.equal(attention[0]!.blocking, false);
+  assert.equal(attention[0]!.summary.text, 'Review the plan');
+  const effort = new ConsoleEffort().read(e,{window:'arc'});
+  assert.equal(effort.rows.filter(r => r.subject.type === 'unit').length, e.data.display.status.units.length);
+  assert.equal(effort.totals.agentMs,null);assert.equal(effort.totals.commandMs,null);
+  assert.equal(effort.totals.coverage.execution.measured,0,'partial recorded effort exposes measurement coverage, not invented wall coverage');
+  assert.equal(effort.scope.basis,'recorded-arc');
 });
 
 test('CPU uses recorded reservation and measured run/wall duration, never demand or synthetic peak', async () => {
   const f = await enrichedParityArc();
   const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
-  const m = consoleModel(e);
-  assert.equal(m.cpu.length, 2);
-  assert.ok(m.cpu.every((r) => r.average === 80 / 120 && !('peak' in r)));
-  assert.equal(m.time.rows.find((r) => r.id === 'u1')!.deterministic, 120);
-  assert.ok(m.activities.every((r) => !('tests' in r) && !('startedAtMs' in r)));
-  assert.ok(m.activities.filter((a) => a.unit === 'u1').every((a) => a.status === 'passed' && a.name.includes('pass')), 'pruned terminal results retain their recorded verdict and never appear queued');
+  const work = [...e.data.display.status.host.work,...e.data.display.status.units.flatMap(u=>u.work)].filter(w=>w.reservedCpu!==null||w.measured!==null);
+  assert.equal(work.length, 2);
+  assert.ok(work.every(r => r.measured!.runMs / r.measured!.wallMs === 80 / 120 && !('peak' in r)));
+  const groups=cpuSummaries(e),cpu=groups.filter(r=>r.measuredCalls>0||r.unreservedCalls>0);assert.equal(cpu.length,2);
+  assert.equal(groups.find(r=>r.parent.type==='job')!.unmeasuredCalls,1);assert.ok(cpu.every(r=>r.unreservedAverageCores===80/120&&!('peak' in r)));
+  assert.equal(effortRows(e).find(r => r.subject.id === 'u1')!.commandMs, 120);
+  assert.equal(new ConsoleEffort().read(e,{window:'arc',unit:'u1'}).totals.commandMs,120);
+  const intervals = timelineIntervals(e);
+  assert.ok(intervals.every(r => !('tests' in r) && !('startedAtMs' in r)));
+  assert.ok(invocationSummaries(e).filter(a=>a.unit==='u1').every(a=>a.status==='passed'&&a.outcome.includes('pass')));
+  assert.ok(intervals.filter(a => a.subject.id === 'u1').every(a => a.outcome === 'pass'), 'pruned terminal results retain their recorded verdict and never appear queued');
 });
 
 
@@ -65,28 +84,34 @@ test('completed reservations become actual resource bookings; release closes the
     transition(ctx, holder, resources, { type: 'clean', from: 'reserved' }, stageParent(holder));
     transition(ctx, holder, resources, { type: 'release' }, stageParent(holder));
     const log = readJournal(ctx.runDir, journal.view.arc);
-    const m = consoleModel({ ...e, data: { ...e.data, events: log.events } });
-    const booking = m.resources.bookings.find((r) => r.resource === DB)!;
-    assert.equal(booking.state, 'done'); assert.equal(booking.to! - booking.from, 0.5);
-    assert.equal(booking.waitFrom, undefined, 'completed reservation waits do not invent historical queue-start timestamps');
-    assert.equal(m.time.rows.find((r) => r.id === 'u1')!.queued, 120);
+    const captured = { ...e, data: { ...e.data, events: log.events } };
+    const booking = bookingSummaries(log.events).find((r) => r.resource === DB)!;
+    assert.equal(booking.state, 'done'); assert.equal((Date.parse(booking.endedAt!) - Date.parse(booking.startedAt)) / 1000, 0.5);
+    assert.equal((booking as unknown as {waitFrom?:number}).waitFrom, undefined, 'completed reservation waits do not invent historical queue-start timestamps');
+    assert.equal(effortRows(captured).find(r=>r.subject.id==='u1')!.queuedMs, 120);
     assert.equal(completedWaiting(log.events).measurements[0]!.waited.totalMs, 120);
     // Projection of an ownership handover: a reclaim must close its predecessor, not leave two current bookings.
     const reclaimed = log.events.map((event) => event.type === 'intent' && event.kind === 'resource.transition' && event.expect.edge.type === 'clean'
       ? { ...event, expect: { ...event.expect, edge: { type: 'reclaim' as const } } } : event);
-    const handover = consoleModel({ ...e, data: { ...e.data, events: reclaimed } }).resources.bookings.filter((r) => r.resource === DB);
+    const handover = bookingSummaries(reclaimed).filter((r) => r.resource === DB);
     assert.equal(handover.length, 2); assert.ok(handover.every((r) => r.state === 'done'));
-    assert.equal(handover[0]!.to, handover[1]!.from);
+    assert.equal(handover[0]!.endedAt, handover[1]!.startedAt);
   } finally { journal.close(); }
 });
 
 
 test('stable graph, formatted activities and effort survive heartbeat-only checks while resource time advances', () => {
   const f = parityArc(); const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
-  const models = new ConsoleModels(); const first = models.read(e);
-  const later = models.read({ ...e, checkedAt: new Date(Date.parse(e.checkedAt) + 2000).toISOString() });
-  assert.equal(later.graph, first.graph); assert.equal(later.time, first.time); assert.equal(later.activities, first.activities);
-  assert.equal(Math.round((later.resources.now - first.resources.now) * 1000), 2000);
+  const views = new ConsoleViews(), metadata = new ConsoleMetadata(), first = metadata.read(e, views, e.arc);
+  const laterEnvelope = {...e, checkedAt:new Date(Date.parse(e.checkedAt)+2000).toISOString()};
+  const later = metadata.read(laterEnvelope, views, e.arc);
+  assert.equal(views.graph(laterEnvelope), views.graph(e));
+  assert.equal(later.viewVersions.effort, first.viewVersions.effort); assert.equal(later.viewVersions.timeline, first.viewVersions.timeline);
+  assert.deepEqual(effortRows(laterEnvelope), effortRows(e)); assert.deepEqual(timelineIntervals(laterEnvelope), timelineIntervals(e));
+  const resources=new ConsoleResources(), original=resources.read(e,{window:'arc'}), checked=resources.read(laterEnvelope,{window:'arc'});
+  assert.equal(Date.parse(checked.bounds.to)-Date.parse(original.bounds.to),2000);
+  assert.equal(Date.parse(later.checkedAt)-Date.parse(first.checkedAt),2000);
+  assert.equal(arcBounds(laterEnvelope).from, arcBounds(e).from);
 });
 
 test('completed lane fixture is ready between stages despite unfinished-unit status active', async () => {
@@ -94,5 +119,5 @@ test('completed lane fixture is ready between stages despite unfinished-unit sta
   const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
   const unit = e.data.display.status.units.find(u => u.unit === 'u1')!;
   assert.equal(unit.status, 'active'); assert.equal(unit.stage, 'lanes'); assert.equal(unit.state, 'ready'); assert.equal(unit.running, null);
-  assert.equal(consoleModel(e).graph.units.find(u => u.id === 'u1')!.status, 'pending');
+  assert.equal(graphView(e).units.find(u => u.id === 'u1')!.signal, 'pending');
 });

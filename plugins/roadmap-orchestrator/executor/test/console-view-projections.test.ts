@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import type { Event } from '../src/core/events.ts';
 import { ObservationCache } from '../src/observation/cache.ts';
 import { statusBytes } from '../src/observation/protocol.ts';
-import { consoleModel } from '../src/console/model.ts';
+import { identityIndex } from '../src/console/indexes.ts';
+import { unitView } from '../src/console/details.ts';
 import { ConsoleViews, graphView, shellView, preview } from '../src/console/views.ts';
 import { projectionIndex, timelineIntervals, effortRows, attentionSummaries, cpuSummaries, bookingSummaries, waitingMeasurements, stageSummaries, holisticSummaries, resourceNow } from '../src/console/tab-projections.ts';
 import { retainedReport } from '../src/console/reports.ts';
@@ -26,7 +27,7 @@ function noWorkingSet(value: unknown) {
 test('D1–D11 independent projections exclude evidence working sets and canonical bytes remain unchanged', async t => {
   const f = await investigationFixture(); t.after(() => f.close());
   const e = capture(f), beforeFull = statusBytes(e, false), beforeSummary = statusBytes(e, true);
-  const model = consoleModel(e), index = projectionIndex(e);
+  const index = projectionIndex(e);
   const shell = shellView(e), graph = graphView(e), intervals = timelineIntervals(e, index), effort = effortRows(e, index);
   const all = [shell, graph, intervals, effort, attentionSummaries(e), cpuSummaries(e), bookingSummaries(e.data.events), waitingMeasurements(e, index), stageSummaries(e), holisticSummaries(e), resourceNow(e)];
   all.forEach(noWorkingSet);
@@ -35,8 +36,8 @@ test('D1–D11 independent projections exclude evidence working sets and canonic
   assert.equal(shell.attention.total, e.data.requests.length);
   assert.equal(shell.attention.blocking + shell.attention.informational, shell.attention.total);
   assert.equal(shell.lifecycle.startedAt, e.data.events[0]!.at);
-  assert.deepEqual(graph.units.map(u => u.title), model.presentation.units.map(u => u.title));
-  assert.deepEqual(graph.edges.filter(edge => edge.kind !== 'contingent').map(edge => [edge.source, edge.target]), model.graph.edges);
+  assert.deepEqual(graph.units.map(u => u.title), [...identityIndex(e).values()].map(u => u.title));
+  assert.deepEqual(graph.edges.filter(edge => edge.kind !== 'contingent').map(edge => [edge.source, edge.target]), [...e.data.display.status.edges.flatMap(edge=>edge.type==='after'?[[edge.effective,edge.unit]]:edge.type==='milestone'?[[`milestone:${edge.milestone}`,edge.unit]]:[]),...(e.data.plan?.milestones??[]).flatMap(g=>g.units.map(id=>[id,`milestone:${g.id}`]))]);
   assert.equal(graph.units.find(u => u.id === 'u14')!.lineageRef, 'u14');
   assert.equal(graph.units.find(u => u.id === 'u13')!.signal, 'withdrawn');
   assert.equal(graph.focus.firstUncleared, 'MS-1');
@@ -70,7 +71,7 @@ test('new projections never sweep reports; selected enrichment keeps digest chec
   const index = projectionIndex(e);
   for (const build of [() => shellView(e), () => graphView(e), () => timelineIntervals(e,index), () => effortRows(e,index), () => attentionSummaries(e), () => cpuSummaries(e), () => waitingMeasurements(e,index), () => stageSummaries(e), () => holisticSummaries(e)]) assert.doesNotThrow(build);
   assert.throws(() => retainedReport(e, id), /recorded digest/);
-  assert.throws(() => consoleModel(e), /recorded digest/, 'temporary legacy adapter retains existing integrity behavior');
+  assert.throws(() => unitView(e,'u7'), /recorded digest/, 'selected journey retains evidence integrity');
   writeFileSync(path, original); assert.ok(retainedReport(e, id));
   unlinkSync(path); assert.equal(retainedReport(e, id), null, 'pruned evidence is not returned from a cached report');
   symlinkSync('/etc/passwd', path); assert.throws(() => retainedReport(e, id), /symlink|escapes/);

@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { consoleFixture } from './fixtures/console.ts';
 import { serveConsole } from '../src/console/http.ts';
-import { CONSOLE_PROTOCOL, statusBytes, type Envelope } from '../src/observation/protocol.ts';
+import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { validateViewEnvelope } from '../src/console/view-validation.ts';
 import { CONSOLE_UI_SCHEMA } from '../src/console/view-protocol.ts';
 
-test('additive shell/graph HTTP routes keep admission, security, schema, canonical parity and legacy adapter', async t => {
+test('typed shell/graph HTTP routes keep admission, security, schema, canonical parity and refuse the retired adapter', async t => {
   const f = consoleFixture(), server = await serveConsole({...f, host:'127.0.0.1', port:0, instance:'views-api'}); t.after(() => server.close());
   const api = `${server.url}/api/${CONSOLE_PROTOCOL}`, base = `${api}/arcs/${f.arc}`;
   const discovery = await fetch(`${api}/arcs`);
@@ -39,13 +39,14 @@ test('additive shell/graph HTTP routes keep admission, security, schema, canonic
   }
   assert.equal((await fetch(`${server.url}/api/old/arcs/${f.arc}/shell`)).status,409);
   assert.equal((await fetch(`${api}/arcs/a%2fb/graph`)).status,400);
-  const capture = await server.ask({kind:'read',path:['arcs',f.arc,'snapshot'],params:{}}) as Envelope;
   for (const summary of [false,true]) {
     const response = await fetch(`${base}/status?summary=${summary ? 1 : 0}`), e = await response.json() as {data: unknown};
     const {canonicalJson} = await import('../src/core/json.ts');
     // Compare the same worker capture, preserving its measured foldMs (not a second local fold).
-    assert.equal(canonicalJson(e.data)+'\n',statusBytes(capture,summary));
+    const captured = await server.ask({kind:'read',path:['arcs',f.arc,'status'],params:{summary:summary?'1':'0'}}) as {data:unknown};
+    assert.equal(canonicalJson(e.data)+'\n',canonicalJson(captured.data)+'\n');
   }
-  const snapshot = await (await fetch(`${base}/snapshot`)).json() as {data:{console:{presentation:{units:unknown[]}}}};
-  assert.equal(snapshot.data.console.presentation.units.length,3,'existing UI still uses its server-side adapter');
+  const graph = await (await fetch(`${base}/graph`)).json() as {data:{units:unknown[]}};
+  assert.equal(graph.data.units.length,3);
+  assert.equal((await fetch(`${base}/snapshot`)).status,404,'retired adapter cannot restore a monolithic load');
 });

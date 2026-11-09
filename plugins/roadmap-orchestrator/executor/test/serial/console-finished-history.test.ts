@@ -33,8 +33,8 @@ test('finished history browser regressions with a real-sized retained stream',{t
  });
  await t.test('unstructured check output keeps search and omits invented severity counts',async()=>{
   const version=JSON.parse(readFileSync(new URL('../../package.json',import.meta.url),'utf8')).version;
-  const e=await(await fetch(`${s.url}/api/${version}/arcs/${f.arc}/snapshot`)).json() as {data:{console:{activities:{kind:string;unit:string;routeId:string}[]}}};
-  const command=e.data.console.activities.find(a=>a.kind==='deterministic'&&a.unit==='u1')!;
+  const e=await(await fetch(`${s.url}/api/${version}/arcs/${f.arc}/units/u1?section=invocations`)).json() as {data:{invocations:{rows:{kind:string;unit:string;routeId:string}[]}}};
+  const command=e.data.invocations.rows.find(a=>a.kind==='deterministic'&&a.unit==='u1')!;
   writeFileSync(`${f.runDir}/inv/${command.routeId}/stdout`,'Warning: recorded text, severity metadata unavailable\n');
   await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/graph/invocations/${command.routeId}`});
   await until(async()=>/First output on this page/.test(await text()),10000,'readable command output');

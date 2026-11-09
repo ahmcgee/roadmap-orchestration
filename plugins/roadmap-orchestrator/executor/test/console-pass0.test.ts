@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ObservationCache } from '../src/observation/cache.ts';
-import { consoleModel } from '../src/console/model.ts';
+import { effortRows, cpuSummaries, waitingMeasurements, holisticSummaries } from '../src/console/tab-projections.ts';
+import { reasonWords } from '../src/console/vocabulary.ts';
 import { cpuStageGroups, resourceQueue } from '../src/console/resources.ts';
 import { mergeHistoryPages } from '../web-src/app/history-pages.ts';
 import { investigationFixture } from './fixtures/console-investigations.ts';
@@ -10,17 +11,17 @@ import type { WorkRun } from '../src/status-work.ts';
 
 test('Pass 0 uses recorded unit identity, CPU stage coverage, waiting counts and finding state',async t=>{
   const f=await investigationFixture();t.after(()=>f.close());
-  const e=new ObservationCache(f.hostDir,'pass0','reader').read({runDir:f.runDir,arc:f.arc}),m=consoleModel(e);
-  assert.equal(m.presentation.units.length,14);
-  const unit=m.presentation.units.find(u=>u.id==='u7')!;
-  assert.equal(unit.redChecks,1);assert.equal(unit.rounds,3);assert.equal(unit.spend,2.25);
-  assert.equal(unit.spendCoverage.recorded,4);
-  const cpu=m.cpuGroups.find(g=>g.parent.type==='stage'&&g.parent.unit==='u1')!;
-  assert.equal(cpu.reservationPercent,5);assert.equal(cpu.averageCores,.2);assert.equal(cpu.reservedCores,4);
+  const e=new ObservationCache(f.hostDir,'pass0','reader').read({runDir:f.runDir,arc:f.arc});
+  const rows=effortRows(e);assert.equal(rows.filter(r=>r.subject.type==='unit').length,14);
+  const unit=rows.find(u=>u.subject.id==='u7')!;
+  assert.equal(unit.lifetime.redChecks,1);assert.equal(unit.lifetime.rounds,3);assert.equal(unit.spend.costUsd,2.25);
+  assert.equal(unit.spend.recorded,4);
+  const cpu=cpuSummaries(e).find(g=>g.parent.type==='unit'&&g.parent.id==='u1')!;
+  assert.equal(cpu.reservationPercent,5);assert.equal(cpu.averageCores,.2);assert.equal(cpu.weightedReservedCores,4);
   assert.equal(cpu.measuredCalls,1);assert.equal(cpu.excludedCalls,0);
-  assert.deepEqual(m.presentation.waitReasonCounts,{'CPU capacity':1,'CPU pressure':1,'Memory pressure':1,'Integration slot':1,'Baseline hold':1});
-  assert.equal(m.time.unmeasuredReservations,1);
-  assert.deepEqual(m.presentation.holistic.activeFindings.map(f=>[f.id,f.claim,f.state]),[['F-1','Document empty input behavior','open']]);
+  assert.deepEqual(waitingMeasurements(e).rows.flatMap(w=>w.reasons).reduce<Record<string,number>>((out,r)=>{const key=reasonWords(r.reason);out[key]=(out[key]??0)+1;return out;},{}),{'CPU capacity':1,'CPU pressure':1,'Memory pressure':1,'Integration slot':1,'Baseline hold':1});
+  assert.equal(waitingMeasurements(e).unmeasuredReservations,1);
+  assert.deepEqual(holisticSummaries(e).filter(f=>f.type==='finding').map(f=>[f.id,f.claim.text,f.state]),[['F-1','Document empty input behavior','open']]);
 });
 
 test('CPU groups weight matching calls and keep missing, zero-wall and over-reservation evidence explicit',async t=>{

@@ -123,15 +123,14 @@ export async function serveConsole(args: ConsoleServerArgs) {
             return;
           } finally { if (!ready || closed()) cleanup(); }
         }
-        // Status and legacy API discovery keep strict two-second admission. During the adapter
-        // transition, legacy API consumers retain their existing contract; the browser
-        // explicitly opts those reads into preparation with Prefer: respond-async.
-        // New view endpoints always use preparation. Browser reads have a
+        // Status and API discovery keep strict two-second admission. Existing selected
+        // unit/invocation API consumers may opt into browser preparation.
+        // Typed view endpoints always use preparation. Browser reads have a
         // bounded delivery lease; pending/cancel are never forwarded as worker query filters.
-        const legacy = ['snapshot', 'units', 'invocations'].includes(path[2] ?? '');
+        const selectedEvidence = ['units', 'invocations'].includes(path[2] ?? '');
         const browserDiscovery = path.length === 1 && path[0] === 'arcs' && req.headers['prefer'] === 'respond-async';
         const uiRead = browserDiscovery || path[0] === 'arcs' && path.length >= 3 && path[2] !== 'status'
-          && (!legacy || req.headers['prefer'] === 'respond-async');
+          && (!selectedEvidence || req.headers['prefer'] === 'respond-async');
         if (uiRead) {
           const {pending: token, cancel, ...query} = params;
           if (cancel !== undefined && cancel !== '1') throw new ConsoleError('invalid', 'cancel is 1');

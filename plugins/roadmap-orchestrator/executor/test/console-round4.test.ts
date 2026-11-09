@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {round4Fixture} from './fixtures/console-round4.ts';
 import {ObservationCache} from '../src/observation/cache.ts';
-import {consoleModel} from '../src/console/model.ts';
+import {unitView} from '../src/console/details.ts';
+import type {UnitView} from '../src/console/detail-protocol.ts';
+import {buildActivityIndex} from '../src/console/activity-index.ts';
 test('terminal completion, meaningful waits and housekeeping are faithful to recorded evidence',async t=>{
- const f=await round4Fixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'round4','reader').read({runDir:f.runDir,arc:f.arc});const p=consoleModel(e).presentation;
- const u=p.units.find(u=>u.id==='u1')!;
- assert.equal(u.journey.find(s=>s.stage==='retire')!.outcome,'Done');assert.ok(u.endedAt);
- assert.deepEqual(u.waiting.map(w=>[w.totalMs,w.reasons]),[[80000,[{reason:'Dependency',ms:80000}]]]);
- const rows=p.feed as {text:string;housekeeping?:boolean}[];
- assert.equal(rows.filter(r=>r.housekeeping).length,4);assert.ok(rows.some(r=>/Release resources.*Cleanup failed/.test(r.text)&&!r.housekeeping));
+ const f=await round4Fixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'round4','reader').read({runDir:f.runDir,arc:f.arc});const d=unitView(e,'u1') as UnitView,u=d.unit;
+ assert.equal(d.journey.rows.find(s=>s.stage==='retire')!.outcome,'Done');assert.ok(u.endedAt);
+ assert.deepEqual(d.waiting.rows.map(w=>[w.totalMs,w.reasons]),[[80000,[{reason:'Dependency',ms:80000}]]]);
+ const rows=buildActivityIndex(e).entries.map(e=>e.row).filter(r=>r.kind==='stage-outcome');
+ assert.equal(rows.filter(r=>r.housekeeping).length,4);assert.ok(rows.some(r=>/Release resources.*Cleanup failed/.test(r.summary.text)&&!r.housekeeping));
 });
 test('Activity filters housekeeping before paging, preserves failures, and validates its toggle',async t=>{
  const {serveConsole}=await import('../src/console/http.ts');const {gitCommonDir}=await import('../src/git/git.ts');const {absPath}=await import('../src/core/values.ts');const {CONSOLE_PROTOCOL}=await import('../src/observation/protocol.ts');

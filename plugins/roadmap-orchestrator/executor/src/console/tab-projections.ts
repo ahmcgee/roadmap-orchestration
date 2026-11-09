@@ -1,4 +1,4 @@
-// Pass 1 row/aggregate boundaries, server-only. Paging/query/index generations are not wire APIs yet.
+// Server-only row/aggregate foundations. Query modules page these collections into typed wire views.
 // Each builder selects recorded fields explicitly and performs no evidence reads or report enrichment.
 import { invocationDirName, invocationIdOf, parseInvocationId } from '../core/ids.ts';
 import type { Parent } from '../core/events.ts';
@@ -141,7 +141,7 @@ export function cpuSummaries(e: Envelope): CpuStageGroup[] {
       unreservedCalls: g.unreservedCalls, unreservedAverageCores: g.unreservedAverageCores, detailKey: id};
   });
 }
-/** D3 base stage summaries; full typed event/park index is pass 4. No fictional event sequence. */
+/** D3 base stage summaries; the Activity index adds typed event/park evidence. */
 export function stageSummaries(e: Envelope): StageSummary[] {
   return [...stageIndex(e.data.events).steps.values()].map(s => ({id: s.id, unit: s.id.slice(0, s.id.lastIndexOf(':')), stage: s.stage,
     attempt: s.attempt, round: s.round, at: s.at, endedAt: s.endedAt, outcome: s.outcome, housekeeping: s.housekeeping,
