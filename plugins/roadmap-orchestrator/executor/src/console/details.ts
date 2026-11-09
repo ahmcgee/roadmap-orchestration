@@ -69,8 +69,9 @@ function text(e:Envelope,value:string,params:Record<string,string>) {
   const generation=end<frozen.length?(c?.version??remember(e,[frozen],'intent')):null;
   return {text:frozen.slice(start,end),next:generation?token({version:generation,arc:e.arc,epoch:e.epoch,instance:e.instance,repoId:e.repoId,entity:params['_entity'],section:'intent',offset:end,limit:4096}):null};
 }
-export function invocationSummaries(e:Envelope):InvocationSummary[] {
-  const index=projectionIndex(e),intervals=timelineIntervals(e,index);
+/** `index` lets one selected-detail read share a single projection index. */
+export function invocationSummaries(e:Envelope,index=projectionIndex(e)):InvocationSummary[] {
+  const intervals=timelineIntervals(e,index);
   return intervals.map((a,n)=>{
     const i=index.invocations.rows[n]!.invocation;
     const status=!i.endedAt&&a.outcome==='running'?'active':/^(success|pass|probe passed)$/.test(a.outcome)?'passed':/fail|fault|lost|malformed|refusal|stall|timeout/.test(a.outcome)?'failed':/held|abort|unowned|blocked/.test(a.outcome)?'held':'pending';
@@ -82,26 +83,28 @@ export function invocationSummaries(e:Envelope):InvocationSummary[] {
   });
 }
 function rawInvocationView(e:Envelope,id:string,params:Record<string,string>={}):InvocationView {
+  const index=projectionIndex(e);
   params={...params,_entity:`invocation:${id}`};
-  const invocation=invocationSummaries(e).find(i=>i.routeId===id);
+  const invocation=invocationSummaries(e,index).find(i=>i.routeId===id);
   if(!invocation)throw new ConsoleError('not-found','invocation is not recorded in this arc');
-  const recorded=e.data.display.invocations.find(i=>invocationDirName(invocationIdOf(i.id))===id)!,identities=projectionIndex(e).identities;
+  const recorded=e.data.display.invocations.find(i=>invocationDirName(invocationIdOf(i.id))===id)!,identities=index.identities;
   const related=(recorded.relatedUnits??[]).map(id=>{const u=e.data.display.status.units.find(u=>u.unit===id);if(!u)throw new ConsoleError('corruption','recorded related unit is absent from the applied plan');return {id:String(id),title:identities.get(id)!.title,state:stateWords(u.state),signal:u.state==='cut'||u.state==='superseded'?'withdrawn' as const:graphStatus(u.state),source:invocation.routeId,target:String(id),unmet:false};});
-  const parent=projectionIndex(e).invocations.rows.find(r=>r.invocation.id===recorded.id)?.parent,basis=recorded.work?.cpuBasis;
+  const parent=index.invocations.rows.find(r=>r.invocation.id===recorded.id)?.parent,basis=recorded.work?.cpuBasis;
   return versioned({invocation,parent:{type:parent?.type==='stage'?'unit':parent?.type==='job'?'job':'arc',id:parent?.type==='stage'?String(parent.unit):parent?.type==='job'?String(parent.job):String(e.arc),stage:parent?.type==='stage'?parent.stage:null,sequence:parent?.type==='stage'?parent.attempt:null},cpuBasis:basis?{kind:basis.kind,value:basis.value,samples:'samples' in basis?basis.samples:null}:null,actor:{role:recorded.role,backend:recorded.backend??null,model:recorded.model??null,requestedModel:recorded.requestedModel??null},measured:recorded.work?.measured??null,reservedCpu:recorded.work?.reservedCpu??null,detailAvailability:detailAvailability(e,recorded),coverage:{money:{recorded:invocation.spend.recorded,estimated:invocation.spend.estimated,unavailable:invocation.spend.unavailable},execution:{measured:recorded.work?.measured?1:0,unmeasured:recorded.work?.measured?0:1}},related:page(e,related,params,'related')},scope);
 }
 function rawUnitView(e:Envelope,id:string,params:Record<string,string>):UnitView|{unit:UnitSummary;uiSchema:number;viewVersion:string;scope:import('./view-protocol.ts').Scope} {
+  const index=projectionIndex(e);
   params={...params,_entity:`unit:${id}`};
   const runtime=e.data.display.status.units.find(u=>u.unit===id);
   if(!runtime)throw new ConsoleError('not-found','unit is not in the applied plan');
-  const stages=projectionIndex(e).stages.byUnit.get(id)??[],start=params['section']==='journey'?offset(e,params,'journey'):0;
+  const stages=index.stages.byUnit.get(id)??[],start=params['section']==='journey'?offset(e,params,'journey'):0;
   const anchored=params['section']==='journey'?cursorOf(e,params,'journey'):null;
   const reportSteps=new Set(params['section']&&params['section']!=='journey'?[]:anchored?generations.get(anchored.version)!.ids.slice(start,start+limitOf(params)):stages.slice(start,start+limitOf(params)).map(s=>s.id));
   const u=selectedUnitJourney(e,id,reportSteps);
   const signal=runtime.state==='cut'||runtime.state==='superseded'?'withdrawn':graphStatus(runtime.state);
-  const unit:UnitSummary={id:u.id,title:u.title,state:u.state,stage:u.stage,signal,startedAt:u.startedAt,endedAt:u.endedAt,arcEndedAt:arcBounds(e).to,elapsedMs:u.elapsedMs,attempts:u.attempts,rounds:u.rounds,spend:projectionIndex(e).charges.bySubject.get(`unit:${id}`)??{costUsd:null,recorded:0,estimated:0,unavailable:0},reasons:u.reasons,waitSince:u.waitSince,lineage:u.lineage?{reenters:u.lineage.reenters,root:u.lineage.root,prepared:u.lineage.prepared}:null};
+  const unit:UnitSummary={id:u.id,title:u.title,state:u.state,stage:u.stage,signal,startedAt:u.startedAt,endedAt:u.endedAt,arcEndedAt:arcBounds(e).to,elapsedMs:u.elapsedMs,attempts:u.attempts,rounds:u.rounds,spend:index.charges.bySubject.get(`unit:${id}`)??{costUsd:null,recorded:0,estimated:0,unavailable:0},reasons:u.reasons,waitSince:u.waitSince,lineage:u.lineage?{reenters:u.lineage.reenters,root:u.lineage.root,prepared:u.lineage.prepared}:null};
   if(params['section']==='summary')return versioned({unit},scope);
-  const s=e.data.display.status,identities=projectionIndex(e).identities;
+  const s=e.data.display.status,identities=index.identities;
   const related=(source:string,target:string):RelatedUnit=>{
     const other=source===id?target:source,r=s.units.find(u=>u.unit===other)!;
     return {id:other,title:identities.get(other)!.title,state:stateWords(r.state),signal:r.state==='cut'||r.state==='superseded'?'withdrawn':graphStatus(r.state),source,target,unmet:runtime.waitingFor?.deps.includes(other as never)??false};
@@ -113,11 +116,11 @@ function rawUnitView(e:Envelope,id:string,params:Record<string,string>):UnitView
   const w=runtime.waitingFor;
   const work=e.data.display.invocations.filter(i=>i.unit===id),waitingEvidence=completedWaiting(e.data.events.filter(ev=>ev.type==='done'||ev.type==='intent'&&ev.parent.type==='stage'&&ev.parent.unit===id||ev.type==='fact'&&ev.fact.kind==='stage-admitted'&&ev.fact.unit===id));
   const currentBlockers=w?{dependencies:[...w.deps],milestones:[...w.milestones],contingentEdges:[...w.edges],resources:w.resources?{named:[...w.resources.named],pools:[...w.resources.pools],cpu:w.resources.cpu,publication:w.resources.publication}:null,environmentBlocked:w.envBlocked,pressureBlocked:w.pressureBlocked??null,tokenWaitMs:w.tokenWaitMs??null,admission:w.admission.map(a=>({kind:a.type,references:Object.entries(a).filter(([k,v])=>['unit','milestone','edge','command','id','finding','obligation','fixUnit','inv','backend','deflake','lane'].includes(k)&&typeof v==='string').map(([field,v])=>({field,id:String(v)})),scope:'scope' in a?a.scope:null,parkClass:'class' in a?a.class:null,reason:'reason' in a?a.reason:null,decision:'decision' in a?a.decision:null,probe:'target' in a?{kind:a.target.type,id:a.target.type==='backend'?a.target.backend:a.target.type==='resource'?String(a.target.instance):a.target.type==='environment'?String(a.target.environment):null}:null})),drainCommands:[...w.drainFor]}:null;
-  const coverage={money:{recorded:unit.spend.recorded,estimated:unit.spend.estimated,unavailable:unit.spend.unavailable+work.filter(i=>i.execution==='agent'&&!projectionIndex(e).charges.byInvocation.has(i.id)).length},execution:{measured:work.filter(i=>i.work?.measured).length,unmeasured:work.filter(i=>!i.work?.measured).length},waiting:{measured:waitingEvidence.measurements.filter(w=>w.source==='admission'?w.unit===id:w.parent.type==='stage'&&w.parent.unit===id).length,unmeasured:waitingEvidence.unmeasuredReservations}};
+  const coverage={money:{recorded:unit.spend.recorded,estimated:unit.spend.estimated,unavailable:unit.spend.unavailable+work.filter(i=>i.execution==='agent'&&!index.charges.byInvocation.has(i.id)).length},execution:{measured:work.filter(i=>i.work?.measured).length,unmeasured:work.filter(i=>!i.work?.measured).length},waiting:{measured:waitingEvidence.measurements.filter(w=>w.source==='admission'?w.unit===id:w.parent.type==='stage'&&w.parent.unit===id).length,unmeasured:waitingEvidence.unmeasuredReservations}};
   return versioned({unit,systems:identities.get(id)!.systems,currentBlockers,supersededBy:runtime.supersededBy,coverage,feeds,waits,
     depends:page(e,edges.filter(x=>x.unit===id).map(x=>related(x.effective,x.unit)),params,'depends'),
     usedBy:page(e,edges.filter(x=>x.effective===id).map(x=>related(x.effective,x.unit)),params,'usedBy'),
-    journey:page(e,u.journey,params,'journey'),invocations:page(e,invocationSummaries(e).filter(i=>i.subject.type==='unit'&&i.unit===id),params,'invocations'),
+    journey:page(e,u.journey,params,'journey'),invocations:page(e,invocationSummaries(e,index).filter(i=>i.subject.type==='unit'&&i.unit===id),params,'invocations'),
     acceptance:page(e,u.acceptance,params,'acceptance'),waiting:page(e,u.waiting.map(w=>({...w,reasons:w.reasons.map(r=>({...r,ms:r.ms!}))})),params,'waiting'),checks:page(e,runtime.certification?.lanes.map(l=>({id:String(l.id),outcome:l.verdict||l.state}))??[],params,'checks'),
     requests:page(e,e.data.requests.filter(r=>r.subject.type==='unit'&&r.subject.unit===id).map(r=>({id:String(r.id),summary:r.summary,recommendation:r.recommendation})),params,'requests'),intent:text(e,u.intent||u.summary,params)},scope);
 }
