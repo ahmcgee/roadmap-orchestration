@@ -15,13 +15,15 @@ import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
 import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
+import { ConsoleAttention } from './attention-query.ts';
+import { requestDetail } from './request-detail.ts';
 import { ConsoleTemporal } from './temporal-query.ts';
 import { ConsoleActivity } from './activity-query.ts';
 import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
-import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape } from './view-shapes.ts';
+import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -34,6 +36,7 @@ const views = new ConsoleViews();
 const metadata = new ConsoleMetadata();
 const activity = new ConsoleActivity();
 const temporal = new ConsoleTemporal();
+const attention = new ConsoleAttention(temporal.pages);
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
@@ -87,11 +90,26 @@ function route(path: string[], params: Record<string, string>) {
     const { events: _events, ...displayData } = e.data;
     return { ...e, data: { ...displayData, console: models.read(e) } };
   }
+  if (section === 'attention' && path.length === 3) {
+    const data = attention.read(e, params, notice(e).viewVersions.attention);
+    if (!attentionShape(data)) throw new ConsoleError('protocol', 'malformed typed Attention view');
+    return {...e, data};
+  }
+  if (section === 'requests' && path.length === 4 && id) {
+    const data = requestDetail(e, id, params);
+    if (!(params['section'] === 'content' ? contentShape : requestShape)(data)) throw new ConsoleError('protocol', 'malformed selected request');
+    return {...e, data};
+  }
   if (section === 'timeline' && (path.length === 3 || path.length === 4 && (id === 'intervals' || id === 'holds'))) {
     const kind = id === 'intervals' ? 'intervals' : id === 'holds' ? 'holds' : 'tracks';
     const data = temporal.timeline(e, params, kind, notice(e).viewVersions.timeline);
     const check = kind === 'tracks' ? timelineShape : kind === 'intervals' ? intervalsShape : holdsShape;
     if (!check(data)) throw new ConsoleError('protocol', 'malformed typed Timeline view');
+    return {...e, data};
+  }
+  if (section === 'holistic' && path.length === 5 && id === 'fields' && file) {
+    const data = temporal.field(e, file, params);
+    if (!holisticFieldShape(data)) throw new ConsoleError('protocol', 'malformed Holistic field');
     return {...e, data};
   }
   if (section === 'holistic' && path.length === 3) {

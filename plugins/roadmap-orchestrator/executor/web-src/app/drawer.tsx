@@ -42,7 +42,7 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
       }
     };
     window.addEventListener('keydown', key);
-    return () => { window.removeEventListener('keydown', key); const target=route().tab==='graph'?document.querySelector<HTMLElement>('.dag-canvas'):(previous?.isConnected?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true }); };
+    return () => { window.removeEventListener('keydown', key); const target=route().tab==='graph'?document.querySelector<HTMLElement>('.dag-canvas'):(previous?.isConnected&&previous!==document.body?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true }); };
   }, []);
   function resize(e: React.PointerEvent<HTMLDivElement>) {
     e.currentTarget.setPointerCapture(e.pointerId);

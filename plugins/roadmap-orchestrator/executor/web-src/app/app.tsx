@@ -9,6 +9,7 @@ import { Views, useView } from './view-state.ts';
 import { graphData } from './graph-data.ts';
 import { CONSOLE_UI_SCHEMA, type ShellView } from '../../src/console/view-protocol.ts';
 import { stateWords } from '../../src/console/vocabulary.ts';
+import { RequestDetail } from './request-detail.tsx';
 import { EventDetail } from './event-detail.tsx';
 import { InvocationDetail } from './invocation.tsx';
 import { Activity, Attention, Effort, Resources, Timeline } from './other-tabs.tsx';
@@ -26,7 +27,7 @@ export function App() {
   return <Views.Provider value={store}><Console key={selected} where={where} selected={selected} listError={listError} now={now} theme={theme} setTheme={setTheme} store={store}/></Views.Provider>;
 }
 function Console({where,selected,listError,now,theme,setTheme,store}:{where:ReturnType<typeof route>;selected:string|null;listError:string;now:number;theme:Theme;setTheme:(t:Theme)=>void;store:ReturnType<typeof useObservation>}) {
-  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(['graph','activity','timeline'].includes(where.tab)?null:'snapshot');
+  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(['graph','activity','timeline','attention'].includes(where.tab)?null:'snapshot');
   const e=legacy.envelope as Envelope|null, p=shell.data as ShellView|null;
   const error=store?.error||shell.error||graph.error||legacy.error||'',checkedAt=store?.checkedAt??null,connected=store?.connected??false,reload=store?.reload??false;
   const graphEnvelope=store?.entries.get('graph')?.value;
@@ -59,10 +60,12 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
       {graphInput&&<div hidden={tab!=='graph'} style={{height:'100%'}}><Graph key={arc} e={graphInput} open={open}/></div>}
       {arc&&tab==='activity'&&<Activity arc={arc}/>}
       {arc&&tab==='timeline'&&<Timeline arc={arc}/>}
-      {tab!=='graph'&&tab!=='activity'&&tab!=='timeline'&&e&&(tab==='effort'?<Effort e={e}/>:tab==='resources'?<Resources e={e}/>:<Attention e={e}/>)}
-      {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
+      {arc&&tab==='attention'&&<Attention arc={arc}/>}
+      {e&&(tab==='effort'?<Effort e={e}/>:tab==='resources'?<Resources e={e}/>:null)}
+      {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'||tab==='attention'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
     </main>
     {stale&&checkedAt&&<div className="stale-notice"><Time at={checkedAt} prefix="Last updated "/>. Live counters paused.</div>}
+    {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}
     {arc&&where.event&&<EventDetail key={where.event} arc={arc} id={where.event} close={close}/>}
     {arc&&where.unit&&<UnitDetail arc={arc} id={where.unit} close={close} stale={stale}/>}{arc&&where.inv&&<InvocationDetail key={where.inv} arc={arc} id={where.inv} close={close} stale={stale}/>}
   </div></Clock.Provider>;

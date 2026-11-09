@@ -14,11 +14,11 @@ export function route() {
   try {
     const [pathname, search = ''] = location.hash.replace(/^#\/?/, '').split('?');
     const p = pathname!.split('/').map(decodeURIComponent);
-    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || (p.length === 5 && ['units', 'invocations', 'events'].includes(p[3]!)));
-    return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : null, inv: p[3] === 'invocations' ? p[4]! : null, event: p[3] === 'events' ? p[4]! : null, query: new URLSearchParams(search), invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, query: new URLSearchParams(), invalid: location.hash !== '' && location.hash !== '#/' };
-  } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, query: new URLSearchParams(), invalid: true }; }
+    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || (p.length === 5 && ['units', 'invocations', 'events', 'requests'].includes(p[3]!)));
+    return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : null, inv: p[3] === 'invocations' ? p[4]! : null, event: p[3] === 'events' ? p[4]! : null, request: p[3] === 'requests' ? p[4]! : null, query: new URLSearchParams(search), invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, request: null, query: new URLSearchParams(), invalid: location.hash !== '' && location.hash !== '#/' };
+  } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, request: null, query: new URLSearchParams(), invalid: true }; }
 }
-export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'invocations' | 'events', id?: string) => {
+export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'invocations' | 'events' | 'requests', id?: string) => {
   const current=route(), query=current.arc===arc&&current.tab===tab?current.query.toString():'';
   return `#/arcs/${encodeURIComponent(arc)}/${tab}${kind ? `/${kind}/${encodeURIComponent(id!)}` : ''}${query?`?${query}`:''}`;
 };

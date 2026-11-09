@@ -29,7 +29,7 @@ export class ConsoleMetadata {
       const waiting = hash(e.data.events.filter(ev => ev.type === 'fact' && ev.fact.kind === 'stage-admitted'
         || (ev.type === 'intent' || ev.type === 'done') && ev.kind === 'resource.transition'));
       const money = hash(e.data.events.filter(ev => ev.type === 'fact' && ['meter','usage-unavailable'].includes(ev.fact.kind)));
-      const attention = hash(e.data.requests);
+      const attention = hash({identity,requests:e.data.requests});
       const holistic = hash({holistic: s.holistic, audit: s.audit, findings: s.findings, decisions: s.decisionsSince,
         audits: e.data.events.filter(ev => ev.type === 'fact' && ['audit-started','audit-ended'].includes(ev.fact.kind))});
       entry = {identities, stages, versions: {

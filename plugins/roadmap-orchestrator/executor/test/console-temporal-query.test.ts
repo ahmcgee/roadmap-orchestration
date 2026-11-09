@@ -31,7 +31,7 @@ test('Timeline independent tracks and exact intervals reconcile at their capture
  for(const section of ['audits','findings','decisions']){const h=tabs.holistic(e,{section});assert.ok(holisticShape(h));noMonolith(h);assert.equal(h.section,section);assert.equal(h.counts.findings,1);assert.equal(h.enabled,true);if(section==='audits'){const r=h.rows[0]!;assert.equal(r.type,'audit');if(r.type==='audit'){assert.equal(r.findingCount,1);assert.match(r.detail.id,/-audit-ended$/);assert.ok(activity.index(e).entries.some(e=>e.row.id===r.detail.id));}}if(section==='findings'){const r=h.rows[0]!;assert.equal(r.type,'finding');if(r.type==='finding'){assert.deepEqual([r.id,r.claim.text,r.state],['F-1','Document empty input behavior','open']);assert.ok(r.detail);assert.deepEqual(r.claim.detail,r.detail);assert.ok(activity.index(e).entries.some(e=>e.row.id===r.detail!.id));}}}
  const decisions=tabs.holistic(e,{section:'decisions'});for(const r of decisions.rows)if(r.type==='decision'){assert.deepEqual(r.oneLine.detail,r.detail);if(r.detail)assert.ok(activity.index(e).entries.some(e=>e.row.id===r.detail!.id));}
  const missingDecisionSource={...e,data:{...e.data,display:{...e.data.display,status:{...e.data.display.status,decisionsSince:e.data.display.status.decisionsSince.map(d=>({...d,seq:(e.highWater+10) as typeof d.seq,oneLine:d.oneLine.repeat(30)}))}}}};
- const unknown=tabs.holistic(missingDecisionSource,{section:'decisions'});assert.ok(holisticShape(unknown));for(const r of unknown.rows)if(r.type==='decision'){assert.equal(r.at,null);assert.equal(r.detail,null);assert.equal(r.oneLine.detail,null);assert.equal(r.oneLine.truncated,false);assert.ok(r.oneLine.text.length>240);}
+ const unknown=tabs.holistic(missingDecisionSource,{section:'decisions'});assert.ok(holisticShape(unknown));for(const r of unknown.rows)if(r.type==='decision'){assert.equal(r.at,null);assert.equal(r.detail,null);assert.equal(r.oneLine.detail,null);assert.equal(r.oneLine.truncated,true);assert.ok(r.oneLine.field);let full='',after=0;for(;;){const field=tabs.field(missingDecisionSource,r.oneLine.field!.key,{after:String(after)});assert.equal(field.offset,after);full+=field.text;if(field.next===null)break;after=field.next;}assert.equal(full,missingDecisionSource.data.display.status.decisionsSince.find(d=>d.id===r.recordId)!.oneLine);}
  const disabled={...e,data:{...e.data,display:{...e.data.display,status:{...e.data.display.status,holistic:false}}}};
  assert.equal(tabs.holistic(disabled,{}).enabled,false);
  assert.deepEqual([statusBytes(e,false),statusBytes(e,true)],before);
@@ -83,4 +83,18 @@ test('Timeline and Holistic HTTP preserve admission, GET/HEAD/security, strict f
  const wrong=await consoleGet(`${base}/timeline?epoch=wrong`);assert.equal(wrong.status,409);
  const current=await (await consoleGet(`${base}/shell`)).json() as Envelope<unknown>;
  const future=await consoleGet(`${base}/holistic?minHighWater=${current.highWater+1}`);assert.equal(future.status,503);
+});
+
+test('source-less oversized Holistic text retains exact Unicode through bounded identity-scoped field reads',async t=>{
+ const f=await investigationFixture();t.after(()=>f.close());const original=capture(f),tabs=new ConsoleTemporal(),s=original.data.display.status;
+ const long='Recorded source-less text \\u0000 \\" 🛰️ <script>\n'.repeat(10000);
+ assert.ok(s.decisionsSince.length>0);
+ const e={...original,data:{...original.data,display:{...original.data.display,status:{...s,decisionsSince:s.decisionsSince.map(d=>({...d,seq:(original.highWater+10) as typeof d.seq,oneLine:long}))}}}};
+ const page=tabs.holistic(e,{section:'decisions'});assert.ok(holisticShape(page));assert.ok(Buffer.byteLength(JSON.stringify({...e,data:page}))+1<=64*1024);
+ const row=page.rows[0]!;assert.equal(row.type,'decision');if(row.type!=='decision')throw Error();assert.equal(row.at,null);assert.equal(row.detail,null);assert.equal(row.oneLine.detail,null);assert.ok(row.oneLine.field);assert.equal(row.oneLine.truncated,true);
+ let text='',after=0,reads=0;for(;;){const field=tabs.field(e,row.oneLine.field.key,{after:String(after)});assert.equal(field.offset,after);assert.ok(Buffer.byteLength(JSON.stringify({...e,data:field}))+1<=16*1024);text+=field.text;reads++;if(field.next===null)break;after=field.next;}assert.equal(text,long);assert.ok(reads>100);
+ assert.throws(()=>tabs.field({...e,epoch:'other'},row.oneLine.field!.key,{}),/no longer retained/);
+ assert.throws(()=>tabs.field(e,row.oneLine.field!.key,{after:String(long.length+1)}),/exceeds/);
+ assert.throws(()=>tabs.field(e,row.oneLine.field!.key,{after:'-1'}),/offset/);
+ assert.throws(()=>tabs.field(e,row.oneLine.field!.key,{path:'/tmp/arbitrary'}),/unknown/);
 });

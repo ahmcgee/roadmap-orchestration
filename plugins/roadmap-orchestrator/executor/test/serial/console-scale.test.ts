@@ -13,6 +13,8 @@ import { sha256Hex } from '../../src/core/json.ts';
 import { arcId, invocationDirName, invocationIdOf } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { CONSOLE_PROTOCOL, type Envelope } from '../../src/observation/protocol.ts';
+import { consoleGet } from '../helpers/console-http.ts';
+import type { AttentionView, RequestView } from '../../src/console/attention-protocol.ts';
 import type { UnitView } from '../../src/console/detail-protocol.ts';
 import type { consoleModel } from '../../src/console/model.ts';
 import type { ConsoleHistories } from '../../src/console/history.ts';
@@ -38,7 +40,7 @@ test('scale arc: real server serves the manifest, attempts and four active histo
   assert.equal(snapshot.data.console.activities.filter(i=>i.kind==='agentic').length,m.agentInvocations);
   assert.equal(units.filter(u=>u.state==='merged').length,m.merged);
   assert.equal(units.filter(u=>u.state==='cut'||u.state==='superseded').length,m.withdrawn);
-  assert.equal(snapshot.data.console.attention.length,m.openAttention);
+  const attention=await (await consoleGet(`${base}/attention`)).json() as {data:AttentionView};assert.equal(attention.data.counts.total,m.openAttention);assert.equal(attention.data.page.matching,m.openAttention);assert.equal(attention.data.rows.length,m.openAttention);
   assert.equal(status.data.milestones.filter(m=>m.passed).length,m.passedMilestones);
   const active=snapshot.data.display.invocations.filter(i=>i.execution==='agent' && !i.endedAt);
   assert.equal(active.length,4); assert.equal(active.length,m.live.length);
@@ -132,10 +134,14 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
   const forge=JSON.parse(readFileSync(join(dirname(m.repo),'forge','gh-store.json'),'utf8'));
   for(const pr of forge.pulls) {const text=textFor(pr.number,m.systems);assert.equal(pr.title,text.title);assert.equal(pr.body,text.intent);}
   const affectedTitles=Array.from({length:12},(_,n)=>textFor(214+n,m.systems).title as string);
-  for(const request of snapshot.data.console.attention) {
-    const title=affectedTitles.find(title=>request.summary.endsWith(title));assert.ok(title);
-    assert.equal(request.recommendation,`Review ${title} and record whether to resume or defer it.`);
-    if(request.subject.type==='unit') assert.equal(title,textFor(Number(request.subject.unit.slice(1)),m.systems).title);
+  let attention=await (await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/attention`)).json() as {data:AttentionView};const requestRows=[...attention.data.rows];
+  while(attention.data.page.next){attention=await (await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/attention?cursor=${encodeURIComponent(attention.data.page.next)}`)).json() as {data:AttentionView};requestRows.push(...attention.data.rows);}
+  assert.equal(requestRows.length,m.openAttention);assert.equal(new Set(requestRows.map(r=>r.id)).size,m.openAttention);
+  for(const row of requestRows) {
+    const response=await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/requests/${row.id}`);assert.equal(response.status,200);const request=(await response.json() as {data:RequestView}).data;
+    const title=affectedTitles.find(title=>request.fields.summary.endsWith(title));assert.ok(title);
+    assert.equal(request.fields.recommendation,`Review ${title} and record whether to resume or defer it.`);
+    if(request.recordPreview!.subject.type==='unit') assert.equal(title,textFor(Number(request.recordPreview!.subject.id.slice(1)),m.systems).title);
   }
 });
 

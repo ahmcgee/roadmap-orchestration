@@ -1,5 +1,5 @@
 import type { Metadata, ViewEnvelope } from '../../src/console/view-protocol.ts';
-import { shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape } from '../../src/console/view-shapes.ts';
+import { shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape } from '../../src/console/view-shapes.ts';
 import { ApiError } from './prepared-read.ts';
 export type Entry={value:ViewEnvelope<any>|null;error:string;loading:boolean;version:string|null;controller?:AbortController;task?:Promise<void>};
 const error=(message:string,code='protocol')=>Object.assign(new ApiError(message),{code});
@@ -14,10 +14,10 @@ export class ViewStore {
   emit=()=>{this.sequence++;for(const fn of this.listeners)fn();};
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn);};};
   snapshot=()=>this.sequence;
-  frozen(path:string){return ['activity','timeline','timeline/intervals','timeline/holds','holistic'].includes(path.split('?')[0]!);}
+  frozen(path:string){return ['activity','timeline','timeline/intervals','timeline/holds','holistic','attention'].includes(path.split('?')[0]!);}
   keyVersion(path:string):string|null {
     if(!this.metadata)return null;
-    const key=path.startsWith('timeline')?'timeline':path.startsWith('holistic')?'holistic':path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
+    const key=path.startsWith('attention')||path.startsWith('requests/')?'attention':path.startsWith('timeline')?'timeline':path.startsWith('holistic')?'holistic':path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
     return key?this.metadata.viewVersions[key]:JSON.stringify(this.metadata.viewVersions);
   }
   entry(path:string) {let e=this.entries.get(path);if(!e){e={value:null,error:'',loading:false,version:null};this.entries.set(path,e);}return e;}
@@ -33,7 +33,7 @@ export class ViewStore {
   }
   notice(raw:any,reset=false) {
     if(!metadataShape(raw))throw error('Malformed metadata or UI schema mismatch');
-    if(reset){for(const key of this.ui.keys())if(key.startsWith('detail:')||key.startsWith('scroll:')||key.startsWith('disclosures:'))this.ui.delete(key);this.generation++;for(const e of this.entries.values())e.controller?.abort();this.entries.clear();this.identity=null;this.metadata=null;}
+    if(reset){for(const key of this.ui.keys())if(key.startsWith('detail:')||key.startsWith('scroll:')||key.startsWith('disclosures:')||key.startsWith('holistic-field:'))this.ui.delete(key);this.generation++;for(const e of this.entries.values())e.controller?.abort();this.entries.clear();this.identity=null;this.metadata=null;}
     if(!this.admit(raw,reset))return;
     this.metadata=raw;this.error='';this.emit();
   }
@@ -48,16 +48,17 @@ export class ViewStore {
         const query=identity?`${path.includes('?')?'&':'?'}epoch=${encodeURIComponent(identity.epoch)}&minHighWater=${identity.highWater}`:'';
         const raw=await this.read(`/arcs/${encodeURIComponent(this.arc)}/${path}${query}`,c.signal);
         if(c.signal.aborted||generation!==this.generation)return;
-        const check=path.startsWith('timeline/intervals?')?intervalsShape:path.startsWith('timeline/holds?')?holdsShape:path.startsWith('timeline?')?timelineShape:path.startsWith('holistic?')?holisticShape:path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
+        const check=path.startsWith('attention?')?attentionShape:path.startsWith('requests/')?requestShape:path.startsWith('timeline/intervals?')?intervalsShape:path.startsWith('timeline/holds?')?holdsShape:path.startsWith('timeline?')?timelineShape:path.startsWith('holistic?')?holisticShape:path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
         if(!check(raw.data))throw error('Malformed view or UI schema mismatch; reload required');
         const entity=decodeURIComponent(path.split('?')[0]!.split('/')[1]??'');
         if(path.startsWith('units/')&&raw.data.unit.id!==entity||path.startsWith('milestones/')&&raw.data.id!==entity||path.startsWith('invocations/')&&raw.data.invocation.routeId!==entity)throw error('Selected detail identity mismatch','conflict');
+        if(path.startsWith('requests/')&&raw.data.id!==entity)throw error('Selected request identity mismatch','conflict');
         if(path.startsWith('activity/')&&!path.startsWith('activity/changes?')&&raw.data.row.id!==entity)throw error('Selected Activity identity mismatch','conflict');
         if(entry.value&&(raw.highWater<entry.value.highWater||raw.revision<entry.value.revision))throw error('Overtaken view response; retry','conflict');
         if(!this.admit(raw,false,true))throw error('Journal advanced during this read; retry','conflict');
         entry.value=raw;
         // Initial SSE notice arriving during the read is deduplicated by the actual content version.
-        entry.version=path==='shell'||path==='graph'||path.startsWith('timeline')||path.startsWith('holistic')?raw.data.viewVersion:version??this.keyVersion(path);
+        entry.version=path==='shell'||path==='graph'||path.startsWith('timeline')||path.startsWith('holistic')||path.startsWith('attention?')?raw.data.viewVersion:version??this.keyVersion(path);
         this.error='';
         this.entries.delete(path);this.entries.set(path,entry);
         let bytes=0;for(const [key,value] of this.entries)if(key!=='snapshot')bytes+=JSON.stringify(value.value).length*2;

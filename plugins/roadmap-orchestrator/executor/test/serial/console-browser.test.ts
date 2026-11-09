@@ -108,6 +108,8 @@ describe('console browser', { concurrency: false }, () => {
     await browser.evaluate(`() => { location.hash = '#/arcs/${f.d.arc}/attention'; return true; }`);
     await until(async () => /Nonblocking/.test(await text()), 10_000, 'nonblocking attention');
     assert.match(await text(), /Review the plan/);
+    await browser.evaluate('() => { document.querySelector(".request-link").click(); return true; }');
+    await until(async () => /After reviewing/.test(await text()), 10_000, 'selected request recommendation');
     assert.equal(await browser.evaluate<boolean>('() => [...document.querySelectorAll(".owner-notice > p")].some(p => p.textContent.startsWith("After reviewing"))'), true, 'automatic follow-up is its own paragraph');
     await brandAudit('attention');
     await browser.evaluate(`() => { location.hash = '#/arcs/${f.d.arc}/resources'; return true; }`);

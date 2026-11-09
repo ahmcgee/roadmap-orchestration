@@ -1,4 +1,5 @@
 // D1/D2/D3/D8/D10, independent of ConsoleModels and presentation/report sweeps.
+import { ConsoleError } from '../observation/protocol.ts';
 import { sha256Hex } from '../core/json.ts';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import type { BackendHold } from './activity-protocol.ts';
@@ -9,7 +10,7 @@ import { projectionIndex, timelineIntervals, holisticSummaries } from './tab-pro
 import { backendHolds, activityKey } from './backend-holds.ts';
 import { versioned, preview } from './views.ts';
 import type { Interval, TrackMark } from './view-protocol.ts';
-import type { TimelineFilters, TimelineView, IntervalsView, HoldsView, HolisticView, TrackSummary, HolisticAudit, HolisticFinding, HolisticDecision } from './temporal-protocol.ts';
+import type { TimelineFilters, TimelineView, IntervalsView, HoldsView, HolisticView, TrackSummary, HolisticAudit, HolisticFinding, HolisticDecision, EvidencePreview, HolisticFieldView } from './temporal-protocol.ts';
 
 const temporalFields = ['window', 'from', 'to', 'zone', 'unit', 'milestone', 'state', 'stage', 'execution', 'q', 'sort', 'subject', 'cursor', 'limit'];
 function timelineQuery(params: Record<string, string>): TimelineFilters {
@@ -27,6 +28,13 @@ function marks(rows: Interval[], subject: string): TrackMark[] {
     result.push({type: 'cluster', from: batch[0]!.startedAt, to: batch.at(-1)!.startedAt, count: batch.length, countsByOutcome, subject});
   }
   return result;
+}
+// A field key identifies exact retained text, without manufacturing an event/date.
+function sourceField(e:Envelope,type:string,id:string,name:'claim'|'oneLine',text:string):EvidencePreview {
+  if(text.length<=240)return {text,truncated:false,detail:null};
+  const key=sha256Hex(JSON.stringify([e.instance,e.repoId,e.arc,e.epoch,type,id,name,text]));
+  let end=240;if(/[\uD800-\uDBFF]/.test(text[end-1]!))end--;
+  return {text:text.slice(0,end),truncated:true,detail:null,field:{key,name}};
 }
 export class ConsoleTemporal {
   readonly pages = new CollectionPages();
@@ -82,6 +90,18 @@ export class ConsoleTemporal {
     });
     return responseBound(e, data, limit >= 100 && section !== 'intervals' || limit === 200 ? 256*1024 : 128*1024) as TimelineView | IntervalsView | HoldsView;
   }
+  field(e:Envelope,key:string,params:Record<string,string>):HolisticFieldView {
+    allowParams(params,['after']);
+    const raw=params['after']??'0',after=Number(raw);
+    if(!/^(0|[1-9][0-9]*)$/.test(raw)||!Number.isSafeInteger(after))invalid('invalid field offset');
+    const s=e.data.display.status;
+    const candidates=[...s.findings.active.map(f=>({type:'finding',id:String(f.id),name:'claim' as const,text:f.claim})),...s.decisionsSince.map(d=>({type:'decision',id:`${d.seq}:${d.id}`,name:'oneLine' as const,text:d.oneLine}))];
+    const selected=candidates.find(f=>sourceField(e,f.type,f.id,f.name,f.text).field?.key===key);
+    if(!selected)throw new ConsoleError('not-found','Holistic field is no longer retained at this identity; reload this view');
+    if(after>selected.text.length||after>0&&/[\uD800-\uDBFF]/.test(selected.text[after-1]!)&&/[\uDC00-\uDFFF]/.test(selected.text[after]!))invalid('field offset exceeds text or splits a Unicode character');
+    let end=Math.min(selected.text.length,after+2048);if(end<selected.text.length&&/[\uD800-\uDBFF]/.test(selected.text[end-1]!))end--;
+    return responseBound(e,versioned({key,name:selected.name,text:selected.text.slice(after,end),offset:after,next:end<selected.text.length?end:null,total:selected.text.length},{basis:'current',from:null,to:null}),16*1024);
+  }
   holistic(e: Envelope, params: Record<string, string>, sourceVersion?: string): HolisticView {
     allowParams(params, ['section','cursor','limit']);
     const section = choice(params, 'section', ['audits','findings','decisions'], 'audits'), limit = pageLimit(params);
@@ -100,10 +120,10 @@ export class ConsoleTemporal {
         if (r.type === 'finding') {
           if (section !== 'findings') return [];
           const ev = opened.get(r.id), detail = ev ? {type:'event' as const,id:activityKey(e.epoch,ev.seq,'finding-opened')} : null;
-          return [{...r, detail, claim:detail ? preview(s.findings.active.find(f=>f.id===r.id)!.claim,detail) : {text:s.findings.active.find(f=>f.id===r.id)!.claim,truncated:false,detail:null}} as HolisticFinding];
+          return [{...r, detail, claim:detail ? preview(s.findings.active.find(f=>f.id===r.id)!.claim,detail) : sourceField(e,'finding',r.id,'claim',s.findings.active.find(f=>f.id===r.id)!.claim)} as HolisticFinding];
         }
         const detail = events.has(r.seq) ? {type:'event' as const,id:`${activityKey(e.epoch,r.seq,'decision')}-${sha256Hex(r.id).slice(0,24)}`} : null;
-        return section === 'decisions' ? [{...r, id:`${r.seq}:${r.id}`, recordId:r.id, detail, oneLine:detail ? {...r.oneLine,detail} : {text:s.decisionsSince.find(d=>Number(d.seq)===r.seq&&d.id===r.id)!.oneLine,truncated:false,detail:null}} as HolisticDecision] : [];
+        return section === 'decisions' ? [{...r, id:`${r.seq}:${r.id}`, recordId:r.id, detail, oneLine:detail ? {...r.oneLine,detail} : sourceField(e,'decision',`${r.seq}:${r.id}`,'oneLine',s.decisionsSince.find(d=>Number(d.seq)===r.seq&&d.id===r.id)!.oneLine)} as HolisticDecision] : [];
       });
       // Audits and decisions are latest first, findings retain canonical order.
       if (section === 'audits' || section === 'decisions') rows.reverse();
