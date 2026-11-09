@@ -36,7 +36,7 @@ export class ConsoleMetadata {
         shell: views.shell(e).viewVersion, graph: views.graph(e).viewVersion,
         timeline: hash({identity, invocations, units, parks, stageVersion}),
         activity: hash({identity, journal, invocations, attention, holistic}), holistic,
-        effort: hash({identity, invocations, units, stageVersion, waiting, money}),
+        effort: hash({identity, invocations, units, stageVersion, waiting, money, parks, queues: [s.host.jobQueue,s.host.queue], milestones: e.data.plan?.milestones ?? []}),
         resources: hash({host: s.host, units, work: invocations.map(i => ({id: i.id, work: i.work})), waiting, parks}), attention,
       }};
       this.#entries.set(key, entry);

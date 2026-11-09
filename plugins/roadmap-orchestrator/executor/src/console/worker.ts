@@ -15,6 +15,7 @@ import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
 import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
+import { ConsoleEffort } from './effort-query.ts';
 import { ConsoleAttention } from './attention-query.ts';
 import { requestDetail } from './request-detail.ts';
 import { ConsoleTemporal } from './temporal-query.ts';
@@ -23,7 +24,7 @@ import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
-import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape } from './view-shapes.ts';
+import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -36,6 +37,7 @@ const views = new ConsoleViews();
 const metadata = new ConsoleMetadata();
 const activity = new ConsoleActivity();
 const temporal = new ConsoleTemporal();
+const effort = new ConsoleEffort(temporal.pages);
 const attention = new ConsoleAttention(temporal.pages);
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
@@ -89,6 +91,11 @@ function route(path: string[], params: Record<string, string>) {
   if (path.length === 3 && section === 'snapshot') {
     const { events: _events, ...displayData } = e.data;
     return { ...e, data: { ...displayData, console: models.read(e) } };
+  }
+  if (section === 'effort' && path.length === 3) {
+    const data = effort.read(e, params, notice(e).viewVersions.effort);
+    if (!effortShape(data)) throw new ConsoleError('protocol', 'malformed typed Effort view');
+    return {...e, data};
   }
   if (section === 'attention' && path.length === 3) {
     const data = attention.read(e, params, notice(e).viewVersions.attention);

@@ -18,7 +18,7 @@ test('paged and expanded detail, tab sorting and reading position survive append
  const b=new ConsoleBrowser(tmpDir('console-detail-state'),{settleMs:100});t.after(()=>b.close());await b.initialize();
  await b.call('browser_resize',{width:1440,height:900});
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.addInitScript(()=>{window.__details=[];const original=window.fetch;window.fetch=async(...args)=>{const r=await original(...args);if(String(args[0]).includes('/units/')){const d=await r.clone().json();window.__details.push({url:String(args[0]),highWater:d.highWater,epoch:d.epoch});}return r;};});}`});
- const nav=async(tail:string)=>{await b.evaluate(`()=>{location.hash='#/arcs/${f.arc}/${tail}';return true;}`);};
+ const nav=async(tail:string)=>{await b.evaluate(tail==='effort'?`()=>{[...document.querySelectorAll('.tabs a')].find(a=>a.textContent==='Effort').click();return true;}`:`()=>{location.hash='#/arcs/${f.arc}/${tail}';return true;}`);};
  const ready=async(id:string)=>until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .unit-meta')?.textContent.includes('${id}')`),10_000,`detail ${id}`);
  await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/graph/units/u1`});await ready('u1');
  await b.evaluate(`()=>{[...document.querySelectorAll('.drawer button')].find(e=>e.textContent==='Show more (25 of 60)').click();return true;}`);
@@ -40,7 +40,9 @@ test('paged and expanded detail, tab sorting and reading position survive append
  await b.evaluate(`()=>{[...document.querySelectorAll('.drawer button')].find(e=>e.textContent==='Show more (50 of 60)').click();return true;}`);
  await until(async()=>b.evaluate(`()=>document.querySelectorAll('.drawer section li').length>=60&&!document.body.innerText.includes('Show more (50 of 60)')`),5000,'anchored final page after unrelated append');
  await nav('effort');await until(async()=>b.evaluate(`()=>!!document.querySelector('[aria-label="All units"]')`),10_000,'Effort');
- await b.evaluate(`()=>{document.querySelector('[aria-label="Sort by red checks"]').click();document.getElementById('content').scrollTop=700;return true;}`);
+ await b.evaluate(`()=>{document.querySelector('[aria-label="Sort by red checks"]').click();return true;}`);
+ await until(async()=>b.evaluate(`()=>document.querySelector('[aria-label="Sort by red checks"]').closest('th').getAttribute('aria-sort')==='descending'`),5000,'server Effort ranking');
+ await b.evaluate(`()=>{document.getElementById('content').scrollTop=700;return true;}`);
  const first=await b.evaluate<string>(`()=>document.querySelector('[aria-label="All units"] tbody tr td').textContent`),scroll=await b.evaluate<number>(`()=>document.getElementById('content').scrollTop`);
  await nav('graph');await until(async()=>b.evaluate(`()=>!!document.querySelector('.dag-canvas canvas')`),5000,'Graph return');
  await b.evaluate(`()=>{history.back();return true;}`);

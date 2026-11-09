@@ -20,7 +20,7 @@ export function usePlainQuery<T>(arc:string, endpoint:string, fields:readonly st
   }
   return {...state,data:state.data as T|null,path,params,navigate};
 }
-export function PlainPageStatus({data,error,loading,retry,reload,version}:{data:(View&Page<unknown>)|null;error:string;loading:boolean;retry:()=>void;reload:()=>void;version:'timeline'|'holistic'|'attention'}) {
+export function PlainPageStatus({data,error,loading,retry,reload,version}:{data:(View&Page<unknown>)|null;error:string;loading:boolean;retry:()=>void;reload:()=>void;version:'timeline'|'holistic'|'attention'|'effort'}) {
   let zone=route().query.get('zone')??Intl.DateTimeFormat().resolvedOptions().timeZone;try{new Intl.DateTimeFormat('en',{timeZone:zone});}catch{zone='UTC';}
   const store=useContext(Views),changed=!!data&&!!store?.metadata&&data.viewVersion!==store.metadata.viewVersions[version];
   return <>

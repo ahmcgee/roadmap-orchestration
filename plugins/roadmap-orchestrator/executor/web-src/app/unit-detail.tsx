@@ -13,7 +13,7 @@ export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void;s
   const now=useContext(Clock),[trail,setTrail]=useState<string[]>([]),[housekeeping,setHousekeeping]=useState(false);
   const path=id.startsWith('milestone:')?`milestones/${encodeURIComponent(id.slice(10))}`:`units/${encodeURIComponent(id)}`;
   const request=useRef(0);useEffect(()=>()=>{request.current++;},[path,cache?.generation]);
-  const selected=useSelectedDetail(arc,path),[detail,setDetail]=useState<any>(null),[error,setError]=useState('');
+  const selected=useSelectedDetail(arc,cache?.metadata?path:null),[detail,setDetail]=useState<any>(null),[error,setError]=useState('');
   useEffect(()=>{const saved=cache?.ui.get(`detail:${path}`) as (UnitView & {_anchored?:boolean})|undefined;setDetail(saved?._anchored?saved:selected.data);setError('');},[selected.data,path]);
 
   const trace=(source:string,target:string)=>window.dispatchEvent(new CustomEvent('roadmap-edge',{detail:{source,target}}));

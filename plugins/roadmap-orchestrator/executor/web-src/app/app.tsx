@@ -27,7 +27,7 @@ export function App() {
   return <Views.Provider value={store}><Console key={selected} where={where} selected={selected} listError={listError} now={now} theme={theme} setTheme={setTheme} store={store}/></Views.Provider>;
 }
 function Console({where,selected,listError,now,theme,setTheme,store}:{where:ReturnType<typeof route>;selected:string|null;listError:string;now:number;theme:Theme;setTheme:(t:Theme)=>void;store:ReturnType<typeof useObservation>}) {
-  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(['graph','activity','timeline','attention'].includes(where.tab)?null:'snapshot');
+  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(['graph','activity','timeline','attention','effort'].includes(where.tab)?null:'snapshot');
   const e=legacy.envelope as Envelope|null, p=shell.data as ShellView|null;
   const error=store?.error||shell.error||graph.error||legacy.error||'',checkedAt=store?.checkedAt??null,connected=store?.connected??false,reload=store?.reload??false;
   const graphEnvelope=store?.entries.get('graph')?.value;
@@ -61,8 +61,9 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
       {arc&&tab==='activity'&&<Activity arc={arc}/>}
       {arc&&tab==='timeline'&&<Timeline arc={arc}/>}
       {arc&&tab==='attention'&&<Attention arc={arc}/>}
-      {e&&(tab==='effort'?<Effort e={e}/>:tab==='resources'?<Resources e={e}/>:null)}
-      {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'||tab==='attention'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
+      {arc&&tab==='effort'&&<Effort arc={arc}/>}
+      {e&&tab==='resources'&&<Resources e={e}/>}
+      {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'||tab==='attention'||tab==='effort'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
     </main>
     {stale&&checkedAt&&<div className="stale-notice"><Time at={checkedAt} prefix="Last updated "/>. Live counters paused.</div>}
     {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}
