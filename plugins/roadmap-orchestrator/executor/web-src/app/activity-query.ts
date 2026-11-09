@@ -22,3 +22,10 @@ export function dayRange(day:string,zone:string):{from:string;to:string} {
   };
   return {from:boundary(day),to:boundary(shiftDay(day,1))};
 }
+
+/** Browser-local reading position, written only on leaving the console. Never a journal fact. */
+const VISIT_KEY='roadmap.previousVisit';
+export function saveVisit(marker:{arc:string;epoch:string;highWater:number}) {try{localStorage.setItem(VISIT_KEY,JSON.stringify(marker));}catch{/* storage can be disabled */}}
+export function previousVisit(arc:string,epoch:string|undefined):number|null {
+  try{const m=JSON.parse(localStorage.getItem(VISIT_KEY)??'null') as {arc:string;epoch:string;highWater:number}|null;return m&&m.arc===arc&&m.epoch===epoch&&Number.isSafeInteger(m.highWater)?m.highWater:null;}catch{return null;}
+}

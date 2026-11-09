@@ -34,6 +34,8 @@ export function displayZone() { try { const z = localStorage.getItem('roadmap.zo
 function zoneOrUtc(zone: string) { try { new Intl.DateTimeFormat('en', { timeZone: zone }); return zone; } catch { return 'UTC'; } }
 /** The console's one date format: "9 Nov 2026, 19:01". Short form omits the year. */
 export function formatInstant(at: string, zone: string, short = false) { return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', ...(short ? {} : { year: 'numeric' as const }), hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: zoneOrUtc(zone) }).format(new Date(at)); }
+/** A calendar day from the API (YYYY-MM-DD), in the console's date format. */
+export function formatDay(day: string) { return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`)); }
 export function zoneLabel(zone: string) { return new Intl.DateTimeFormat('en-GB', { timeZone: zoneOrUtc(zone), timeZoneName: 'short' }).formatToParts(new Date()).find(p => p.type === 'timeZoneName')?.value ?? zone; }
 
 /** A transport failure is never a statement about the arc: name it as such. */

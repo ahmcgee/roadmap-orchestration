@@ -16,12 +16,13 @@ test('Attention cold/deep links, frozen file-only updates, selected settlement, 
  const b=new ConsoleBrowser(tmpDir('console-attention-browser'));t.after(()=>b.close());await b.initialize();
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.addInitScript(()=>{window.__reads=[];const original=window.fetch;window.fetch=async(...args)=>{const r=await original(...args);if(String(args[0]).includes('/api/'))window.__reads.push({url:String(args[0]),status:r.status,bytes:new TextEncoder().encode(await r.clone().text()).length});return r;};});}`});
  const text=()=>b.evaluate<string>('()=>document.body.innerText');
- const ready=()=>until(async()=>b.evaluate(`()=>document.querySelectorAll('table[aria-label="Open human requests"] tbody tr').length===3&&document.querySelector('.connection')?.textContent==='Connected'`),10_000,'typed Attention ready');
+ const ready=()=>until(async()=>b.evaluate(`()=>document.querySelectorAll('table[aria-label="Open human requests"] tbody tr[data-clickable]').length===3&&document.querySelector('.connection')?.textContent==='Connected'`),10_000,'typed Attention ready');
  await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/attention`});await ready();
  const reads=await b.evaluate<{url:string;status:number;bytes:number}[]>(`()=>window.__reads`);
  assert.deepEqual(reads.filter(r=>r.status===200).map(r=>new URL(r.url,'http://console').pathname.split('/').at(-1)).sort(),['arcs','attention','shell']);
  assert.ok(!reads.some(r=>/\/(snapshot|status|graph|timeline|resources|effort|activity)(?:\?|$)/.test(r.url)));
- const row=()=>b.evaluate<string>(`()=>JSON.stringify([...document.querySelectorAll('table[aria-label="Open human requests"] tbody tr')].map(r=>[...r.cells].map((c,n)=>n===4?c.querySelector('time').dateTime:c.textContent)))`),before=await row();
+ assert.match(await text(),/Recommended: Inspect the compiler output, fix the environment, then resume\./,'the recommendation reads in the row without opening it');
+ const row=()=>b.evaluate<string>(`()=>JSON.stringify([...document.querySelectorAll('table[aria-label="Open human requests"] tbody tr[data-clickable]')].map(r=>[...r.cells].map((c,n)=>n===4?c.querySelector('time').dateTime:c.textContent)))`),before=await row();
  await b.evaluate(`()=>{const a=[...document.querySelectorAll('.request-link')].find(a=>a.textContent==='Compiler process failed');a.focus();return true;}`);await b.call('browser_press_key',{key:'Enter'});
  await until(async()=>b.evaluate(`()=>document.querySelector('.request-drawer')?.textContent.includes('Retry after fixing the environment')`),5000,'selected request');
  assert.equal(await b.evaluate(`()=>location.hash.includes('/attention/requests/${f.request}')`),true);assert.match(await text(),new RegExp(`roadmap ack ${f.request} --choice retry`));

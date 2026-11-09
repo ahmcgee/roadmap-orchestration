@@ -15,7 +15,8 @@ export function activityPage(e:Envelope,activity:ConsoleActivity,params:Record<s
       const report=retainedReport(e,i.id);
       if(Array.isArray(report?.['findings']))for(const finding of report['findings']){const f=record(finding),title=f['title']??f['what']??f['summary']??f['description'];if(typeof title==='string')titles.push(title);}
     }
-    return {...row,summary:preview(`Review sent ${row.subject.id} back: ${titles[0]??'changes requested'}`,row.detail)};
+    const sent=preview(`Review sent ${row.subject.id} back: ${titles[0]??'changes requested'}`,row.detail);
+    return {...row,summary:sent,result:sent};
   });
   const result={...data,rows};
   if(Buffer.byteLength(JSON.stringify({...e,data:result})+'\n')>(data.page.limit===100?128:64)*1024)throw new ConsoleError('unavailable','Activity response exceeds its byte ceiling; narrow the range or page size');

@@ -7,6 +7,7 @@ import { activityRequest, type ActivityEntry } from './activity-index.ts';
 import type { ConsoleActivity } from './activity-query.ts';
 import type { ActivityDetail } from './activity-protocol.ts';
 import { retainedReport } from './reports.ts';
+import { plainWords, requestReasonWords } from './vocabulary.ts';
 import { detailAvailability } from './detail-metadata.ts';
 import { projectionIndex, timelineIntervals } from './tab-projections.ts';
 import { versioned } from './views.ts';
@@ -27,7 +28,7 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
   if (entry.request) {
     const r = activityRequest(e, entry.request); evidenceAvailability = r ? 'available' : 'pruned';
     if (r) {
-      add('Request', r.id); add('Summary', r.summary); add('Blocking', r.blocking); add('Reason', r.reason); add('Raised at', r.raisedAt);
+      add('Request', r.id); add('Summary', r.summary); add('Blocking', r.blocking ? 'Yes' : 'No'); add('Reason', requestReasonWords(r.reason)); add('Raised at', r.raisedAt);
       add('Subject', r.subject.type === 'unit' ? `Unit ${r.subject.unit}` : r.subject.type);
       if (r.subject.type === 'findings') for (const finding of r.subject.findings) add('Related finding', finding);
       add('Recommendation', r.recommendation);
@@ -38,7 +39,7 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
         if(route&&e.data.display.invocations.some(i=>invocationDirName(invocationIdOf(i.id))===route))add('Evidence invocation',route);
       }
       // Open-list membership says only what it proves. Resolution is stated only from a recorded ack.
-      add('Currently in open list', e.data.requests.some(open => open.id === r.id));
+      add('Currently in open list', e.data.requests.some(open => open.id === r.id) ? 'Yes' : 'No');
     }
   }
   if (ev.type === 'fact') {
@@ -51,19 +52,19 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
     else if (f.kind === 'needs-user-acked') {add('Request', f.id); add('Command', f.command); if (f.choice !== null) add('Choice', f.choice); add('Resolution', 'Acknowledged by a recorded journal fact');}
     else if (f.kind === 'audit-started') {add('Audit job', f.job); for (const lens of f.lenses) add('Lens', lens);}
     else if (f.kind === 'audit-ended') {
-      add('Audit job', f.job); add('Outcome', f.outcome); add('Suppressed findings', f.suppressed);
+      add('Audit job', f.job); add('Result', plainWords(f.outcome)); add('Suppressed findings', f.suppressed);
       for (const range of f.covered) add('Recorded coverage', `${range.lens}: ${range.from} to ${range.to}`);
       for (const finding of f.findings) add('Finding', finding);
       for (const refusal of f.refused) add('Refused lens', `${refusal.lens}: ${refusal.claim}; ${refusal.reason}`);
-      add('Detail limitation', 'Checkpoint job detail is not included in this console yet.');
+      add('Note', "Checkpoint details aren't available here yet.");
     } else if (f.kind === 'finding-opened') {
-      add('Finding', f.id); add('Claim', f.claim); add('State at this event', 'open'); add('Severity', f.severity);
+      add('Finding', f.id); add('Claim', f.claim); add('State at this event', 'Open'); add('Severity', plainWords(f.severity));
       for (const evidence of f.evidence) add('Recorded evidence path', evidence.path);
-    } else if (f.kind === 'finding-transition') {add('Finding', f.id); add('State at this event', f.to.state);}
+    } else if (f.kind === 'finding-transition') {add('Finding', f.id); add('State at this event', plainWords(f.to.state));}
   }
   if (entry.row.kind === 'decision') {
     for (const d of e.data.display.status.decisionsSince.filter(d => d.seq === ev.seq)) {
-      add('Decision', d.id); add('Decision summary', d.oneLine); add('Kind', d.kind); add('Ruled by', d.ruledBy.type);
+      add('Decision', d.id); add('Decision summary', d.oneLine); add('Kind', plainWords(d.kind)); add('Ruled by', plainWords(d.ruledBy.type));
       if (d.ruledBy.type === 'architect' && d.ruledBy.command) add('Command', d.ruledBy.command);
       else if (d.ruledBy.type === 'judgment') add('Recorded role', d.ruledBy.role);
     }

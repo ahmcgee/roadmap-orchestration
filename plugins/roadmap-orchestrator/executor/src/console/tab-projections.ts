@@ -65,7 +65,7 @@ export function attentionSummaries(e: Envelope): RequestSummary[] {
   return e.data.requests.map(r => ({id: String(r.id), raisedAt: r.raisedAt, blocking: r.blocking,
     subject: r.subject.type === 'unit' ? {type: 'unit' as const, id: r.subject.unit, title: identities.get(r.subject.unit)?.title.slice(0, 96) ?? r.subject.unit}
       : r.subject.type === 'findings' ? {type: 'findings' as const, count: r.subject.findings.length} : {type: r.subject.type},
-    reason: r.reason, summary: preview(r.summary, {type: 'request', id: r.id}), evidenceCount: r.evidence.length,
+    reason: r.reason, summary: preview(r.summary, {type: 'request', id: r.id}), recommendationPreview: preview(r.recommendation, {type: 'request', id: r.id}), evidenceCount: r.evidence.length,
   })).sort((a, b) => Number(b.blocking) - Number(a.blocking) || Date.parse(a.raisedAt) - Date.parse(b.raisedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 /** D5 totals are completed measurements, not reconstructed historical wait intervals. */

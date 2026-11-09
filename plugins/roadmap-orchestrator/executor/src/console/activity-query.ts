@@ -179,7 +179,9 @@ export class ConsoleActivity {
       return entry.row;
     });
     const days = new Map<string, number>(), formatter = new Intl.DateTimeFormat('en-CA', {timeZone: g.query.filters.zone, year: 'numeric', month: '2-digit', day: '2-digit'});
-    for (const n of g.keys) {const day = formatter.format(new Date(index.entries[n]!.row.at)); days.set(day, (days.get(day) ?? 0) + 1);}
+    // Every recorded day stays reachable while one day is selected, so day counts ignore the time range.
+    const anyTime = {...g.query.filters, from: null, to: null};
+    for (const entry of index.entries) if (matches(entry, anyTime, index)) {const day = formatter.format(new Date(entry.row.at)); days.set(day, (days.get(day) ?? 0) + 1);}
     const data: ActivityView = {...versioned({rows, filters: g.query.filters, membership: 'applied-plan-at-anchor' as const,
       days: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({date, count})),
       page: {anchor: this.#token(id), next: end < g.keys.length && last !== undefined ? this.#token(id, keyOf(index.entries[last]!), 'next') : null,

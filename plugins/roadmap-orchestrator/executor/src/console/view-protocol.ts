@@ -37,7 +37,7 @@ export type Interval = {
 export type RequestSummary = {
   id: string; raisedAt: string; blocking: boolean;
   subject: {type: 'unit'; id: string; title: string} | {type: 'arc' | 'host'} | {type: 'findings'; count: number};
-  reason: string; summary: Preview; evidenceCount: number;
+  reason: string; summary: Preview; recommendationPreview: Preview; evidenceCount: number;
 };
 export type EffortRow = {
   subject: Subject; state: string | null; stage: string | null; systems: string[];

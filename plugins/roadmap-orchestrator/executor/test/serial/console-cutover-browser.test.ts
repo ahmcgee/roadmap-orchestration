@@ -22,7 +22,7 @@ test('Activity independently announces file-only requests without moving journal
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.addInitScript(()=>{window.__reads=[];const original=window.fetch;window.fetch=async(...args)=>{const r=await original(...args);if(String(args[0]).includes('/api/'))window.__reads.push({url:String(args[0]),status:r.status});return r;};});}`});
  const wait=(expr:string,label:string)=>until(async()=>b.evaluate(`()=>${expr}`),10_000,label);
  const click=(label:string)=>b.evaluate(`()=>{[...document.querySelectorAll('button')].find(e=>e.textContent===${JSON.stringify(label)}).click();return true;}`);
- await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/activity?window=arc&limit=25`});await wait(`document.querySelectorAll('.activity-feed li').length===25&&document.querySelector('.connection')?.textContent==='Connected'`,'Activity connected');
+ await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/activity?window=arc&limit=25`});await wait(`document.querySelectorAll('.activity-feed tbody tr').length===25&&document.querySelector('.connection')?.textContent==='Connected'`,'Activity connected');
  assert.equal(await b.evaluate(`()=>!!document.querySelector('.activity-current-requests [role="status"]')`),false,'initial notice is deduplicated');
  await click('Earlier activity');await wait(`location.hash.includes('cursor=')`,'older page');
  const page=()=>b.evaluate<string>(`()=>JSON.stringify({anchor:document.querySelector('.activity-anchor').textContent,rows:[...document.querySelectorAll('.activity-feed a')].map(a=>[a.href,a.textContent])})`);

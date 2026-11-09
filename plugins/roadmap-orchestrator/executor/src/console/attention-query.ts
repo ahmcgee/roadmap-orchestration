@@ -22,9 +22,9 @@ export class ConsoleAttention {
       const blocking = summaries.filter(r=>r.blocking).length;
       const rows = summaries.filter(r=>(filters.blocking==='all'||r.blocking===(filters.blocking==='1'))
         &&(!filters.subjectType.length||filters.subjectType.includes(r.subject.type))&&(!filters.reason.length||filters.reason.includes(r.reason))
-        &&(!filters.q||[r.id,records.get(r.id)!.summary,r.reason,r.subject.type,...(r.subject.type==='unit'?[r.subject.id,r.subject.title]:[])].join(' ').toLowerCase().includes(filters.q)));
+        &&(!filters.q||[r.id,records.get(r.id)!.summary,records.get(r.id)!.recommendation,r.reason,r.subject.type,...(r.subject.type==='unit'?[r.subject.id,r.subject.title]:[])].join(' ').toLowerCase().includes(filters.q)));
       rows.sort((a,b)=>Number(b.blocking)-Number(a.blocking)||(filters.sort==='oldest'?1:-1)*(Date.parse(a.raisedAt)-Date.parse(b.raisedAt))||(a.id<b.id?-1:a.id>b.id?1:0));
-      return {rows,context:{...versioned({filters,counts:{total:summaries.length,blocking,informational:summaries.length-blocking}},{basis:'current',from:null,to:null}),viewVersion:sourceVersion??sha256Hex(JSON.stringify(summaries))}};
+      return {rows,context:{...versioned({filters,counts:{total:summaries.length,blocking,informational:summaries.length-blocking},reasons:[...new Set(summaries.map(r=>r.reason))].sort()},{basis:'current',from:null,to:null}),viewVersion:sourceVersion??sha256Hex(JSON.stringify(summaries))}};
     });
     return responseBound(e,data,limit===100?96*1024:48*1024);
   }

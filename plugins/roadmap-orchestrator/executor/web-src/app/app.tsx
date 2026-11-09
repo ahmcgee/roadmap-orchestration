@@ -1,3 +1,4 @@
+import { saveVisit } from './activity-query.ts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
@@ -26,6 +27,7 @@ export function App() {
   useEffect(()=>{const media=matchMedia('(prefers-color-scheme: dark)'),apply=()=>{document.documentElement.dataset['theme']=theme==='system'?(media.matches?'dark':'light'):theme;window.dispatchEvent(new Event('roadmap-theme'));};apply();media.addEventListener('change',apply);try{localStorage.setItem('roadmap.theme',theme);}catch{}return()=>media.removeEventListener('change',apply);},[theme]);
   const [zone,setZone]=useState(displayZone);
   const store=useObservation(selected,setSelected);
+  useEffect(()=>{if(!selected)return;const leave=()=>{if(store?.metadata)saveVisit({arc:selected,epoch:store.metadata.epoch,highWater:store.metadata.highWater});};window.addEventListener('pagehide',leave);return()=>window.removeEventListener('pagehide',leave);},[selected,store]);
   useEffect(()=>{if(store?.connected)return;const c=new AbortController(),timer=setInterval(()=>{void get('/arcs',c.signal).then(r=>{if(r.uiSchema!==CONSOLE_UI_SCHEMA)throw new Error('Reload required: UI schema changed');setSelected(r.selected);setListed(true);setListError('');}).catch(err=>{if(!c.signal.aborted)setListError(err.message);});},15_000);return()=>{clearInterval(timer);c.abort();};},[store?.connected]);
   return <Views.Provider value={store}><Console key={selected} zone={zone} setZone={next=>{try{localStorage.setItem('roadmap.zone',next);}catch{/* storage can be disabled */}setZone(next);}} where={where} selected={selected} listed={listed} retryList={()=>{setListError('');setListAttempt(n=>n+1);}} listError={listError} now={now} theme={theme} setTheme={setTheme} store={store}/></Views.Provider>;
 }

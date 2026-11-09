@@ -30,7 +30,7 @@ test('plain Timeline expansion and Holistic section targets keep anchors, Back, 
  await until(async()=>b.evaluate(`()=>!!document.querySelector('table[aria-label="Holistic audits"]')`),5000,'typed audit section');
  await b.evaluate(`()=>{[...document.querySelectorAll('button')].find(e=>e.textContent==='Active findings (1)').click();return true;}`);
  await until(async()=>b.evaluate(`()=>document.querySelector('table[aria-label="Active findings"]')?.textContent.includes('Document empty input behavior')`),5000,'finding claim/state');
- assert.match(await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Active findings"]').textContent`),/F-1Document empty input behavioropen/);
+ assert.match(await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Active findings"]').textContent`),/F-1Document empty input behaviorOpen/);
  await b.evaluate(`()=>{document.querySelector('table[aria-label="Active findings"] a').click();return true;}`);await until(async()=>b.evaluate(`()=>document.querySelector('.drawer .detail-facts')?.textContent.includes('Document empty input behavior')`),5000,'finding source event');
  await b.evaluate(`()=>{history.back();return true;}`);await until(async()=>b.evaluate(`()=>!document.querySelector('.drawer')&&!!document.querySelector('table[aria-label="Active findings"]')`),5000,'Back to same finding section');
  await b.evaluate(`()=>{[...document.querySelectorAll('.tabs a')].find(a=>a.textContent==='Timeline').click();return true;}`);await ready();

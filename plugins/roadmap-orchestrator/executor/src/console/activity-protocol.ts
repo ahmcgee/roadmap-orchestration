@@ -11,7 +11,9 @@ export type ActivitySubject = Subject | {type: 'host' | 'findings' | 'request'; 
 export type ActivityRow = {
   id: string; seq: number; at: string; kind: ActivityKind; subject: ActivitySubject;
   stage: string | null; attempt: number | null; round: number | null;
-  actor: Actor | null; actorCount: number; outcome: string | null; summary: Preview;
+  actor: Actor | null; actorCount: number; outcome: string | null;
+  /** Plain-words result of a stage row; other rows show their summary. */
+  result: Preview | null; summary: Preview;
   workMs: number | null; spend: Money | null;
   coverage: {measured: number; unmeasured: number};
   detail: DetailRef; housekeeping: boolean;

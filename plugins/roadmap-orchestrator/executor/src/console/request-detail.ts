@@ -31,7 +31,7 @@ function selected(e: Envelope, id: string): NeedsUserRecord | null {
 const cliToken=(value:string)=>/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value);
 export function requestGuidance(r:NeedsUserRecord) {
   const command=r.options.length===0&&(r.subject.type==='arc'||r.reason==='pack-review')&&cliToken(r.id)?`roadmap ack ${r.id}`:null;
-  return {command,text:r.options.length?'Respond using the CLI with one of the recorded options.':command?'After reviewing and resolving or explicitly accepting this item, respond in your terminal.':'Respond using the CLI. Follow the recorded recommendation and act on the request’s subject.'};
+  return {command,text:r.options.length?'Run one of these commands to respond.':command?'After reviewing and resolving or explicitly accepting this item, respond in your terminal.':'Respond using the CLI. Follow the recorded recommendation and act on the request’s subject.'};
 }
 function resolution(e:Envelope,id:string,open:boolean):RequestResolution[] {
   const fact=e.data.events.findLast(ev=>ev.type==='fact'&&ev.fact.kind==='needs-user-acked'&&ev.fact.id===id);

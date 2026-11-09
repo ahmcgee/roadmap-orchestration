@@ -10,7 +10,7 @@ export type EffortTotals = {agentMs: number | null; commandMs: number | null; he
 export type EffortGroup = 'unit' | 'role' | 'system-set';
 export type EffortFilters = {window: '24h' | '7d' | 'arc' | null; from: string | null; to: string | null; zone: string;
   metric: 'work' | 'spend' | 'waiting'; group: EffortGroup; role: string[]; systemSet: string[]; subject: string[]; unit: string[]; milestone: string[]; system: string[]; state: string[]; blocked: 'all' | '1' | '0'; q: string; sort: EffortSort; direction: 'asc' | 'desc'};
-export type EffortUnit = EffortTotals & {id: string; subject: Subject | {type: 'role' | 'system-set' | 'unattributed'; id: string; title: string}; detailKey: string | null; contributorCount: number; titleTruncated: boolean; signal: Signal | null; state: string | null; stage: string | null; systems: string[];
+export type EffortUnit = EffortTotals & {id: string; subject: Subject | {type: 'role' | 'system-set' | 'unattributed'; id: string; title: string}; detailKey: string | null; contributorCount: number; titleTruncated: boolean; signal: Signal | null; state: string | null; stage: string | null; stageFinished: boolean; systems: string[];
   blockers: {reasons: Preview[]; count: number; waitSince: string | null};
   lifetime: {startedAt: string | null; endedAt: string | null; elapsedMs: number | null; rounds: number | null; redChecks: number | null; spend: Money}};
 export type EffortView = View & Page<EffortUnit> & {filters: EffortFilters; bounds: TemporalBounds; totals: EffortTotals;

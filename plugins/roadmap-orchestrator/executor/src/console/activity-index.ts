@@ -10,7 +10,8 @@ import { projectionIndex, timelineIntervals } from './tab-projections.ts';
 import { readEvidence } from './evidence.ts';
 import { preview } from './views.ts';
 import { activityKey, backendHolds } from './backend-holds.ts';
-import { stageWords } from './vocabulary.ts';
+import { plainWords, stageWords } from './vocabulary.ts';
+import { outcomeWords } from './indexes.ts';
 import type { ActivityRow, ActivityKind, Actor, BackendHold } from './activity-protocol.ts';
 import type { Subject, Money, Interval } from './view-protocol.ts';
 
@@ -55,7 +56,7 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
   const entries: ActivityEntry[] = [], holds = backendHolds(e.data.events, e.epoch);
   const arc: Subject = {type: 'arc', id: e.arc, title: 'Arc'};
   const unit = (id: string): Subject => ({type: 'unit', id, title: index.identities.get(id)?.title.slice(0, 96) ?? id});
-  const add = (ev: Event, kind: ActivityKind, text: string, fields: Partial<ActivityRow> = {}, refs: string[] = [], request: RequestRef | null = null, subkey = '') => {
+  const add = (ev: Event, kind: ActivityKind, text: string, fields: Partial<Omit<ActivityRow, 'result'>> & {result?: string} = {}, refs: string[] = [], request: RequestRef | null = null, subkey = '') => {
     const id = activityKey(e.epoch, ev.seq, kind) + (subkey ? `-${sha256Hex(subkey).slice(0, 24)}` : ''), detail = {type: 'event' as const, id};
     const joined = refs.map(id => byRoute.get(id)!).filter(Boolean), completed = joined.filter(i => i.endedAt !== null);
     const measured = completed.filter(i => i.wallMs !== null), actors = new Map<string, Actor>();
@@ -65,8 +66,8 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
       actor: actors.size === 1 ? [...actors.values()][0]! : null, actorCount: actors.size,
       outcome: null, summary: preview(text, detail), workMs: measured.length ? measured.reduce((n, i) => n + i.wallMs!, 0) : null,
       spend: aggregateMoney(joined.filter(i => agents.has(i.id))), coverage: {measured: measured.length, unmeasured: joined.length - measured.length},
-      detail, housekeeping: false, ...fields};
-    const search = [row.summary.text, row.subject.id, row.subject.title, row.stage, row.outcome, request?.id,
+      detail, housekeeping: false, ...fields, result: fields.result === undefined ? null : preview(fields.result, detail)};
+    const search = [row.summary.text, row.subject.id, row.subject.title, row.stage, row.stage ? stageWords(row.stage) : null, row.outcome, request?.id,
       ...[...actors.values()].flatMap(a => [a.role, a.backend, a.model])].filter(v => v != null).join(' ').toLowerCase();
     entries.push({row, actors: [...actors.values()], invocations: refs, request, search});
   };
@@ -77,21 +78,21 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
       const ref = raises.get(ev.expect.id)!, request = activityRequest(e, ref);
       add(ev, 'request-raised', `Question raised: ${request?.summary ?? `Human request ${ref.id}; evidence pruned`}`,
         {subject: !request ? {type: 'request', id: ref.id, title: 'Human request'} : request.subject.type === 'unit' ? unit(request.subject.unit)
-          : request.subject.type === 'arc' ? arc : {type: request.subject.type, id: null, title: request.subject.type === 'host' ? 'Host' : 'Findings'}, outcome: 'raised'}, [], ref);
+          : request.subject.type === 'arc' ? arc : {type: request.subject.type, id: null, title: request.subject.type === 'host' ? 'Host' : 'Findings'}, outcome: 'raised', ...(request ? {result: request.summary} : {})}, [], ref);
     } else if (ev.type === 'intent' && ev.kind === 'proc.spawn') {
       const i = byRoute.get(invocationDirName(invocationId(ev.op, ev.ordinal)));
-      if (i) add(ev, 'invocation-started', `${stageWords(i.stage)} invocation started`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: 'started', workMs: null, spend: null}, [i.id]);
+      if (i) add(ev, 'invocation-started', `${stageWords(i.stage)} run started`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: 'started', workMs: null, spend: null}, [i.id]);
     } else if (ev.type === 'done' && ev.kind === 'proc.spawn') {
       const refs = byOp.get(ev.op) ?? [], i = refs.length === 1 ? byRoute.get(refs[0]!) : null;
-      if (i) add(ev, 'invocation-ended', `${stageWords(i.stage)} invocation: ${i.outcome}`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: i.outcome}, [i.id]);
-      else if (refs.length) add(ev, 'invocation-ended', 'Invocation operation completed; multiple recorded attempts', {outcome: ev.outcome.kind}, refs);
+      if (i) add(ev, 'invocation-ended', `${stageWords(i.stage)} run: ${i.outcome}`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: i.outcome}, [i.id]);
+      else if (refs.length) add(ev, 'invocation-ended', 'Runs finished; several attempts recorded', {outcome: ev.outcome.kind}, refs);
     } else if (ev.type === 'fact') {
       const f = ev.fact;
       if (f.kind === 'stage-outcome' && 'unit' in f) {
         const step = index.stages.steps.get(`${f.unit}:${f.attempt}`), refs = byStep.get(`${f.unit}:${f.stage}:${f.attempt}`) ?? [];
         add(ev, 'stage-outcome', `${f.unit}: ${stageWords(f.stage)} — ${step?.outcome ?? f.outcome}`,
           {subject: unit(f.unit), stage: f.stage, attempt: step?.attempt ?? null, round: step?.round ?? null,
-            outcome: f.outcome, housekeeping: step?.housekeeping ?? false}, refs);
+            outcome: f.outcome, result: step?.outcome ?? outcomeWords(f.outcome), housekeeping: step?.housekeeping ?? false}, refs);
       } else if (f.kind === 'stage-outcome') {
         add(ev, 'stage-outcome', `${stageWords(f.stage)}: ${f.verdict}`, {subject: {type: 'job', id: f.job, title: f.job}, stage: f.stage, outcome: f.verdict}, byJob.get(f.job) ?? []);
       } else if (f.kind === 'plan-applied') add(ev, f.kind, `Plan revision ${f.rev} applied`, {outcome: 'applied'});
@@ -99,11 +100,11 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
       else if (f.kind === 'needs-user-acked') add(ev, 'request-acknowledged', `Human request ${f.id} acknowledged`, {outcome: 'acknowledged'}, [], raises.get(f.id) ?? null);
       else if (f.kind === 'audit-started' || f.kind === 'audit-ended') {
         add(ev, f.kind, f.kind === 'audit-started' ? 'Holistic audit started' : `Holistic audit ${f.outcome}: ${f.findings.length} ${f.findings.length === 1 ? 'finding' : 'findings'}`,
-          {subject: {type: 'job', id: f.job, title: f.job}, outcome: f.kind === 'audit-started' ? 'started' : f.outcome}, f.kind === 'audit-ended' ? byJob.get(f.job) ?? [] : []);
+          {subject: {type: 'job', id: f.job, title: f.job}, outcome: f.kind === 'audit-started' ? 'started' : f.outcome, ...(f.kind === 'audit-ended' ? {result: `${plainWords(f.outcome)}, ${f.findings.length} new ${f.findings.length === 1 ? 'finding' : 'findings'}`} : {})}, f.kind === 'audit-ended' ? byJob.get(f.job) ?? [] : []);
       } else if (f.kind === 'finding-opened' || f.kind === 'finding-transition') {
         const finding = findings.get(f.id), source = finding?.source, subject = source?.type === 'stage' ? unit(source.unit) : source?.type === 'job' ? {type: 'job' as const, id: source.job, title: source.job} : arc;
         add(ev, f.kind, `${f.id}: ${finding?.claim ?? 'Finding'} — ${f.kind === 'finding-opened' ? 'open' : f.to.state}`,
-          {subject, outcome: f.kind === 'finding-opened' ? 'open' : f.to.state});
+          {subject, outcome: f.kind === 'finding-opened' ? 'open' : f.to.state, result: `${f.id}: ${finding?.claim ?? 'Finding'} (${plainWords(f.kind === 'finding-opened' ? 'open' : f.to.state)})`});
       } else if (f.kind === 'backend-park') {
         const h = holds.find(h => h.startSeq === ev.seq)!;
         add(ev, 'backend-park', `${f.backend}: backend unavailable to new calls (${h.effectiveClass})`,

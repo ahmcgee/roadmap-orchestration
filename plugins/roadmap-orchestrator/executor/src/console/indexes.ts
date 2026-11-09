@@ -8,7 +8,7 @@ import { record } from '../tui/projection.ts';
 import { shortUnitTitle, stageWords } from './vocabulary.ts';
 
 export const housekeepingStages = new Set(['quiesce', 'evidence', 'salvage', 'teardown']);
-const outcomeWords = (outcome: string) => ({empty:'No workloads running',captured:'Evidence captured',committed:'Changes saved','committed-contract-touched':'Changes saved; contract updated',released:'Resources released','cleanup-failed':'Cleanup failed','executor-fault':'Executor fault','commit-failed':'Commit failed',unmerged:'Unmerged changes',approve:'Approved',revise:'Changes requested',green:'Passed',success:'Succeeded',published:'Published','process-fault':'Process fault',red:'Failed'}[outcome] ?? outcome.replaceAll('-', ' '));
+export const outcomeWords = (outcome: string) => ({empty:'No workloads running',captured:'Evidence captured',committed:'Changes saved','committed-contract-touched':'Changes saved; contract updated',released:'Resources released','cleanup-failed':'Cleanup failed','executor-fault':'Executor fault','commit-failed':'Commit failed',unmerged:'Unmerged changes',approve:'Approved',revise:'Changes requested',green:'Passed',success:'Succeeded',published:'Published','process-fault':'Process fault',red:'Failed'}[outcome] ?? outcome.replaceAll('-', ' '));
 export type StageStep = {housekeeping: boolean; id: string; stage: string; label: string; attempt: number; sequence: number; round: number; at: string; endedAt: string | null; outcome: string; findingTitles: string[]; activities: string[]; notes: string[]};
 export type UnitIdentity = { id: string; title: string; systems: string[]; order: number };
 export function identityIndex(e: Envelope): Map<string, UnitIdentity> {

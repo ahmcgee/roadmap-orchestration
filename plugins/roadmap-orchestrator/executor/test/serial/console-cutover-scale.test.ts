@@ -28,7 +28,7 @@ test('all six typed routes meet combined cold/deep-link request and decoded budg
   {name:'timeline',hash:'timeline',endpoint:'timeline',budget:136,ready:`!!document.querySelector('table[aria-label="Invocation timeline"] tbody tr')`,link:`document.querySelector('table[aria-label="Invocation timeline"] a')?.getAttribute('href')`},
   {name:'effort',hash:'effort',endpoint:'effort',budget:136,ready:`!!document.querySelector('table[aria-label="All units"] tbody tr')`,link:`document.querySelector('table[aria-label="All units"] a')?.getAttribute('href')`},
   {name:'resources',hash:'resources',endpoint:'resources',budget:136,ready:`!!document.querySelector('table[aria-label="Resource bookings"]')`,link:`document.querySelector('table[aria-label="Resource bookings"] .resource-primary-link')?.getAttribute('href')`},
-  {name:'attention',hash:'attention',endpoint:'attention',budget:56,ready:`!!document.querySelector('table[aria-label="Open human requests"] tbody tr')`,link:`document.querySelector('.request-link')?.getAttribute('href')`},
+  {name:'attention',hash:'attention',endpoint:'attention',budget:56,ready:`!!document.querySelector('table[aria-label="Open human requests"] tbody tr[data-clickable]')`,link:`document.querySelector('.request-link')?.getAttribute('href')`},
  ];
  const measurements:Record<string,unknown>={},deepLinks:{name:string;hash:string;endpoint:string;budget:number;detail:string;detailBudget:number}[]=[];
  for(const r of routes){

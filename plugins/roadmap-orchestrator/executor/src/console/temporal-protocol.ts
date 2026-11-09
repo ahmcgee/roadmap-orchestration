@@ -13,7 +13,8 @@ export type HolisticSection = 'audits' | 'findings' | 'decisions';
 export type HolisticAudit = Extract<HolisticRow, {type: 'audit'}> & {coverage: {lens: string; from: string; to: string}[]; coverageTruncated: boolean};
 export type EvidencePreview = Omit<Preview,'detail'> & {detail: DetailRef | null; field?: {key:string;name:'claim'|'oneLine'}};
 export type HolisticFieldView = View & {key:string;name:'claim'|'oneLine';text:string;offset:number;next:number|null;total:number};
-export type HolisticFinding = {type: 'finding'; id: string; claim: EvidencePreview; state: string; detail: DetailRef | null};
+export type HolisticFinding = {type: 'finding'; id: string; claim: EvidencePreview; state: string; detail: DetailRef | null;
+  foundBy: {type: 'audit'; job: string} | {type: 'stage'; unit: string; stage: string} | {type: 'other'} | null; foundAt: string | null};
 export type HolisticDecision = Omit<Extract<HolisticRow, {type: 'decision'}>, 'detail' | 'oneLine'> & {detail: DetailRef | null; recordId: string; oneLine: EvidencePreview};
 export type HolisticView = View & Page<HolisticAudit | HolisticFinding | HolisticDecision> & {
   section: HolisticSection; enabled: boolean; currentAudit: {running: boolean; job: string | null} | null;

@@ -99,10 +99,11 @@ test('D9 request previews are bounded and retain identity, age, canonical count 
   const e = capture(f), requests = e.data.requests;
   assert.ok(requests.length >= 2);
   const first = requests[0]!, second = requests[1]!;
-  const summaries = attentionSummaries({...e, data: {...e.data, requests: [{...first, summary: 'Long request '.repeat(1000)}, {...second, summary: 'Long request '.repeat(1000)}]}});
+  const summaries = attentionSummaries({...e, data: {...e.data, requests: [{...first, summary: 'Long request '.repeat(1000), recommendation: 'Long advice '.repeat(1000)}, {...second, summary: 'Long request '.repeat(1000)}]}});
   assert.equal(summaries.length, 2); assert.notEqual(summaries[0]!.id, summaries[1]!.id);
   for (const row of summaries) {
-    assert.equal(row.summary.truncated, true); assert.equal(row.summary.text.length, 240);
+    assert.equal(row.summary.truncated, true); assert.equal(row.summary.text.length, 240); assert.ok(row.recommendationPreview.text.length <= 240); assert.equal(row.recommendationPreview.detail.id, row.id);
+    if (row.id === String(first.id)) assert.equal(row.recommendationPreview.truncated, true);
     assert.equal(row.summary.detail.id, row.id); assert.ok(row.raisedAt); assert.equal(row.evidenceCount, requests.find(r => r.id === row.id)!.evidence.length);
   }
   assert.deepEqual(preview('', {type:'unit', id:'u1'}), {text:'', truncated:false, detail:{type:'unit',id:'u1'}});

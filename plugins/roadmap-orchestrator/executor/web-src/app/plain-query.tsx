@@ -35,11 +35,17 @@ export function PlainPageStatus({data,error,loading,reload,version,noun}:{data:(
   return <>
     {error&&<div role="alert"><p>{loadError(error)}</p><Button onClick={reload}>Retry</Button></div>}
     {loading&&<p role="status">{data?'Updating…':'Loading…'}</p>}
-    {data&&<><p className="muted">{pluralise(data.page.matching,noun)}. Updated {formatInstant(data.page.asOf.observedAt,zone,true)} {zoneLabel(zone)}.</p><div className="activity-updates" aria-live="polite">{changed&&<p>Updates available. <Button onClick={reload}>Show updates</Button></p>}</div></>}
+    {data&&<div className="page-status"><p className="muted">{pluralise(data.page.matching,noun)}. Updated {formatInstant(data.page.asOf.observedAt,zone,true)} {zoneLabel(zone)}.</p><div className="activity-updates" aria-live="polite">{changed&&<p>Updates available. <Button onClick={reload}>Show updates</Button></p>}</div></div>}
   </>;
 }
 export function PlainPaging({page,navigate}:{page:Page<unknown>['page'];navigate:(changes:Record<string,string|null>)=>void}) {
   return <div className="pagination"><Button disabled={!page.previous} onClick={()=>navigate({cursor:page.previous})}>Previous page</Button><Button disabled={!page.next} onClick={()=>navigate({cursor:page.next})}>Next page</Button><span>Showing {page.returned} of {page.matching}</span></div>;
+}
+/** The shared row path: Up/Down, Home/End between each row's primary link; Enter follows it. */
+export function moveRowFocus(ev:React.KeyboardEvent<HTMLElement>) {
+  if((ev.target as HTMLElement).closest('input,select,button')||!['ArrowDown','ArrowUp','Home','End'].includes(ev.key))return;
+  const links=[...ev.currentTarget.querySelectorAll<HTMLTableRowElement>('tbody tr[data-clickable]')].flatMap(r=>r.querySelector<HTMLAnchorElement>('a[href]')??[]),n=links.indexOf(document.activeElement as HTMLAnchorElement);
+  if(n<0)return;ev.preventDefault();links[ev.key==='Home'?0:ev.key==='End'?links.length-1:Math.max(0,Math.min(links.length-1,n+(ev.key==='ArrowDown'?1:-1)))]?.focus();
 }
 export function activateRow(ev:React.MouseEvent<HTMLTableRowElement>,href:string|null) {
   if(!href||ev.defaultPrevented||ev.button!==0||ev.metaKey||ev.ctrlKey||ev.altKey||ev.shiftKey||(ev.target as HTMLElement).closest('a,button,input,select,summary'))return;

@@ -17,14 +17,14 @@ test('Activity cold route, anchored paging, filters, days, append notice, event 
  const b=new ConsoleBrowser(tmpDir('console-activity-browser'),{settleMs:100});t.after(()=>b.close());await b.initialize();await b.call('browser_resize',{width:1440,height:900});
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.addInitScript(()=>{window.__reads=[];const original=window.fetch;window.fetch=async(...args)=>{const r=await original(...args);if(String(args[0]).includes('/api/'))window.__reads.push({url:String(args[0]),status:r.status,bytes:new TextEncoder().encode(await r.clone().text()).length});return r;};});}`});
  const began=performance.now();await b.call('browser_navigate',{url:`${s.url}/#/arcs/${f.arc}/activity?window=arc&limit=25`});
- const ready=(count=25)=>until(async()=>b.evaluate(`()=>document.querySelectorAll('.activity-feed li').length===${count}&&document.querySelector('.progress-count')?.textContent.includes('/14')`),10_000,'typed Activity page');await ready();
+ const ready=(count=25)=>until(async()=>b.evaluate(`()=>document.querySelectorAll('.activity-feed tbody tr').length===${count}&&document.querySelector('.progress-count')?.textContent.includes('/14')`),10_000,'typed Activity page');await ready();
  const coldMs=performance.now()-began;
  const reads=await b.evaluate<any[]>(`()=>window.__reads`),successful=reads.filter(r=>r.status===200),paths=successful.map(r=>new URL(r.url,'http://console').pathname.split('/').at(-1));
  assert.deepEqual(paths.sort(),['activity','arcs','shell']);
  assert.equal(reads.some(r=>/\/(snapshot|status|activity-legacy|holistic)(?:\?|$)/.test(r.url)),false);assert.equal(reads.some(r=>/activity\/changes/.test(r.url)),false,'initial notice does not issue a duplicate/count read');
  const coldBytes=successful.filter(r=>/\/(shell|activity)(?:\?|$)/.test(r.url)).reduce((n,r)=>n+r.bytes,0);assert.ok(coldBytes<=72*1024);
  const click=async(label:string)=>b.evaluate(`()=>{[...document.querySelectorAll('button')].find(e=>e.textContent===${JSON.stringify(label)}).click();return true;}`);
- await click('Earlier activity');await until(async()=>b.evaluate(`()=>location.hash.includes('cursor=')&&document.querySelectorAll('.activity-feed li').length===25`),5000,'older frozen page');
+ await click('Earlier activity');await until(async()=>b.evaluate(`()=>location.hash.includes('cursor=')&&document.querySelectorAll('.activity-feed tbody tr').length===25`),5000,'older frozen page');
  const identity=await b.evaluate<string>(`()=>document.querySelector('.activity-feed a').href`),anchor=await b.evaluate<string>(`()=>document.querySelector('.activity-anchor').textContent`);
  await b.evaluate(`()=>{document.getElementById('content').scrollTop=400;document.querySelector('.activity-feed a').focus();return true;}`);
  await b.call('browser_press_key',{key:'Enter'});await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .detail-facts')`),10_000,'event drawer');
@@ -42,23 +42,23 @@ test('Activity cold route, anchored paging, filters, days, append notice, event 
  assert.equal(await b.evaluate<number>(`()=>document.getElementById('content').scrollTop`),scroll);assert.ok(Math.abs(await b.evaluate<number>(`()=>document.querySelector('.activity-feed a').getBoundingClientRect().top`)-top)<2);
  await click('Show latest');await until(async()=>b.evaluate(`()=>!location.hash.includes('cursor=')&&document.querySelector('.activity-feed a').href!==${JSON.stringify(identity)}`),5000,'fresh latest anchor');
  await b.evaluate(`()=>{const q=document.querySelector('[name="q"]');q.value='Plan revision';q.form.requestSubmit();return true;}`);
- await until(async()=>b.evaluate(`()=>document.querySelectorAll('.activity-feed li').length===2&&location.hash.includes('q=Plan+revision')`),5000,'server summary search');
+ await until(async()=>b.evaluate(`()=>document.querySelectorAll('.activity-feed tbody tr').length===2&&location.hash.includes('q=Plan+revision')`),5000,'server summary search');
  await b.evaluate(`()=>{document.querySelector('.activity-feed a').click();return true;}`);await until(async()=>b.evaluate(`()=>document.querySelector('.drawer .detail-facts')?.textContent.includes('Plan revision')`),5000,'plan event target');
- await b.evaluate(`()=>{history.back();return true;}`);await until(async()=>b.evaluate(`()=>!document.querySelector('.drawer')&&document.querySelectorAll('.activity-feed li').length===2`),5000,'Back restores filtered list');
+ await b.evaluate(`()=>{history.back();return true;}`);await until(async()=>b.evaluate(`()=>!document.querySelector('.drawer')&&document.querySelectorAll('.activity-feed tbody tr').length===2`),5000,'Back restores filtered list');
  await click('Reset view');await ready(50);
  const date=await b.evaluate<string>(`()=>document.querySelector('.activity-feed time').dateTime.slice(0,10)`);
- await b.evaluate(`()=>{const input=document.querySelector('[aria-label="Activity day"]');const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(input,${JSON.stringify(date)});input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));return true;}`);
- await until(async()=>b.evaluate(`()=>location.hash.includes('from=')&&!!document.querySelector('[aria-label="Jump to recorded day"]')`),5000,'date input selects its day').catch(async err=>{console.log(await b.evaluate(`()=>({hash:location.hash,text:document.body.innerText})`));throw err;});
+ await b.evaluate(`()=>{const input=document.querySelector('[aria-label="Activity time window"]');input.value='day:'+${JSON.stringify(date)};input.dispatchEvent(new Event('change',{bubbles:true}));return true;}`);
+ await until(async()=>b.evaluate(`()=>location.hash.includes('from=')&&document.querySelector('[aria-label="Activity time window"]').value==='day:'+${JSON.stringify(date)}`),5000,'date input selects its day').catch(async err=>{console.log(await b.evaluate(`()=>({hash:location.hash,text:document.body.innerText})`));throw err;});
  // Use the native select's recorded-day jump as well as the date input path.
- await b.evaluate(`()=>{const input=document.querySelector('[aria-label="Jump to recorded day"]');input.value=${JSON.stringify(date)};input.dispatchEvent(new Event('change',{bubbles:true}));return true;}`);
- await until(async()=>b.evaluate(`()=>location.hash.includes('from=')&&document.querySelectorAll('.activity-feed li').length>0`),5000,'direct calendar day');
+ await b.evaluate(`()=>{const input=document.querySelector('[aria-label="Activity time window"]');input.value='day:'+${JSON.stringify(date)};input.dispatchEvent(new Event('change',{bubbles:true}));return true;}`);
+ await until(async()=>b.evaluate(`()=>location.hash.includes('from=')&&document.querySelectorAll('.activity-feed tbody tr').length>0`),5000,'direct calendar day');
  await click('Previous day');await until(async()=>b.evaluate(`()=>document.body.innerText.includes('No activity matches')`),5000,'empty selected day');await click('Next day');await ready(50).catch(async err=>{console.log(await b.evaluate(`()=>({hash:location.hash,text:document.body.innerText,reads:window.__reads.slice(-8)})`));throw err;});
  // Expire the actual worker generation through ordinary queries, without a production hook.
  const base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
  for(let n=0;n<34;n++)assert.equal((await consoleGet(`${base}/activity?q=eviction${n}`)).status,200);
  await click('Earlier activity');await until(async()=>b.evaluate(`()=>document.body.innerText.includes('expired or changed')`),5000,'explicit reset');await click('Retry');await ready(50);
  const deepLink=await b.evaluate<string>(`()=>document.querySelector('.activity-feed a').href`);
- await b.call('browser_navigate',{url:'about:blank'});await b.call('browser_navigate',{url:deepLink});await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .detail-facts')&&document.querySelectorAll('.activity-feed li').length===50`),10_000,'cold selected event deep link');
+ await b.call('browser_navigate',{url:'about:blank'});await b.call('browser_navigate',{url:deepLink});await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .detail-facts')&&document.querySelectorAll('.activity-feed tbody tr').length===50`),10_000,'cold selected event deep link');
  const deepReads=await b.evaluate<any[]>(`()=>window.__reads.filter(r=>r.status===200)`);
  assert.equal(deepReads.length,4,JSON.stringify(deepReads));assert.equal(deepReads.filter(r=>/\/activity\//.test(r.url)).length,1,'only the selected event is read');assert.equal(deepReads.some(r=>/snapshot|activity-legacy|holistic/.test(r.url)),false);
  await b.call('browser_resize',{width:390,height:844});assert.equal(await b.evaluate(`()=>document.documentElement.scrollWidth<=innerWidth`),true);

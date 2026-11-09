@@ -120,7 +120,9 @@ export class ConsoleTemporal {
         if (r.type === 'finding') {
           if (section !== 'findings') return [];
           const ev = opened.get(r.id), detail = ev ? {type:'event' as const,id:activityKey(e.epoch,ev.seq,'finding-opened')} : null;
-          return [{...r, detail, claim:detail ? preview(s.findings.active.find(f=>f.id===r.id)!.claim,detail) : sourceField(e,'finding',r.id,'claim',s.findings.active.find(f=>f.id===r.id)!.claim)} as HolisticFinding];
+          const source = ev?.type === 'fact' && ev.fact.kind === 'finding-opened' ? ev.fact.source : null;
+          const foundBy: HolisticFinding['foundBy'] = source === null ? null : source.type === 'job' ? {type: 'audit', job: source.job} : source.type === 'stage' ? {type: 'stage', unit: source.unit, stage: source.stage} : {type: 'other'};
+          return [{...r, detail, foundBy, foundAt: ev?.at ?? null, claim:detail ? preview(s.findings.active.find(f=>f.id===r.id)!.claim,detail) : sourceField(e,'finding',r.id,'claim',s.findings.active.find(f=>f.id===r.id)!.claim)} as HolisticFinding];
         }
         const detail = events.has(r.seq) ? {type:'event' as const,id:`${activityKey(e.epoch,r.seq,'decision')}-${sha256Hex(r.id).slice(0,24)}`} : null;
         return section === 'decisions' ? [{...r, id:`${r.seq}:${r.id}`, recordId:r.id, detail, oneLine:detail ? {...r.oneLine,detail} : sourceField(e,'decision',`${r.seq}:${r.id}`,'oneLine',s.decisionsSince.find(d=>Number(d.seq)===r.seq&&d.id===r.id)!.oneLine)} as HolisticDecision] : [];
