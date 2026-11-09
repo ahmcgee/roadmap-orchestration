@@ -14,6 +14,7 @@ import { gitCommonDir } from '../../src/git/git.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import type { Page } from '../../src/console/view-protocol.ts';
 import type { Envelope } from '../../src/observation/protocol.ts';
+import { consoleGet } from '../helpers/console-http.ts';
 
 test('300-unit/7-day projection budgets preserve every relationship and independently bounded tab row contracts', {timeout:90_000}, async t => {
   const generated = performance.now(), m = await generateScaleArc(tmpDir('console-view-scale'));
@@ -67,13 +68,13 @@ test('300-unit/7-day projection budgets preserve every relationship and independ
   const httpStart=performance.now(), server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});
   t.after(()=>server.close());
   const base=`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}`;
-  const shellResponse=await fetch(`${base}/shell`), shellBody=await shellResponse.text(), firstShellHttpMs=performance.now()-httpStart;
+  const shellResponse=await consoleGet(`${base}/shell`), shellBody=await shellResponse.text(), firstShellHttpMs=performance.now()-httpStart;
   assert.equal(shellResponse.status,200,shellBody); measured['httpShell']=Buffer.byteLength(shellBody);assert.ok(measured['httpShell']<=8*1024);
-  const graphResponse=await fetch(`${base}/graph`), graphBody=await graphResponse.text();
+  const graphResponse=await consoleGet(`${base}/graph`), graphBody=await graphResponse.text();
   assert.equal(graphResponse.status,200,graphBody.slice(0,500));measured['httpGraph']=Buffer.byteLength(graphBody);assert.ok(measured['httpGraph']<=256*1024);
   assert.deepEqual(JSON.parse(graphBody).data,graph);
   const httpTimes:number[]=[];
-  for(let i=0;i<20;i++){const started=performance.now(),r=await fetch(`${base}/graph`);assert.equal(r.status,200);await r.json();httpTimes.push(performance.now()-started);}
+  for(let i=0;i<20;i++){const started=performance.now(),r=await consoleGet(`${base}/graph`);assert.equal(r.status,200);await r.json();httpTimes.push(performance.now()-started);}
   httpTimes.sort((a,b)=>a-b);
   const times:number[]=[];
   for(let i=0;i<100;i++){const started=performance.now();assert.equal(views.graph(e),graph);times.push(performance.now()-started);}

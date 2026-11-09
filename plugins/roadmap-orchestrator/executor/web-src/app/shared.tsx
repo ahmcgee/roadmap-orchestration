@@ -1,15 +1,12 @@
 import { createContext, useContext } from 'react';
 import type { Activity, Envelope, Signal } from './types.ts';
+import { preparedRead } from './prepared-read.ts';
+export { ApiError } from './prepared-read.ts';
 export const protocol = document.querySelector<HTMLMetaElement>('meta[name="roadmap-protocol"]')!.content;
 export const api = `/api/${protocol}`;
-export class ApiError extends Error { code?: string; }
 // History and evidence are heterogeneous recorded payloads; their renderer narrows by event kind.
 export async function get(path: string, signal?: AbortSignal): Promise<any> {
-  const response = await fetch(`${api}${path}`, { ...(signal ? { signal } : {}), cache: 'no-store' });
-  let value; try { value = await response.json(); } catch { throw new ApiError('Malformed console response'); }
-  if (!response.ok) { const error = new ApiError(value.error?.message || `Console response ${response.status}`); error.code = value.error?.code; throw error; }
-  if (value.protocol !== protocol) { const error = new ApiError('Reload required: executor version changed'); error.code = 'protocol'; throw error; }
-  return value;
+  return preparedRead(api, protocol, path, signal);
 }
 export const tabs = ['graph', 'timeline', 'activity', 'effort', 'resources', 'attention'] as const;
 export type Tab = typeof tabs[number];

@@ -14,6 +14,7 @@ import { logPage, readEvidence } from './evidence.ts';
 import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
 import { ConsoleViews } from './views.ts';
+import { ConsoleMetadata } from './metadata.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
@@ -24,10 +25,12 @@ const subscribed = new Set<string>();
 const maintained = new Set<string>();
 const models = new ConsoleModels(); // Temporary legacy UI adapter until the tab cutover.
 const views = new ConsoleViews();
+const metadata = new ConsoleMetadata();
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
 function read(arc: string, admission: Admission = {}) { return cache.read(retainedRun(args.common, args.hostDir, arc), admission); }
+function notice(e: Envelope) { return metadata.read(e, views, retainedRuns(args.common, args.hostDir).selected); }
 function result(e: Envelope, id: string) {
   const selected = e.data.display.invocations.find((i) => i.id === id);
   if (!selected) throw new ConsoleError('not-found', 'invocation is not recorded in this arc');
@@ -46,19 +49,22 @@ function result(e: Envelope, id: string) {
   }
   return { record, report, raw: JSON.stringify(record, null, 2), lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
 }
-function route(path: string[], params: Record<string, string>) {
-  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, uiSchema: CONSOLE_UI_SCHEMA, selected: retainedRuns(args.common, args.hostDir).selected };
-  const [runs, arc, section, id, file] = path;
-  if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
-  if (path.length === 3 && (section === 'shell' || section === 'graph')) {
-    for (const key of Object.keys(params)) if (!['epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown view query parameter');
-  }
-  const admission: Admission = {
+function admissionOf(params: Record<string, string>) {
+  return {
     ...(params['epoch'] !== undefined ? { epoch: params['epoch'] } : {}),
     ...(params['revision'] !== undefined ? { revision: integer(params['revision']) } : {}),
     ...(params['minHighWater'] !== undefined ? { minHighWater: integer(params['minHighWater']) } : {}),
     ...(params['fenceIdentity'] !== undefined && params['fenceSize'] !== undefined ? { fence: { identity: params['fenceIdentity'], size: integer(params['fenceSize']) } } : {}),
-  };
+  } satisfies Admission;
+}
+function route(path: string[], params: Record<string, string>) {
+  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, uiSchema: CONSOLE_UI_SCHEMA, selected: retainedRuns(args.common, args.hostDir).selected };
+  const [runs, arc, section, id, file] = path;
+  if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
+  if (path.length === 3 && (section === 'shell' || section === 'graph' || section === 'metadata')) {
+    for (const key of Object.keys(params)) if (!['epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown view query parameter');
+  }
+  const admission = admissionOf(params);
   let e: Envelope;
   try { e = read(arc, admission); }
   catch (error) {
@@ -68,6 +74,7 @@ function route(path: string[], params: Record<string, string>) {
   if (path.length === 3 && (section === 'shell' || section === 'graph')) {
     return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : views.graph(e)}, section, e);
   }
+  if (path.length === 3 && section === 'metadata') return notice(e);
   if (path.length === 3 && section === 'snapshot') {
     const { events: _events, ...displayData } = e.data;
     return { ...e, data: { ...displayData, console: models.read(e) } };
@@ -112,7 +119,15 @@ function integer(raw: string) {
 function request(m: ConsoleRequest): unknown {
   switch (m.kind) {
     case 'read': return route(m.path, m.params);
-    case 'subscribe': subscribed.add(m.arc); cache.pin(m.arc); break;
+    case 'subscribe': {
+      // Registration and watermark capture are one synchronous worker operation. No journal
+      // notification can be lost between an independent read and subscription installation.
+      const params = m.params ?? {};
+      for (const key of Object.keys(params)) if (!['invocation', 'epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown events query parameter');
+      const e = read(m.arc, admissionOf(params));
+      subscribed.add(m.arc); cache.pin(m.arc);
+      return notice(e);
+    }
     case 'unsubscribe': subscribed.delete(m.arc); if (!maintained.has(m.arc)) cache.unpin(m.arc); break;
     case 'history-unsubscribe': historySubscriptions.delete(`${m.arc}:${m.invocation}`); break;
     case 'history-subscribe': {
@@ -145,7 +160,8 @@ function tick() {
     const arcs = new Set([...defaults, ...subscribed]);
     for (const arc of arcs) {
       try {
-        const e = cache.maintain(retainedRun(args.common, args.hostDir, arc)); parentPort!.postMessage({ kind: 'checked', arc, epoch: e.epoch, highWater: e.highWater, revision: e.revision, checkedAt: e.checkedAt });
+        const e = cache.maintain(retainedRun(args.common, args.hostDir, arc));
+        parentPort!.postMessage({kind: 'checked', ...notice(e)});
         for (const subscription of historySubscriptions.values()) if (subscription.arc === arc) {
           try {
             const delta = histories.poll(e, subscription.invocation);
@@ -165,3 +181,4 @@ for (const dir of ['roadmap-runtime', 'refs', 'roadmap']) {
   if (existsSync(path)) watch(path, { recursive: true }, () => { timer ??= setTimeout(tick, 100); }).on('error', (e) => parentPort!.postMessage({ kind: 'error', error: err(e) }));
 }
 tick();
+parentPort!.postMessage({kind: 'ready'});

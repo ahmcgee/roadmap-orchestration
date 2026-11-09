@@ -9,13 +9,15 @@ import { consoleUrl, ConsoleBindError } from './settings.ts';
 import { SseWriter, errorNotice } from './sse.ts';
 import type { ConsoleRequest } from './messages.ts';
 import { staticResponse } from './static.ts';
+import { BrowserPreparation, PREPARATION } from './preparation.ts';
+import type { Metadata } from './view-protocol.ts';
 
 const statuses: Record<ConsoleCode, number> = { reset: 409, conflict: 409, unavailable: 503, corruption: 500, protocol: 409, 'not-found': 404, invalid: 400 };
 export const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
 };
-type Notice = { kind: string; invocation?: string; data?: unknown; arc?: string; epoch?: string; revision?: number; checkedAt?: string; error?: { code: ConsoleCode; message: string } };
+type Notice = Partial<Metadata> & { kind: string; invocation?: string; data?: unknown; arc?: string; epoch?: string; revision?: number; checkedAt?: string; error?: { code: ConsoleCode; message: string } };
 export type ConsoleServerArgs = Readonly<{ repo: AbsPath; common: AbsPath; hostDir: AbsPath; host: string; port: number; instance?: string }>;
 export async function serveConsole(args: ConsoleServerArgs) {
   const instance = args.instance ?? randomUUID();
@@ -25,6 +27,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
   let failed: Error | null = null;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   const coalesced = new Map<string, Promise<unknown>>();
+  const preparation = new BrowserPreparation();
+  const latest = new Map<string, Metadata>();
   const connections = new Map<ServerResponse, { arc: string; invocation?: string }>();
   const streams = new Map<ServerResponse, { arc: string; last: string; writer: SseWriter; invocation?: string }>();
   function send(res: ServerResponse, event: string, data: unknown, id?: string) { streams.get(res)?.writer.send(event,data,id); }
@@ -38,6 +42,10 @@ export async function serveConsole(args: ConsoleServerArgs) {
       clearTimeout(p.timer); pending.delete(m.id);
       if (m.error) p.reject(new ConsoleError(m.error.code, m.error.message)); else p.resolve(m.value);
       return;
+    }
+    if (m.kind === 'checked' && m.arc) {
+      latest.delete(m.arc); latest.set(m.arc, m as Metadata);
+      while (latest.size > 24) latest.delete(latest.keys().next().value!);
     }
     for (const [res, s] of streams) {
       if (m.arc && m.arc !== s.arc) continue;
@@ -53,14 +61,14 @@ export async function serveConsole(args: ConsoleServerArgs) {
   const fail = (e: Error) => { failed = e; for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
   worker.on('error', fail);
   worker.on('exit', (code) => fail(new Error(`observation worker exited ${code}`)));
-  function ask(message: ConsoleRequest): Promise<unknown> {
+  function ask(message: ConsoleRequest, timeoutMs = 2_000): Promise<unknown> {
     if (failed) return Promise.reject(new ConsoleError('unavailable', failed.message));
     // Coalesce reads only. Subscription mutations must preserve add/remove/add order.
-    const key = message.kind === 'read' ? canonicalJson(message) : `control:${next + 1}`;
+    const key = message.kind === 'read' ? `${timeoutMs}:${canonicalJson(message)}` : `control:${next + 1}`;
     const known = coalesced.get(key); if (known) return known;
     const id = ++next;
     const task = new Promise<unknown>((resolve, reject) => {
-      const timer = setTimeout(() => { pending.delete(id); reject(new ConsoleError('unavailable', 'console catch-up exceeded two seconds')); }, 2_000);
+      const timer = setTimeout(() => { pending.delete(id); reject(new ConsoleError('unavailable', timeoutMs === 2_000 ? 'console catch-up exceeded two seconds' : 'browser preparation exceeded thirty seconds; retry')); }, timeoutMs);
       pending.set(id, { resolve, reject, timer }); worker.postMessage({ ...message, id });
     }).finally(() => { coalesced.delete(key); });
     coalesced.set(key, task); return task;
@@ -78,7 +86,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
       if (decoded.startsWith('/api/')) {
         const [, , version, ...path] = decoded.split('/');
         if (version !== CONSOLE_PROTOCOL) throw new ConsoleError('protocol', 'console protocol/version mismatch; reload required');
-        const params: Record<string, string> = {};
+        const params: Record<string, string> = Object.create(null);
         for (const [key, value] of url.searchParams) { if (Object.hasOwn(params, key)) throw new ConsoleError('invalid', 'duplicate query parameter'); params[key] = value; }
         if (path.length === 3 && path[0] === 'arcs' && path[2] === 'events') {
           const arc = path[1]!;
@@ -95,26 +103,54 @@ export async function serveConsole(args: ConsoleServerArgs) {
           res.once('close', cleanup);
           let ready = false;
           try {
-            const initial = await ask({ kind: 'read', path: ['arcs', arc, 'snapshot'], params }) as { epoch: string; revision: number; checkedAt: string; highWater: number };
+            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {} }, PREPARATION.lifetimeMs) as { data: object } : null;
             if (closed()) return;
-            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {} }) as { data: object } : null;
+            if (invocation && req.method !== 'HEAD') await ask({ kind: 'history-subscribe', arc, invocation }, PREPARATION.lifetimeMs);
             if (closed()) return;
-            if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(); return; }
-            if (invocation) await ask({ kind: 'history-subscribe', arc, invocation });
-            if (closed()) return;
-            await ask({ kind: 'subscribe', arc });
+            const registered = await ask({ kind: 'subscribe', arc, params }, PREPARATION.lifetimeMs) as Metadata;
             if (closed()) return;
             res.writeHead(200, { 'content-type': 'text/event-stream', 'x-accel-buffering': 'no' });
+            if (req.method === 'HEAD') { res.end(); return; }
+            // A newer checked notice may arrive between the worker reply and this continuation.
+            const checked = latest.get(arc);
+            const initial = checked && Date.parse(checked.checkedAt) >= Date.parse(registered.checkedAt) ? checked : registered;
             const id = `${initial.epoch}:${initial.revision}`;
             const previous = req.headers['last-event-id'];
             streams.set(res, { arc, last: id, writer: new SseWriter(res), ...(invocation ? { invocation } : {}) });
             ready = true;
-            send(res, previous && previous !== id ? 'reset' : 'revision', {arc,epoch:initial.epoch,revision:initial.revision,checkedAt:initial.checkedAt,highWater:initial.highWater}, id);
+            send(res, previous && previous !== id ? 'reset' : 'revision', initial, id);
             if (page) send(res, 'history', historyNotice({ ...page.data, reset: true }));
             return;
           } finally { if (!ready || closed()) cleanup(); }
         }
-        json(200, await ask({ kind: 'read', path, params })); return;
+        // Status and legacy API discovery keep strict two-second admission. During the adapter
+        // transition, legacy API consumers retain their existing contract; the browser
+        // explicitly opts those reads into preparation with Prefer: respond-async.
+        // New view endpoints always use preparation. Browser reads have a
+        // bounded delivery lease; pending/cancel are never forwarded as worker query filters.
+        const legacy = ['snapshot', 'activity', 'units', 'invocations'].includes(path[2] ?? '');
+        const browserDiscovery = path.length === 1 && path[0] === 'arcs' && req.headers['prefer'] === 'respond-async';
+        const uiRead = browserDiscovery || path[0] === 'arcs' && path.length >= 3 && path[2] !== 'status'
+          && (!legacy || req.headers['prefer'] === 'respond-async');
+        if (uiRead) {
+          const {pending: token, cancel, ...query} = params;
+          if (cancel !== undefined && cancel !== '1') throw new ConsoleError('invalid', 'cancel is 1');
+          const controller = new AbortController();
+          const aborted = () => { if (!res.writableFinished) controller.abort(); };
+          res.once('close', aborted);
+          try {
+            const result = await preparation.read({instance, path, params: query}, () => ask({kind: 'read', path, params: query}, PREPARATION.lifetimeMs), controller.signal, token, cancel === '1');
+            if (controller.signal.aborted) return;
+            if (result.state === 'preparing') {
+              res.setHeader('retry-after', '1');
+              json(202, {protocol: CONSOLE_PROTOCOL, arc: path[1] ?? null, ...result});
+            } else json(200, cancel === '1' ? {protocol: CONSOLE_PROTOCOL, arc: path[1] ?? null, state: 'cancelled'} : result.value);
+          } finally { res.removeListener('close', aborted); }
+        } else {
+          if ('pending' in params || 'cancel' in params) throw new ConsoleError('invalid', 'preparation is only available for browser reads');
+          json(200, await ask({ kind: 'read', path, params }));
+        }
+        return;
       }
       if (await staticResponse(decoded, req, res)) return;
       throw new ConsoleError('not-found', 'unknown console asset');
@@ -127,12 +163,13 @@ export async function serveConsole(args: ConsoleServerArgs) {
   try {
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(args.port, args.host, resolve); });
   } catch (error) {
-    await worker.terminate();
+    preparation.close(); await worker.terminate();
     throw new ConsoleBindError(args.host, args.port, (error as Error).message);
   }
   const port = (server.address() as AddressInfo).port;
   const url = consoleUrl(args.host, port);
   return { server, port, url, instance, repoId, ask, async close() {
+    preparation.close();
     for (const res of streams.keys()) res.end(); streams.clear();
     server.closeAllConnections();
     await Promise.all([new Promise<void>((r) => server.close(() => r())), worker.terminate()]);

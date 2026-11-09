@@ -1,6 +1,8 @@
 // UI-only DTOs, intentionally separate from canonical ObservationData/status. Browser imports types only.
 // D1–D11 refer to the source-field register in phase2-plan.md. No executor record/schema changes.
 export const CONSOLE_UI_SCHEMA = 1;
+export type ViewVersions = Record<'shell' | 'graph' | 'timeline' | 'activity' | 'holistic' | 'effort' | 'resources' | 'attention', string>;
+export type Metadata = Omit<ViewEnvelope<never>, 'data'> & {uiSchema: number; selected: string | null; viewVersions: ViewVersions};
 export type Signal = 'passed' | 'active' | 'held' | 'pending' | 'failed' | 'withdrawn';
 export type DetailRef = {type: 'unit' | 'invocation' | 'request' | 'event' | 'resource'; id: string};
 export type Preview = {text: string; truncated: boolean; detail: DetailRef};
