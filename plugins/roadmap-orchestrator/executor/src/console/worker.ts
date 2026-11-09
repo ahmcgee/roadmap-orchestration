@@ -24,7 +24,7 @@ import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
-import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape } from './view-shapes.ts';
+import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape, effortScopeShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -91,6 +91,11 @@ function route(path: string[], params: Record<string, string>) {
   if (path.length === 3 && section === 'snapshot') {
     const { events: _events, ...displayData } = e.data;
     return { ...e, data: { ...displayData, console: models.read(e) } };
+  }
+  if (section === 'resources' && path.length === 5 && id === 'details' && file?.startsWith('effort-')) {
+    const data = effort.detail(e, file, params, notice(e).viewVersions.effort);
+    if (!effortScopeShape(data)) throw new ConsoleError('protocol', 'malformed selected Effort scope');
+    return {...e, data};
   }
   if (section === 'effort' && path.length === 3) {
     const data = effort.read(e, params, notice(e).viewVersions.effort);

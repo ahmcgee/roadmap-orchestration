@@ -31,7 +31,7 @@ test('Effort reconciles once-counted completion totals, all-unit lifetime rankin
  assert.deepEqual(tabs.read(e,{sort:'redChecks',direction:'asc'}).rows.filter(r=>r.subject.type==='unit').map(r=>r.subject.id),['u1','u2','u3','u4','u5','u6','u8','u9','u10','u11','u12','u13','u14','u7']);
  const empty=tabs.read(e,{from:'2100-01-01T00:00:00Z',to:'2100-01-02T00:00:00Z'});assert.equal(empty.rows.length,14);assert.equal(empty.totals.agentMs,null);assert.equal(empty.totals.spend.costUsd,null);assert.equal(empty.totals.coverage.waiting.unmeasuredReservations,null);
  assert.deepEqual([statusBytes(e,false),statusBytes(e,true)],before);assert.equal(effortShape({...h,events:[]}),false);
- for(const params of [{group:'role'},{metric:'cpu'},{sort:'rank'},{direction:'sideways'},{blocked:'true'},{unit:'foreign'},{system:'unknown'},{milestone:'missing'},{q:'x'.repeat(201)},{limit:'200'},{from:'2026-02-30T00:00:00Z'},{window:'arc',from:'2026-01-01T00:00:00Z'},{unit:'u1,u1'},{surprise:'1'}])assert.throws(()=>tabs.read(e,params as Record<string,string>),ConsoleError);
+ for(const params of [{group:'unknown'},{metric:'cpu'},{sort:'rank'},{direction:'sideways'},{blocked:'true'},{unit:'foreign'},{system:'unknown'},{milestone:'missing'},{q:'x'.repeat(201)},{limit:'200'},{from:'2026-02-30T00:00:00Z'},{window:'arc',from:'2026-01-01T00:00:00Z'},{unit:'u1,u1'},{surprise:'1'}])assert.throws(()=>tabs.read(e,params as Record<string,string>),ConsoleError);
 });
 test('Effort completion boundaries keep zero/absent work, meter timestamps, delegated charges and overlapping mixed waiting distinct',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());const e=capture(f),tabs=new ConsoleEffort(),i=e.data.display.invocations.find(i=>i.endedAt&&i.work?.measured)!;

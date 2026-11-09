@@ -1,5 +1,5 @@
 import type { Metadata, ViewEnvelope } from '../../src/console/view-protocol.ts';
-import { shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, effortShape } from '../../src/console/view-shapes.ts';
+import { shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, effortShape, effortScopeShape } from '../../src/console/view-shapes.ts';
 import { ApiError } from './prepared-read.ts';
 export type Entry={value:ViewEnvelope<any>|null;error:string;loading:boolean;version:string|null;controller?:AbortController;task?:Promise<void>};
 const error=(message:string,code='protocol')=>Object.assign(new ApiError(message),{code});
@@ -14,10 +14,10 @@ export class ViewStore {
   emit=()=>{this.sequence++;for(const fn of this.listeners)fn();};
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn);};};
   snapshot=()=>this.sequence;
-  frozen(path:string){return ['activity','timeline','timeline/intervals','timeline/holds','holistic','attention','effort'].includes(path.split('?')[0]!);}
+  frozen(path:string){return path.startsWith('resources/details/effort-')||['activity','timeline','timeline/intervals','timeline/holds','holistic','attention','effort'].includes(path.split('?')[0]!);}
   keyVersion(path:string):string|null {
     if(!this.metadata)return null;
-    const key=path.startsWith('effort?')?'effort':path.startsWith('attention')||path.startsWith('requests/')?'attention':path.startsWith('timeline')?'timeline':path.startsWith('holistic')?'holistic':path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
+    const key=path.startsWith('resources/details/effort-')?'effort':path.startsWith('effort?')?'effort':path.startsWith('attention')||path.startsWith('requests/')?'attention':path.startsWith('timeline')?'timeline':path.startsWith('holistic')?'holistic':path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
     return key?this.metadata.viewVersions[key]:JSON.stringify(this.metadata.viewVersions);
   }
   entry(path:string) {let e=this.entries.get(path);if(!e){e={value:null,error:'',loading:false,version:null};this.entries.set(path,e);}return e;}
@@ -48,10 +48,11 @@ export class ViewStore {
         const query=identity?`${path.includes('?')?'&':'?'}epoch=${encodeURIComponent(identity.epoch)}&minHighWater=${identity.highWater}`:'';
         const raw=await this.read(`/arcs/${encodeURIComponent(this.arc)}/${path}${query}`,c.signal);
         if(c.signal.aborted||generation!==this.generation)return;
-        const check=path.startsWith('effort?')?effortShape:path.startsWith('attention?')?attentionShape:path.startsWith('requests/')?requestShape:path.startsWith('timeline/intervals?')?intervalsShape:path.startsWith('timeline/holds?')?holdsShape:path.startsWith('timeline?')?timelineShape:path.startsWith('holistic?')?holisticShape:path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
+        const check=path.startsWith('resources/details/effort-')?effortScopeShape:path.startsWith('effort?')?effortShape:path.startsWith('attention?')?attentionShape:path.startsWith('requests/')?requestShape:path.startsWith('timeline/intervals?')?intervalsShape:path.startsWith('timeline/holds?')?holdsShape:path.startsWith('timeline?')?timelineShape:path.startsWith('holistic?')?holisticShape:path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
         if(!check(raw.data))throw error('Malformed view or UI schema mismatch; reload required');
         const entity=decodeURIComponent(path.split('?')[0]!.split('/')[1]??'');
         if(path.startsWith('units/')&&raw.data.unit.id!==entity||path.startsWith('milestones/')&&raw.data.id!==entity||path.startsWith('invocations/')&&raw.data.invocation.routeId!==entity)throw error('Selected detail identity mismatch','conflict');
+        if(path.startsWith('resources/details/effort-')&&raw.data.key!==decodeURIComponent(path.split('?')[0]!.split('/')[2]!))throw error('Selected scope identity mismatch','conflict');
         if(path.startsWith('requests/')&&raw.data.id!==entity)throw error('Selected request identity mismatch','conflict');
         if(path.startsWith('activity/')&&!path.startsWith('activity/changes?')&&raw.data.row.id!==entity)throw error('Selected Activity identity mismatch','conflict');
         if(entry.value&&(raw.highWater<entry.value.highWater||raw.revision<entry.value.revision))throw error('Overtaken view response; retry','conflict');

@@ -9,6 +9,7 @@ import { Views, useView } from './view-state.ts';
 import { graphData } from './graph-data.ts';
 import { CONSOLE_UI_SCHEMA, type ShellView } from '../../src/console/view-protocol.ts';
 import { stateWords } from '../../src/console/vocabulary.ts';
+import { EffortScopeDetail } from './effort-scope.tsx';
 import { RequestDetail } from './request-detail.tsx';
 import { EventDetail } from './event-detail.tsx';
 import { InvocationDetail } from './invocation.tsx';
@@ -66,6 +67,7 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
       {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'||tab==='attention'||tab==='effort'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
     </main>
     {stale&&checkedAt&&<div className="stale-notice"><Time at={checkedAt} prefix="Last updated "/>. Live counters paused.</div>}
+    {arc&&where.scope&&<EffortScopeDetail key={where.scope} arc={arc} id={where.scope} close={close}/>}
     {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}
     {arc&&where.event&&<EventDetail key={where.event} arc={arc} id={where.event} close={close}/>}
     {arc&&where.unit&&<UnitDetail arc={arc} id={where.unit} close={close} stale={stale}/>}{arc&&where.inv&&<InvocationDetail key={where.inv} arc={arc} id={where.inv} close={close} stale={stale}/>}
