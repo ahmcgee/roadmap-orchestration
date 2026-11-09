@@ -1,14 +1,25 @@
+import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
-import { pluralise, Time } from './shared.tsx';
-import type { Envelope } from './types.ts';
+import { link, pluralise, route } from './shared.tsx';
+import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow } from './plain-query.tsx';
+import type { HolisticView } from '../../src/console/temporal-protocol.ts';
 
-export function Holistic({e}:{e:Envelope}) {
-  const h=e.data.console.presentation.holistic,latest=h.audits.at(-1);
-  return <section aria-label="Holistic review"><h3>Holistic review</h3>{h.enabled?<>
-    <p>Holistic audit: {h.audit?.running?'Running':latest?latest.outcome==='completed'?'Completed':latest.outcome:'No audit recorded'}. {pluralise(h.activeFindings.length,'active finding')}.</p>
-    <Table aria-label="Holistic audits"><thead><TableRow><TableHead>Recorded at</TableHead><TableHead>Audit job</TableHead><TableHead>Outcome</TableHead><TableHead>Coverage and findings</TableHead></TableRow></thead><tbody>{h.audits.map((audit,i)=><TableRow key={i}><td><Time at={audit.at}/></td><td>{audit.job}</td><td>{audit.outcome}</td><td>Holistic audit {audit.outcome}: {pluralise(audit.findings.length,'finding')}<ul>{audit.covered.map((c,j)=><li key={j}>{c.lens}: {c.from} to {c.to}</li>)}</ul></td></TableRow>)}</tbody></Table>
-    <h3>Active findings</h3><Table aria-label="Active findings"><thead><TableRow><TableHead>ID</TableHead><TableHead>Claim</TableHead><TableHead>State</TableHead></TableRow></thead><tbody>{h.activeFindings.map(f=><TableRow key={f.id}><td>{f.id}</td><td>{f.claim}</td><td>{f.state}</td></TableRow>)}</tbody></Table>
-    <p>{pluralise(h.checkpoint.length,'root decision')} recorded. Checkpoint job detail is not included in this console yet.</p>
-    {h.checkpoint.length>0&&<Table aria-label="Root decisions"><thead><TableRow><TableHead>Decision</TableHead><TableHead>Kind</TableHead><TableHead>Ruled by</TableHead></TableRow></thead><tbody>{h.checkpoint.map(d=><TableRow key={d.seq}><td>{d.oneLine}</td><td>{d.kind}</td><td>{d.ruledBy.type}{'role' in d.ruledBy?` ${d.ruledBy.role}`:''}</td></TableRow>)}</tbody></Table>}
-  </>:<p>No holistic layer is enabled for this arc.</p>}</section>;
+export function Holistic({arc}:{arc:string}) {
+  const state=usePlainQuery<HolisticView>(arc,'holistic',['section','cursor','limit'],{section:'audits'}),h=state.data;
+  let zone=route().query.get('zone')??Intl.DateTimeFormat().resolvedOptions().timeZone;try{new Intl.DateTimeFormat('en',{timeZone:zone});}catch{zone='UTC';}
+  const time=(at:string|null)=>at?<time dateTime={at}>{new Date(at).toLocaleString('en-GB',{timeZone:zone})} {zone}</time>:'Time not recorded';
+  const reload=()=>state.navigate({cursor:null},true),section=state.params.get('section');
+  return <section aria-label="Holistic review"><h3>Holistic review</h3>
+    <PlainPageStatus {...state} data={h} reload={reload} version="holistic"/>
+    {h&&<>{h.enabled?<>
+      <p>Holistic audit: {h.currentAudit?.running?'Running':h.latestOutcome?h.latestOutcome.outcome==='completed'?'Completed':h.latestOutcome.outcome:'No audit recorded'}. <span style={{marginLeft:4}}>{pluralise(h.counts.findings,'active finding')}.</span></p>
+      <p>{pluralise(h.counts.decisions,'root decision')} recorded. Checkpoint job detail is not included in this console yet.</p>
+      <div className="local-tabs" aria-label="Holistic sections">{(['audits','findings','decisions'] as const).map(key=><Button key={key} aria-pressed={section===key} onClick={()=>state.navigate({section:key})}>{key==='audits'?'Audits':key==='findings'?'Active findings':'Root decisions'} ({h.counts[key]})</Button>)}</div>
+      {!h.rows.length&&<p>No {section==='findings'?'active findings':section==='decisions'?'root decisions':'completed audits'} recorded.</p>}
+      {section==='audits'&&<Table aria-label="Holistic audits"><thead><TableRow>{['Recorded at','Audit job','Outcome','Coverage and findings'].map(t=><TableHead key={t}>{t}</TableHead>)}</TableRow></thead><tbody>{h.rows.map(r=>r.type==='audit'&&<TableRow key={r.id} onClick={ev=>activateRow(ev,link(arc,route().tab,'events',r.detail.id))}><td>{time(r.at)}</td><td><a href={link(arc,route().tab,'events',r.detail.id)}>{r.job}</a></td><td>{r.outcome}</td><td>Holistic audit {r.outcome}: {pluralise(r.findingCount,'finding')}<ul>{r.coverage.map((c,j)=><li key={j}>{c.lens}: {c.from} to {c.to}</li>)}</ul>{r.coverageTruncated&&<a href={link(arc,route().tab,'events',r.detail.id)}>All {r.coverageCount} coverage ranges in evidence</a>}</td></TableRow>)}</tbody></Table>}
+      {section==='findings'&&<Table aria-label="Active findings"><thead><TableRow><TableHead>ID</TableHead><TableHead>Claim</TableHead><TableHead>State</TableHead></TableRow></thead><tbody>{h.rows.map(r=>r.type==='finding'&&<TableRow key={r.id} onClick={ev=>activateRow(ev,r.detail?link(arc,route().tab,'events',r.detail.id):null)}><td>{r.detail?<a href={link(arc,route().tab,'events',r.detail.id)}>{r.id}</a>:r.id}</td><td>{r.claim.text}{r.claim.truncated&&<>… {r.detail?<a href={link(arc,route().tab,'events',r.detail.id)}>Full claim</a>:'Source event unavailable'}</>}</td><td>{r.state}</td></TableRow>)}</tbody></Table>}
+      {section==='decisions'&&<Table aria-label="Root decisions"><thead><TableRow>{['Decision','Kind','Ruled by','Recorded at'].map(t=><TableHead key={t}>{t}</TableHead>)}</TableRow></thead><tbody>{h.rows.map(r=>r.type==='decision'&&<TableRow key={r.id} onClick={ev=>activateRow(ev,r.detail?link(arc,route().tab,'events',r.detail.id):null)}><td><span className="cell-line">{r.recordId}</span>{r.detail?<a href={link(arc,route().tab,'events',r.detail.id)}>{r.oneLine.text}{r.oneLine.truncated?'… Open full evidence':''}</a>:r.oneLine.text}</td><td>{r.kind}</td><td>{r.ruledBy.type}{'role' in r.ruledBy?` ${r.ruledBy.role}`:'command' in r.ruledBy&&r.ruledBy.command?` ${r.ruledBy.command}`:''}</td><td>{time(r.at)}</td></TableRow>)}</tbody></Table>}
+      <label className="activity-day-jump">Rows per page<select aria-label="Holistic rows per page" value={state.params.get('limit')??'50'} onChange={ev=>state.navigate({limit:ev.target.value})}>{[25,50,100].map(n=><option key={n}>{n}</option>)}</select></label><PlainPaging page={h.page} navigate={state.navigate}/>
+    </>:<p>No holistic layer is enabled for this arc.</p>}</>}
+  </section>;
 }

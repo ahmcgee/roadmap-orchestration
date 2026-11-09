@@ -75,3 +75,18 @@ const backendHold=object({id:str,backend:str,recordedClass:oneOf('usage-limit','
   endedAt:nullable(date),closure:nullable(object({kind:oneOf('resumed','probe','park-updated'),seq:nat,at:date,detail})),terminalAt:nullable(date),detail});
 export const activityDetailShape=object({...base,row:activityRow,evidenceAvailability:oneOf('available','pruned','not-applicable'),context:array(object({label:str,value:str})),
   invocations:array(object({id:str,subject,stage:str,attempt:nat,actor,startedAt:date,endedAt:nullable(date),wallMs:nullable(num),spend:money})),backendHold:nullable(backendHold)},expansions);
+
+const collectionPage=(limit:Check)=>object({anchor:str,next:nullable(str),previous:nullable(str),limit,matching:nat,returned:nat,asOf:object({epoch:str,highWater:nat,observedAt:date})});
+const temporalFilters=object({window:oneOf('arc','24h','7d',null),from:nullable(date),to:nullable(date),zone:str,unit:array(str),milestone:array(str),state:array(str),stage:array(str),execution:array(oneOf('agent','command','unknown')),q:str,sort:oneOf('plan','open','longest-open'),subject:nullable(str)});
+const temporalBase={...base,filters:temporalFilters,bounds:object({from:nullable(date),to:date,terminalAt:nullable(date)})};
+const mark:Check=v=>object({type:oneOf('interval'),id:str,startedAt:date,endedAt:nullable(date),stage:str,outcome:str,invocation:str})(v)||object({type:oneOf('cluster'),from:date,to:date,count:nat,countsByOutcome:dictionary(nat),subject:str})(v);
+const track=object({id:str,subject,state:nullable(str),intervalCount:nat,openCount:nat,firstAt:date,lastAt:nullable(date),marks:v=>Array.isArray(v)&&v.length<=32&&v.every(mark),detail:nullable(detail)});
+export const timelineShape=object({...temporalBase,rows:array(track),page:collectionPage(oneOf(25,50,100)),overview:object({buckets:v=>Array.isArray(v)&&v.length<=512&&v.every(object({from:date,to:date,count:nat})),backendHolds:object({rows:array(backendHold),matching:nat})})});
+const interval=object({id:str,invocation:str,subject,stage:str,attempt:nat,round:nullable(nat),actor:object({role:str,backend:nullable(str),model:nullable(str)}),outcome:str,startedAt:date,endedAt:nullable(date),wallMs:nullable(num),spend:money});
+export const intervalsShape=object({...temporalBase,rows:array(interval),page:collectionPage(oneOf(25,50,100,200))});
+export const holdsShape=object({...temporalBase,rows:array(backendHold),page:collectionPage(oneOf(25,50,100))});
+const evidencePreview=object({text:str,truncated:bool,detail:nullable(detail)});
+const holisticRow:Check=v=>object({type:oneOf('audit'),id:str,at:date,job:str,outcome:str,coverageCount:nat,findingCount:nat,detail,coverage:array(object({lens:str,from:str,to:str})),coverageTruncated:bool})(v)
+  ||object({type:oneOf('finding'),id:str,claim:evidencePreview,state:str,detail:nullable(detail)})(v)
+  ||object({type:oneOf('decision'),id:str,recordId:str,seq:nat,at:nullable(date),kind:str,oneLine:evidencePreview,ruledBy:v=>object({type:oneOf('architect'),command:nullable(str)})(v)||object({type:oneOf('judgment'),role:oneOf('verifier')})(v)||object({type:oneOf('executor')})(v),detail:nullable(detail)})(v);
+export const holisticShape=object({...base,section:oneOf('audits','findings','decisions'),enabled:bool,currentAudit:nullable(object({running:bool,job:nullable(str)})),latestOutcome:nullable(object({at:date,job:str,outcome:str})),counts:object({audits:nat,findings:nat,decisions:nat}),rows:array(holisticRow),page:collectionPage(oneOf(25,50,100))});

@@ -1,0 +1,21 @@
+import type { View, Page, Subject, Interval, TrackMark, HolisticRow, Preview, DetailRef } from './view-protocol.ts';
+import type { BackendHold } from './activity-protocol.ts';
+export type TemporalBounds = {from: string | null; to: string; terminalAt: string | null};
+export type TimelineFilters = {window: 'arc' | '24h' | '7d' | null; from: string | null; to: string | null; zone: string;
+  unit: string[]; milestone: string[]; state: string[]; stage: string[]; execution: string[]; q: string; sort: 'plan' | 'open' | 'longest-open'; subject: string | null};
+export type TrackSummary = {id: string; subject: Subject; state: string | null; intervalCount: number; openCount: number;
+  firstAt: string; lastAt: string | null; marks: TrackMark[]; detail: DetailRef | null};
+export type TimelineOverview = {buckets: {from: string; to: string; count: number}[]; backendHolds: {rows: BackendHold[]; matching: number}};
+export type TimelineView = View & Page<TrackSummary> & {filters: TimelineFilters; bounds: TemporalBounds; overview: TimelineOverview};
+export type IntervalsView = View & Page<Interval> & {filters: TimelineFilters; bounds: TemporalBounds};
+export type HoldsView = View & Page<BackendHold> & {filters: TimelineFilters; bounds: TemporalBounds};
+export type HolisticSection = 'audits' | 'findings' | 'decisions';
+export type HolisticAudit = Extract<HolisticRow, {type: 'audit'}> & {coverage: {lens: string; from: string; to: string}[]; coverageTruncated: boolean};
+type EvidencePreview = Omit<Preview,'detail'> & {detail: DetailRef | null};
+export type HolisticFinding = {type: 'finding'; id: string; claim: EvidencePreview; state: string; detail: DetailRef | null};
+export type HolisticDecision = Omit<Extract<HolisticRow, {type: 'decision'}>, 'detail' | 'oneLine'> & {detail: DetailRef | null; recordId: string; oneLine: EvidencePreview};
+export type HolisticView = View & Page<HolisticAudit | HolisticFinding | HolisticDecision> & {
+  section: HolisticSection; enabled: boolean; currentAudit: {running: boolean; job: string | null} | null;
+  latestOutcome: {at: string; job: string; outcome: string} | null;
+  counts: {audits: number; findings: number; decisions: number};
+};

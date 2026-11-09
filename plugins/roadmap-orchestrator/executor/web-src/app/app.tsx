@@ -26,7 +26,7 @@ export function App() {
   return <Views.Provider value={store}><Console key={selected} where={where} selected={selected} listError={listError} now={now} theme={theme} setTheme={setTheme} store={store}/></Views.Provider>;
 }
 function Console({where,selected,listError,now,theme,setTheme,store}:{where:ReturnType<typeof route>;selected:string|null;listError:string;now:number;theme:Theme;setTheme:(t:Theme)=>void;store:ReturnType<typeof useObservation>}) {
-  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(where.tab==='graph'||where.tab==='activity'?null:'snapshot');
+  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(['graph','activity','timeline'].includes(where.tab)?null:'snapshot');
   const e=legacy.envelope as Envelope|null, p=shell.data as ShellView|null;
   const error=store?.error||shell.error||graph.error||legacy.error||'',checkedAt=store?.checkedAt??null,connected=store?.connected??false,reload=store?.reload??false;
   const graphEnvelope=store?.entries.get('graph')?.value;
@@ -52,14 +52,15 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
       <span className={`connection connection-${live.toLowerCase()}`} role="status" title={checkedAt?`Last verified ${new Date(checkedAt).toLocaleString()}`:'Waiting for verified observation'}><span aria-hidden="true"/>{live}</span>
       <Button variant="ghost" size="icon" aria-label={`Theme: ${theme}. Switch theme`} title={`Theme: ${theme}`} onClick={()=>setTheme(theme==='system'?'light':theme==='light'?'dark':'system')}>{theme==='system'?<Monitor size={16}/>:theme==='light'?<Sun size={16}/>:<Moon size={16}/>}</Button>
     </header>
-    <nav className="tabs" aria-label="Roadmap views">{tabs.map(key=><a key={key} href={arc?link(arc,key)+(key==='activity'&&tab!==key&&store?.ui.get('query:activity')?`?${store.ui.get('query:activity')}`:''):'#/'} aria-current={key===tab?'page':undefined}>{key[0]!.toUpperCase()+key.slice(1)}{key==='attention'&&!!p?.attention.total&&<span className="tab-badge">{p.attention.total}</span>}</a>)}</nav>
+    <nav className="tabs" aria-label="Roadmap views">{tabs.map(key=><a key={key} href={arc?link(arc,key)+(tab!==key&&store?.ui.get(`query:${key}`)?`?${store.ui.get(`query:${key}`)}`:''):'#/'} aria-current={key===tab?'page':undefined}>{key[0]!.toUpperCase()+key.slice(1)}{key==='attention'&&!!p?.attention.total&&<span className="tab-badge">{p.attention.total}</span>}</a>)}</nav>
     {(reload||error||listError||where.invalid)&&<div className="notice" role="alert">{where.invalid?'Unknown console route. Open the current arc.':reload?'Reload required: executor version changed':error||listError}{reload?<Button onClick={()=>location.reload()}>Reload console</Button>:error&&<Button onClick={()=>{shell.retry();if(tab==='graph')graph.retry();else legacy.retry();}}>Retry</Button>}</div>}
     {p?.lifecycle.endedAt&&<div className="outcome">{stateWords(p.lifecycle.state)}. {counts.passed??0} units merged; {counts.withdrawn??0} withdrawn. Recorded spend {money(p.spend.costUsd)}. Elapsed {elapsed(p.lifecycle.startedAt?Date.parse(p.lifecycle.endedAt!)-Date.parse(p.lifecycle.startedAt):null)}.</div>}
     <main id="content" tabIndex={-1} className={tab==='graph'?'graph-main':'tab-content'}>
       {graphInput&&<div hidden={tab!=='graph'} style={{height:'100%'}}><Graph key={arc} e={graphInput} open={open}/></div>}
       {arc&&tab==='activity'&&<Activity arc={arc}/>}
-      {tab!=='graph'&&tab!=='activity'&&e&&(tab==='timeline'?<Timeline e={e}/>:tab==='effort'?<Effort e={e}/>:tab==='resources'?<Resources e={e}/>:<Attention e={e}/>)}
-      {(tab==='graph'?!graphInput:tab==='activity'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
+      {arc&&tab==='timeline'&&<Timeline arc={arc}/>}
+      {tab!=='graph'&&tab!=='activity'&&tab!=='timeline'&&e&&(tab==='effort'?<Effort e={e}/>:tab==='resources'?<Resources e={e}/>:<Attention e={e}/>)}
+      {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
     </main>
     {stale&&checkedAt&&<div className="stale-notice"><Time at={checkedAt} prefix="Last updated "/>. Live counters paused.</div>}
     {arc&&where.event&&<EventDetail key={where.event} arc={arc} id={where.event} close={close}/>}

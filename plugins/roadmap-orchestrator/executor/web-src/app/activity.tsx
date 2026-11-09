@@ -6,10 +6,6 @@ import { activityChangesShape } from '../../src/console/view-shapes.ts';
 import { ACTIVITY_KINDS, type ActivityView } from '../../src/console/activity-protocol.ts';
 import { activityFields, activityParams, dayRange, shiftDay } from './activity-query.ts';
 import { Holistic } from './holistic.tsx';
-import type { Envelope } from './types.ts';
-
-// Temporary Holistic adapter mounts only when explicitly selected. Events never reads it.
-function LegacyHolistic(){const state=useView('snapshot');return <>{state.error&&<p role="alert">{state.error}<Button onClick={state.retry}>Retry Holistic review</Button></p>}{state.envelope?<Holistic e={state.envelope as Envelope}/>:<p>Loading Holistic review…</p>}</>;}
 export function Activity({arc}:{arc:string}) {
   const current=route(),view=current.query.get('view')==='holistic'?'holistic':'events';
   const store=useContext(Views),params=activityParams(current.query),cursor=current.query.get('cursor');
@@ -38,13 +34,19 @@ export function Activity({arc}:{arc:string}) {
     if(location.hash===target){state.retry();setChanges(0);setNoticeError('');}else location.hash=target;
   }
   function latest(){const next=new URLSearchParams(current.query);next.set('order','desc');navigate(next,true);}
-  function change(key:string,value:string){const next=new URLSearchParams(current.query);if(value)next.set(key,value);else next.delete(key);navigate(next,key!=='view');}
+  function change(key:string,value:string){
+    if(key==='view'){
+      if(value==='holistic'){store?.ui.set('query:activity.events',current.query.toString());const next=new URLSearchParams(current.query);next.set('view','holistic');next.delete('cursor');next.delete('section');navigate(next);}
+      else{const next=new URLSearchParams(store?.ui.get('query:activity.events') as string|undefined);next.delete('view');navigate(next);}
+      return;
+    }
+    const next=new URLSearchParams(current.query);if(value)next.set(key,value);else next.delete(key);navigate(next,key!=='view');}
   function day(value:string){try{const range=dayRange(value,params.get('zone')!);const next=new URLSearchParams(current.query);next.delete('window');next.set('from',range.from);next.set('to',range.to);navigate(next,true);setLocalError('');}catch(err){setLocalError((err as Error).message);}}
   let selectedDay='';try{if(params.get('from'))selectedDay=new Intl.DateTimeFormat('en-CA',{timeZone:params.get('zone')!,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(params.get('from')!));}catch{/* The API presents invalid URL filters as a local, recoverable error. */}
   function filters(form:HTMLFormElement){const values=new FormData(form),next=new URLSearchParams(current.query);for(const key of activityFields){if(!values.has(key)&&key!=='housekeeping')continue;const value=String(values.get(key)??'');if(value)next.set(key,value);else next.delete(key);}navigate(next,true);}
   return <section className="panel"><header><h2>Activity</h2><p className="muted">What happened, in recorded journal order</p></header>
     <div className="local-tabs" aria-label="Activity sections"><Button aria-pressed={view==='events'} onClick={()=>change('view','')}>Events</Button><Button aria-pressed={view==='holistic'} onClick={()=>change('view','holistic')}>Holistic review</Button></div>
-    {view==='holistic'?<LegacyHolistic/>:<>
+    {view==='holistic'?<Holistic arc={arc}/>:<>
       <form key={query} className="activity-filters" aria-label="Activity filters" onSubmit={ev=>{ev.preventDefault();filters(ev.currentTarget);}}>
         <label>Time window<select aria-label="Activity time window" value={params.get('window')??'range'} onChange={ev=>{const next=new URLSearchParams(current.query);next.delete('from');next.delete('to');next.set('window',ev.target.value);navigate(next,true);}}><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="arc">Whole arc</option>{!params.has('window')&&<option value="range">Selected range</option>}</select></label>
         <label>Day<input aria-label="Activity day" type="date" value={selectedDay} onChange={ev=>{if(ev.target.value)day(ev.target.value);}}/></label>

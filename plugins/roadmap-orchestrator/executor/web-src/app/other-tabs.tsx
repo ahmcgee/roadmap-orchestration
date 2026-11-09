@@ -1,7 +1,7 @@
 import { useContext, type ReactNode } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
-import { Clock, elapsed, info, link, route, SignalMark, Time } from './shared.tsx';
+import { Clock, elapsed, link, route, SignalMark, Time } from './shared.tsx';
 import { useRouteState } from './view-state.ts';
 import type { Envelope } from './types.ts';
 import { AllUnits } from './effort.tsx';
@@ -16,5 +16,5 @@ export function Effort({e}:{e:Envelope}) {
     {m.time.unallocated>0&&<p>{elapsed(m.time.unallocated)} waiting has mixed or unallocated categories, counted once.</p>}
   </Panel></>;
 }
-export function Timeline({e}:{e:Envelope}) {const [whole,setWhole]=useRouteState('timeline.whole',false),now=useContext(Clock),end=e.data.console.presentation.run.endedAt?Date.parse(e.data.console.presentation.run.endedAt):now,start=whole?Date.parse(e.data.console.presentation.run.startedAt):end-86400_000;const rows=e.data.console.activities.filter(a=>Date.parse(a.startedAt)+(a.elapsedMs??Math.max(0,end-Date.parse(a.startedAt)))>=start);return <Panel title="Timeline" subtitle={whole?'Whole arc':'Last 24 hours'}><Button aria-pressed={whole} onClick={()=>setWhole(!whole)}>{whole?'Last 24 hours':'Whole arc'}</Button><Table aria-label="Invocation timeline"><thead><TableRow>{['Started','Unit','Stage','State','Duration'].map(t=><TableHead key={t}>{t}</TableHead>)}</TableRow></thead><tbody>{rows.map(a=><TableRow key={a.id}><td><Time at={a.startedAt}/></td><td>{a.unit}</td><td><a href={link(e.arc,route().tab,'invocations',a.routeId)}>{info(e,a).label}</a></td><td><SignalMark state={a.status}/>{a.status}</td><td className="number">{elapsed(a.elapsedMs??Math.max(0,end-Date.parse(a.startedAt)))}</td></TableRow>)}</tbody></Table></Panel>;}
+export { Timeline } from './timeline.tsx';
 export function Attention({e}:{e:Envelope}) {const rows=[...e.data.console.attention].sort((a,b)=>Number(b.blocking)-Number(a.blocking));return <Panel title="Attention" subtitle={`${rows.length} open human requests`}>{!rows.length&&<p>Nothing needs a human response.</p>}{rows.map(r=><article key={r.id} className="attention-item"><h3>{r.summary}</h3><p>{r.blocking?'Blocking: Waiting for a human':'Nonblocking: For your information'}</p>{r.subject.type==='unit'&&<a href={link(e.arc,route().tab,'units',r.subject.unit)}>Affected unit: {r.subject.unit}</a>}<div className="owner-notice"><p><strong>Recommendation: </strong>{r.recommendation.split(' After reviewing')[0]}</p>{r.recommendation.includes(' After reviewing')&&<p>After reviewing{r.recommendation.split(' After reviewing').slice(1).join(' After reviewing')}</p>}</div>{r.options.map(o=><p key={o.id}>{o.label} <code>roadmap ack {r.id} --choice {o.id}</code></p>)}{!r.options.length&&<p>To respond in your terminal: <code>roadmap ack {r.id}</code></p>}{r.evidence.map((path,i)=><p key={i}>{r.evidenceLinks[i]?<a href={link(e.arc,route().tab,'invocations',r.evidenceLinks[i]!)}>Evidence: {path.split('/').slice(-2).join('/')}</a>:<code>{path}</code>}</p>)}</article>)}</Panel>;}

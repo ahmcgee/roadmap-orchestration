@@ -2,12 +2,14 @@
 // are retained: never observations, event bodies, transcripts or report objects.
 import { createHmac, randomBytes } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { COLLECTION_RETENTION } from './collection-pages.ts';
 import { ConsoleError, type Envelope } from '../observation/protocol.ts';
 import { ACTIVITY_KINDS, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
 import { activityRequest, buildActivityIndex, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
 import { versioned } from './views.ts';
 
-export const ACTIVITY_RETENTION = {bytes: 32 * 1024 * 1024, indexes: 8, queries: 32, idleMs: 15 * 60 * 1000} as const;
+// Reserve eight MiB for other typed collections: combined summary/index retention stays at 32 MiB.
+export const ACTIVITY_RETENTION = {bytes: 32 * 1024 * 1024 - COLLECTION_RETENTION.bytes, indexes: 8, queries: 32, idleMs: 15 * 60 * 1000} as const;
 const admission = ['epoch', 'revision', 'minHighWater'];
 const common = ['from', 'to', 'window', 'zone', 'afterSeq', 'beforeSeq', 'unit', 'milestone', 'stage', 'kind', 'role', 'backend', 'model', 'outcome', 'q', 'housekeeping', 'order', 'limit'];
 type Query = {filters: ActivityFilters; limit: number; window: 'arc' | '24h' | '7d' | null; hash: string};
