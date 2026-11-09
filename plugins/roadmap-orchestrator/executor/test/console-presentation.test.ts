@@ -40,9 +40,18 @@ test('activity GET pages a long journal without overlap, in reverse recorded ord
  const {serveConsole}=await import('../src/console/http.ts');const {gitCommonDir}=await import('../src/git/git.ts');const {absPath}=await import('../src/core/values.ts');const {CONSOLE_PROTOCOL}=await import('../src/observation/protocol.ts');
  const f=await investigationFixture();t.after(()=>f.close());for(let n=0;n<40;n++){const p=f.begin('u7','build');f.journal.fact({kind:'stage-outcome',unit:p.unit,stage:'build',attempt:p.attempt,outcome:'success',class:'advance',chargeable:false});}
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());
- const page=async(offset:number)=>(await(await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity-legacy?offset=${offset}`)).json() as {data:{rows:{id:number;text:string}[];more:boolean}}).data;
- const a=await page(0),b=await page(30);assert.equal(a.rows.length,30);assert.equal(a.more,true);assert.ok(b.rows.length>0);assert.ok(a.rows.every((r,i)=>i===0||a.rows[i-1]!.id>r.id));assert.ok(a.rows.at(-1)!.id>b.rows[0]!.id);assert.ok(a.rows.every(r=>/Build — Succeeded/.test(r.text)));
- assert.equal((await page(10000)).more,false);assert.deepEqual((await page(10000)).rows,[]);
+ const {consoleGet}=await import('./helpers/console-http.ts');
+ const url=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity?limit=25`;
+ const page=async(cursor?:string)=>(await(await consoleGet(url+(cursor?'&cursor='+encodeURIComponent(cursor):''))).json() as {epoch:string;highWater:number;data:import('../src/console/activity-protocol.ts').ActivityView});
+ const first=await page(),second=await page(first.data.page.next!),a=first.data,b=second.data;
+ assert.equal(a.rows.length,25);assert.ok(a.page.next);assert.ok(b.rows.length>0);
+ assert.ok(a.rows.every((r,i)=>i===0||a.rows[i-1]!.seq>r.seq));assert.ok(a.rows.at(-1)!.seq>b.rows[0]!.seq);assert.ok(a.rows.every(r=>/Build — Succeeded/.test(r.summary.text)));
+ const originalThirty=[...a.rows,...b.rows].slice(0,30);assert.equal(originalThirty.length,30);assert.ok(originalThirty.every((r,i)=>i===0||originalThirty[i-1]!.seq>r.seq));assert.ok(originalThirty.every(r=>/Build — Succeeded/.test(r.summary.text)));
+ const ids=[...a.rows,...b.rows].map(r=>r.id);let last=b;
+ while(last.page.next){last=(await page(last.page.next)).data;ids.push(...last.rows.map(r=>r.id));}
+ assert.equal(new Set(ids).size,ids.length);assert.equal(ids.length,a.page.matching);assert.equal(last.page.next,null);
+ const empty=(await(await consoleGet(`${url}&afterSeq=${first.highWater}&epoch=${encodeURIComponent(first.epoch)}`)).json() as {data:import('../src/console/activity-protocol.ts').ActivityView}).data;
+ assert.equal(empty.page.next,null);assert.deepEqual(empty.rows,[]);
 });
 
 test('short human titles strip paths, identifiers and later clauses, retain prose, and bound long intents', async () => {

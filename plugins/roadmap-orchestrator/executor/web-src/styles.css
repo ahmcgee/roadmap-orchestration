@@ -309,3 +309,21 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 
 /* Restore readable comparisons in the existing plain tab ports. */
 .panel{min-width:0;overflow-wrap:anywhere;}.table-wrap{max-width:100%;}th.number{text-align:right;white-space:nowrap;}.cell-line{display:block;}.local-tabs{display:flex;gap:8px;margin-bottom:16px;}.unit-identity{min-width:320px;width:340px;}.unit-identity a{display:block;line-height:18px;overflow-wrap:anywhere;}.unit-identity strong{margin-right:8px;}.unit-blockers{min-width:260px;}.unit-blockers ul{list-style:disc;margin:0 0 8px;padding-left:16px;}table ul{padding-left:16px;}th button{white-space:nowrap;}
+
+/* Plain query controls retain readable labels; the feed remains the existing list. */
+.activity-filters { display:flex; flex-wrap:wrap; align-items:end; gap:12px 16px; margin:16px 0; }
+.activity-filters label { display:flex; flex-direction:column; gap:4px; max-width:100%; }
+.activity-filters input:not([type=checkbox]), .activity-filters select { width:180px; max-width:100%; min-height:32px; border:1px solid var(--rule); border-radius:6px; background:var(--surface); color:var(--ink); padding:4px 8px; }
+.activity-filters label:has(input[type=checkbox]) { flex-direction:row; align-items:center; min-height:32px; }
+.activity-anchor { color:var(--muted-ink); }
+.activity-feed time { font-variant-numeric:tabular-nums; }
+.activity-feed a > span { min-width:0; overflow-wrap:anywhere; }
+@media(max-width:640px) { .activity-filters label { flex:1 1 140px; } .activity-filters input:not([type=checkbox]), .activity-filters select { width:100%; } }
+.activity-updates { min-height:40px; }
+.activity-feed a { grid-template-columns:200px minmax(0,1fr); }
+.event-context > div { display:grid; grid-template-columns:120px minmax(0,1fr); gap:12px; padding:8px 0; border-bottom:1px solid var(--rule); }
+.event-context dt { color:var(--muted-ink); }
+.event-context dd { margin:0; white-space:pre-wrap; }
+@media(max-width:640px) { .activity-feed a { grid-template-columns:110px minmax(0,1fr); } .event-context > div { grid-template-columns:1fr; gap:4px; } }
+.activity-day-jump { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.activity-day-jump select { min-height:32px; border:1px solid var(--rule); border-radius:6px; background:var(--surface); color:var(--ink); padding:4px 8px; max-width:100%; }

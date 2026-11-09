@@ -32,7 +32,11 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
       if (r.subject.type === 'findings') for (const finding of r.subject.findings) add('Related finding', finding);
       add('Recommendation', r.recommendation);
       for (const option of r.options) add(`Option ${option.id}`, option.label);
-      for (const path of r.evidence) add('Recorded evidence path', path);
+      for (const path of r.evidence) {
+        add('Recorded evidence path', path);
+        const route=/\/inv\/([1-9][0-9]*-[1-9][0-9]*)(?:\/|$)/.exec(path)?.[1];
+        if(route&&e.data.display.invocations.some(i=>invocationDirName(invocationIdOf(i.id))===route))add('Evidence invocation',route);
+      }
       // Open-list membership says only what it proves. Resolution is stated only from a recorded ack.
       add('Currently in open list', e.data.requests.some(open => open.id === r.id));
     }

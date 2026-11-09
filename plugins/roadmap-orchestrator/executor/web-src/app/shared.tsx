@@ -12,12 +12,16 @@ export const tabs = ['graph', 'timeline', 'activity', 'effort', 'resources', 'at
 export type Tab = typeof tabs[number];
 export function route() {
   try {
-    const p = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
-    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || (p.length === 5 && ['units', 'invocations'].includes(p[3]!)));
-    return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : null, inv: p[3] === 'invocations' ? p[4]! : null, invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, invalid: location.hash !== '' && location.hash !== '#/' };
-  } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, invalid: true }; }
+    const [pathname, search = ''] = location.hash.replace(/^#\/?/, '').split('?');
+    const p = pathname!.split('/').map(decodeURIComponent);
+    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || (p.length === 5 && ['units', 'invocations', 'events'].includes(p[3]!)));
+    return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : null, inv: p[3] === 'invocations' ? p[4]! : null, event: p[3] === 'events' ? p[4]! : null, query: new URLSearchParams(search), invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, query: new URLSearchParams(), invalid: location.hash !== '' && location.hash !== '#/' };
+  } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, query: new URLSearchParams(), invalid: true }; }
 }
-export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'invocations', id?: string) => `#/arcs/${encodeURIComponent(arc)}/${tab}${kind ? `/${kind}/${encodeURIComponent(id!)}` : ''}`;
+export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'invocations' | 'events', id?: string) => {
+  const current=route(), query=current.arc===arc&&current.tab===tab?current.query.toString():'';
+  return `#/arcs/${encodeURIComponent(arc)}/${tab}${kind ? `/${kind}/${encodeURIComponent(id!)}` : ''}${query?`?${query}`:''}`;
+};
 export const pluralise = (n: number, singular: string, plural = singular + 's') => `${n} ${n === 1 ? singular : plural}`;
 export const money = (n: number) => `$${n.toFixed(2)}`;
 export function elapsed(ms: number | null | undefined): string { if (ms == null) return 'unrecorded'; if (ms < 1000) return `${Math.round(ms)} ms`; const n = Math.floor(ms / 1000); return n < 60 ? `${n}s` : n < 3600 ? `${Math.floor(n / 60)}m ${n % 60}s` : n < 86400 ? `${Math.floor(n / 3600)}h ${Math.floor(n % 3600 / 60)}m` : `${Math.floor(n / 86400)}d ${Math.floor(n % 86400 / 3600)}h`; }

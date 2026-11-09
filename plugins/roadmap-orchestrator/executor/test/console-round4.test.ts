@@ -16,8 +16,10 @@ test('Activity filters housekeeping before paging, preserves failures, and valid
  const f=await round4Fixture();t.after(()=>f.close());
  for(let n=0;n<35;n++){const p=f.begin('u7','quiesce');f.journal.fact({kind:'stage-outcome',unit:p.unit,stage:'quiesce',attempt:p.attempt,outcome:'empty',class:'advance',chargeable:false});}
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());
- const url=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity-legacy`;
- const page=async(query:string)=>(await(await fetch(url+query)).json() as {data:{rows:{text:string;housekeeping:boolean}[];more:boolean}}).data;
- const ordinary=await page(''),all=await page('?housekeeping=1');assert.ok(ordinary.rows.some(r=>/Cleanup failed/.test(r.text)));assert.ok(ordinary.rows.every(r=>!r.housekeeping));assert.equal(all.rows.length,30);assert.ok(all.rows.every(r=>r.housekeeping));assert.ok(all.more);
- const earlier=await page('?housekeeping=1&offset=30');assert.ok(earlier.rows.some(r=>/Cleanup failed/.test(r.text)));assert.equal((await fetch(url+'?housekeeping=maybe')).status,400);
+ const {consoleGet}=await import('./helpers/console-http.ts');
+ const url=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity`;
+ const page=async(query:string)=>(await(await consoleGet(url+query)).json() as {data:import('../src/console/activity-protocol.ts').ActivityView}).data;
+ const ordinary=await page('?limit=25'),all=await page('?limit=25&housekeeping=1');assert.ok(ordinary.rows.some(r=>/Cleanup failed/.test(r.summary.text)));assert.ok(ordinary.rows.every(r=>!r.housekeeping));assert.equal(all.rows.length,25);assert.ok(all.rows.every(r=>r.housekeeping));assert.ok(all.page.next);
+ const earlier=await page('?limit=25&housekeeping=1&cursor='+encodeURIComponent(all.page.next!));assert.ok(earlier.rows.some(r=>/Cleanup failed/.test(r.summary.text)));const originalThirty=[...all.rows,...earlier.rows].slice(0,30);assert.equal(originalThirty.length,30);assert.ok(originalThirty.every(r=>r.housekeeping));assert.equal((await fetch(url+'?housekeeping=maybe')).status,400);
+ assert.equal((await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity-legacy`)).status,404);
 });

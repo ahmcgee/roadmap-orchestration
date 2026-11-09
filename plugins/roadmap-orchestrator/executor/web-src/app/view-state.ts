@@ -4,7 +4,7 @@ export const Views=createContext<ViewStore|null>(null);
 export function useView(path:string|null) {
   const store=useContext(Views);
   useSyncExternalStore(store?.subscribe??(()=>()=>{}),store?.snapshot??(()=>0));
-  const version=path?store?.keyVersion(path):null;
+  const version=path&&!store?.frozen(path)?store?.keyVersion(path):null;
   const e=path?store?.entry(path):null;
   useEffect(()=>{if(store&&path)void store.load(path);},[store,path,version,store?.generation]);
   useEffect(()=>{if(!store||!path)return;store.active.set(path,(store.active.get(path)??0)+1);return()=>{const n=(store.active.get(path)??1)-1;if(n)store.active.set(path,n);else{store.active.delete(path);store.abort(path);}};},[store,path]);

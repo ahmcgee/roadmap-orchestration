@@ -1,5 +1,5 @@
 import type { Metadata, ViewEnvelope } from '../../src/console/view-protocol.ts';
-import { shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape } from '../../src/console/view-shapes.ts';
+import { shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape } from '../../src/console/view-shapes.ts';
 import { ApiError } from './prepared-read.ts';
 export type Entry={value:ViewEnvelope<any>|null;error:string;loading:boolean;version:string|null;controller?:AbortController;task?:Promise<void>};
 const error=(message:string,code='protocol')=>Object.assign(new ApiError(message),{code});
@@ -14,9 +14,10 @@ export class ViewStore {
   emit=()=>{this.sequence++;for(const fn of this.listeners)fn();};
   subscribe=(fn:()=>void)=>{this.listeners.add(fn);return()=>{this.listeners.delete(fn);};};
   snapshot=()=>this.sequence;
+  frozen(path:string){return path.split('?')[0]==='activity';}
   keyVersion(path:string):string|null {
     if(!this.metadata)return null;
-    const key=path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
+    const key=path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
     return key?this.metadata.viewVersions[key]:JSON.stringify(this.metadata.viewVersions);
   }
   entry(path:string) {let e=this.entries.get(path);if(!e){e={value:null,error:'',loading:false,version:null};this.entries.set(path,e);}return e;}
@@ -39,7 +40,7 @@ export class ViewStore {
   async load(path:string,force=false):Promise<void> {
     const entry=this.entry(path),version=this.keyVersion(path);
     if(entry.task){if(entry.controller?.signal.aborted){await entry.task;return this.load(path,force);}return entry.task;}
-    if(!force&&entry.value&&entry.version===version)return;
+    if(!force&&entry.value&&(this.frozen(path)||entry.version===version))return;
     const c=new AbortController(),generation=this.generation;entry.controller=c;entry.loading=true;entry.error='';
     const task=(async()=>{
       try {
@@ -47,10 +48,11 @@ export class ViewStore {
         const query=identity?`${path.includes('?')?'&':'?'}epoch=${encodeURIComponent(identity.epoch)}&minHighWater=${identity.highWater}`:'';
         const raw=await this.read(`/arcs/${encodeURIComponent(this.arc)}/${path}${query}`,c.signal);
         if(c.signal.aborted||generation!==this.generation)return;
-        const check=path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
+        const check=path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
         if(!check(raw.data))throw error('Malformed view or UI schema mismatch; reload required');
         const entity=decodeURIComponent(path.split('?')[0]!.split('/')[1]??'');
         if(path.startsWith('units/')&&raw.data.unit.id!==entity||path.startsWith('milestones/')&&raw.data.id!==entity||path.startsWith('invocations/')&&raw.data.invocation.routeId!==entity)throw error('Selected detail identity mismatch','conflict');
+        if(path.startsWith('activity/')&&!path.startsWith('activity/changes?')&&raw.data.row.id!==entity)throw error('Selected Activity identity mismatch','conflict');
         if(entry.value&&(raw.highWater<entry.value.highWater||raw.revision<entry.value.revision))throw error('Overtaken view response; retry','conflict');
         if(!this.admit(raw,false,true))throw error('Journal advanced during this read; retry','conflict');
         entry.value=raw;
@@ -61,7 +63,7 @@ export class ViewStore {
         let bytes=0;for(const [key,value] of this.entries)if(key!=='snapshot')bytes+=JSON.stringify(value.value).length*2;
         for(const [key,value] of this.entries){if((this.entries.size<=24&&bytes<=4*1024*1024)||key===path)break;if(key!=='snapshot'&&!this.active.has(key)&&!value.loading){bytes-=JSON.stringify(value.value).length*2;this.entries.delete(key);}}
       }catch(err){if(!c.signal.aborted){entry.error=err instanceof Error?err.message:String(err);if(err instanceof ApiError&&err.code==='protocol')this.reload=true;}}
-      finally{if(generation===this.generation){entry.loading=false;delete entry.task;this.emit();const current=this.keyVersion(path);if(!c.signal.aborted&&!entry.error&&this.active.has(path)&&current!==null&&current!==version&&entry.version!==current)void this.load(path);}}
+      finally{if(generation===this.generation){entry.loading=false;delete entry.task;this.emit();const current=this.keyVersion(path);if(!this.frozen(path)&&!c.signal.aborted&&!entry.error&&this.active.has(path)&&current!==null&&current!==version&&entry.version!==current)void this.load(path);}}
     })();entry.task=task;this.emit();return task;
   }
   trimUi(){let bytes=0;for(const value of this.ui.values())bytes+=JSON.stringify(value).length*2;for(const [key,value] of this.ui){if(bytes<=4*1024*1024&&this.ui.size<=64)break;bytes-=JSON.stringify(value).length*2;this.ui.delete(key);}}

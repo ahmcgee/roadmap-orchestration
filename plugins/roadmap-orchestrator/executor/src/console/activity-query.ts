@@ -173,7 +173,8 @@ export class ConsoleActivity {
     const selected = direction === 'previous' ? keys.slice(-g.query.limit) : keys.slice(0, g.query.limit);
     const first = selected[0], last = selected.at(-1), start = first === undefined ? 0 : g.keys.indexOf(first), end = last === undefined ? 0 : g.keys.indexOf(last) + 1;
     const rows = selected.map(n => {
-      const entry = index.entries[n]!; if (entry.request) activityRequest(e, entry.request); return entry.row;
+      const entry = index.entries[n]!; if (entry.request) activityRequest(e, entry.request);
+      return entry.row;
     });
     const days = new Map<string, number>(), formatter = new Intl.DateTimeFormat('en-CA', {timeZone: g.query.filters.zone, year: 'numeric', month: '2-digit', day: '2-digit'});
     for (const n of g.keys) {const day = formatter.format(new Date(index.entries[n]!.row.at)); days.set(day, (days.get(day) ?? 0) + 1);}
@@ -189,7 +190,13 @@ export class ConsoleActivity {
     for (const key of Object.keys(params)) if (![...admission, ...common, 'anchor'].includes(key)) invalid('unknown Activity changes query parameter');
     if (!params['anchor']) return invalid('Activity changes requires an anchor');
     const query = queryOf(params), {g} = this.#admit(e, params['anchor'], query, true), index = this.index(e);
-    const newMatching = index.entries.filter(entry => entry.row.seq > g.asOf.highWater && matches(entry, g.query.filters, index)).length;
+    const filters={...g.query.filters};
+    if(g.query.window==='24h'||g.query.window==='7d'){
+      const terminal=e.data.events.findLast(ev=>ev.type==='fact'&&['arc-completed','stop-completed'].includes(ev.fact.kind));
+      const end=Date.parse(terminal?.at??e.checkedAt);
+      filters.from=new Date(end-(g.query.window==='24h'?1:7)*86400_000).toISOString();filters.to=new Date(end).toISOString();
+    }
+    const newMatching = index.entries.filter(entry => entry.row.seq > g.asOf.highWater && matches(entry, filters, index)).length;
     return bounded(e, {...versioned({newMatching, latestHighWater: e.highWater, latestViewVersion: index.version}, {basis: 'recorded-arc', from: g.query.filters.from, to: g.query.filters.to}), viewVersion: index.version}, 2 * 1024);
   }
 }
