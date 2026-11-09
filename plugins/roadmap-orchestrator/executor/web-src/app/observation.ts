@@ -1,38 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, get } from './shared.tsx';
-import type { Envelope } from './types.ts';
-export function useObservation(arc: string | null) {
-  const [e,setEnvelope]=useState<Envelope|null>(null), [error,setError]=useState(''), [checkedAt,setCheckedAt]=useState<string|null>(null), [connected,setConnected]=useState(false), [reload,setReload]=useState(false);
-  const current=useRef<Envelope|null>(null);
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
+import { api, ApiError, get, protocol } from './shared.tsx';
+import { ViewStore } from './view-store.ts';
+export function useObservation(arc:string|null,onSelection:(arc:string|null)=>void) {
+  const store=useMemo(()=>arc?new ViewStore(arc,protocol,get):null,[arc]);
+  useSyncExternalStore(store?.subscribe??(()=>()=>{}),store?.snapshot??(()=>0));
   useEffect(()=>{
-    current.current=null;setEnvelope(null);setCheckedAt(null);setError('');setConnected(false);
-    if(!arc)return;
-    const c=new AbortController();let fetching=false,again=false,resetPending=false;
-    async function capture(reset=false):Promise<void>{
-      resetPending ||= reset;
-      if(fetching){again=true;return;}fetching=true;
-      try{
-        const previous=resetPending?null:current.current;resetPending=false;
-        const query=previous?`?epoch=${encodeURIComponent(previous.epoch)}&revision=${previous.revision}&minHighWater=${previous.highWater}`:'';
-        const next:Envelope=await get(`/arcs/${encodeURIComponent(arc!)}/snapshot${query}`,c.signal);
-        if(!next.data?.console||next.arc!==arc||!next.instance||!next.epoch||!Number.isSafeInteger(next.highWater)||!Number.isFinite(Date.parse(next.checkedAt)))throw new Error('Malformed observation payload');
-        if(previous&&(next.epoch!==previous.epoch||next.instance!==previous.instance||next.highWater<previous.highWater||next.revision<previous.revision))throw new ApiError('Observation conflict: reconnect to reset');
-        current.current=next;setEnvelope(next);setCheckedAt(next.checkedAt);setError('');
-      }catch(err){
-        if(c.signal.aborted)return;
-        if(err instanceof ApiError&&(err.code==='reset'||err.code==='conflict')){setError('Observation reset; verifying a new journal prefix');resetPending=true;again=true;}
-        else {const message=err instanceof Error?err.message:String(err);setError(message);if(err instanceof ApiError&&err.code==='protocol')setReload(true);}
-      }finally{fetching=false;if(again&&!c.signal.aborted){again=false;void capture();}}
-    }
-    void capture();
+    if(!store||!arc)return;
     const stream=new EventSource(`${api}/arcs/${encodeURIComponent(arc)}/events`);
-    stream.onopen=()=>setConnected(true);
-    stream.addEventListener('revision',()=>void capture());
-    stream.addEventListener('reset',()=>{setError('Observation reset; verifying a new journal prefix');void capture(true);});
-    stream.addEventListener('heartbeat',(event)=>{try{const notice=JSON.parse((event as MessageEvent<string>).data);if(current.current&&notice.epoch===current.current.epoch&&Number.isFinite(Date.parse(notice.checkedAt))){current.current={...current.current,checkedAt:notice.checkedAt};setCheckedAt(notice.checkedAt);}}catch{setError('Malformed verification heartbeat');}});
-    stream.addEventListener('error',(event)=>{setConnected(false);const data=(event as MessageEvent<string>).data;if(data){try{const notice=JSON.parse(data);setError(notice.message);if(notice.code==='protocol')setReload(true);}catch{setError('Console observation error');}}});
-    const retry=setInterval(()=>{if(!current.current||Date.now()-Date.parse(current.current.checkedAt)>5000)void capture();},3000);
-    return()=>{c.abort();stream.close();clearInterval(retry);};
-  },[arc]);
-  return {e,error,checkedAt,connected,reload};
+    stream.onopen=()=>{store.connected=true;store.emit();};
+    const notice=(event:Event,reset=false)=>{try{const raw=JSON.parse((event as MessageEvent).data);store.notice(raw,reset);onSelection(raw.selected);}catch(err){store.error=err instanceof Error?err.message:String(err);if(err instanceof ApiError&&err.code==='protocol')store.reload=true;store.emit();}};
+    stream.addEventListener('revision',ev=>notice(ev));stream.addEventListener('heartbeat',ev=>notice(ev));stream.addEventListener('reset',ev=>notice(ev,true));
+    stream.addEventListener('error',ev=>{store.connected=false;const data=(ev as MessageEvent).data;if(data){try{const raw=JSON.parse(data);store.error=raw.message;if(raw.code==='protocol')store.reload=true;}catch{store.error='Console observation error';}}store.emit();});
+    let alive=true,attempts=0,timer:ReturnType<typeof setTimeout>;
+    const retry=async()=>{
+      if(!store.checkedAt||Date.now()-Date.parse(store.checkedAt)>5000){
+        try{store.notice(await get(`/arcs/${encodeURIComponent(arc)}/metadata`));attempts=0;if(!store.connected){const selected=await get('/arcs');onSelection(selected.selected);}}catch{attempts++;}
+      }
+      if(alive)timer=setTimeout(()=>void retry(),Math.min(30_000,3000*2**Math.min(attempts,3)));
+    };timer=setTimeout(()=>void retry(),3000);
+    const visible=()=>{if(document.visibilityState==='visible')void get(`/arcs/${encodeURIComponent(arc)}/metadata`).then(raw=>store.notice(raw)).catch(()=>{});};
+    window.addEventListener('focus',visible);document.addEventListener('visibilitychange',visible);
+    return()=>{alive=false;clearTimeout(timer);stream.close();store.dispose();window.removeEventListener('focus',visible);document.removeEventListener('visibilitychange',visible);};
+  },[store]);
+  return store;
 }

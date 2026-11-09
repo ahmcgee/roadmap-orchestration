@@ -1,22 +1,22 @@
-import type { Envelope } from './types.ts';
+import type { GraphData } from './graph-data.ts';
 export const NODE_WIDTH = 248, NODE_HEIGHT = 128, LABEL_PX = 16, MIN_LABEL_PX = 11;
 // The space belongs to the relationships: never compress these floors to fit.
 export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };
 export type Band = { id: string; label: string; ids: string[]; passed: number; total: number; state: string; x: number; y: number; width: number; height: number };
-export function graphLayout(e: Envelope) {
-  const started = performance.now(), m = e.data.console;
-  const gates = e.data.plan?.milestones ?? [];
+export function graphLayout(e: GraphData) {
+  const started = performance.now(), m = e;
+  const gates = e.milestones ?? [];
   const assigned = new Map<string, number>();
   gates.forEach((gate, i) => { for (const id of gate.units) if (!assigned.has(id)) assigned.set(id, i); });
-  for (const u of m.presentation.units) if (!assigned.has(u.id)) assigned.set(u.id, gates.length);
-  for (const edge of e.data.display.status.edges) if (edge.type === 'milestone') {
+  for (const u of m.units) if (!assigned.has(u.id)) assigned.set(u.id, gates.length);
+  for (const edge of e.dependencies) if (edge.type === 'milestone') {
     const index = gates.findIndex(g => g.id === edge.milestone);
     assigned.set(edge.unit, Math.max(assigned.get(edge.unit) ?? 0, index + 1));
   }
-  for (let pass = 0; pass < gates.length + 1; pass++) for (const edge of e.data.display.status.edges) if (edge.type === 'after') assigned.set(edge.unit, Math.max(assigned.get(edge.unit) ?? 0, assigned.get(edge.effective) ?? 0));
+  for (let pass = 0; pass < gates.length + 1; pass++) for (const edge of e.dependencies) if (edge.type === 'after') assigned.set(edge.unit, Math.max(assigned.get(edge.unit) ?? 0, assigned.get(edge.effective) ?? 0));
   const bands: Band[] = gates.map(g => {
-    const state = e.data.display.status.milestones.find(v => v.id === g.id);
+    const state = e.milestones.find(v => v.id === g.id);
     return { id: `milestone:${g.id}`, label: g.name ?? g.id, ids: [], passed: g.units.filter(id => m.graph.units.find(v => v.id === id)?.status === 'passed').length, total: g.units.length, state: state?.passed ? 'passed' : state?.state === 'walking' ? 'active' : state?.state === 'blocked' ? 'held' : 'pending', x: 0, y: 0, width: 0, height: 0 };
   });
   if ([...assigned.values()].some(i => i >= gates.length)) bands.push({ id: 'unbound', label: 'No milestone', ids: [], passed: 0, total: 0, state: 'pending', x: 0, y: 0, width: 0, height: 0 });
@@ -117,12 +117,12 @@ export type EdgeCurve = { source:string; target:string; points: Point[]; path:st
  * Each bow clears that card in its immediate neighbourhood. It never sends a
  * relationship to a band boundary, shared corridor, or outside its endpoints.
  */
-export function graphCurves(e: Envelope, positions: Map<string,Point>): EdgeCurve[] {
+export function graphCurves(e: GraphData, positions: Map<string,Point>): EdgeCurve[] {
   const clearances=new Map<number,number[]>();
-  const boxes=e.data.console.graph.units.map(u=>{const p=positions.get(u.id)!;const w=NODE_WIDTH;return {id:u.id,left:p.x-w/2-16,right:p.x+w/2+16,top:p.y-NODE_HEIGHT/2-16,bottom:p.y+NODE_HEIGHT/2+16};});
+  const boxes=e.graph.units.map(u=>{const p=positions.get(u.id)!;const w=NODE_WIDTH;return {id:u.id,left:p.x-w/2-16,right:p.x+w/2+16,top:p.y-NODE_HEIGHT/2-16,bottom:p.y+NODE_HEIGHT/2+16};});
   const curves:EdgeCurve[]=[];
   // Quiet waits must not displace the visible unit relationships.
-  const edges=[...e.data.console.graph.edges.entries()].sort((a,b)=>Number(a[1][0].startsWith('milestone:'))-Number(b[1][0].startsWith('milestone:')));
+  const edges=[...e.graph.edges.entries()].sort((a,b)=>Number(a[1][0].startsWith('milestone:'))-Number(b[1][0].startsWith('milestone:')));
   for(const [edgeIndex,[source,target]] of edges){
     const p=positions.get(source)!,q=positions.get(target)!;
     const a={x:p.x+NODE_WIDTH/2+3,y:p.y},b={x:q.x-NODE_WIDTH/2-5,y:q.y};
@@ -183,18 +183,18 @@ export function graphCurves(e: Envelope, positions: Map<string,Point>): EdgeCurv
 }
 
 /** The live units and only their direct unit neighbours, never transitive gate fan-out. */
-export function activeFocus(e: Envelope) {
-  const seeds=e.data.console.graph.units.filter(u=>!u.id.startsWith('milestone:')&&u.status==='active').map(u=>u.id);
+export function activeFocus(e: GraphData) {
+  const seeds=e.graph.units.filter(u=>!u.id.startsWith('milestone:')&&u.status==='active').map(u=>u.id);
   const neighbours=(ids:string[])=>{
     const result=new Set(ids);
-    for(const [a,b] of e.data.console.graph.edges)if(!a.startsWith('milestone:')&&!b.startsWith('milestone:')&&(ids.includes(a)||ids.includes(b))){result.add(a);result.add(b);}
+    for(const [a,b] of e.graph.edges)if(!a.startsWith('milestone:')&&!b.startsWith('milestone:')&&(ids.includes(a)||ids.includes(b))){result.add(a);result.add(b);}
     return [...result];
   };
   return { seeds, ids:neighbours(seeds) };
 }
 /** Compact identifiers use the recorded system, never a guessed title fragment. */
-export function compactIdentifier(e: Envelope, id: string) {
+export function compactIdentifier(e: GraphData, id: string) {
   if (id.startsWith('milestone:')) return id.slice(10);
-  const systems=e.data.plan?.units.find(u=>u.id===id)?.systems??[];
+  const systems=e.units.find(u=>u.id===id)?.systems??[];
   return [...systems, /^u\d+$/.test(id)?id.slice(1):id].join(' ');
 }

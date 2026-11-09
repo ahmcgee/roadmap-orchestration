@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 const { graphLayout, graphCurves, NODE_WIDTH, NODE_HEIGHT, ROW_GAP, COLUMN_GAP } = await import(new URL('../../web-src/app/graph-layout.ts',import.meta.url).href);
+import { graphView } from '../../src/console/views.ts';
+const {graphData}=await import(new URL('../../web-src/app/graph-data.ts',import.meta.url).href);
 type Point = {x:number;y:number};
 type GraphEnvelope = {data:{console:{graph:{edges:[string,string][];units:{id:string}[]}}}};
 /** Check actual curve geometry, independently of SVG serialization or renderer visibility. */
 export function assertGraphGeometry(e: GraphEnvelope) {
-  const started=performance.now(), layout=graphLayout(e), curves=graphCurves(e,layout.positions);
+  const started=performance.now(), input=graphData({...e,data:graphView(e as any)}), layout=graphLayout(input), curves=graphCurves(input,layout.positions);
   const elapsed=performance.now()-started;
   assert.ok(elapsed<300,`layout and curves took ${elapsed.toFixed(1)}ms`);
-  assert.deepEqual(layout.positions,graphLayout(e).positions,'deterministic positions');
-  assert.deepEqual(curves,graphCurves(e,layout.positions),'deterministic curves');
+  assert.deepEqual(layout.positions,graphLayout(input).positions,'deterministic positions');
+  assert.deepEqual(curves,graphCurves(input,layout.positions),'deterministic curves');
   assert.equal(curves.length,e.data.console.graph.edges.length,'every semantic edge has a curve');
   assert.deepEqual(curves.map((c:{source:string;target:string})=>[c.source,c.target]),e.data.console.graph.edges,'complete, exact endpoints');
   assert.ok(ROW_GAP>=.6*NODE_HEIGHT);assert.ok(COLUMN_GAP>=1.5*NODE_WIDTH);

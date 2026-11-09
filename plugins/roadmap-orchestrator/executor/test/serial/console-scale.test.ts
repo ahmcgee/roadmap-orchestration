@@ -13,6 +13,7 @@ import { sha256Hex } from '../../src/core/json.ts';
 import { arcId, invocationDirName, invocationIdOf } from '../../src/core/ids.ts';
 import { readJournal } from '../../src/core/log.ts';
 import { CONSOLE_PROTOCOL, type Envelope } from '../../src/observation/protocol.ts';
+import type { UnitView } from '../../src/console/detail-protocol.ts';
 import type { consoleModel } from '../../src/console/model.ts';
 import type { ConsoleHistories } from '../../src/console/history.ts';
 
@@ -43,9 +44,11 @@ test('scale arc: real server serves the manifest, attempts and four active histo
   assert.equal(active.length,4); assert.equal(active.length,m.live.length);
   const attempts=units.reduce((n,u)=>n+new Set(snapshot.data.display.invocations.filter(i=>i.unit===u.unit).map(i=>i.attempt)).size,0);
   assert.equal(attempts,m.attempts);
-  const detail=await get<{data:{attempts:number[];activities:unknown[]}}>('units/u7');
-  assert.equal(detail.data.activities.length,snapshot.data.display.invocations.filter(i=>i.unit==='u7').length);
-  assert.ok(detail.data.attempts.length>=2);
+  const detail=await get<{data:UnitView}>('units/u7'),invocations=[...detail.data.invocations.rows];
+  let cursor=detail.data.invocations.next;while(cursor){const next=await get<{data:UnitView}>(`units/u7?section=invocations&cursor=${encodeURIComponent(cursor)}`);invocations.push(...next.data.invocations.rows);cursor=next.data.invocations.next;}
+  assert.equal(invocations.length,snapshot.data.display.invocations.filter(i=>i.unit==='u7').length);
+  assert.deepEqual(invocations.map(i=>i.id).sort(),snapshot.data.display.invocations.filter(i=>i.unit==='u7').map(i=>i.id).sort());
+  assert.ok(new Set(invocations.map(i=>i.attempt)).size>=2);
   for(const live of m.live) {
     const history=await get<{data:ReturnType<ConsoleHistories['page']>}>(`invocations/${live.routeId}/history`);
     assert.equal(history.data.state,'running'); assert.equal(history.data.endedAt,null); assert.ok(history.data.events.length>0);

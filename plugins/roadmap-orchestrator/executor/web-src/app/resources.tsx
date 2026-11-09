@@ -2,11 +2,12 @@ import { useContext, useState } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, elapsed, link, pluralise, route, stageName } from './shared.tsx';
+import { useRouteState } from './view-state.ts';
 import type { Envelope } from './types.ts';
 
 const cores = (n:number|null) => n === null ? 'unrecorded' : Number(n.toFixed(2)).toString();
 export function Resources({e}:{e:Envelope}) {
-  const m=e.data.console,p=m.presentation,now=useContext(Clock),[all,setAll]=useState(false);
+  const m=e.data.console,p=m.presentation,now=useContext(Clock),[all,setAll]=useRouteState('resources.whole',false);
   const end=m.resources.endAt?m.resources.now:Math.max(m.resources.now,(now-m.resources.origin)/1000);
   const slots=m.resources.bookings.filter(b=>b.resource==='integration-slot'&&b.state==='holding');
   const queue=m.resources.queue.filter(q=>q.request.publication);

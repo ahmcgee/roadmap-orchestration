@@ -14,6 +14,9 @@ import { gitCommonDir } from '../../src/git/git.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import type { Page } from '../../src/console/view-protocol.ts';
 import type { Envelope } from '../../src/observation/protocol.ts';
+import { unitView, invocationView } from '../../src/console/details.ts';
+import { ConsoleBrowser } from '../helpers/console-browser.ts';
+import { until } from '../fixtures/exec-common.ts';
 import { consoleGet } from '../helpers/console-http.ts';
 
 test('300-unit/7-day projection budgets preserve every relationship and independently bounded tab row contracts', {timeout:90_000}, async t => {
@@ -63,6 +66,11 @@ test('300-unit/7-day projection budgets preserve every relationship and independ
     }
     measured[name]=largest; assert.ok(largest<=budget*1024,`${name}: ${largest} > ${budget} KiB`);
   }
+  let largestUnit=0,largestInvocation=0;
+  for(const unit of graph.units)largestUnit=Math.max(largestUnit,envelopeBytes(unitView(e,unit.id,{})));
+  for(const i of intervals.filter((_,n)=>n%100===0))largestInvocation=Math.max(largestInvocation,envelopeBytes(invocationView(e,i.id)));
+  measured['unitDetail']=largestUnit;measured['invocationDetail']=largestInvocation;
+  assert.ok(largestUnit<=64*1024);assert.ok(largestInvocation<=16*1024);
   const serializedStart=performance.now(), bytes=canonicalJson({...metadata,data:graph})+'\n', serializationMs=performance.now()-serializedStart;
   const parseStart=performance.now(); JSON.parse(bytes); const parseMs=performance.now()-parseStart;
   const httpStart=performance.now(), server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});
@@ -79,6 +87,25 @@ test('300-unit/7-day projection budgets preserve every relationship and independ
   const times:number[]=[];
   for(let i=0;i<100;i++){const started=performance.now();assert.equal(views.graph(e),graph);times.push(performance.now()-started);}
   times.sort((a,b)=>a-b);
+  const browser=new ConsoleBrowser(tmpDir('console-view-client-scale'),{settleMs:100});t.after(()=>browser.close());await browser.initialize();
+  await browser.call('browser_run_code_unsafe',{code:`async(page)=>{await page.addInitScript(()=>{window.__viewBodies=[];const get=window.fetch;window.fetch=async(...args)=>{const r=await get(...args);const body=await r.clone().text();window.__viewBodies.push({url:String(args[0]),status:r.status,bytes:new TextEncoder().encode(body).length});return r;};});}`});
+  const coldServer=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>coldServer.close());
+  const browserStart=performance.now();await browser.call('browser_navigate',{url:coldServer.url});
+  await until(async()=>browser.evaluate(`()=>!!document.querySelector('.dag-canvas canvas')&&document.body.innerText.includes('Connected')`),15_000,'300-unit DTO Graph');
+  const browserGraphMs=performance.now()-browserStart;
+  const bodies=await browser.evaluate<{url:string;status:number;bytes:number}[]>('()=>window.__viewBodies');
+  assert.equal(bodies.some(r=>/\/(snapshot|status|activity)(?:\?|$)/.test(r.url)),false);
+  for(const name of ['shell','graph'])assert.equal(bodies.filter(r=>r.status===200&&r.url.includes('/'+name)).length,1);
+  const decoded=bodies.filter(r=>r.status===200&&/\/(shell|graph)(?:\?|$)/.test(r.url)).reduce((n,r)=>n+r.bytes,0);
+  assert.ok(decoded<=264*1024);measured['browserGraphColdLoad']=decoded;
+  const selectedStart=performance.now();await browser.openUnit('u167');await until(async()=>browser.evaluate(`()=>document.querySelector('.drawer .unit-meta')?.textContent.includes('u167')`),10_000,'selected DTO detail');
+  const browserDetailMs=performance.now()-selectedStart;
+  await browser.evaluate(`()=>{location.hash='#/arcs/${m.arc}/graph/units/milestone%3AMS-3';return true;}`);
+  await until(async()=>browser.evaluate(`()=>!!document.querySelector('.drawer .outstanding-units')`),10_000,'unit to milestone DTO transition');
+  assert.doesNotMatch(await browser.evaluate<string>('()=>document.body.innerText'),/Console rendering failed/);
+  await browser.evaluate(`()=>{history.back();return true;}`);
+  await until(async()=>browser.evaluate(`()=>document.querySelector('.drawer .unit-meta')?.textContent.includes('u167')`),10_000,'Back restores selected unit');
+  t.diagnostic(JSON.stringify({browserTimingMs:{usableGraph:browserGraphMs,selectedDetail:browserDetailMs},browserHeap:await browser.evaluate('()=>performance.memory?.usedJSHeapSize??null')}));
   t.diagnostic(JSON.stringify({fixture:{units:m.units,days:7,events:m.events,invocations:m.invocations},bytes:measured,timingMs:{generation:generationMs,capture:captureMs,shell:shellMs,graph:graphMs,index:indexMs,serialization:serializationMs,nodeParse:parseMs,warmProjectionP95:times[94],firstShellHttp:firstShellHttpMs,warmGraphHttpP95:httpTimes[18]},rssBytes:process.memoryUsage().rss}));
   // No capture metadata is accidentally carried into the wire data.
   assert.equal('capture' in (JSON.parse(bytes) as Envelope<Record<string,unknown>>).data,false);

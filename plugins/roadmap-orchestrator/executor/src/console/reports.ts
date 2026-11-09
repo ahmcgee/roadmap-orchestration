@@ -48,10 +48,10 @@ export function retainedReport(e: Envelope, id: string): Record<string, unknown>
   const terminal = e.data.events.find((ev): ev is Terminal => ev.type === 'done' && ev.kind === 'proc.spawn' && ev.op === op);
   return readReport(e, e.data.display.invocations.find(i => i.id === id), terminal);
 }
-export function enrichReports(e: Envelope) {
+export function enrichReports(e: Envelope, invocations: readonly import('../tui/types.ts').Invocation[] = e.data.display.invocations) {
   const reports = new Map<string, Record<string, unknown>>();
   const terminals = new Map(e.data.events.flatMap(ev => ev.type === 'done' && ev.kind === 'proc.spawn' ? [[String(ev.op), ev] as const] : []));
-  for (const inv of e.data.display.invocations) if (inv.execution === 'agent') {
+  for (const inv of invocations) if (inv.execution === 'agent') {
     const report = readReport(e, inv, terminals.get(parseInvocationId(invocationIdOf(inv.id)).op)); if (report) reports.set(inv.id, report);
   }
   return reports;

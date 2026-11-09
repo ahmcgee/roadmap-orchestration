@@ -17,6 +17,8 @@ import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
+import { unitShape, unitSummaryShape, invocationShape, milestoneShape } from './view-shapes.ts';
+import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
@@ -84,13 +86,13 @@ function route(path: string[], params: Record<string, string>) {
     if (params['summary'] !== undefined && params['summary'] !== '0' && params['summary'] !== '1') throw new ConsoleError('invalid', 'summary is 0 or 1');
     return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };
   }
-  if (path.length === 4 && section === 'units' && id) {
-    const unit = e.data.display.status.units.find((u) => u.unit === id);
-    if (!unit) throw new ConsoleError('not-found', 'unit is not in the applied plan');
-    const activities = e.data.display.invocations.filter((i) => i.unit === id || i.relatedUnits?.includes(id));
-    return { ...e, data: { unit, activities, attempts: [...new Set(activities.map((i) => i.attempt))],
-      records: e.data.display.estate.filter((r) => r.id === id || r.parentId === id || r.id === `unit:${id}`),
-      lines: project(unit).map((r) => r.text) } };
+  if (path.length === 4 && id && (section === 'units' || section === 'milestones' || section === 'invocations')) {
+    detailParams(params, section === 'units' ? ['summary','depends','usedBy','journey','invocations','acceptance','waiting','checks','requests','intent'] : section === 'milestones' ? ['members','intent'] : ['related']);
+    if(section==='invocations'&&!/^[1-9][0-9]*-[1-9][0-9]*$/.test(id))throw new ConsoleError('invalid','invocation route ID is seq-ordinal');
+    const data=section==='units'?unitView(e,id,params):section==='milestones'?milestoneView(e,id,params):invocationView(e,id,params);
+    const check=section==='units'?(params['section']==='summary'?unitSummaryShape:unitShape):section==='milestones'?milestoneShape:invocationShape;
+    if(!check(data))throw new ConsoleError('protocol','malformed selected detail');
+    return {...e,data};
   }
   if (path.length === 5 && section === 'invocations' && id) {
     if (!/^[1-9][0-9]*-[1-9][0-9]*$/.test(id)) throw new ConsoleError('invalid', 'invocation route ID is seq-ordinal');

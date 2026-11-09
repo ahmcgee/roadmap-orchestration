@@ -14,13 +14,13 @@ export { stageWords, stateWords, reasonWords, waitWords, shortUnitTitle } from '
 import { stageWords, stateWords, reasonWords, waitWords } from './vocabulary.ts';
 import { identityIndex, stageIndex, invocationIndex } from './indexes.ts';
 import { enrichReports } from './reports.ts';
-export function presentation(e:Envelope){
+export function presentation(e:Envelope, selectedUnit?: string, reportStepIds?: ReadonlySet<string>){
  const s=e.data.display.status,events=e.data.events;
  const startedAt=events[0]?.at??e.observedAt;
  const ended= [...events].reverse().find(ev=>ev.type==='fact'&&['arc-completed','stop-completed'].includes(ev.fact.kind));
  const usage=meterOf(events);
  const meters=new Map<string,number>(),costCoverage=new Map<string,{recorded:number;estimated:number}>(),meteredInvocations=new Set<string>();
- for(const ev of events){
+ for(const ev of selectedUnit===undefined?events:[]){
   if(ev.type!=='fact'||(ev.fact.kind!=='meter'&&ev.fact.kind!=='usage-unavailable'))continue;
   const f=ev.fact;meteredInvocations.add(f.inv);
   if(f.kind!=='meter')continue;
@@ -32,11 +32,12 @@ export function presentation(e:Envelope){
    costCoverage.set(f.subject.unit,coverage);
   }
  }
- const reports=enrichReports(e); // Temporary legacy adapter: new view builders never call this sweep.
+ const selectedInvocations=e.data.display.invocations.filter(i=>selectedUnit===undefined||i.unit===selectedUnit);
+ const reports=enrichReports(e,selectedInvocations.filter(i=>{if(!reportStepIds)return true;const parent=record(record(JSON.parse(i.body))['parent']);return reportStepIds.has(`${i.unit}:${parent['attempt']}`);})); // Temporary legacy adapter: new view builders never call this sweep.
  const stages=stageIndex(events),{steps,byUnit}=stages;
  const invocations=invocationIndex(e.data.display.invocations,stages);
  const identities=identityIndex(e);
- const activityInfo=e.data.display.invocations.map(i=>{
+ const activityInfo=selectedInvocations.map(i=>{
   const body=record(JSON.parse(i.body)),parent=record(body['parent']);const sequence=typeof parent['attempt']==='number'?parent['attempt']:i.attempt;
   const row=steps.get(`${i.unit}:${sequence}`),report=reports.get(i.id);
   const findings=Array.isArray(report?.['findings'])?report['findings'].map(v=>{const r=record(v);return String(r['title']??r['what']??r['summary']??r['description']??'Finding recorded');}):[];
@@ -44,7 +45,7 @@ export function presentation(e:Envelope){
   return{id:i.id,routeId:invocationDirName(invocationIdOf(i.id)),stage:typeof parent['stage']==='string'?parent['stage']:i.role,label:i.role.startsWith('lane:')?stageWords(i.role):row?.label??stageWords(i.role),attempt:row?.attempt??1,round:row?.round??1,spend:meters.get(i.id)??0,decision:report?.['decision']??null,findings};
  });
  const waits=completedWaiting(events).measurements.filter(w=>w.waited.totalMs>0&&Object.values(w.waited.byReasonMs).some(ms=>ms!=null&&ms>0));
- const units=s.units.map(u=>{
+ const units=s.units.filter(u=>selectedUnit===undefined||u.unit===selectedUnit).map(u=>{
   const specEntry=e.data.display.estate.find(r=>r.kind==='specification'&&r.id===u.unit);const spec=specEntry?record(JSON.parse(specEntry.body)):{};
   const acceptance=Array.isArray(spec['acceptance'])?spec['acceptance'].map(a=>String(record(a)['clause']??'')).filter(Boolean):[];
   const intent=typeof spec['intent']==='string'?spec['intent']:acceptance.join('\n');
@@ -60,7 +61,7 @@ export function presentation(e:Envelope){
   return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:first?Math.max(0,Date.parse(last??ended?.at??e.checkedAt)-Date.parse(first)):null,rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,redChecks:invs.filter(i=>i.execution==='command'&&(/fail/.test(i.state)||record(record(JSON.parse(i.body))['settlement'])['outcome']&&JSON.stringify(JSON.parse(i.body).settlement).includes('"verdict":"fail"'))).length,spend:charged.reduce((n,t)=>n+t.costUsd,0),spendCoverage,reasons,waitSince:queue?.queuedAt!==undefined?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
  });
  const feed:{id:number;at:string;text:string;unit?:string;invocation?:string;tab?:string;housekeeping?:boolean}[]=[];
- for(const ev of events){
+ for(const ev of selectedUnit===undefined?events:[]){
   if(ev.type==='fact'){const f=ev.fact;
    if(f.kind==='stage-outcome'&&'unit'in f){const row=steps.get(`${f.unit}:${f.attempt}`);let text=`${f.unit}: ${stageWords(f.stage)} — ${row?.outcome??f.outcome}`;if(f.stage==='ff'&&f.outcome==='published')text=`${f.unit} merged`;if(f.class==='park')text=`${f.unit} parked at ${stageWords(f.stage)}: ${row?.outcome}`;if(f.stage==='gate'&&f.outcome==='revise')text=`Review sent ${f.unit} back: ${row?.findingTitles[0]??'changes requested'}`;feed.push({id:ev.seq,at:ev.at,text,unit:f.unit,housekeeping:housekeepingStages.has(f.stage)&&f.class==='advance'});}
    else if(f.kind==='plan-applied')feed.push({id:ev.seq,at:ev.at,text:`Plan revision ${f.rev} applied`});

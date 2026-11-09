@@ -2,12 +2,13 @@ import { useContext, useState } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, elapsed, link, money, route, SignalMark } from './shared.tsx';
+import { useRouteState } from './view-state.ts';
 import type { Envelope } from './types.ts';
 
 type Sort = 'redChecks' | 'elapsedMs' | 'spend' | 'rounds';
 export function AllUnits({e}:{e:Envelope}) {
-  const [sort,setSort] = useState<{key:Sort;descending:boolean}|null>(null);
-  const [blocked,setBlocked] = useState(false);
+  const [sort,setSort] = useRouteState<{key:Sort;descending:boolean}|null>('effort.sort',null);
+  const [blocked,setBlocked] = useRouteState('effort.blocked',false);
   const m=e.data.console,clock=useContext(Clock),now=m.resources.endAt?Date.parse(m.resources.endAt):clock;
   const rows=m.presentation.units.map((u,index)=>({u,index})).filter(({u})=>!blocked||u.reasons.length>0);
   if(sort)rows.sort((a,b)=>{

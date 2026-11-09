@@ -1,3 +1,4 @@
+import { InvocationFacts } from './invocation-facts.tsx';
 import { mergeHistoryPages } from './history-pages.ts';
 import { HistoryMarkdown } from './markdown.tsx';
 // Recorded agent-history rendering, ported intact from the original console.
@@ -271,9 +272,9 @@ function HistoryEvents({events,live,...props}:any){
   const groups=historyToolRuns(events,live);
   return groups.map(group=>group.events.length===1?h(AgentEvent,{key:group.key,event:group.events[0],...props}):h("details",{key:group.events.at(-1).id,className:"history-group",onToggle:props.onLayout},h("summary",null,`${group.events.length} tool calls: ${group.label}`,h("small",{className:"muted"},[group.events[0].at,group.events.at(-1).at].filter(Boolean).map(at=>new Date(at).toLocaleTimeString()).join(' – '))),group.events.map(event=>h(AgentEvent,{key:event.id,event,...props}))));
 }
-function AgentDetail({ e, id, activity, close, stale }: any) {
+function AgentDetail({ arc, id, activity, close, stale, detail }: any) {
   const now=R.useContext(Clock);
-  const base = `/arcs/${e.arc}/invocations/${id}`;
+  const base = `/arcs/${arc}/invocations/${id}`;
   const [history, setHistory] = useState<any>(null), [error, setError] = useState<any>(""), [brief, setBrief] = useState<any>(null), [result, setResult] = useState<any>(null);
   const [following, setFollowing] = useState<any>(true), [earlier, setEarlier] = useState<any>(false), [above,setAbove]=useState(false), [loadingEarlier,setLoadingEarlier]=useState(false);
   const scroll = useRef<any>(null), follow = useRef<any>(true), placedScroll = useRef<any>(null), entered=useRef(false), anchor=useRef<{id:string;offset:number}|null>(null);
@@ -316,7 +317,7 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
       }
     };
     load();
-    const stream = new EventSource(`${api}/arcs/${e.arc}/events?invocation=${id}`);
+    const stream = new EventSource(`${api}/arcs/${arc}/events?invocation=${id}`);
     stream.addEventListener("history", (ev: any) => load(JSON.parse(ev.data)));
     stream.addEventListener("history-error", (ev: any) => {
       if (ev.data) setError(JSON.parse(ev.data).message);
@@ -369,8 +370,9 @@ function AgentDetail({ e, id, activity, close, stale }: any) {
   const thinking = useRef(new Map<string, boolean>());
   return h(ThinkingState.Provider,{value:thinking.current},h(FileHistoryProvider,{identity:history?.identity,events:history?.events||[]},h(
     Dialog,
-    { title: `${info(e, activity).label}, attempt ${info(e, activity).attempt}`, close, className: "agent-detail", headingLink: h(BackToUnit, {e, unit:activity.unit}) },
-    h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,money(info(e,activity).spend))))),
+    { title: `${activity.label}, attempt ${activity.attempt}`, close, className: "agent-detail", headingLink: activity.subject.type==='unit'?h(BackToUnit, {arc, unit:activity.unit,title:activity.subject.title,systems:activity.systems}):h('p',null,`${activity.subject.type==='job'?'Job':'Arc'} ${activity.subject.id}`) },
+    h(InvocationFacts,{arc,id,detail}),
+    h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,activity.spend.costUsd===null?'Unrecorded':money(activity.spend.costUsd))))),
     result?.report != null ? h(VerdictStatus,{value:result.report}) : h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,summary:true}),
     error && h("p", { role: "alert" }, error),
     h("div",{className:"history-navigation"},h("div", {className:"history-heading"},"History"),h(ChangedFiles,{onJump:(id:string)=>{follow.current=false;setFollowing(false);const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset['eventId']===id) as HTMLElement|undefined;if(target){let parent=target.parentElement;while(parent&&parent!==scroll.current){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top;placedScroll.current=scroll.current.scrollTop;setAbove(scroll.current.scrollTop>8);}}}),
