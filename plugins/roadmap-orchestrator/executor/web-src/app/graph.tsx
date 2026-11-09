@@ -2,17 +2,20 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import cytoscape, { type Core, type NodeSingular } from 'cytoscape';
 import { Minus, Plus, Search } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { activeFocus, compactIdentifier, graphCurves, graphLayout, LABEL_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH } from './graph-layout.ts';
+import { activeFocus, compactIdentifier, compactSystem, GLYPH_RESERVE, graphCurves, graphLayout, LABEL_PX, MIN_ID_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH, TINY_GLYPH_RESERVE, TINY_ZOOM, TITLE_MIN_ZOOM } from './graph-layout.ts';
 import { Clock, elapsed, glyph, pluralise, route, SignalMark } from './shared.tsx';
 import type { Signal } from './types.ts';
 import type { GraphData } from './graph-data.ts';
 import { useSelectedDetail } from './view-state.ts';
-function nodeTitle(title:string){
-  const context=document.createElement('canvas').getContext('2d')!;context.font=`600 ${LABEL_PX}px \"Barlow Semi Condensed\"`;
-  const lines=[''];for(const word of title.split(/\s+/)){const last=lines.length-1,next=lines[last]?`${lines[last]} ${word}`:word;if(context.measureText(next).width>NODE_WIDTH-24&&lines[last]){if(lines.length===2){while(context.measureText(lines[last]+'…').width>NODE_WIDTH-24)lines[last]=lines[last]!.slice(0,-1);lines[last]+='…';break;}lines.push(word);}else lines[last]=next;}return lines.join('\n');
+/** Width of `text` per 1px of font size. Measured at a large size: browsers round glyph advances at tiny sizes, so 1px metrics can be 0 or badly off. */
+function emWidth(text:string){const context=document.createElement('canvas').getContext('2d')!;context.font='600 100px "Barlow Semi Condensed"';return context.measureText(text).width/100;}
+function nodeTitle(title:string,fontPx=LABEL_PX){
+  const context=document.createElement('canvas').getContext('2d')!;context.font=`600 ${fontPx}px "Barlow Semi Condensed"`;
+  const limit=NODE_WIDTH-24,lines=[''];for(const word of title.split(/\s+/)){const last=lines.length-1,next=lines[last]?`${lines[last]} ${word}`:word;if(context.measureText(next).width>limit&&lines[last]){if(lines.length===3){while(context.measureText(lines[last]+'…').width>limit)lines[last]=lines[last]!.slice(0,-1);lines[last]+='…';break;}lines.push(word);}else lines[last]=next;}return lines.join('\n');
 }
 const states: Signal[] = ['passed','active','held','failed','pending','withdrawn'];
 type FocusMode = 'active' | 'all' | null;
+const ALL_MARGIN = 32;
 export function Graph({ e, open }: { e: GraphData; open: (id: string) => void }) {
   const now=useContext(Clock), m=e;
   const region=useRef<HTMLDivElement>(null), moved=useRef(false), applying=useRef(false), activeSignature=useRef('');
@@ -51,7 +54,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     return {left:24,right:graph.width()-24,top:Math.max(0,toolbar.bottom-bounds.top),bottom:Math.min(graph.height(),...bottoms.map(r=>r.top-bounds.top))};
   }
   const reframe=useRef(()=>{});
-  reframe.current=()=>{if(focus==='active')frame(activeIds(),false);else if(focus==='all')frame(m.graph.units.map(u=>u.id),false);else if(station){const band=baseline.bands.find(b=>b.id===station);if(band)frame([...band.ids,station],false);}};
+  reframe.current=()=>{if(focus==='active')frame(activeIds(),false);else if(focus==='all')frameAll(false);else if(station){const band=baseline.bands.find(b=>b.id===station);if(band)frame([...band.ids,station],false);}};
   function frameBox(nodes:cytoscape.NodeCollection){
     // Border thickness changes with LOD; frame the fixed geometry so repeated
     // focus actions yield exactly the same viewport at every starting zoom.
@@ -59,9 +62,9 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const y1=Math.min(...nodes.map(n=>n.position().y-n.height()/2)),y2=Math.max(...nodes.map(n=>n.position().y+n.height()/2));
     return {x1,x2,y1,y2,w:x2-x1,h:y2-y1};
   }
-  function fitZoom(nodes:cytoscape.NodeCollection){
+  function fitZoom(nodes:cytoscape.NodeCollection,margin=80){
     const r=unobscured(),box=frameBox(nodes);
-    return Math.min(1,Math.max(.001,Math.min((r.right-r.left-80)/Math.max(1,box.w),(r.bottom-r.top-80)/Math.max(1,box.h))));
+    return Math.min(1,Math.max(.001,Math.min((r.right-r.left-margin)/Math.max(1,box.w),(r.bottom-r.top-margin)/Math.max(1,box.h))));
   }
   function viewport(zoom:number,pan:{x:number;y:number},animate=true){
     const graph=cy.current!;graph.stop();applying.current=true;
@@ -76,6 +79,14 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const zoom=Math.max(graph.minZoom(),fitZoom(nodes));
     viewport(zoom,{x:(r.left+r.right)/2-(box.x1+box.x2)/2*zoom,y:(r.top+r.bottom)/2-(box.y1+box.y2)/2*zoom},animate);
   }
+  /** All frames the whole graph with a tight margin so ids stay legible as long as possible. */
+  function frameAll(animate=true){
+    const graph=cy.current;if(!graph)return;
+    const nodes=graph.nodes('[gate]');if(!nodes.length)return;
+    graph.resize();const r=unobscured(),box=frameBox(nodes);
+    const zoom=Math.max(graph.minZoom(),fitZoom(nodes,ALL_MARGIN));
+    viewport(zoom,{x:(r.left+r.right)/2-(box.x1+box.x2)/2*zoom,y:(r.top+r.bottom)/2-(box.y1+box.y2)/2*zoom},animate);
+  }
   function activeIds(){return active.seeds.length?active.seeds:fallback?[...fallback.ids,...(fallback.id==='unbound'?[]:[fallback.id])]:m.graph.units.map(u=>u.id);}
   function focusActive(animate=true){
     setHighlight([]);setHealth(null);setFocus('active');setStation(null);setHover(null);touchCard.current=null;moved.current=false;
@@ -83,7 +94,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
   }
   function focusAll(){
     setHighlight([]);setHealth(null);setFocus('all');setStation(null);setHover(null);touchCard.current=null;moved.current=false;
-    frame(m.graph.units.map(u=>u.id));
+    frameAll();
   }
   function focusStation(id:string){
     if(station===id){setStation(null);setHealth(null);return;}
@@ -112,7 +123,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     performance.mark('roadmap-graph-start');
     const styles=getComputedStyle(document.documentElement),color=(token:string)=>styles.getPropertyValue(token).trim();
 
-    const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,gate=u.id.startsWith('milestone:');return {id:u.id,label:gate?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),compact:gate?gateLabel(u.id):compactIdentifier(e,u.id),state,gate:gate?1:0};};
+    const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,gate=u.id.startsWith('milestone:');return {id:u.id,label:gate?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),title:m.units.find(v=>v.id===u.id)?.title||u.label,compact:gate?gateLabel(u.id):compactIdentifier(e,u.id),system:gate?null:compactSystem(e,u.id),state,gate:gate?1:0};};
     // Cytoscape owns nodes, selection and navigation. The SVG below draws
     // every dependency as a cubic with arrowheads that stay visible at All.
     const graph=cytoscape({container:canvas.current,pixelRatio:Math.min(devicePixelRatio,2),minZoom:.001,maxZoom:2.5,textureOnViewport:true,elements:[
@@ -139,7 +150,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       {selector:'node.extreme',style:{'label':''}},
       {selector:'node[gate=0].overview[state="pending"]',style:{'border-width':4,'background-opacity':1}}
     ] as cytoscape.StylesheetJson,autoungrabify:true,boxSelectionEnabled:false});
-    const clampZoom=()=>{graph.minZoom(.6*fitZoom(graph.nodes('[gate]')));if(graph.zoom()<graph.minZoom())graph.zoom(graph.minZoom());};
+    const clampZoom=()=>{graph.minZoom(.6*fitZoom(graph.nodes('[gate]'),ALL_MARGIN));if(graph.zoom()<graph.minZoom())graph.zoom(graph.minZoom());};
     cy.current=graph;clampZoom();
     if(saved.current?.arc===e.arc){
       const previous=saved.current;
@@ -168,28 +179,39 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     graph.on('mouseover mousemove','node[gate]',ev=>showCard(ev.target as NodeSingular));
     graph.on('mouseout','node[gate]',hideCard);
     let frameId=0,labelZoom=-1,detailTier='',fadeTimer:ReturnType<typeof setTimeout>|undefined;
+    // Titles are rewrapped only when the rendered title size changes, not on every zoom frame.
+    const titles=new Map<string,string>();let titlesAt=0;
+    const titleLabel=(node:NodeSingular,font:number)=>{if(titlesAt!==font){titles.clear();titlesAt=font;}const key=`${node.id()}:${node.data('title')}`;let text=titles.get(key);if(text===undefined){text=nodeTitle(String(node.data('title')),font);titles.set(key,text);}return text;};
     const viewport=()=>{
       cancelAnimationFrame(frameId);frameId=requestAnimationFrame(()=>{
         const p=graph.pan(),zoom=graph.zoom();setView({zoom,x:p.x,y:p.y});
         if(zoom!==labelZoom){
           labelZoom=zoom;
           graph.edges().style('width',1/zoom);graph.edges('.chain,.trace,.exact').style({'width':2/zoom,'arrow-scale':Math.max(.65,.6/Math.sqrt(zoom))});
-          const context=document.createElement('canvas').getContext('2d')!;
           const nodes=graph.nodes('[gate]');
-          context.font='600 10px "Barlow Semi Condensed"';
-          const compactFits=nodes.toArray().every(node=>context.measureText(node.data('gate')?node.id().slice(10):String(node.data('compact'))).width<=node.width()*zoom-24);
-          const identifiers=nodes.map(node=>compactFits?node.data('gate')?node.id().slice(10):String(node.data('compact')):node.data('gate')?node.id().slice(10).replace(/^MS-/,'M'):node.id());
-          context.font='600 1px "Barlow Semi Condensed"';
-          const minimalPx=Math.min(24,...nodes.map((node,i)=>Math.min((node.width()*zoom-(zoom<.25?10:24))/context.measureText(identifiers[i]!).width,(node.height()*zoom-2)/1.1)));
-          const full=LABEL_PX*zoom>=MIN_LABEL_PX,nextTier=full?'full':minimalPx>=10?'minimal':'status',changed=detailTier!==nextTier,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+          const full=zoom>=TITLE_MIN_ZOOM,tiny=zoom<TINY_ZOOM,reserve=tiny?TINY_GLYPH_RESERVE:GLYPH_RESERVE,boxWidth=NODE_WIDTH*zoom;
+          // Compact ids are left-aligned past the status glyph and never drawn under it.
+          const room=boxWidth-reserve-1.5;
+          const shortId=(node:NodeSingular)=>node.data('gate')?node.id().slice(10).replace(/^MS-/,'M'):String(node.data('compact'));
+          const fullId=(node:NodeSingular)=>node.data('gate')?node.id().slice(10):String(node.data('compact'));
+          const widths=nodes.map(node=>emWidth(shortId(node as NodeSingular)));
+          const minimalPx=Math.min(13,...widths.map(w=>room/Math.max(.01,w)),(NODE_HEIGHT*zoom-2)/1.1);
+          const nextTier=full?'full':minimalPx>=MIN_ID_PX?'minimal':'status',changed=detailTier!==nextTier,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
           if(changed){clearTimeout(fadeTimer);nodes.stop();}
+          const titleFont=full?Math.max(LABEL_PX,Math.ceil(MIN_LABEL_PX/zoom*2)/2):LABEL_PX;
+          const compactLabel=(node:NodeSingular)=>{
+            const id=fullId(node),base=emWidth(id)*minimalPx<=room?id:shortId(node),system=node.data('system') as string|null;
+            return system&&emWidth(`${base} ${system}`)*minimalPx<=room?`${base} ${system}`:base;
+          };
           const fade=changed&&detailTier!==''&&!reduced;
           detailTier=nextTier;
           setTier(nextTier);
           graph.batch(()=>{
-            nodes.forEach((node,i)=>{
+            nodes.forEach(element=>{
+              const node=element as NodeSingular;
               node.toggleClass('overview',!full).toggleClass('extreme',nextTier==='status');
-              node.style({'label':nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?node.data('label'):identifiers[i], 'font-size':full?LABEL_PX:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':full?'left-inside':'center','text-justification':full?'left':'center','text-margin-x':full?12:(zoom<.25?4:6)/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,Math.max(2,(full?1:3)/zoom))});
+              const label=nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?(node.data('gate')||titleFont===LABEL_PX?node.data('label'):titleLabel(node,titleFont)):compactLabel(node);
+              node.style({'label':label,'font-size':full?titleFont:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':'left-inside','text-justification':'left','text-margin-x':full?12:reserve/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,Math.max(2,(full?1:3)/zoom))});
             });
           });
           if(changed){
@@ -245,7 +267,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     if(cy.current&&activeSignature.current!==signature){activeSignature.current=signature;if(focus==='active'&&!moved.current)frame(activeIds());}
   },[e.revision,structure,fontsReady]);
   useEffect(()=>{const keep=()=>requestAnimationFrame(()=>{const id=route().unit,node=id?cy.current?.getElementById(id):null;if(node?.length)keepVisible(node);});keep();window.addEventListener('hashchange',keep);return()=>window.removeEventListener('hashchange',keep);},[fontsReady,structure]);
-  useEffect(()=>{const graph=cy.current;if(!graph)return;graph.batch(()=>{for(const u of m.graph.units){const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;graph.getElementById(u.id).data({state,compact:u.id.startsWith('milestone:')?gateLabel(u.id):compactIdentifier(e,u.id),label:u.id.startsWith('milestone:')?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label)});}});},[e.revision,structure,fontsReady]);
+  useEffect(()=>{const graph=cy.current;if(!graph)return;graph.batch(()=>{for(const u of m.graph.units){const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;graph.getElementById(u.id).data({state,compact:u.id.startsWith('milestone:')?gateLabel(u.id):compactIdentifier(e,u.id),system:u.id.startsWith('milestone:')?null:compactSystem(e,u.id),label:u.id.startsWith('milestone:')?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),title:m.units.find(v=>v.id===u.id)?.title||u.label});}});},[e.revision,structure,fontsReady]);
   useEffect(()=>{
     const graph=cy.current;if(!graph)return;
     graph.batch(()=>{
@@ -344,7 +366,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         const compact=tier!=='full',tiny=compact&&view.zoom<.25,w=node.width()*view.zoom,h=node.height()*view.zoom,x=p.x*view.zoom+view.x-w/2,y=p.y*view.zoom+view.y-h/2;
         if(x+w<0||x>(canvas.current?.clientWidth??innerWidth)||y+h<0||y>(canvas.current?.clientHeight??innerHeight))return null;
         const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;
-        return <span key={u.id} data-state={state} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'} ${tiny?'node-signal-tiny':''}`} style={compact?{left:x+(tiny?1:4),top:y+h/2-(tiny?4:6)}:{left:x+1,top:y+h-22*view.zoom,width:w-2,height:22*view.zoom,fontSize:12*view.zoom}}><SignalMark state={state}/>{!compact&&<span>{u.id.startsWith('milestone:')?'Gate':u.id} {({passed:'Passed',active:'Running',held:'Held',failed:'Failed',pending:'Pending',withdrawn:'Withdrawn'})[state]}</span>}</span>;
+        return <span key={u.id} data-state={state} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'} ${tiny?'node-signal-tiny':''}`} style={compact?{left:x+(tiny?1:4),top:y+h/2-(tiny?4:6)}:{left:x+1,top:y+h-Math.max(16,22*view.zoom),width:w-2,height:Math.max(16,22*view.zoom),fontSize:Math.max(10,12*view.zoom)}}><SignalMark state={state}/>{!compact&&<span>{u.id.startsWith('milestone:')?'Gate':u.id} {({passed:'Passed',active:'Running',held:'Held',failed:'Failed',pending:'Pending',withdrawn:'Withdrawn'})[state]}</span>}</span>;
       })}</div>
       <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${station===b.id?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}/>)}</div>
       <div className="band-headings">{layout.bands.map(b=>{

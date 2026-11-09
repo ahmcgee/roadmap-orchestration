@@ -1,5 +1,10 @@
 import type { GraphData } from './graph-data.ts';
 export const NODE_WIDTH = 248, NODE_HEIGHT = 128, LABEL_PX = 16, MIN_LABEL_PX = 11;
+/** Titles show once a card holds readable text and its status row: the model font grows so titles stay at 11 px or more. */
+export const TITLE_MIN_ZOOM = .5;
+/** Compact identifiers sit right of the status glyph; these reserve the glyph's width (left inset, glyph, gap) in screen pixels. */
+export const TINY_ZOOM = .25, TINY_GLYPH_RESERVE = 10, GLYPH_RESERVE = 18;
+export const MIN_ID_PX = 10;
 // The space belongs to the relationships: never compress these floors to fit.
 export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };
@@ -192,9 +197,10 @@ export function activeFocus(e: GraphData) {
   };
   return { seeds, ids:neighbours(seeds) };
 }
-/** Compact identifiers use the recorded system, never a guessed title fragment. */
+/** One name per unit at every tier: its id. The recorded system is secondary text, shown only when it fits. */
 export function compactIdentifier(e: GraphData, id: string) {
-  if (id.startsWith('milestone:')) return id.slice(10);
-  const systems=e.units.find(u=>u.id===id)?.systems??[];
-  return [...systems, /^u\d+$/.test(id)?id.slice(1):id].join(' ');
+  return id.startsWith('milestone:') ? id.slice(10) : id;
+}
+export function compactSystem(e: GraphData, id: string): string | null {
+  return e.units.find(u => u.id === id)?.systems[0] ?? null;
 }

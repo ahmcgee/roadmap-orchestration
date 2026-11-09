@@ -144,9 +144,9 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes(':selected')[0],p=n.renderedPosition();return n.data('state')==='active'&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height()-40;}`),true,'first arrow selects a visible active unit');
  await b.call('browser_press_key',{key:'Enter'});await until(async()=>await b.evaluate('()=>!!document.querySelector(".drawer")'),5000,'keyboard details');await b.call('browser_press_key',{key:'Escape'});
  await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.activeElement===document.querySelector(".dag-canvas")'),5000,'keyboard focus returns');
- await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(.62);return true;}`);await new Promise(r=>setTimeout(r,350));
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.zoom(.4);return true;}`);await new Promise(r=>setTimeout(r,350));
  await assertRenderedLabels(b,'zoomed',1440);
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>n.hasClass('overview')&&n.style('label')===n.data('compact')&&parseFloat(n.style('font-size'))*cy.zoom()>=10);}`),true,'mid zoom uses only readable compact identifiers');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.nodes('[gate=0]').every(n=>n.hasClass('overview')&&n.style('label').split(' ')[0]===n.data('compact')&&parseFloat(n.style('font-size'))*cy.zoom()>=10);}`),true,'mid zoom leads every label with the unit id');
  await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,350));
  assert.deepEqual(await assertRenderedLabels(b,'all',1440),coordinates,'All changes the viewport, never node positions');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return document.querySelector('.graph-view').dataset.detailTier==='status'&&cy.nodes('[gate]').every(n=>n.visible()&&n.style('label')===''&&parseFloat(n.style('text-opacity'))===0)&&!!document.querySelector('.graph-minimap');}`),true,'All at 300 units keeps status-only unit boxes in place and preserves the minimap');
