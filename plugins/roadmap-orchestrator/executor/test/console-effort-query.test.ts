@@ -18,7 +18,11 @@ function noMonolith(v:unknown){if(!v||typeof v!=='object')return;for(const [k,va
 const row=(h:ReturnType<ConsoleEffort['read']>,id:string)=>h.rows.find(r=>r.subject.id===id)!;
 test('Effort reconciles once-counted completion totals, all-unit lifetime rankings, current blockers and separate coverage without canonical changes',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());const e=capture(f),before=[statusBytes(e,false),statusBytes(e,true)],tabs=new ConsoleEffort(),h=tabs.read(e,{window:'arc'});
- assert.ok(effortShape(h));noMonolith(h);assert.equal(h.rows.filter(r=>r.subject.type==='unit').length,14);assert.equal(h.totals.spend.costUsd,e.data.summary.spend.costUsd);
+ assert.ok(effortShape(h));noMonolith(h);assert.equal(h.rows.filter(r=>r.subject.type==='unit').length,14);
+ // Counts name what they count over the whole filtered population; every bucket sits on a histogram slot.
+ assert.equal(h.rowCounts.unit,14);assert.equal(Object.values(h.rowCounts).reduce((n,c)=>n+c,0),h.page.matching);
+ const blocked=tabs.read(e,{window:'arc',blocked:'1'});assert.equal(Object.values(blocked.rowCounts).reduce((n,c)=>n+c,0),blocked.page.matching);
+ for(const b of h.buckets){const at=Date.parse(b.from)-Date.parse(h.histogram.from);assert.equal(at%h.histogram.widthMs,0);assert.ok(at>=0&&Date.parse(b.to)<=Date.parse(h.histogram.to));}assert.equal(h.totals.spend.costUsd,e.data.summary.spend.costUsd);
  const calls=e.data.display.invocations.filter(i=>i.endedAt&&i.work?.measured&&i.execution),agents=calls.filter(i=>i.execution==='agent'),commands=calls.filter(i=>i.execution==='command');
  assert.equal(h.totals.agentMs,agents.reduce((n,i)=>n+i.work!.measured!.wallMs,0));assert.equal(h.totals.commandMs,commands.reduce((n,i)=>n+i.work!.measured!.wallMs,0));assert.equal(h.totals.coverage.execution.measured,calls.length);
  const waits=completedWaiting(e.data.events);assert.equal((h.totals.heldMs??0)+(h.totals.queuedMs??0)+(h.totals.unallocatedMs??0),waits.measurements.reduce((n,m)=>n+m.waited.totalMs,0));assert.equal(h.totals.coverage.waiting.measured,waits.measurements.length);assert.equal(h.totals.coverage.waiting.unmeasuredReservations,1);
