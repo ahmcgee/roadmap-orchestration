@@ -14,7 +14,8 @@ export class ConsoleBrowser {
   constructor(evidence: string, options: { settleMs?: number } = {}) {
     const config = JSON.parse(walkMcpConfig(CONFIG.walkthrough!.mcp, absPath(evidence))) as { mcpServers: { playwright: { command: string; args: string[]; env: Record<string, string> } } };
     const s = config.mcpServers.playwright;
-    const args = options.settleMs === undefined ? s.args : [...s.args, '--timeout-settle', String(options.settleMs)];
+    // Console readiness uses explicit DOM polls; keep MCP's unconditional settle short.
+    const args = [...s.args, '--timeout-settle', String(options.settleMs ?? 100)];
     this.child = spawn(s.command, args, { env: { ...process.env, ...s.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     this.child.stderr.setEncoding('utf8').on('data', (d: string) => this.stderr.push(d));
     this.child.stdout.setEncoding('utf8').on('data', (d: string) => {
