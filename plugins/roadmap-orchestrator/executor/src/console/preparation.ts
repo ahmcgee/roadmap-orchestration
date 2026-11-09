@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { canonicalJson } from '../core/json.ts';
 import { ConsoleError } from '../observation/protocol.ts';
 
-// A quarter-second response window avoids a one-second poll penalty for verified warm
-// reads that take 150–250 ms on the 300-unit fixture. Cold work still yields promptly.
+// A first read answers within a quarter second, so cold work yields promptly. A poll carrying
+// its pending token is held until the read completes, for at most retryAfterMs, so a read that
+// misses the first window arrives as soon as it is ready rather than after a fixed second.
 export const PREPARATION = { deadlineMs: 250, retryAfterMs: 1000, lifetimeMs: 30_000, graceMs: 1000, maxReads: 32, maxSubscribers: 128 } as const;
 type Read = { id: string; key: string; expires: number; subscribers: Set<string>; task: Promise<void>; result?: {value: unknown} | {error: unknown}; run: () => Promise<unknown> };
 type Subscriber = { read: Read; exposed: boolean; delivered: boolean; expires: number };
@@ -31,6 +32,7 @@ export class BrowserPreparation {
   async read(identity: unknown, run: () => Promise<unknown>, signal: AbortSignal, token?: string, cancel = false): Promise<Prepared> {
     this.#sweep();
     const key = canonicalJson(identity);
+    const polled = token !== undefined;
     let s: Subscriber;
     if (token !== undefined) {
       if (!/^[0-9a-f-]{36}$/.test(token)) throw new ConsoleError('invalid', 'invalid preparation token');
@@ -64,7 +66,10 @@ export class BrowserPreparation {
         const at = (result.value as {checkedAt?: unknown} | null)?.checkedAt;
         if (typeof at === 'string' && Date.now() - Date.parse(at) > 5000) this.#start(s.read);
       }
-      await Promise.race([s.read.task, new Promise<void>(resolve => { timer = setTimeout(resolve, PREPARATION.deadlineMs); })]);
+      const hold = Math.min(polled ? PREPARATION.retryAfterMs : PREPARATION.deadlineMs, Math.max(0, s.read.expires - Date.now()));
+      await Promise.race([s.read.task, new Promise<void>(resolve => {
+        timer = setTimeout(resolve, hold); signal.addEventListener('abort', () => resolve(), {once: true});
+      })]);
       if (signal.aborted || !this.#subscribers.has(lease)) throw new ConsoleError('unavailable', 'browser read cancelled');
       if (Date.now() >= s.read.expires) { this.#remove(lease); throw new ConsoleError('unavailable', 'browser preparation exceeded thirty seconds; retry'); }
       if (!s.read.result) { s.exposed = true; return {state: 'preparing', pending: lease, retryAfterMs: PREPARATION.retryAfterMs}; }

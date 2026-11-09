@@ -60,6 +60,16 @@ test('pending work and leases are bounded through abandonment, expiry and worker
   expiry.resolve(null);
 });
 
+test('a poll carrying its token is held until the read completes, past the first response window', async t => {
+  const p = new BrowserPreparation(); t.after(() => p.close()); const gate = deferred();
+  const a = await p.read('held',() => gate.promise,signal()); assert.equal(a.state,'preparing'); if (a.state !== 'preparing') return;
+  setTimeout(() => gate.resolve(23), PREPARATION.deadlineMs + 150);
+  assert.deepEqual(await p.read('held',() => gate.promise,signal(),a.pending),{state:'ready',value:23});
+  const slow = deferred(), b = await p.read('slow',() => slow.promise,signal()); assert.equal(b.state,'preparing'); if (b.state !== 'preparing') return;
+  const c = new AbortController(), held = p.read('slow',() => slow.promise,c.signal,b.pending);
+  setTimeout(() => c.abort(), 20); await assert.rejects(held,/cancelled/); slow.resolve(null);
+});
+
 test('abort releases a browser subscriber while equivalent readers retain their work', async t => {
   const p = new BrowserPreparation(); t.after(() => p.close()); const gate = deferred(), c = new AbortController();
   const a = p.read('same',() => gate.promise,c.signal); c.abort();
@@ -103,8 +113,10 @@ test('HTTP slow browser reads prepare past two seconds, coalesce and cancel; CLI
 
 test('real browser transport retries the identical route/query and abort cancels its own pending lease', async t => {
   const urls:URL[] = []; const token = '12345678-1234-1234-1234-123456789abc';
-  t.mock.method(globalThis,'fetch',async (url:URL) => {
+  t.mock.method(globalThis,'fetch',async (url:URL,init?:RequestInit) => {
     urls.push(new URL(url));
+    // The server holds a pending poll until its read completes; this one completes only by abort.
+    if (url.pathname.endsWith('/graph') && url.searchParams.has('pending') && !url.searchParams.has('cancel')) return new Promise<Response>((_,reject) => init!.signal!.addEventListener('abort',() => reject(init!.signal!.reason)));
     return new Response(JSON.stringify(url.searchParams.has('pending') ? {protocol:'test',data:{real:1}} : {protocol:'test',arc:'a',state:'preparing',pending:token,retryAfterMs:1000}),{status:url.searchParams.has('pending')?200:202});
   });
   assert.deepEqual(await preparedRead('http://console/api/test','test','/arcs/a/shell?epoch=e&minHighWater=4'),{protocol:'test',data:{real:1}});

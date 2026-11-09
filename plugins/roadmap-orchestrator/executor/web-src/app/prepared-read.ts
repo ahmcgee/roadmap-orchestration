@@ -1,13 +1,7 @@
 export class ApiError extends Error { code?: string; }
-function pause(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    const abort = () => { clearTimeout(timer); reject(signal!.reason); };
-    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
-    signal?.addEventListener('abort', abort, {once: true});
-    if (signal?.aborted) abort();
-  });
-}
-/** Retry the identical query with its delivery token. Preparation is never a dataset. */
+/** Retry the identical query with its delivery token. Preparation is never a dataset.
+ * The server holds a poll that carries the token for up to retryAfterMs and answers as soon
+ * as the read completes, so the browser polls again at once instead of sleeping. */
 export async function preparedRead(api: string, protocol: string, path: string, signal?: AbortSignal): Promise<any> {
   const original = new URL(`${api}${path}`, (globalThis as {location?: {href: string}}).location?.href ?? 'http://console');
   const url = new URL(original);
@@ -33,7 +27,6 @@ export async function preparedRead(api: string, protocol: string, path: string, 
         || value.retryAfterMs !== 1000 || (token && token !== value.pending)) throw new ApiError('Malformed preparation response');
       token = value.pending; url.searchParams.set('pending', token!);
       if (Date.now() + value.retryAfterMs >= deadline) throw new ApiError('Browser preparation expired; retry this view');
-      await pause(value.retryAfterMs, signal);
     }
   } finally { cancel(); signal?.removeEventListener('abort', cancel); }
 }
