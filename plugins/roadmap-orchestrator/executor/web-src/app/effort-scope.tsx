@@ -3,7 +3,7 @@ import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Drawer } from './drawer.tsx';
 import { Views, useSelectedDetail } from './view-state.ts';
-import { elapsed, link, route } from './shared.tsx';
+import { displayZone, elapsed, formatInstant, link, route } from './shared.tsx';
 import { activateRow } from './plain-query.tsx';
 import { Spend, Coverage } from './effort.tsx';
 import type { EffortScopeView } from '../../src/console/effort-protocol.ts';
@@ -13,8 +13,8 @@ export function EffortScopeDetail({arc,id,close}:{arc:string;id:string;close:()=
   params.set('section',current.query.get('detailSection')??'subjects');params.set('limit','25');
   if(current.query.has('detailCursor'))params.set('cursor',current.query.get('detailCursor')!);
   const path=`resources/details/${encodeURIComponent(id)}?${params}`,state=useSelectedDetail(arc,store?.metadata?path:null),data=state.data as EffortScopeView|null;
-  let zone=current.query.get('zone')??Intl.DateTimeFormat().resolvedOptions().timeZone;try{new Intl.DateTimeFormat('en',{timeZone:zone});}catch{zone='UTC';}
-  const time=(at:string)=>new Date(at).toLocaleString('en-GB',{timeZone:zone});
+  const zone=current.query.get('zone')??displayZone();
+  const time=(at:string)=>formatInstant(at,zone);
   const navigate=(section:string,cursor:string|null=null,fresh=false)=>{if(fresh){const read=new URLSearchParams(params);read.set('section',section);read.delete('cursor');void store?.load(`resources/details/${encodeURIComponent(id)}?${read}`,true);}const q=new URLSearchParams(current.query);q.set('detailSection',section);if(cursor)q.set('detailCursor',cursor);else q.delete('detailCursor');location.hash=`${link(arc,current.tab,'scopes',id).split('?')[0]}?${q}`;};
   function filterLink(){if(!data)return '#';const q=new URLSearchParams(current.query);for(const k of ['cursor','detailSection','detailCursor','role','systemSet','subject'])q.delete(k);q.set('group','unit');for(const [k,v] of Object.entries(data.filter))if(v!==null)q.set(k,v);return `${link(arc,'effort').split('?')[0]}?${q}`;}
   return <Drawer title="Effort scope" close={close} className="effort-scope-drawer">

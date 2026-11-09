@@ -44,7 +44,7 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
   if (ev.type === 'fact') {
     const f = ev.fact;
     if (f.kind === 'stage-outcome' && 'unit' in f) {
-      add('Outcome', f.outcome); add('Outcome class', f.class); add('Parent stage sequence', f.attempt); add('Chargeable', f.chargeable);
+      add('Result', outcomeClassWords(f.class, f.outcome)); add('Attempt', f.attempt); add('Counts toward retry limit', f.chargeable ? 'yes' : 'no');
       if (f.detail && 'summary' in f.detail) add('Recorded detail', String(f.detail.summary));
     } else if (f.kind === 'plan-applied') {add('Plan revision', f.rev); if (f.command) add('Command', f.command);}
     else if (f.kind === 'arc-completed') {add('Plan revision', f.planRev); add('Integration head', f.head); add('Completed units', f.units.length);}
@@ -95,3 +95,4 @@ export function activityDetail(e: Envelope, activity: ConsoleActivity, id: strin
   }
   return boundDetail(e, entity, data, 32 * 1024, current => rawDetail(current, activity, selected(current, activity, id)));
 }
+const outcomeClassWords=(cls:string,outcome:string)=>cls==='park'?'unit parked':cls==='pass'?'passed':cls==='fail'?'failed':outcome;

@@ -63,5 +63,5 @@ export function Intent({ text, title }: { text: string; title: string }) {
   return <section className="intent"><h3>Intent</h3><div className={expanded?'':'intent-collapsed'}><HistoryMarkdown text={display}/></div>{(text.length>180||heading)&&<Button variant="ghost" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'Show less intent':'Show full intent'}</Button>}</section>;
 }
 export function BackToUnit({ arc, unit, title, systems=[] }: { arc:string; unit:string;title:string;systems?:string[] }) {
-  return <div className="invocation-breadcrumb"><Button variant="ghost" asChild><a className="back-to-unit" href={link(arc, route().tab, 'units', unit)}><ChevronLeft size={16}/>Unit {unit}</a></Button><a className="invocation-unit-link" href={link(arc,route().tab,'units',unit)}>{title}</a><span className="invocation-identity">{unit}{systems.length?`  ${systems.join(', ')}`:''}</span></div>;
+  return <div className="invocation-breadcrumb"><Button variant="ghost" asChild><a className="back-to-unit" href={link(arc, route().tab, 'units', unit)}><ChevronLeft size={16}/>Unit {unit}</a></Button><a className="invocation-unit-link" href={link(arc,route().tab,'units',unit)}>{title}</a><span className="invocation-identity">{unit}{systems.length?`, ${systems.join(', ')} system${systems.length>1?'s':''}`:''}</span></div>;
 }

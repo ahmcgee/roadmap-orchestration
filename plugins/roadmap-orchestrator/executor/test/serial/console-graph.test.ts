@@ -164,9 +164,9 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  const overviewState=await b.evaluate<{badEdges:string[];transparentGates:string[]}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {badEdges:cy.edges('[kind="dependency"]').filter(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return !e.visible()||!a||!b||![a.x,a.y,b.x,b.y].every(Number.isFinite);}).map(e=>e.id()),transparentGates:cy.nodes('[gate=1]').filter(n=>parseFloat(n.style('background-opacity'))!==1).map(n=>n.id())};}`);
  assert.deepEqual(overviewState.badEdges,[],'every dependency restores on zoom-in');assert.deepEqual(overviewState.transparentGates,[],'opaque gates mask connectors');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,buses=[...document.querySelectorAll('.wait-bus-label')];const actual=buses.flatMap(b=>[...b.querySelectorAll('button')].map(n=>'milestone:'+b.querySelector('summary').getAttribute('aria-label').split(':')[0]+'>'+n.textContent)).sort(),expected=cy.edges('[kind="waits"]').map(e=>e.source().id()+'>'+e.target().id()).sort();return JSON.stringify(actual)===JSON.stringify(expected)&&document.querySelectorAll('.wait-buses,.wait-target-tick').length===0;}`),true,'prerequisite disclosures retain every exact gate relationship without bus routes');
- assert.equal(await b.evaluate(`()=>document.querySelector('.station-current')?.getAttribute('aria-description')`),'First uncleared milestone');
+ assert.equal(await b.evaluate(`()=>document.querySelector('.station-current')?.getAttribute('aria-description')`),'Next milestone to clear');
  await b.evaluate(`()=>{document.querySelectorAll('.station')[1].click();return true;}`);
- await b.call('browser_run_code_unsafe',{code:`async(page)=>{const summary=page.locator('.wait-bus-label>summary').filter({hasText:'MS-1: 30 linked'}).first();await summary.hover();await summary.focus();await summary.locator('..').getByRole('button',{name:'u31',exact:true}).click();}`});
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{const summary=page.locator('.wait-bus-label>summary').filter({hasText:'30 units here depend on MS-1'}).first();await summary.hover();await summary.focus();await summary.locator('..').getByRole('button',{name:'u31',exact:true}).click();}`});
  await until(async()=>await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.getElementById('u31').selected()&&cy.edges('.exact').length===1&&cy.edges('.exact').every(e=>e.visible());}`),5000,'passed gate links stay navigable');
  await b.evaluate(`()=>{document.querySelectorAll('.station')[5].click();return true;}`);await new Promise(r=>setTimeout(r,350));
  assert.deepEqual(await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`),coordinates,'Milestone uses the identical full layout');
@@ -217,7 +217,7 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  }`);
  assert.equal(ink.count,110,'all sixty dependencies and fifty gate feeds have actual SVG ink');assert.deepEqual(ink.outside,[],'every All-view curve stays on screen');assert.equal(ink.badArrows,0);assert.deepEqual(ink.clipped,[]);
  const geometry=await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>({id:n.id(),position:n.position(),width:n.width(),height:n.height()}))`);
- const fade=await b.evaluate<{out:number;hidden:boolean;inside:number;shown:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes('[gate=0]')[0];cy.zoom(.62);await new Promise(r=>setTimeout(r,160));cy.zoom(.075);await new Promise(r=>setTimeout(r,60));const out=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));const hidden=n.style('label')===''&&parseFloat(n.style('text-opacity'))===0;cy.zoom(.62);await new Promise(r=>setTimeout(r,60));const inside=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));return{out,hidden,inside,shown:parseFloat(n.style('text-opacity'))===1};}`);
+ const fade=await b.evaluate<{out:number;hidden:boolean;inside:number;shown:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes('[gate=0]')[0];cy.zoom(.4);await new Promise(r=>setTimeout(r,160));cy.zoom(.075);await new Promise(r=>setTimeout(r,60));const out=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));const hidden=n.style('label')===''&&parseFloat(n.style('text-opacity'))===0;cy.zoom(.4);await new Promise(r=>setTimeout(r,60));const inside=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));return{out,hidden,inside,shown:parseFloat(n.style('text-opacity'))===1};}`);
  assert.ok(fade.out>0&&fade.out<1,'text fades out over the tier boundary');
  assert.equal(fade.hidden,true,'status tier settles without text');
  assert.ok(fade.inside>0&&fade.inside<1,'identifiers fade back in');
@@ -262,12 +262,12 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.equal(await b.evaluate('()=>!document.querySelector(".drawer")&&document.activeElement===document.querySelector(".dag-canvas")'),true,'next Escape closes sheet and returns graph focus');
 
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,origin=document.querySelector('.dag-canvas').getBoundingClientRect();const labels=[...document.querySelectorAll('.band-headings>div,.wait-bus-label>summary')].filter(n=>getComputedStyle(n).display!=='none'&&getComputedStyle(n.parentElement).display!=='none');return labels.every(n=>{const r=n.getBoundingClientRect();return cy.nodes('[gate]').every(node=>{const b=node.renderedBoundingBox({includeLabels:false});return r.right<=origin.left+b.x1||r.left>=origin.left+b.x2||r.bottom<=origin.top+b.y1||r.top>=origin.top+b.y2;});});}`),true,'band and bus captions never overlap a node');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".station-current").textContent'),/MS-3 Concurrency and retries.*First uncleared/);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".station-current").textContent'),/MS-3 Concurrency and retries.*Next to clear/);
  const coords=await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`);
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u39').select();return true;}`);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.station').filter({hasText:'MS-4 Observability'}).hover();}`});
- assert.match(await b.evaluate<string>('()=>document.querySelector(".station-health").textContent'),/Show 2 held units/);
- await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Show 2 held units',exact:true}).click();}`});
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".station-health").textContent'),/Show 2 on hold units/);
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Show 2 on hold units',exact:true}).click();}`});
  assert.deepEqual(await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`),coords,'held targets frame units without re-layout');
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return ['u37','u38'].every(id=>{const n=cy.getElementById(id),p=n.renderedPosition();return !n.hasClass('dim')&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();})&&cy.edges('[kind="dependency"]').length===60;}`),true,'exact held members stay highlighted with all dependencies retained');
  await b.openUnit('u39');
@@ -276,11 +276,11 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".intent .history-markdown h3").length'),0,'repeated title heading is omitted in collapsed intent');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".intent code").length>0'),true,'intent keeps path chips');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer-body").textContent'),/No check results recorded/);
- assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/Declared gate prerequisites[\s\S]*MS-3 Pending[\s\S]*Build is currently running/);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/Waits for milestone[\s\S]*MS-3[\s\S]*pending[\s\S]*Build is currently running/);
  assert.doesNotMatch(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/Current blocker|Waits on/);
- await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.unit-gates a').filter({hasText:'MS-3 Pending'}).click();}`});
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.unit-gates a').filter({hasText:'MS-3 Concurrency and retries: pending'}).click();}`});
  await until(async()=>await b.evaluate('()=>document.querySelector("#detail-title")?.textContent==="MS-3 Concurrency and retries"'),5000,'named gate sheet');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8\/10 passed.*Pending gate[\s\S]*Outstanding units \(2\)[\s\S]*u30[\s\S]*u29/s);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8\/10 passed.*Not passed yet[\s\S]*Outstanding units \(2\)[\s\S]*u30[\s\S]*u29/s);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Focus this milestone',exact:true}).click();}`});
  await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.querySelector(".station[aria-pressed=true]")?.textContent.includes("MS-3")'),5000,'gate focus control');
  await b.openUnit('u39');
@@ -296,9 +296,9 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  await b.evaluate('()=>{[...document.querySelectorAll(".intent button")].find(b=>b.textContent==="Show full intent").click();return true;}');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".intent h3 + div").textContent'),/^Emit counters for ingest latency and drop rate/,'full original intent remains available');
  await b.call('browser_press_key',{key:'Escape'});await b.call('browser_press_key',{key:'Escape'});await b.call('browser_press_key',{key:'Escape'});await b.evaluate('()=>{document.querySelector(".dag-canvas")._cyreg.cy.getElementById("u39").select();return true;}');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Gate prerequisites \(1\).*MS-3 Pending/s);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Waits for milestone \(1\).*MS-3 Pending/s);
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u37').select();return true;}`);
- assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Gate prerequisites.*MS-1 Passed.*MS-2 Passed.*MS-3 Pending/s);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".exact-relations").textContent'),/Waits for milestone.*MS-1 Passed.*MS-2 Passed.*MS-3 Pending/s);
  await b.openUnit('u10');
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.invocation-row').filter({hasText:'Build'}).first().click();}`});
  await until(async()=>await b.evaluate('()=>document.querySelectorAll(".successful-command").length>0&&document.querySelectorAll(".history-diff-line").length>0'),5000,'compact successful commands and visible diffs');

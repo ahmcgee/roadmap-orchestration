@@ -56,7 +56,7 @@ test('Activity cold route, anchored paging, filters, days, append notice, event 
  // Expire the actual worker generation through ordinary queries, without a production hook.
  const base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
  for(let n=0;n<34;n++)assert.equal((await consoleGet(`${base}/activity?q=eviction${n}`)).status,200);
- await click('Earlier activity');await until(async()=>b.evaluate(`()=>document.body.innerText.includes('expired or changed')`),5000,'explicit reset');await click('Reload Activity view');await ready(50);
+ await click('Earlier activity');await until(async()=>b.evaluate(`()=>document.body.innerText.includes('expired or changed')`),5000,'explicit reset');await click('Retry');await ready(50);
  const deepLink=await b.evaluate<string>(`()=>document.querySelector('.activity-feed a').href`);
  await b.call('browser_navigate',{url:'about:blank'});await b.call('browser_navigate',{url:deepLink});await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .detail-facts')&&document.querySelectorAll('.activity-feed li').length===50`),10_000,'cold selected event deep link');
  const deepReads=await b.evaluate<any[]>(`()=>window.__reads.filter(r=>r.status===200)`);

@@ -1,17 +1,17 @@
 import { HolisticField } from './holistic-field.tsx';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
-import { link, pluralise, route } from './shared.tsx';
+import { displayZone, formatInstant, link, pluralise, route } from './shared.tsx';
 import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow } from './plain-query.tsx';
 import type { HolisticView } from '../../src/console/temporal-protocol.ts';
 
 export function Holistic({arc}:{arc:string}) {
   const state=usePlainQuery<HolisticView>(arc,'holistic',['section','cursor','limit'],{section:'audits'}),h=state.data;
-  let zone=route().query.get('zone')??Intl.DateTimeFormat().resolvedOptions().timeZone;try{new Intl.DateTimeFormat('en',{timeZone:zone});}catch{zone='UTC';}
-  const time=(at:string|null)=>at?<time dateTime={at}>{new Date(at).toLocaleString('en-GB',{timeZone:zone})} {zone}</time>:'Time not recorded';
+  const zone=route().query.get('zone')??displayZone();
+  const time=(at:string|null)=>at?<time dateTime={at}>{formatInstant(at,zone)}</time>:'Time not recorded';
   const reload=()=>state.navigate({cursor:null},true),section=state.params.get('section');
   return <section aria-label="Holistic review"><h3>Holistic review</h3>
-    <PlainPageStatus {...state} data={h} reload={reload} version="holistic"/>
+    <PlainPageStatus {...state} data={h} reload={reload} version="holistic" noun={section==='findings'?'finding':section==='decisions'?'decision':'audit'}/>
     {h&&<>{h.enabled?<>
       <p>Holistic audit: {h.currentAudit?.running?'Running':h.latestOutcome?h.latestOutcome.outcome==='completed'?'Completed':h.latestOutcome.outcome:'No audit recorded'}. <span style={{marginLeft:4}}>{pluralise(h.counts.findings,'active finding')}.</span></p>
       <p>{pluralise(h.counts.decisions,'root decision')} recorded. Checkpoint job detail is not included in this console yet.</p>

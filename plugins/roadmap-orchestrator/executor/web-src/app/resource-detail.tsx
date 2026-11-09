@@ -23,7 +23,7 @@ export function ResourceDetailDrawer({arc,id,close}:{arc:string;id:string;close:
   const duration=(start:string,end:string|null)=>{const ms=(end?Date.parse(end):terminalAt?Date.parse(terminalAt):clock)-Date.parse(start);return ms<0?'Timestamp order unavailable':`${end?'':'Open for '}${elapsed(ms)}`;};
   return <Drawer title="Resource evidence" close={close} className="resource-detail-drawer">
     {state.error&&<div role="alert"><p>{state.error}</p><Button onClick={()=>navigate(null,true)}>Reload resource detail</Button></div>}
-    {!visible?<p>Loading selected resource evidence…</p>:<>
+    {!visible?(state.error?null:<p>Loading selected resource evidence…</p>):<>
       <h3>{visible.label}</h3><p>Captured <ResourceTime at={visible.page.asOf.observedAt}/>; journal through {visible.page.asOf.highWater}.</p>
       {visible.viewVersion!==store?.metadata?.viewVersions.resources&&<p>Newer resource evidence available. <Button onClick={()=>navigate(null,true)}>Show current evidence</Button></p>}
       {visible.subject&&<p><ResourceIdentity arc={arc} subject={visible.subject}/></p>}

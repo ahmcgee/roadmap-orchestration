@@ -38,7 +38,8 @@ export class ConsoleEffort {
         const u=b.subject.type==='unit'?states.find(u=>u.unit===b.subject.id):undefined;
         // Use the complete source reasons, then bound each preview explicitly with a unit detail target.
         const all=u?unitReasons(u,index,queues):[];
-        const elapsedMs=b.lifetime.startedAt===null?null:Math.max(0,Date.parse(b.lifetime.endedAt??bounds.terminalAt??e.checkedAt)-Date.parse(b.lifetime.startedAt));
+        // A journey whose only recorded instant is its start has no measurable length; that is unknown, not zero.
+        const elapsedMs=b.lifetime.startedAt===null||b.lifetime.endedAt===b.lifetime.startedAt?null:Math.max(0,Date.parse(b.lifetime.endedAt??bounds.terminalAt??e.checkedAt)-Date.parse(b.lifetime.startedAt));
         rows.set(key(b.subject),{...empty(),id:key(b.subject),subject:b.subject,detailKey:b.subject.type==='unit'&&u?null:effortDetailKey(e.arc,'unit',key(b.subject)),contributorCount:0,titleTruncated:(index.identities.get(b.subject.id)?.title.length??b.subject.title.length)>b.subject.title.length,signal:u?u.state==='cut'||u.state==='superseded'?'withdrawn':graphStatus(u.state):null,state:b.state,stage:b.stage,systems:b.systems,
           blockers:{reasons:all.slice(0,8).map(text=>preview(text,{type:'unit',id:b.subject.id})),count:all.length,waitSince:u?queues.find(q=>q.unit===u.unit)?.queuedAt===undefined?null:new Date(queues.find(q=>q.unit===u.unit)!.queuedAt!).toISOString():null},
           lifetime:{startedAt:b.lifetime.startedAt,endedAt:b.lifetime.endedAt,elapsedMs,rounds:u?b.lifetime.rounds:null,redChecks:u?b.lifetime.redChecks:null,spend:b.spend}});

@@ -13,7 +13,7 @@ test('Activity calendar navigation uses actual IANA day boundaries, including sh
  assert.deepEqual(dayRange('2026-11-01','America/New_York'),{from:'2026-11-01T04:00:00.000Z',to:'2026-11-02T05:00:00.000Z'});
  assert.deepEqual(dayRange('2026-11-09','UTC'),{from:'2026-11-09T00:00:00.000Z',to:'2026-11-10T00:00:00.000Z'});
  assert.equal(shiftDay('2026-12-31',1),'2027-01-01');assert.throws(()=>dayRange('2026-02-30','UTC'));assert.throws(()=>dayRange('2011-12-30','Pacific/Apia'));
- assert.deepEqual([...activityParams(new URLSearchParams('q=Build&cursor=opaque&view=events'))],[['q','Build'],['window','24h'],['zone','UTC']]);
+ assert.deepEqual([...activityParams(new URLSearchParams('q=Build&cursor=opaque&view=events'))],[['q','Build'],['window','arc'],['zone','UTC']]);
 });
 test('Activity pages remain frozen through notices and cached Back; refresh and schema refusal are explicit',async()=>{
  const f=consoleFixture(),e=new ObservationCache(f.hostDir,'activity-client','repo').read({runDir:f.runDir,arc:f.arc});

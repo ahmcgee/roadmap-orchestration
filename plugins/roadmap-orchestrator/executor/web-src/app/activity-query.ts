@@ -1,10 +1,11 @@
 // Hash query state stays separate from API admission and opaque paging tokens.
 export const activityFields=['window','from','to','zone','afterSeq','beforeSeq','unit','milestone','stage','kind','role','backend','model','outcome','q','housekeeping','order','limit'] as const;
-export function activityParams(query:URLSearchParams) {
+export function activityParams(query:URLSearchParams,zone=Intl.DateTimeFormat().resolvedOptions().timeZone) {
   const result=new URLSearchParams();
   for(const key of activityFields)for(const value of query.getAll(key))result.append(key,value);
-  if(!result.has('window')&&!result.has('from')&&!result.has('to'))result.set('window','24h');
-  if(!result.has('zone'))result.set('zone',Intl.DateTimeFormat().resolvedOptions().timeZone);
+  // Activity opens on the latest events regardless of age: a quiet arc never reads as an empty window.
+  if(!result.has('window')&&!result.has('from')&&!result.has('to'))result.set('window','arc');
+  if(!result.has('zone'))result.set('zone',zone);
   return result;
 }
 export function shiftDay(day:string,delta:number){return new Date(Date.parse(`${day}T00:00:00Z`)+delta*86400_000).toISOString().slice(0,10);}

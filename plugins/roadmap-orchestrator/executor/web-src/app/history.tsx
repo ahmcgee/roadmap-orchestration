@@ -266,7 +266,7 @@ function TranscriptVerdict({ event, base, identity, onLayout, summary=false }: a
 }
 function ChangedFiles({onJump}:any){
   const {views,events=[]}=R.useContext(FileHistory),files=changedFiles(events,views);
-  return h("details",{className:"changed-files"},h("summary",null,`Changed files (${files.length} loaded)`),h("div",null,files.map(file=>h("button",{key:file.path,onClick:()=>onJump(file.id)},h("code",null,file.path),file.counts?h("span",null,`+${file.added} −${file.removed}`):h("small",null,"Change counts unrecorded")))),!files.length&&h("p",{className:"muted"},"No file changes in the loaded events."));
+  return h("details",{className:"changed-files"},h("summary",null,`Changed files (${files.length})`),h("div",null,files.map(file=>h("button",{key:file.path,onClick:()=>onJump(file.id)},h("code",null,file.path),file.counts?h("span",null,`+${file.added} −${file.removed}`):h("small",null,"Change counts unrecorded")))),!files.length&&h("p",{className:"muted"},"No file changes in the loaded events."));
 }
 function HistoryEvents({events,live,...props}:any){
   const groups=historyToolRuns(events,live);
