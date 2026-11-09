@@ -1,5 +1,6 @@
 // Pure runtime validators shared by server and browser.
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
+import { ACTIVITY_KINDS } from './activity-protocol.ts';
 type Check = (v: unknown) => boolean;
 const str: Check = v => typeof v === 'string';
 const bool: Check = v => typeof v === 'boolean';
@@ -60,3 +61,17 @@ export const invocationShape=object({...base,invocation,actor:object({role:str,b
 export const unitShape=object({...base,unit,systems:array(str),supersededBy:nullable(str),coverage:object({money:coverageMoney,execution:coverageTime,waiting:coverageTime}),currentBlockers:nullable(object({dependencies:array(str),milestones:array(str),contingentEdges:array(str),resources:nullable(object({named:array(str),pools:array(str),cpu:num,publication:bool})),environmentBlocked:bool,pressureBlocked:nullable(bool),tokenWaitMs:nullable(num),admission:array(object({kind:str,references:array(object({field:str,id:str})),scope:nullable(str),parkClass:nullable(str),reason:nullable(str),decision:nullable(str),probe:nullable(object({kind:str,id:nullable(str)}))})),drainCommands:array(str)})),feeds:array(gate),waits:array(gate),depends:page(related),usedBy:page(related),journey:page(step),invocations:page(invocation),acceptance:page(str),waiting:page(object({at:date,stage:str,totalMs:num,reasons:array(object({reason:str,ms:num}))})),checks:page(object({id:str,outcome:str})),requests:page(object({id:str,summary:str,recommendation:str})),intent:text},expansions);
 export const milestoneShape=object({...base,id:str,name:nullable(str),state:str,passed:bool,total:nat,merged:nat,members:page(related),intent:text},expansions);
 export const metadataShape=object({protocol:str,instance:str,repoId:str,arc:str,epoch:str,highWater:nat,revision:nat,observedAt:date,checkedAt:date,uiSchema:oneOf(CONSOLE_UI_SCHEMA),selected:nullable(str),viewVersions:object(Object.fromEntries(['shell','graph','timeline','activity','holistic','effort','resources','attention'].map(k=>[k,base.viewVersion])))},{kind:str});
+
+const actor=object({role:nullable(str),backend:nullable(str),model:nullable(str)});
+const activitySubject:Check=v=>subject(v)||object({type:oneOf('host','findings','request'),id:nullable(str),title:str})(v);
+const activityRow=object({id:str,seq:nat,at:date,kind:oneOf(...ACTIVITY_KINDS),subject:activitySubject,stage:nullable(str),attempt:nullable(nat),round:nullable(nat),
+  actor:nullable(actor),actorCount:nat,outcome:nullable(str),summary:preview,workMs:nullable(num),spend:nullable(money),coverage:coverageTime,detail,housekeeping:bool});
+const activityFilters=object({from:nullable(date),to:nullable(date),afterSeq:nullable(nat),beforeSeq:nullable(nat),unit:array(str),milestone:array(str),stage:array(str),
+  kind:array(oneOf(...ACTIVITY_KINDS)),role:array(str),backend:array(str),model:array(str),outcome:array(str),q:str,housekeeping:bool,order:oneOf('asc','desc'),zone:str});
+export const activityShape=object({...base,filters:activityFilters,membership:oneOf('applied-plan-at-anchor'),days:array(object({date:str,count:nat})),rows:array(activityRow),
+  page:object({anchor:str,next:nullable(str),previous:nullable(str),limit:oneOf(25,50,100),matching:nat,returned:nat,asOf:object({epoch:str,highWater:nat,observedAt:date})})});
+export const activityChangesShape=object({...base,newMatching:nat,latestHighWater:nat,latestViewVersion:base.viewVersion});
+const backendHold=object({id:str,backend:str,recordedClass:oneOf('usage-limit','capacity','outage'),effectiveClass:oneOf('usage-limit','capacity','outage'),invocation:nullable(str),startSeq:nat,startedAt:date,
+  endedAt:nullable(date),closure:nullable(object({kind:oneOf('resumed','probe','park-updated'),seq:nat,at:date,detail})),terminalAt:nullable(date),detail});
+export const activityDetailShape=object({...base,row:activityRow,evidenceAvailability:oneOf('available','pruned','not-applicable'),context:array(object({label:str,value:str})),
+  invocations:array(object({id:str,subject,stage:str,attempt:nat,actor,startedAt:date,endedAt:nullable(date),wallMs:nullable(num),spend:money})),backendHold:nullable(backendHold)},expansions);

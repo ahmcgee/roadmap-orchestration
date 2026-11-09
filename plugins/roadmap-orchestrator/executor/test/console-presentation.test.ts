@@ -40,7 +40,7 @@ test('activity GET pages a long journal without overlap, in reverse recorded ord
  const {serveConsole}=await import('../src/console/http.ts');const {gitCommonDir}=await import('../src/git/git.ts');const {absPath}=await import('../src/core/values.ts');const {CONSOLE_PROTOCOL}=await import('../src/observation/protocol.ts');
  const f=await investigationFixture();t.after(()=>f.close());for(let n=0;n<40;n++){const p=f.begin('u7','build');f.journal.fact({kind:'stage-outcome',unit:p.unit,stage:'build',attempt:p.attempt,outcome:'success',class:'advance',chargeable:false});}
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());
- const page=async(offset:number)=>(await(await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity?offset=${offset}`)).json() as {data:{rows:{id:number;text:string}[];more:boolean}}).data;
+ const page=async(offset:number)=>(await(await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/activity-legacy?offset=${offset}`)).json() as {data:{rows:{id:number;text:string}[];more:boolean}}).data;
  const a=await page(0),b=await page(30);assert.equal(a.rows.length,30);assert.equal(a.more,true);assert.ok(b.rows.length>0);assert.ok(a.rows.every((r,i)=>i===0||a.rows[i-1]!.id>r.id));assert.ok(a.rows.at(-1)!.id>b.rows[0]!.id);assert.ok(a.rows.every(r=>/Build — Succeeded/.test(r.text)));
  assert.equal((await page(10000)).more,false);assert.deepEqual((await page(10000)).rows,[]);
 });

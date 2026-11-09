@@ -15,9 +15,11 @@ import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
 import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
+import { ConsoleActivity } from './activity-query.ts';
+import { activityDetail } from './activity-detail.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
-import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape } from './view-shapes.ts';
+import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -28,6 +30,7 @@ const maintained = new Set<string>();
 const models = new ConsoleModels(); // Temporary legacy UI adapter until the tab cutover.
 const views = new ConsoleViews();
 const metadata = new ConsoleMetadata();
+const activity = new ConsoleActivity();
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
@@ -81,7 +84,14 @@ function route(path: string[], params: Record<string, string>) {
     const { events: _events, ...displayData } = e.data;
     return { ...e, data: { ...displayData, console: models.read(e) } };
   }
-  if (path.length === 3 && section === 'activity') { const offset=integer(params['offset']??'0');if(params['housekeeping']!==undefined&&!['0','1'].includes(params['housekeeping']))throw new ConsoleError('invalid','housekeeping is 0 or 1');const rows=models.read(e).presentation.feed.filter(row=>params['housekeeping']==='1'||!row.housekeeping);return {...e,data:{rows:rows.slice(offset,offset+30),more:offset+30<rows.length}}; }
+  if (section === 'activity' && (path.length === 3 || path.length === 4)) {
+    const data = path.length === 3 ? activity.page(e, params) : id === 'changes' ? activity.changes(e, params) : activityDetail(e, activity, id!, params);
+    const check = path.length === 3 ? activityShape : id === 'changes' ? activityChangesShape : params['section'] === 'content' ? contentShape : activityDetailShape;
+    if (!check(data)) throw new ConsoleError('protocol', 'malformed typed Activity view');
+    return {...e, data};
+  }
+  // Explicit intermediate plain-tab adapter. Retired with its remaining browser consumers.
+  if (path.length === 3 && section === 'activity-legacy') { const offset=integer(params['offset']??'0');if(params['housekeeping']!==undefined&&!['0','1'].includes(params['housekeeping']))throw new ConsoleError('invalid','housekeeping is 0 or 1');const rows=models.read(e).presentation.feed.filter(row=>params['housekeeping']==='1'||!row.housekeeping);return {...e,data:{rows:rows.slice(offset,offset+30),more:offset+30<rows.length}}; }
   if (path.length === 3 && section === 'status') {
     if (params['summary'] !== undefined && params['summary'] !== '0' && params['summary'] !== '1') throw new ConsoleError('invalid', 'summary is 0 or 1');
     return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };

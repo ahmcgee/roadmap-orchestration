@@ -128,7 +128,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
         // explicitly opts those reads into preparation with Prefer: respond-async.
         // New view endpoints always use preparation. Browser reads have a
         // bounded delivery lease; pending/cancel are never forwarded as worker query filters.
-        const legacy = ['snapshot', 'activity', 'units', 'invocations'].includes(path[2] ?? '');
+        const legacy = ['snapshot', 'activity-legacy', 'units', 'invocations'].includes(path[2] ?? '');
         const browserDiscovery = path.length === 1 && path[0] === 'arcs' && req.headers['prefer'] === 'respond-async';
         const uiRead = browserDiscovery || path[0] === 'arcs' && path.length >= 3 && path[2] !== 'status'
           && (!legacy || req.headers['prefer'] === 'respond-async');
