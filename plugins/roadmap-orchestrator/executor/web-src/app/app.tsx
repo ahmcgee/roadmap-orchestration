@@ -18,6 +18,14 @@ import { InvocationDetail } from './invocation.tsx';
 import { Activity, Attention, Effort, Resources, Timeline } from './other-tabs.tsx';
 import type { Signal } from './types.ts';
 type Theme = 'system'|'light'|'dark';
+/** The Arc's identity: its recorded goal leads when the plan records one; the id stays visible as the secondary line. */
+function ArcIdentity({arc,shell,zone}:{arc:string|null;shell:ShellView|null;zone:string}) {
+  const direction=shell?.identity.direction??null,ref=useRef<HTMLDetailsElement>(null);
+  useEffect(()=>{const close=(ev:Event)=>{if(ref.current?.open&&!(ev instanceof MouseEvent&&ref.current.contains(ev.target as Node)))ref.current.open=false;};const key=(ev:KeyboardEvent)=>{if(ev.key==='Escape'&&ref.current?.open){ref.current.open=false;ref.current.querySelector('summary')?.focus();}};document.addEventListener('mousedown',close);window.addEventListener('keydown',key);return()=>{document.removeEventListener('mousedown',close);window.removeEventListener('keydown',key);};},[]);
+  if(!arc)return <span className="arc-identity"><span className="arc-name">Roadmap</span></span>;
+  const details=<div className="arc-identity-body"><h2>Goal</h2><p>{direction?<>{direction.text}{direction.truncated&&'…'}</>:'No goal is recorded in the plan.'}</p><dl><div><dt>Arc</dt><dd>{arc}</dd></div>{shell?.lifecycle.startedAt&&<div><dt>Started</dt><dd>{formatInstant(shell.lifecycle.startedAt,zone)}</dd></div>}</dl></div>;
+  return <details ref={ref} className="arc-identity"><summary title="About this arc">{direction?<><span className="arc-name">{direction.text}</span><span className="arc-id">Arc {arc}</span></>:<span className="arc-id arc-id-only">Arc {arc}</span>}</summary>{details}</details>;
+}
 export function App() {
   const [where,setWhere]=useState(route),[selected,setSelected]=useState<string|null>(null),[listed,setListed]=useState(false),[listAttempt,setListAttempt]=useState(0),[listError,setListError]=useState(''),[now,setNow]=useState(Date.now());
   const [theme,setTheme]=useState<Theme>(()=>{try{const value=localStorage.getItem('roadmap.theme');return value==='light'||value==='dark'?value:'system';}catch{return 'system';}});
@@ -53,7 +61,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
   return <Clock.Provider value={clock}><div className="shell" data-stale={stale}>
     <a className="skip" href="#content" onClick={ev=>{ev.preventDefault();document.getElementById('content')?.focus();}}>Skip to content</a>
     <header className="arc-bar">
-      <span className="arc-id"><span className="arc-logo" aria-hidden="true">╎</span><span>{arc||'Roadmap'}</span></span>
+      <ArcIdentity arc={arc} shell={p} zone={zone}/>
       {p&&<><span className="arc-state">{stateWords(p.lifecycle.state)}</span>{day!==null&&<span className="arc-day">day {Math.floor(day)}</span>}</>}
       <div className="progress-group"><div className="progress-strip" aria-label={p?`${counts.passed??0} of ${total} units merged`:'Unit progress not recorded'}>{(['passed','active','held','failed','pending','withdrawn'] as Signal[]).map(state=>counts[state]?<span key={state} className={`progress-${state}`} style={{width:`${counts[state]!/Math.max(1,total??1)*100}%`}} title={`${counts[state]} ${state}`}/>:null)}</div><span className="progress-count">{p&&<>{counts.passed??0}/{total}<span> merged</span></>}</span></div>
       {p&&<span className="recorded-spend" title="Recorded spend">{money(p.spend.costUsd)}</span>}

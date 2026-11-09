@@ -25,7 +25,7 @@ const base = {uiSchema: oneOf(CONSOLE_UI_SCHEMA), viewVersion: (v: unknown) => t
 const detail = object({type: oneOf('unit', 'invocation', 'request', 'event', 'resource'), id: str});
 const preview = object({text: str, truncated: bool, detail});
 export const shellShape = object({...base,
-  identity: object({arc: str}), lifecycle: object({state: str, startedAt: nullable(date), endedAt: nullable(date)}),
+  identity: object({arc: str, direction: nullable(object({text: str, truncated: bool}))}), lifecycle: object({state: str, startedAt: nullable(date), endedAt: nullable(date)}),
   progress: object({total: nat, countsByState: dictionary(nat), merged: nat, withdrawn: nat}),
   spend: object({costUsd: num, estimatedCalls: nat, unavailableCalls: nat}),
   attention: object({total: nat, blocking: nat, informational: nat}), availableRange: object({from: nullable(date), to: nullable(date)}),

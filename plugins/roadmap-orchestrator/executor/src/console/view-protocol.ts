@@ -9,7 +9,8 @@ export type Preview = {text: string; truncated: boolean; detail: DetailRef};
 export type Scope = {basis: 'current' | 'recorded-arc'; from: string | null; to: string | null};
 export type View = {uiSchema: number; viewVersion: string; scope: Scope};
 export type ShellView = View & {
-  identity: {arc: string};
+  /** The plan's recorded direction is the Arc's goal in words; bounded here, never derived. */
+  identity: {arc: string; direction: {text: string; truncated: boolean} | null};
   lifecycle: {state: string; startedAt: string | null; endedAt: string | null};
   progress: {total: number; countsByState: Record<string, number>; merged: number; withdrawn: number};
   spend: {costUsd: number; estimatedCalls: number; unavailableCalls: number};

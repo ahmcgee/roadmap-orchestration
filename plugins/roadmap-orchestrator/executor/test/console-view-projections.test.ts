@@ -31,7 +31,7 @@ test('D1–D11 independent projections exclude evidence working sets and canonic
   const shell = shellView(e), graph = graphView(e), intervals = timelineIntervals(e, index), effort = effortRows(e, index);
   const all = [shell, graph, intervals, effort, attentionSummaries(e), cpuSummaries(e), bookingSummaries(e.data.events), waitingMeasurements(e, index), stageSummaries(e), holisticSummaries(e), resourceNow(e)];
   all.forEach(noWorkingSet);
-  assert.equal(shell.identity.arc, f.arc); assert.equal(shell.progress.total, 14);
+  assert.equal(shell.identity.arc, f.arc); assert.ok(shell.identity.direction); assert.equal(shell.identity.direction.text, e.data.plan!.direction.trim(), 'the Arc goal is the recorded plan direction, never derived'); assert.equal(shell.progress.total, 14);
   assert.equal(shell.spend.costUsd, e.data.summary.spend.costUsd);
   assert.equal(shell.attention.total, e.data.requests.length);
   assert.equal(shell.attention.blocking + shell.attention.informational, shell.attention.total);

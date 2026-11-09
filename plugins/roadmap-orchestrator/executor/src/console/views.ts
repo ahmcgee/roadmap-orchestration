@@ -22,7 +22,7 @@ export function shellView(e: Envelope): ShellView {
   for (const u of s.units) countsByState[u.state] = (countsByState[u.state] ?? 0) + 1;
   const blocking = e.data.requests.filter(r => r.blocking).length;
   return versioned({
-    identity: {arc: String(e.arc)},
+    identity: {arc: String(e.arc), direction: e.data.plan?.direction.trim() ? {text: e.data.plan.direction.trim().slice(0, 600), truncated: e.data.plan.direction.trim().length > 600} : null},
     lifecycle: {state: terminal?.type === 'fact' ? terminal.fact.kind === 'arc-completed' ? 'complete' : 'no-owner' : s.run.state, startedAt: bounds.from, endedAt: bounds.to},
     progress: {total: s.units.length, countsByState, merged: countsByState['merged'] ?? 0, withdrawn: (countsByState['cut'] ?? 0) + (countsByState['superseded'] ?? 0)},
     spend: {costUsd: e.data.summary.spend.costUsd, estimatedCalls: e.data.summary.spend.estimatedCalls, unavailableCalls: e.data.summary.spend.unavailableCalls},
