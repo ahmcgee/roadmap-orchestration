@@ -31,7 +31,7 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
   const graphEnvelope=store?.entries.get('graph')?.value;
   const graphInput=useMemo(()=>graphEnvelope?graphData(graphEnvelope):null,[graphEnvelope]);
   const scrolls=useRef(new Map<string,number>()),lastTab=useRef(where.tab);
-  useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;const old=lastTab.current;lastTab.current=where.tab;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);scrolls.current.set(where.tab,node.scrollTop);};},[where.tab,Boolean(e),Boolean(graphInput)]);
+  useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;const old=lastTab.current;lastTab.current=where.tab;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);};},[where.tab,Boolean(e),Boolean(graphInput)]);
   const stale=!checkedAt||now-Date.parse(checkedAt)>5000||Boolean(error||listError);
   const clock=stale?Date.parse(checkedAt||e?.observedAt||new Date(now).toISOString()):now;
   const arc=selected,tab=where.tab,open=(id:string)=>{if(arc)location.hash=link(arc,tab,'units',id).slice(1);},close=()=>{if(arc)location.hash=link(arc,tab).slice(1);};

@@ -105,7 +105,23 @@ test('300-unit/7-day projection budgets preserve every relationship and independ
   assert.doesNotMatch(await browser.evaluate<string>('()=>document.body.innerText'),/Console rendering failed/);
   await browser.evaluate(`()=>{history.back();return true;}`);
   await until(async()=>browser.evaluate(`()=>document.querySelector('.drawer .unit-meta')?.textContent.includes('u167')`),10_000,'Back restores selected unit');
-  t.diagnostic(JSON.stringify({browserTimingMs:{usableGraph:browserGraphMs,selectedDetail:browserDetailMs},browserHeap:await browser.evaluate('()=>performance.memory?.usedJSHeapSize??null')}));
+  // Full-scale return cycles supplement the long-field/paging fixture. Preserve
+  // the 300-unit population and the existing 90-second file deadline.
+  const cycleHeaps:number[]=[];let cycleMaxDom=0;
+  for(let n=0;n<12;n++){
+    const id=`u${(n*23)%300+1}`;
+    await browser.evaluate(`()=>{location.hash='#/arcs/${m.arc}/graph/units/${id}';return true;}`);
+    await until(async()=>browser.evaluate(`()=>!!document.querySelector('.drawer .unit-meta')?.textContent.includes('${id}')`),10_000,'full-scale cycle detail');
+    await browser.evaluate(`()=>{location.hash='#/arcs/${m.arc}/effort';return true;}`);
+    await until(async()=>browser.evaluate(`()=>!!document.querySelector('[aria-label="All units"]')`),10_000,'full-scale cycle Effort');
+    cycleMaxDom=Math.max(cycleMaxDom,await browser.evaluate<number>('()=>document.getElementsByTagName("*").length'));
+    await browser.evaluate(`()=>{location.hash='#/arcs/${m.arc}/graph';return true;}`);
+    await until(async()=>browser.evaluate(`()=>!!document.querySelector('.dag-canvas canvas')`),5000,'full-scale cycle Graph');
+    if(n===3||n===11){await browser.call('browser_run_code_unsafe',{code:'async(page)=>{const c=await page.context().newCDPSession(page);await c.send("HeapProfiler.collectGarbage");await c.detach();}'});cycleHeaps.push(await browser.evaluate<number>('()=>performance.memory.usedJSHeapSize'));}
+  }
+  assert.ok(cycleMaxDom<15000,`full-scale DOM ${cycleMaxDom}`);
+  assert.ok(cycleHeaps[1]!-cycleHeaps[0]!<16*1024*1024,`full-scale retained heap ${cycleHeaps}`);
+  t.diagnostic(JSON.stringify({browserTimingMs:{usableGraph:browserGraphMs,selectedDetail:browserDetailMs},browserHeap:await browser.evaluate('()=>performance.memory?.usedJSHeapSize??null'),cycles:{count:12,heapBytes:cycleHeaps,maxDom:cycleMaxDom}}));
   t.diagnostic(JSON.stringify({fixture:{units:m.units,days:7,events:m.events,invocations:m.invocations},bytes:measured,timingMs:{generation:generationMs,capture:captureMs,shell:shellMs,graph:graphMs,index:indexMs,serialization:serializationMs,nodeParse:parseMs,warmProjectionP95:times[94],firstShellHttp:firstShellHttpMs,warmGraphHttpP95:httpTimes[18]},rssBytes:process.memoryUsage().rss}));
   // No capture metadata is accidentally carried into the wire data.
   assert.equal('capture' in (JSON.parse(bytes) as Envelope<Record<string,unknown>>).data,false);

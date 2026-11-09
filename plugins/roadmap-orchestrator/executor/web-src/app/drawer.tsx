@@ -8,7 +8,19 @@ import { Clock, elapsed, glyph, info, link, money, pluralise, route, SignalMark,
 
 export function Drawer({ title, close, children, headingLink, className = '' }: { title: string; close: () => void; children?: ReactNode; headingLink?: ReactNode; className?: string }) {
   const panel = useRef<HTMLElement>(null),cache=useContext(Views),routeKey=location.hash;
+  const disclosures=useRef({route:'',seen:new WeakSet<HTMLDetailsElement>()});
   useLayoutEffect(()=>{const body=panel.current?.querySelector<HTMLElement>('.drawer-body');if(!body||!cache)return;body.scrollTop=Number(cache.ui.get(`scroll:${routeKey}`)??0);const remember=()=>{cache.ui.delete(`scroll:${routeKey}`);cache.ui.set(`scroll:${routeKey}`,body.scrollTop);const keys=[...cache.ui.keys()].filter(k=>k.startsWith('scroll:'));for(const key of keys.slice(0,-24))cache.ui.delete(key);};body.addEventListener('scroll',remember);return()=>body.removeEventListener('scroll',remember);},[cache,routeKey]);
+  useLayoutEffect(()=>{
+    const body=panel.current?.querySelector<HTMLElement>('.drawer-body');if(!body||!cache)return;
+    const key=`disclosures:${routeKey}`,saved=cache.ui.get(key) as Record<string,boolean>|undefined;
+    if(disclosures.current.route!==routeKey)disclosures.current={route:routeKey,seen:new WeakSet<HTMLDetailsElement>()};
+    // Restore newly mounted disclosures once. Reapplying on every clock/history
+    // render can race the native toggle event and reopen a section after Escape.
+    for(const el of body.querySelectorAll('details')){if(disclosures.current.seen.has(el))continue;disclosures.current.seen.add(el);const name=el.querySelector('summary')?.textContent??'';if(saved&&name in saved)el.open=saved[name]!;}
+    if(body.querySelector('.unit-meta,.invocation-facts'))body.scrollTop=Number(cache.ui.get(`scroll:${routeKey}`)??0);
+    const remember=(ev:Event)=>{const el=ev.target;if(!(el instanceof HTMLDetailsElement))return;cache.ui.set(key,{...(cache.ui.get(key) as object??{}),[el.querySelector('summary')?.textContent??'']:el.open});cache.trimUi();};
+    body.addEventListener('toggle',remember,true);return()=>body.removeEventListener('toggle',remember,true);
+  },[children,cache,routeKey]);
   const [width, setWidth] = useState(() => { try { return Math.max(360, Math.min(960, Number(localStorage.getItem('roadmap.drawer-width')) || 520)); } catch { return 520; } });
   useEffect(() => {
     const previous=document.activeElement as HTMLElement|null;

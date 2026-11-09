@@ -43,3 +43,13 @@ test('a semantic change during a pending read coalesces into one follow-up for t
  const duplicate=store.load('graph');finish({...e,data:old});await Promise.all([task,duplicate]);if(store.entry('graph').task)await store.entry('graph').task;
  assert.equal(count,2);assert.equal(store.entry('graph').value.data.viewVersion,next.viewVersion);
 });
+
+test('route and return caches bound inactive data and clear detail state on epoch reset',async()=>{
+ const {e,notice}=fixture(),store=new ViewStore(e.arc,CONSOLE_PROTOCOL,async()=>({...e,data:{}}));
+ for(let n=0;n<90;n++){store.ui.set(`detail:units/u${n}`,{text:'recorded text'.repeat(10000)});store.trimUi();}
+ assert.ok(store.ui.size<=64);assert.ok([...store.ui.values()].reduce((n:number,v:unknown)=>n+JSON.stringify(v).length*2,0)<=4*1024*1024);
+ store.ui.set('effort.sort',{key:'redChecks',descending:true});store.ui.set('scroll:route',500);store.ui.set('disclosures:route',{Journey:true});
+ store.notice(notice);store.notice({...notice,epoch:'replacement'},true);
+ assert.equal([...store.ui.keys()].some((k:string)=>/^(detail:|scroll:|disclosures:)/.test(k)),false);
+ assert.deepEqual(store.ui.get('effort.sort'),{key:'redChecks',descending:true});
+});

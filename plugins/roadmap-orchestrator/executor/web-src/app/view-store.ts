@@ -32,7 +32,7 @@ export class ViewStore {
   }
   notice(raw:any,reset=false) {
     if(!metadataShape(raw))throw error('Malformed metadata or UI schema mismatch');
-    if(reset){this.generation++;for(const e of this.entries.values())e.controller?.abort();this.entries.clear();this.identity=null;this.metadata=null;}
+    if(reset){for(const key of this.ui.keys())if(key.startsWith('detail:')||key.startsWith('scroll:')||key.startsWith('disclosures:'))this.ui.delete(key);this.generation++;for(const e of this.entries.values())e.controller?.abort();this.entries.clear();this.identity=null;this.metadata=null;}
     if(!this.admit(raw,reset))return;
     this.metadata=raw;this.error='';this.emit();
   }
@@ -64,6 +64,7 @@ export class ViewStore {
       finally{if(generation===this.generation){entry.loading=false;delete entry.task;this.emit();const current=this.keyVersion(path);if(!c.signal.aborted&&!entry.error&&this.active.has(path)&&current!==null&&current!==version&&entry.version!==current)void this.load(path);}}
     })();entry.task=task;this.emit();return task;
   }
+  trimUi(){let bytes=0;for(const value of this.ui.values())bytes+=JSON.stringify(value).length*2;for(const [key,value] of this.ui){if(bytes<=4*1024*1024&&this.ui.size<=64)break;bytes-=JSON.stringify(value).length*2;this.ui.delete(key);}}
   abort(path:string){this.entries.get(path)?.controller?.abort();}
   dispose(){this.generation++;for(const e of this.entries.values())e.controller?.abort();}
 }

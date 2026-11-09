@@ -17,7 +17,7 @@ import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
-import { unitShape, unitSummaryShape, invocationShape, milestoneShape } from './view-shapes.ts';
+import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -87,10 +87,10 @@ function route(path: string[], params: Record<string, string>) {
     return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };
   }
   if (path.length === 4 && id && (section === 'units' || section === 'milestones' || section === 'invocations')) {
-    detailParams(params, section === 'units' ? ['summary','depends','usedBy','journey','invocations','acceptance','waiting','checks','requests','intent'] : section === 'milestones' ? ['members','intent'] : ['related']);
+    detailParams(params, ['content',...(section === 'units' ? ['summary','depends','usedBy','journey','invocations','acceptance','waiting','checks','requests','intent'] : section === 'milestones' ? ['members','intent'] : ['related'])]);
     if(section==='invocations'&&!/^[1-9][0-9]*-[1-9][0-9]*$/.test(id))throw new ConsoleError('invalid','invocation route ID is seq-ordinal');
     const data=section==='units'?unitView(e,id,params):section==='milestones'?milestoneView(e,id,params):invocationView(e,id,params);
-    const check=section==='units'?(params['section']==='summary'?unitSummaryShape:unitShape):section==='milestones'?milestoneShape:invocationShape;
+    const check=params['section']==='content'?contentShape:section==='units'?(params['section']==='summary'?unitSummaryShape:unitShape):section==='milestones'?milestoneShape:invocationShape;
     if(!check(data))throw new ConsoleError('protocol','malformed selected detail');
     return {...e,data};
   }
