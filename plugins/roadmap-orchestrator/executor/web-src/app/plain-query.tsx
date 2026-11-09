@@ -29,13 +29,14 @@ export function usePlainQuery<T>(arc:string, endpoint:string, fields:readonly st
   }
   return {...state,data:state.data as T|null,path,params,navigate};
 }
-export function PlainPageStatus({data,error,loading,reload,version,noun}:{data:(View&Page<unknown>)|null;error:string;loading:boolean;retry:()=>void;reload:()=>void;version:'timeline'|'holistic'|'attention'|'effort'|'resources';noun:string}) {
+/** `count` names what the rows are when they are not all one noun. */
+export function PlainPageStatus({data,error,loading,reload,version,noun,count}:{data:(View&Page<unknown>)|null;error:string;loading:boolean;retry:()=>void;reload:()=>void;version:'timeline'|'holistic'|'attention'|'effort'|'resources';noun:string;count?:string|undefined}) {
   const zone=route().query.get('zone')??displayZone();
   const store=useContext(Views),changed=!!data&&!!store?.metadata&&data.viewVersion!==store.metadata.viewVersions[version];
   return <>
     {error&&<div role="alert"><p>{loadError(error)}</p><Button onClick={reload}>Retry</Button></div>}
     {loading&&<p role="status">{data?'Updating…':'Loading…'}</p>}
-    {data&&<div className="page-status"><p className="muted">{pluralise(data.page.matching,noun)}. Updated {formatInstant(data.page.asOf.observedAt,zone,true)} {zoneLabel(zone)}.</p><div className="activity-updates" aria-live="polite">{changed&&<p>Updates available. <Button onClick={reload}>Show updates</Button></p>}</div></div>}
+    {data&&<div className="page-status"><p className="muted">{count??pluralise(data.page.matching,noun)}. Updated {formatInstant(data.page.asOf.observedAt,zone,true)} {zoneLabel(zone)}.</p><div className="activity-updates" aria-live="polite">{changed&&<p>Updates available. <Button onClick={reload}>Show updates</Button></p>}</div></div>}
   </>;
 }
 export function PlainPaging({page,navigate}:{page:Page<unknown>['page'];navigate:(changes:Record<string,string|null>)=>void}) {

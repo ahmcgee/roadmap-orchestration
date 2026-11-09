@@ -40,8 +40,8 @@ test('paged and expanded detail, tab sorting and reading position survive append
  await b.evaluate(`()=>{[...document.querySelectorAll('.drawer button')].find(e=>e.textContent==='Show more (50 of 60)').click();return true;}`);
  await until(async()=>b.evaluate(`()=>document.querySelectorAll('.drawer section li').length>=60&&!document.body.innerText.includes('Show more (50 of 60)')`),5000,'anchored final page after unrelated append');
  await nav('effort');await until(async()=>b.evaluate(`()=>!!document.querySelector('[aria-label="All units"]')`),10_000,'Effort');
- await b.evaluate(`()=>{document.querySelector('[aria-label="Sort by red checks"]').click();return true;}`);
- await until(async()=>b.evaluate(`()=>document.querySelector('[aria-label="Sort by red checks"]').closest('th').getAttribute('aria-sort')==='descending'`),5000,'server Effort ranking');
+ await b.evaluate(`()=>{document.querySelector('[aria-label="Sort by failed checks"]').click();return true;}`);
+ await until(async()=>b.evaluate(`()=>document.querySelector('[aria-label="Sort by failed checks"]').closest('th').getAttribute('aria-sort')==='descending'`),5000,'server Effort ranking');
  await b.evaluate(`()=>{document.getElementById('content').scrollTop=700;return true;}`);
  const first=await b.evaluate<string>(`()=>document.querySelector('[aria-label="All units"] tbody tr td').textContent`),scroll=await b.evaluate<number>(`()=>document.getElementById('content').scrollTop`);
  await nav('graph');await until(async()=>b.evaluate(`()=>!!document.querySelector('.dag-canvas canvas')`),5000,'Graph return');

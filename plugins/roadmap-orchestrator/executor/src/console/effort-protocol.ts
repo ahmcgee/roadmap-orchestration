@@ -14,7 +14,10 @@ export type EffortUnit = EffortTotals & {id: string; subject: Subject | {type: '
   blockers: {reasons: Preview[]; count: number; waitSince: string | null};
   lifetime: {startedAt: string | null; endedAt: string | null; elapsedMs: number | null; rounds: number | null; redChecks: number | null; spend: Money}};
 export type EffortView = View & Page<EffortUnit> & {filters: EffortFilters; bounds: TemporalBounds; totals: EffortTotals;
-  buckets: (EffortTotals & {from: string; to: string})[]; membership: 'applied-plan-at-anchor';
+  /** Completion buckets with data; empty slots between them are implied by `histogram` (start and slot width). */
+  buckets: (EffortTotals & {from: string; to: string})[]; histogram: {from: string; to: string; widthMs: number}; membership: 'applied-plan-at-anchor';
+  /** Rows of the whole filtered population by kind, so a count names what it counts. */
+  rowCounts: Record<EffortUnit['subject']['type'], number>;
   attribution: {unit: EffortTotals; arcJob: EffortTotals};
 };
 
