@@ -15,6 +15,7 @@ import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
 import { ConsoleViews } from './views.ts';
 import { ConsoleMetadata } from './metadata.ts';
+import { ConsoleResources } from './resource-query.ts';
 import { ConsoleEffort } from './effort-query.ts';
 import { ConsoleAttention } from './attention-query.ts';
 import { requestDetail } from './request-detail.ts';
@@ -24,7 +25,7 @@ import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
-import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape, effortScopeShape } from './view-shapes.ts';
+import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape, effortScopeShape, resourcesShape, resourceDetailShape, resourceReasonsShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
@@ -38,6 +39,7 @@ const metadata = new ConsoleMetadata();
 const activity = new ConsoleActivity();
 const temporal = new ConsoleTemporal();
 const effort = new ConsoleEffort(temporal.pages);
+const resources = new ConsoleResources(temporal.pages);
 const attention = new ConsoleAttention(temporal.pages);
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
@@ -95,6 +97,21 @@ function route(path: string[], params: Record<string, string>) {
   if (section === 'resources' && path.length === 5 && id === 'details' && file?.startsWith('effort-')) {
     const data = effort.detail(e, file, params, notice(e).viewVersions.effort);
     if (!effortScopeShape(data)) throw new ConsoleError('protocol', 'malformed selected Effort scope');
+    return {...e, data};
+  }
+  if (section === 'resources' && path.length === 4 && id === 'reasons') {
+    const data = resources.reasons(e, params, notice(e).viewVersions.resources);
+    if (!resourceReasonsShape(data)) throw new ConsoleError('protocol', 'malformed resource reason page');
+    return {...e, data};
+  }
+  if (section === 'resources' && path.length === 3) {
+    const data = resources.read(e, params, notice(e).viewVersions.resources);
+    if (!resourcesShape(data)) throw new ConsoleError('protocol', 'malformed typed Resources view');
+    return {...e, data};
+  }
+  if (section === 'resources' && path.length === 5 && id === 'details' && file) {
+    const data = params['section']==='content'?resources.content(e,file,params):resources.detail(e, file, params, notice(e).viewVersions.resources);
+    if (!(params['section']==='content'?contentShape:resourceDetailShape)(data)) throw new ConsoleError('protocol', 'malformed selected resource');
     return {...e, data};
   }
   if (section === 'effort' && path.length === 3) {

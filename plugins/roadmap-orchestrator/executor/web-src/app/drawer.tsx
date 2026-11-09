@@ -3,7 +3,7 @@ import { Views } from './view-state.ts';
 import { HistoryMarkdown } from './markdown.tsx';
 import { ChevronLeft, X } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, elapsed, glyph, info, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
+import { Clock, elapsed, glyph, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
 
 
 export function Drawer({ title, close, children, headingLink, className = '' }: { title: string; close: () => void; children?: ReactNode; headingLink?: ReactNode; className?: string }) {

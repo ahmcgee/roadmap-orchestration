@@ -37,7 +37,7 @@ export class ConsoleMetadata {
         timeline: hash({identity, invocations, units, parks, stageVersion}),
         activity: hash({identity, journal, invocations, attention, holistic}), holistic,
         effort: hash({identity, invocations, units, stageVersion, waiting, money, parks, queues: [s.host.jobQueue,s.host.queue], milestones: e.data.plan?.milestones ?? []}),
-        resources: hash({host: s.host, units, work: invocations.map(i => ({id: i.id, work: i.work})), waiting, parks}), attention,
+        resources: hash({identity, host:s.host, owner:s.run.owner.state, units, work: invocations.map(i => ({id: i.id, role:i.role, attempt:i.attempt, startedAt:i.startedAt, endedAt:i.endedAt, work:i.work})), waiting, parks}), attention,
       }};
       this.#entries.set(key, entry);
       while (this.#entries.size > 8) this.#entries.delete(this.#entries.keys().next().value!);

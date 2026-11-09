@@ -327,3 +327,11 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 @media(max-width:640px) { .activity-feed a { grid-template-columns:110px minmax(0,1fr); } .event-context > div { grid-template-columns:1fr; gap:4px; } }
 .activity-day-jump { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .activity-day-jump select { min-height:32px; border:1px solid var(--rule); border-radius:6px; background:var(--surface); color:var(--ink); padding:4px 8px; max-width:100%; }
+
+/* Current scheduling stays readable beside the selected historical section. */
+.resource-now-grid { display:grid; grid-template-columns:minmax(360px,1fr) minmax(360px,1fr); gap:24px; margin:12px 0 20px; }
+.resource-now-grid h3 { margin-top:0; }
+.resource-now-grid table { width:100%; }
+.resources-panel .unit-identity { min-width:320px; }
+.resource-detail-drawer td { overflow-wrap:anywhere; }
+@media (max-width:800px) { .resource-now-grid { grid-template-columns:minmax(0,1fr); gap:16px; } }

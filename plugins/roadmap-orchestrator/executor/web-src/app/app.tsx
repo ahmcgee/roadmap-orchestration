@@ -9,12 +9,13 @@ import { Views, useView } from './view-state.ts';
 import { graphData } from './graph-data.ts';
 import { CONSOLE_UI_SCHEMA, type ShellView } from '../../src/console/view-protocol.ts';
 import { stateWords } from '../../src/console/vocabulary.ts';
+import { ResourceDetailDrawer } from './resource-detail.tsx';
 import { EffortScopeDetail } from './effort-scope.tsx';
 import { RequestDetail } from './request-detail.tsx';
 import { EventDetail } from './event-detail.tsx';
 import { InvocationDetail } from './invocation.tsx';
 import { Activity, Attention, Effort, Resources, Timeline } from './other-tabs.tsx';
-import type { Envelope, Signal } from './types.ts';
+import type { Signal } from './types.ts';
 type Theme = 'system'|'light'|'dark';
 export function App() {
   const [where,setWhere]=useState(route),[selected,setSelected]=useState<string|null>(null),[listError,setListError]=useState(''),[now,setNow]=useState(Date.now());
@@ -28,15 +29,15 @@ export function App() {
   return <Views.Provider value={store}><Console key={selected} where={where} selected={selected} listError={listError} now={now} theme={theme} setTheme={setTheme} store={store}/></Views.Provider>;
 }
 function Console({where,selected,listError,now,theme,setTheme,store}:{where:ReturnType<typeof route>;selected:string|null;listError:string;now:number;theme:Theme;setTheme:(t:Theme)=>void;store:ReturnType<typeof useObservation>}) {
-  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null),legacy=useView(['graph','activity','timeline','attention','effort'].includes(where.tab)?null:'snapshot');
-  const e=legacy.envelope as Envelope|null, p=shell.data as ShellView|null;
-  const error=store?.error||shell.error||graph.error||legacy.error||'',checkedAt=store?.checkedAt??null,connected=store?.connected??false,reload=store?.reload??false;
+  const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null);
+  const p=shell.data as ShellView|null;
+  const error=store?.error||shell.error||graph.error||'',checkedAt=store?.checkedAt??null,connected=store?.connected??false,reload=store?.reload??false;
   const graphEnvelope=store?.entries.get('graph')?.value;
   const graphInput=useMemo(()=>graphEnvelope?graphData(graphEnvelope):null,[graphEnvelope]);
-  const scrolls=useRef(new Map<string,number>()),lastTab=useRef(where.tab);
-  useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;const old=lastTab.current;lastTab.current=where.tab;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);};},[where.tab,Boolean(e),Boolean(graphInput)]);
+  const scrolls=useRef(new Map<string,number>());
+  useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);};},[where.tab,Boolean(graphInput)]);
   const stale=!checkedAt||now-Date.parse(checkedAt)>5000||Boolean(error||listError);
-  const clock=stale?Date.parse(checkedAt||e?.observedAt||new Date(now).toISOString()):now;
+  const clock=stale?Date.parse(checkedAt||new Date(now).toISOString()):now;
   const arc=selected,tab=where.tab,open=(id:string)=>{if(arc)location.hash=link(arc,tab,'units',id).slice(1);},close=()=>{if(arc)location.hash=link(arc,tab).slice(1);};
   const counts:Partial<Record<Signal,number>>={};
   const signal=(state:string):Signal=>state==='cut'||state==='superseded'?'withdrawn':state==='merged'?'passed':['running','preparing'].includes(state)?'active':['blocked','held','parked','awaiting-admission'].includes(state)?'held':state==='refused'?'failed':'pending';
@@ -55,7 +56,7 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
       <Button variant="ghost" size="icon" aria-label={`Theme: ${theme}. Switch theme`} title={`Theme: ${theme}`} onClick={()=>setTheme(theme==='system'?'light':theme==='light'?'dark':'system')}>{theme==='system'?<Monitor size={16}/>:theme==='light'?<Sun size={16}/>:<Moon size={16}/>}</Button>
     </header>
     <nav className="tabs" aria-label="Roadmap views">{tabs.map(key=><a key={key} href={arc?link(arc,key)+(tab!==key&&store?.ui.get(`query:${key}`)?`?${store.ui.get(`query:${key}`)}`:''):'#/'} aria-current={key===tab?'page':undefined}>{key[0]!.toUpperCase()+key.slice(1)}{key==='attention'&&!!p?.attention.total&&<span className="tab-badge">{p.attention.total}</span>}</a>)}</nav>
-    {(reload||error||listError||where.invalid)&&<div className="notice" role="alert">{where.invalid?'Unknown console route. Open the current arc.':reload?'Reload required: executor version changed':error||listError}{reload?<Button onClick={()=>location.reload()}>Reload console</Button>:error&&<Button onClick={()=>{shell.retry();if(tab==='graph')graph.retry();else legacy.retry();}}>Retry</Button>}</div>}
+    {(reload||error||listError||where.invalid)&&<div className="notice" role="alert">{where.invalid?'Unknown console route. Open the current arc.':reload?'Reload required: executor version changed':error||listError}{reload?<Button onClick={()=>location.reload()}>Reload console</Button>:error&&<Button onClick={()=>{shell.retry();if(tab==='graph')graph.retry();}}>Retry</Button>}</div>}
     {p?.lifecycle.endedAt&&<div className="outcome">{stateWords(p.lifecycle.state)}. {counts.passed??0} units merged; {counts.withdrawn??0} withdrawn. Recorded spend {money(p.spend.costUsd)}. Elapsed {elapsed(p.lifecycle.startedAt?Date.parse(p.lifecycle.endedAt!)-Date.parse(p.lifecycle.startedAt):null)}.</div>}
     <main id="content" tabIndex={-1} className={tab==='graph'?'graph-main':'tab-content'}>
       {graphInput&&<div hidden={tab!=='graph'} style={{height:'100%'}}><Graph key={arc} e={graphInput} open={open}/></div>}
@@ -63,10 +64,11 @@ function Console({where,selected,listError,now,theme,setTheme,store}:{where:Retu
       {arc&&tab==='timeline'&&<Timeline arc={arc}/>}
       {arc&&tab==='attention'&&<Attention arc={arc}/>}
       {arc&&tab==='effort'&&<Effort arc={arc}/>}
-      {e&&tab==='resources'&&<Resources e={e}/>}
-      {(tab==='graph'?!graphInput:tab==='activity'||tab==='timeline'||tab==='attention'||tab==='effort'?!arc:!e)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
+      {arc&&tab==='resources'&&<Resources arc={arc}/>}
+      {(tab==='graph'?!graphInput:!arc)&&<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error||'Waiting for a verified observation…':'No current arc in this repository.'}</p></div>}
     </main>
     {stale&&checkedAt&&<div className="stale-notice"><Time at={checkedAt} prefix="Last updated "/>. Live counters paused.</div>}
+    {arc&&where.resource&&<ResourceDetailDrawer key={where.resource} arc={arc} id={where.resource} close={close}/>}
     {arc&&where.scope&&<EffortScopeDetail key={where.scope} arc={arc} id={where.scope} close={close}/>}
     {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}
     {arc&&where.event&&<EventDetail key={where.event} arc={arc} id={where.event} close={close}/>}

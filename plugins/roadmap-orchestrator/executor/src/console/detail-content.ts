@@ -12,7 +12,7 @@ const MAX_BYTES=16*1024*1024;
 let retainedBytes=0;
 const sign=(s:string)=>createHmac('sha256',secret).update(s).digest('hex');
 function cursor(key:string,offset:number,path:(string|number)[],hash:string){const raw=Buffer.from(JSON.stringify({key,offset,path,hash})).toString('base64url');return `${raw}.${sign(raw)}`;}
-const protectedText=new Set(['invocation','event','command','choice','id','routeId','unit','source','target','reenters','root','supersededBy','state','signal','stage','outcome','execution','kind','type','at','startedAt','endedAt','arcEndedAt','waitSince','viewVersion','next','basis']);
+const protectedText=new Set(['detailKey','resource','instance','reason','key','invocation','event','command','choice','id','routeId','unit','source','target','reenters','root','supersededBy','state','signal','stage','outcome','execution','kind','type','at','startedAt','endedAt','arcEndedAt','waitSince','viewVersion','next','basis']);
 const scope={basis:'current' as const,from:null,to:null};
 function reportIds(e:Envelope,data:any):string[]{
  const routes=new Set<string>((data.journey?.rows??[]).flatMap((s:any)=>s.activities));

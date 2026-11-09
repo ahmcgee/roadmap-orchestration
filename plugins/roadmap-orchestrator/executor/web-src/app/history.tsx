@@ -4,7 +4,7 @@ import { HistoryMarkdown } from './markdown.tsx';
 // Recorded agent-history rendering, ported intact from the original console.
 import * as R from 'react';
 import { useState, useEffect, useRef } from 'react';
-import { Clock, api, elapsed, get, info, link, money, pluralise, relativeTime, route } from './shared.tsx';
+import { Clock, api, elapsed, get, link, money, pluralise, relativeTime, route } from './shared.tsx';
 import { Drawer as Dialog, BackToUnit } from './drawer.tsx';
 import { fileHistory, shellWritePath, fileLines, readFilePreview } from './file-history.ts';
 import { changedFiles, historyToolRuns } from './history-presentation.ts';

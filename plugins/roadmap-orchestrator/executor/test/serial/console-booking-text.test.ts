@@ -22,6 +22,7 @@ test('short resource holds display integer milliseconds instead of subtraction a
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});const b=new ConsoleBrowser(tmpDir('console-booking-text'));t.after(async()=>{await b.close();await s.close();});await b.initialize();await b.call('browser_navigate',{url:s.url});
  await until(async()=>/Connected/.test(await b.evaluate<string>('()=>document.body.innerText')),10000,'overview');
  const snapshot=await b.call('browser_snapshot',{}),line=snapshot.split('\n').find(l=>l.includes('link "Resources"'))!;assert.ok(line);await b.call('browser_click',{element:'Resources',target:/\[ref=(\w+)\]/.exec(line)![1]});
- await until(async()=>/Resource booking details|CPU evidence/.test(await b.evaluate<string>('()=>document.body.innerText')),10000,'recorded hold');
+ await b.evaluate(`()=>{location.hash='#/arcs/${f.arc}/resources?from=${new Date(origin).toISOString()}&to=${new Date(origin+3000).toISOString()}';return true;}`);
+ await until(async()=>/Resource booking details/.test(await b.evaluate<string>('()=>document.body.innerText')),10000,'recorded hold');
  const cells=await b.evaluate<string[]>('()=>[...[...document.querySelectorAll("table[aria-label=\\"Resource bookings\\"] tbody tr")].find(r=>r.cells[0].textContent==="short-slot").cells].map(c=>c.textContent)');assert.equal(cells[0],'short-slot');assert.match(cells[1]!,/^u1 /);assert.equal(cells[2],'done');assert.equal(cells[3],'1s');assert.equal(cells[4],'805 ms');assert.doesNotMatch(cells.join(' '),/\d+\.\d+ ms/);
 });

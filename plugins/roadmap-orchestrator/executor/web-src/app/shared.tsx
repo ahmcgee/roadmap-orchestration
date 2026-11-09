@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Activity, Envelope, Signal } from './types.ts';
+import type { Signal } from './types.ts';
 import { preparedRead } from './prepared-read.ts';
 export { ApiError } from './prepared-read.ts';
 export const protocol = document.querySelector<HTMLMetaElement>('meta[name="roadmap-protocol"]')!.content;
@@ -14,13 +14,14 @@ export function route() {
   try {
     const [pathname, search = ''] = location.hash.replace(/^#\/?/, '').split('?');
     const p = pathname!.split('/').map(decodeURIComponent);
-    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || (p.length === 5 && ['units', 'invocations', 'events', 'requests', 'scopes'].includes(p[3]!)));
-    return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : null, inv: p[3] === 'invocations' ? p[4]! : null, event: p[3] === 'events' ? p[4]! : null, request: p[3] === 'requests' ? p[4]! : null, scope: p[3] === 'scopes' ? p[4]! : null, query: new URLSearchParams(search), invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, request: null, scope: null, query: new URLSearchParams(), invalid: location.hash !== '' && location.hash !== '#/' };
-  } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, request: null, scope: null, query: new URLSearchParams(), invalid: true }; }
+    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || (p.length === 5 && ['units', 'invocations', 'events', 'requests', 'scopes', 'resources'].includes(p[3]!)));
+    return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : null, inv: p[3] === 'invocations' ? p[4]! : null, event: p[3] === 'events' ? p[4]! : null, request: p[3] === 'requests' ? p[4]! : null, scope: p[3] === 'scopes' ? p[4]! : null, resource: p[3] === 'resources' ? p[4]! : null, query: new URLSearchParams(search), invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, request: null, scope: null, resource:null, query: new URLSearchParams(), invalid: location.hash !== '' && location.hash !== '#/' };
+  } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, event: null, request: null, scope: null, resource:null, query: new URLSearchParams(), invalid: true }; }
 }
-export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'invocations' | 'events' | 'requests' | 'scopes', id?: string) => {
+export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'invocations' | 'events' | 'requests' | 'scopes' | 'resources', id?: string) => {
   const current=route(), params=new URLSearchParams(current.arc===arc&&current.tab===tab?current.query:undefined);
   if(kind!=='scopes'||current.scope!==id){params.delete('detailSection');params.delete('detailCursor');}
+  if(kind!=='resources'||current.resource!==id){params.delete('detailFrom');params.delete('detailTo');params.delete('resourceEvidence');}
   const query=params.toString();
   return `#/arcs/${encodeURIComponent(arc)}/${tab}${kind ? `/${kind}/${encodeURIComponent(id!)}` : ''}${query?`?${query}`:''}`;
 };
@@ -37,4 +38,3 @@ export function SignalMark({ state }: { state: Signal }) {
   </svg></span>;
 }
 export const stageName = (stage: string) => ({ 'pre-build': 'Plan review', build: 'Build', lanes: 'Checks', gate: 'Review', candidate: 'Integration check', ff: 'Merge', snapshot: 'Publish snapshot', verifier: 'Review' }[stage] || (stage.startsWith('lane:') ? (!stage.slice(5)||stage.slice(5)==='null'?'Checks':`Check: ${stage.slice(5)}`) : stage));
-export const info = (e: Envelope, a: Activity) => e.data.console.presentation.activityInfo.find(i => i.id === a.id) || { label: stageName(a.stage), attempt: a.attempt, round: 1, spend: 0, findings: [] };
