@@ -1,48 +1,19 @@
 // Console-only vocabulary and recorded journeys. Canonical status objects are never rewritten.
 import type { Envelope } from '../observation/protocol.ts';
-import type { WaitingFor } from '../status.ts';
 import { record } from '../tui/projection.ts';
-import { invocationDir } from '../pipeline/invoke.ts';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { readEvidence } from './evidence.ts';
-import { join } from 'node:path';
 import { sha256Hex } from '../core/json.ts';
 import { ConsoleError } from '../observation/protocol.ts';
 import { needsUserPath } from '../needsuser.ts';
 import { completedWaiting } from '../status/waiting.ts';
 import { resourceQueue } from './resources.ts';
 import { meterOf } from '../meter.ts';
-export const stageWords = (stage:string):string => ({'pre-build':'Plan review',build:'Build',lanes:'Checks',gate:'Review',candidate:'Integration check',ff:'Merge',snapshot:'Publish snapshot',retire:'Complete',prepare:'Prepare re-entry',quiesce:'Stop workloads',evidence:'Collect evidence',salvage:'Save changes',teardown:'Release resources',reproduce:'Reproduce finding',verifier:'Review',baseline:'Baseline checks','campaign-audit':'Holistic audit','experience-verdict':'Experience review'}[stage] ?? (stage.startsWith('lane:')?(!stage.slice(5)||stage.slice(5)==='null'?'Checks':`Check: ${stage.slice(5)}`):stage.replaceAll('-',' ')));
-export const stateWords = (state:string):string => ({running:'Running',preparing:'Preparing',ready:'Ready',waiting:'Waiting',held:'On hold',blocked:'Blocked',parked:'Parked',merged:'Merged',cut:'Withdrawn',superseded:'Replaced','awaiting-admission':'Waiting',complete:'Complete',draining:'Draining',stopping:'Stopping','no-owner':'Stopped',refused:'Refused'}[state] ?? state);
-export const reasonWords = (reason:string):string => ({'cpu-tokens':'CPU capacity','cpu-pressure':'CPU pressure','memory-pressure':'Memory pressure','publication-slot':'Integration slot','admission-hold:base-red':'Baseline hold','admission-hold:dependency':'Dependency','admission-hold:milestone':'Milestone gate','admission-hold:paused':'Paused','admission-hold:host-pressure':'Host pressure'}[reason] ?? reason.replace(/^admission-hold:/,'').replace(/^named-resource:/,'Resource: ').replaceAll('-',' '));
-export function waitWords(w:WaitingFor|null):string[] {
- if(!w)return[];
- const out=[...w.deps.map(d=>`Dependency on ${d}`),...w.milestones.map(m=>`Milestone ${m} has not passed`),...w.edges.map(d=>`Waiting for decision ${d}`)];
- for(const a of w.admission){switch(a.type){case 'dependency':out.push(`Dependency on ${a.unit}`);break;case 'milestone':out.push(`Milestone ${a.milestone} has not passed`);break;case 'base-red':out.push('Baseline hold: baseline checks are failing');break;case 'blocking-item':out.push(`Human decision needed: ${a.id}`);break;case 'host-pressure':out.push('Host CPU pressure');break;case 'known-defect':out.push(`Waiting for fix from ${a.fixUnit}`);break;case 'backend-parked':out.push(`${a.backend} is parked`);break;default:out.push(reasonWords(a.type));}}
- if(w.pressureBlocked)out.push('Host CPU or memory pressure');if(w.envBlocked)out.push('Resource environment is unavailable');
- if(w.resources){if(w.resources.publication)out.push('Queued for the integration slot');if(w.resources.cpu)out.push(`Waiting for ${w.resources.cpu} CPU cores`);for(const r of [...w.resources.named,...w.resources.pools])out.push(`Waiting for resource ${r}`);}
- return [...new Set(out)];
-}
-const housekeepingStages=new Set(['quiesce','evidence','salvage','teardown']);
-const outcomeWords=(outcome:string)=>({empty:'No workloads running',captured:'Evidence captured',committed:'Changes saved','committed-contract-touched':'Changes saved; contract updated',released:'Resources released','cleanup-failed':'Cleanup failed','executor-fault':'Executor fault','commit-failed':'Commit failed',unmerged:'Unmerged changes',approve:'Approved',revise:'Changes requested',green:'Passed',success:'Succeeded',published:'Published','process-fault':'Process fault',red:'Failed'}[outcome]??outcome.replaceAll('-',' '));
-type Step={housekeeping:boolean;id:string;stage:string;label:string;attempt:number;sequence:number;round:number;at:string;endedAt:string|null;outcome:string;findingTitles:string[];activities:string[];notes:string[]};
-/** Human display text is separate from the complete agent-facing intent. */
-export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): string {
- const heading = /^# ([^\n]+)\n/.exec(intent)?.[1]?.trim();
- const prose = intent
-  .replace(/\b(?:contract|spec):[\w:#./-]+/gi, '')
-  .replace(/`[^`]+`/g, '')
-  .replace(/(?:https?:\/\/|(?:\.?\.?\/)?[\w@*{}.-]+\/)[^\s,;]+/g, '')
-  .replace(/\b[\w*-]+\.(?:[cm]?[jt]sx?|json|md|css|html|ya?ml|toml|sh)\b/g, '')
-  .replace(/\b(?:[a-z]+(?:[A-Z][a-z0-9]+)+|[a-z0-9]+(?:[_-][a-z0-9]+)+)\b/g, '')
-  .split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
-  .replace(/\s+/g, ' ').replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '').trim();
- const value = heading || prose || fallback;
- // Three condensed lines can carry the complete action and its system/slice.
- // Only genuinely long prose is elided, at the tail rather than in the middle.
- if (value.length <= 96) return value;
- return value.slice(0,95).replace(/\s+\S*$/, '').trimEnd()+'…';
-}
+import { housekeepingStages } from './indexes.ts';
+export { stageWords, stateWords, reasonWords, waitWords, shortUnitTitle } from './vocabulary.ts';
+import { stageWords, stateWords, reasonWords, waitWords } from './vocabulary.ts';
+import { identityIndex, stageIndex, invocationIndex } from './indexes.ts';
+import { enrichReports } from './reports.ts';
 export function presentation(e:Envelope){
  const s=e.data.display.status,events=e.data.events;
  const startedAt=events[0]?.at??e.observedAt;
@@ -61,34 +32,10 @@ export function presentation(e:Envelope){
    costCoverage.set(f.subject.unit,coverage);
   }
  }
- const reports=new Map<string,Record<string,unknown>>();
- for(const inv of e.data.display.invocations)if(inv.execution==='agent'){
-  const settlement=record(record(JSON.parse(inv.body))['settlement']);
-  const terminal=record(settlement['outcome']);
-  if(terminal['kind']!=='result')continue;
-  let bytes:Buffer;try{bytes=readEvidence(e.data.display.run.runDir,join(invocationDir(e.data.display.run.runDir,invocationIdOf(inv.id)),'result.json'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
-  if(sha256Hex(bytes)!==terminal['resultSha256'])throw new ConsoleError('invalid','retained agent report does not match its recorded digest');
-  const result=record(JSON.parse(bytes.toString('utf8'))),outcome=record(result['outcome']);
-  if(result['type']==='backend'&&outcome['kind']==='success')reports.set(inv.id,record(outcome['value']));
- }
- const steps=new Map<string,Step>();const counts=new Map<string,number>();const rounds=new Map<string,number>();
- const step=(unit:string,stage:string,sequence:number,at:string)=>{
-  const id=`${unit}:${sequence}`;let row=steps.get(id);if(row)return row;
-  const key=`${unit}:${stage}`,attempt=(counts.get(key)??0)+1;counts.set(key,attempt);
-  let round=rounds.get(unit)??1;if(stage==='build'&&attempt>1)round++;rounds.set(unit,round);
-  row={housekeeping:false,id,stage,label:stageWords(stage),attempt,sequence,round,at,endedAt:null,outcome:'In progress',findingTitles:[],activities:[],notes:[]};steps.set(id,row);return row;
- };
- for(const ev of events){
-  if(ev.type==='intent'&&ev.parent.type==='stage')step(ev.parent.unit,ev.parent.stage,ev.parent.attempt,ev.at);
-  if(ev.type==='fact'&&ev.fact.kind==='stage-outcome'&&'unit'in ev.fact){const f=ev.fact;const row=step(f.unit,f.stage,f.attempt,ev.at);row.endedAt=ev.at;row.outcome=outcomeWords(f.outcome);row.housekeeping=housekeepingStages.has(f.stage)&&f.class==='advance';if(f.class==='park')row.notes.push(`Parked: ${row.outcome}`);if(f.class==='hold')row.notes.push(`On hold: ${row.outcome}`);}
- }
- // Retirement has no stage-outcome fact: its recorded operations are its completion evidence.
- const settlements=new Map(events.filter(ev=>ev.type==='done').map(ev=>[ev.op,ev]));
- for(const row of steps.values())if(row.stage==='retire'){
-  const intents=events.filter(ev=>ev.type==='intent'&&ev.parent.type==='stage'&&`${ev.parent.unit}:${ev.parent.attempt}`===row.id);
-  const done=intents.map(i=>'op'in i?settlements.get(i.op):undefined);
-  if(intents.length&&done.every(Boolean)){row.outcome='Done';row.endedAt=done.reduce((last,ev)=>ev!.seq>last!.seq?ev:last)!.at;}
- }
+ const reports=enrichReports(e); // Temporary legacy adapter: new view builders never call this sweep.
+ const stages=stageIndex(events),{steps,byUnit}=stages;
+ const invocations=invocationIndex(e.data.display.invocations,stages);
+ const identities=identityIndex(e);
  const activityInfo=e.data.display.invocations.map(i=>{
   const body=record(JSON.parse(i.body)),parent=record(body['parent']);const sequence=typeof parent['attempt']==='number'?parent['attempt']:i.attempt;
   const row=steps.get(`${i.unit}:${sequence}`),report=reports.get(i.id);
@@ -101,10 +48,9 @@ export function presentation(e:Envelope){
   const specEntry=e.data.display.estate.find(r=>r.kind==='specification'&&r.id===u.unit);const spec=specEntry?record(JSON.parse(specEntry.body)):{};
   const acceptance=Array.isArray(spec['acceptance'])?spec['acceptance'].map(a=>String(record(a)['clause']??'')).filter(Boolean):[];
   const intent=typeof spec['intent']==='string'?spec['intent']:acceptance.join('\n');
-  const existingTitle=typeof spec['title']==='string'&&spec['title'].trim()?spec['title']:null;
-  const title=existingTitle??shortUnitTitle(intent,String(u.unit));
-  const journey=[...steps.values()].filter(st=>st.id.startsWith(`${u.unit}:`));
-  const invs=e.data.display.invocations.filter(i=>i.unit===u.unit);const first=journey[0]?.at??invs.at(-1)?.startedAt??null;
+  const title=identities.get(u.unit)!.title;
+  const journey=byUnit.get(u.unit)??[];
+  const invs=invocations.byUnit.get(u.unit)??[];const first=journey[0]?.at??invs.at(-1)?.startedAt??null;
   const last=u.state==='merged'||u.state==='cut'||u.state==='superseded'||u.state==='parked'?journey.at(-1)?.endedAt??null:null;
   const queue=s.host.queue.find(q=>q.unit===u.unit);
   const reasons=waitWords(u.waitingFor);if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${journey.at(-1)?`: ${journey.at(-1)!.outcome}`:''}`);

@@ -1,59 +1,25 @@
 // Adapters contain only recorded quantities. Signal states supplement, never replace, executor labels.
-import { type Event, type IntentOf } from '../core/events.ts';
-import { invocationDirName, invocationIdOf, parseResourceUnit, type ResourceUnit } from '../core/ids.ts';
-import type { Waited, WaitReason } from '../core/waiting.ts';
+import { type Event } from '../core/events.ts';
+import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { completedWaiting } from '../status/waiting.ts';
-import type { UnitRunState } from '../status.ts';
 import { activityState } from '../tui/outcome.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import { presentation } from './presentation.ts';
 import { project } from '../tui/projection.ts';
+import { bookingSummaries } from './bookings.ts';
 import { cpuStageGroups, resourceQueue } from './resources.ts';
 
-export type GraphStatus = 'passed' | 'active' | 'held' | 'pending' | 'failed';
-export function graphStatus(state: UnitRunState): GraphStatus {
-  switch (state) {
-    case 'merged': return 'passed';
-    case 'running': case 'preparing': return 'active';
-    case 'held': case 'blocked': case 'parked': case 'awaiting-admission': return 'held';
-    case 'waiting': case 'ready': case 'cut': case 'superseded': return 'pending';
-  }
-}
-const QUEUED_ADMISSIONS = new Set(['dependency', 'contingent-edge', 'milestone', 'host-pressure', 'compare', 'deflake', 'repair-batch']);
-export function waitingCategory(reason: WaitReason): 'held' | 'queued' {
-  return reason.startsWith('admission-hold:') && !QUEUED_ADMISSIONS.has(reason.slice('admission-hold:'.length)) ? 'held' : 'queued';
-}
-export function waitingBreakdown(waited: Waited, source: 'admission' | 'reservation') {
-  const categories = new Set(Object.keys(waited.byReasonMs).map((r) => source === 'reservation' ? 'queued' : waitingCategory(r as WaitReason)));
-  const kind = categories.size === 1 ? [...categories][0] : null;
-  return { held: kind === 'held' ? waited.totalMs : 0, queued: kind === 'queued' ? waited.totalMs : 0, unallocated: kind === null ? waited.totalMs : 0 };
-}
-const resourceId = (r: ResourceUnit): string | null => { const p = parseResourceUnit(r); return p.type === 'cpu' ? null : p.type === 'instance' ? p.pool : p.name; };
+export { graphStatus, type GraphStatus } from './signals.ts';
+import { graphStatus, type GraphStatus } from './signals.ts';
+export { waitingCategory, waitingBreakdown } from './waiting.ts';
+import { waitingBreakdown } from './waiting.ts';
 type Booking = { id: string; resource: string; instance?: string; startedAt?: string; durationMs?: number; label: string; unitId?: string; from: number; to?: number; state: 'done' | 'holding' | 'waiting'; waitFrom?: number; waitedMs?: number };
-function bookings(events: readonly Event[], origin: number) {
-  const intents = new Map<string, IntentOf<'resource.transition'>>();
-  const active = new Map<string, Booking>();
-  const rows: Booking[] = [];
-  for (const e of events) {
-    if (e.type === 'intent' && e.kind === 'resource.transition') intents.set(e.op, e);
-    if (e.type !== 'done' || e.kind !== 'resource.transition') continue;
-    const i = intents.get(e.op); if (!i) continue;
-    const x = i.expect;
-    for (const r of x.resources) {
-      const resource = resourceId(r); if (!resource) continue;
-      if (x.edge.type === 'reserve' || x.edge.type === 'reclaim') {
-        const previous = active.get(r);
-        if (previous) { previous.to = (Date.parse(e.at) - origin) / 1000; previous.state = 'done'; previous.durationMs = Date.parse(e.at) - Date.parse(previous.startedAt!); }
-        const row: Booking = { id: `${e.op}:${r}`, resource, ...(parseResourceUnit(r).type === 'instance' ? { instance: r } : {}), startedAt: e.at, label: 'unit' in x.holder ? x.holder.unit : x.holder.type,
-          ...('unit' in x.holder ? { unitId: x.holder.unit } : {}), from: (Date.parse(e.at) - origin) / 1000, state: 'holding' };
-        active.set(r, row); rows.push(row);
-      } else if (x.edge.type === 'release') {
-        const row = active.get(r);
-        if (row) { row.to = (Date.parse(e.at) - origin) / 1000; row.state = 'done'; row.durationMs = Date.parse(e.at) - Date.parse(row.startedAt!); active.delete(r); }
-      }
-    }
-  }
-  return rows;
+// Temporary wire adapter preserves the existing UI's offsets and holder labels.
+function bookings(events: readonly Event[], origin: number): Booking[] {
+  return bookingSummaries(events).map(b => ({id: b.id, resource: b.resource, ...(b.instance === null ? {} : {instance: b.instance}),
+    startedAt: b.startedAt, label: b.holder.unitId ?? b.holder.type, ...(b.holder.unitId ? {unitId: b.holder.unitId} : {}),
+    from: (Date.parse(b.startedAt) - origin) / 1000, state: b.state,
+    ...(b.endedAt === null ? {} : {to: (Date.parse(b.endedAt) - origin) / 1000, durationMs: Date.parse(b.endedAt) - Date.parse(b.startedAt)})}));
 }
 export function consoleModel(e: Envelope) {
   const { display, plan, events, requests } = e.data;

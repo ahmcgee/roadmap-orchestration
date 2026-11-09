@@ -13,13 +13,17 @@ import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
 import { ConsoleHistories } from './history.ts';
 import { ConsoleModels } from './model.ts';
+import { ConsoleViews } from './views.ts';
+import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
+import { validateViewEnvelope } from './view-validation.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
 const cache = new ObservationCache(args.hostDir, args.instance, args.repoId);
 const subscribed = new Set<string>();
 const maintained = new Set<string>();
-const models = new ConsoleModels();
+const models = new ConsoleModels(); // Temporary legacy UI adapter until the tab cutover.
+const views = new ConsoleViews();
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
@@ -43,9 +47,12 @@ function result(e: Envelope, id: string) {
   return { record, report, raw: JSON.stringify(record, null, 2), lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
 }
 function route(path: string[], params: Record<string, string>) {
-  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, selected: retainedRuns(args.common, args.hostDir).selected };
+  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, uiSchema: CONSOLE_UI_SCHEMA, selected: retainedRuns(args.common, args.hostDir).selected };
   const [runs, arc, section, id, file] = path;
   if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
+  if (path.length === 3 && (section === 'shell' || section === 'graph')) {
+    for (const key of Object.keys(params)) if (!['epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown view query parameter');
+  }
   const admission: Admission = {
     ...(params['epoch'] !== undefined ? { epoch: params['epoch'] } : {}),
     ...(params['revision'] !== undefined ? { revision: integer(params['revision']) } : {}),
@@ -57,6 +64,9 @@ function route(path: string[], params: Record<string, string>) {
   catch (error) {
     if (error instanceof ConsoleError && error.code === 'not-found' && (section === 'snapshot' || section === 'status')) throw new ConsoleError('unavailable', 'arc has no retained observation yet');
     throw error;
+  }
+  if (path.length === 3 && (section === 'shell' || section === 'graph')) {
+    return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : views.graph(e)}, section, e);
   }
   if (path.length === 3 && section === 'snapshot') {
     const { events: _events, ...displayData } = e.data;
