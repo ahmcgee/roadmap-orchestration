@@ -85,7 +85,7 @@ PlanUnit = {
   origin?: 'planned'|'repair'|'polish'|'deflake'; cpu?: number;
   review?: 'always'|'never'; spike?: {question:string};
   reenters?: {unit:UnitId,enterAt?:'pre-build'|'build'|'verify',reset?:{reason:string},fixes?:FailureRef};
-  cut?: {reason:string}; routing?: RoutingLayer; limits?: UnitLimits;
+  cut?: {reason:string}; carries?: {unit:UnitId,tip:Sha}; routing?: RoutingLayer; limits?: UnitLimits;
   priority?: 'normal'|'high'; polish?: {milestone:MilestoneId,proposal:PolishId};
   deflake?: {keys:FlakyKey[]};
 }
@@ -99,6 +99,11 @@ refused and escalated to an owner request. Reserved new unit ids include batch-n
 Root splits conserve parent text, systems, obligations, dependencies and milestone ownership; deflake cannot split.
 Re-entry must identify a recorded failure where required and keeps lineage counters. `reenters.reset: {reason}` clears
 only chargeable failures; lifetime attempts and other counters remain. Cuts and reset carry reasons. All structural/runtime restrictions are applied again by the classifier, not only the parser.
+`carries` (dev.59, C4, additive: absent means none, no read-time default needed) records that a fresh unit continues a
+cut unit's work from `tip`, a commit of that unit's branch. It is set when the unit is added, never after; never on a
+re-entry or naming itself; the classifier requires the named unit cut (before or by the same apply), with a branch whose
+history holds `tip`. Status shows `units[].carries` on the carrier and `carriedBy` on the cut unit. A carrier stands for
+the unit it carries in milestone membership and the milestone node (`src/walk/node.ts` follows it as a lineage).
 
 ### Specs and design
 
@@ -253,7 +258,13 @@ journeys are nonempty where required; selected lanes default []. A design unit i
 Journeys have `{id,text,via:browser|shell,entry,budget:{steps,seconds}|null}`. BringUp has setup argv[], serve entries
 `{name,argv,ready:{http}|{log}}`, env map, seed argv[]. `{port:<serve-name>}` substitutes allocated ports consistently.
 References are design directories and have a 512 KiB text budget. Missing tools/MCP handshake refuse browser readiness.
-A planned descendant outside the milestone waits for milestone-passed; code follows lineage heads. Non-planned
+A planned descendant outside the milestone waits for milestone-passed; code follows lineage heads.
+Membership (dev.59, `milestoneMembers` in `src/input/plan.ts`): the listed units, every unit re-entering one of them
+and every unit carrying a cut one forward, transitively, in plan order. Superseded and cut members are withdrawn: a
+milestone is reached when it has a live member and every live member merged (an all-withdrawn milestone is never
+reached). Members also receive the milestone's prompt inputs, and the walk reads every merged member's spec. Status
+`milestones[]` adds `members`, `withdrawn`, `live` and `merged`; summary milestones add `live` and `merged`; the
+console's graph, milestone detail (`total` live, `merged`) and filters read status's members. Non-planned
 lineages are exempt so repairs/polish can proceed. A reported walk with no active walkthrough P1 passes the node;
 polish may still be settling. Breaks hold, deviations can be repaired alongside work. Walk and
 before/after comparison share the experienceVerdict role. Demo records/controls are in `src/demo/records.ts`.
@@ -916,6 +927,12 @@ A held stage does not advance or consume a charge; backend/recovery holds retain
 | reproduce/lanes/candidate env-unavailable | Named environment |
 
 Lanes `rerun-red` (dev.59) is an operator env park: `resume` restores the decision the rerun waived (above, Commands).
+
+dev.59 gate split proposal (no schema change): a gate answer holds an active acceptance clause unmet when a blocking
+`requirement-unmet` finding names its id as a whole token (`src/pipeline/gate.ts` `unmetClauses`). A clause every gate
+answer of a lineage holds unmet, from the second answer on,
+raises one non-blocking unit `split-proposal` per lineage, parented by that gate attempt and raised before its outcome
+(a crash between them re-reads the answer and finds the item). The unit goes on.
 
 dev.59 park items (no record change): a `chargeable-bound` park's recommendation names a re-entry with `reenters.reset`,
 never a spec revision (a re-opened unit keeps its count and parks at its next charged failure), and a candidate `base-red`
