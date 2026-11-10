@@ -507,10 +507,11 @@ export const STAGE_OUTCOME_KINDS = {
   ],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
+  // dev.59: `static-red` (a `red` whose every red lane is a static check, `LaneDef.kind: static`: one uncharged fix round).
   candidate: [
     'checkout-residue',
     'green', 'transient-violation', 'conflict', 'red', 'base-red', 'blocked', 'occupied', 'cleanup-failed', 'interrupted', 'preempted', 'finding-blocked',
-    'executor-fault', 'env-unavailable',
+    'executor-fault', 'env-unavailable', 'static-red',
   ],
   ff: ['published', 'cas-stale', 'fingerprint-invalid', 'foreign-move'],
   snapshot: ['published'],
@@ -533,14 +534,15 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
 /**
  * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
  * unit's counters and status from it. `advance`: on to another stage, no counter. `revise`,
- * `candidate-red`, `smoke` (M4a rev 3: a mutation-smoke fix round): a bounded round within its bound. `retry`: the stage's one uncharged retry.
+ * `candidate-red`, `smoke` (M4a rev 3: a mutation-smoke fix round), `static-red` (dev.59: the one uncharged fix round of a
+ * candidate red only on static lanes): a bounded round within its bound. `retry`: the stage's one uncharged retry.
  * `route-up`: re-dispatched at the role's escalation seat. `trigger`: a risk trigger (contract path touched,
  * scope growth) that puts the next judgment dispatch on the escalation seat. `hold`: the stage was interrupted
  * (a pause or stop cancel, or its backend parked arc-wide on a usage limit); the unit stays at the stage,
  * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
  */
-export const OUTCOME_CLASSES = ['advance', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire'] as const;
+export const OUTCOME_CLASSES = ['advance', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire', 'static-red'] as const;
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
@@ -634,7 +636,7 @@ export type StageOutcomeDetail =
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect',
-  'candidate/red': 'candidate-red',
+  'candidate/red': 'candidate-red', 'candidate/static-red': 'candidate-red',
   'lanes/base-red': 'base-red',
   'lanes/plan-defect': 'plan-defect',
   'build/context-exceeded': 'context-exceeded', 'gate/context-exceeded': 'context-exceeded',

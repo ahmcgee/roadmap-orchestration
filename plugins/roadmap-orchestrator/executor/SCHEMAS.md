@@ -170,7 +170,12 @@ Capture shape:
 {kind:'capture', capture:{up:string[],script:string[],states:string[],port:ResourceName,portBase?:number}}
 ```
 
-Capture and kind appear together. States are safe filename stems. Port is in lane resources and names a declared pool;
+Capture and `kind:'capture'` appear together. dev.59: `kind:'static'` (additive; no capture) marks a static check, a
+linter or typechecker that reads the source and runs none of it. A candidate red with the tip alone green whose every red
+lane is static, its checkout clean, records candidate outcome `static-red` (detail as `candidate/red`): one uncharged fix
+round, class `static-red` (fold counter `staticReds`, 0 in older logs: none spent), taking no candidateReds round and no
+chargeable failure; a second `static-red` takes the `red` row (class `candidate-red`, charged, then the park). The kind is
+declared, never inferred from a lane's name. States are safe filename stems. Port is in lane resources and names a declared pool;
 script names a repo capture script path. The executor binds a leased slot/port, contains stack+script and requires every
 PNG. Only related milestone design/member gates get the evidence. Summary currently projects suite capture spawns.
 
@@ -1315,7 +1320,7 @@ arc across restarts, with no needs-user notice. `roadmap pr` retains its own can
 
 ### dev.45 candidate-red detail
 
-`candidate/red` stage outcomes carry `detail {kind: "candidate-red", path, causes, summary, evidence, directives, baseComparison}`.
+`candidate/red` and (dev.59) `candidate/static-red` stage outcomes carry `detail {kind: "candidate-red", path, causes, summary, evidence, directives, baseComparison}`.
 `path` is `suite red vs tip green`, `held-claims brake`, `mutant survivor`, or `repair batch`. The summary/directives name
 red obligations and declared repairs, unexplained/background lane failures, dirty/moved checkouts, mutant findings,
 and RUN/REUSED grading invocations with record/evidence paths. Fix rounds and bounded parks read this same diagnosis.

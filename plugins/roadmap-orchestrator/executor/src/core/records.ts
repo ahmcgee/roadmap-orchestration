@@ -891,6 +891,10 @@ export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] }
 /** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
 export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
 
+/** `LaneDef.kind`'s values. */
+export const LANE_KIND_FIELDS = ['capture', 'static'] as const;
+export type LaneKindField = (typeof LANE_KIND_FIELDS)[number];
+
 /** The `{files}` element of a lane's `testArgv`: the changed leaf test files, one argument each. */
 export const TEST_FILES_TOKEN = '{files}';
 
@@ -909,7 +913,12 @@ export type LaneDef = Readonly<{
   inputs?: readonly RepoPattern[];
   cost?: 'cheap' | 'expensive';
   placement?: 'local' | 'shared-resource' | 'cross-system';
-  kind?: 'capture';
+  /**
+   * `capture` (with `capture`): a capture lane. dev.59: `static`, a static check (a linter, a typechecker: it reads the
+   * source and runs none of it): a candidate red only on static lanes takes one uncharged fix round
+   * (src/pipeline/transitions.ts `static-red`). Absent: neither.
+   */
+  kind?: LaneKindField;
   capture?: Readonly<{ up: readonly string[]; script: readonly string[]; states: readonly string[]; port: ResourceName; portBase?: number }>;
 
   resources: readonly ResourceName[];
@@ -991,7 +1000,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   if (inputs !== undefined) assertUnique(inputs, (x) => x, `${f.path}.inputs`);
   const cost = f.optional('cost', oneOf(['cheap', 'expensive'] as const));
   const placement = f.optional('placement', oneOf(['local', 'shared-resource', 'cross-system'] as const));
-  const laneKind = f.optional('kind', literal('capture'));
+  const laneKind = f.optional('kind', oneOf(LANE_KIND_FIELDS));
   const capture = f.optional('capture', object((g) => ({ up: g.get('up', argv), script: g.get('script', argv), states: g.get('states', arrayOf(str, { nonEmpty: true })), port: g.get('port', resource), ...(g.optional('portBase', positive) === undefined ? {} : { portBase: g.get('portBase', positive) }) })));
   if ((laneKind === 'capture') !== (capture !== undefined)) throw new SchemaError(`${f.path}.capture`, 'present exactly for a capture lane', capture);
   if (capture !== undefined && capture.states.some((s) => !/^[a-zA-Z0-9_-]+$/.test(s))) throw new SchemaError(`${f.path}.capture.states`, 'safe file names', capture.states);

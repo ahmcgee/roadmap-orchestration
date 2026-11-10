@@ -61,7 +61,7 @@ export type LaneJson = Readonly<{
   /** dev.17: written instead of `tier` when given. */
   cost?: 'cheap' | 'expensive';
   placement?: 'local' | 'shared-resource' | 'cross-system';
-  kind?: 'capture';
+  kind?: 'capture' | 'static';
   capture?: { up: readonly string[]; script: readonly string[]; states: readonly string[]; port: string };
   cadence?: 'build' | 'unit' | 'candidate' | 'batch';
   resources?: readonly string[];

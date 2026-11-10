@@ -9,6 +9,8 @@
 //   process faults never charge. The third chargeable failure parks the unit, whatever its row says.
 // - Bounded rounds: gate revise ≤ 2, red candidate ≤ 1. Within the bound the row's
 //   round runs (and a C row charges); beyond it the exhausted action runs uncharged, as no round happened.
+//   dev.59: a candidate red only on static lanes (`static-red`: lint, typecheck) takes one uncharged fix round of its own,
+//   then is read as any candidate red (its exhausted action is the `red` row).
 // - One uncharged retry at pre-build, build (a resume), lanes and gate, then park. Retries are counted per
 //   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
 //   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
@@ -93,18 +95,19 @@ type Hold = Readonly<{ do: 'hold' }>;
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason` and class `park`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
-type BoundedRound = 'revise' | 'candidate-red' | 'smoke';
+type BoundedRound = 'revise' | 'candidate-red' | 'smoke' | 'static-red';
 /**
- * A round the unit may take `bounds[bound]` times; the next one takes `then`, uncharged. M4a rev 3 (D2, R38): the smoke
- * round's `then` goes on to the gate, which decides with the survivors (`Go`, never a halt).
+ * A round the unit may take `bounds[bound]` times (`1`: once, not configurable); the next one takes `then`, uncharged.
+ * M4a rev 3 (D2, R38): the smoke round's `then` goes on to the gate, which decides with the survivors (`Go`, never a halt).
+ * dev.59: the static-red round's `then` is the candidate's `red` row, itself bounded.
  */
 type Bounded<S extends OutcomeStage> = Readonly<{
   do: 'bounded';
   round: BoundedRound;
-  bound: keyof Pick<Bounds, 'reviseRounds' | 'candidateReds' | 'smokeRounds'>;
+  bound: keyof Pick<Bounds, 'reviseRounds' | 'candidateReds' | 'smokeRounds'> | 1;
   to: Target;
   chargeable: boolean;
-  then: S extends JudgmentStage ? RouteUp : Park | Go;
+  then: S extends JudgmentStage ? RouteUp : Park | Go | Bounded<S>;
 }>;
 
 /** Route-ups exist only at judgment stages and retries only at retry stages, as the fact validator requires. */
@@ -129,6 +132,9 @@ const hold: Hold = { do: 'hold' };
 const fault: Park = park('executor-fault', 'env');
 // Ownership repair needs the operator; a backend/host/resource probe cannot settle an open checkout intent.
 const checkoutResidue: Park = park('residue', 'env');
+
+/** Red with T alone green: a fix round, fresh gate, new candidate. Red again parks. */
+const candidateRed: Bounded<'candidate'> = { do: 'bounded', round: 'candidate-red', bound: 'candidateReds', to: build('fix'), chargeable: true, then: park('candidate-red', 'design') };
 
 /** The plan's table, one rule per (stage, outcome); the type requires every row and admits no other. */
 export const TABLE: Table = {
@@ -264,8 +270,10 @@ export const TABLE: Table = {
     'transient-violation': { do: 'go', to: build('fix'), chargeable: true, trigger: true },
     // mergein.prepare, then resume "resolve and commit"; uncharged, the diff base is recomputed.
     conflict: go(build('resolve')),
-    // Red with T alone green: a fix round, fresh gate, new candidate. Red again parks.
-    red: { do: 'bounded', round: 'candidate-red', bound: 'candidateReds', to: build('fix'), chargeable: true, then: park('candidate-red', 'design') },
+    red: candidateRed,
+    // dev.59: red with T alone green, every red lane a static check (lint, typecheck: checks a builder can miss when they run
+    // only at the candidate): one uncharged fix round, consuming no candidate-red round; again, it is a `red`.
+    'static-red': { do: 'bounded', round: 'static-red', bound: 1, to: build('fix'), chargeable: false, then: candidateRed },
     // Red with T alone red too: the base is broken, not the unit; uncharged.
     'base-red': park('base-red', 'env'),
     // A suite lane its runner ended (deadline) or lost: no product verdict, and no retry at this stage.
@@ -303,7 +311,7 @@ type Step =
   | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
-const ROUND_COUNTERS = { revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds' } as const satisfies {
+const ROUND_COUNTERS = { revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds', 'static-red': 'staticReds' } as const satisfies {
   readonly [R in BoundedRound]: keyof UnitCounters;
 };
 
@@ -368,7 +376,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
       return { class: rule.trigger ? 'trigger' : 'advance', chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
     case 'bounded': {
       const taken = u.counters[ROUND_COUNTERS[rule.round]];
-      const max = u.bounds[rule.bound];
+      const max = rule.bound === 1 ? 1 : u.bounds[rule.bound];
       if (taken < max) return { class: rule.round, chargeable: rule.chargeable, step: { to: 'stage', target: rule.to } };
       return apply(u, o, rule.then, `${why} beyond ${max} ${rule.round} round${max === 1 ? '' : 's'}`);
     }
@@ -536,8 +544,13 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
     case 'revise':
     case 'candidate-red':
     case 'smoke':
-      if (rule.do !== 'bounded') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule is ${rule.do}`);
-      return { kind: 'stage', target: rule.to };
+    case 'static-red': {
+      // The round the class names: the rule's own, or (dev.59) the bounded round its exhausted `then` runs.
+      let round: Rule<OutcomeStage> = rule;
+      while (round.do === 'bounded' && round.round !== fact.class) round = round.then;
+      if (round.do !== 'bounded') throw new Error(`${fact.stage} ${fact.outcome}: class ${fact.class}, but the table's rule has no such round`);
+      return { kind: 'stage', target: round.to };
+    }
     case 'retry':
       return { kind: 'stage', target: fact.stage === 'build' ? build('resume') : at(fact.stage as Exclude<OutcomeStage, 'build'>) };
     case 'route-up':

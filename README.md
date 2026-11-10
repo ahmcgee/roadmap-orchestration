@@ -138,7 +138,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
 4. **Publish the tested head.** An approved unit plans a candidate on the current integration tip and atomically takes the publication slot plus the first scheduled lane’s resources (spec first, otherwise the selected suite). A moved tip reselects the entry; unused entry resources are cleaned and released. Candidate lanes
    retain unit attribution; only a green exact head is fast-forwarded. Candidate reds durably name their cause,
-   grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. Every successful integration fast-forward
+   grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. A candidate red whose
+   only red lanes are declared static checks (`kind: static`: lint, typecheck) gets one uncharged fix round of its own;
+   a second is read as any candidate red. Every successful integration fast-forward
    (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
    Pushes use an explicit lease and require the remote tip to be an ancestor; `main` is never pushed. Startup
    retries the current head after a crash; an up-to-date remote is a no-op. Snapshots and retirement continue

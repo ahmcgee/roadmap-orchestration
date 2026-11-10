@@ -86,7 +86,7 @@ describe('fold derives', () => {
       }],
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
-        attempts: 7, chargeableFailures: 1, unchargedLanesReds: 0, reviseRounds: 1, candidateReds: 0, smokeRounds: 0,
+        attempts: 7, chargeableFailures: 1, unchargedLanesReds: 0, reviseRounds: 1, candidateReds: 0, staticReds: 0, smokeRounds: 0,
         retries: { build: 1, lanes: 0, gate: 0 },
       },
     }]);
