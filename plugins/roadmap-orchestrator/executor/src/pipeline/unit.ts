@@ -74,7 +74,7 @@ import { WorktreeRecoveryError,standing } from '../git/worktree.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { regenerateLanes } from '../input/derived.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import { raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
+import { chargeableBoundRecommendation,raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
 import { dirtyLanesDirective,revertedPathsDirective } from '../prompts/directives.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
@@ -86,7 +86,7 @@ import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceT
 import type { Role } from '../routing/types.ts';
 import { type NextStage,nextStage } from '../schedule/ready.ts';
 import { ADMISSION_STAGES } from '../schedule/types.ts';
-import { attemptSignals } from './attempts.ts';
+import { attemptSignals,lineageAttempts,lineageAttemptsText } from './attempts.ts';
 import { candidateRed,candidateReentryChange } from './candidate-red.ts';
 import {
 type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
@@ -163,11 +163,13 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): r
 /**
  * The needs-user content of a halt the table decided (the unit's latest decided outcome), when the stage
  * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a
- * `routing-changed` park re-enters once its implementer seat's routing is restored; any other park at a
- * judgment stage or build spec-wrong re-opens after a spec edit; any other is re-entered under a new unit id.
+ * `routing-changed` park re-enters once its implementer seat's routing is restored; a park at the chargeable bound is
+ * re-entered with `reset` (dev.59: a revision keeps the count), with the lineage's attempts against the caps; any other park
+ * at a judgment stage or build spec-wrong re-opens after a spec edit; any other is re-entered under a new unit id.
  */
 function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop', reason: NeedsUserReason, summary: string): NeedsUserContent {
-  const f = ctx.journal.view.unit(unit.id).decided;
+  const u = ctx.journal.view.unit(unit.id);
+  const f = u.decided;
   if (f === null) throw new Error(`unit ${unit.id} halted without a decided outcome`);
   const { path, spec } = loadUnitSpec(ctx, unit);
   const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
@@ -199,6 +201,8 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ? rerunRedRecommendation(ctx, unit.id)
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
+    : reason === 'chargeable-bound'
+      ? `${chargeableBoundRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id), u.counters.chargeableFailures, u.bounds.chargeable)} ${lineageAttemptsText(lineageAttempts(ctx.journal.view, unit.id))}`
       : specReopenable(f)
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));

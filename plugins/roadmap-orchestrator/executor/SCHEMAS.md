@@ -537,6 +537,10 @@ needsUser, waste, demo, completion. Caught is laneReds + gateRevisions + uniqueF
 not a cross-seat unique-defect metric. Milestone costs include members/re-entries/polish and walk/compare jobs, not all
 arc costs. Captures lists suite capture spawns only. Waste findings use observed duration/evidence and durable cause keys.
 
+Full status `units[].lineageAttempts` (dev.59, derived) is `{builds,judged,buildCap:16,judgedCap:40}`: the unit's lineage
+(itself and each unit it re-enters) against the total-attempt caps, which `reenters.reset` never clears. An accepted apply
+(and `apply --dry-run`'s `warnings`) states the same per `unit-reentered` change, one receipt line beginning `lineage:`.
+
 Full status and summary both expose `supervision: {state:'live'|'stale'|'none',pid?,lastPollAt?,executorVersion?}`.
 `none` has no other fields; `live` and `stale` include all three. Liveness is the lease's PID/start identity on the
 recorded boot, not the age of lastPollAt. The TUI keeps supervision on one status line, red when it is not live,
@@ -912,6 +916,12 @@ A held stage does not advance or consume a charge; backend/recovery holds retain
 | reproduce/lanes/candidate env-unavailable | Named environment |
 
 Lanes `rerun-red` (dev.59) is an operator env park: `resume` restores the decision the rerun waived (above, Commands).
+
+dev.59 park items (no record change): a `chargeable-bound` park's recommendation names a re-entry with `reenters.reset`,
+never a spec revision (a re-opened unit keeps its count and parks at its next charged failure), and a candidate `base-red`
+park, an operator env park, names its two ways out: estate or base fixed, `ack` then `resume` (the candidate re-runs as a
+new attempt, uncharged); the unit's own red, `steer --resume` then `ack`. Both state the lineage's builds and judged stages
+against the total-attempt caps (`src/pipeline/attempts.ts` `lineageAttemptsText`).
 
 `src/park/table.ts` supplies targets; `src/pipeline/transitions.ts` owns class/charge/re-entry decisions. Recovering then
 parking on the same target within six hours becomes operator env (`env-blocked`), preventing endless flapping retries.

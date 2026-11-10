@@ -14,6 +14,7 @@ import { describe,test } from 'node:test';
 import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
 import { pollCommands,readReceipt,submitCommand } from '../src/commands/queue.ts';
 import type { Fact,IntentOf,PlanChange } from '../src/core/events.ts';
+import { status } from '../src/status.ts';
 import { arcId,clauseId,commandId,edgeId,invocationIdOf,opKey,planRev,poolInstance,resourceName,sha,specRev,unitId } from '../src/core/ids.ts';
 import { openJournal,readJournal } from '../src/core/log.ts';
 import type { CommandBody,ResidueKey } from '../src/core/records.ts';
@@ -963,6 +964,16 @@ for (const c of BOUND_CASES) {
       assert.deepEqual(r.journal.view.unit(unitId('u4')).counters, {...inherited, chargeableFailures: c.reset ? 0 : c.failures}, 'reset clears only chargeable failures; all other lineage counters remain');
       const receipt = readReceipt(r.ctx.runDir, commandId(id), 'applied');
       assert.ok(receipt?.state === 'applied');
+      // dev.59 (scope item 4): every re-entry's receipt states the lineage's attempts against the total caps, which reset never
+      // clears, and status shows them on the re-entry's line.
+      const inheritedAttempts = r.journal.view.attemptCounts(U1);
+      assert.ok(inheritedAttempts.judged > 0, JSON.stringify(inheritedAttempts));
+      assert.deepEqual(receipt.verified.filter((l) => l.startsWith('lineage:')), [
+        `lineage: u4 inherits the attempts of u1's lineage (u1): ${inheritedAttempts.builds} of 16 builds and ${inheritedAttempts.judged} of 40 judged stages; `
+          + `it parks at the cap after ${16 - inheritedAttempts.builds} more builds or ${40 - inheritedAttempts.judged} more judged stages, whatever \`reset\` clears`,
+      ]);
+      const line = status(absPath(d.runDir), arcId(d.arc), absPath(d.hostDir)).units.find((u) => u.unit === 'u4');
+      assert.deepEqual(line?.lineageAttempts, { ...inheritedAttempts, buildCap: 16, judgedCap: 40 });
       const warnings = receipt.verified.filter((l) => l.startsWith('warning:'));
       if (!c.warns) assert.deepEqual(warnings, []);
       else {

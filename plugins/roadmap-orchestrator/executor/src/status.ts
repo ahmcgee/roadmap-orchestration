@@ -100,6 +100,7 @@ import { type Certification,type WorkRun,certificationReader,workRuns } from './
 //                      park's needs-user lists the same
 //   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
 //   units[].gate  (dev.12 round 2) the latest gate answer: decision, findings by class, and `unreviewed` (src/pipeline/gate.ts)
+//   units[].lineageAttempts  (dev.59) the lineage's builds and judged stages against the total-attempt caps (16/40)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
@@ -152,6 +153,7 @@ import { type Supervision,supervision } from './watch-lease.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,type OpenBlockingDigest,supersededItems } from './needsuser.ts';
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
 import type { BriefArc,OwnerAnswer,StageTiming } from './phase0/types.ts';
+import { lineageAttempts } from './pipeline/attempts.ts';
 import { type LaneFailure,laneFailures } from './pipeline/failures.ts';
 import { type GateAnswerView,latestGateAnswer } from './pipeline/gate.ts';
 import { observations } from './pipeline/lanes.ts';
@@ -266,6 +268,11 @@ export type UnitStatusLine = Readonly<{
   status: string;
   attempts: number;
   chargeableFailures: number;
+  /**
+   * dev.59 (scope item 4): the lineage's builds and judged stages (the unit's and each unit it re-enters', `attemptCounts`)
+   * against the total-attempt caps, which a re-entry's `reset` never clears.
+   */
+  lineageAttempts: Readonly<{ builds: number; judged: number; buildCap: number; judgedCap: number }>;
   certification: Certification | null;
   work: readonly WorkRun[];
   risk: RiskTier | null;
@@ -821,7 +828,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
   const after = u.status === 'active' ? unit.after.filter((d) => view.unit(effectiveDependency(view, d)).status !== 'retired') : [];
   return {
     unit: unit.id, stage: u.stage, status: after.length > 0 ? `held-after:${after.join(',')}` : u.status, attempts: u.counters.attempts,
-    chargeableFailures: u.counters.chargeableFailures, risk: u.risk, seat: seatOf(view, unit.id),
+    chargeableFailures: u.counters.chargeableFailures, lineageAttempts: lineageAttemptsOf(view, unit.id), risk: u.risk, seat: seatOf(view, unit.id),
     state,
     waitingFor,
     holds,
@@ -832,6 +839,11 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     buildTier: u.buildTier,
     running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
   };
+}
+
+function lineageAttemptsOf(view: JournalView, unit: UnitId): UnitStatusLine['lineageAttempts'] {
+  const { builds, judged, buildCap, judgedCap } = lineageAttempts(view, unit);
+  return { builds, judged, buildCap, judgedCap };
 }
 
 function edgesOf(view: JournalView, plan: PlanM1): readonly EdgeView[] {

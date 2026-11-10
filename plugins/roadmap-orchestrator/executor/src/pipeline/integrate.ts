@@ -89,7 +89,6 @@ import { type ObligationEffect, completes, latches, obligationEffects } from '..
 import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
-import { reentryRecommendation } from '../needsuser.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
 import {
@@ -97,6 +96,7 @@ import {
 } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
+import { lineageAttempts, lineageAttemptsText } from './attempts.ts';
 import { type Cancelled, type StageContext, type StageParent, candidateVerificationWorktree, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
@@ -330,10 +330,26 @@ function baseRedNeedsUser(ctx: StageContext, parent: StageParent, tip: Sha, base
     subject: { type: 'arc' },
     reason: 'base-red',
     summary: `On ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: ${baseRedAccount(base)}. The base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
-    recommendation: `Repair ${ctx.plan().integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', parent.attempt, unitBranch(ctx.plan().arc, unit))}`,
+    recommendation: baseRedRecommendation(ctx, unit, tip),
     options: [],
     evidence,
   };
+}
+
+/**
+ * dev.59 (scope item 2): the two designed ways out of a candidate base-red park, which is an env park (resume re-runs the
+ * candidate as a new, uncharged attempt) and holds every candidate while its item is open: the estate or the base was broken
+ * and is fixed now (ack, then resume), or the red is the unit's own, its candidate run having left state that turned T red
+ * too (steer --resume, then ack). Never a re-entry: the park is not final.
+ */
+function baseRedRecommendation(ctx: StageContext, unit: UnitId, tip: Sha): string {
+  const branch = ctx.plan().integrationBranch;
+  return `Read the evidence of both series, the candidate's and ${tip}'s alone, and decide whose red it is. `
+    + `If the estate the suite runs against, or ${branch} itself, was broken: repair it (or the suite) if it still is, acknowledge this item (merges resume), `
+    + `then \`roadmap resume ${unit}\` re-runs the candidate as a new attempt, uncharged. `
+    + `If the red is the unit's own (its candidate run left state that turned ${tip} red too): \`roadmap steer ${unit} --brief <file> --budget <min> --resume\`, `
+    + 'with a brief that cites both series\' evidence, gives it one build round and then lanes, gate and the candidate again; then acknowledge this item. '
+    + lineageAttemptsText(lineageAttempts(ctx.journal.view, unit));
 }
 
 /** An external integration move invalidates the selection before candidate refs are published. */
