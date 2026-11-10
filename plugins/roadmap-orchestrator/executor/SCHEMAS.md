@@ -459,8 +459,10 @@ Codex; M2/design/high risk and diagnosis fallback use Claude. M1/capture-only re
 frontier advisor remain. Effective fallback/profile changes have routing revisions so history resolves actual seats.
 Config also accepts chain, walkthrough.mcp, systemsMap and systemNotesDir; unknown keys refuse.
 
-Strict role output readers reject unknown fields. BuildOutput is summary/blockers/experiments/grounding/tooBig/notes/final
-(exact type below). Grounding contains specWrong nullable text and touches strings; tooBig is **top-level**. Structured
+Strict role output readers reject unknown fields. BuildOutput is summary/blockers/experiments/grounding/tooBig/notes/messages/final
+(exact type below). `messages` (dev.59) lists every cross-session message the build received, `{from,at,text}` (text verbatim or
+its first 500 characters); the wire schema requires it, and the reader takes a report written before dev.59 (its launch's
+schema had no such field) as none, with one `ROADMAP_UPGRADE` warning per process (temporary scaffolding). Grounding contains specWrong nullable text and touches strings; tooBig is **top-level**. Structured
 decisions come from decisions.json captured by evidence, not a BuildOutput decisions key. Final false is an intermediate
 wait protocol; the terminal build output must be final true.
 
@@ -558,6 +560,10 @@ spend `{costUsd,expectedUsd,differenceUsd,estimatedCalls,unavailableCalls}`, mil
 needsUser, waste, demo, completion. Caught is laneReds + gateRevisions + uniqueFindings, with byLens counts of unique keys;
 not a cross-seat unique-defect metric. Milestone costs include members/re-entries/polish and walk/compare jobs, not all
 arc costs. Captures lists suite capture spawns only. Waste findings use observed duration/evidence and durable cause keys.
+
+Full status `units[].running.session` (dev.59, derived) is the cross-session name of the Claude build running in the
+unit's attempt now, read from its launch.json `terminal.name`: the exact `SendMessage` address. It is null between builds,
+for a Codex build and for a build launched before dev.59, so it disappears when the build ends.
 
 Full status `units[].lineageAttempts` (dev.59, derived) is `{builds,judged,buildCap:16,judgedCap:40}`: the unit's lineage
 (itself and each unit it re-enters) against the total-attempt caps, which `reenters.reset` never clears. An accepted apply
@@ -657,8 +663,11 @@ export type TooBig = Readonly<{ estimate: string; suggestedChildren: readonly st
 ```ts
 export type BuildOutput = Readonly<{
   summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
-  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[]; final: true;
+  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[];
+  messages: readonly ReceivedMessage[];
+  final: true;
 }>;
+export type ReceivedMessage = Readonly<{ from: string; at: string; text: string }>;
 ```
 
 ### DispatchRecord (`src/core/records.ts`)
@@ -770,6 +779,7 @@ Constructors in `src/core/ids.ts` reject invalid forms before branding.
 | Pool instance / CPU token | `<pool>#<positive n>` / `@cpu#<positive n>` |
 | Command | `cmd-<16 lowercase hex>` |
 | Session | Lowercase UUID |
+| Build session name (dev.59) | `<arc>-<unit>-<seq>-<ordinal>` (`buildSessionName`, the one derivation); `[A-Za-z0-9_-]{1,200}` |
 | SHA / content hash | 40 / 64 lowercase hex |
 | Routing, seat, lane, environment rev; brief id | 16 lowercase hex |
 | Needs-user | `nu-<n>`, `sup-<n>-<n>`, or `host-<slug>` |
@@ -1104,7 +1114,10 @@ ExitFile = InvocationBinding & {
 ```
 
 LaunchTerminal is command `{type,purpose,expectedExit,timeoutMin?}` or backend
-`{type,purpose,role,routingRev,schemaPath,outputPath,session}`. TimeoutMin is lane-only. Claude sessions have backend,
+`{type,purpose,role,routingRev,schemaPath,outputPath,session,name?}`. `name` (dev.59) is a Claude build's
+`BuildSessionName`, the `--name` it launched with (a startup or probe smoke's build is named by its check); it is refused on a
+Codex build and absent on a build launched before dev.59. Every Claude build also launches with
+`crossSessionInbound: "accept"` in its `--settings` and never `--bare`. TimeoutMin is lane-only. Claude sessions have backend,
 mode fresh/resume and id; fresh Codex lacks id until the result. Runner adds ROADMAP_OP/INV/ROLE to the declared env.
 Only launch argv can carry model ids among executor-written runtime files. Exit is published after containment empties,
 before adaptation; `reported` follows a validated final report's bounded descendant grace. Binding mismatch refuses.

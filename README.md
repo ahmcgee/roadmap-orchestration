@@ -191,7 +191,12 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    exported base; untouched files take current bytes, and edited specs advance automatically. An apply that touches
    running work queues to its stage boundary: a suite-lane edit waits behind a running lanes attempt (a lanes red's fix
    round still reads the series as it ran) and is refused only while a candidate is under way. Steer cancels an
-   unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
+   unfinished unit into a directed round; note informs its next build without interruption. To reach a build while it
+   runs, the architect `SendMessage`s a running Claude build at the exact session name `status` shows
+   (`units[].running.session`, `<arc>-<unit>-<seq>-<ordinal>`, gone once the build ends); the build reads it between
+   tool calls and lists it in its report's `messages`. A successful send is not proof of delivery, a name whose build
+   has ended fails as unreachable, and only builds in the same container are reachable. A Codex build, or one not yet
+   running, gets `note`, then `pause` and `resume`: the resumed session reads the note. Unit/host actions close
    their notices. Resolve an audit’s arc requests with the apply that answers them: add `--resolves nu-ID[,nu-ID...]`. Unit requests require that unit’s change/re-entry and grouped findings require every named repair. No-op/stale applies close nothing; the receipt lists actual closures. Other arc items accept named `ack <id>` after review.
    A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests
    close when their findings settle or a root apply supplies all named repairs. Dismissal suppresses the same finding

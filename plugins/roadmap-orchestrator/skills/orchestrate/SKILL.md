@@ -105,6 +105,7 @@ Exercise the smallest action that resolves the cause:
 - **Change requirements or plan:** export current inputs, edit, CAS apply with revision and one-line reason.
 - **Redirect an unfinished build:** steer with a concrete brief and editing budget. A running workload is killed and quiesced first. Use `--resume` when a green pass should proceed; otherwise it parks for root review.
 - **Inform the next round:** note a brief without killing the current build. It lands as a kept note in the next build inputs.
+- **Reach a build while it runs:** a running Claude build has a session name in `status` (`units[].running.session`). `SendMessage` to that exact name, never one picked from a listing; the build reads it at its next tool call and lists it in its report's `messages`. A successful send is not proof of delivery: check the report. A name whose build has ended fails as unreachable, and only builds in this container are reachable. For a Codex build, or anything not yet running, note the brief, then `pause` and `resume` the unit: the resumed session reads the note.
 - **Dismiss a false positive:** dismiss the named open finding with a concrete counter-evidence line, after reviewing any audit request.
 - **Supply external proof:** witness an external-class obligation with pass/fail and a file or URL. Evidence binds the submission head; a fail reopens its delivering lineage.
 - **Resolve readiness:** resolve-edge with evidence; merge-in the current tip when needed; clear run-only after targeted work.
