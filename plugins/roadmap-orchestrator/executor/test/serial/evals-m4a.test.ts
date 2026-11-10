@@ -15,6 +15,8 @@
 // evals-m4a.smoke-survivor, evals-m4a.opportunity, evals-m4a.lane-reuse-after-pause,
 // evals-m4a.owner-questions, evals-m4a.owner-code-answers, evals-m4a.owner-reads-brief, evals-m4a.wake-key, skill.operator-log-format,
 // evals-m4a.ruler-criteria, evals-m4a.plant-lane.
+import { consoleCommon, readConsoleLease, stopConsole } from '../../src/console/lease.ts';
+import { isAlive } from '../../src/host/liveness.ts';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync,existsSync,readFileSync,readdirSync } from 'node:fs';
@@ -29,7 +31,7 @@ type RulerArc,LEVERS,arcView,chainOf,parseOperatorLog,
 rulerArgvs,rulerRecordProblems,triplesProblems,
 } from '../../evals/m4a/check.ts';
 import {
-MIN_ARC1_UNITS,type Report,SPEND_APPROVED,type Turn,codeAnswer,failFastText,firstPlanCheck,ghOnPath,launchEnv,numberedQuestions,openBriefQuestions,
+MIN_ARC1_UNITS,type Report,SPEND_APPROVED,type Turn,codeAnswer,failFastText,firstPlanCheck,fixtureProcesses,ghOnPath,launchEnv,numberedQuestions,openBriefQuestions,
 plantCheck,plantLaneOf,spendHold,stagePlugin,
 } from '../../evals/m4a/driver.ts';
 import { fakeArc,fakeHostDir } from '../../evals/m4a/fake-root.ts';
@@ -99,7 +101,17 @@ async function runFixture(name: 'story' | 'vision-silent'): Promise<Fixture> {
     },
   };
   track(scope);
-  const driver = await script('driver.ts', [dir, '--fake', name]).finally(() => teardown(scope));
+  const repo = absPath(layout(dir).product);
+  const driver = await script('driver.ts', [dir, '--fake', name]).finally(async () => {
+    const lease = readConsoleLease(consoleCommon(repo));
+    try { await teardown(scope); }
+    finally { await stopConsole(repo); }
+    assert.equal(readConsoleLease(consoleCommon(repo)), null, 'fixture teardown removes its console lease');
+    if (lease !== null) assert.equal(isAlive(lease, lease.bootId), false, 'fixture teardown stops its console process');
+    assert.deepEqual(fixtureProcesses(dir).filter(p => p.argv.some(a => a.endsWith('/entry/console.ts'))), [], 'no console process for the fixture repo survives teardown');
+    assert.equal(lease, null, 'driver explicitly stops its console before the generic fixture reaper');
+  });
+  assert.equal(readConsoleLease(consoleCommon(repo)), null, 'driver leaves no console lease');
   const report = JSON.parse(readFileSync(layout(dir).report, 'utf8')) as Report;
   return { dir, driver, report, checked: await check(dir) };
 }
@@ -486,7 +498,7 @@ describe('evals-m4a: the fake-backed session, story and vision-silent side by si
   test('evals-m4a.adjudication-tree: the adjudicator\'s tree holds the run\'s evidence and nothing that names the key or this repository', () => {
     const tree = join(tmpDir('m4a-adjudication'), 'tree');
     stageTree(story.dir, tree);
-    for (const d of ['vision', 'raw-corpus', 'curated-corpus', 'extraction', 'plan', 'product', 'witness/runs']) assert.ok(existsSync(join(tree, d)), `the tree holds ${d}`);
+    for (const d of ['vision', 'raw-corpus', 'curated-corpus', 'extraction', 'plan', 'product', 'witness/arcs']) assert.ok(existsSync(join(tree, d)), `the tree holds ${d}`);
     assert.ok(existsSync(join(tree, 'product', 'src', 'confirm.js')), 'the product snapshot is arc 1\'s head');
     assert.ok(!existsSync(join(tree, 'product', '.git')));
     for (const e of readdirSync(tree, { recursive: true, withFileTypes: true })) {

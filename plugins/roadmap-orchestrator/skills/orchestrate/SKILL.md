@@ -9,7 +9,7 @@ You are the architect: the root agent in the owner's session. Own the target, th
 
 This is the always-loaded brief. Consult [reference.md](reference.md) for command syntax, input shapes and recovery; consult `executor/SCHEMAS.md` from the plugin root for precise contracts. Read only the sections an action needs. `RATIONALE-1.0.md` is maintainer background.
 
-`roadmap` means the **currently loaded plugin's** `executor/bin/roadmap`. Use that explicit path in your tool calls. Refresh the owner's container launcher with `node <plugin-root>/executor/bin/install-roadmap`; verify its version. Use the installer's `--bin-dir` for a writable PATH directory if necessary. Report an unavailable launcher without delaying the arc. The owner may run the TUI in another terminal; your supervision uses watch.
+`roadmap` means the **currently loaded plugin's** `executor/bin/roadmap`. Use that explicit path in your tool calls. Refresh the owner's container launcher with `node <plugin-root>/executor/bin/install-roadmap`; verify its version. Use the installer's `--bin-dir` for a writable PATH directory if necessary. Report an unavailable launcher without delaying the arc. The owner may run the TUI in another terminal; your supervision uses watch. After startup, share the console URL printed on stderr, pinned with `/#/runs/<arc>/overview`, and the arc-pinned TUI command.
 
 ## Operating loop
 
@@ -86,6 +86,8 @@ Diagnosis is due after **8 builds or 20 judged build/lanes/gate attempts**, incl
 
 `default` mixes eligible low/medium-risk builds on Codex with Claude judgments. High risk, M2 and design units use Claude; M1 and capture-only units remain eligible for Codex. `claude-only` keeps every seat on Claude. Change a profile through a normal routing revision; records preserve the effective routing revision.
 
+After an audit’s arc-subject requests, resolve them with the apply that answers them: apply --from DIR --rev N --reason LINE --resolves nu-ID[,nu-ID...].
+
 A milestone runs its selected lanes after its units retire, then a fresh experience verdict walks the journeys and proposes fixes/polish. One experience role also judges before/after polish. Campaign audits cover the whole selected range at milestones, on request and at the final boundary: invariants, vacuity, cross-unit interactions and document drift together. They report findings and root requests. Admit repairs through revised inputs; only the root changes obligation dispositions. Dismiss a false-positive open finding, including P1, with `roadmap dismiss <finding> --counter-evidence "<line>"`. Counter-evidence must be non-empty; the root decision records `{role:root,routingRev}`. Audit dismissal requests require root review and never apply themselves. Dismissal closes settled finding items and suppresses re-raising on unchanged cited code; never edit the journal.
 
 ## Supervision and intervention
@@ -129,6 +131,8 @@ Apply queues at safe boundaries when necessary; read the durable receipt through
 
 Lane reuse hashes declared `inputs`, else the appropriate systems input; it also binds command/environment identity. Keep witness ids stable across lane moves and refresh proof only when its test ids/files or statement change. Run targeted development checks; let the executor certify full lanes. A repeated red is compared at diffBase: green there supplies regression evidence to the fix round; red there follows the base-red protocol. Never weaken tests to make a lane green. Declare deterministic fixtures for clocks and time zones.
 
+Lanes may read executor-owned ROADMAP_CPU, the granted CPU-token count, to size worker pools; never declare it in env.set or env.pass.
+
 Capture lanes bring up a contained stack and repo capture script on a leased port and retain every declared PNG state. Gate capture evidence is supplied only to the milestone's design/member units. Resource probe/teardown commands must label their own workload and clean it; declare pools and environment lifecycle honestly. Evidence globs must not hide tracked product/test files or protected paths.
 
 `docs/systems/<system>.md` (configurable as `systemNotesDir`) carries non-normative gotchas, seams and rigs. Build/gate receive existing note paths from their checkout commit. Edit notes as normal unit diffs, with gate review. Normative claims stay in the corpus. Salvage and candidate commit bodies retain captured build summaries and decisions; recovery uses verified evidence bytes.
@@ -139,7 +143,7 @@ The supervisor owns restart/backoff; containment emptiness precedes releasing re
 
 ## Completion
 
-Close admissions when the intended slice is complete. Let final audit, selected witnesses, batch lanes, close-out document publication and snapshots settle. Distinguish a completed active arc from a sealed one; report outstanding findings and debt honestly. Prepare the stacked PR with `pr`, then present the brief and demo location/rough edges. Demo controls are up/down/hold/release; promotion never restarts a held demo.
+Close admissions when the intended slice is complete. Let final audit, selected witnesses, batch lanes, close-out document publication and snapshots settle. Distinguish a completed active arc from a sealed one; report outstanding findings and debt honestly. Prepare the stacked PR with `pr`, then present the brief and demo location/rough edges. Demo controls are up/down/hold/release; promotion never restarts a held demo. At completion, share the arc-pinned console URL again so the owner can inspect retained results.
 
 Use `chain status` before another start. Prepare the next baseline on your own checkout, preserving the previous head and allowed between-arc corpus/config/vision changes. Stop when the vision is silent or the acknowledged chain bound disallows another start. Lookup details belong in the reference.
 

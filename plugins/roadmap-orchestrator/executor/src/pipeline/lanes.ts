@@ -1,3 +1,4 @@
+import { parseResourceUnit } from '../core/ids.ts';
 import { holisticInForce } from './stages.ts';
 import { externalVerdict } from '../holistic/external.ts';
 // Lane execution (plan "Pipeline", lanes and candidate rows; DESIGN-1.0.md §2.7 "Plan, specs and certification lanes"): the
@@ -241,11 +242,11 @@ export type LaneRuntime = Readonly<{ acquire: Acquire; rank: () => Rank; signal:
  * A cancelled signal is honoured.
  */
 export function reserveNow(ctx: ResourceContext): Acquire {
-  return (request, holder, _rank, signal) => {
+  return (request, holder, _rank, signal, entry) => {
     if (signal.aborted) return Promise.resolve({ kind: 'cancelled' });
     if (holder.type !== 'stage' && holder.type !== 'publication') throw new Error(`${canonicalJson(holder)} does not acquire`);
     const parent = { type: 'stage', unit: holder.unit, stage: holder.type === 'stage' ? holder.stage : 'candidate', attempt: holder.attempt } as const;
-    const got = reserve(ctx, holder, request, parent);
+    const got = reserve(ctx, holder, entry?.refresh() ?? request, parent, 0, { totalMs: 0, byReasonMs: {} }, entry?.slotHolder);
     if (got.state === 'refused') throw new Error(`${canonicalJson(holder)}: resources ${got.busy.join(', ')} are held by another`);
     return Promise.resolve({ kind: 'granted', units: got.resources });
   };
@@ -285,20 +286,27 @@ export const builderSuiteLanes = (suite: readonly LaneDef[], spec: SpecM1): read
  * The lane's declared env verbatim (`set`, and `pass` copied from the host), plus the unit's owner label and
  * `RESOURCE_INSTANCE_<POOL>` for each pool instance the lane's holder holds (`held`, F7).
  */
-export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: readonly ResourceUnit[]): Readonly<Record<string, string>> {
+/** Executor variables always reflect the reservation actually granted, including an empty set. */
+function executorEnv(label: string, held: readonly ResourceUnit[]): Readonly<Record<string, string>> {
+  return { [OWNER_ENV]: label, ...instanceEnv(held), ROADMAP_CPU: String(held.filter((u) => parseResourceUnit(u).type === 'cpu').length) };
+}
+
+function declaredEnv(ctx: Pick<StageContext, 'hostEnv'>, lane: LaneDef, executor: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
   const env: Record<string, string> = { ...lane.env.set };
   for (const name of lane.env.pass) {
     const value = ctx.hostEnv[name];
-    // Startup refuses a lane whose declared variable the host lacks (spec-lane-unrunnable).
     if (value === undefined) throw new Error(`lane ${lane.id} passes ${name}, which the executor's environment lacks`);
     env[name] = value;
   }
-  const executor: Record<string, string> = { [OWNER_ENV]: ownerLabel(ctx.plan().arc, unit), ...instanceEnv(held) };
   for (const [name, value] of Object.entries(executor)) {
     if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.id} declares ${name}, which the executor sets`);
     env[name] = value;
   }
   return env;
+}
+
+export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: readonly ResourceUnit[]): Readonly<Record<string, string>> {
+  return declaredEnv(ctx, lane, executorEnv(ownerLabel(ctx.plan().arc, unit), held));
 }
 
 /** A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. */
@@ -1033,6 +1041,14 @@ export async function runLaneSeries(
       }
       entry = false;
       const reserved = heldReservation(ctx, holder, 'reserved');
+      // A compound entry has already acquired its first lane: honour a pause that arrived at the grant.
+      if (rt.signal.aborted) {
+        const cleaned = await cleanup(ctx, reserved, parent);
+        return {
+          kind: 'ended', ran: null,
+          end: cleaned.kind === 'cleanup-failed' ? { kind: 'cleanup-failed', failed: cleaned.failed } : { kind: 'interrupted', reason: laneAbortReason(rt.signal) },
+        };
+      }
       const occupancy = await probe(ctx, reserved, parent);
       if (occupancy.kind === 'parked') {
         const cleaned = await cleanup(ctx, reserved, parent);
@@ -1671,20 +1687,8 @@ export async function runJourneySeries(
   let lastEvidence: OpId | null = null;
   let end: JourneyEnd = { kind: 'ran' };
 
-  const envOf = (lane: JourneyLane, held: readonly ResourceUnit[], witnessFile: AbsPath): Readonly<Record<string, string>> => {
-    const env: Record<string, string> = { ...lane.def.env.set };
-    for (const name of lane.def.env.pass) {
-      const value = ctx.hostEnv[name];
-      if (value === undefined) throw new Error(`lane ${lane.def.id} passes ${name}, which the executor's environment lacks`);
-      env[name] = value;
-    }
-    const executor: Record<string, string> = { [OWNER_ENV]: label, ...instanceEnv(held), ...(lane.witness === null ? {} : witnessEnv(lane.witness.reporter, witnessFile)) };
-    for (const [name, value] of Object.entries(executor)) {
-      if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.def.id} declares ${name}, which the executor sets`);
-      env[name] = value;
-    }
-    return env;
-  };
+  const envOf = (lane: JourneyLane, held: readonly ResourceUnit[], witnessFile: AbsPath): Readonly<Record<string, string>> =>
+    declaredEnv(ctx, lane.def, { ...executorEnv(label, held), ...(lane.witness === null ? {} : witnessEnv(lane.witness.reporter, witnessFile)) });
 
   const runOne = async (lane: JourneyLane, held: readonly ResourceUnit[]): Promise<JourneyRan> => {
     const start = sampleHost();

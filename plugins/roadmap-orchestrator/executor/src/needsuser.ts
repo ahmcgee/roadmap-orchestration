@@ -170,6 +170,7 @@ export function supersededItems(view: JournalView): ReadonlySet<NeedsUserId> {
 
 /**
  * The one predicate of an open journal item (paid M4a run 10, R-17): raised, not acknowledged and not superseded (K14).
+ * Apply resolution validation also uses the canonical openItems projection, including ack-file checks.
  * Everything that lists open items reads it: `status.needsUser`, the brief's items, the scheduler's holds and the terminal
  * predicate. `watch` streams files, so it reads the superseded set alone (`supersededItems`, a `superseded` line).
  */

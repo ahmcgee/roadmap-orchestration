@@ -73,7 +73,7 @@ export function setup(dir: string): Layout {
   const l = layout(dir);
   for (const d of [l.product, l.ghConfig, l.xdgConfig, l.inputs, l.worktrees]) mkdirSync(d, { recursive: true });
   write(l.gitConfig, `[user]\n\tname = ${FIXTURE_IDENTITY.name}\n\temail = ${FIXTURE_IDENTITY.email}\n[commit]\n\tgpgsign = false\n[init]\n\tdefaultBranch = ${MAIN}\n`);
-  for (const [path, text] of Object.entries(filesOf(join(FILES, 'product')))) write(join(l.product, path), text);
+  for (const [path, text] of Object.entries(filesOf(join(FILES, 'product')))) write(join(l.product, path), path === '.roadmap/config.json' ? json({ ...JSON.parse(text), webConsole: { host: '127.0.0.1', port: 0 } }) : text);
   const visionText = readFileSync(join(l.product, CORPUS_ROOT, VISION_DOC), 'utf8');
   write(join(l.product, '.roadmap', 'vision.json'), json(visionRecord(visionText)));
   git(l.product, '-c', `init.defaultBranch=${MAIN}`, 'init', '--quiet');

@@ -1,3 +1,4 @@
+import { type WaitingTotals, waitingTotals } from './status/waiting.ts';
 import { canonicalJson } from './core/json.ts';
 import { terminalReceipts } from './commands/queue.ts';
 import { withArcRefReads } from './chain.ts';
@@ -463,6 +464,7 @@ export const LOG_COMPACTION_BYTES = 50 * 1024 * 1024;
 export const LOG_COMPACTION_FOLD_MS = 2_000;
 
 export type Status = Readonly<{
+  waiting: WaitingTotals;
   arc: ArcId;
   supervision: Supervision;
   run: Readonly<{ state: ArcState; owner: OwnerState; heartbeatAt: IsoTime | null; stop: Readonly<{ mode: 'immediate' | 'drain'; deadline: IsoTime | null }> | null }>;
@@ -886,6 +888,7 @@ type Derived = Readonly<{
   view: JournalView;
   /** How long folding the log took (`host.log.foldMs`). */
   foldMs: number;
+  clock: number;
   plan: PlanM1 | null;
   start: Readonly<{ record: RunStart; plan: PlanM1 }> | null;
   inForce: InForce | null;
@@ -921,11 +924,11 @@ function routingInForce(inForce: InForce): Readonly<{ profile: ProfileName; of: 
 }
 
 /** The log folded, the plan in force, and every unit's line with the run's state: what `status` and `watch` share. */
-function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Derived {
+function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, timing?: Readonly<{ clock: number; foldMs: number }>): Derived {
   const began = performance.now();
   const log = snapshot ?? readJournal(runDir, arc);
   if (log.view.arc !== arc) throw new Error(`status: journal snapshot belongs to ${log.view.arc}, not ${arc}`);
-  const foldMs = Math.round(performance.now() - began);
+  const foldMs = timing?.foldMs ?? Math.round(performance.now() - began);
   const { view, events } = log;
   const record = readIf(join(runDir, START_FILE), runStart);
   const inForce = planInForce(runDir, view);
@@ -956,10 +959,10 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
     view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
   };
   const times = { starts: attemptStarts(events), intents: intentTimes(events) };
-  const now = Date.now();
+  const now = timing?.clock ?? Date.now();
   const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, times, now));
   return {
-    log, events, view, foldMs, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
+    log, events, view, foldMs, clock: now, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
   };
 }
 
@@ -1547,14 +1550,14 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
 }
 
 /** The common projection consumed by summary; execution detail is layered on only for full status. */
-export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones'> & Readonly<{
+export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones' | 'waiting'> & Readonly<{
   units: readonly UnitCore[];
   spend: Pick<Status['spend'], 'byRole' | 'bySmoke'>;
 }>;
 
 function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   const { view, events, start, inForce } = d;
-  const now = Date.now();
+  const now = d.clock;
   const meter = meterOf(events);
   const needsUser = openItems(runDir, view);
   const commands = commandsOf(runDir, arc, view);
@@ -1574,7 +1577,7 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   });
 
   const core: StatusCore = {
-    arc, supervision: supervision(runDir),
+    arc, supervision: supervision(runDir), waiting: waitingTotals(events),
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
     units: d.units, needsUser, spend: { byRole: meter.byRole, bySmoke: meter.bySmoke },
     plan: inForce === null ? null : { rev: inForce.rev, planSha256: inForce.manifest.planSha256 },
@@ -1586,9 +1589,9 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   return { core, d, meter, commands, on, revision, head, obligations, t, repairs, plan, now };
 }
 
-export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath) {
+export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot) {
   return withTreeListings(() => withObservationReads(() => {
-    const d = derive(runDir, arc, hostDir);
+    const d = derive(runDir, arc, hostDir, snapshot);
     return withSnapshotReads(d.log, () => {
       const x = readCore(runDir, arc, hostDir, d);
       return { core: x.core, events: x.d.events, plan: x.plan, meter: x.meter };
@@ -1596,8 +1599,8 @@ export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath) {
   }));
 }
 
-function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Derived): Status {
-  const x = readCore(runDir, arc, hostDir, derived);
+function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Derived, captured?: ReturnType<typeof readCore>): Status {
+  const x = captured ?? readCore(runDir, arc, hostDir, derived);
   const { core, d, meter, commands, on, revision, head, obligations, repairs, plan, now } = x;
   const { view, events, start, inForce } = d;
   const t = x.t.withHistory();
@@ -1681,6 +1684,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     demo: core.demo,
     milestones: core.milestones,
+    waiting: core.waiting,
   };
 }
 
@@ -1708,4 +1712,16 @@ function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: 
   });
   const routing = routingInForce(inForce).of;
   return { ...h, audit: { ...h.audit, routing }, revision: { ...h.revision, routing } };
+}
+
+/** One production capture: measured cursor fold, one clock and one shared core derivation.
+ * Materialized values outlive the mutable ObserverJournal view; never retain that view. */
+export function captureStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>) {
+  return withTreeListings(() => withObservationReads(() => {
+    const d = derive(runDir, arc, hostDir, snapshot, timing);
+    return withSnapshotReads(d.log, () => withArcRefReads(() => {
+      const x = readCore(runDir, arc, hostDir, d);
+      return { full: readStatus(runDir, arc, hostDir, d, x), core: x.core, plan: x.plan, events: [...d.events], ...timing };
+    }));
+  }));
 }

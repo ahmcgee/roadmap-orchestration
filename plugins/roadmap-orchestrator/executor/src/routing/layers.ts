@@ -55,6 +55,7 @@
 //   keys are refused. `{"routing": {"profile": "claude-only"}}` is the one config line that selects the
 //   Claude-only profile. On the first start, choose explicit `start --profile`, else this file's
 //   `profile`, else `default`. Restarts use the profile in the latest routing provenance.
+import { webConsole, type ConsoleSettings } from '../console/settings.ts';
 import { type RepoPath,repoPath } from '../core/values.ts';
 import type { UnitId } from '../core/ids.ts';
 import { type RoutingRev,routingRev } from '../core/ids.ts';
@@ -80,6 +81,7 @@ export const WALK_VIEWPORT = '1280x800';
 const MCP_SERVER_NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type RepoConfig = Readonly<{
+  webConsole?: ConsoleSettings;
   routing?: Readonly<{ profile?: ProfileName; seats?: RoutingLayer; classes?: ClassBindings }>;
   chain?: Readonly<{ k: number }>;
   /** dev.13: the walk sessions' MCP servers, by name (non-empty); absent: no browser drive. */
@@ -110,6 +112,7 @@ const walkMcp: Read<Readonly<Record<string, WalkMcpServer>>> = (value, path) => 
 };
 
 export const repoConfig = object((f): RepoConfig => {
+  const console = f.optional('webConsole', webConsole);
   const chain = f.optional('chain', object((g) => ({ k: g.get('k', positive) })));
   const walkthrough = f.optional('walkthrough', object((g) => ({ mcp: g.get('mcp', walkMcp) })));
   const systems = f.optional('systemsMap', systemsMap);
@@ -125,6 +128,7 @@ export const repoConfig = object((f): RepoConfig => {
     return out;
   }));
   return {
+    ...(console === undefined ? {} : { webConsole: console }),
     ...(routing === undefined ? {} : { routing }), ...(chain === undefined ? {} : { chain }),
     ...(systemNotesDir === undefined ? {} : { systemNotesDir }),
     ...(walkthrough === undefined ? {} : { walkthrough }), ...(systems === undefined ? {} : { systemsMap: systems }),

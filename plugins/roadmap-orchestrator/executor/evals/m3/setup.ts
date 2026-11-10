@@ -313,7 +313,7 @@ export async function setup(dir: string): Promise<void> {
   git(l.repo, 'config', 'user.name', 'M3 Fixture');
   git(l.repo, 'config', 'user.email', 'm3-fixture@example.invalid');
   git(l.repo, 'config', 'commit.gpgsign', 'false');
-  for (const [path, text] of Object.entries(filesOf(join(FILES, 'base')))) write(join(l.repo, path), path === '.roadmap/config.json' ? json({ systemsMap: FIXTURE_SYSTEMS }) : text);
+  for (const [path, text] of Object.entries(filesOf(join(FILES, 'base')))) write(join(l.repo, path), path === '.roadmap/config.json' ? json({ systemsMap: FIXTURE_SYSTEMS, webConsole: { host: '127.0.0.1', port: 0 } }) : text);
   write(l.vision, json(visionRecord(readFileSync(join(l.repo, CORPUS_ROOT, VISION_DOC), 'utf8'))));
   git(l.repo, 'add', '--all');
   git(l.repo, 'commit', '--quiet', '--message', 'm3 fixture: the ledger CLI');

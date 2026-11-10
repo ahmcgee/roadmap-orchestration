@@ -1,3 +1,4 @@
+import { changedPaths } from '../git/docs.ts';
 import { candidateRed } from './candidate-red.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
 // The integration slot (plan "Pipeline", candidate, ff and snapshot rows; DESIGN-1.0.md "Git truth and backend invariants"):
@@ -90,7 +91,7 @@ import { reentryRecommendation } from '../needsuser.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
 import {
-  type BatchHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, resourceTable, run, sameHolder,
+  type BatchHolder, type StageHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run, sameHolder,
 } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
@@ -98,7 +99,7 @@ import { type Cancelled, type StageContext, type StageParent, candidateVerificat
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
   type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
-  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, standInJourneyLane, suiteJourneyLane, suiteStandIns, witnessRecordPath,
+  removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, seriesEntry, standInJourneyLane, suiteJourneyLane, suiteStandIns, witnessRecordPath,
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
 import { pressureCause, seriesRuling } from './starved.ts';
@@ -211,7 +212,7 @@ const baseSeriesRoot = (runDir: AbsPath, parent: StageParent): AbsPath => absPat
  */
 export function candidateLanes(ctx: StageContext, tip: Sha, candidate: Sha): readonly LaneDef[] {
   const lanes = ctx.plan().suite.lanes.filter((l) => cadenceAtOrBefore(l.cadence, 'candidate'));
-  return seriesOrder(selectedLanes(mapInForce(ctx.journal.view), lanes, unitDiffPaths(ctx.repo, tip, candidate)));
+  return seriesOrder(selectedLanes(mapInForce(ctx.journal.view), lanes, changedPaths(ctx.repo, tip, candidate)));
 }
 
 /**
@@ -220,15 +221,15 @@ export function candidateLanes(ctx: StageContext, tip: Sha, candidate: Sha): rea
  * to an arc lane the held claims will witness on this tree (F6): each runs once, as both, and the claims reuse it.
  */
 async function suite(
-  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>,
+  ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], checkout: WorktreeCreateRequest, root: AbsPath, standIns: ReadonlyMap<LaneId, ArcLaneDef>, entered = false,
 ): Promise<Series> {
   // Candidate-cadence spec lanes run on this candidate on the current tip, owned by the delivering unit.
   // Their separate series preserves `set: spec`, evidence and red/fix attribution (including tip-alone diagnostics).
   const spec = loadUnitSpec(ctx, ctx.plan().units.find((u) => u.id === parent.unit)!).spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'candidate');
-  const own = spec.length === 0 ? null : await runLaneSeries(ctx, parent, spec, 'spec', checkout, absPath(join(root, '_spec')), laneRuntime(ctx, parent.unit), false);
+  const own = spec.length === 0 ? null : await runLaneSeries(ctx, parent, spec, 'spec', checkout, absPath(join(root, '_spec')), laneRuntime(ctx, parent.unit), entered);
   if (own !== null && own.tree !== null) await removeVerificationTree(ctx, own.tree, parent);
   if (own !== null && (own.end.kind !== 'green' || own.dirty.length > 0)) return { ...own, tree: null };
-  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, root, laneRuntime(ctx, parent.unit), false, standIns);
+  const series = await runLaneSeries(ctx, parent, lanes, 'suite', checkout, root, laneRuntime(ctx, parent.unit), entered && spec.length === 0, standIns);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return own === null ? series : { ...series, ledger: [...own.ledger, ...series.ledger] };
 }
@@ -236,7 +237,7 @@ async function suite(
 /** A suite that did not pass, or that changed its checkout (never certified under a SHA). */
 const failed = (series: Series): boolean => series.end.kind === 'red' || series.dirty.length > 0;
 
-async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent, decision: CandidateDecision): Promise<CandidateEnd> {
+async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent, decision: CandidateDecision, entered = false): Promise<CandidateEnd> {
   if (ctx.signal.reason === 'preempt') return ended('preempted');
   switch (decision.kind) {
     case 'transient-violation':
@@ -257,13 +258,15 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
     }
     case 'merge': {
       const op = candidateMergeOp(ctx.repo);
-      const intent = await runPrepared(ctx.journal, op, `candidate:${unit.id}`, parent, await op.prepare(decision.plan));
+      const prepared = await op.prepare(decision.plan);
+      if (integrationTip(ctx) !== decision.plan.tip) throw new CandidateEntryMoved();
+      const intent = await runPrepared(ctx.journal, op, `candidate:${unit.id}`, parent, prepared);
       if (ctx.signal.reason === 'preempt') return ended('preempted');
       // F6: a suite lane identical to an arc lane the held claims witness runs once on the candidate, as both.
       const claims = unitClaims(ctx, unit, intent.expect.integrationTip, intent.expect.unitCommit);
       const lanes = candidateLanes(ctx, intent.expect.integrationTip, intent.post.new);
       const standIns = suiteStandIns(lanes, claims === null || claims.selected.size === 0 ? [] : claims.lanes);
-      const onCandidate = await suite(ctx, parent, lanes, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent), standIns);
+      const onCandidate = await suite(ctx, parent, lanes, candidateWorktreeRequest(intent), candidateSeriesRoot(ctx.runDir, parent), standIns, entered);
       const fault = pressureHeld(ctx, unit.id, onCandidate) ?? seriesFault(onCandidate);
       if (fault !== null) return fault;
       if (!failed(onCandidate)) return heldClaims(ctx, unit, parent, intent);
@@ -316,33 +319,81 @@ function baseRedNeedsUser(ctx: StageContext, parent: StageParent, tip: Sha, base
   };
 }
 
+/** An external integration move invalidates the selection before candidate refs are published. */
+class CandidateEntryMoved extends Error {}
+
+/** Only the unused first-lane entry remains reserved; completed lane cleanup owns its residues. */
+async function releaseEntry(ctx: StageContext, holder: StageHolder, parent: StageParent): Promise<readonly ResourceInstance[]> {
+  const table = resourceTable(ctx.journal.view);
+  const resources = holderUnits(ctx.journal.view, holder).filter((u) => table.get(u)!.status.state === 'reserved');
+  if (resources.length === 0) return [];
+  const cleaned = await cleanup(ctx, { state: 'reserved', holder, resources, recipes: heldReservation(ctx, holder, 'reserved').recipes }, parent);
+  return cleaned.kind === 'cleanup-failed' ? cleaned.failed : [];
+}
+
 export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'candidate'> | Cancelled> {
   const parent = at(start(ctx, unit.id, 'candidate'), 'candidate');
   const approved = approvalOf(ctx, unit.id);
   const request = candidateRequest(ctx, unit, parent.attempt);
   if (approved.unitCommit !== request.unitCommit) throw new Error(`candidate of ${unit.id}: the approval binds ${approved.unitCommit}, the branch is at ${request.unitCommit}`);
   const holder: PublicationHolder = { type: 'publication', unit: unit.id, attempt: parent.attempt };
-  const entered = await enter(ctx, holder, PUBLICATION);
-  if (isCancelled(entered)) return entered;
-  // The slot declares no probe: nothing can occupy it.
-  const held = run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
-  const preempt = preemptible(ctx, unit.id, parent);
-  let end: CandidateEnd;
-  try {
-    end = await integrate(preempt.ctx, unit, parent, planCandidate(ctx.repo, request));
-    // M3 (B3): a vacuity repair's candidate must kill every mutant it repairs (src/pipeline/reproduce.ts).
-    if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
-    // Before green is recorded: a preemption that arrived after the last lane still wins (A7), and an active P1 over
-    // a selected obligation blocks it (G10).
-    if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
-    if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
-  } finally {
-    await preempt.close();
+  const stageHolder: StageHolder = { ...parent };
+  for (;;) {
+    let decision = planCandidate(ctx.repo, request);
+    let entry: ResourceRequest | null = null;
+    let combined: ResourceRequest = PUBLICATION;
+    const select = (): void => {
+      const spec = loadUnitSpec(ctx, unit).spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'candidate');
+      entry = decision.kind !== 'merge' ? null : seriesEntry(ctx, spec.length > 0 ? spec : candidateLanes(ctx, decision.plan.tip, decision.plan.tree));
+      combined = { ...(entry ?? PUBLICATION), publication: true };
+      ctx.journal.fact({ kind: 'candidate-entry-planned', unit: unit.id, attempt: parent.attempt, tip: decision.kind === 'merge' ? decision.plan.tip : decision.tip, request: combined });
+    };
+    select();
+    const refresh = (): ResourceRequest => {
+      const tip = decision.kind === 'merge' ? decision.plan.tip : decision.tip;
+      if (integrationTip(ctx) !== tip) { decision = planCandidate(ctx.repo, request); select(); }
+      return combined;
+    };
+    const entered = await enter(ctx, stageHolder, combined, { slotHolder: holder, refresh });
+    if (isCancelled(entered)) return entered;
+    const held = run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
+    const tip = decision.kind === 'merge' ? decision.plan.tip : decision.tip;
+    if (integrationTip(ctx) !== tip) {
+      const failed = await releaseEntry(ctx, stageHolder, parent);
+      await releasePublication(ctx, held, parent);
+      if (failed.length > 0) return record(ctx, parent, 'cleanup-failed', null, failedFacts(failed));
+      continue;
+    }
+    const preempt = preemptible(ctx, unit.id, parent);
+    let end: CandidateEnd;
+    let retry = false;
+    let entryFailures: readonly ResourceInstance[] = [];
+    try {
+      try { end = await integrate(preempt.ctx, unit, parent, decision, entry !== null); }
+      catch (error) {
+        if (!(error instanceof CandidateEntryMoved)) throw error;
+        retry = true;
+        end = ended('preempted');
+      }
+      if (end.kind === 'green') end = mutantEnd(await mutantAcceptance(preempt.ctx, unit, parent, latestCandidate(ctx, unit.id).post.new));
+      if (end.kind === 'green' && preempt.ctx.signal.reason === 'preempt') end = ended('preempted');
+      if (end.kind === 'green' && findingBlocking(ctx, unit) !== null) end = ended('finding-blocked');
+    } finally {
+      await preempt.close();
+      entryFailures = await releaseEntry(ctx, stageHolder, parent);
+      // Unexpected errors retain the publication slot: the scheduler must classify the fault as shared,
+      // then full recovery settles it. Only normal outcomes and tip-move retries release it below.
+    }
+    if (entryFailures.length > 0) {
+      retry = false;
+      end = { kind: 'cleanup-failed', needsUser: null, failed: entryFailures };
+    }
+    if (retry) { await releasePublication(ctx, held, parent); continue; }
+    const detail = end.kind === 'red' ? candidateRed(ctx, unit, parent, end.checkout ?? null).detail : undefined;
+    const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause, detail);
+    if (end.kind !== 'green') await releasePublication(ctx, held, parent);
+    return done;
   }
-  const detail = end.kind === 'red' ? candidateRed(ctx, unit, parent, end.checkout ?? null).detail : undefined;
-  const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause, detail);
-  if (end.kind !== 'green') await releasePublication(ctx, held, parent);
-  return done;
 }
 
 // ---------------------------------------------------------------------------------------------------

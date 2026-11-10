@@ -25,11 +25,12 @@ export function tmpDir(prefix: string): string {
 }
 
 // Isolate from the developer's global and system git config (hooks, signing, templates).
-const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+// Read process.env at invocation time so scoped fixture commit dates take effect.
+const gitEnv = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 
 /** Run git in `repo`; throws with stderr on a non-zero exit. Returns trimmed stdout. */
 export function git(repo: string, ...args: string[]): string {
-  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: gitEnv });
+  const result = spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: { ...process.env, ...gitEnv } });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} in ${repo} exited ${result.status}: ${result.stderr.trim()}`);
@@ -99,7 +100,7 @@ export function makeRepo(dir: string, spec: RepoSpec): string {
 export function worktreeTree(dir: string): string {
   const scratch = mkdtempSync(join(tmpdir(), 'roadmap-tree-'));
   try {
-    const env = { ...gitEnv, GIT_INDEX_FILE: join(scratch, 'index') };
+    const env = { ...process.env, ...gitEnv, GIT_INDEX_FILE: join(scratch, 'index') };
     const run = (...args: string[]): string => {
       const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env });
       if (r.error) throw r.error;

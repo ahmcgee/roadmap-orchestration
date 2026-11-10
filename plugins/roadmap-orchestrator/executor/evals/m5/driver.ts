@@ -34,6 +34,7 @@
 // Fail-fast: once the first arc's first plan in force is in its run dir (arcs in start order), `planShape` (shape.ts) must hold: two or more
 // milestones, a browser flow with its design unit, and a milestone with a unit descending from another's. Otherwise
 // the turn is killed and the run ends `fail-fast` (it would cost hours and grade nothing of M5).
+import { stopConsole } from '../../src/console/lease.ts';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -427,7 +428,7 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
     released = await stopHeldArc(HOST_DIR, product, (arc) => {
       const [cmd, args] = roadmapArgv(l, REAL, ['stop', '--repo', l.product, '--arc', arc]);
       return spawnSync(cmd, [...args], { cwd: l.product, env, encoding: 'utf8', timeout: RELEASE_WAIT_MS }).status;
-    }, RELEASE_WAIT_MS);
+    }, RELEASE_WAIT_MS).finally(() => stopConsole(product));
     const graceEnd = Date.now() + LEFTOVER_GRACE_MS;
     let left = fixtureProcesses(l.dir);
     while (left.length > 0 && Date.now() < graceEnd) {

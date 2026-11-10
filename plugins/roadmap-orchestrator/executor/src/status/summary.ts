@@ -69,6 +69,7 @@ export function summarize(s: StatusCore, events: readonly Event[], plan: PlanM1 
     }),
     needsUser: s.needsUser, waste: plan === null ? [] : wasteFindings(events, runs),
     demo: s.demo, completion: s.completion,
+    waiting: s.waiting,
   };
 }
 

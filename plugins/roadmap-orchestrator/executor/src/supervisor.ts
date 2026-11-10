@@ -1,3 +1,4 @@
+import { ensureArcConsole, consoleStatusLine } from './console/lease.ts';
 import { killEvidence, readOomKills } from './host/diagnostics.ts';
 // The supervisor (plan "Supervisor (R19)", "Host lock and ownership (R17-R18)"; DESIGN-1.0.md §2): it owns
 // the executor and nothing else.
@@ -418,6 +419,7 @@ export async function supervise(args: SupervisorArgs): Promise<number> {
   }
   const legacy = prepareLegacyHost(dir);
   if (legacy !== null) return refuse([legacy]);
+  await ensureArcConsole(args.repo, args.hostDir);
   const claimed = await claimHost(dir, { arc: plan.arc, runDir, repo: args.repo, supervisor: selfIdentity() }, reconcilePreviousArc);
   if (claimed.kind === 'refused') {
     const r = claimed.rejection;
@@ -530,6 +532,8 @@ function fromMarker(marker: ReadinessFile, supervisor: number): StartOutcome {
  */
 export async function launchSupervisor(args: SupervisorArgs, env: Readonly<Record<string, string | undefined>>, waitMs: number): Promise<StartOutcome> {
   const dir = openHostDir(args.hostDir);
+  try { const console = await ensureArcConsole(args.repo, args.hostDir); if (console) process.stderr.write(`${consoleStatusLine(console)}\n`); }
+  catch (e) { return failed(null, (e as Error).message); }
   const logs = supervisorLogs(dir, randomBytes(8).toString('hex'));
   const out = openSync(logs.out, 'a');
   const err = openSync(logs.err, 'a');

@@ -52,5 +52,10 @@
     "unmet": [
       "units-open"
     ]
+  },
+  "waiting": {
+    "unmeasuredReservations": 0,
+    "byUnitStage": [],
+    "byJobStage": []
   }
 }

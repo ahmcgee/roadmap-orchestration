@@ -18,7 +18,7 @@
 // inputs bind it as the host's cpu wait now.
 //
 // A host without schedstat (no `/proc/schedstat`: a kernel built without CONFIG_SCHEDSTATS) is `unavailable`: every
-// launch's pressure is null and every pressure rule is off. A file that is present but malformed fails loud.
+// launch's CPU pressure is null; independently available memory evidence still participates in admission. A file that is present but malformed fails loud.
 //
 // PSI `/proc/pressure/cpu` is not read: its `some` (the share of wall time during which at least one task waited) is high
 // on a many-cpu host whenever anything waits, and it did not separate a healthy busy host from a starving one.
@@ -198,12 +198,16 @@ export function memoryPressure(availableFraction: number, psi: string | null): n
   return Math.max(stalled, availableFraction < 0.05 ? PRESSURE_SATURATED : 0);
 }
 
-export function readHostCpu(): PressureTick | 'unavailable' {
-  const cpu = readHostCpuAt(HOST_SCHEDSTAT, Date.now());
-  if (cpu === 'unavailable') return cpu;
+/** The latest memory reading is available independently of kernel schedstat support. */
+export function readHostMemory(): number {
   const sample = readHostSample();
   const path = '/proc/pressure/memory';
-  return { ...cpu, memory: memoryPressure(sample.memAvailableKb / sample.memTotalKb, existsSync(path) ? readFileSync(path, 'utf8') : null) };
+  return memoryPressure(sample.memAvailableKb / sample.memTotalKb, existsSync(path) ? readFileSync(path, 'utf8') : null);
+}
+
+export function readHostCpu(): PressureTick | 'unavailable' {
+  const cpu = readHostCpuAt(HOST_SCHEDSTAT, Date.now());
+  return cpu === 'unavailable' ? cpu : { ...cpu, memory: readHostMemory() };
 }
 
 /** How long the ticks are kept: the longest span a pressure rule reads (the starved hold's 30-min bound, RC-11). */
@@ -214,6 +218,10 @@ export const HOST_WINDOW_MS = 60_000;
 /** The scheduler's per-tick readings, newest last, pruned to `PRESSURE_TICKS_MS`; empty on a host without schedstat. */
 export class PressureTicks {
   readonly #ticks: PressureTick[] = [];
+  #memory: number | null = null;
+
+  recordMemory(memory: number): void { this.#memory = memory; }
+  memory(): number | null { return this.#memory ?? this.#ticks.at(-1)?.memory ?? null; }
 
   record(tick: PressureTick | 'unavailable'): void {
     if (tick === 'unavailable') return;
@@ -234,14 +242,21 @@ export class PressureTicks {
  * The host's pressure over the last `HOST_WINDOW_MS` of the ticks taken at or after `sinceMs`: waited / (run + waited)
  * between the newest tick and the latest one at least the window before it. Null when those ticks span less.
  */
-export function hostPressure(ticks: readonly PressureTick[], sinceMs: number): number | null {
+export function hostCpuPressure(ticks: readonly PressureTick[], sinceMs: number): number | null {
   const newest = ticks.at(-1);
   if (newest === undefined) return null;
   const start = ticks.findLast((t) => t.atMs >= sinceMs && t.atMs <= newest.atMs - HOST_WINDOW_MS);
-  if (start === undefined) return (newest.memory ?? 0) >= PRESSURE_SATURATED ? newest.memory! : null;
+  if (start === undefined) return null;
   const run = newest.runNs - start.runNs;
   const wait = newest.waitNs - start.waitNs;
-  return Math.max(newest.memory ?? 0, run + wait === 0 ? 0 : wait / (run + wait));
+  return run + wait === 0 ? 0 : wait / (run + wait);
+}
+
+/** Combined wrapper for existing pressure-red/hold callers. */
+export function hostPressure(ticks: readonly PressureTick[], sinceMs: number, memory = ticks.at(-1)?.memory ?? null): number | null {
+  const cpu = hostCpuPressure(ticks, sinceMs);
+  if (cpu === null) return memory !== null && memory >= PRESSURE_SATURATED ? memory : null;
+  return Math.max(memory ?? 0, cpu);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -285,7 +300,7 @@ export function pressureRuling(runs: readonly PressureRun[], holds: PressureHold
 }
 
 /** What a hold's release reads: the scheduler's tick history (none in a process without it: status) and the wall time now. */
-export type PressureNow = Readonly<{ ticks: readonly PressureTick[]; nowMs: number }>;
+export type PressureNow = Readonly<{ ticks: readonly PressureTick[]; nowMs: number; memory?: number | null }>;
 
 /**
  * Whether a host-pressure hold recorded at `heldAtMs` still holds: under `STARVED_HOLD_MS` old, and the host's pressure
@@ -294,6 +309,6 @@ export type PressureNow = Readonly<{ ticks: readonly PressureTick[]; nowMs: numb
  */
 export function pressureHoldWaits(heldAtMs: number, now: PressureNow): boolean {
   if (now.nowMs - heldAtMs >= STARVED_HOLD_MS) return false;
-  const host = hostPressure(now.ticks, heldAtMs);
+  const host = hostPressure(now.ticks, heldAtMs, now.memory ?? now.ticks.at(-1)?.memory ?? null);
   return host === null || host >= PRESSURE_SATURATED;
 }

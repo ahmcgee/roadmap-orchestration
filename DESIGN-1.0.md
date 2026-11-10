@@ -106,6 +106,14 @@ decisions, report and evidence), bounded to ten recent history items per list.
 
 ### 2.2 Scheduling, systems and resources
 
+Waiting is measured per request in memory at each arbiter tick: one total and independent simultaneous reason
+totals (CPU pressure, memory pressure, tokens, named resources, publication slot, queue precedence). Completed
+reservations persist those totals on the reserve transition. Scheduler admission holds use the same accumulation,
+including dependency/contingent/milestone holds at initial dispatch and baseline, review and repair-batch holds, recorded at stage admission. In-flight tasks retain their previous stage-admission constraints; graph readiness is not reimposed.
+Status and summary share the completed totals per unit-stage and job-stage; live blockers remain in sched.json.
+Old grants without measurements are unmeasured, warned once; crashes discard in-flight timing and exclude downtime.
+CPU-window and latest-memory evidence are independent, with a combined pressure wrapper for existing hold callers. Only positive workload CPU (a calibrated request or build/lanes/candidate stage) arms CPU and memory braking; classification survives run/cleanup/replay until release, and pending reserves count. Judgments alone leave first-workload progress available. Both CPU and memory pressure brake only while another workload holds or has reserved CPU tokens, so a lone workload always progresses despite external host saturation.
+
 Units form a dependency DAG. Dependencies require actual merged/retired lineage state; contingent edges require an
 explicit resolve-edge with evidence. Priority, origin and aging order waiters. Repair and deflake work can take precedence;
 polish has its own origin. Admission reserves all named resources and CPU atomically before workload startup. CPU
@@ -129,8 +137,8 @@ Admission rechecks pause, draining mutations, backend/recovery and other readine
 reproduce, pre-build, build, lanes, gate and candidate. The post-build quiesce/evidence/salvage/teardown chain and green
 ff/snapshot chain finish despite pause/drain, so resources and publication cannot be stranded halfway through.
 Reservations are all-or-none, in global order: resource/pool name (instance number), CPU token number, integration-slot.
-Over-capacity requests refuse at load/apply; release follows confirmed cleanup. The publication holder keeps the slot
-through ff/snapshot. Docs publications outrank units and may preempt a candidate before green; red, preempted and
+Over-capacity requests refuse at load/apply; release follows confirmed cleanup. Candidate entry plans against the merged tree before queueing and atomically reserves the slot plus the first scheduled spec lane, otherwise selected suite lane. The request refreshes when the tip moves, synchronously before granting; after acquisition it revalidates before publishing candidate refs, releasing both partitions before retrying a changed selection. A compound reserve records optional slotHolder: the publication owns the slot and its candidate stage owns the lane set. Only the first owning series consumes entry, cleaning unused resources on reuse/refusal/conflict/cancellation/preparation failure; CPU never carries into later lanes or ff/snapshot. Full executor recovery settles both owners from that single intent. Task-fault recovery closes the atomic intent but settles only holders within the fault scope, leaving an excluded publication slot alone. The publication holder keeps the slot
+through ff/snapshot. While the slot is held, combined entrants contribute slot-only queue precedence, avoiding indirect CPU/resource convoys. Only that durable slot owner’s lane/journey requests bypass CPU pressure; memory still brakes them while another workload holds or has reserved CPU tokens. A lone workload retains the escape under either pressure cause. Tokens, dirty pools and independent precedence still apply. Docs publications outrank units and may preempt a candidate before green; red, preempted and
 finding-blocked candidates abandon and release resources before waiting again.
 
 Retryable parks name backend/host/resource/environment targets; operator parks require a root action. Probes coalesce
@@ -139,9 +147,11 @@ non-blocking park-escalated while probes continue. Repeating a recovered target 
 env-blocked. Usage-limit parks dominate retryable backend parks and need explicit backend resume. Backend/recovery
 holds retain their cause and do not advance the held stage. Ordering parks emit unparked once every blocker merges.
 
+Every lane/journey launch persists executor-owned ROADMAP_CPU as the granted CPU-token count, including an empty grant. Lanes may size worker pools from it; authoring/preflight refuse env.set/env.pass collisions. Kept legacy declarations load and become blocking plan-defect requests before execution.
+
 CPU defaults are judgment 1, build 4, lane build 2 and other lane cadences 4. Explicit values win; after three completed
 samples of at least 30 s, use ceil(p90 of the last ten), floor 1, cap at the default. Host admission uses CPU wait ratio,
-memory PSI and low available RAM; judgments bypass the pressure brake and one workload always progresses. Pressure
+memory PSI and low available RAM; judgments bypass the pressure brake and the first workload progresses under both CPU and memory pressure; memory saturation brakes further workloads while workload CPU tokens are held or pending. Pressure
 charging/holds distinguish starvation from product reds and are bounded at 30 minutes; not all job paths participate.
 
 A unit-confined throw is settled like recovery, then parks uncharged executor-fault with stack. Only audit/walk/baseline
@@ -165,6 +175,13 @@ Contract behavior changes land through gate-reviewed units. Plain ledger edits d
 ledger remains exported root text; existing rulings/cites.rulings/debt resolve.ruling fields still refer to it.
 
 Revision payload is kept before activation under the revision fence; queued root applies wait for safe stage boundaries.
+A changed apply may name `--resolves nu-ID[,nu-ID...]` to answer canonical open journal requests. Arc subjects are
+explicit architect assertions; unit subjects require a change/re-entry of that unit; grouped findings require every
+named finding answered by prospective repairs or already settled. Host/file-only, malformed/duplicate/closed ids and
+no-op applies refuse. Submission, dry-run and fenced precommit after queueing/smokes use one eligibility predicate.
+After its plan-applied fact, the apply closes eligible requests through existing choice:null acknowledgements; a
+concurrent ack wins. The applied receipt names the answering command and lists only its actual closures. Recovery
+replays commit/ack-file/ack-fact/receipt boundaries idempotently and preserves original bytes.
 Recovery preserves queued/applied receipt provenance and subject closure. Executor revisions use CAS/retry and a
 non-blocking revision notice. Root apply itself does not automatically produce that executor notice.
 
@@ -185,6 +202,56 @@ Full status is a read-only authoritative projection of run/owner/heartbeat, plan
 progress, resources/waits, spend, findings, obligation observations/census, timings, milestones, demo and completion.
 There is no single-flight status lock. TUI reads the same records with bounded observation; it never controls admission.
 Actionable watch wakes the architect on durable work/questions, death or timed check-ins and returns a sequence cursor.
+
+The Roadmap web console is a detached repo service, keyed by realpath Git common directory and kept outside
+supervisor/workload containment and arc GC. Start/resume and direct supervisor entry attempt console readiness before
+host claim; normal executor exit leaves it running. Explicit console start/stop/status manage an identity-checked
+lease; version replacement waits for death under an abstract-socket mutex. Operational console unavailability
+(bind failure, ten-second startup deadline, settings conflict, twenty-second mutex deadline, or survival of
+SIGKILL) prints one loud warning naming the cause and `webConsole.port` or `roadmap console stop`; arc work
+continues. Only this typed operational error is caught. Direct `roadmap console start` refuses these failures;
+invalid configuration, corrupt records and programming errors still propagate.
+A nonzero configured port never falls back to another port. Defaults remain
+0.0.0.0:4747: devcontainers need the wildcard interface for access from the host. Set `webConsole.port: 0`
+to bind any free port when several repos share one container. The lease records the actual bound port,
+which supplies the URL printed by `roadmap console status` and start/resume. A zero setting reuses an
+existing live console on the same host; its concrete bound port remains positive. No authentication is provided;
+loopback binding is the option for exposed hosts, and logs/results can contain sensitive text.
+
+One observation worker continuously maintains the active/latest and subscribed runs with bounded older-run
+caches. TUI, console and local CLI observation share the verified ObserverJournal capture and status core.
+HTTP status contains the same canonical full/summary objects as CLI stdout, with clock and measured fold telemetry
+captured once, not independently timed reads. Requests fence the journal and revalidate side files/liveness;
+unavailable transport/catch-up and console version/protocol mismatch fall back locally with a stderr diagnostic,
+while identity mismatch, malformed payload and corrupt evidence failures remain loud. Watch's actionable filtering, cursor and lease stay local.
+Envelopes bind package-version protocol, service instance, repo, arc, epoch, highWater and revision with observation
+and verification timestamps. They describe a verified journal prefix plus sampled external state, not a filesystem
+transaction. SSE invalidates snapshots; five seconds without verification marks content stale and freezes timers.
+
+The overview answers what is running, what is waiting and why, and what needs a human. Units offers sortable
+elapsed time, failures and spend; unit details lead with their recorded purpose and ordered rounds with
+stage-local attempt numbering. Activity pages plain-language journal events and audit findings. Timestamps
+are relative with local absolute time on hover. Resource timelines stop at recorded completion, and CPU
+measurements are compared with reserved cores. Missing wait starts and measurements remain explicit;
+checkpoint job drill-down is not included. No presentation adapter changes canonical status or arc flow.
+
+Agentic activities expose deep-linked AgentHistory views using the same structured transcript decoder as
+TUI text rendering. A bounded complete-line byte tail sends small per-invocation invalidations on SSE;
+clients fetch event pages through GET. Frames stay below 4 KiB, and backpressure waits for bounded drain rather than resetting on the
+first full buffer. The tail resets on
+replacement/truncation and settles on recorded completion. The retained seat brief is collapsed first;
+tool calls pair with results, errors stay visible, and earlier history/long fields load explicitly.
+Deterministic activities retain StepLog. This observation surface never changes agent invocation or arc flow.
+
+
+The browser uses vendored React 18.3.1 and supplied square-geometry components with Roadmap names throughout.
+UnitGraph has explicit milestone gate nodes; member completion cannot infer gate passage. Waiting totals allocate
+completed measurements once: reservation waits and dependency/contingent-edge/milestone/host-pressure/compare/
+deflake/repair-batch admission waits are queued, other admission holds are held, and mixed totals stay unallocated.
+Resource history comes from completed transitions and current queues only from owner-validated sched.json. CPU
+compares recorded reservations with measured run/wall averages; continuous utilization/peaks and individual test
+case bars remain unavailable. GET/HEAD-only versioned APIs serve validated retained evidence with bounded log
+cursors, containment checks, no CORS, same-origin CSP and no evidence HTML execution.
 
 Summary is compact JSON: progress, spend/expectations, milestones, caught, verdicts, captures, needsUser, waste, demo and
 completion. Optional plan.expectations arcUsd/perMilestoneUsd are forecasts, never limits. Caught is lane-red count plus

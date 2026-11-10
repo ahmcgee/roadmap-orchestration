@@ -19,7 +19,7 @@ import { lensStep } from './helpers/holistic.ts';
 import { commitAll, git } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const EVIDENCE = 'https://ci.example/runs/external-audit';
+const EVIDENCE = 'https://ci.example/arcs/external-audit';
 const head = (repo: string) => sha(git(repo, 'rev-parse', 'main'));
 const tree = (repo: string) => sha(git(repo, 'rev-parse', 'main^{tree}'));
 

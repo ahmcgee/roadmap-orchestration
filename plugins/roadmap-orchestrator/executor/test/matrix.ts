@@ -73,6 +73,7 @@ export const NEEDSUSER_RAISE = 'needsuser.raise';
 export const DISMISS = 'command.apply: dismiss a finding with root counter-evidence';
 export const COMMAND_APPLY = 'command.apply';
 export const PLAN_APPLY = 'command.apply: apply (a plan revision)';
+export const PLAN_APPLY_RESOLVES = 'command.apply: apply with linked needs-user resolutions';
 export const PLAN_START = 'start: a later start whose files change the plan (supervised)';
 export const QUEUED_APPLY = 'command.apply: an apply queued behind a running stage (dev.17: apply-queued, queued receipt, its landing at the boundary, apply-dropped; supervised)';
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
@@ -245,7 +246,7 @@ const LABEL_BOUNDARY: ReadonlyMap<string, Boundary> = new Map([
   ...(Object.entries(PIPELINE_LABELS) as [Boundary, readonly string[]][]).flatMap(([b, ls]) => ls.map((l) => [l, b] as const)),
   ...(Object.entries(HOLISTIC_LABELS) as [Boundary, readonly string[]][]).flatMap(([b, ls]) => ls.map((l) => [l, b] as const)),
   ['kill.after-intent', 'B2'], ['kill.after-cancel', 'B3'], ['kill.after-quiesced', 'B4'], ['kill.after-done', 'B5'],
-  ['docs.after-lanes', 'B4'], ['revision.commit.after-docs', 'B4'], ['batch.after-candidate', 'B4'], ['command.apply.after-effect', 'B4'], ['command.apply.after-receipt', 'B4'],
+  ['docs.after-lanes', 'B4'], ['revision.commit.after-docs', 'B4'], ['batch.after-candidate', 'B4'], ['command.apply.after-effect', 'B4'], ['command.apply.after-ack-file', 'B4'], ['command.apply.after-ack', 'B4'], ['command.apply.after-receipt', 'B4'],
 ]);
 
 /**
@@ -811,6 +812,26 @@ export const MATRIX: readonly Row[] = [
     },
   },
   {
+    // A changed apply resolves two named requests; each ack boundary is crashed at both occurrences.
+    row: PLAN_APPLY_RESOLVES,
+    test: 'test/apply-resolves.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: { status: 'excluded', why: `before-effect is covered by ${PLAN_APPLY}; no resolution is acknowledged before the revision commits` },
+      B3: {
+        status: 'crash',
+        labels: ['revision.commit.after-fact'],
+        recovery: 'the plan-applied fact links the command to the committed revision; recovery closes the revision and acknowledges each named request once',
+      },
+      B4: {
+        status: 'crash',
+        labels: ['command.apply.after-effect', 'command.apply.after-ack-file', 'command.apply.after-ack', 'command.apply.after-receipt'],
+        recovery: 'recovery preserves each existing ack file, writes each missing ack fact once, and completes one applied receipt whose resolved ids match the command and both acknowledgements; a second recovery changes nothing',
+      },
+      B5: { status: 'excluded', why: 'the done closes the command; repeated recovery preserves the journal and acknowledgement files byte-for-byte' },
+    },
+  },
+  {
     // dev.17 (arc feedback 2026-10-23, item 7), through the real CLI and supervisor (test/apply-exec.test.ts): B2, a spec
     // revision of u1 queued behind its running build; B4, one queued behind its running gate, which approves, so it is refused
     // where it lands.
@@ -1135,11 +1156,11 @@ export const MATRIX: readonly Row[] = [
   {
     row: CONCURRENT_APPLY,
     test: 'test/serial/concurrent-matrix.test.ts',
-    cells: jobCells([...LOG_APPENDS, 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'needsuser.raise.before-publish', 'needsuser.raise.after-publish', 'command.apply.before-effect', 'command.apply.after-effect', 'command.apply.after-receipt'], {
+    cells: jobCells([...LOG_APPENDS, 'plan.apply.after-inputs', 'revision.commit.after-intent', 'revision.commit.after-fact', 'needsuser.raise.before-publish', 'needsuser.raise.after-publish', 'command.apply.before-effect', 'command.apply.after-effect', 'command.apply.after-ack-file', 'command.apply.after-ack', 'command.apply.after-receipt'], {
       B1: 'a plan-applied or item-closure fact is absent after the crash: the command and revision reconcile from their kept inputs',
       B2: 'the campaign request raise or root command/revision is open: recovery finishes each exactly once',
       B3: 'the root revision inputs are kept before activation: recovery finishes the same accepted edit',
-      B4: 'the request file, revision fact or root receipt is durable: recovery consumes it, closing the request once',
+      B4: 'the request file, revision fact, acknowledgement file/fact or root receipt is durable: recovery keeps the ack file, writes the ack fact exactly once, and closes the request exactly once after the apply',
       B5: 'nothing is open: durable request, revision and receipt remain singular',
     }, PEERS_IN_BUILDS, 'no root decision label falls on this boundary'),
   },

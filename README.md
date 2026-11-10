@@ -41,12 +41,54 @@ The first run bootstraps the repo and distils the vision with you (it runs the `
 `/roadmap-orchestrator:estate-compaction` at any time to prune what the arcs have accumulated.
 
 The skill installs a managed `/usr/local/bin/roadmap` launcher inside the executor container and refreshes
-it on each skill session. Developers can then use `roadmap tui` in another terminal. After startup and at
-completion, the skill supplies a command pinned to that arc for inspection. The launcher points to the
-installed plugin and the current Node executable; no global npm package or copied executor is required.
+it on each skill session. Startup also ensures the **Roadmap web console**, normally at
+`http://localhost:4747`, and prints its URL on stderr without changing JSON stdout. Developers can use
+`roadmap tui` in another terminal. After startup and at completion, the architect shares the console URL
+and an arc-pinned TUI command. Pin browser inspection with `/#/runs/<arc>/overview`; the initial page
+follows this repo's live run, or its latest retained run. The launcher points to the installed plugin and
+the current Node executable; no global npm package or copied executor is required.
 For manual setup, run `node "<plugin root>/executor/bin/install-roadmap"` (with container administrator
 rights if needed), or pass `--bin-dir <directory>` for a writable PATH directory. Unrelated commands are
 never overwritten. Keep the plugin installed; refresh the launcher after updates or container rebuilds.
+
+The console is a detached, read-only service. `roadmap console start|stop|status --repo <path>` controls
+it independently of executor/watch; normal stop, completion, parking and supervisor death leave it
+available. Explicit console stop persists until another start. Console bind failures, startup or mutex
+timeouts, conflicts with a running console and failed termination leave arc work running with one loud
+warning naming the cause and `.roadmap/config.json` `webConsole.port` or `roadmap console stop`.
+Direct `roadmap console start` refuses these failures. Invalid configuration and programming errors still
+refuse startup; a nonzero configured port never falls back to another port.
+
+Start on Overview for the run state, current work, waiting reasons and open requests. Units lists every
+unit and sorts by elapsed time, failed checks or spend. Open a unit to see its purpose and rounds, then
+an agent activity for its live history or a check for its output. Activity shows recent journal events.
+Successful housekeeping steps stay behind a toggle in Activity and unit journeys; failures remain visible.
+Time & resources groups CPU measurements by unit and stage attempt, lists resource holds in words, and
+tabulates recorded waiting by reason. Attention lists the exact terminal commands for human responses.
+Times are relative, with local time on hover. Missing measurements are labelled, and stopped or completed runs retain their recorded time range. All views are read-only.
+
+The executor normally runs in a devcontainer. The intended default, `0.0.0.0:4747`, makes the console
+reachable from the host through the container's network interface. Set `webConsole.port` to `0` to bind
+any free port, useful when several repos share one container. The lease records the actual bound port;
+`roadmap console status` and the start/resume console line show its URL. There is **no authentication**: it
+exposes plans, state, spend, questions and selected logs/results. On an exposed host, use loopback in the
+existing `.roadmap/config.json`: `{"webConsole":{"host":"127.0.0.1","port":4747}}`. Hosts must be IP
+literals; missing fields default without rewriting config. A zero port reuses the current live console; other binding changes need console stop/start, and
+conflicting settings across worktrees are refused. For LAN sharing, replace the printed loopback address
+with the host's reachable hostname/IP. Service metadata lives under the realpath Git common directory's
+`roadmap-console/`, shared across worktrees and outside arc GC.
+
+The page retains timestamped content and reports “Disconnected/stale” after five seconds without a
+verified observation. Milestone nodes show executor gates, including when all member units have passed.
+Time charts show partial recorded effort, not wall-time coverage; overlapping waiting reasons are never
+summed and mixed-category waiting stays unallocated. CPU shows recorded reservations and measured
+run/wall averages, without invented utilization histories, peaks or test-case counts. Assets ship with
+the plugin; there is no runtime package installation or asset download.
+
+Open an agentic activity's history from its unit to read the retained brief, thoughts, tool inputs/results
+and final report. Active histories grow over SSE and follow the tail until you scroll up. Show earlier
+and explicit expansion keep long transcripts bounded; deterministic activities keep their step logs.
+
 
 For local testing before pushing: `/plugin marketplace add ./path/to/this/repo`.
 
@@ -94,7 +136,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    and encode supported field constraints; property descriptions state remaining semantic rules.
    Walk and comparison evidence entries are exact saved file paths; explanations belong in report text.
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
-4. **Publish the tested head.** An approved unit gets a candidate on the current integration tip. Candidate lanes
+4. **Publish the tested head.** An approved unit plans a candidate on the current integration tip and atomically takes the publication slot plus the first scheduled lane’s resources (spec first, otherwise the selected suite). A moved tip reselects the entry; unused entry resources are cleaned and released. Candidate lanes
    retain unit attribution; only a green exact head is fast-forwarded. Candidate reds durably name their cause,
    grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. Every successful integration fast-forward
    (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
@@ -129,7 +171,7 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
    exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
-   their notices. Arc items stay open until named with `ack <id>`; read and resolve or explicitly accept each one first.
+   their notices. Resolve an audit’s arc requests with the apply that answers them: add `--resolves nu-ID[,nu-ID...]`. Unit requests require that unit’s change/re-entry and grouped findings require every named repair. No-op/stale applies close nothing; the receipt lists actual closures. Other arc items accept named `ack <id>` after review.
    A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests
    close when their findings settle or a root apply supplies all named repairs. Dismissal suppresses the same finding
    on unchanged code. Supplied ack choices must be offered. External witnesses are explicit root attestations

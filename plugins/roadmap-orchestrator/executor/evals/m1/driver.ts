@@ -27,6 +27,7 @@
 // as above; check.ts then grades the needs-user items for coherence. On the hard timeout it sends `stop`,
 // waits a grace period for the supervisor to exit, then SIGKILLs the supervisor and the executor
 // (`endedBy: timeout`, exit 1).
+import { stopConsole } from '../../src/console/lease.ts';
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -192,51 +193,55 @@ function exitOf(hostDir: AbsPath, readyGeneration: number): Ended {
 
 export async function drive(args: Args): Promise<Report> {
   const l = layout(args.dir);
-  const c = prepare(args);
-  const limits = args.fake === null ? TIMEOUTS.real : TIMEOUTS.fake;
-  const run = ['--repo', l.repo, '--arc', l.arc];
-  const startedAt = new Date();
-  const deadline = startedAt.getTime() + limits.runMs;
-  const s = spawnSync(process.execPath, c.argv(['start', '--repo', l.repo, '--plan', l.plan, '--profile', args.profile]), { env: c.env, encoding: 'utf8', timeout: CLI_TIMEOUT_MS });
-  if (s.error !== undefined) throw s.error;
-  const ready = s.status === 0 ? JSON.parse(s.stdout) as Ready : null;
-  if (ready !== null && ready.kind !== 'ready') throw new Error(`roadmap start exited 0 without a ready line: ${s.stdout}`);
+  try {
+    const c = prepare(args);
+    const limits = args.fake === null ? TIMEOUTS.real : TIMEOUTS.fake;
+    const run = ['--repo', l.repo, '--arc', l.arc];
+    const startedAt = new Date();
+    const deadline = startedAt.getTime() + limits.runMs;
+    const s = spawnSync(process.execPath, c.argv(['start', '--repo', l.repo, '--plan', l.plan, '--profile', args.profile]), { env: c.env, encoding: 'utf8', timeout: CLI_TIMEOUT_MS });
+    if (s.error !== undefined) throw s.error;
+    const ready = s.status === 0 ? JSON.parse(s.stdout) as Ready : null;
+    if (ready !== null && ready.kind !== 'ready') throw new Error(`roadmap start exited 0 without a ready line: ${s.stdout}`);
 
-  let endedBy: EndedBy = ready === null ? 'start-failed' : 'exit';
-  let ended: Ended = { generation: null, exit: null };
-  if (ready !== null) {
-    const supervisor = supervisorOf(ready.supervisor);
-    const onStatus = (st: Status): void => {
-      if (endedBy === 'exit' && st.run.state === 'parked') {
-        endedBy = 'parked-stop';
+    let endedBy: EndedBy = ready === null ? 'start-failed' : 'exit';
+    let ended: Ended = { generation: null, exit: null };
+    if (ready !== null) {
+      const supervisor = supervisorOf(ready.supervisor);
+      const onStatus = (st: Status): void => {
+        if (endedBy === 'exit' && st.run.state === 'parked') {
+          endedBy = 'parked-stop';
+          cli(c, ['stop', ...run]);
+        }
+      };
+      if (!(await awaitEnd(c, run, supervisor, deadline, limits.pollMs, onStatus))) {
+        endedBy = 'timeout';
         cli(c, ['stop', ...run]);
+        if (!(await awaitEnd(c, run, supervisor, Date.now() + limits.stopGraceMs, limits.pollMs, () => {}))) {
+          const owner = statusOf(c, run).run.owner;
+          if (alive(supervisor)) process.kill(supervisor!.pid, 'SIGKILL');
+          if (owner.state === 'alive' && owner.pid !== null) process.kill(owner.pid, 'SIGKILL');
+        }
       }
-    };
-    if (!(await awaitEnd(c, run, supervisor, deadline, limits.pollMs, onStatus))) {
-      endedBy = 'timeout';
-      cli(c, ['stop', ...run]);
-      if (!(await awaitEnd(c, run, supervisor, Date.now() + limits.stopGraceMs, limits.pollMs, () => {}))) {
-        const owner = statusOf(c, run).run.owner;
-        if (alive(supervisor)) process.kill(supervisor!.pid, 'SIGKILL');
-        if (owner.state === 'alive' && owner.pid !== null) process.kill(owner.pid, 'SIGKILL');
-      }
+      ended = exitOf(c.hostDir, ready.generation);
     }
-    ended = exitOf(c.hostDir, ready.generation);
+    const report: Report = {
+      schema: REPORT_SCHEMA,
+      profile: args.profile,
+      fake: args.fake === null ? null : basename(args.fake),
+      startedAt: startedAt.toISOString(),
+      endedAt: new Date().toISOString(),
+      endedBy,
+      start: { code: s.status, signal: s.signal, stdout: s.stdout, stderr: s.stderr, ready },
+      generation: ended.generation,
+      exit: ended.exit,
+      status: statusOf(c, run),
+    };
+    writeFileSync(l.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' });
+    return report;
+  } finally {
+    await stopConsole(absPath(l.repo));
   }
-  const report: Report = {
-    schema: REPORT_SCHEMA,
-    profile: args.profile,
-    fake: args.fake === null ? null : basename(args.fake),
-    startedAt: startedAt.toISOString(),
-    endedAt: new Date().toISOString(),
-    endedBy,
-    start: { code: s.status, signal: s.signal, stdout: s.stdout, stderr: s.stderr, ready },
-    generation: ended.generation,
-    exit: ended.exit,
-    status: statusOf(c, run),
-  };
-  writeFileSync(l.report, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' });
-  return report;
 }
 
 if (import.meta.main) {

@@ -387,7 +387,7 @@ const RUNNING = (a: ArcState) => `Arc ${a.arc} is running. No Monitor here: endi
 function bootstrapArc1(c: Ctx, k: string): ArcState {
   const l = layout(c.dir);
   c.t.git('switch', '--quiet', '-c', 'roadmap-work', MAIN);
-  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) }, systemsMap: FIXTURE_SYSTEMS }));
+  writeFile(join(l.product, '.roadmap', 'config.json'), json({ chain: { k: Number(k) }, systemsMap: FIXTURE_SYSTEMS, webConsole: { host: '127.0.0.1', port: 0 } }));
   writeCorpus(c, 1);
   cpSync(join(FILES, 'golden', 'journeys'), join(l.product, 'journeys'), { recursive: true });
   c.t.git('add', '--all');

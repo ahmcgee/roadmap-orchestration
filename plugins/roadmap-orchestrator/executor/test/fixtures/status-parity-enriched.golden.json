@@ -695,7 +695,12 @@
         "walks": [],
         "findings": []
       }
-    ]
+    ],
+    "waiting": {
+      "unmeasuredReservations": 0,
+      "byUnitStage": [],
+      "byJobStage": []
+    }
   },
   "summary": {
     "arc": "<arc>",
@@ -762,6 +767,11 @@
         "close-out",
         "obligations-not-discharged"
       ]
+    },
+    "waiting": {
+      "unmeasuredReservations": 0,
+      "byUnitStage": [],
+      "byJobStage": []
     }
   }
 }

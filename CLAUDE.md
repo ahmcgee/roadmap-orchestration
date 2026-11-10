@@ -6,7 +6,9 @@ inside the skill address agents running an arc with it; they do not bind you her
 ## 1.0 (prerelease, on `main`)
 
 - The executor lives at `plugins/roadmap-orchestrator/executor/`: TypeScript run directly by Node 24 type
-  stripping. `tsc --noEmit` only, no build step, no runtime dependencies. Explicit `.ts` import specifiers,
+  stripping. The executor has no build step or runtime dependencies. The web console is prebuilt from
+  `executor/web-src/` with `npm run build:console`; its output `executor/web/` is committed and guarded
+  by the console drift test. Explicit `.ts` import specifiers,
   erasable syntax only (no enums, namespaces or parameter properties).
 - The binding design brief is `DESIGN-1.0.md`. The M1 plan's frozen schemas and contracts live in
   `executor/SCHEMAS.md`.

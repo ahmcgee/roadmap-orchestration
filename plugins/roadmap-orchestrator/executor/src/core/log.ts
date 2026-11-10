@@ -129,6 +129,9 @@ export class ObserverJournal {
   #events: Event[] = [];
   #offset = 0;
   #identity = '';
+  #generation = 0;
+  /** Cursor identity changes on replacement, truncation, anchor reset or failed verification. */
+  get cursor() { return { generation: this.#generation, identity: this.#identity, offset: this.#offset, size: this.#size }; }
   #size = 0;
   #mtime = 0;
   #anchor = Buffer.alloc(0);
@@ -138,6 +141,7 @@ export class ObserverJournal {
     this.#fold = new Fold(arc);
   }
   #reset(): void {
+    this.#generation++;
     this.#fold = new Fold(this.arc);
     this.#events = [];
     this.#offset = 0;

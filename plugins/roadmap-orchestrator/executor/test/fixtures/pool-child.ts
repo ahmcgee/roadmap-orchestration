@@ -13,11 +13,11 @@ import { recoverReservations } from '../../src/recover/resource.ts';
 import {
   type PublicationHolder, type RetryHolder, type StageHolder, cleanup, reserve, retryReclaim, run,
 } from '../../src/resources/reserve.ts';
-import { ESTATE, openPoolRun } from './pool-plan.ts';
+import { DB, ESTATE, openPoolRun } from './pool-plan.ts';
 import type { ResRun } from './res-plan.ts';
 
 const [mode, json, dieAt] = process.argv.slice(2);
-const MODES = ['retry', 'reclaim', 'publication', 'recover'];
+const MODES = ['retry', 'reclaim', 'publication', 'compound', 'recover'];
 if (json === undefined || mode === undefined || !MODES.includes(mode)) throw new Error(`usage: pool-child <${MODES.join('|')}> <run json> [dieAt], got ${JSON.stringify(process.argv.slice(2))}`);
 const { ctx, journal } = openPoolRun(JSON.parse(json) as ResRun);
 
@@ -55,6 +55,15 @@ switch (mode) {
     }
     process.stdout.write(`${JSON.stringify(await cleanup(ctx, held, parent))}\n`);
     break;
+  }
+  case 'compound': {
+    const holder: StageHolder = { type: 'stage', unit: U1, stage: 'candidate', attempt: 1 };
+    const slotHolder: PublicationHolder = { type: 'publication', unit: U1, attempt: 1 };
+    const parent = { ...holder };
+    const got = reserve(ctx, holder, { named: [DB], pools: [], cpu: 1, publication: true }, parent, 0, { totalMs: 0, byReasonMs: {} }, slotHolder);
+    if (got.state === 'refused') throw new Error('compound refused');
+    run(ctx, got, parent);
+    break; // Recovery owns both partitions, including a reserved slot with no green decision.
   }
   case 'recover':
     await recoverReservations(ctx);

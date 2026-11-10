@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { generateScaleArc, ownScaleArc } from '../helpers/scale-arc.ts';
+import { tmpDir } from '../helpers/repo.ts';
+import { ConsoleBrowser } from '../helpers/console-browser.ts';
+import { until } from '../fixtures/exec-common.ts';
+import { arcId } from '../../src/core/ids.ts';
+import { absPath } from '../../src/core/values.ts';
+import { gitCommonDir } from '../../src/git/git.ts';
+import { ObservationCache } from '../../src/observation/cache.ts';
+import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
+import { projectionIndex } from '../../src/console/tab-projections.ts';
+import { ConsoleEffort } from '../../src/console/effort-query.ts';
+import { serveConsole } from '../../src/console/http.ts';
+import { consoleGet } from '../helpers/console-http.ts';
+test('300-unit Effort completions reconcile with canonical spend, exhaustive frozen ranking and cold browser request/body budgets',{timeout:90_000},async t=>{
+ const generation=performance.now(),m=await generateScaleArc(tmpDir('console-effort-scale')),generationMs=performance.now()-generation,release=await ownScaleArc(m);t.after(release);
+ const capture=performance.now(),e=new ObservationCache(absPath(m.hostDir),'effort-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
+ assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
+ const tabs=new ConsoleEffort(),projection=performance.now();let page=tabs.read(e,{window:'arc',sort:'work'});const projectionMs=performance.now()-projection,first=page;
+ const serialization=performance.now(),serialized=JSON.stringify({...e,data:page}),serializationMs=performance.now()-serialization,parse=performance.now();JSON.parse(serialized);const parseMs=performance.now()-parse;
+ const bytes=(data:unknown)=>Buffer.byteLength(JSON.stringify({...e,data}))+1,all=[...page.rows];let largest=bytes(page);
+ while(page.page.next){page=tabs.read(e,{window:'arc',sort:'work',cursor:page.page.next});all.push(...page.rows);largest=Math.max(largest,bytes(page));}
+ assert.ok(largest<=128*1024);assert.equal(all.filter(r=>r.subject.type==='unit').length,300);assert.equal(new Set(all.map(r=>r.id)).size,all.length);assert.equal(all.length,page.page.matching);
+ const spend=all.reduce((n,r)=>n+(r.spend.costUsd??0),0);assert.ok(Math.abs(spend-e.data.summary.spend.costUsd)<1e-9);assert.ok(Math.abs(first.totals.spend.costUsd!-spend)<1e-9);
+ for(const k of ['agentMs','commandMs','heldMs','queuedMs','unallocatedMs'] as const)assert.equal(all.reduce((n,r)=>n+(r[k]??0),0),first.totals[k]??0);
+ const values=all.map(r=>r.agentMs===null&&r.commandMs===null?null:(r.agentMs??0)+(r.commandMs??0));assert.ok(values.every((v,n)=>!n||v===null||values[n-1]!==null&&values[n-1]!>=v));
+ assert.equal(first.buckets.length<=64,true);const index=projectionIndex(e),expectedScopes=[...new Set([...index.invocations.rows.map(r=>{const s=index.subject(r.parent,r.invocation.unit);return `${s.type}:${s.id}`;}),...index.charges.bySubject.keys()])].filter(key=>!key.startsWith('unit:')).sort();assert.deepEqual(all.filter(r=>r.subject.type!=='unit').map(r=>r.id).sort(),expectedScopes,'every recorded Arc/job scope stays outside unit attribution');
+ const b=new ConsoleBrowser(tmpDir('console-effort-scale-browser'));t.after(()=>b.close());await b.initialize();await b.call('browser_resize',{width:1440,height:900});
+ await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.addInitScript(()=>{window.__reads=[];const original=window.fetch;window.fetch=async(...args)=>{const r=await original(...args);if(String(args[0]).includes('/api/'))window.__reads.push({url:String(args[0]),status:r.status,atMs:performance.now(),bytes:new TextEncoder().encode(await r.clone().text()).length});return r;};});}`});
+ const start=performance.now(),s=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>s.close());
+ await b.call('browser_navigate',{url:`${s.url}/#/arcs/${m.arc}/effort?window=arc&sort=work`});await until(async()=>b.evaluate(`()=>document.querySelectorAll('table[aria-label="All units"] tbody tr').length===50&&document.querySelector('.progress-count')?.textContent.includes('/300')`),10_000,'cold Effort');const usableMs=performance.now()-start;
+ const reads=await b.evaluate<{url:string;status:number;bytes:number;atMs:number}[]>(`()=>window.__reads`),success=reads.filter(r=>r.status===200);
+ assert.deepEqual(success.map(r=>new URL(r.url,'http://console').pathname.split('/').at(-1)).sort(),['arcs','effort','shell']);assert.ok(!reads.some(r=>/\/(snapshot|status|resources|graph|activity|timeline|attention)(?:\?|$)/.test(r.url)));
+ const coldBytes=success.filter(r=>!r.url.endsWith('/arcs')).reduce((n,r)=>n+r.bytes,0);assert.ok(coldBytes<=136*1024);
+ const detailStart=performance.now();await b.evaluate(`()=>{document.querySelector('.effort-unit-link').click();return true;}`);await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .unit-meta')`),5000,'selected unit');const selectedMs=performance.now()-detailStart;await b.evaluate(`()=>{document.querySelector('[aria-label="Close details"]').click();return true;}`);
+ const times:number[]=[];for(let n=0;n<20;n++){const at=performance.now(),r=await consoleGet(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/effort?window=arc`);assert.equal(r.status,200,await r.clone().text());await r.json();times.push(performance.now()-at);}times.sort((a,b)=>a-b);
+ const heaps:number[]=[];let maxDom=0;for(let n=0;n<12;n++){await b.evaluate(`()=>{document.querySelector('.effort-unit-link').click();return true;}`);await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .unit-meta')`),5000,'cycle drawer');await b.evaluate(`()=>{document.querySelector('[aria-label="Close details"]').click();return true;}`);maxDom=Math.max(maxDom,await b.evaluate<number>(`()=>document.querySelectorAll('*').length`));if(n===3||n===11){await b.call('browser_run_code_unsafe',{code:'async(page)=>{const c=await page.context().newCDPSession(page);await c.send("HeapProfiler.collectGarbage");await c.detach();}'});heaps.push(await b.evaluate<number>(`()=>performance.memory.usedJSHeapSize`));}}
+ assert.ok(maxDom<6000);assert.ok(heaps[1]!-heaps[0]!<12*1024*1024);
+ await b.call('browser_resize',{width:390,height:844});assert.equal(await b.evaluate(`()=>document.documentElement.scrollWidth<=innerWidth`),true);
+ console.log(JSON.stringify({effortScale:{largestEnvelopeBytes:largest,coldBytes,matching:all.length,generationMs,captureMs,projectionMs,serializationMs,parseMs,usableMs,shellBodyMs:success.find(r=>r.url.includes('/shell'))!.atMs,selectedMs,warmP95Ms:times[18],heaps,maxDom,rss:process.memoryUsage().rss,node:process.version}}));
+});

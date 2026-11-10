@@ -121,7 +121,7 @@ export type WalkToolsProblem =
   | Readonly<{ type: 'mcp-unconnected'; server: string; detail: string }>;
 
 /** Why a declared command (a lane, a probe, a teardown) cannot run on this host. */
-export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }>;
+export type CommandProblem = Readonly<{ type: 'argv0-unresolvable'; argv0: string }> | Readonly<{ type: 'env-missing'; name: string }> | Readonly<{ type: 'env-reserved'; name: 'ROADMAP_CPU' }>;
 
 export type StartupRejectionKind = StartupRejection['kind'];
 
@@ -194,6 +194,7 @@ export interface StartupCheck<K extends StartupRejectionKind> {
 export type RejectionFile = Readonly<{ v: SchemaVersion; at: IsoTime; rejections: readonly StartupRejection[] }>;
 
 const commandProblem: Read<CommandProblem> = tagged('type', {
+  'env-reserved': object((f): CommandProblem => ({ type: f.get('type', literal('env-reserved')), name: f.get('name', literal('ROADMAP_CPU')) })),
   'argv0-unresolvable': object((f): CommandProblem => ({ type: f.get('type', literal('argv0-unresolvable')), argv0: f.get('argv0', str) })),
   'env-missing': object((f): CommandProblem => ({ type: f.get('type', literal('env-missing')), name: f.get('name', str) })),
 });

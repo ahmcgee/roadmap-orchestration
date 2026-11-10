@@ -160,7 +160,7 @@ export function setup(dir: string): void {
   git(l.repo, 'config', 'user.name', 'M1 Fixture');
   git(l.repo, 'config', 'user.email', 'm1-fixture@example.invalid');
   git(l.repo, 'config', 'commit.gpgsign', 'false');
-  for (const [path, text] of Object.entries(PRODUCT)) write(join(l.repo, path), text);
+  for (const [path, text] of Object.entries(PRODUCT)) write(join(l.repo, path), path === '.roadmap/config.json' ? json({ ...JSON.parse(text), webConsole: { host: '127.0.0.1', port: 0 } }) : text);
   git(l.repo, 'add', '--all');
   git(l.repo, 'commit', '--quiet', '--message', 'm1 fixture: initial product');
   git(l.repo, 'branch', INTEGRATION, MAIN);
