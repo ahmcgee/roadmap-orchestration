@@ -110,7 +110,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    K-n curation; debt resolutions link B-n and K-n in the plain C-n ledger. Phase 0 checks typed inputs, committed
    target bytes, proof reachability and readiness; system overlap, possible future-witness vacuity, spanning proof and design ordering advise judgment.
    Phase 0 and every apply refuse a witness file its lane would never run: outside the lane's `testPaths`, or left out
-   of an explicit file list in its argv (a shell's `-c` script included); a lane an apply adds must declare `testPaths`.
+   of an explicit file list anywhere in its argv (past wrapper layers, a shell's `-c` script included); a lane an apply
+   adds must declare `testPaths`. A builder that finds a witness file its lane never runs reports it as a spec error,
+   which parks the unit for the root, uncharged.
 2. **Start and review.** Startup validates the pack, claims the host and smokes its routed backends. A fresh pack
    review checks it against the target and census and must end before admission. Blocking unit findings hold the named
    units and their transitive dependents; other blocking targets hold the arc. The architect fixes the pack for a

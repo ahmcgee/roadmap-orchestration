@@ -16,19 +16,19 @@ import { patchedTree } from '../src/git/mutant.ts';
 import { verificationWorktree } from '../src/pipeline/dispatch.ts';
 import { unitTip } from '../src/pipeline/gate.ts';
 import { removeCheckout,seriesTree } from '../src/pipeline/lanes.ts';
-import { step } from '../src/pipeline/unit.ts';
+import { runUnit,step } from '../src/pipeline/unit.ts';
 import { ROADMAP_BIN } from '../src/pipeline/witnesscheck.ts';
 import { idleEnvironments } from '../src/resources/environments.ts';
 import { type ChecksArc,type ChecksOptions,checksArc,outcomeFacts } from './fixtures/checks-common.ts';
 import { managedEnv,startedCalls } from './fixtures/env-common.ts';
 import { treeWith } from './fixtures/repair-common.ts';
-import { SCENARIO_TIMEOUT_MS,planCheckStep } from './fixtures/stage-common.ts';
+import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcDescriptor,type ArcRun,MUL,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil } from './fixtures/unit-common.ts';
 import { barrierDir,reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { fixture,runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
-import { readCalls } from './helpers/scenario.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 import { type TreePlan,scriptTree } from './helpers/witness.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -112,6 +112,32 @@ describe('D1 witness presence', () => {
       assert.equal(lanesFacts(own.a.d).at(-1)!.outcome, 'witnesses-missing');
     } finally {
       own.r.journal.close();
+    }
+  });
+
+  // dev.59 pass 6 (nu-119813, C-355): u-web-read-journeys's witness item W-1 sat in a file its witness lane never ran; a
+  // witness item declares no files, so only the builder sees it. Its spec-wrong report is the designed way out: the unit
+  // parks for the root, uncharged, instead of a further fix round.
+  test('witnesscheck.unselected-spec-wrong: a fix round whose builder reports the witness file unselected by its lane parks spec-wrong for the root, uncharged; no further lanes, no gate', T, async () => {
+    const unselected = 'witness item W-1 (test "w1") is in test/rehearse.test.js, which lane journey never runs: its argv lists other files. Evidence: roadmap witness-check reports w1 missing after the test was added.';
+    const wrong: Step = { as: 'codex', expect: { argv: ['exec', 'resume'] }, acts: [{ type: 'commit', message: 'add w1', files: { 'test/rehearse.test.js': '// w1\n' } }, { type: 'emit', value: { ...BUILD_REPORT, grounding: { specWrong: unselected, touches: [] } } }] };
+    const { a, r } = await lanesOf({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), wrong], witnesses: [{ id: 'W-1', testId: 'w1' }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } } });
+    try {
+      const missing = lanesFacts(a.d).at(-1)!;
+      assert.deepEqual([missing.outcome, missing.chargeable], ['witnesses-missing', false]);
+      assert.deepEqual(missing.detail, { kind: 'witnesses-missing', missing: [{ lane: 'journey', testId: 'w1' }], failed: [] });
+      const parked = await runUnit(r.ctx, r.unit('u1'), admitAll);
+      if (parked.kind !== 'parked') throw new Error(JSON.stringify(parked));
+      assert.deepEqual([parked.needsUser.reason, parked.needsUser.blocking, parked.needsUser.summary], ['spec-wrong', true, unselected]);
+      assert.match(parked.needsUser.recommendation, /roadmap resume u1/);
+      const f = outcomeFacts(a.d).at(-1)!;
+      assert.deepEqual([f.stage, f.outcome, f.chargeable, f.park], ['build', 'spec-wrong', false, { class: 'operator', kind: 'design', ordering: null }]);
+      const u = r.journal.view.unit(unitId('u1'));
+      assert.deepEqual([u.status, u.counters.chargeableFailures], ['park-pending', 0]);
+      assert.equal(lanesFacts(a.d).length, 1, 'no lanes run after the report');
+      assert.equal(gateCalls(a.d).length, 0, 'the gate is not called');
+    } finally {
+      r.journal.close();
     }
   });
 
