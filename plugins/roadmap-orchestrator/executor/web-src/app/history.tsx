@@ -272,12 +272,16 @@ function HistoryEvents({events,live,...props}:any){
   const groups=historyToolRuns(events,live);
   return groups.map(group=>group.events.length===1?h(AgentEvent,{key:group.key,event:group.events[0],...props}):h("details",{key:group.events.at(-1).id,className:"history-group",onToggle:props.onLayout},h("summary",null,`${group.events.length} tool calls: ${group.label}`,h("small",{className:"muted"},[group.events[0].at,group.events.at(-1).at].filter(Boolean).map(at=>new Date(at).toLocaleTimeString()).join(' – '))),group.events.map(event=>h(AgentEvent,{key:event.id,event,...props}))));
 }
-function AgentDetail({ arc, id, activity, close, stale, detail }: any) {
+function AgentDetail({ arc, id, activity, close, stale, detail, full = false }: any) {
   const now=R.useContext(Clock);
   const base = `/arcs/${arc}/invocations/${id}`;
   const [history, setHistory] = useState<any>(null), [error, setError] = useState<any>(""), [brief, setBrief] = useState<any>(null), [result, setResult] = useState<any>(null);
   const [following, setFollowing] = useState<any>(true), [earlier, setEarlier] = useState<any>(false), [above,setAbove]=useState(false), [loadingEarlier,setLoadingEarlier]=useState(false);
-  const scroll = useRef<any>(null), follow = useRef<any>(true), placedScroll = useRef<any>(null), entered=useRef(false), anchor=useRef<{id:string;offset:number}|null>(null);
+  const scroll = useRef<any>(null), follow = useRef<any>(true), placedScroll = useRef<any>(null), entered=useRef(false), anchor=useRef<{id:string;offset:number;height:number}|null>(null);
+  // Where the reader was in the drawer when they pressed Expand: the full view opens there and Back returns there.
+  const reading=useRef<{following:boolean;anchor:{id:string;offset:number;height:number}|null}|null>(null), wasFull=useRef(full);
+  // The first event still visible at the top of the transcript, how far below the top edge it sits, and its height.
+  const readingAnchor=()=>{const top=scroll.current.getBoundingClientRect().top,first=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>!node.closest('details:not([open])')&&node.getBoundingClientRect().height>0&&node.getBoundingClientRect().bottom>top) as HTMLElement|undefined;return first?{id:first.dataset['eventId']!,offset:first.getBoundingClientRect().top-top,height:first.getBoundingClientRect().height}:null;};
   useEffect(() => {
     const c = new AbortController();
     setHistory(null);
@@ -329,7 +333,10 @@ function AgentDetail({ arc, id, activity, close, stale, detail }: any) {
   }, [base]);
   const followLayout = () => {
     if(!scroll.current)return;
-    if(anchor.current){const saved=anchor.current;anchor.current=null;const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset['eventId']===saved.id) as HTMLElement|undefined;if(target)scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top-saved.offset;placedScroll.current=scroll.current.scrollTop;return;}
+    if(anchor.current){const saved=anchor.current;anchor.current=null;const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset['eventId']===saved.id) as HTMLElement|undefined;if(target){const box=target.getBoundingClientRect();
+      // An event cut by the top edge keeps the same share of itself above the edge when a width change reflows it.
+      const offset=saved.offset<0&&saved.height>0?saved.offset*box.height/saved.height:saved.offset;
+      scroll.current.scrollTop+=box.top-scroll.current.getBoundingClientRect().top-offset;}placedScroll.current=scroll.current.scrollTop;return;}
     if(!entered.current&&history?.events.length){entered.current=true;if(completed){scroll.current.scrollTop=0;placedScroll.current=0;return;}}
     if (!follow.current) return;
     const verdict = completed ? scroll.current.querySelector(".history-verdict") : null;
@@ -337,12 +344,25 @@ function AgentDetail({ arc, id, activity, close, stale, detail }: any) {
     placedScroll.current = scroll.current.scrollTop;
   };
   R.useLayoutEffect(followLayout, [history, result]);
+  // Expand and Back change only the width: keep the same reading position, or keep following the live tail.
+  R.useLayoutEffect(() => {
+    if (wasFull.current === full) return;
+    wasFull.current = full;
+    if (!scroll.current) return;
+    const saved = reading.current;
+    if (!full) reading.current = null;
+    // A reader who was following when they expanded and stopped in the full view gets the updates they skipped.
+    const catchUp = saved?.following && !follow.current && history?.unseen;
+    if (saved) { follow.current = saved.following; setFollowing(saved.following); anchor.current = saved.following ? null : saved.anchor; }
+    if (catchUp) void latest();
+    followLayout();
+    setAbove(scroll.current.scrollTop > 8);
+  }, [full]);
   const more = () => {
     if(loadingEarlier)return;setLoadingEarlier(true);
     follow.current = false;
     setFollowing(false);
-    const top=scroll.current.getBoundingClientRect().top,first=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>!node.closest('details:not([open])')&&node.getBoundingClientRect().height>0&&node.getBoundingClientRect().bottom>top) as HTMLElement|undefined;
-    if(first)anchor.current={id:first.dataset['eventId']!,offset:first.getBoundingClientRect().top-top};
+    anchor.current=readingAnchor();
     get(`${base}/history?before=${history.before}&identity=${encodeURIComponent(history.identity)}`).then((r: any) => {
       setEarlier(true);
       setHistory((old: any) => ({ ...old, before: r.data.before, hasMore:r.data.hasMore, events: [...new Map([...r.data.events, ...old.events].map((event: any) => [event.id, event])).values()].slice(0, 200) }));
@@ -370,7 +390,7 @@ function AgentDetail({ arc, id, activity, close, stale, detail }: any) {
   const thinking = useRef(new Map<string, boolean>());
   return h(ThinkingState.Provider,{value:thinking.current},h(FileHistoryProvider,{identity:history?.identity,events:history?.events||[]},h(
     Dialog,
-    { title: `${activity.label}, attempt ${activity.attempt}`, close, className: "agent-detail", headingLink: activity.subject.type==='unit'?h(BackToUnit, {arc, unit:activity.unit,title:activity.subject.title,systems:activity.systems}):h('p',null,`${activity.subject.type==='job'?'Job':'Arc'} ${activity.subject.id}`) },
+    { title: `${activity.label}, attempt ${activity.attempt}`, close, className: "agent-detail", expand: { arc, id, full, onExpand: () => { reading.current = { following: follow.current, anchor: follow.current ? null : readingAnchor() }; } }, headingLink: activity.subject.type==='unit'?h(BackToUnit, {arc, unit:activity.unit,title:activity.subject.title,systems:activity.systems}):h('p',null,`${activity.subject.type==='job'?'Job':'Arc'} ${activity.subject.id}`) },
     h(InvocationFacts,{arc,id,detail}),
     h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,activity.spend.costUsd===null?'Unrecorded':money(activity.spend.costUsd))))),
     result?.report != null ? h(VerdictStatus,{value:result.report}) : h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,summary:true}),

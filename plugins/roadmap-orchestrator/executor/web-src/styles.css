@@ -500,3 +500,10 @@ tr.timeline-runs p{margin:8px 12px;}
 .timeline-continues{width:12px;margin-left:-12px;background:var(--sig-active);clip-path:polygon(0 0,100% 50%,0 100%);border-radius:0;}
 .timeline-running-since{color:var(--sig-active);font-weight:500;}
 .filter-unknown{color:var(--sig-held);font-size:13px;margin:6px 0 0;}
+/* Full-page log: the drawer's own view at the whole window's width, covering the Graph rather than sitting beside it. */
+.drawer-actions{display:flex;align-items:center;gap:4px;flex-shrink:0;}
+.drawer-full{left:0;max-width:none;border-left:0;border-radius:0;box-shadow:none;}
+.drawer-full>.drawer-head,.drawer-full>.drawer-body{padding-inline:32px;}
+/* Prose keeps a readable measure; commands, tool output, code and diffs take the full width. */
+.drawer-full .history-markdown>:is(p,ul,ol,h3,h4,h5,h6,blockquote),.drawer-full .invocation-summary>p,.drawer-full .history-empty,.drawer-full .log-summary{max-width:80ch;}
+@media(max-width:640px){.drawer-expand{display:none;}.drawer-full>.drawer-head,.drawer-full>.drawer-body{padding-inline:16px;}}

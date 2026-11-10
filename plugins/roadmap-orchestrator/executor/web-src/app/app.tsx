@@ -87,6 +87,6 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
     {arc&&where.scope&&<EffortScopeDetail key={where.scope} arc={arc} id={where.scope} close={close}/>}
     {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}
     {arc&&where.event&&<EventDetail key={where.event} arc={arc} id={where.event} close={close}/>}
-    {arc&&where.unit&&<UnitDetail arc={arc} id={where.unit} close={close} stale={stale}/>}{arc&&where.inv&&<InvocationDetail key={where.inv} arc={arc} id={where.inv} close={close} stale={stale}/>}
+    {arc&&where.unit&&<UnitDetail arc={arc} id={where.unit} close={close} stale={stale}/>}{arc&&where.inv&&<InvocationDetail key={where.inv} arc={arc} id={where.inv} full={where.full} close={close} stale={stale}/>}
   </div></Clock.Provider>;
 }

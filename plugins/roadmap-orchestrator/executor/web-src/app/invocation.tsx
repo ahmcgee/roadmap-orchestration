@@ -7,18 +7,18 @@ import { InvocationFacts } from './invocation-facts.tsx';
 import { useSelectedDetail } from './view-state.ts';
 import type { InvocationSummary } from '../../src/console/detail-protocol.ts';
 type Page = { text: string; after: number; next: number; size: number; identity: string };
-export function InvocationDetail(props: { arc:string; id:string; close:()=>void; stale:boolean }) {
+export function InvocationDetail(props: { arc:string; id:string; full:boolean; close:()=>void; stale:boolean }) {
   const selected=useSelectedDetail(props.arc,`invocations/${encodeURIComponent(props.id)}`),activity=selected.data?.invocation as InvocationSummary|undefined;
   if(!activity)return <Drawer title="Invocation details" close={props.close}><p role={selected.error?'alert':'status'}>{selected.error||'Reading invocation…'}</p></Drawer>;
   return activity.kind==='agentic'?<AgentDetail {...props} activity={activity} detail={selected.data}/>:<CommandDetail {...props} activity={activity} detail={selected.data}/>;
 }
-function CommandDetail({ arc, id, close,activity,detail }: { arc:string; id:string; close:()=>void; stale:boolean;activity:InvocationSummary;detail:import('../../src/console/detail-protocol.ts').InvocationView }) {
+function CommandDetail({ arc, id, full, close,activity,detail }: { arc:string; id:string; full:boolean; close:()=>void; stale:boolean;activity:InvocationSummary;detail:import('../../src/console/detail-protocol.ts').InvocationView }) {
   const [source, setSource] = useState('stdout'), [page, setPage] = useState<Page | null>(null), [error, setError] = useState(''), [result, setResult] = useState<string[] | null>(null);
   const [query,setQuery]=useState('');
   const base = `/arcs/${arc}/invocations/${id}`;
   useEffect(() => { const c = new AbortController(); setPage(null); setResult(null); setError(''); get(`${base}/${source === 'result' ? 'result' : `log?source=${source}&after=0`}`, c.signal).then(r => source === 'result' ? setResult(r.data.lines) : setPage(r.data)).catch((err: Error) => { if (!c.signal.aborted) setError(err.message); }); return () => c.abort(); }, [base, source]);
   const load = (after: number) => get(`${base}/log?source=${source}&after=${after}&identity=${page!.identity}`).then(r => setPage(r.data)).catch((err: Error) => setError(err.message));
-  return <Drawer title={activity ? activity.label : `Invocation ${id}`} close={close} headingLink={activity.subject.type==='unit' && <BackToUnit arc={arc} unit={activity.unit} title={activity.subject.title} systems={activity.systems}/>}>
+  return <Drawer title={activity ? activity.label : `Invocation ${id}`} close={close} className="command-detail" expand={{arc,id,full}} headingLink={activity.subject.type==='unit' && <BackToUnit arc={arc} unit={activity.unit} title={activity.subject.title} systems={activity.systems}/>}>
     <InvocationFacts arc={arc} id={id} detail={detail}/>
     <div className="log-sources">{['stdout','stderr','runner.log','result'].map(s => <Button key={s} aria-pressed={s === source} onClick={() => setSource(s)}>{s}</Button>)}</div>
     {error && <p role="alert">{error}</p>}{result && <pre className="record">{result.join('\n')}</pre>}
