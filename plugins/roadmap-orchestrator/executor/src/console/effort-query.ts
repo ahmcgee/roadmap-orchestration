@@ -7,7 +7,7 @@ import { CollectionPages, responseBound } from './collection-pages.ts';
 import { allowParams, choice, invalid, known, list, pageLimit, resolveTime, timeParams } from './query-params.ts';
 import { effortRows, projectionIndex } from './tab-projections.ts';
 import { resourceQueue } from './resources.ts';
-import { graphStatus } from './signals.ts';
+import { unitSignal } from './signals.ts';
 import { waitWords, stageWords } from './vocabulary.ts';
 import { preview, versioned } from './views.ts';
 import type { Subject } from './view-protocol.ts';
@@ -40,7 +40,7 @@ export class ConsoleEffort {
         const all=u?unitReasons(u,index,queues):[];
         // A journey whose only recorded instant is its start has no measurable length; that is unknown, not zero.
         const elapsedMs=b.lifetime.startedAt===null||b.lifetime.endedAt===b.lifetime.startedAt?null:Math.max(0,Date.parse(b.lifetime.endedAt??bounds.terminalAt??e.checkedAt)-Date.parse(b.lifetime.startedAt));
-        rows.set(key(b.subject),{...empty(),id:key(b.subject),subject:b.subject,detailKey:b.subject.type==='unit'&&u?null:effortDetailKey(e.arc,'unit',key(b.subject)),contributorCount:0,titleTruncated:(index.identities.get(b.subject.id)?.title.length??b.subject.title.length)>b.subject.title.length,signal:u?u.state==='cut'||u.state==='superseded'?'withdrawn':graphStatus(u.state):null,state:b.state,stage:b.stage,stageFinished:u?((last=>last?.stage===b.stage&&last.endedAt!==null)(index.stages.byUnit.get(u.unit)?.at(-1))):false,systems:b.systems,
+        rows.set(key(b.subject),{...empty(),id:key(b.subject),subject:b.subject,detailKey:b.subject.type==='unit'&&u?null:effortDetailKey(e.arc,'unit',key(b.subject)),contributorCount:0,titleTruncated:(index.identities.get(b.subject.id)?.title.length??b.subject.title.length)>b.subject.title.length,signal:u?unitSignal(u.state):null,state:b.state,stage:b.stage,stageFinished:u?((last=>last?.stage===b.stage&&last.endedAt!==null)(index.stages.byUnit.get(u.unit)?.at(-1))):false,systems:b.systems,
           blockers:{reasons:all.slice(0,8).map(text=>preview(text,{type:'unit',id:b.subject.id})),count:all.length,waitSince:u?queues.find(q=>q.unit===u.unit)?.queuedAt===undefined?null:new Date(queues.find(q=>q.unit===u.unit)!.queuedAt!).toISOString():null},
           lifetime:{startedAt:b.lifetime.startedAt,endedAt:b.lifetime.endedAt,elapsedMs,rounds:u?b.lifetime.rounds:null,redChecks:u?b.lifetime.redChecks:null,spend:b.spend}});
       }

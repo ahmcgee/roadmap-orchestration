@@ -6,6 +6,7 @@ import { ConsoleTemporal } from '../src/console/temporal-query.ts';
 import { ConsoleActivity } from '../src/console/activity-query.ts';
 import { CollectionPages, COLLECTION_RETENTION } from '../src/console/collection-pages.ts';
 import { timelineIntervals } from '../src/console/tab-projections.ts';
+import { unitSignal } from '../src/console/signals.ts';
 import { timelineShape, intervalsShape, holdsShape, holisticShape } from '../src/console/view-shapes.ts';
 import { intersects, instant } from '../src/console/query-params.ts';
 import type { TimelineView, IntervalsView } from '../src/console/temporal-protocol.ts';
@@ -28,6 +29,13 @@ test('Timeline independent tracks and exact intervals reconcile at their capture
  assert.deepEqual(u7.rows.filter(r=>r.stage==='build').map(r=>[r.attempt,r.round]),[[1,1],[2,2],[3,3]]);
  assert.equal(u7.rows.find(r=>r.stage==='build')!.endedAt,timelineIntervals(e).find(r=>r.id===u7.rows.find(r=>r.stage==='build')!.id)!.endedAt);
  assert.ok(holdsShape(tabs.timeline(e,{window:'arc'},'holds')));
+ // The overview is the whole Arc whatever the window: every run counted once, slices aligned to the recorded range.
+ const all=timelineIntervals(e),firstStart=all.map(i=>i.startedAt).sort()[0]!,narrowFrom=u7.rows[0]!.startedAt;
+ const narrow=tabs.timeline(e,{from:narrowFrom,to:new Date(Date.parse(narrowFrom)+60_000).toISOString()}) as TimelineView;assert.ok(timelineShape(narrow));
+ for(const view of [tracks,narrow]){const o=view.overview;assert.equal(o.buckets.reduce((n,b)=>n+b.count,0),all.length);assert.ok(Date.parse(o.range.from)<=Date.parse(firstStart));assert.ok(o.buckets.every(b=>(Date.parse(b.from)-Date.parse(o.range.from))%o.range.widthMs===0));}
+ assert.ok(narrow.rows.length<tracks.rows.length,'tracks follow the window; the overview does not');
+ const u7track=tracks.rows.find(r=>r.subject.id==='u7')!,u7state=e.data.display.status.units.find(u=>u.unit==='u7')!.state;assert.equal(u7track.state,u7state);assert.equal(u7track.signal,unitSignal(u7state));
+ assert.ok(tracks.rows.filter(r=>r.subject.type!=='unit').every(r=>r.signal===null&&r.state===null),'jobs and Arc-wide runs have no unit state');
  for(const section of ['audits','findings','decisions']){const h=tabs.holistic(e,{section});assert.ok(holisticShape(h));noMonolith(h);assert.equal(h.section,section);assert.equal(h.counts.findings,1);assert.equal(h.enabled,true);if(section==='audits'){const r=h.rows[0]!;assert.equal(r.type,'audit');if(r.type==='audit'){assert.equal(r.findingCount,1);assert.match(r.detail.id,/-audit-ended$/);assert.ok(activity.index(e).entries.some(e=>e.row.id===r.detail.id));}}if(section==='findings'){const r=h.rows[0]!;assert.equal(r.type,'finding');if(r.type==='finding'){assert.deepEqual([r.id,r.claim.text,r.state],['F-1','Document empty input behavior','open']);assert.ok(r.detail);assert.deepEqual(r.claim.detail,r.detail);assert.ok(activity.index(e).entries.some(e=>e.row.id===r.detail!.id));}}}
  const decisions=tabs.holistic(e,{section:'decisions'});for(const r of decisions.rows)if(r.type==='decision'){assert.deepEqual(r.oneLine.detail,r.detail);if(r.detail)assert.ok(activity.index(e).entries.some(e=>e.row.id===r.detail!.id));}
  const missingDecisionSource={...e,data:{...e.data,display:{...e.data.display,status:{...e.data.display.status,decisionsSince:e.data.display.status.decisionsSince.map(d=>({...d,seq:(e.highWater+10) as typeof d.seq,oneLine:d.oneLine.repeat(30)}))}}}};

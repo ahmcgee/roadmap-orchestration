@@ -24,7 +24,8 @@ test('300-unit/7-day Timeline and Holistic typed pages, all six parks, cold brow
  const projected=performance.now();let tracks=tabs.timeline(e,{window:'arc'}) as TimelineView;const projectionMs=performance.now()-projected,serial=performance.now(),serialized=JSON.stringify({...e,data:tracks}),serializationMs=performance.now()-serial,parsed=performance.now();JSON.parse(serialized);const parseMs=performance.now()-parsed;const allTracks=[...tracks.rows];let largest=bytes(tracks);
  while(tracks.page.next){tracks=tabs.timeline(e,{window:'arc',cursor:tracks.page.next}) as TimelineView;allTracks.push(...tracks.rows);largest=Math.max(largest,bytes(tracks));}
  measured['tracks']=largest;assert.ok(largest<=128*1024);assert.equal(new Set(allTracks.map(r=>r.id)).size,allTracks.length);assert.equal(allTracks.reduce((n,r)=>n+r.intervalCount,0),1088);assert.equal(allTracks.reduce((n,r)=>n+r.openCount,0),6);
- for(const track of allTracks){assert.ok(track.marks.length<=32);assert.equal(track.marks.reduce((n,m)=>n+(m.type==='cluster'?m.count:1),0),track.intervalCount);if(track.subject.type!=='unit')assert.equal(track.detail,null);}
+ const sliceOf=(at:string)=>{const lo=Date.parse(tracks.scope.from!),w=(Date.parse(tracks.scope.to!)-lo)/16;return Math.max(0,Math.min(15,Math.floor((Date.parse(at)-lo)/w)));};
+ for(const track of allTracks){for(const mark of track.marks)if(mark.type==='cluster')assert.equal(sliceOf(mark.from),sliceOf(mark.to),'a cluster groups runs that start in one slice of the window');assert.ok(track.marks.length<=32);assert.equal(track.marks.reduce((n,m)=>n+(m.type==='cluster'?m.count:1),0),track.intervalCount);if(track.subject.type!=='unit')assert.equal(track.detail,null);}
  let intervals=tabs.timeline(e,{window:'arc'},'intervals') as IntervalsView;const allIntervals=[...intervals.rows];largest=bytes(intervals);
  while(intervals.page.next){intervals=tabs.timeline(e,{window:'arc',cursor:intervals.page.next},'intervals') as IntervalsView;allIntervals.push(...intervals.rows);largest=Math.max(largest,bytes(intervals));}
  measured['intervals']=largest;assert.ok(largest<=128*1024);assert.equal(allIntervals.length,1088);assert.equal(new Set(allIntervals.map(i=>i.id)).size,1088);
@@ -45,6 +46,9 @@ test('300-unit/7-day Timeline and Holistic typed pages, all six parks, cold brow
   timing[`${view}ShellBodyMs`]=successful.find(r=>/\/shell(?:\?|$)/.test(r.url))!.atMs;
   measured[`${view}BrowserCold`]=successful.filter(r=>!r.url.endsWith('/arcs')).reduce((n,r)=>n+r.bytes,0);assert.ok(measured[`${view}BrowserCold`]!<=budget*1024);
   if(view==='timeline'){
+   // All six overnight parks read on the whole-arc overview and as pinned hold bands in the whole-arc window.
+   assert.equal(await b.evaluate<number>(`()=>document.querySelectorAll('.timeline-overview-hold').length`),6);
+   assert.equal(await b.evaluate<number>(`()=>document.querySelectorAll('table[aria-label="Backend availability"] .timeline-hold[href*="/timeline/events/"]').length`),6);
    const first=await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Invocation timeline"] tbody tr').textContent`);
    await b.evaluate(`()=>{[...document.querySelectorAll('button')].find(b=>b.textContent==='Next page').click();return true;}`);
    await until(async()=>b.evaluate(`()=>location.hash.includes('cursor=')&&document.querySelector('table[aria-label="Invocation timeline"] tbody tr')?.textContent!==${JSON.stringify(first)}`),5000,'second track page');
@@ -52,7 +56,7 @@ test('300-unit/7-day Timeline and Holistic typed pages, all six parks, cold brow
    const intervalStart=performance.now();await b.evaluate(`()=>{document.querySelector('table[aria-label="Invocation timeline"] tbody tr button').click();return true;}`);
    await until(async()=>b.evaluate(`()=>document.querySelectorAll('table[aria-label="Exact invocation intervals"] tbody tr').length>0`),5000,'page-two track intervals');
    timing['selectedIntervalsMs']=performance.now()-intervalStart;
-   assert.equal(await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Invocation timeline"] tbody tr').textContent`),frozen.replace('Inspect intervals','Close intervals'));
+   assert.equal(await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Invocation timeline"] tbody tr').textContent`),frozen.replace('Show runs','Hide runs'));
    assert.equal(await b.evaluate<string>(`()=>new URLSearchParams(location.hash.split('?')[1]).get('cursor')`),new URLSearchParams(hash.split('?')[1]).get('cursor'));
    const detailStart=performance.now();await b.evaluate(`()=>{document.querySelector('table[aria-label="Exact invocation intervals"] a').click();return true;}`);
    await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer .invocation-facts')&&!!document.querySelector('.drawer .history-controls,.drawer [aria-label="Recorded check output"]')`),10_000,'selected invocation default evidence');

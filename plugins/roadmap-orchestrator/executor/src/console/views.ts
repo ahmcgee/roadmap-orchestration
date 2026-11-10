@@ -1,7 +1,7 @@
 // Independent, allowlisted shell and graph projections. D1/D2/D4/D8/D9/D11.
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Envelope } from '../observation/protocol.ts';
-import { graphStatus } from './signals.ts';
+import { unitSignal } from './signals.ts';
 import { identityIndex } from './indexes.ts';
 import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
@@ -35,7 +35,7 @@ export function graphView(e: Envelope): GraphView {
   const units: GraphView['units'] = s.units.map(u => {
     const identity = identities.get(u.unit)!;
     return {id: String(u.unit), title: identity.title.slice(0, 96), titleTruncated: identity.title.length > 96,
-      signal: u.state === 'cut' || u.state === 'superseded' ? 'withdrawn' : graphStatus(u.state),
+      signal: unitSignal(u.state),
       state: u.state, stage: u.stage, systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null};
   });
   const states = new Map(s.milestones.map(m => [String(m.id), m]));

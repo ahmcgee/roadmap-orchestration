@@ -17,6 +17,10 @@ test('plain Timeline expansion and Holistic section targets keep anchors, Back, 
  const click=async(label:string)=>b.evaluate(`()=>{[...document.querySelectorAll('button')].find(e=>e.textContent===${JSON.stringify(label)}).click();return true;}`);
  await b.evaluate(`()=>{const row=[...document.querySelectorAll('table[aria-label="Invocation timeline"] tbody tr')].find(r=>r.textContent.includes('u7'));row.querySelector('button').click();return true;}`);
  await until(async()=>b.evaluate(`()=>document.querySelectorAll('table[aria-label="Exact invocation intervals"] tbody tr').length===5`),5000,'only selected track');
+ // Each run is a bar on the shared axis, and the track row carries the same runs as links to their exact invocation.
+ assert.equal(await b.evaluate(`()=>document.querySelectorAll('table[aria-label="Exact invocation intervals"] .timeline-bar').length`),5);
+ assert.equal(await b.evaluate(`()=>{const row=[...document.querySelectorAll('table[aria-label="Invocation timeline"] tbody tr')].find(r=>r.textContent.includes('u7'));return row.querySelectorAll('.timeline-mark[href*="/timeline/invocations/"]').length;}`),5);
+ assert.ok((await b.evaluate<number>(`()=>document.querySelectorAll('.timeline-axis span').length`))>=2,'a shared time axis');
  const before=await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Invocation timeline"]').textContent`);
  const first=await b.evaluate<string>(`()=>document.querySelector('table[aria-label="Exact invocation intervals"] a').href`);
  await b.evaluate(`()=>{document.querySelector('table[aria-label="Exact invocation intervals"] a').focus();return true;}`);await b.call('browser_press_key',{key:'Enter'});
@@ -26,6 +30,8 @@ test('plain Timeline expansion and Holistic section targets keep anchors, Back, 
  await click('Show updates');await until(async()=>b.evaluate(`()=>[...document.querySelectorAll('table[aria-label="Invocation timeline"] tbody tr')].find(r=>r.textContent.includes('u3')).textContent.includes('0 open')&&!document.body.innerText.includes('Updates available.')`),5000,'refreshed Timeline');
  await b.evaluate(`()=>{const q=document.querySelector('[name="q"]');q.value='u7';q.form.requestSubmit();return true;}`);
  await until(async()=>b.evaluate(`()=>document.querySelectorAll('table[aria-label="Invocation timeline"] tbody tr').length===1`),5000,'server Timeline search');
+ await click('Show as table');await until(async()=>b.evaluate(`()=>[...document.querySelectorAll('table[aria-label="Invocation timeline"] th')].some(h=>h.textContent==='First start')&&document.querySelectorAll('table[aria-label="Invocation timeline"] tbody tr').length===1`),5000,'exact text table');
+ await click('Show as chart');await until(async()=>b.evaluate(`()=>!!document.querySelector('table[aria-label="Invocation timeline"] .timeline-axis')`),5000,'chart again');
  await b.evaluate(`()=>{[...document.querySelectorAll('.tabs a')].find(a=>a.textContent==='Activity').click();return true;}`);await click('Holistic review');
  await until(async()=>b.evaluate(`()=>!!document.querySelector('table[aria-label="Holistic audits"]')`),5000,'typed audit section');
  await b.evaluate(`()=>{[...document.querySelectorAll('button')].find(e=>e.textContent==='Active findings (1)').click();return true;}`);

@@ -9,6 +9,7 @@ import { allowParams, choice, invalid, known, list, pageLimit, timeParams, resol
 import { projectionIndex, timelineIntervals, holisticSummaries } from './tab-projections.ts';
 import { backendHolds, activityKey } from './backend-holds.ts';
 import { versioned, preview } from './views.ts';
+import { unitSignal } from './signals.ts';
 import type { Interval, TrackMark } from './view-protocol.ts';
 import type { TimelineFilters, TimelineView, IntervalsView, HoldsView, HolisticView, TrackSummary, HolisticAudit, HolisticFinding, HolisticDecision, EvidencePreview, HolisticFieldView } from './temporal-protocol.ts';
 
@@ -18,17 +19,24 @@ function timelineQuery(params: Record<string, string>): TimelineFilters {
   return {...timeParams(params), unit: list(params, 'unit'), milestone: list(params, 'milestone'), state: list(params, 'state'), stage: list(params, 'stage'), execution: list(params, 'execution'),
     q: q.toLowerCase(), sort: choice(params, 'sort', ['plan', 'open', 'longest-open'], 'plan'), subject: params['subject'] ?? null};
 }
-function marks(rows: Interval[], subject: string): TrackMark[] {
-  if (rows.length <= 16) return rows.map(r => ({type: 'interval', id: r.id, startedAt: r.startedAt, endedAt: r.endedAt, stage: r.stage, outcome: r.outcome, invocation: r.invocation}));
-  // Clusters summarize discrete calls. Their range is never labeled continuous execution.
-  const sorted = [...rows].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id)), size = Math.ceil(sorted.length / 16), result: TrackMark[] = [];
-  for (let n = 0; n < sorted.length; n += size) {
-    const batch = sorted.slice(n, n + size), countsByOutcome: Record<string, number> = {};
+/** At most 16 marks per track. A crowded track groups runs by where they start in the window (16 equal slices,
+ * runs already open at the window start in the first): one run stays exact, several become a counted cluster.
+ * A cluster spans its first and last start; it is never presented as continuous execution. */
+function marks(rows: Interval[], subject: string, lo: number, hi: number): TrackMark[] {
+  const exact = (r: Interval): TrackMark => ({type: 'interval', id: r.id, startedAt: r.startedAt, endedAt: r.endedAt, stage: r.stage, outcome: r.outcome, invocation: r.invocation});
+  const sorted = [...rows].sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id));
+  if (sorted.length <= 16) return sorted.map(exact);
+  const slices = new Map<number, Interval[]>(), width = Math.max(1, (hi - lo) / 16);
+  for (const r of sorted) {const n = Math.max(0, Math.min(15, Math.floor((Date.parse(r.startedAt) - lo) / width))); slices.set(n, [...slices.get(n) ?? [], r]);}
+  return [...slices].sort(([a], [b]) => a - b).map(([, batch]) => {
+    if (batch.length === 1) return exact(batch[0]!);
+    const countsByOutcome: Record<string, number> = {};
     for (const row of batch) countsByOutcome[row.outcome] = (countsByOutcome[row.outcome] ?? 0) + 1;
-    result.push({type: 'cluster', from: batch[0]!.startedAt, to: batch.at(-1)!.startedAt, count: batch.length, countsByOutcome, subject});
-  }
-  return result;
+    return {type: 'cluster', from: batch[0]!.startedAt, to: batch.at(-1)!.startedAt, count: batch.length, countsByOutcome, subject};
+  });
 }
+/** Overview slice widths: the smallest that keeps the whole Arc within 168 slices. */
+const OVERVIEW_WIDTHS = [15, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080].map(m => m * 60_000);
 // A field key identifies exact retained text, without manufacturing an event/date.
 function sourceField(e:Envelope,type:string,id:string,name:'claim'|'oneLine',text:string):EvidencePreview {
   if(text.length<=240)return {text,truncated:false,detail:null};
@@ -54,7 +62,7 @@ export class ConsoleTemporal {
       known(filters.stage, [...new Set(intervals.map(r => r.stage))], 'stage');
       known(filters.execution, ['agent','command','unknown'], 'execution');
       if (filters.subject !== null) known([filters.subject], [...new Set(intervals.map(r => `${r.subject.type}:${r.subject.id}`))], 'subject');
-      const selected = intervals.filter(r => {
+      const matching = intervals.filter(r => {
         const unit = r.subject.type === 'unit' ? r.subject.id : null;
         return (!filters.subject || filters.subject === `${r.subject.type}:${r.subject.id}`)
           && (!filters.unit.length || unit !== null && filters.unit.includes(unit))
@@ -62,31 +70,36 @@ export class ConsoleTemporal {
           && (!filters.state.length || unit !== null && filters.state.includes(states.get(unit)!))
           && (!filters.stage.length || filters.stage.includes(r.stage))
           && (!filters.execution.length || filters.execution.includes(execution.get(r.id)!))
-          && (!filters.q || `${r.subject.id} ${r.subject.title}`.toLowerCase().includes(filters.q))
-          && intersects(r.startedAt, r.endedAt, scope.from, scope.to, bounds.to);
+          && (!filters.q || `${r.subject.id} ${r.subject.title}`.toLowerCase().includes(filters.q));
       });
-      const holds = backendHolds(e.data.events, e.epoch).filter(h => intersects(h.startedAt, h.endedAt ?? h.terminalAt, scope.from, scope.to, bounds.to));
+      const selected = matching.filter(r => intersects(r.startedAt, r.endedAt, scope.from, scope.to, bounds.to));
+      const arcHolds = backendHolds(e.data.events, e.epoch), holds = arcHolds.filter(h => intersects(h.startedAt, h.endedAt ?? h.terminalAt, scope.from, scope.to, bounds.to));
       const base = {...versioned({filters, bounds}, scope), ...(sourceVersion ? {viewVersion: sourceVersion} : {})};
       if (section === 'intervals') return {rows: selected.sort((a,b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id)), context: base};
       if (section === 'holds') return {rows: holds, context: base};
       const tracks = new Map<string, Interval[]>();
       for (const interval of selected) {const key = `${interval.subject.type}:${interval.subject.id}`; const rows = tracks.get(key) ?? []; rows.push(interval); tracks.set(key, rows);}
       const planOrder = [...index.identities.keys()];
+      const lo = Date.parse(scope.from ?? bounds.from ?? bounds.to), hi = Date.parse(scope.to ?? bounds.to);
       const rows: TrackSummary[] = [...tracks].map(([id, calls]) => ({id, subject: calls[0]!.subject, state: states.get(calls[0]!.subject.id) ?? null,
+        signal: calls[0]!.subject.type === 'unit' && states.has(calls[0]!.subject.id) ? unitSignal(states.get(calls[0]!.subject.id)!) : null,
         intervalCount: calls.length, openCount: calls.filter(i => i.endedAt === null).length,
         firstAt: calls.map(i => i.startedAt).sort()[0]!, lastAt: calls.some(i => i.endedAt === null) ? null : calls.map(i => i.endedAt!).sort().at(-1)!,
-        marks: marks(calls, id), detail: calls[0]!.subject.type === 'unit' ? {type: 'unit', id: calls[0]!.subject.id} : null}));
+        marks: marks(calls, id, lo, hi), detail: calls[0]!.subject.type === 'unit' ? {type: 'unit', id: calls[0]!.subject.id} : null}));
       const longest = (t: TrackSummary) => Math.min(...tracks.get(t.id)!.filter(i => i.endedAt === null).map(i => Date.parse(i.startedAt)));
       const order = (a: TrackSummary, b: TrackSummary) => {
         if (a.subject.type === 'unit' && b.subject.type === 'unit') return planOrder.indexOf(a.subject.id) - planOrder.indexOf(b.subject.id);
         return a.subject.type === 'unit' ? -1 : b.subject.type === 'unit' ? 1 : a.id.localeCompare(b.id);
       };
       rows.sort((a,b) => (filters.sort === 'open' ? Number(b.openCount > 0) - Number(a.openCount > 0) : filters.sort === 'longest-open' ? (Number(a.openCount === 0) - Number(b.openCount === 0) || (a.openCount && b.openCount ? longest(a) - longest(b) : 0)) : 0) || order(a,b));
-      const lo = Date.parse(scope.from ?? bounds.from ?? bounds.to), hi = Date.parse(scope.to ?? bounds.to), width = Math.max(1, Math.ceil((hi - lo) / 128));
+      // The overview covers the whole Arc whatever the window, so the owner can see where to look. Each run counts at its recorded start.
+      const arcFrom = Date.parse(bounds.from ?? bounds.to), arcTo = Date.parse(bounds.to) + 1;
+      const widthMs = OVERVIEW_WIDTHS.find(w => (arcTo - arcFrom) / w <= 168) ?? OVERVIEW_WIDTHS.at(-1)!, start = Math.floor(arcFrom / widthMs) * widthMs;
       const buckets = new Map<number, number>();
-      // Counts attribute starts to their actual timestamp; calls already open at the window start stay in tracks, not an invented start bucket.
-      for (const i of selected) {const at = Date.parse(i.startedAt); if (at < lo || at >= hi) continue; const n = Math.floor((at - lo) / width); buckets.set(n, (buckets.get(n) ?? 0) + 1);}
-      return {rows, context: {...base, overview: {buckets: [...buckets].sort(([a],[b]) => a-b).map(([n,count]) => ({from: new Date(lo+n*width).toISOString(), to: new Date(Math.min(hi,lo+(n+1)*width)).toISOString(), count})), backendHolds: {rows: holds.slice(0,25), matching: holds.length}}}};
+      for (const i of matching) {const n = Math.floor((Date.parse(i.startedAt) - start) / widthMs); buckets.set(n, (buckets.get(n) ?? 0) + 1);}
+      return {rows, context: {...base, overview: {range: {from: new Date(start).toISOString(), to: new Date(arcTo).toISOString(), widthMs},
+        buckets: [...buckets].sort(([a],[b]) => a-b).map(([n,count]) => ({from: new Date(start+n*widthMs).toISOString(), to: new Date(Math.min(arcTo,start+(n+1)*widthMs)).toISOString(), count})),
+        backendHolds: {rows: arcHolds.slice(0,64), matching: arcHolds.length}}}};
     });
     return responseBound(e, data, limit >= 100 && section !== 'intervals' || limit === 200 ? 256*1024 : 128*1024) as TimelineView | IntervalsView | HoldsView;
   }
