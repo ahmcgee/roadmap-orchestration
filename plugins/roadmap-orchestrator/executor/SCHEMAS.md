@@ -1130,8 +1130,8 @@ adoption of dev.54 state.
 
 A dedicated observation worker polls every second without browser clients; filesystem notices accelerate
 polling. It discovers retained (including refused) arcs, maintains active/latest/subscribed arcs and an LRU
-of eight older captures. Default browser selection follows this repo's claim, otherwise latest retained;
-`/#/arcs/<arc>/overview` pins a run. Only ObserverJournal.read verifies journal prefixes, retaining incomplete
+of eight older captures. `/arcs` selects this repo's claimed arc, otherwise the latest retained; the browser
+shows only that arc (another arc's link reads "This console shows the current arc only"). Only ObserverJournal.read verifies journal prefixes, retaining incomplete
 tails without repair; inode/truncation/anchor resets change epoch. Derived materialized values are detached
 from the cursor before another read. Dependency stamps include identity/size/mtime/ctime and membership;
 refs, owner/liveness, scheduler, heartbeat, needs-user, answers, receipts and retained result/exit records
@@ -1155,29 +1155,58 @@ silently returned. Absent/dead/unreachable servers, unavailable catch-up and con
 with a stderr diagnostic. Identity mismatch, malformed payload and corrupt evidence do not fall back.
 `host.log.foldMs` and compactionDue retain measured fold semantics; elapsed time is not zeroed for parity.
 
-All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 405), no-store, no CORS:
+All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 405), no-store, no CORS.
+`:arc` is the arc id; `:id` of an invocation is its `seq-ordinal` key. Every typed view and detail returns
+the envelope with `data` validated by `src/console/view-shapes.ts` (malformed data is a `protocol` error):
 
 | Path after version | Response data |
 |---|---|
-| `/arcs` | Retained runs and current selection |
-| `/arcs/:arc/snapshot` | Envelope with canonical status/summary, observer detail and display adapters |
-| `/arcs/:arc/activity?offset=N&housekeeping=0\|1` | Thirty plain-language journal entries, newest first, and a `more` flag. Successful housekeeping is excluded before paging by default; `housekeeping=1` includes it. Failed housekeeping always remains. |
-| `/arcs/:arc/status?summary=0|1` | Envelope containing the unchanged canonical CLI object |
-| `/arcs/:arc/units/:id` | Activities, attempts, lane certification, holds and readable records |
+| `/arcs` | Console protocol, UI schema and the selected arc |
+| `/arcs/:arc/status?summary=0\|1` | Envelope containing the unchanged canonical CLI status object, or its summary |
+| `/arcs/:arc/shell`, `/graph`, `/metadata` | Arc shell (header, available range), the unit/milestone graph, and `viewVersions`; only `epoch`, `revision`, `minHighWater` accepted |
+| `/arcs/:arc/activity` | Activity page: `window=arc\|24h\|7d` or `from`/`to` (RFC3339), `zone`, keyset `afterSeq`/`beforeSeq`/`cursor`, `order=asc\|desc`, `limit`, `housekeeping`, `q`, filters unit, milestone, stage, kind, role, backend, model, outcome; `facets` |
+| `/arcs/:arc/activity/changes` | Count of newer matching entries since an anchor |
+| `/arcs/:arc/activity/:id` | One activity entry's detail; `section=content` pages its full text |
+| `/arcs/:arc/timeline`, `/timeline/intervals`, `/timeline/holds` | Tracks, a track's intervals and backend holds: window, unit, milestone, state, stage, execution, `q`, `sort`, `subject`, `cursor`, `limit` (intervals up to 200); tracks carry `facets` |
+| `/arcs/:arc/holistic?section=audits\|findings\|decisions` | Holistic audits, findings and decisions, paged |
+| `/arcs/:arc/holistic/fields/:key?after=N` | One long holistic text field, sliced |
+| `/arcs/:arc/effort` | Effort page: `group=unit\|role\|system-set`, `metric=work\|spend\|waiting`, `sort`, `direction`, window, filters; `facets` |
+| `/arcs/:arc/resources?section=schedule\|cpu\|waiting\|now` | Resources page: bookings, CPU reservation against measured run time, measured waits, current holders/queues; filters resource, unit, stage, state, reason, utilization; `facets` |
+| `/arcs/:arc/resources/reasons` | Waiting reasons with totals, paged |
+| `/arcs/:arc/resources/details/:key` | Selected booking-, resource-, cpu-, waiting- or measurement- detail (`evidence=ownership\|calls\|measurements`); `effort-<group id>` (for example `effort-job:audit-1`) is an Effort scope read under the page's grouping and window |
+| `/arcs/:arc/attention` | Attention subjects: `subjectType`, `reason`, `q`, `sort=oldest\|newest`, `cursor`, `limit` |
+| `/arcs/:arc/requests/:id` | One recorded request; `section=content` pages its text |
+| `/arcs/:arc/units/:id`, `/milestones/:id`, `/invocations/:id` | Selected detail. Unit sections summary, depends, usedBy, journey, invocations, acceptance, waiting, checks, requests, intent; milestone members, intent; invocation related; every one content. Collections page with `section`, `cursor`, `limit=25\|50\|100` |
 | `/arcs/:arc/invocations/:id/result` | Validated recorded result/evidence, or explicit absence/pruning |
-| `/arcs/:arc/invocations/:id/log?source=stdout|stderr|runner.log&after=N` | At most 64 KiB of source bytes, next cursor, identity, text and lossless base64 bytes |
+| `/arcs/:arc/invocations/:id/log?source=stdout\|stderr\|runner.log&after=N` | At most 64 KiB of source bytes, next cursor, identity, text and lossless base64 bytes |
 | `/arcs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
 | `/arcs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
 | `/arcs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
-| `/arcs/:arc/events?invocation=ID` | Existing revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
+| `/arcs/:arc/events?invocation=ID` | Revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
+
+`/arcs/:arc/snapshot` is not found. Windowed views default to `window=24h` (Activity to the whole arc) and
+refuse `window` with `from`/`to`. Unknown query parameters, values outside closed choices and filter values
+outside the view's `facets` are refused with `invalid` ("unknown … filter"). `facets` lists the recorded values
+each text filter accepts: Activity unit, milestone, stage, role, backend, model, outcome; Timeline unit,
+milestone, stage; Effort unit, milestone, system; Resources resource, unit, stage, reason. Responses are
+byte-bounded (for example 128/256 KiB view pages by limit, 32 KiB details); paged cursors are bound to arc,
+epoch and query, and a foreign cursor is `invalid`. Graph units and unit summaries carry `stageFinished`: the
+current stage's last attempt has ended. A unit's total time is null when no start is recorded or the recorded
+end equals the start.
+
+Typed views, `/arcs` with `Prefer: respond-async`, and unit/invocation details with that header use browser
+preparation: a read not ready within 250 ms answers 202 with `{state:'preparing',pending,retryAfterMs}` and
+`retry-after: 1`; polling with `pending=<token>` holds up to a second for the result; `cancel=1` cancels.
+Reads live at most 30 s, with at most 32 preparing reads and 128 readers (beyond either: unavailable).
+`pending`/`cancel` on other routes are `invalid`. Status and API discovery keep the two-second admission.
 
 Invocation route IDs are the existing `seq-ordinal` directory keys: canonical invocation IDs contain `/`
 and `#`, while routes deliberately reject encoded separators. Keys resolve only to journal-recorded
-invocations of the named run. Log requests can echo `identity` to detect replacement; after beyond the
+invocations of the named arc. Log requests can echo `identity` to detect replacement; after beyond the
 current end returns reset. SSE reconnects with Last-Event-ID; missed revisions reset rather than replaying
 unbounded history. Every SSE frame is at most 4 KiB: revision notices carry only
 arc/epoch/revision/checkedAt/highWater, and history notices carry invocation/identity/cursor/state/end/reset
-and changed count. Snapshots, event pages and expanded content are fetched through ordinary GETs. A full
+and changed count. Views, event pages and expanded content are fetched through ordinary GETs. A full
 socket waits for drain for up to two seconds; pending notices coalesce by event kind, and a persistently
 blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt;
 after five seconds without verification the browser shows “Stale”, retaining timestamped
@@ -1192,25 +1221,26 @@ exclude supplied branding and marks. Evidence is text only. Traversal, encoded s
 are refused; evidence reads verify containment of the opened descriptor. CSP is same-origin with nosniff;
 there are no commands, credential reads, shell actions or arbitrary filesystem browsing.
 
-The graph uses Cytoscape with dagre milestone bands and explicit executor milestone gates. Feed edges
-are solid; waits-on-gate edges are dashed. Station focus, search, selection chains and level of detail
-keep every unit navigable without a list below the graph. Route-driven drawers overlay the canvas.
-Merged maps to passed; preparing/running to active; held/blocked/parked to held; waiting/ready to pending;
-cut/superseded stay labelled withdrawn, never passed. `completedWaiting` exposes each completed measurement
-before aggregation. Reservation waits are queued; dependency/contingent-edge/milestone/host-pressure/compare/
-deflake/repair-batch admission waits are queued; others are held. Only a total with one shared category is
-allocated; mixed totals remain unallocated. Never sum overlapping byReasonMs. Time bars are partial recorded
-effort, not wall-time coverage; unmeasured reservations and reason totals stay separate. Resource bookings
-use completed transitions, including integration-slot and named pools; current queuedAt comes only from
-owner-validated sched.json and missing starts remain unknown. CPU compares WorkRun.reservedCpu with measured
-runMs/wallMs; demand is separate. Continuous utilization, peaks, sparklines and standardized individual test
-case bars are not inferred. Certification shows recorded lane verdicts. Attention includes blocking and
-nonblocking subjects, recommendations/options/evidence without response controls. StepLog has one phase per
-recorded invocation, neutral info lines and no inferred timestamps/levels.
+Browser routes are `#/arcs/:arc/:tab` with tabs graph, timeline, activity, effort, resources and attention,
+plus an optional drawer segment `/units|milestones|invocations|events|requests|scopes|resources/:id`; any other
+hash is invalid. Activity opens on the latest events regardless of age; Timeline, Effort and Resources open on
+the 24 hours ending at the last recorded event. Filters are offered only as choices of the view's `facets`; an
+unknown value from a link is left out of the read, saying so under the filter bar. One display vocabulary
+(`src/console/vocabulary.ts`) names states, stages, roles, agents (role, then model), outcomes, hold classes,
+closures and decision kinds. Missing values read "Not recorded", known absence in a window "None in this window",
+and values that cannot apply "Not applicable". An interval still open past a window's right edge keeps its true
+start, gets an arrow cap at the edge, and its row says since when it has run or been held.
 
-Agentic activity rows open a deep link at `#/arcs/:arc/overview/invocations/:id` and return to their
-unit. Deterministic activities retain StepLog. The seat brief is first and collapsed. `decodeTranscript`
-in `src/tui/transcript.ts` is the single presentation decoder; `normalize` renders its structured events
+The graph uses Cytoscape with dagre milestone bands and a legend. Dependency edges are solid; milestone waits
+are dashed. Unit signals (`src/console/signals.ts`):
+merged is passed; preparing/running active; held/blocked/parked/awaiting-admission held; waiting/ready
+pending; cut/superseded withdrawn (dashed border), never passed. Waiting/ready units whose current stage has
+finished are marked distinctly, and the unit drawer reads "Finished: <stage>". Search, focus and selection keep
+every unit navigable; route-driven drawers overlay the canvas, and the drawer's route is the graph selection. Effort scope drawers read under the page's
+resolved window. Attention shows subjects, recommendations, options and evidence without response controls.
+
+Activity rows for invocations open the invocation drawer; the seat brief renders as its own collapsed block.
+`decodeTranscript` in `src/tui/transcript.ts` is the single presentation decoder; `normalize` renders its structured events
 through the legacy text projection, guarded by unchanged TUI tests and phase-4 text goldens. This does
 not change backend execution/result parsers. Claude stream-json is first-class; Codex JSONL command,
 reasoning, message, result and error events use the same event layer. Known events are readable prose;
