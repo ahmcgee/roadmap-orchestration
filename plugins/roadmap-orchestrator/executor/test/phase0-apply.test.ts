@@ -551,6 +551,36 @@ describe('revision plan-defect delta', () => {
     } finally { j.close(); }
   });
 
+  // dev.59 (item 6, nu-119813, C-355): a witness whose file its lane's argv never selects is refused at apply, also when the
+  // lane runs its explicit file list through a shell command string.
+  const editLanes = (a: CorpusArc, lanes: (ls: Json[]) => Json[]): void => editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, lanes: lanes(o['lanes'] as Json[]) }));
+  it('apply.witness-argv-shell: a witness lane whose sh -c file list leaves out the witness file is refused; adding the file applies', T, async () => {
+    const a = await corpusArc();
+    const j = inForce(a);
+    try {
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: ['sh', '-c', 'node --test test/other.test.ts'] })));
+      const why = rejected(await apply(a, j));
+      assert.deepEqual(why.map((r) => JSON.parse(r)), [{ kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: 'I-1', lane: 'journey', file: 'test/berths.test.ts', missing: 'argv' }] }]);
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: ['sh', '-c', "node --test test/other.test.ts 'test/berths.test.ts'"] })));
+      accepted(await apply(a, j));
+    } finally { j.close(); }
+  });
+
+  it('apply.witness-lane-undeclared: an arc lane an apply adds without testPaths is refused (its argv could select nothing); one in force without them refuses nothing', T, async () => {
+    const a = await corpusArc();
+    editLanes(a, (ls) => ls.map(({ testPaths: _t, ...l }) => l));
+    const j = inForce(a);
+    try {
+      editPlan(a, (p) => ({ ...p, direction: 'Book berths safely.' }));
+      accepted(await apply(a, j));
+      editLanes(a, (ls) => [...ls, { ...ls[0]!, id: 'journey-2' }]);
+      const why = rejected(await apply(a, j));
+      assert.deepEqual(why.map((r) => JSON.parse(r)), [{ kind: 'plan-defect', defects: [{ type: 'lane-test-paths-undeclared', lane: 'journey-2' }] }]);
+      editLanes(a, (ls) => ls.map((l) => (l['id'] === 'journey-2' ? { ...l, testPaths: ['test'] } : l)));
+      accepted(await apply(a, j));
+    } finally { j.close(); }
+  });
+
   it('an executor split that removes a deliverer dependency scope refuses the new unreachable witness', T, async () => {
     const a = await corpusArc({ activation: 'future' });
     editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({...u, systems: ['app', 'tests']})) }));

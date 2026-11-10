@@ -76,6 +76,11 @@ describe('witness files against their lane', () => {
     assert.equal(laneMisses(lane(['node', '--test', '--import=./test/setup.ts', '/abs/test']), file), null);
     assert.equal(laneMisses(lane(['node', '--test', 'test/other'], '.', null), file), null);
     assert.equal(laneMisses(lane(['npm', 'test'], '.', ['src']), file), 'test-paths');
+    // dev.59 (item 6): a shell's command string is read as its script's words: a file list there names test paths too.
+    assert.equal(laneMisses(lane(['sh', '-c', 'node --test test/other.test.ts']), file), 'argv');
+    assert.equal(laneMisses(lane(['/bin/bash', '-ec', "node --test test/other.test.ts 'test/unit/a.test.ts'"]), file), null);
+    assert.equal(laneMisses(lane(['sh', '-c', 'cd unit && node --test other.test.ts'], 'test'), file), null);
+    assert.equal(laneMisses(lane(['sh', '-c', 'npm test']), file), null);
   });
 });
 

@@ -37,9 +37,10 @@ import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
 //                    tip (the baseline before the branch exists) or inside the systems of a deliverer or a unit
 //                    a deliverer runs after, transitively (`witness-file-unreachable`). At a fresh start every arc lane
 //                    declares `testPaths` and every binding witness `files` (`lane-test-paths-undeclared`,
-//                    `witness-files-undeclared`). Otherwise each lane and witness is judged on its own (2026-10-21;
-//                    1.0.0-dev.16): a declared one is checked, an undeclared one (an arc started before 2026-10-16) is
-//                    read as undeclared with a logged warning, whatever the others declare.
+//                    `witness-files-undeclared`), and (dev.59, item 6) so does every lane and witness a revision adds
+//                    (`REVISION`: a revision is refused only for the defects it adds). Otherwise (a restart) each lane and witness
+//                    is judged on its own (2026-10-21; 1.0.0-dev.16): a declared one is checked, an undeclared one is read
+//                    as undeclared with a logged warning, whatever the others declare.
 //                  - milestone references (every arc; 2026-10-21, 1.0.0-dev.16): a milestone whose reference dirs hold more
 //                    than `MILESTONE_REFERENCES_BUDGET` bytes of text at the integration tip (the baseline before the branch
 //                    exists), naming its largest text files (`milestone-references-oversize`). Every such file is inlined
@@ -99,17 +100,24 @@ type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind:
 
 /**
  * Which live rows run: the answers (5a) and the chain (8), a fresh start's; the tree (9). Rows 1-6 and 10 always run;
- * `fresh` makes row 11 require declared test paths and witness files; `defects` reports row 11 as refusals, else advisories.
+ * `fresh` is a fresh start (corpus drift); `declared` makes row 11 require declared test paths and witness files;
+ * `defects` reports row 11 as refusals, else advisories.
  */
-export type Phase0Mode = Readonly<{ chain: boolean; answers: boolean; tree: boolean; fresh: boolean; defects: boolean }>;
+export type Phase0Mode = Readonly<{ chain: boolean; answers: boolean; tree: boolean; fresh: boolean; declared: boolean; defects: boolean }>;
 /** `start` of a fresh arc and `phase0 check --plan`: everything. */
-export const FRESH_START: Phase0Mode = { chain: true, answers: true, tree: true, fresh: true, defects: true };
+export const FRESH_START: Phase0Mode = { chain: true, answers: true, tree: true, fresh: true, declared: true, defects: true };
 /** `start` of an arc with a plan in force: no chain or answer rows (it is not a new start). */
-export const RESTART: Phase0Mode = { chain: false, answers: false, tree: true, fresh: false, defects: true };
+export const RESTART: Phase0Mode = { chain: false, answers: false, tree: true, fresh: false, declared: false, defects: true };
 /** `apply`: no chain, no answers (an answer that comes mid-arc is applied by an apply, not refused by one). */
-export const APPLY: Phase0Mode = { chain: false, answers: false, tree: true, fresh: false, defects: false };
+export const APPLY: Phase0Mode = { chain: false, answers: false, tree: true, fresh: false, declared: false, defects: false };
+/**
+ * dev.59 (item 6): the plan defects every revision is refused for adding (src/commands/apply.ts `evaluateClassifiedRevision`
+ * compares them before and after): declarations required, so an arc lane a revision adds without `testPaths`, or a binding
+ * witness it adds without `files`, is that revision's defect; undeclared ones already in force are in both and refuse nothing.
+ */
+export const REVISION: Phase0Mode = { ...APPLY, declared: true };
 /** `phase0 check --from-ref`: the recorded closure alone (K20). */
-export const FROM_REF: Phase0Mode = { chain: false, answers: false, tree: false, fresh: false, defects: true };
+export const FROM_REF: Phase0Mode = { chain: false, answers: false, tree: false, fresh: false, declared: false, defects: true };
 
 /** What the rows read of a plan's inputs: bytes as the files (or a ref) hold them, null when absent. */
 export type Phase0Input = Readonly<{
@@ -313,7 +321,7 @@ export function planDefects(input: Phase0Input, mode: Phase0Mode): readonly Plan
   const set = pin === null || input.guide === null ? null : sameRepoCorpusSet(pin, input.guide);
   if (set !== null) defects.push(...derivedOnCorpus(input.plan, set));
   const obligations = input.plan.holistic.obligations === undefined ? null : load(rows, 'plan.holistic.obligations', input.where, input.obligations, parseObligations);
-  if (obligations !== null) defects.push(...witnessDefects(input, obligations, mode.fresh));
+  if (obligations !== null) defects.push(...witnessDefects(input, obligations, mode.declared));
   return defects;
 }
 
@@ -389,18 +397,19 @@ function withDependencies(plan: PlanM1, units: readonly UnitId[]): readonly Plan
 }
 
 /**
- * Row 11's witness half over the obligations (binding ones: active, not exempt). A fresh start requires every lane's
- * `testPaths` and every witness's `files`; otherwise each is judged on its own (2026-10-21): what is declared is checked,
- * what is not is the logged-warning read of an arc started before 2026-10-16, so a checkpoint that declares one witness's
- * files never turns the arc's other witnesses into defects.
+ * Row 11's witness half over the obligations (binding ones: active, not exempt). `declared` (a fresh start, a revision)
+ * requires every lane's `testPaths` and every witness's `files`: a revision (`REVISION`) refuses only those it adds, so a
+ * lane or witness a revision introduces must declare them (dev.59, item 6: without `testPaths` its argv decides nothing). Otherwise
+ * each is judged on its own (2026-10-21): what is declared is checked, what is not is the logged-warning read of an arc
+ * started before 2026-10-16, so a checkpoint that declares one witness's files never turns the arc's other witnesses into defects.
  */
-function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boolean): readonly PlanDefect[] {
+function witnessDefects(input: Phase0Input, obligations: Obligations, declared: boolean): readonly PlanDefect[] {
   const { plan } = input;
   const binding = obligations.obligations.filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null);
   const out: PlanDefect[] = [];
   for (const lane of obligations.lanes) {
     if (lane.witnessClass === 'external' || lane.testPaths !== undefined) continue;
-    if (fresh) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
+    if (declared) out.push({ type: 'lane-test-paths-undeclared', lane: lane.id });
   }
   let tip: ReadonlySet<string> | null = null;
   const atTip = (file: RepoPath): boolean => {
@@ -411,7 +420,7 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, fresh: boo
     const w = o.witness!;
     if (obligations.lanes.some((l) => l.id === w.lane && l.witnessClass === 'external')) continue;
     if (w.files === undefined) {
-      if (fresh) out.push({ type: 'witness-files-undeclared', obligation: o.id });
+      if (declared) out.push({ type: 'witness-files-undeclared', obligation: o.id });
 
       continue;
     }

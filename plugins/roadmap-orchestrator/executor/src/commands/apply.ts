@@ -40,7 +40,7 @@ import { type PlanM1,type PlanUnit,boundsOf,visionFile } from '../input/plan.ts'
 import { lineageAttempts } from '../pipeline/attempts.ts';
 import { chargeableBoundRecommendation,needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck,reentryRecommendation } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
-import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,planDefects,underRoot } from '../phase0/rows.ts';
+import { APPLY,type Phase0Advisory,REVISION,phase0InputOf,phase0Rows,planDefects,underRoot } from '../phase0/rows.ts';
 import { dispatchOf,repin,unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
@@ -760,8 +760,8 @@ function evaluateClassifiedRevision(
   // absent: those rows refuse it).
   // Every revision refuses only the plan defects it adds (2026-10-27; 1.0.0-dev.26), including executor revisions.
   const before = inForceFiles(ctx.runDir, ctx.view, inForce, revision, ctx.planFile, proposal.repo);
-  const known = new Set(planDefects(phase0InputOf(before, ctx.routingBase.config, ctx.view), APPLY).map(canonicalJson));
-  const added = planDefects(phase0InputOf(proposal, ctx.routingBase.config, ctx.view), APPLY).filter((d) => !known.has(canonicalJson(d)));
+  const known = new Set(planDefects(phase0InputOf(before, ctx.routingBase.config, ctx.view), REVISION).map(canonicalJson));
+  const added = planDefects(phase0InputOf(proposal, ctx.routingBase.config, ctx.view), REVISION).filter((d) => !known.has(canonicalJson(d)));
   if (added.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'plan-defect', defects: added })] };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };

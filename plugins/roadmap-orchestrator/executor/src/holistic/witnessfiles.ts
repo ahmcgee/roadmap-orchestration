@@ -10,8 +10,11 @@
 //                  overlap one of the lane's `testPaths` (`mayOverlap`); a go package pattern's `/...` reads as its
 //                  directory. It reaches the file when it is the root, the file itself, a directory above it, or a glob
 //                  matching it (`matchesPattern`). An argv that names no test path (`npm test`, a bare `node --test`)
-//                  leaves selection to the runner: `testPaths` alone decides.
-// A lane without `testPaths` (inputs recorded before 2026-10-16) decides nothing here.
+//                  leaves selection to the runner: `testPaths` alone decides. dev.59 (item 6, nu-119813): a shell's
+//                  command string (`sh|bash|dash|zsh -c '<script>'`) is read as the words of its script, so an explicit
+//                  file list in it names test paths like one in argv.
+// A lane without `testPaths` (inputs recorded before 2026-10-16) decides nothing here; Phase 0 refuses a fresh start's,
+// and (dev.59) a revision's new one (src/phase0/rows.ts `witnessDefects`).
 import { posix } from 'node:path';
 import { type LaneDef, cadenceAtOrBefore } from '../core/records.ts';
 import type { RepoPath, RepoPattern } from '../core/values.ts';
@@ -21,7 +24,7 @@ import type { ArcLaneDef } from './types.ts';
 
 /** The repo patterns a lane's argv names test files by (empty: the runner selects). */
 export function argvTestPaths(lane: ArcLaneDef, testPaths: readonly RepoPattern[]): readonly RepoPattern[] {
-  return lane.argv.slice(1).flatMap((arg) => {
+  return argvWords(lane.argv).flatMap((arg) => {
     if (arg === '' || arg.startsWith('-')) return [];
     const dir = arg === '...' ? '.' : arg.endsWith('/...') ? arg.slice(0, -4) || '.' : arg;
     if (posix.isAbsolute(dir)) return [];
@@ -30,6 +33,21 @@ export function argvTestPaths(lane: ArcLaneDef, testPaths: readonly RepoPattern[
     if (resolved !== '.' && !testPaths.some((t) => mayOverlap(resolved, t))) return [];
     return [repoPattern(resolved)];
   });
+}
+
+const SHELLS = new Set(['sh', 'bash', 'dash', 'zsh']);
+
+/**
+ * The words after the program that may name test paths: argv's, or (dev.59) for a shell running a command string (`-c`, or
+ * a flag cluster holding `c` such as `-ec`), the script's words, split on whitespace with quotes dropped. The words after
+ * the script are `$0` and the positional parameters, which name nothing the lane runs.
+ */
+function argvWords(argv: readonly string[]): readonly string[] {
+  const rest = argv.slice(1);
+  if (!SHELLS.has(posix.basename(argv[0] ?? ''))) return rest;
+  const flag = rest.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
+  const script = flag === -1 ? undefined : rest[flag + 1];
+  return script === undefined ? rest : script.split(/\s+/).map((w) => w.replace(/^['"]+|['"]+$/g, '')).filter((w) => w !== '');
 }
 
 /**
