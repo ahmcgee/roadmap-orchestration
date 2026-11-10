@@ -155,7 +155,7 @@ import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
 import { PressureTicks,readHostCpuAt,HOST_SCHEDSTAT,readHostMemory } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
 import type { RoutingBase } from '../input/inforce.ts';
-import { type PlanM1,type PlanUnit,hasMilestones } from '../input/plan.ts';
+import { ALL_WITHDRAWN_WAYS_OUT,type PlanM1,type PlanUnit,allWithdrawnText,hasMilestones } from '../input/plan.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,raisedFor,readNeedsUser } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
@@ -175,7 +175,7 @@ import { bringDown,downEnvironments,idleEnvironments,settleEnvironments } from '
 import { holderStage } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { compareDue,cutDue,runCompare,runningCompare } from '../walk/compare.ts';
-import { walksPending } from '../walk/milestones.ts';
+import { allWithdrawnMilestones,walksPending } from '../walk/milestones.ts';
 import { applyPolish,polishDue } from '../walk/polish.ts';
 import { raiseWalkItems,runWalk,settleWalks,walkPending } from '../walk/walk.ts';
 import type { Arbiter,FirstHolder } from './arbiter.ts';
@@ -735,6 +735,17 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     const existing = openBlocking(view()).some((id) => readNeedsUser(runDir, id)?.summary === summary);
     if (!existing) raiseNeedsUser(journal, runDir, { blocking: true, subject: { type: 'arc' }, reason: 'plan-defect', summary, recommendation: 'Export the inputs, remove the reserved variable declarations and apply the corrected revision with --resolves naming this item.', options: [], evidence: [] }, { type: 'arc' });
     process.emitWarning('kept ROADMAP_CPU declaration adopted as an actionable plan-defect, execution held until corrected', { code: 'ROADMAP_UPGRADE' });
+  }
+  // dev.59 adoption (temporary scaffolding, src/walk/milestones.ts `allWithdrawnMilestones`): a milestone in force with no
+  // live member never waits silently; it is the root's blocking item, once while open, and is never reached for it.
+  for (const { milestone, withdrawn } of allWithdrawnMilestones(view(), plan())) {
+    const summary = `${allWithdrawnText(milestone, withdrawn)}.`;
+    if (openBlocking(view()).some((id) => readNeedsUser(runDir, id)?.summary === summary)) continue;
+    raiseNeedsUser(journal, runDir, {
+      blocking: true, subject: { type: 'arc' }, reason: 'plan-defect', summary,
+      recommendation: `Export the inputs and ${ALL_WITHDRAWN_WAYS_OUT}; apply it with --resolves naming this item.`, options: [], evidence: [],
+    }, { type: 'arc' });
+    process.emitWarning(`milestone ${milestone} adopted with no live member, raised as a blocking plan-defect`, { code: 'ROADMAP_UPGRADE' });
   }
 
   const tasks = new Map<UnitId, Task>();

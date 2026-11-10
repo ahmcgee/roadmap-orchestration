@@ -306,6 +306,26 @@ export function milestoneMembers(plan: Pick<PlanM1, 'units'>, m: Pick<Milestone,
   }
   return plan.units.map((u) => u.id).filter((id) => members.has(id));
 }
+/**
+ * dev.59: the members of `m` the plan withdraws, in plan order: cut, or re-entered by another unit (superseded; its re-entry
+ * is a member instead). What the fold reads as the units' statuses (src/walk/milestones.ts `milestoneMembership`), from
+ * the plan alone, so a revision is judged before it is in force.
+ */
+export function withdrawnMembers(plan: Pick<PlanM1, 'units'>, m: Pick<Milestone, 'units'>): readonly UnitId[] {
+  const reentered = new Set(plan.units.flatMap((u) => (u.reenters === undefined ? [] : [u.reenters.unit])));
+  const cut = new Set(plan.units.flatMap((u) => (u.cut === undefined ? [] : [u.id])));
+  return milestoneMembers(plan, m).filter((u) => cut.has(u) || reentered.has(u));
+}
+/**
+ * dev.59: why milestone `id`, every member of which (`withdrawn`) is withdrawn, is a defect, and the ways out. It has no
+ * live member, so it is never reached (src/walk/milestones.ts `milestoneReached`) and the units after it wait for ever.
+ */
+export const allWithdrawnText = (id: MilestoneId, withdrawn: readonly UnitId[]): string =>
+  `milestone ${id} has no live member: ${withdrawn.join(', ')} ${withdrawn.length === 1 ? 'is' : 'are'} withdrawn (superseded or cut), so it is never reached `
+  + 'and the units after it wait on it for ever';
+/** The ways out of `allWithdrawnText`. The executor never marks such a milestone reached on the root's behalf. */
+export const ALL_WITHDRAWN_WAYS_OUT = 'carry the work forward into a unit that counts for it (a unit added with `carries: {unit, tip}` naming '
+  + 'a cut member), or apply a revision that re-points its units to live units or removes it';
 /** The milestones `unit` is a member of (`milestoneMembers`), in plan order. */
 export const milestonesOfUnit = (plan: Pick<PlanM1, 'milestones' | 'units'>, unit: UnitId): readonly Milestone[] =>
   milestonesOf(plan).filter((m) => milestoneMembers(plan, m).includes(unit));

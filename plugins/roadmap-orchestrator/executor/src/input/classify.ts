@@ -44,8 +44,8 @@ import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../s
 import { baseFiles,compareAndSwap } from './cas.ts';
 import { type InForce,type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,inForceFiles,inputPath,keptInput,phase0RecordOf,planInForce,planRouting,readInputFiles,revisionInForce,revisionManifestOf,unitRouting } from './inforce.ts';
 import {
-type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
-planFieldValue,priorityOf,reservedUnitIdReason,
+type KnownDefect,type PlanM1,type PlanUnit,ALL_WITHDRAWN_WAYS_OUT,allWithdrawnText,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestoneMembers,milestonesNeedHolistic,milestonesOf,parsePlan,
+planFieldValue,priorityOf,reservedUnitIdReason,withdrawnMembers,
 } from './plan.ts';
 
 /** Who proposes a revision: root input or one of the executor's narrowly scoped machine edits. */
@@ -872,13 +872,23 @@ function routingRows(
  * walked on; one being walked (started, not ended) does not change until its walk ends; a milestone added, or whose units
  * change, lists a unit still to merge (it is reached on the publication that retires its last unit). On every revision, by
  * any proposer: no milestone lists a cut unit, which never merges, so the milestone would never be reached and its
- * descendants would wait on it for ever.
+ * descendants would wait on it for ever; nor (dev.59) does a revision leave a milestone with no live member.
  */
 function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: PlanChange[], reasons: string[]): void {
   const cut = new Set(plan.units.filter((u) => u.cut !== undefined).map((u) => u.id));
   for (const m of milestonesOf(plan)) {
     const on = m.units.filter((u) => cut.has(u));
     if (on.length > 0) reasons.push(`milestone ${m.id} lists ${on.join(', ')}, cut: a cut unit never merges, so the milestone would never be reached; drop it from the milestone's units in the same apply`);
+  }
+  // dev.59 (pass 3 follow-up): a revision that withdraws a milestone's last live member (a cut of its re-entry, say) is
+  // refused the same way; one already without a live member in force (adopted from an earlier release) is not this
+  // revision's, so it refuses nothing here: the scheduler raises it as a blocking item (`allWithdrawnItem`).
+  for (const m of milestonesOf(plan)) {
+    const withdrawn = withdrawnMembers(plan, m);
+    if (withdrawn.length < milestoneMembers(plan, m).length) continue;
+    const prior = milestonesOf(cur).find((x) => x.id === m.id);
+    if (prior !== undefined && withdrawnMembers(cur, prior).length === milestoneMembers(cur, prior).length) continue;
+    reasons.push(`${allWithdrawnText(m.id, withdrawn)}: ${ALL_WITHDRAWN_WAYS_OUT} in the same apply`);
   }
   const was = milestonesOf(cur);
   const now = milestonesOf(plan);

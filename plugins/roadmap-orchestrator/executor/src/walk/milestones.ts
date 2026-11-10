@@ -86,6 +86,19 @@ export function milestoneReached(view: JournalView, plan: Pick<PlanM1, 'units'>,
   return live.length > 0 && merged.length === live.length;
 }
 
+/**
+ * dev.59 adoption (temporary scaffolding: delete once no arc started before 1.0.0-dev.59 is in flight): the milestones in
+ * force with members but no live one, each with its withdrawn members. The classifier refuses a revision that makes one
+ * (src/input/classify.ts `milestoneRows`), so only an arc adopted from an earlier release, whose membership did not yet
+ * count re-entries, holds one; the scheduler raises each as a blocking item at its start. Never reached for the root.
+ */
+export function allWithdrawnMilestones(view: JournalView, plan: Pick<PlanM1, 'units' | 'milestones'>): readonly Readonly<{ milestone: MilestoneId; withdrawn: readonly UnitId[] }>[] {
+  return milestonesOf(plan).flatMap((m) => {
+    const { members, live, withdrawn } = milestoneMembership(view, plan, m);
+    return members.length > 0 && live.length === 0 ? [{ milestone: m.id, withdrawn }] : [];
+  });
+}
+
 /** A round's walk and what it admitted: the units, and what an author has yet to do. */
 export type RoundView = Readonly<{
   job: JobId;

@@ -20,8 +20,8 @@ import { parseVision } from '../src/holistic/types.ts';
 import { type Classified, type Proposer, changesScope, classify } from '../src/input/classify.ts';
 import { readInputFiles, recordPlan, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { milestonesOf, parsePlan } from '../src/input/plan.ts';
-import { openBlocking, raiseNeedsUser, supersededItems } from '../src/needsuser.ts';
-import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
+import { openBlocking, raiseNeedsUser, readNeedsUser, supersededItems } from '../src/needsuser.ts';
+import { allWithdrawnMilestones, milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
 import { bringUpDraft } from '../src/walk/report.ts';
 import { FROM_REF, MILESTONE_REFERENCES_BUDGET, phase0Rows } from '../src/phase0/rows.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
@@ -31,6 +31,8 @@ import { commitAll, git, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts'
 import { planDirOf } from './fixtures/route-common.ts';
 import { status } from '../src/status.ts';
 import { type ArcDescriptor, type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
+import { startScheduler, stopScheduler } from './fixtures/sched-common.ts';
+import { until } from './fixtures/exec-common.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;
@@ -261,6 +263,48 @@ describe('milestones.membership (dev.59 scope item 3, C2, C4)', () => {
     assert.deepEqual(milestoneProgress(r.journal.view, plan, m, []), { kind: 'walk-due', round: 1 }, 'reached: its one live member merged, the cut lineage withdrawn');
     assert.deepEqual(membersOf(r), [{ members: ['u2', 'u3', 'u4'], withdrawn: ['u2', 'u3'], live: 1, merged: 1 }]);
   }));
+
+  // dev.59 (pass 3 follow-up): a milestone whose members are all withdrawn never waits silently.
+  const reenteredThenCut = (r: ArcRun): string => {
+    withMilestones({ ...MILESTONE, design: { supplied: true }, units: ['u2'] })(r.d);
+    accept(r);
+    park(r, 'u2');
+    addUnit(r.d, 'u3', { reenters: { unit: 'u2', fixes: 'u2/gate#1' } });
+    accept(r);
+    r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: unitId('u3') } });
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['cut'] = { reason: 'past the attempt caps' }));
+    return 'milestone MS-1 has no live member: u2, u3 are withdrawn (superseded or cut), so it is never reached and the units after it wait on it for ever';
+  };
+  test('milestones.all-withdrawn-refused: a revision that withdraws a milestone\'s last live member is refused, naming it, its withdrawn members and the ways out; carrying the work forward applies', T, () => onCorpusArc((r) => {
+    const text = reenteredThenCut(r);
+    assert.deepEqual(reasons(classifyNow(r)), [`${text}: carry the work forward into a unit that counts for it (a unit added with \`carries: {unit, tip}\` naming a cut member), or apply a revision that re-points its units to live units or removes it in the same apply`]);
+    git(r.d.repo, 'branch', `roadmap/${r.d.arc}/u3`, 'main');
+    addUnit(r.d, 'u4', { carries: { unit: 'u3', tip: git(r.d.repo, 'rev-parse', 'main') } });
+    accepted(classifyNow(r));
+  }));
+
+  test('milestones.all-withdrawn-adopted: one in force from an earlier release is a blocking plan-defect item the scheduler raises, never reached for the root', T, async () => {
+    const arc = await setupCorpusArc([], { units: TWO });
+    const r = contextFor(arc.d);
+    try {
+      const text = reenteredThenCut(r);
+      // As an earlier release let it in: the revision is put in force without this release's classifier.
+      recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), [{ type: 'unit-cut', unit: unitId('u3') }], BASE);
+      r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000002'), target: { type: 'all' } });
+      const plan = parsePlan(JSON.parse(readFileSync(r.d.planPath, 'utf8')));
+      assert.deepEqual(allWithdrawnMilestones(r.journal.view, plan), [{ milestone: 'MS-1', withdrawn: ['u2', 'u3'] }]);
+      assert.notEqual(milestoneProgress(r.journal.view, plan, milestonesOf(plan)[0]!, []).kind, 'walk-due', 'never reached');
+      const s = startScheduler(r);
+      const item = () => openBlocking(r.journal.view).map((id) => readNeedsUser(r.ctx.runDir, id)!).find((n) => n.summary.startsWith('milestone MS-1'));
+      await until(() => item() !== undefined, 30_000, 'the blocking item');
+      assert.deepEqual([item()!.reason, item()!.blocking, item()!.subject, item()!.summary], ['plan-defect', true, { type: 'arc' }, `${text}.`]);
+      assert.match(item()!.recommendation, /carries: \{unit, tip\}.*re-points its units to live units or removes it; apply it with --resolves/);
+      await stopScheduler(r, s);
+      assert.equal(openBlocking(r.journal.view).filter((id) => readNeedsUser(r.ctx.runDir, id)!.summary === `${text}.`).length, 1, 'raised once');
+    } finally {
+      r.journal.close();
+    }
+  });
 
   test('milestones.carry-refusals: a carry names a cut unit and a commit of its branch, set when the unit is added', T, () => onCorpusArc((r) => {
     const tip = git(r.d.repo, 'rev-parse', 'main');
