@@ -1240,7 +1240,8 @@ Continued request churn yields unavailable instead of spinning until the deadlin
 not-found for absent/pruned evidence. Requests accept
 `minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and `fenceSize` captured cheaply
 from the journal. The cursor must inspect through that fence, excluding incomplete trailing lines. Request
-admission rechecks dependencies and coalesces catch-up, bounded to two seconds. Reset/conflict (409),
+admission rechecks dependencies and coalesces catch-up, bounded to two seconds counted from when the observation
+worker is ready (loaded and through its first check); a request arriving earlier waits for that. Reset/conflict (409),
 unavailable (503) and corruption (500) are explicit; old epochs/lower watermarks/unchecked caches are not
 silently returned. Absent/dead/unreachable servers, unavailable catch-up and console protocol/version mismatch fall back locally
 with a stderr diagnostic. Identity mismatch, malformed payload and corrupt evidence do not fall back.

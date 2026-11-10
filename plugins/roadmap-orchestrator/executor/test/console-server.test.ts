@@ -6,6 +6,7 @@ import { invocationDirName, opKey, sha256 } from '../src/core/ids.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { createServer } from 'node:net';
 import { test } from 'node:test';
+import { Worker } from 'node:worker_threads';
 import { parseRepoConfig } from '../src/routing/layers.ts';
 import { parseCommand } from '../src/input/cli.ts';
 import { consoleSettings } from '../src/console/settings.ts';
@@ -51,6 +52,19 @@ test('real HTTP worker observes retained runs, enforces GET/HEAD, immutable stat
   assert.equal((await fetch(`${api}/arcs/${f.arc}/units/a%2fb`)).status, 400);
   assert.equal((await fetch(`${console.url}/package.json`)).status, 404);
   assert.equal((await fetch(`${api}/arcs`)).headers.get('access-control-allow-origin'), null);
+});
+
+test('a strict read sent while the worker is still loading gets its two seconds once the worker is ready', async (t) => {
+  // A worker that takes 2.5 s to load and make its first check, as on a busy host: nothing it says arrives before then.
+  const f = consoleFixture(), emit = Worker.prototype.emit, held: [Worker, unknown[]][] = []; let loading = true;
+  t.mock.method(Worker.prototype, 'emit', function (this: Worker, event: string | symbol, ...rest: unknown[]) {
+    if (event === 'message' && loading) { held.push([this, rest]); return true; }
+    return emit.call(this, event, ...rest);
+  });
+  setTimeout(() => { loading = false; for (const [worker, m] of held.splice(0)) emit.call(worker, 'message', ...m); }, 2_500);
+  const s = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => s.close());
+  const status = await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/status`);
+  assert.equal(status.status, 200, await status.clone().text());
 });
 
 test('occupied explicit port refuses binding without choosing another', async (t) => {
