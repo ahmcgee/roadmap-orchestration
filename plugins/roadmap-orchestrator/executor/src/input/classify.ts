@@ -28,7 +28,9 @@ import type { Phase0Record } from '../phase0/types.ts';
 import { citedFailure,laneFailures,outcomeRef } from '../pipeline/failures.ts';
 import { designFaults,pinDesign } from '../pipeline/design.ts';
 import { verificationReasons } from '../pipeline/deflake.ts';
-import { revParse } from '../git/git.ts';
+import { catFileType,refTarget,revParse } from '../git/git.ts';
+import { isAncestor } from '../git/ff.ts';
+import { unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { environmentState } from '../resources/environments.ts';
 import { cpuCapacity,overCapacity } from '../resources/pool.ts';
@@ -202,9 +204,25 @@ export const busyText = (b: BusyAttempt): string => `unit ${b.unit} is running $
  * A plan unit without its M2 lifecycle fields, its M3 routing layer and limits and its M4a rev 3 priority (their own edit
  * classes), for comparing the rest of its entry.
  */
-function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters' | 'routing' | 'limits' | 'priority'> {
-  const { cut: _cut, reenters: _reenters, routing: _routing, limits: _limits, priority: _priority, ...rest } = u;
+function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters' | 'carries' | 'routing' | 'limits' | 'priority'> {
+  const { cut: _cut, reenters: _reenters, carries: _carries, routing: _routing, limits: _limits, priority: _priority, ...rest } = u;
   return rest;
+}
+
+/**
+ * dev.59 (C4): why an added unit may not carry `carries.unit`'s work forward: the plan must hold that unit cut (before, or
+ * by this apply), and `carries.tip` must be a commit of its branch. Empty when it may.
+ */
+function carryReasons(repo: AbsPath, plan: PlanM1, unit: PlanUnit): readonly string[] {
+  const c = unit.carries;
+  if (c === undefined) throw new Error(`carryReasons of ${unit.id}, which carries nothing`);
+  const from = plan.units.find((u) => u.id === c.unit);
+  if (from === undefined) return [`unit ${unit.id} carries ${c.unit}, which the plan does not hold`];
+  if (from.cut === undefined) return [`unit ${unit.id} carries ${c.unit}, which is not cut: cut it in the same apply, or re-enter it instead`];
+  const head = refTarget(repo, unitBranch(plan.arc, c.unit));
+  if (head === null) return [`unit ${unit.id} carries ${c.unit}, which has no branch: it left no work to carry`];
+  if (catFileType(repo, c.tip) !== 'commit' || !isAncestor(repo, c.tip, head)) return [`unit ${unit.id} carries ${c.unit} from ${c.tip}, which is not a commit of ${c.unit}'s branch (its head is ${head})`];
+  return [];
 }
 
 /** The revision's ledger: its rulings, or why it does not load. */
@@ -429,6 +447,7 @@ export function classify(input: ClassifyInput): Classified {
   const nextIds = plan.units.map((u) => u.id);
   const planned = new Set(view.plannedUnits());
   const reentering: PlanUnit[] = [];
+  const carrying: PlanUnit[] = [];
   for (const u of cur.units) {
     if (nextIds.includes(u.id)) continue;
     if (started(view, u.id)) reasons.push(`unit ${u.id} has started; it cannot be removed`);
@@ -444,6 +463,7 @@ export function classify(input: ClassifyInput): Classified {
       changes.push({ type: 'unit-added', unit: u.id });
       scoped.add(u.id);
       if (u.reenters !== undefined) reentering.push(u);
+      if (u.carries !== undefined) carrying.push(u);
     }
   }
   // G3: a DAG arc starts units out of plan order, so the started ones keep only their relative order. A re-entry
@@ -492,6 +512,7 @@ export function classify(input: ClassifyInput): Classified {
 
     if (was === undefined) continue;
     if (!same(was.reenters, unit.reenters)) reasons.push(`unit ${unit.id}: \`reenters\` is set when a unit is added, never after`);
+    if (!same(was.carries, unit.carries)) reasons.push(`unit ${unit.id}: \`carries\` is set when a unit is added, never after`);
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
@@ -572,6 +593,7 @@ export function classify(input: ClassifyInput): Classified {
       scoped.add(row.reenters);
     } else reasons.push(...row);
   }
+  for (const unit of carrying) reasons.push(...carryReasons(next.repo, plan, unit));
   if (chains.length === 0) {
     const cycle = findCycle(effectiveGraph(plan.units));
     if (cycle !== null) reasons.push(`the unit graph has a cycle once each re-entered unit stands for its lineage's head: ${cycle.join(' → ')}`);

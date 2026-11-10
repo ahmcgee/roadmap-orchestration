@@ -87,7 +87,7 @@ import { unknownLaneSystems } from '../input/systems.ts';
 import { visionUnconfirmed } from '../holistic/vision.ts';
 import { mayOverlap } from '../input/classify.ts';
 import type { InputFiles } from '../input/inforce.ts';
-import { type PlanM1,type PlanUnit,derivedOf,designUnitOf,milestonesNeedHolistic,milestonesOf } from '../input/plan.ts';
+import { type PlanM1,type PlanUnit,derivedOf,designUnitOf,milestoneMembers,milestonesNeedHolistic,milestonesOf } from '../input/plan.ts';
 import { isLive } from '../preflight/lanerows.ts';
 import type { StartupRejection } from '../preflight/startup.ts';
 import type { RepoConfig } from '../routing/layers.ts';
@@ -325,7 +325,7 @@ function milestoneUnitsBeforeDesign(plan: PlanM1): readonly MilestoneUnitBeforeD
   return milestonesOf(plan).flatMap((m) => {
     const design = designUnitOf(m);
     if (design === null) return [];
-    return plan.units.filter((u) => m.units.includes(u.id) && isLive(plan, u) && !withDependencies(plan, u.after).some((d) => d.id === design))
+    return plan.units.filter((u) => milestoneMembers(plan, m).includes(u.id) && isLive(plan, u) && !withDependencies(plan, u.after).some((d) => d.id === design))
       .map((u) => ({ kind: 'milestone-unit-before-design' as const, milestone: m.id, unit: u.id, design }));
   });
 }

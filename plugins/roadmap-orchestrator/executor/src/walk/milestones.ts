@@ -2,7 +2,8 @@
 // force and the findings, never stored. Pure but for the repairing units the caller reads (src/pipeline/reproduce.ts
 // `repairUnits`: which units' specs repair which findings).
 //
-// - **Reached**: every unit of the milestone is merged (each followed to its lineage head). The walk of round 1 is due.
+// - **Reached**: every live member is merged (dev.59: its members are its units, their re-entries and the units carrying a
+//   cut one forward, `milestoneMembers`; superseded and cut members are withdrawn). The walk of round 1 is due.
 // - **A walk** (`walk-<n>`): `walk-started` opens it, `walk-ended` closes it. An `abandoned` walk (its session failed, was
 //   interrupted or its backend parked) is not a round: the same round is due again, but a round whose walk failed (not
 //   interrupted) WALK_ATTEMPTS times ends `abandoned`: no further walk, not settled (the demo never promotes on it), and
@@ -31,7 +32,7 @@ import type { NeedsUserContent } from '../core/records.ts';
 import type { IsoTime } from '../core/values.ts';
 import { type RepairUnit, isActive } from '../holistic/findings.ts';
 import { lineageMembers } from '../input/lineage.ts';
-import { type Milestone, type PlanM1, milestonesOf, walkRoundsOf } from '../input/plan.ts';
+import { type Milestone, type PlanM1, milestoneMembers, milestonesOf, walkRoundsOf } from '../input/plan.ts';
 import { PARK_ESCALATE_MS } from '../schedule/types.ts';
 
 /** What the rounds read of the repairing units (`repairUnits`, or the brief's over a ref): each unit and what its spec repairs. */
@@ -68,8 +69,22 @@ export const runningWalk = (view: JournalView): WalkRecord | null => walksOf(vie
 /** The lineage head of `unit`: the unit itself, or the last unit re-entering it. */
 const headOf = (view: JournalView, unit: UnitId): UnitId => lineageMembers(view, unit).at(-1)!;
 
-/** Every unit of `m` is merged (each followed to its lineage head). */
-export const milestoneReached = (view: JournalView, m: Milestone): boolean => m.units.every((u) => view.unit(headOf(view, u)).status === 'retired');
+/** A member withdrawn from its milestone's counts and readiness: superseded (its re-entry counts instead) or cut. */
+const withdrawn = (view: JournalView, unit: UnitId): boolean => view.unit(unit).status === 'superseded' || view.unit(unit).status === 'cut';
+
+/** Who counts toward `m` now: every member, those withdrawn, and the rest (live) with those of them merged. */
+export type MilestoneMembership = Readonly<{ members: readonly UnitId[]; withdrawn: readonly UnitId[]; live: readonly UnitId[]; merged: readonly UnitId[] }>;
+export function milestoneMembership(view: JournalView, plan: Pick<PlanM1, 'units'>, m: Pick<Milestone, 'units'>): MilestoneMembership {
+  const members = milestoneMembers(plan, m);
+  const live = members.filter((u) => !withdrawn(view, u));
+  return { members, withdrawn: members.filter((u) => withdrawn(view, u)), live, merged: live.filter((u) => view.unit(u).status === 'retired') };
+}
+
+/** Every live member of `m` is merged, and it has one: superseded and cut members are withdrawn (dev.59). */
+export function milestoneReached(view: JournalView, plan: Pick<PlanM1, 'units'>, m: Pick<Milestone, 'units'>): boolean {
+  const { live, merged } = milestoneMembership(view, plan, m);
+  return live.length > 0 && merged.length === live.length;
+}
 
 /** A round's walk and what it admitted: the units, and what an author has yet to do. */
 export type RoundView = Readonly<{
@@ -153,7 +168,7 @@ export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone,
   const rounds = walks.filter((w) => w.ended !== null && w.ended.outcome !== 'abandoned');
   const last = rounds.at(-1);
   const since = view.rewalkSeq(m.id);
-  if (last === undefined) return milestoneReached(view, m) ? braked(walks, 1, since) : { kind: 'building' };
+  if (last === undefined) return milestoneReached(view, plan, m) ? braked(walks, 1, since) : { kind: 'building' };
   if (last.ended!.outcome === 'bring-up-failed' && since > last.ended!.seq) return braked(walks, last.round, since);
   const r = roundOf(view, plan, last, repairs);
   if (r.pending !== null || r.inFlight.length > 0) return { kind: 'round-open', round: r };

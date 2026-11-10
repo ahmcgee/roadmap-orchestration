@@ -50,7 +50,7 @@ export class ConsoleEffort {
       const selected=(s:Subject)=>{
         const u=s.type==='unit'?index.identities.get(s.id):undefined,r=rows.get(key(s));
         return (!filters.subject.length||filters.subject.includes(key(s)))&&(!filters.unit.length||!!u&&filters.unit.includes(s.id))&&(!filters.system.length||!!u&&u.systems.some(v=>filters.system.includes(v)))
-          &&(!filters.milestone.length||!!u&&(e.data.plan?.milestones??[]).some(m=>filters.milestone.includes(m.id)&&m.units.includes(s.id as never)))
+          &&(!filters.milestone.length||!!u&&e.data.display.status.milestones.some(m=>filters.milestone.includes(m.id)&&m.members.includes(s.id as never)))
           &&(!filters.state.length||!!r?.state&&filters.state.includes(r.state))&& (filters.blocked==='all'||!!r&&Boolean(r.blockers.count)===(filters.blocked==='1'))
           &&(!filters.q||`${s.id} ${u?.title??s.title}`.toLowerCase().includes(filters.q));
       };

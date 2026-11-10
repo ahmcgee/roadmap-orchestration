@@ -103,8 +103,10 @@ import { type Certification,type WorkRun,certificationReader,workRuns } from './
 //   units[].lineageAttempts  (dev.59) the lineage's builds and judged stages against the total-attempt caps (16/40)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
+//   units[].carries / carriedBy  (dev.59, C4) the cut unit a fresh unit carries forward (plan `carries`), and back
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
-//                 passed, its last round, its walks and its active walkthrough findings; `edges` adds each node edge
+//                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
+//                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge
 import { existsSync,statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -177,7 +179,7 @@ type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,typ
 readOnlyContexts,recordedLaneEnv,schedFile,unitSettled,
 } from './schedule/scheduler.ts';
 import type { AdmissionConstraint,Rank,ResourceRequest } from './schedule/types.ts';
-import { type MilestoneState,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
+import { type MilestoneState,milestoneMembership,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
 import { milestoneEdges,milestonePassed,milestoneWaits } from './walk/node.ts';
 
 export type OwnerState = Readonly<{ state: 'alive' | 'dead' | 'none'; generation: number | null; pid: number | null }>;
@@ -289,6 +291,10 @@ export type UnitStatusLine = Readonly<{
   lineage: Lineage | null;
   /** The unit that re-entered this one, once it is superseded. */
   supersededBy: UnitId | null;
+  /** dev.59 (C4): the cut unit whose work this one carries forward, and from which commit (plan `carries`); null otherwise. */
+  carries: Readonly<{ unit: UnitId; tip: Sha }> | null;
+  /** dev.59 (C4): on a cut unit, the units of the plan carrying its work forward, in plan order. */
+  carriedBy: readonly UnitId[];
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
   running: UnitRunning | null;
@@ -560,6 +566,12 @@ export type Status = Readonly<{
 export type MilestoneView = Readonly<{
   id: MilestoneId; state: MilestoneState; passed: boolean; round: number; walks: readonly Readonly<{ job: JobId; round: number; outcome: WalkOutcome | null }>[];
   findings: readonly FindingId[];
+  /**
+   * dev.59 (scope item 3, C4; src/walk/milestones.ts `milestoneMembership`): who counts toward it. `members`: its units, their
+   * re-entries and the units carrying a cut one forward, in plan order; `withdrawn`: those superseded or cut; `live`: the
+   * rest, `merged` of them merged. It is reached when every live member merged.
+   */
+  members: readonly UnitId[]; withdrawn: readonly UnitId[]; live: number; merged: number;
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
@@ -836,6 +848,8 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     park: parkOf(view, u),
     lineage: u.lineage,
     supersededBy: u.supersededBy,
+    carries: unit.carries ?? null,
+    carriedBy: plan.units.filter((p) => p.carries?.unit === unit.id).map((p) => p.id),
     buildTier: u.buildTier,
     running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
   };
@@ -1711,6 +1725,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
 function milestoneViews(view: JournalView, plan: PlanM1, repairs: readonly RepairUnit[]): readonly MilestoneView[] {
   return milestonesOf(plan).map((m) => {
     const walks = walksOf(view, m.id);
+    const membership = milestoneMembership(view, plan, m);
     return {
       id: m.id,
       state: milestoneState(view, m.id, milestoneProgress(view, plan, m, repairs)),
@@ -1718,6 +1733,7 @@ function milestoneViews(view: JournalView, plan: PlanM1, repairs: readonly Repai
       round: walks.filter((w) => w.ended !== null && w.ended.outcome !== 'abandoned').at(-1)?.round ?? 0,
       walks: walks.map((w) => ({ job: w.job, round: w.round, outcome: w.ended?.outcome ?? null })),
       findings: canonicalIds(view.holistic().findings.filter((f) => f.lens === 'walkthrough' && f.milestone === m.id && isActive(f)).map((f) => f.id)),
+      members: membership.members, withdrawn: membership.withdrawn, live: membership.live.length, merged: membership.merged.length,
     };
   });
 }

@@ -41,7 +41,8 @@ export function graphView(e: Envelope): GraphView {
   const states = new Map(s.milestones.map(m => [String(m.id), m]));
   const milestones: GraphView['milestones'] = (e.data.plan?.milestones ?? []).map(m => {
     const state = states.get(m.id)!;
-    return {id: String(m.id), ...(m.name === undefined ? {} : {name: m.name}), state: state.state, passed: state.passed, memberIds: [...m.units]};
+    // dev.59: members as status counts them (its units, their re-entries and carriers; src/walk/milestones.ts).
+    return {id: String(m.id), ...(m.name === undefined ? {} : {name: m.name}), state: state.state, passed: state.passed, memberIds: state.members.map(String)};
   });
   const edges: GraphView['edges'] = s.edges.map(edge => {
     switch (edge.type) {

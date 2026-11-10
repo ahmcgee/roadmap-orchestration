@@ -53,7 +53,7 @@ import { regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
 
 import { CORPUS_FILE_INPUT,type CorpusInForce,type LoadedSpec,OBLIGATIONS_INPUT,PLAN_INPUT,RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce } from '../input/inforce.ts';
 import {
-type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
+type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,milestoneMembers,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
 } from '../input/plan.ts';
 
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
@@ -331,14 +331,15 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
 }
 
 /**
- * dev.13: the milestones `unit` takes part in under the plan in force (a member of their `units`, or their design unit), in
+ * dev.13: the milestones `unit` takes part in under the plan in force (a member, `milestoneMembers`: dev.59 a re-entry or carrier of
+ * one of their units too; or their design unit), in
  * plan order, with their design references at `tip` (`MilestonesInput`); null when it is in none. What its pre-build,
  * build and gate read.
  */
 export function unitMilestones(ctx: Pick<StageContext, 'plan' | 'repo'>, unit: UnitId, tip: Sha): MilestonesInput | null {
   const of = milestonesOf(ctx.plan()).flatMap((m): UnitMilestone[] => {
     if (designUnitOf(m) === unit) return [{ as: 'design', id: m.id, text: m.text, dirs: m.references, journeys: m.journeys }];
-    return m.units.includes(unit) ? [{ as: 'member', id: m.id, text: m.text, dirs: m.references }] : [];
+    return milestoneMembers(ctx.plan(), m).includes(unit) ? [{ as: 'member', id: m.id, text: m.text, dirs: m.references }] : [];
   });
   if (of.length === 0) return null;
   const files = referenceFiles(ctx.repo, tip, of.flatMap((m) => m.dirs));
@@ -360,7 +361,7 @@ export function buildBrowser(
   if (servers === undefined) return null;
   const repairs = new Set<string>(specRepairs(spec));
   const repairedMilestones = new Set(ctx.journal.view.holistic().findings.flatMap((f) => repairs.has(f.id) && f.milestone !== undefined ? [f.milestone] : []));
-  const milestones = milestonesOf(ctx.plan()).filter((m) => m.units.includes(spec.unit) || designUnitOf(m) === spec.unit || repairedMilestones.has(m.id));
+  const milestones = milestonesOf(ctx.plan()).filter((m) => milestoneMembers(ctx.plan(), m).includes(spec.unit) || designUnitOf(m) === spec.unit || repairedMilestones.has(m.id));
   return {
     input: { servers: Object.keys(servers), bringUps: milestones.map((m) => ({ milestone: m.id, bringUp: m.bringUp })) },
     mcpConfig: walkMcpConfig(servers, evidenceDir),

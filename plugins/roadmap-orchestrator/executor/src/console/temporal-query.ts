@@ -79,7 +79,7 @@ export class ConsoleTemporal {
         const unit = r.subject.type === 'unit' ? r.subject.id : null;
         return (!filters.subject || filters.subject === `${r.subject.type}:${r.subject.id}`)
           && (!filters.unit.length || unit !== null && filters.unit.includes(unit))
-          && (!filters.milestone.length || unit !== null && (e.data.plan?.milestones ?? []).some(m => filters.milestone.includes(m.id) && m.units.includes(unit as never)))
+          && (!filters.milestone.length || unit !== null && e.data.display.status.milestones.some(m => filters.milestone.includes(m.id) && m.members.includes(unit as never)))
           && (!filters.state.length || unit !== null && filters.state.includes(states.get(unit)!))
           && (!filters.stage.length || filters.stage.includes(r.stage))
           && (!filters.execution.length || filters.execution.includes(execution.get(r.id)!))

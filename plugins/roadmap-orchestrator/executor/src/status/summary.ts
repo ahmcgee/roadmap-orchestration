@@ -4,7 +4,7 @@ import type { ArcId, UnitId } from '../core/ids.ts';
 import type { AbsPath } from '../core/values.ts';
 import { meterOf } from '../meter.ts';
 import { laneRuns, wasteFindings } from '../flow/waste.ts';
-import { type PlanM1 } from '../input/plan.ts';
+import { type PlanM1, milestoneMembers } from '../input/plan.ts';
 import { type StatusCore, statusCore } from '../status.ts';
 
 export function caughtOf(events: readonly Event[], runs = laneRuns(events)) {
@@ -31,24 +31,15 @@ export function summarize(s: StatusCore, events: readonly Event[], plan: PlanM1 
     if (f.kind === 'walk-started') add(jobsByMilestone, f.milestone, f.job);
     if (f.kind === 'compare-started') add(jobsByUnit, f.unit, f.job);
   }
-  const membership = new Map((plan?.milestones ?? []).map((m) => [m.id, new Set(m.units)]));
-  const children = new Map<UnitId, UnitId[]>();
-  for (const u of plan?.units ?? []) {
-    if (u.polish !== undefined) membership.get(u.polish.milestone)?.add(u.id);
-    if (u.reenters !== undefined) { const rows = children.get(u.reenters.unit) ?? []; rows.push(u.id); children.set(u.reenters.unit, rows); }
-  }
-  for (const units of membership.values()) {
-    const queue = [...units];
-    for (let i = 0; i < queue.length; i++) for (const child of children.get(queue[i]!) ?? []) {
-      if (!units.has(child)) { units.add(child); queue.push(child); }
-    }
-  }
+  // A milestone's spend: its members (status, `milestoneMembers`: its units, their re-entries and carriers) and its polish
+  // units with their own re-entries.
   const ms = s.milestones.map((m) => {
-    const units = membership.get(m.id) ?? new Set<UnitId>();
+    const polish = (plan?.units ?? []).filter((u) => u.polish?.milestone === m.id).map((u) => u.id);
+    const units = new Set<UnitId>([...m.members, ...(plan === null ? [] : milestoneMembers(plan, { units: polish }))]);
     const jobs = new Set([...(jobsByMilestone.get(m.id) ?? []), ...[...units].flatMap((u) => jobsByUnit.get(u) ?? [])]);
     const costUsd = meter.byUnit.filter((u) => units.has(u.unit)).reduce((n, u) => n + u.costUsd, 0)
       + meter.byJob.filter((j) => jobs.has(j.job)).reduce((n, j) => n + j.costUsd, 0);
-    return { id: m.id, state: m.state, round: m.round, findings: m.findings.length, costUsd, expectedUsd: expected?.perMilestoneUsd ?? null };
+    return { id: m.id, state: m.state, round: m.round, live: m.live, merged: m.merged, findings: m.findings.length, costUsd, expectedUsd: expected?.perMilestoneUsd ?? null };
   });
   const states: Record<string, number> = {};
   for (const u of s.units) states[u.state] = (states[u.state] ?? 0) + 1;

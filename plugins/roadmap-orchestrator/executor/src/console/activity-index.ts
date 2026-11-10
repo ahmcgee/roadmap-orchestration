@@ -120,6 +120,6 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
     add(ev, 'decision', `${d.id}: ${d.oneLine}`, {outcome: d.kind}, [], null, d.id);
   }
   entries.sort((a, b) => a.row.seq - b.row.seq || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0));
-  const units = [...index.identities.keys()], milestones = (e.data.plan?.milestones ?? []).map(m => ({id: String(m.id), units: [...m.units]}));
+  const units = [...index.identities.keys()], milestones = e.data.display.status.milestones.map(m => ({id: String(m.id), units: m.members.map(String)}));
   return {version: sha256Hex(canonicalJson({entries, units, milestones})), entries, holds, units, milestones};
 }

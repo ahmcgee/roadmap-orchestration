@@ -4,7 +4,8 @@
 // inserts the edge; the plan author writes nothing. `status` shows it (an `EdgeView` of type `milestone`).
 //
 // Lineages: every unit stands for its lineage, so a re-entry of one of M's units is one of M's units, an edge on a
-// superseded unit is an edge on its lineage, and a re-entry of a gated unit is gated. Exempt: units whose lineage root is
+// superseded unit is an edge on its lineage, and a re-entry of a gated unit is gated. dev.59 (C4): a unit that carries a cut
+// unit's work forward (`carries`) stands for it the same way, so it never waits on the node it counts toward. Exempt: units whose lineage root is
 // not planned (a repair, a checkpoint admit, a polish unit): fixes and polish never wait on a node.
 //
 // Pure over the plan in force and the log's view.
@@ -12,16 +13,21 @@ import type { MilestoneId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type PlanM1, type PlanUnit, milestonesOf } from '../input/plan.ts';
 
-/** The original unit of `id`'s lineage in the plan: `id` unless it re-enters another unit, transitively. */
+/**
+ * The original unit of `id`'s lineage in the plan: `id` unless it re-enters another unit, or (dev.59, C4) carries a cut
+ * one's work forward, transitively: a carrying unit stands for the work it carries, as a re-entry does (`milestoneMembers`).
+ */
 function rootOf(units: ReadonlyMap<UnitId, PlanUnit>, id: UnitId): UnitId {
   const seen = new Set<UnitId>();
   let at = id;
-  for (let u = units.get(at); u?.reenters !== undefined; u = units.get(at)) {
+  for (;;) {
+    const u = units.get(at);
+    const from = u?.reenters?.unit ?? u?.carries?.unit;
+    if (from === undefined) return at;
     if (seen.has(at)) throw new Error(`the lineage of ${id} re-enters itself at ${at}`);
     seen.add(at);
-    at = u.reenters.unit;
+    at = from;
   }
-  return at;
 }
 
 const edgeCache = new WeakMap<PlanM1, ReadonlyMap<UnitId, readonly MilestoneId[]>>();

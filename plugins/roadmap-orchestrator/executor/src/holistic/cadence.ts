@@ -67,7 +67,7 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   const head = integrationHeadNow(ctx);
   const fold = view.holistic();
   const audited = new Set(fold.audits.filter((a) => a.ended?.outcome === 'completed').flatMap((a) => a.started.triggers.filter((t) => t.type === 'milestone').map((t) => t.type === 'milestone' ? t.milestone : '')));
-  const milestone = (ctx.plan().milestones ?? []).find((m) => milestoneReached(view, m) && !audited.has(m.id));
+  const milestone = (ctx.plan().milestones ?? []).find((m) => milestoneReached(view, ctx.plan(), m) && !audited.has(m.id));
   const latest = fold.audits.at(-1);
   const requested = fold.auditRequests.find((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
   const final = !workRemains(ctx) && !fold.findings.some(f => f.severity === 'P1' && isActive(f)) && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);

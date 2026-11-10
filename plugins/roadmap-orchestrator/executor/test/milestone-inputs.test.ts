@@ -30,11 +30,11 @@ const MS2 = {
   journeys: [{ id: 'J-2', text: 'I run the CLI with no arguments.', via: 'shell', entry: 'node cli.js', budget: null }], resources: [],
 };
 
-function planOf(milestones: object[]): PlanM1 {
+function planOf(milestones: object[], extra: object[] = []): PlanM1 {
   return parsePlan({
     schema: 'roadmap/plan-m1', arc: 'arc-1', integrationBranch: 'main', baseline: 'a'.repeat(40), worktreeRoot: '/var/tmp/wt', contracts: [], rulings: 'rulings.md',
     architectureDoc: 'docs/arch.md', direction: 'd', suite: { lanes: [] }, resources: [],
-    units: [unit('d1'), unit('u1', ['d1']), unit('u2', ['d1']), unit('loose')], holistic: { vision: 'vision.json', advances: ['V-1'] },
+    units: [unit('d1'), unit('u1', ['d1']), unit('u2', ['d1']), unit('loose'), ...extra], holistic: { vision: 'vision.json', advances: ['V-1'] },
     ...(milestones.length === 0 ? {} : { milestones }),
   });
 }
@@ -66,6 +66,12 @@ describe('milestone prompt inputs', () => {
     assert.deepEqual(u2?.binary, ['design/web/wire.png']);
     const d1 = unitMilestones(ctx, unitId('d1'), tip);
     assert.deepEqual(d1?.of, [{ as: 'design', id: 'MS-1', text: MS1.text, dirs: ['design/web'], journeys: MS1.journeys }]);
+  });
+
+  it('dev.59: a re-entry of a member, and a unit carrying a cut member forward, get its milestones as members', () => {
+    const { dir, tip } = repo();
+    const ctx = { plan: () => planOf([MS1], [{ ...unit('u1-r2'), reenters: { unit: 'u1' } }, { ...unit('u2-carry'), carries: { unit: 'u2', tip } }]), repo: absPath(dir) };
+    for (const id of ['u1-r2', 'u2-carry']) assert.deepEqual(unitMilestones(ctx, unitId(id), tip)?.of, [{ as: 'member', id: 'MS-1', text: MS1.text, dirs: ['design/web'] }], id);
   });
 
   it('a unit in no milestone, or a plan without milestones, gets none; a reference dir not there yet has no files', () => {
