@@ -14,9 +14,9 @@ export function RequestDetail({arc,id,close}:{arc:string;id:string;close:()=>voi
   const rows=cache?[...cache.entries].find(([key])=>key.startsWith('attention?')&&cache.active.has(key))?.[1].value?.data.rows as {id:string}[]|undefined:undefined;
   const at=rows?.findIndex(r=>r.id===id)??-1;
   const zone=route().query.get('zone')??displayZone();
-  return <Drawer title="Human request" close={close} className="request-drawer">
+  return <Drawer title="Decision request" close={close} className="request-drawer">
     {state.error&&<div role="alert"><p>{state.error}</p><Button onClick={state.retry}>Retry request detail</Button></div>}
-    {!data?<p>Loading selected human request…</p>:<>
+    {!data?<p>Loading…</p>:<>
       <p>{data.id}</p><p role="status">{open?'Currently open':fresh?.resolutionEvidence.some(r=>r.kind==='acknowledged')?'Acknowledged':fresh?.resolutionEvidence.some(r=>r.kind==='declined')?'Declined by the executor':'No longer in the open list'}</p>
       {!open&&(fresh??data).resolutionEvidence.map((r,i)=><p key={i}>{r.kind==='no-longer-open'?'No acknowledgement identified. Absence from the open list does not establish how this request was settled.':`${r.kind==='declined'?'Declined':'Acknowledged'}: ${r.source}, ${r.at?formatInstant(r.at,zone):'date not recorded'}${r.command?`, command ${r.command}`:''}${r.choice?`, choice ${r.choice}`:''}.`}</p>)}
       {expanded&&fresh&&expanded.viewVersion!==fresh.viewVersion&&<p>Newer verified request detail available. <Button onClick={()=>{cache?.ui.delete(`detail:${path}`);setExpanded(null);}}>Show current detail</Button></p>}

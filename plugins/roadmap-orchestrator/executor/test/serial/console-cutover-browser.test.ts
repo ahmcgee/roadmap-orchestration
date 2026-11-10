@@ -30,7 +30,7 @@ test('Activity independently announces file-only requests without moving journal
  const journal=join(f.runDir,'events.jsonl'),bytes=readFileSync(journal),base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
  const metadata=async()=>await(await consoleGet(`${base}/metadata`)).json() as {epoch:string;highWater:number};const initial=await metadata();
  const file=needsUserRecord({v:2,id:'sup-1-1',arc:f.arc,raisedAt:'2026-10-01T00:00:00.000Z',blocking:true,subject:{type:'host'},reason:'supervisor-crash-limit',summary:'Current file-only host request',recommendation:'Inspect the host.',options:[],evidence:[]},'current request fixture');writeFileSync(needsUserPath(f.runDir,file.id),JSON.stringify(file));
- await wait(`document.querySelector('.activity-current-requests')?.textContent.includes('Current human requests may have changed')&&document.querySelector('.tab-badge')?.textContent==='4'`,'independent current request notice');
+ await wait(`document.querySelector('.activity-current-requests')?.textContent.includes('Decisions waiting for you may have changed')&&document.querySelector('.tab-badge')?.textContent==='4'`,'independent current request notice');
  assert.equal(await page(),before);assert.equal(await b.evaluate<number>(`()=>document.getElementById('content').scrollTop`),scroll);assert.ok(Math.abs(await b.evaluate<number>(`()=>document.querySelector('.activity-feed').getBoundingClientRect().top`)-top)<2);
  assert.equal((await metadata()).highWater,initial.highWater);assert.deepEqual(readFileSync(journal),bytes);
 

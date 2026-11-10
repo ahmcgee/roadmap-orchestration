@@ -22,12 +22,12 @@ test('recorded executor states become plain journeys, stage-local attempts, verd
  assert.deepEqual(d.journey.rows.filter(s=>s.stage==='build').map(s=>[s.attempt,s.round,s.outcome]),[[1,1,'Succeeded'],[2,2,'Succeeded'],[3,3,'Succeeded']]);
  const review=d.journey.rows.find(s=>s.stage==='gate')!;assert.equal(review.attempt,1);assert.equal(review.outcome,'Changes requested');assert.deepEqual(review.findingTitles,['Handle empty input before multiplying']);
  assert.deepEqual(u.reasons,['Baseline hold: baseline checks are failing']);assert.equal(u.waitSince,null,'admission wait starts are not invented');
- assert.deepEqual(detail(e,'u4').unit.reasons,['Dependency on u3']);assert.deepEqual(detail(e,'u5').unit.reasons,['Milestone MS-1 has not passed']);
+ assert.deepEqual(detail(e,'u4').unit.reasons,['Waiting for u3']);assert.deepEqual(detail(e,'u5').unit.reasons,['Milestone MS-1 has not passed']);
  assert.match(detail(e,'u11').unit.reasons.join(' '),/pressure/);assert.ok(detail(e,'u11').unit.waitSince);assert.ok(detail(e,'u8').unit.reasons.includes('Integration queue position 1'));
  assert.equal(detail(e,'u14').unit.lineage?.reenters,'u12');assert.equal(detail(e,'u12').unit.state,'Replaced');assert.equal(detail(e,'u13').unit.state,'Withdrawn');
  const activity=new ConsoleActivity();let page=activityPage(e,activity,{limit:'25',window:'arc'}),rows=[...page.rows];while(page.page.next){page=activityPage(e,activity,{limit:'25',window:'arc',cursor:page.page.next});rows.push(...page.rows);}
  assert.equal(rows.length,page.page.matching);assert.equal(new Set(rows.map(r=>r.id)).size,rows.length);
- assert.ok(rows.some(row=>row.summary.text==='Review sent u7 back: Handle empty input before multiplying'));assert.ok(rows.some(row=>row.summary.text==='Plan revision 2 applied'));assert.ok(rows.some(row=>row.summary.text==='Question raised: Already answered request'));
+ assert.ok(rows.some(row=>row.summary.text==='Review sent u7 back: Handle empty input before multiplying'));assert.ok(rows.some(row=>row.summary.text==='Plan revision 2 applied'));assert.ok(rows.some(row=>row.summary.text==='Decision requested: Already answered request'));
  const holistic=holisticSummaries(e);assert.equal(holistic.find(r=>r.type==='finding')!.claim.text,'Document empty input behavior');assert.equal(holistic.filter(r=>r.type==='audit').length,1);
 });
 test('CPU uses measured cores over the recorded reservation; missing historical waiting remains unmeasured',async t=>{

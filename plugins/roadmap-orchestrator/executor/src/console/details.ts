@@ -7,6 +7,7 @@ import { ConsoleError, type Envelope } from '../observation/protocol.ts';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { record } from '../tui/projection.ts';
 import { selectedUnitJourney } from './unit-journey.ts';
+import { stageFinished } from './indexes.ts';
 import { projectionIndex, timelineIntervals } from './tab-projections.ts';
 import { graphStatus } from './signals.ts';
 import { stageWords, stateWords } from './vocabulary.ts';
@@ -102,7 +103,7 @@ function rawUnitView(e:Envelope,id:string,params:Record<string,string>):UnitView
   const reportSteps=new Set(params['section']&&params['section']!=='journey'?[]:anchored?generations.get(anchored.version)!.ids.slice(start,start+limitOf(params)):stages.slice(start,start+limitOf(params)).map(s=>s.id));
   const u=selectedUnitJourney(e,id,reportSteps);
   const signal=runtime.state==='cut'||runtime.state==='superseded'?'withdrawn':graphStatus(runtime.state);
-  const unit:UnitSummary={id:u.id,title:u.title,state:u.state,stage:u.stage,signal,startedAt:u.startedAt,endedAt:u.endedAt,arcEndedAt:arcBounds(e).to,elapsedMs:u.elapsedMs,attempts:u.attempts,rounds:u.rounds,spend:index.charges.bySubject.get(`unit:${id}`)??{costUsd:null,recorded:0,estimated:0,unavailable:0},reasons:u.reasons,waitSince:u.waitSince,lineage:u.lineage?{reenters:u.lineage.reenters,root:u.lineage.root,prepared:u.lineage.prepared}:null};
+  const unit:UnitSummary={id:u.id,title:u.title,state:u.state,stage:u.stage,stageFinished:stageFinished(stages,runtime.stage),signal,startedAt:u.startedAt,endedAt:u.endedAt,arcEndedAt:arcBounds(e).to,elapsedMs:u.elapsedMs,attempts:u.attempts,rounds:u.rounds,spend:index.charges.bySubject.get(`unit:${id}`)??{costUsd:null,recorded:0,estimated:0,unavailable:0},reasons:u.reasons,waitSince:u.waitSince,lineage:u.lineage?{reenters:u.lineage.reenters,root:u.lineage.root,prepared:u.lineage.prepared}:null};
   if(params['section']==='summary')return versioned({unit},scope);
   const s=e.data.display.status,identities=index.identities;
   const related=(source:string,target:string):RelatedUnit=>{

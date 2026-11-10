@@ -24,8 +24,10 @@ export type ActivityFilters = {
   role: string[]; backend: string[]; model: string[]; outcome: string[];
   q: string; housekeeping: boolean; order: 'asc' | 'desc'; zone: string;
 };
+/** The recorded values each Activity filter accepts. */
+export type ActivityFacets = Record<'unit' | 'milestone' | 'stage' | 'role' | 'backend' | 'model' | 'outcome', string[]>;
 export type ActivityView = View & Page<ActivityRow> & {
-  filters: ActivityFilters; membership: 'applied-plan-at-anchor';
+  filters: ActivityFilters; facets: ActivityFacets; membership: 'applied-plan-at-anchor';
   days: {date: string; count: number}[];
 };
 export type ActivityChanges = View & {newMatching: number; latestHighWater: number; latestViewVersion: string};

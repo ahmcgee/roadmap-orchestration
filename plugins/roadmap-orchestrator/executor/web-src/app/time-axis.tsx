@@ -1,11 +1,7 @@
 // The time axis Timeline and Resources share: zone-aware ticks, greedy lanes, lane guides, backend-hold words and the whole-arc overview.
 import { useRef, useState } from 'react';
-import { pluralise } from './shared.tsx';
+import { elapsed, pluralise } from './shared.tsx';
 import type { ArcOverview } from '../../src/console/temporal-protocol.ts';
-import type { BackendHold } from '../../src/console/activity-protocol.ts';
-import { plainWords } from '../../src/console/vocabulary.ts';
-export const classWords=(c:string)=>({'usage-limit':'Usage limit','rate-limit':'Rate limit',auth:'Sign-in needed',outage:'Outage'}[c]??plainWords(c));
-export const closureWords=(h:BackendHold)=>h.closure?h.closure.kind==='park-updated'?'Continued by a later hold':h.closure.kind==='probe'?'Ended by a successful check':'Resumed':h.terminalAt?'Arc ended; no resume recorded':'Still unavailable';
 /** Greedy lanes: runs that overlap in time never paint over each other. Runs that only touch at this scale share a lane. */
 export function lanes<T>(items:T[],span:(t:T)=>[number,number],minWidth:(t:T)=>number){
   const ends:number[]=[];
@@ -59,4 +55,12 @@ export function Overview({overview:o,noun,zone,lo,hi,open,short}:{overview:ArcOv
     <div className="timeline-overview-time" aria-hidden="true">{ticks(from,to,zone,7).map(a=><span key={a.t} className={a.end?'axis-end':undefined} style={a.end?{right:0}:{left:`${x(a.t)}%`}}>{a.label}</span>)}</div>
     {o.backendHolds.matching>0&&<p className="timeline-overview-key muted"><i className="swatch timeline-hold-swatch" aria-hidden="true"/> Backend unavailable to new calls</p>}
   </figure>;
+}
+/** An interval that runs past the window's right edge. Its bar keeps its true start; the cap at the edge says it continues. */
+export function ContinuesCap({href,top,label}:{href:string;top:number;label:string}) {
+  return <a className="timeline-mark timeline-continues" style={{left:'100%',top:`${top}px`}} href={href} aria-label={label} title={label}/>;
+}
+/** "Open since 7 Nov, 19:58, for 2d 6h. Continues past this window." */
+export function continuesWords(startedAt:string,endedAt:string|null,clock:number,short:(at:string)=>string) {
+  return endedAt?`Ran from ${short(startedAt)} to ${short(endedAt)}, past the end of this window.`:`Open since ${short(startedAt)}, for ${elapsed(Math.max(0,clock-Date.parse(startedAt)))}. Continues past this window.`;
 }

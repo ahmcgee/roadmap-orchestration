@@ -24,7 +24,9 @@ export function effortGroup(group:EffortGroup,subject:Subject,role:string|null,i
   if(identity){const systems=[...identity.systems].sort();return {id:`system-set:${systemSetKey(systems)}`,label:systems.length?systems.join(', '):'No recorded systems',type:'system-set' as const};}
   return subject.type==='unit'?{id:'unattributed',label:'Unit outside applied plan',type:'unattributed' as const}:{id:effortSubjectKey(subject),label:subject.type==='arc'?'Arc work':`Job ${subject.id}`,type:subject.type};
 }
-export const effortDetailKey=(arc:string,group:EffortGroup,id:string)=>`effort-${sha256Hex(JSON.stringify([arc,group,id]))}`;
+/** A group's detail key is its own id ("effort-job:audit-1"), read under the same Arc, grouping and window as its page. */
+export const effortDetailKey=(id:string)=>`effort-${id}`;
+export const EFFORT_DETAIL_KEY=/^effort-[A-Za-z0-9:._@+#-]{1,256}$/;
 export function effortContributions(e:Envelope,index=projectionIndex(e)):EffortContribution[] {
   const rows:Omit<EffortContribution,'unitRef'>[]=[],invs=new Map(index.invocations.rows.map(r=>[r.invocation.id,r]));
   for(const {invocation:i,parent} of index.invocations.rows){

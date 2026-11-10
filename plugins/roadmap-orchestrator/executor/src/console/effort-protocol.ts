@@ -13,7 +13,7 @@ export type EffortFilters = {window: '24h' | '7d' | 'arc' | null; from: string |
 export type EffortUnit = EffortTotals & {id: string; subject: Subject | {type: 'role' | 'system-set' | 'unattributed'; id: string; title: string}; detailKey: string | null; contributorCount: number; titleTruncated: boolean; signal: Signal | null; state: string | null; stage: string | null; stageFinished: boolean; systems: string[];
   blockers: {reasons: Preview[]; count: number; waitSince: string | null};
   lifetime: {startedAt: string | null; endedAt: string | null; elapsedMs: number | null; rounds: number | null; redChecks: number | null; spend: Money}};
-export type EffortView = View & Page<EffortUnit> & {filters: EffortFilters; bounds: TemporalBounds; totals: EffortTotals;
+export type EffortView = View & Page<EffortUnit> & {filters: EffortFilters; bounds: TemporalBounds; facets: Record<'unit' | 'milestone' | 'system', string[]>; totals: EffortTotals;
   /** Completion buckets with data; empty slots between them are implied by `histogram` (start and slot width). */
   buckets: (EffortTotals & {from: string; to: string})[]; histogram: {from: string; to: string; widthMs: number}; membership: 'applied-plan-at-anchor';
   /** Rows of the whole filtered population by kind, so a count names what it counts. */

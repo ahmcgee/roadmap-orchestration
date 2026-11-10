@@ -10,8 +10,7 @@ import { projectionIndex, timelineIntervals } from './tab-projections.ts';
 import { readEvidence } from './evidence.ts';
 import { preview } from './views.ts';
 import { activityKey, backendHolds } from './backend-holds.ts';
-import { plainWords, stageWords } from './vocabulary.ts';
-import { outcomeWords } from './indexes.ts';
+import { backendWords, holdClassWords, outcomeWords, plainWords, runOutcomeWords, stageWords } from './vocabulary.ts';
 import type { ActivityRow, ActivityKind, Actor, BackendHold } from './activity-protocol.ts';
 import type { Subject, Money, Interval } from './view-protocol.ts';
 
@@ -76,15 +75,15 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
   for (const ev of e.data.events) {
     if (ev.type === 'intent' && ev.kind === 'needsuser.raise') {
       const ref = raises.get(ev.expect.id)!, request = activityRequest(e, ref);
-      add(ev, 'request-raised', `Question raised: ${request?.summary ?? `Human request ${ref.id}; evidence pruned`}`,
-        {subject: !request ? {type: 'request', id: ref.id, title: 'Human request'} : request.subject.type === 'unit' ? unit(request.subject.unit)
+      add(ev, 'request-raised', `Decision requested: ${request?.summary ?? `Request ${ref.id}; evidence pruned`}`,
+        {subject: !request ? {type: 'request', id: ref.id, title: 'Decision request'} : request.subject.type === 'unit' ? unit(request.subject.unit)
           : request.subject.type === 'arc' ? arc : {type: request.subject.type, id: null, title: request.subject.type === 'host' ? 'Host' : 'Findings'}, outcome: 'raised', ...(request ? {result: request.summary} : {})}, [], ref);
     } else if (ev.type === 'intent' && ev.kind === 'proc.spawn') {
       const i = byRoute.get(invocationDirName(invocationId(ev.op, ev.ordinal)));
       if (i) add(ev, 'invocation-started', `${stageWords(i.stage)} run started`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: 'started', workMs: null, spend: null}, [i.id]);
     } else if (ev.type === 'done' && ev.kind === 'proc.spawn') {
       const refs = byOp.get(ev.op) ?? [], i = refs.length === 1 ? byRoute.get(refs[0]!) : null;
-      if (i) add(ev, 'invocation-ended', `${stageWords(i.stage)} run: ${i.outcome}`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: i.outcome}, [i.id]);
+      if (i) add(ev, 'invocation-ended', `${stageWords(i.stage)} run: ${runOutcomeWords(i.outcome)}`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: i.outcome}, [i.id]);
       else if (refs.length) add(ev, 'invocation-ended', 'Runs finished; several attempts recorded', {outcome: ev.outcome.kind}, refs);
     } else if (ev.type === 'fact') {
       const f = ev.fact;
@@ -97,7 +96,7 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
         add(ev, 'stage-outcome', `${stageWords(f.stage)}: ${f.verdict}`, {subject: {type: 'job', id: f.job, title: f.job}, stage: f.stage, outcome: f.verdict}, byJob.get(f.job) ?? []);
       } else if (f.kind === 'plan-applied') add(ev, f.kind, `Plan revision ${f.rev} applied`, {outcome: 'applied'});
       else if (f.kind === 'arc-completed' || f.kind === 'stop-completed') add(ev, f.kind, f.kind === 'arc-completed' ? 'Arc completed' : 'Arc stopped', {outcome: f.kind === 'arc-completed' ? 'completed' : 'stopped'});
-      else if (f.kind === 'needs-user-acked') add(ev, 'request-acknowledged', `Human request ${f.id} acknowledged`, {outcome: 'acknowledged'}, [], raises.get(f.id) ?? null);
+      else if (f.kind === 'needs-user-acked') add(ev, 'request-acknowledged', `Decision request ${f.id} answered`, {outcome: 'acknowledged'}, [], raises.get(f.id) ?? null);
       else if (f.kind === 'audit-started' || f.kind === 'audit-ended') {
         add(ev, f.kind, f.kind === 'audit-started' ? 'Holistic audit started' : `Holistic audit ${f.outcome}: ${f.findings.length} ${f.findings.length === 1 ? 'finding' : 'findings'}`,
           {subject: {type: 'job', id: f.job, title: f.job}, outcome: f.kind === 'audit-started' ? 'started' : f.outcome, ...(f.kind === 'audit-ended' ? {result: `${plainWords(f.outcome)}, ${f.findings.length} new ${f.findings.length === 1 ? 'finding' : 'findings'}`} : {})}, f.kind === 'audit-ended' ? byJob.get(f.job) ?? [] : []);
@@ -107,11 +106,11 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
           {subject, outcome: f.kind === 'finding-opened' ? 'open' : f.to.state, result: `${f.id}: ${finding?.claim ?? 'Finding'} (${plainWords(f.kind === 'finding-opened' ? 'open' : f.to.state)})`});
       } else if (f.kind === 'backend-park') {
         const h = holds.find(h => h.startSeq === ev.seq)!;
-        add(ev, 'backend-park', `${f.backend}: backend unavailable to new calls (${h.effectiveClass})`,
+        add(ev, 'backend-park', `${backendWords(f.backend)} unavailable to new calls: ${holdClassWords(h.effectiveClass).toLowerCase()}`,
           {actor: {role: null, backend: f.backend, model: null}, actorCount: 1, outcome: h.effectiveClass});
       }
       const closed = holds.find(h => h.closure?.seq === ev.seq && h.closure.kind !== 'park-updated');
-      if (closed) add(ev, 'backend-closure', `${closed.backend}: backend availability restored by ${closed.closure!.kind}`,
+      if (closed) add(ev, 'backend-closure', `${backendWords(closed.backend)} available again (${closed.closure!.kind === 'probe' ? 'a check passed' : 'resumed'})`,
         {actor: {role: null, backend: closed.backend, model: null}, actorCount: 1, outcome: 'available'});
     }
   }

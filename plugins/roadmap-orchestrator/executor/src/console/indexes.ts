@@ -5,10 +5,14 @@ import { parseInvocationId, invocationIdOf } from '../core/ids.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import type { Invocation } from '../tui/types.ts';
 import { record } from '../tui/projection.ts';
-import { shortUnitTitle, stageWords } from './vocabulary.ts';
+import { outcomeWords, shortUnitTitle, stageWords } from './vocabulary.ts';
 
 export const housekeepingStages = new Set(['quiesce', 'evidence', 'salvage', 'teardown']);
-export const outcomeWords = (outcome: string) => ({empty:'No workloads running',captured:'Evidence captured',committed:'Changes saved','committed-contract-touched':'Changes saved; contract updated',released:'Resources released','cleanup-failed':'Cleanup failed','executor-fault':'Executor fault','commit-failed':'Commit failed',unmerged:'Unmerged changes',approve:'Approved',revise:'Changes requested',green:'Passed',success:'Succeeded',published:'Published','process-fault':'Process fault',red:'Failed'}[outcome] ?? outcome.replaceAll('-', ' '));
+/** A unit's total time: unknown (null) without a recorded start, or when its recorded end equals its start. */
+export const journeyMs = (startedAt: string | null, endedAt: string | null, end: string): number | null =>
+  startedAt === null || endedAt === startedAt ? null : Math.max(0, Date.parse(endedAt ?? end) - Date.parse(startedAt));
+/** The unit's current stage has finished: it waits after that stage, not in it. */
+export const stageFinished = (steps: readonly StageStep[] | undefined, stage: string): boolean => {const last = steps?.at(-1); return last?.stage === stage && last.endedAt !== null;};
 export type StageStep = {housekeeping: boolean; id: string; stage: string; label: string; attempt: number; sequence: number; round: number; at: string; endedAt: string | null; outcome: string; findingTitles: string[]; activities: string[]; notes: string[]};
 export type UnitIdentity = { id: string; title: string; systems: string[]; order: number };
 export function identityIndex(e: Envelope): Map<string, UnitIdentity> {

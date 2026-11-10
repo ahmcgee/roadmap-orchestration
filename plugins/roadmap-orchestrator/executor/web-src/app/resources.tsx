@@ -5,18 +5,20 @@ import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, displayZone, elapsed, formatInstant, link, pluralise, route, zoneLabel } from './shared.tsx';
 import { Views, useView } from './view-state.ts';
-import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, moveRowFocus, FilterBar, useLatestWindow, WindowSelect } from './plain-query.tsx';
-import { classWords, closureWords, lanes, Overview, tickGrid, ticks } from './time-axis.tsx';
+import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, moveRowFocus, CustomRange, FacetSelect, FilterBar, ignoredFilters, useLatestWindow, WindowSelect } from './plain-query.tsx';
+import { ContinuesCap, continuesWords, lanes, Overview, tickGrid, ticks } from './time-axis.tsx';
 import { Hint } from './effort.tsx';
 import type { ResourceView, ResourceSubject, ResourceBooking, ResourceCpu, ResourceCpuCall, ResourceWait, ResourceNow, ResourceNowRow, ResourceReasonsView, ResourceLane, BookingMark } from '../../src/console/resource-protocol.ts';
 import type { ShellView } from '../../src/console/view-protocol.ts';
-import { plainWords, reasonWords, stageWords, stateWords } from '../../src/console/vocabulary.ts';
+import { closureWords, holdClassWords as classWords, plainWords, reasonWords, stageWords, stateWords } from '../../src/console/vocabulary.ts';
 export const resourceFields=['section','window','from','to','zone','resource','unit','stage','state','reason','utilization','q','sort','direction','cursor','limit'] as const;
 export const cores=(n:number|null)=>n===null?'Not recorded':Number(n.toFixed(2)).toString();
 /** A current resource state, as words. */
 export const resourceStateWords=(state:string)=>({reserved:'Reserved',running:'In use',cleaning:'Cleaning','cleanup-failed':'Cleanup failed',free:'Free'}[state]??plainWords(state));
 /** CPU reservation tokens read as slots of the CPU pool. */
-export const resourceName=(r:string)=>r==='@cpu'?'CPU':r.startsWith('@cpu#')?`CPU slot ${r.slice(5)}`:r;
+/** When in the arc: "Day 8, 7d 0h after the arc started". The date is the cell; this is its secondary line. */
+export const arcDay=(at:string,start:string)=>{const ms=Math.max(0,Date.parse(at)-Date.parse(start));return `Day ${Math.floor(ms/86400_000)+1}, ${elapsed(ms)} after the arc started`;};
+export const resourceName=(r:string)=>r==='integration-slot'?'Integration slot':r==='@cpu'?'CPU':r.startsWith('@cpu#')?`CPU slot ${r.slice(5)}`:r;
 /** How a call's CPU reservation was chosen. */
 export const basisWords=(b:NonNullable<ResourceCpuCall['basis']>)=>b.kind==='explicit'?'Reservation set in the plan':b.kind==='calibrated'?'Reservation calibrated from earlier runs':b.kind==='default'?'Default reservation':plainWords(b.kind);
 /** What CPU figures rest on, one fact per sentence. "Measured calls" are those measured against a reservation. */
@@ -28,7 +30,7 @@ export function cpuCoverage(c:{matchedCalls?:number;measuredCalls?:number;unmeas
   return parts.join(' ');
 }
 const cpuHelp=<><p>Measured cores are run time divided by wall time, over calls that had a CPU reservation.</p><p>Reserved cores are averaged over the same calls, weighted by how long each ran. Used reservation compares the two.</p><p>Calls that overlap in time count separately.</p></>;
-const sections={schedule:'Schedule',cpu:'CPU evidence',waiting:'Waiting'} as const;
+const sections={schedule:'Schedule',cpu:'CPU evidence',waiting:'Waiting',now:'Everything current'} as const;
 export function Resources({arc}:{arc:string}) {
   const store=useContext(Views),current=route(),section=current.query.get('section')??'schedule',zone=current.query.get('zone')??displayZone(),explicit=section==='now'||current.query.has('window')||current.query.has('from')||current.query.has('to'),latest=useLatestWindow();
   const state=usePlainQuery<ResourceView>(arc,'resources',resourceFields,explicit?{section,zone}:latest?{section,...latest,zone}:null),data=state.data,table=useRef<HTMLTableElement>(null),clock=useContext(Clock);
@@ -55,18 +57,18 @@ export function Resources({arc}:{arc:string}) {
   const windowTitle=data&&section!=='now'&&<h3 className="timeline-window-title">{data.scope.from?<>{short(data.scope.from)} to {short(data.scope.to??data.bounds.to)}</>:<>Up to {short(data.scope.to??data.bounds.to)}</>} <span className="muted">{zoneLabel(timeZone)}</span></h3>;
   return <section className="panel resources-panel"><header className="panel-head"><div><h2>Resources</h2><p className="muted">Who holds shared resources now, and who held them before.</p></div></header>
     {now&&<NowStrip arc={arc} now={now} nowEnd={nowEnd} terminalAt={terminalAt??null} startedAt={data?.bounds.from??null} detail={detail} subject={subject} showAll={()=>select('now')} freshError={freshNow.error} retry={freshNow.retry}/>}
-    <nav className="activity-subviews" aria-label="Resource sections">{(['schedule','cpu','waiting'] as const).map(s=><Button key={s} aria-pressed={section===s} onClick={()=>select(s)}>{sections[s]}</Button>)}</nav>
-    <FilterBar label="Resources" resetKey={state.params.toString()} search={state.params.get('q')??''} searchHelp={section==='schedule'?'Find a resource, unit or holder.':'Find a unit, stage or reason.'} dirty={resourceFields.some(k=>k!=='section'&&current.query.has(k))} activeFilters={['resource','unit','stage','state','reason'].filter(k=>state.params.get(k)).length+(state.params.get('utilization')&&state.params.get('utilization')!=='all'?1:0)} apply={values=>{const next:Record<string,string|null>={};for(const key of ['resource','unit','stage','state','reason','utilization','q','sort','direction','limit','from','to'])if(values.has(key))next[key]=String(values.get(key))||null;if(next['from']||next['to'])next['window']=null;state.navigate(next,true);}} reset={()=>state.navigate(Object.fromEntries(resourceFields.filter(k=>k!=='section').map(k=>[k,null])),true)}
+    <nav className="activity-subviews" aria-label="Resource sections">{(['schedule','cpu','waiting','now'] as const).map(s=><Button key={s} aria-pressed={section===s} onClick={()=>select(s)}>{sections[s]}</Button>)}</nav>
+    <FilterBar label="Resources" ignored={ignoredFilters(current.query,state.facets,{resource:'resource',unit:'unit',stage:'stage',reason:'reason'})} resetKey={state.params.toString()} search={state.params.get('q')??''} searchHelp={section==='schedule'?'Find a resource, unit or holder.':'Find a unit, stage or reason.'} dirty={resourceFields.some(k=>k!=='section'&&current.query.has(k))} activeFilters={['resource','unit','stage','state','reason'].filter(k=>state.params.get(k)).length+(state.params.get('utilization')&&state.params.get('utilization')!=='all'?1:0)} apply={values=>{const next:Record<string,string|null>={};for(const key of ['resource','unit','stage','state','reason','utilization','q','sort','direction','limit','from','to'])if(values.has(key))next[key]=String(values.get(key))||null;if(next['from']||next['to'])next['window']=null;state.navigate(next,true);}} reset={()=>state.navigate(Object.fromEntries(resourceFields.filter(k=>k!=='section').map(k=>[k,null])),true)}
       window={section!=='now'?<WindowSelect label="Resources time window" query={current.query} navigate={state.navigate} latest={latest}/>:undefined}
       extra={section!=='now'&&<>
         <span className="filter-steps"><Button type="button" disabled={!data?.scope.from||!data.scope.to} onClick={()=>shift(-1)} title="The same length of time, just before this window">Earlier</Button><Button type="button" disabled={!data?.scope.from||!data.scope.to} onClick={()=>shift(1)} title="The same length of time, just after this window">Later</Button><Button type="button" onClick={()=>state.navigate({window:state.params.get('window')==='7d'?'7d':'24h',from:null,to:null},true)} title={data?.bounds.terminalAt?'The last 24 hours before the Arc ended':'The last 24 hours, up to now'}>{data?.bounds.terminalAt?'Arc end':'Now'}</Button></span>
         <a className="filter-link" href={`#/arcs/${encodeURIComponent(arc)}/timeline${timeline.size?`?${timeline}`:''}`}>Open this window in Timeline</a></>}>
-      {section!=='now'&&<details className="activity-range"><summary>Custom time range</summary><label>From<input name="from" defaultValue={state.params.get('from')??''}/></label><label>To<input name="to" defaultValue={state.params.get('to')??''}/></label><Button type="submit">Apply time range</Button></details>}
-      <div className="filter-grid">{(section==='schedule'||section==='now')&&<label>Resource<input name="resource" defaultValue={state.params.get('resource')??''} title="A resource name, or one instance of a pool"/></label>}
-      <label>Unit<input name="unit" defaultValue={state.params.get('unit')??''}/></label>
-      {(section==='cpu'||section==='waiting')&&<label>Stage<input name="stage" defaultValue={state.params.get('stage')??''} title="A recorded stage, such as build, lanes or gate"/></label>}
+      {section!=='now'&&<CustomRange from={state.params.get('from')} to={state.params.get('to')}/>}
+      <div className="filter-grid">{(section==='schedule'||section==='now')&&<FacetSelect name="resource" label="Resource" all="All resources" values={state.facets?.['resource']??null} value={current.query.get('resource')??''} words={resourceName}/>}
+      <FacetSelect name="unit" label="Unit" all="All units" values={state.facets?.['unit']??null} value={current.query.get('unit')??''}/>
+      {(section==='cpu'||section==='waiting')&&<FacetSelect name="stage" label="Stage" all="All stages" values={state.facets?.['stage']??null} value={current.query.get('stage')??''} words={stageWords}/>}
       {section==='schedule'&&<label>Booking<select name="state" defaultValue={state.params.get('state')??''}><option value="">Held or released</option><option value="holding">Still held</option><option value="done">Released</option></select></label>}
-      {section==='waiting'&&<label>Reason<input name="reason" defaultValue={state.params.get('reason')??''} title="A recorded waiting reason, such as cpu-tokens"/></label>}
+      {section==='waiting'&&<FacetSelect name="reason" label="Reason" all="All reasons" values={state.facets?.['reason']??null} value={current.query.get('reason')??''} words={reasonWords}/>}
       {section==='cpu'&&<label>Reservation use<select name="utilization" defaultValue={state.params.get('utilization')??'all'}><option value="all">Any</option><option value="under10">Used under 10%</option><option value="over100">Used more than reserved</option><option value="unmeasured">Some calls not measured</option></select></label>}
       {section!=='now'&&<label>Sort<select name="sort" defaultValue={state.params.get('sort')??(section==='schedule'?'resource':section==='cpu'?'unit':'reason')}>{(section==='schedule'?['resource','start','duration']:section==='cpu'?['unit','utilization','coreTime']:['reason','duration','count']).map(s=><option key={s} value={s}>{({resource:'Resource',start:'Start time',duration:'How long',unit:'Unit',utilization:'Reservation used',coreTime:'Measured run time',reason:'Reason',count:'Number of waits'} as Record<string,string>)[s]}</option>)}</select></label>}
       {section!=='now'&&<label>Order<select name="direction" defaultValue={state.params.get('direction')??'asc'}><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>}<label>Rows per page<select name="limit" defaultValue={state.params.get('limit')??'50'}>{[25,50,100].map(n=><option key={n}>{n}</option>)}</select></label></div>
@@ -78,7 +80,7 @@ export function Resources({arc}:{arc:string}) {
         {windowTitle}
         <Schedule arc={arc} data={data} zone={timeZone} clock={terminalAt?Date.parse(terminalAt):clock} short={short} detail={detail} openWindow={openWindow}/>
         <h3>Resource booking details</h3>
-        <Table ref={table} aria-label="Resource bookings" className="resource-table" onKeyDown={resourceRowKeys}><thead><TableRow>{['Resource','Holder','Booking','Started (arc time)','Duration'].map(t=><TableHead key={t} className={['Started (arc time)','Duration'].includes(t)?'number':undefined}>{t}</TableHead>)}</TableRow></thead><tbody>{bookingRows.map(b=><TableRow key={b.id} onClick={ev=>activateRow(ev,detail(b.detailKey))}><td><a className="resource-primary-link" href={detail(b.detailKey)} title={`Started ${short(b.startedAt)}${b.endedAt?`, released ${short(b.endedAt)}`:''}`}>{b.resource}{b.instance&&<span className="cell-line">{b.instance}</span>}</a></td><td>{subject(b.subject)}{b.subject.type==='arc'&&<span className="cell-line">{plainWords(b.holder.type)} {b.holder.id}</span>}</td><td>{stateWords(b.state)}</td><td className="number" title={short(b.startedAt)}>{data.bounds.from?elapsed(Date.parse(b.startedAt)-Date.parse(data.bounds.from)):'Not recorded'}</td><td className="number" title={b.endedAt?`${Date.parse(b.endedAt)-Date.parse(b.startedAt)} ms`:undefined}>{duration(b)}</td></TableRow>)}</tbody></Table>
+        <Table ref={table} aria-label="Resource bookings" className="resource-table" onKeyDown={resourceRowKeys}><thead><TableRow>{['Resource','Holder','Booking','Started','Duration'].map(t=><TableHead key={t} className={t==='Duration'?'number':undefined}>{t}</TableHead>)}</TableRow></thead><tbody>{bookingRows.map(b=><TableRow key={b.id} onClick={ev=>activateRow(ev,detail(b.detailKey))}><td><a className="resource-primary-link" href={detail(b.detailKey)} title={`Started ${short(b.startedAt)}${b.endedAt?`, released ${short(b.endedAt)}`:''}`}>{resourceName(b.resource)}{b.instance&&<span className="cell-line">{resourceName(b.instance)}</span>}</a></td><td>{subject(b.subject)}{b.subject.type==='arc'&&<span className="cell-line">{plainWords(b.holder.type)} {b.holder.id}</span>}</td><td>{stateWords(b.state)}</td><td><time dateTime={b.startedAt}>{short(b.startedAt)}</time>{data.bounds.from&&<span className="cell-line">{arcDay(b.startedAt,data.bounds.from)}</span>}</td><td className="number" title={b.endedAt?`${Date.parse(b.endedAt)-Date.parse(b.startedAt)} ms`:undefined}>{duration(b)}</td></TableRow>)}</tbody></Table>
         {!bookingRows.length&&<p>{data.overview.resourceCount===0?'No shared resources are recorded in this arc.':'None in this window.'} <Button onClick={()=>state.navigate({window:'arc',from:null,to:null},true)}>Show the whole arc</Button></p>}</>}
       {section==='cpu'&&<>{windowTitle}
         <p>{data.coverage.under10Stages} of {pluralise(data.coverage.measuredStages,'measured stage')} used under 10% of the cores they reserved. {data.coverage.over100Stages} used more than they reserved.</p>
@@ -131,8 +133,12 @@ function NowStrip({arc,now,nowEnd,terminalAt,startedAt,detail,subject,showAll,fr
         {now.blockers.rows.map(b=><p key={b.id}>{subject(b.subject)}: {b.reasons.map(r=>r.text+(r.truncated?'…':'')).join('. ')}{(b.reasonCount>b.reasons.length||b.reasons.some(r=>r.truncated))&&<a className="cell-line" href={link(arc,'resources','units',b.subject.id)}>All {b.reasonCount} reasons</a>}</p>)}
         {!now.blockers.matching&&<p>No units are blocked by host load.</p>}
         {now.blockers.matching>now.blockers.rows.length&&<p className="muted">{pluralise(now.blockers.matching-now.blockers.rows.length,'more unit')}. <Button variant="ghost" onClick={showAll}>Show all</Button></p>}
-        <p><Button variant="ghost" className="resource-now-all" onClick={showAll} title="Units waiting on anything: dependencies, milestones, resources or decisions">{pluralise(now.counts.blockers,'unit')} blocked</Button></p>
         {now.unknownQueueStarts>0&&<p className="muted">{pluralise(now.unknownQueueStarts,'queue entry','queue entries')} {now.unknownQueueStarts===1?'has':'have'} no recorded start.</p>}
+      </div>
+      <div><h4>Blocked for any reason</h4>
+        <p className="resource-figure">{pluralise(now.counts.blockers,'unit')}</p>
+        <p className="muted">Waiting on dependencies, milestones, resources or decisions.</p>
+        {now.counts.blockers>0&&<Button variant="ghost" className="resource-now-all" onClick={showAll}>Show them in Everything current</Button>}
       </div>
     </div>
     {freshError&&<p role="alert">Couldn't update Now. {freshError} <Button onClick={retry}>Retry</Button></p>}
@@ -145,7 +151,7 @@ function Schedule({arc,data,zone,clock,short,detail,openWindow}:{arc:string;data
   const axis=ticks(lo,hi,zone,9),grid=tickGrid(axis,x),holds=data.overview.backendHolds?.rows??[],laneRows=data.overview.lanes?.rows??[];
   const length=(from:string,to:string|null)=>{const ms=(to?Date.parse(to):clock)-Date.parse(from);return ms<0?'Timestamp order unavailable':elapsed(ms);};
   function mark(m:BookingMark,lane:ResourceLane,row:number,a:number,b:number){
-    const style={left:`${a}%`,width:`${Math.max(b-a,m.type==='cluster'?2.4:.4)}%`,top:`${row*22+4}px`},name=lane.instance??lane.resource;
+    const style={left:`${a}%`,width:`${Math.max(b-a,m.type==='cluster'?2.4:.4)}%`,top:`${row*22+4}px`},name=resourceName(lane.instance??lane.resource);
     if(m.type==='cluster'){const from=Date.parse(m.from),to=Math.max(Date.parse(m.to),from+60000),label=`${m.count} bookings of ${name} started between ${short(m.from)} and ${short(m.to)}. Zoom in.`;
       return <button key={`c${m.from}`} type="button" className="timeline-mark timeline-cluster" style={style} aria-label={label} title={label} onClick={()=>openWindow(from-60000,to+60000)}><span>{m.count}</span><span className="timeline-label"> bookings</span></button>;}
     const label=`${m.holder} ${m.endedAt?'held':'holds'} ${name} from ${short(m.startedAt)}${m.endedAt?` to ${short(m.endedAt)}`:', still held'}. ${length(m.startedAt,m.endedAt)}.`;
@@ -159,8 +165,12 @@ function Schedule({arc,data,zone,clock,short,detail,openWindow}:{arc:string;data
         <td className="timeline-lane" style={{height:'38px'}}>{holds.filter(h=>h.backend===backend).map(h=>{const [a,b]=span(h.startedAt,h.endedAt??h.terminalAt),label=`${backend} unavailable to new calls: ${classWords(h.effectiveClass)}. From ${short(h.startedAt)}${h.endedAt??h.terminalAt?` to ${short((h.endedAt??h.terminalAt)!)}`:', still unavailable'}. ${closureWords(h)}.`;
           return <a key={h.id} className={`timeline-mark timeline-hold${h.endedAt||h.terminalAt?'':' bar-open'}`} style={{left:`${a}%`,width:`${Math.max(b-a,.4)}%`,top:'6px'}} href={link(arc,'resources','events',h.detail.id)} aria-label={label} title={label}><span className="timeline-label">{classWords(h.effectiveClass)}</span></a>;})}</td></TableRow>)}
       {laneRows.map(lane=>{const {placed,count}=lanes(lane.marks,m=>m.type==='cluster'?span(m.from,m.to):span(m.startedAt,m.endedAt),m=>m.type==='cluster'?2.4:0);
-        return <TableRow key={lane.id} onClick={ev=>activateRow(ev,detail(lane.resourceKey))}><td className="timeline-identity"><a href={detail(lane.resourceKey)} title={`Everyone who held ${lane.instance??lane.resource}`}><strong>{lane.instance??lane.resource}</strong>{lane.instance&&<span>in {lane.resource}</span>}</a><span className="cell-line">{pluralise(lane.count,'booking')} in this window{lane.open?`, ${lane.open} still held`:''}</span></td>
-          <td className="timeline-lane" style={{height:`${count*22+8}px`}}>{placed.map(p=>mark(p.item,lane,p.lane,p.a,p.b))}</td></TableRow>;})}
+        // A booking still held reads in the row; one that outlasts the window says so at the window's edge.
+        const held=lane.marks.flatMap(m=>m.type!=='cluster'&&m.endedAt===null?[m]:[]).sort((a,b)=>a.startedAt.localeCompare(b.startedAt))[0];
+        const past=placed.flatMap(p=>p.item.type!=='cluster'&&(p.item.endedAt?Date.parse(p.item.endedAt):clock)>hi?[{m:p.item,row:p.lane}]:[]);
+        return <TableRow key={lane.id} onClick={ev=>activateRow(ev,detail(lane.resourceKey))}><td className="timeline-identity"><a href={detail(lane.resourceKey)} title={`Everyone who held ${resourceName(lane.instance??lane.resource)}`}><strong>{resourceName(lane.instance??lane.resource)}</strong>{lane.instance&&<span>in {resourceName(lane.resource)}</span>}</a><span className="cell-line">{pluralise(lane.count,'booking')} in this window{lane.open?`, ${lane.open} still held`:''}</span>
+          {held&&<span className="cell-line timeline-running-since">Held by {held.holder} since {short(held.startedAt)}{clock>hi?'. Continues past this window':''}</span>}</td>
+          <td className="timeline-lane" style={{height:`${count*22+8}px`}}>{placed.map(p=>mark(p.item,lane,p.lane,p.a,p.b))}{past.map(({m,row})=><ContinuesCap key={`past-${m.id}`} href={detail(m.detailKey)} top={row*22+4} label={`${m.holder}, ${resourceName(lane.instance??lane.resource)}: ${continuesWords(m.startedAt,m.endedAt,clock,short)}`}/>)}</td></TableRow>;})}
     </tbody></Table>
     {(data.overview.lanes?.matching??0)>laneRows.length&&<p className="muted">The first {laneRows.length} of {data.overview.lanes!.matching} resources are drawn. Filter by resource to see another.</p>}
     {holds.length>0&&<p className="muted">New calls were blocked while a backend was unavailable. Running calls could continue.</p>}

@@ -23,7 +23,7 @@ export type GraphEdge =
   | {kind: 'feeds'; source: string; target: string}
   | {kind: 'contingent'; target: string; edge: string; condition: Preview; resolved: boolean};
 export type GraphView = View & {
-  units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; systems: string[]; lineageRef: string | null}[];
+  units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; stageFinished: boolean; systems: string[]; lineageRef: string | null}[];
   milestones: {id: string; name?: string; state: string; passed: boolean; memberIds: string[]}[];
   edges: GraphEdge[];
   focus: {activeIds: string[]; firstUncleared: string | null};

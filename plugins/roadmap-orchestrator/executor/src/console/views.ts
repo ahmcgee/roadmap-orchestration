@@ -2,7 +2,7 @@
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import { unitSignal } from './signals.ts';
-import { identityIndex } from './indexes.ts';
+import { identityIndex, stageFinished, stageIndex } from './indexes.ts';
 import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
 export function preview(text: string, detail: DetailRef, limit = 240): Preview {
@@ -31,12 +31,12 @@ export function shellView(e: Envelope): ShellView {
   }, {basis: 'current', ...bounds});
 }
 export function graphView(e: Envelope): GraphView {
-  const s = e.data.display.status, identities = identityIndex(e);
+  const s = e.data.display.status, identities = identityIndex(e), steps = stageIndex(e.data.events).byUnit;
   const units: GraphView['units'] = s.units.map(u => {
     const identity = identities.get(u.unit)!;
     return {id: String(u.unit), title: identity.title.slice(0, 96), titleTruncated: identity.title.length > 96,
       signal: unitSignal(u.state),
-      state: u.state, stage: u.stage, systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null};
+      state: u.state, stage: u.stage, stageFinished: stageFinished(steps.get(u.unit), u.stage), systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null};
   });
   const states = new Map(s.milestones.map(m => [String(m.id), m]));
   const milestones: GraphView['milestones'] = (e.data.plan?.milestones ?? []).map(m => {

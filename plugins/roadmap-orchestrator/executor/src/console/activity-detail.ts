@@ -7,7 +7,7 @@ import { activityRequest, type ActivityEntry } from './activity-index.ts';
 import type { ConsoleActivity } from './activity-query.ts';
 import type { ActivityDetail } from './activity-protocol.ts';
 import { retainedReport } from './reports.ts';
-import { plainWords, requestReasonWords } from './vocabulary.ts';
+import { decisionKindWords, outcomeWords, plainWords, requestReasonWords, ruledByWords } from './vocabulary.ts';
 import { detailAvailability } from './detail-metadata.ts';
 import { projectionIndex, timelineIntervals } from './tab-projections.ts';
 import { versioned } from './views.ts';
@@ -34,9 +34,10 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
       add('Recommendation', r.recommendation);
       for (const option of r.options) add(`Option ${option.id}`, option.label);
       for (const path of r.evidence) {
-        add('Recorded evidence path', path);
+        // A path inside a recorded run is named by that run; any other path is shown as recorded.
         const route=/\/inv\/([1-9][0-9]*-[1-9][0-9]*)(?:\/|$)/.exec(path)?.[1];
         if(route&&e.data.display.invocations.some(i=>invocationDirName(invocationIdOf(i.id))===route))add('Evidence invocation',route);
+        else add('Recorded evidence path', path);
       }
       // Open-list membership says only what it proves. Resolution is stated only from a recorded ack.
       add('Currently in open list', e.data.requests.some(open => open.id === r.id) ? 'Yes' : 'No');
@@ -45,7 +46,7 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
   if (ev.type === 'fact') {
     const f = ev.fact;
     if (f.kind === 'stage-outcome' && 'unit' in f) {
-      add('Result', outcomeClassWords(f.class, f.outcome)); add('Attempt', f.attempt); add('Counts toward retry limit', f.chargeable ? 'yes' : 'no');
+      add('Result', f.class === 'park' ? 'Unit put on hold' : outcomeWords(f.outcome)); add('Counts toward the retry limit', f.chargeable ? 'Yes' : 'No');
       if (f.detail && 'summary' in f.detail) add('Recorded detail', String(f.detail.summary));
     } else if (f.kind === 'plan-applied') {add('Plan revision', f.rev); if (f.command) add('Command', f.command);}
     else if (f.kind === 'arc-completed') {add('Plan revision', f.planRev); add('Integration head', f.head); add('Completed units', f.units.length);}
@@ -53,7 +54,7 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
     else if (f.kind === 'audit-started') {add('Audit job', f.job); for (const lens of f.lenses) add('Lens', lens);}
     else if (f.kind === 'audit-ended') {
       add('Audit job', f.job); add('Result', plainWords(f.outcome)); add('Suppressed findings', f.suppressed);
-      for (const range of f.covered) add('Recorded coverage', `${range.lens}: ${range.from} to ${range.to}`);
+      for (const range of f.covered) add('Recorded coverage', range.from === range.to ? `${plainWords(range.lens)} at ${range.from.slice(0, 7)}` : `${plainWords(range.lens)}: ${range.from.slice(0, 7)} to ${range.to.slice(0, 7)}`);
       for (const finding of f.findings) add('Finding', finding);
       for (const refusal of f.refused) add('Refused lens', `${refusal.lens}: ${refusal.claim}; ${refusal.reason}`);
       add('Note', "Checkpoint details aren't available here yet.");
@@ -64,10 +65,9 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
   }
   if (entry.row.kind === 'decision') {
     for (const d of e.data.display.status.decisionsSince.filter(d => d.seq === ev.seq)) {
-      add('Decision', d.id); add('Decision summary', d.oneLine); add('Kind', plainWords(d.kind)); add('Ruled by', plainWords(d.ruledBy.type));
+      add('Decision', d.id); add('Decision summary', d.oneLine); add('Kind', decisionKindWords(d.kind)); add('Ruled by', ruledByWords(d.ruledBy));
       if (d.ruledBy.type === 'architect' && d.ruledBy.command) add('Command', d.ruledBy.command);
-      else if (d.ruledBy.type === 'judgment') add('Recorded role', d.ruledBy.role);
-    }
+          }
   }
   for (const i of e.data.display.invocations.filter(i => routes.has(invocationDirName(invocationIdOf(i.id))) && i.execution === 'agent' && i.endedAt)) {
     const available = detailAvailability(e, i).result;
@@ -75,7 +75,7 @@ function rawDetail(e: Envelope, activity: ConsoleActivity, entry: ActivityEntry)
     if (available === 'pruned') {evidenceAvailability = 'pruned'; continue;}
     if (!report) continue;
     if (evidenceAvailability !== 'pruned') evidenceAvailability = 'available';
-    if (typeof report['decision'] === 'string') add('Recorded decision', report['decision']);
+    if (typeof report['decision'] === 'string') add('Decision', outcomeWords(report['decision']));
     if (Array.isArray(report['findings'])) for (const finding of report['findings']) {
       const r = record(finding), title = r['title'] ?? r['what'] ?? r['summary'] ?? r['description'];
       if (typeof title === 'string') add('Review finding', title);
@@ -96,4 +96,3 @@ export function activityDetail(e: Envelope, activity: ConsoleActivity, id: strin
   }
   return boundDetail(e, entity, data, 32 * 1024, current => rawDetail(current, activity, selected(current, activity, id)));
 }
-const outcomeClassWords=(cls:string,outcome:string)=>cls==='park'?'unit parked':cls==='pass'?'passed':cls==='fail'?'failed':outcome;

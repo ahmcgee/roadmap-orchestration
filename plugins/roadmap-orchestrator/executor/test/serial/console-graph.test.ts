@@ -54,7 +54,7 @@ async function hoverNode(b:ConsoleBrowser,id:string){
  await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-hover')?.textContent.includes(${JSON.stringify(scaleTitle(id))})`),5000,'real pointer hover title card');
  assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0);
  assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return cy.edges('.trace').length>0&&cy.edges('.trace').every(e=>parseFloat(e.style('width'))*cy.zoom()>=2&&(e.source().id()==='${id}'||e.target().id()==='${id}'));}`),true,'hover traces real routes at two rendered pixels');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/attempt/);
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText'),/\d+ runs?\b/);
  return point;
 }
 

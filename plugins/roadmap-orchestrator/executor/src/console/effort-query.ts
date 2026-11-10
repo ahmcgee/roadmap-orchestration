@@ -8,11 +8,12 @@ import { allowParams, choice, invalid, known, list, pageLimit, resolveTime, time
 import { effortRows, projectionIndex } from './tab-projections.ts';
 import { resourceQueue } from './resources.ts';
 import { unitSignal } from './signals.ts';
+import { journeyMs, stageFinished } from './indexes.ts';
 import { waitWords, stageWords } from './vocabulary.ts';
 import { preview, versioned } from './views.ts';
 import type { Subject } from './view-protocol.ts';
 import type { EffortFilters, EffortTotals, EffortUnit, EffortView, EffortContribution, EffortScopeView } from './effort-protocol.ts';
-import { emptyMoney, emptyEffort as empty, addEffort as add, effortSubjectKey as key, effortGroup, effortDetailKey, systemSetKey, effortContributions } from './effort-contributions.ts';
+import { emptyMoney, emptyEffort as empty, addEffort as add, effortSubjectKey as key, effortGroup, effortDetailKey, EFFORT_DETAIL_KEY, systemSetKey, effortContributions } from './effort-contributions.ts';
 export class ConsoleEffort {
   readonly pages:CollectionPages;
   constructor(pages=new CollectionPages()){this.pages=pages;}
@@ -30,21 +31,21 @@ export class ConsoleEffort {
   }
   build(e:Envelope,filters:EffortFilters,sourceVersion?:string) {
       const index=projectionIndex(e),{scope,bounds}=resolveTime(e,filters),base=effortRows(e,index),states=e.data.display.status.units;
-      known(filters.unit,[...index.identities.keys()],'unit');known(filters.milestone,(e.data.plan?.milestones??[]).map(m=>m.id),'milestone');
-      known(filters.system,[...new Set([...index.identities.values()].flatMap(u=>u.systems))],'system');
+      // The recorded values the text filters accept; served so the browser offers only these.
+      const facets={unit:[...index.identities.keys()],milestone:(e.data.plan?.milestones??[]).map(m=>String(m.id)),system:[...new Set([...index.identities.values()].flatMap(u=>u.systems))].sort()};
+      known(filters.unit,facets.unit,'unit');known(filters.milestone,facets.milestone,'milestone');known(filters.system,facets.system,'system');
       known(filters.state,['preparing','ready','running','waiting','blocked','held','parked','awaiting-admission','merged','cut','superseded'],'current unit state');
       const queues=resourceQueue(e.data.display.status.host),rows=new Map<string,EffortUnit>();
       for(const b of base){
         const u=b.subject.type==='unit'?states.find(u=>u.unit===b.subject.id):undefined;
         // Use the complete source reasons, then bound each preview explicitly with a unit detail target.
         const all=u?unitReasons(u,index,queues):[];
-        // A journey whose only recorded instant is its start has no measurable length; that is unknown, not zero.
-        const elapsedMs=b.lifetime.startedAt===null||b.lifetime.endedAt===b.lifetime.startedAt?null:Math.max(0,Date.parse(b.lifetime.endedAt??bounds.terminalAt??e.checkedAt)-Date.parse(b.lifetime.startedAt));
-        rows.set(key(b.subject),{...empty(),id:key(b.subject),subject:b.subject,detailKey:b.subject.type==='unit'&&u?null:effortDetailKey(e.arc,'unit',key(b.subject)),contributorCount:0,titleTruncated:(index.identities.get(b.subject.id)?.title.length??b.subject.title.length)>b.subject.title.length,signal:u?unitSignal(u.state):null,state:b.state,stage:b.stage,stageFinished:u?((last=>last?.stage===b.stage&&last.endedAt!==null)(index.stages.byUnit.get(u.unit)?.at(-1))):false,systems:b.systems,
+        const elapsedMs=journeyMs(b.lifetime.startedAt,b.lifetime.endedAt,bounds.terminalAt??e.checkedAt);
+        rows.set(key(b.subject),{...empty(),id:key(b.subject),subject:b.subject,detailKey:b.subject.type==='unit'&&u?null:effortDetailKey(key(b.subject)),contributorCount:0,titleTruncated:(index.identities.get(b.subject.id)?.title.length??b.subject.title.length)>b.subject.title.length,signal:u?unitSignal(u.state):null,state:b.state,stage:b.stage,stageFinished:u&&b.stage!==null?stageFinished(index.stages.byUnit.get(u.unit),b.stage):false,systems:b.systems,
           blockers:{reasons:all.slice(0,8).map(text=>preview(text,{type:'unit',id:b.subject.id})),count:all.length,waitSince:u?queues.find(q=>q.unit===u.unit)?.queuedAt===undefined?null:new Date(queues.find(q=>q.unit===u.unit)!.queuedAt!).toISOString():null},
           lifetime:{startedAt:b.lifetime.startedAt,endedAt:b.lifetime.endedAt,elapsedMs,rounds:u?b.lifetime.rounds:null,redChecks:u?b.lifetime.redChecks:null,spend:b.spend}});
       }
-      const ensure=(s:Subject)=>{let r=rows.get(key(s));if(!r){r={...empty(),id:key(s),subject:s,detailKey:s.type==='unit'&&index.identities.has(s.id)?null:effortDetailKey(e.arc,'unit',key(s)),contributorCount:0,titleTruncated:false,signal:null,state:null,stage:null,stageFinished:false,systems:[],blockers:{reasons:[],count:0,waitSince:null},lifetime:{startedAt:null,endedAt:null,elapsedMs:null,rounds:null,redChecks:null,spend:emptyMoney()}};rows.set(r.id,r);}return r;};
+      const ensure=(s:Subject)=>{let r=rows.get(key(s));if(!r){r={...empty(),id:key(s),subject:s,detailKey:s.type==='unit'&&index.identities.has(s.id)?null:effortDetailKey(key(s)),contributorCount:0,titleTruncated:false,signal:null,state:null,stage:null,stageFinished:false,systems:[],blockers:{reasons:[],count:0,waitSince:null},lifetime:{startedAt:null,endedAt:null,elapsedMs:null,rounds:null,redChecks:null,spend:emptyMoney()}};rows.set(r.id,r);}return r;};
       known(filters.subject,[...rows.keys()],'subject');
       const selected=(s:Subject)=>{
         const u=s.type==='unit'?index.identities.get(s.id):undefined,r=rows.get(key(s));
@@ -64,7 +65,7 @@ export class ConsoleEffort {
       const chosen:EffortContribution[]=[],groups=new Map<string,EffortUnit>();
       const aggregate=(s:Subject,role:string|null)=>{
         const g=effortGroup(filters.group,s,role,index);let r=groups.get(g.id);
-        if(!r){r={...empty(),id:g.id,subject:{type:g.type,id:g.id,title:g.label},detailKey:effortDetailKey(e.arc,filters.group,g.id),contributorCount:0,titleTruncated:false,signal:null,state:null,stage:null,stageFinished:false,systems:filters.group==='system-set'&&s.type==='unit'?[...index.identities.get(s.id)?.systems??[]].sort():[],blockers:{reasons:[],count:0,waitSince:null},lifetime:{startedAt:null,endedAt:null,elapsedMs:null,rounds:null,redChecks:null,spend:emptyMoney()}};groups.set(g.id,r);}return r;
+        if(!r){r={...empty(),id:g.id,subject:{type:g.type,id:g.id,title:g.label},detailKey:effortDetailKey(g.id),contributorCount:0,titleTruncated:false,signal:null,state:null,stage:null,stageFinished:false,systems:filters.group==='system-set'&&s.type==='unit'?[...index.identities.get(s.id)?.systems??[]].sort():[],blockers:{reasons:[],count:0,waitSince:null},lifetime:{startedAt:null,endedAt:null,elapsedMs:null,rounds:null,redChecks:null,spend:emptyMoney()}};groups.set(g.id,r);}return r;
       };
       // Keep each plan unit/system-set available even without a completed measurement.
       for(const r of rows.values())if(r.subject.type==='unit'&&selected(r.subject as Subject)&&(!filters.systemSet.length||filters.systemSet.includes(systemSetKey(r.systems)))&&(!filters.role.length||contributions.some(c=>key(c.subject)===r.id&&selectedContribution(c)))){
@@ -89,17 +90,17 @@ export class ConsoleEffort {
       const value=(r:EffortUnit):number|null=>filters.sort==='work'?r.agentMs===null&&r.commandMs===null?null:(r.agentMs??0)+(r.commandMs??0):filters.sort==='spend'?r.spend.costUsd:filters.sort==='elapsed'?r.lifetime.elapsedMs:filters.sort==='redChecks'?r.lifetime.redChecks:filters.sort==='rounds'?r.lifetime.rounds:filters.sort==='held'?r.heldMs:r.queuedMs;
       result.sort((a,b)=>{if(filters.sort==='plan')return order(a,b);const av=value(a),bv=value(b);return av===null||bv===null?av===null?(bv===null?order(a,b):1):-1:(filters.direction==='desc'?bv-av:av-bv)||order(a,b);});
       const rowCounts={unit:0,arc:0,job:0,role:0,'system-set':0,unattributed:0};for(const r of result)rowCounts[r.subject.type]++;
-      return {rows:result,contributions:chosen,context:{...versioned({filters,bounds,totals,buckets:[],histogram:{from:new Date(lo).toISOString(),to:new Date(hi).toISOString(),widthMs:width},rowCounts,membership:'applied-plan-at-anchor' as const,attribution:{unit:unitTotals,arcJob:arcJobTotals}},scope),viewVersion:sourceVersion??sha256Hex(JSON.stringify([e.data.capture.source,'effort'])),
+      return {rows:result,contributions:chosen,context:{...versioned({filters,bounds,facets,totals,buckets:[],histogram:{from:new Date(lo).toISOString(),to:new Date(hi).toISOString(),widthMs:width},rowCounts,membership:'applied-plan-at-anchor' as const,attribution:{unit:unitTotals,arcJob:arcJobTotals}},scope),viewVersion:sourceVersion??sha256Hex(JSON.stringify([e.data.capture.source,'effort'])),
         buckets:[...buckets].sort(([a],[b])=>a-b).map(([n,v])=>({...v,from:new Date(lo+n*width).toISOString(),to:new Date(Math.min(hi,lo+(n+1)*width)).toISOString()}))}};
   }
   detail(e:Envelope,id:string,params:Record<string,string>,sourceVersion?:string):EffortScopeView {
-    if(!/^effort-[a-f0-9]{64}$/.test(id))invalid('invalid effort scope key');
+    if(!EFFORT_DETAIL_KEY.test(id))invalid('invalid effort scope key');
     const {section:rawSection,...query}=params,section=choice({section:rawSection??'subjects'},'section',['subjects','measurements'],'subjects');
     const filters=this.filters(query),limit=pageLimit({...query,limit:query['limit']??'25'});
     const data=this.pages.page<EffortScopeView['rows'][number],Omit<EffortScopeView,'rows'|'page'>>(e,`effort-scope:${id}:${section}`,filters,limit,query['cursor'],()=>{
       const built=this.build(e,filters,sourceVersion),selected=built.rows.find(r=>r.detailKey===id);
       if(!selected)throw new ConsoleError('not-found','Effort scope is not recorded in this selection');
-      const index=projectionIndex(e),contributions=built.contributions.filter(c=>effortDetailKey(e.arc,filters.group,effortGroup(filters.group,c.subject,c.role,index).id)===id);
+      const index=projectionIndex(e),contributions=built.contributions.filter(c=>effortDetailKey(effortGroup(filters.group,c.subject,c.role,index).id)===id);
       const subjects=new Map<string,ReturnType<typeof empty>&{id:string;subject:Subject;unitRef:string|null;contributionCount:number}>();
       for(const c of contributions){const k=key(c.subject),r=subjects.get(k)??{...empty(),id:k,subject:c.subject,unitRef:c.unitRef,contributionCount:0};add(r,c);r.contributionCount++;subjects.set(k,r);}
       const filter={role:filters.group==='role'?selected.subject.type==='unattributed'?'unattributed':selected.id.slice('role:'.length):null,systemSet:filters.group==='system-set'&&selected.subject.type==='system-set'?selected.id.slice('system-set:'.length):null,subject:filters.group==='unit'||filters.group==='system-set'&&['job','arc'].includes(selected.subject.type)?selected.id:filters.group==='system-set'&&selected.subject.type==='unattributed'?[...subjects.keys()].join(',')||null:null};

@@ -4,17 +4,21 @@ import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Drawer } from './drawer.tsx';
 import { Views, useSelectedDetail } from './view-state.ts';
 import { displayZone, elapsed, formatInstant, link, loadError, pluralise, route, zoneLabel } from './shared.tsx';
-import { activateRow } from './plain-query.tsx';
+import { activateRow, useLatestWindow } from './plain-query.tsx';
 import { Spend, EffortFigures, Hint, countingHelp, coverageText } from './effort.tsx';
 import { series, waitingHelp } from './effort-chart.tsx';
 import { reasonWords, roleWords, stageWords } from '../../src/console/vocabulary.ts';
 import type { EffortScopeView } from '../../src/console/effort-protocol.ts';
 export function EffortScopeDetail({arc,id,close}:{arc:string;id:string;close:()=>void}) {
-  const table=useRef<HTMLTableElement>(null),store=useContext(Views),current=route(),params=new URLSearchParams(current.query);
+  const table=useRef<HTMLTableElement>(null),store=useContext(Views),current=route(),params=new URLSearchParams(current.query),latest=useLatestWindow();
   for(const key of ['cursor','detailSection','detailCursor'])params.delete(key);
+  // The drawer reads the page's own window: the page's default is the 24 hours ending at the last recorded event, not the server's.
+  const explicit=params.has('window')||params.has('from')||params.has('to');
+  if(!explicit&&latest)for(const [key,value] of Object.entries(latest))params.set(key,value);
+  if(!params.has('zone'))params.set('zone',displayZone());
   params.set('section',current.query.get('detailSection')??'subjects');params.set('limit','25');
   if(current.query.has('detailCursor'))params.set('cursor',current.query.get('detailCursor')!);
-  const path=`resources/details/${encodeURIComponent(id)}?${params}`,state=useSelectedDetail(arc,store?.metadata?path:null),data=state.data as EffortScopeView|null;
+  const path=`resources/details/${encodeURIComponent(id)}?${params}`,state=useSelectedDetail(arc,store?.metadata&&(explicit||latest)?path:null),data=state.data as EffortScopeView|null;
   const zone=current.query.get('zone')??displayZone();
   const time=(at:string)=>formatInstant(at,zone);
   const navigate=(section:string,cursor:string|null=null,fresh=false)=>{if(fresh){const read=new URLSearchParams(params);read.set('section',section);read.delete('cursor');void store?.load(`resources/details/${encodeURIComponent(id)}?${read}`,true);}const q=new URLSearchParams(current.query);q.set('detailSection',section);if(cursor)q.set('detailCursor',cursor);else q.delete('detailCursor');location.hash=`${link(arc,current.tab,'scopes',id).split('?')[0]}?${q}`;};
@@ -24,7 +28,7 @@ export function EffortScopeDetail({arc,id,close}:{arc:string;id:string;close:()=
     {state.error&&<div role="alert"><p>{loadError(state.error)}</p><Button onClick={()=>navigate(current.query.get('detailSection')??'subjects',null,true)}>Retry</Button></div>}
     {!data?<p role="status">Loading…</p>:<>
       {data.viewVersion!==store?.metadata?.viewVersions.effort&&<p>Updates available. <Button onClick={()=>navigate(data.section,null,true)}>Show updates</Button></p>}
-      <h3>{data.label}</h3><p className="muted">Finished {data.scope.from?`between ${time(data.scope.from)} and ${data.scope.to?time(data.scope.to):'now'}`:`up to ${data.scope.to?time(data.scope.to):'now'}`} ({zoneLabel(zone)}). Updated {time(data.page.asOf.observedAt)}.</p>
+      <h3>{data.group==='role'&&data.filter.role!==null&&data.filter.role!=='unattributed'?roleWords(data.filter.role):data.label}</h3><p className="muted">Finished {data.scope.from?`between ${time(data.scope.from)} and ${data.scope.to?time(data.scope.to):'now'}`:`up to ${data.scope.to?time(data.scope.to):'now'}`} ({zoneLabel(zone)}). Updated {time(data.page.asOf.observedAt)}.</p>
       <EffortFigures v={data.totals}/><p className="muted">{coverageText(data.totals)}</p>
       {(data.filter.role!==null||data.filter.systemSet!==null||data.filter.subject!==null)&&<p><a href={filterLink()}>Filter All units to this group</a></p>}
       <nav className="activity-subviews" aria-label="Effort group detail">{(['subjects','measurements'] as const).map(section=><Button key={section} aria-pressed={data.section===section} onClick={()=>navigate(section)}>{section==='subjects'?'Units and jobs':'Each run, charge and wait'} ({data.counts[section]})</Button>)}</nav>

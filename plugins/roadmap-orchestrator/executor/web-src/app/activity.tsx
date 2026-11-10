@@ -2,18 +2,22 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { ApiError, displayZone, elapsed, formatDay, formatInstant, get, link, loadError, money, pluralise, route, Time, zoneLabel } from './shared.tsx';
-import { activateRow, FilterBar, moveRowFocus } from './plain-query.tsx';
+import { activateRow, CustomRange, FacetSelect, FilterBar, ignoredFilters, knownOnly, moveRowFocus, useFacets, unknownFilter } from './plain-query.tsx';
 import { Views, useView } from './view-state.ts';
 import { activityChangesShape } from '../../src/console/view-shapes.ts';
 import { ACTIVITY_KINDS, type ActivityRow, type ActivityView } from '../../src/console/activity-protocol.ts';
 import { activityFields, activityParams, dayRange, previousVisit, shiftDay } from './activity-query.ts';
-import { activityKindWords, plainWords, stageWords } from '../../src/console/vocabulary.ts';
+import { activityKindWords, agentParts, backendWords, outcomeWords, roleWords, stageWords } from '../../src/console/vocabulary.ts';
 import { Holistic } from './holistic.tsx';
+/** The Activity filters that choose among recorded values: field, label, the "all" option, and the words each value reads as. */
+const activityFacetFields=[['unit','Unit','All units',(v:string)=>v],['milestone','Milestone','All milestones',(v:string)=>v],['stage','Stage','All stages',stageWords],['role','Agent role','All roles',roleWords],['backend','Backend','All backends',backendWords],['model','Model','All models',(v:string)=>v],['outcome','Result','All results',outcomeWords]] as const;
 const NOT_RECORDED='Not recorded',NOT_APPLICABLE=<span className="muted">Not applicable</span>;
 function actorCell(row:ActivityRow) {
   if(row.actorCount>1)return `${row.actorCount} agents`;
   if(!row.actor)return NOT_RECORDED;
-  return <>{row.actor.role?(row.actor.role.startsWith('lane:')?stageWords(row.actor.role):plainWords(row.actor.role)):row.actor.backend}{row.actor.role&&(row.actor.model||row.actor.backend)&&<span className="cell-line">{row.actor.model??row.actor.backend}</span>}</>;
+  // The shared agent name (role, then model), one part per line.
+  const [first,second]=agentParts(row.actor);
+  return first?<>{first}{second&&<span className="cell-line">{second}</span>}</>:NOT_RECORDED;
 }
 const workCell=(row:ActivityRow)=>row.workMs!==null?elapsed(row.workMs):row.coverage.measured+row.coverage.unmeasured>0?NOT_RECORDED:NOT_APPLICABLE;
 function spendCell(row:ActivityRow) {
@@ -23,9 +27,9 @@ function spendCell(row:ActivityRow) {
 }
 export function Activity({arc}:{arc:string}) {
   const current=route(),view=current.query.get('view')==='holistic'?'holistic':'events';
-  const store=useContext(Views),params=activityParams(current.query,displayZone()),cursor=current.query.get('cursor');
+  const store=useContext(Views),cached=useFacets('activity',undefined),params=knownOnly(activityParams(current.query,displayZone()),cached),cursor=current.query.get('cursor');
   const query=params.toString(),path=`activity?${query}${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`;
-  const state=useView(view==='events'?path:null),data=state.data as ActivityView|null;
+  const state=useView(view==='events'?path:null),data=state.data as ActivityView|null,facets=useFacets('activity',data?.facets);
   const [changes,setChanges]=useState(0),[noticeError,setNoticeError]=useState(''),[retry,setRetry]=useState(0),[localError,setLocalError]=useState('');
   useEffect(()=>{store?.ui.set('query:activity',current.query.toString());},[store,current.query.toString()]);
   const metadataVersion=store?.metadata?.viewVersions.activity,request=useRef(0);
@@ -78,9 +82,9 @@ export function Activity({arc}:{arc:string}) {
   function apply(values:FormData){const next=new URLSearchParams(current.query);for(const key of activityFields){if(!values.has(key)&&key!=='housekeeping')continue;const value=String(values.get(key)??'');if(value)next.set(key,value);else next.delete(key);}if(next.get('from')||next.get('to'))next.delete('window');navigate(next,true);}
   return <section className="panel"><header className="panel-head"><div><h2>Activity</h2><p className="muted">{view==='holistic'?'Audits, findings and root decisions':`What happened, ${params.get('order')==='asc'?'oldest':'newest'} first`}</p></div>
     <div className="local-tabs" aria-label="Activity sections"><Button aria-pressed={view==='events'} onClick={()=>change('view','')}>Events</Button><Button aria-pressed={view==='holistic'} onClick={()=>change('view','holistic')}>Holistic review</Button></div>
-    <div className="activity-current-requests" aria-live="polite">{requestsChanged&&<p role="status">Current human requests may have changed. <a href={link(arc,'attention')}>View Attention</a> <Button onClick={()=>setRequestAnchor({generation,version:requestVersion!})}>Dismiss request notice</Button></p>}</div></header>
+    <div className="activity-current-requests" aria-live="polite">{requestsChanged&&<p role="status">Decisions waiting for you may have changed. <a href={link(arc,'attention')}>View Attention</a> <Button onClick={()=>setRequestAnchor({generation,version:requestVersion!})}>Dismiss request notice</Button></p>}</div></header>
     {view==='holistic'?<Holistic arc={arc}/>:<>
-      <FilterBar label="Activity" resetKey={query} search={params.get('q')??''} searchHelp="Searches summaries, units and agents. Open an event for the full report." dirty={current.query.size>0} activeFilters={['unit','milestone','stage','role','backend','model','outcome','kind'].filter(k=>params.get(k)).length+(params.get('housekeeping')==='1'?1:0)+(params.get('order')==='asc'?1:0)}
+      <FilterBar label="Activity" ignored={ignoredFilters(current.query,facets,{unit:'unit',milestone:'milestone',stage:'stage',role:'agent role',backend:'backend',model:'model',outcome:'result'})} resetKey={query} search={params.get('q')??''} searchHelp="Searches summaries, units and agents. Open an event for the full report." dirty={current.query.size>0} activeFilters={['unit','milestone','stage','role','backend','model','outcome','kind'].filter(k=>params.get(k)).length+(params.get('housekeeping')==='1'?1:0)+(params.get('order')==='asc'?1:0)}
         apply={apply} reset={()=>navigate(new URLSearchParams(),true)}
         window={<select aria-label="Activity time window" className="filter-window" value={windowValue} onChange={ev=>chooseWindow(ev.target.value)}>
           <option value="arc">Latest events</option><option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option>
@@ -89,15 +93,16 @@ export function Activity({arc}:{arc:string}) {
           <optgroup label="By day">{dayOptions.map(d=><option key={d.date} value={`day:${d.date}`}>{formatDay(d.date)}{d.count===null?'':` (${pluralise(d.count,'event')})`}</option>)}</optgroup>
         </select>}
         extra={selectedDay?<><Button type="button" onClick={()=>day(shiftDay(selectedDay,-1))}>Previous day</Button><Button type="button" onClick={()=>day(shiftDay(selectedDay,1))}>Next day</Button></>:undefined}>
-        <details className="activity-range"><summary>Custom time range</summary><label>From<input name="from" defaultValue={params.get('from')??''} placeholder="2026-11-09T00:00:00Z"/></label><label>To<input name="to" defaultValue={params.get('to')??''} placeholder="2026-11-09T12:00:00Z"/></label><Button type="submit">Apply time range</Button></details>
-        <div className="filter-grid">{(['unit','milestone','stage','role','backend','model','outcome'] as const).map(key=><label key={key}>{key==='role'?'Agent role':key==='outcome'?'Result':key[0]!.toUpperCase()+key.slice(1)}<input name={key} defaultValue={params.get(key)??''} placeholder="All"/></label>)}
+        <CustomRange from={params.get('from')} to={params.get('to')}/>
+        <div className="filter-grid">{activityFacetFields.map(([key,label,all,words])=><FacetSelect key={key} name={key} label={label} all={all} values={facets?.[key]??null} value={current.query.get(key)??''} words={words}/>)}
         <label>Type<select name="kind" defaultValue={params.get('kind')??''}><option value="">All types</option>{ACTIVITY_KINDS.map(k=><option key={k} value={k}>{activityKindWords(k)}</option>)}</select></label>
         <label>Order<select name="order" defaultValue={params.get('order')??'desc'}><option value="desc">Newest first</option><option value="asc">Oldest first</option></select></label>
         <label>Rows per page<select name="limit" defaultValue={params.get('limit')??'50'}>{[25,50,100].map(n=><option key={n}>{n}</option>)}</select></label>
         <label className="filter-check"><input type="checkbox" name="housekeeping" value="1" defaultChecked={params.get('housekeeping')==='1'}/> Show routine steps</label></div>
       </FilterBar>
       {localError&&<p role="alert">{localError}</p>}
-      {(state.error||noticeError)&&<div role="alert"><p>{loadError(state.error||noticeError)}</p><Button onClick={()=>state.error?navigate(new URLSearchParams(current.query),true):setRetry(retry+1)}>Retry</Button></div>}
+      {state.error&&unknownFilter(state.error)?<div role="alert"><p>This link filters by a value that isn't recorded in this arc.</p><Button onClick={()=>{const next=new URLSearchParams(current.query);for(const [key] of activityFacetFields)next.delete(key);navigate(next,true);}}>Clear those filters</Button></div>
+      :(state.error||noticeError)&&<div role="alert"><p>{loadError(state.error||noticeError)}</p><Button onClick={()=>state.error?navigate(new URLSearchParams(current.query),true):setRetry(retry+1)}>Retry</Button></div>}
       {state.loading&&<p role="status">{data?'Updating Activity…':'Loading Activity…'}</p>}
       {data&&<>
         <div className="page-status"><p className="activity-anchor muted">{windowValue==='visit'?`Since your last visit in this browser: ${pluralise(data.page.matching,'event')}`:pluralise(data.page.matching,'event')}. Updated {formatInstant(data.page.asOf.observedAt,data.filters.zone,true)} {zoneLabel(data.filters.zone)}.</p>

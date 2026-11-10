@@ -4,15 +4,16 @@ import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, displayZone, elapsed, formatInstant, link, money, pluralise, route, SignalMark, zoneLabel } from './shared.tsx';
 import { Views } from './view-state.ts';
-import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, FilterBar, useLatestWindow, WindowSelect } from './plain-query.tsx';
+import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, CustomRange, FacetSelect, FilterBar, ignoredFilters, useLatestWindow, WindowSelect } from './plain-query.tsx';
 import { EffortChart, figure, series, waitingHelp, type EffortMetric } from './effort-chart.tsx';
 import type { EffortView, EffortTotals, EffortUnit } from '../../src/console/effort-protocol.ts';
 import type { EffortSort, Money } from '../../src/console/view-protocol.ts';
-import { roleWords, stateWords, stageWords } from '../../src/console/vocabulary.ts';
+import { roleWords, stateChoices, stateWords, stageWords } from '../../src/console/vocabulary.ts';
 /** The unit states the Effort filter accepts, in the order a unit moves through them. */
 const unitStates=['preparing','ready','waiting','awaiting-admission','blocked','held','parked','running','merged','cut','superseded'];
 const fields=['window','from','to','zone','unit','milestone','system','state','blocked','q','sort','direction','metric','group','role','systemSet','subject','cursor','limit'] as const;
-export function Spend({value}:{value:Money}) {return <>{value.costUsd===null?'Not recorded':money(value.costUsd)}{value.estimated>0&&<small className="cell-line">{value.estimated} estimated</small>}{value.unavailable>0&&<small className="cell-line">{value.unavailable} not recorded</small>}</>;}
+/** `absent` names a known absence (a window with no charge); a charge that went unrecorded is always "Not recorded". */
+export function Spend({value,absent='Not recorded'}:{value:Money;absent?:string}) {return <>{value.costUsd===null?value.unavailable>0?'Not recorded':absent:money(value.costUsd)}{value.estimated>0&&<small className="cell-line">{value.estimated} estimated</small>}{value.unavailable>0&&<small className="cell-line">{value.unavailable} not recorded</small>}</>;}
 /** A short note on how a figure is counted, opened on demand rather than printed beside it. */
 export function Hint({label,children}:{label:string;children:ReactNode}) {return <details className="hint"><summary aria-label={label} title={label}>?</summary><div className="hint-body">{children}</div></details>;}
 export const countingHelp='Each run counts in full at the time it finished, even if it started earlier. Spend counts when it was charged, and a wait when it ended.';
@@ -29,7 +30,7 @@ export function coverageText(v:EffortTotals) {
 }
 /** The window's figures as labelled values. */
 export function EffortFigures({v}:{v:EffortTotals}) {
-  return <dl className="effort-figures">{(['work','waiting','spend'] as EffortMetric[]).flatMap(metric=>series[metric].map(s=><div key={s.key}><dt>{s.label}</dt><dd>{metric==='spend'?<Spend value={v.spend}/>:figure(metric,s,v)}</dd></div>))}</dl>;
+  return <dl className="effort-figures">{(['work','waiting','spend'] as EffortMetric[]).flatMap(metric=>series[metric].map(s=><div key={s.key}><dt>{s.label}</dt><dd>{metric==='spend'?<Spend value={v.spend} absent="None in this window"/>:figure(metric,s,v)}</dd></div>))}</dl>;
 }
 const work=(u:EffortTotals)=>u.agentMs===null&&u.commandMs===null?null:(u.agentMs??0)+(u.commandMs??0);
 /** A row with no finished runs at all has nothing to measure: that is known absence, not missing data. */
@@ -69,19 +70,19 @@ export function Effort({arc}:{arc:string}) {
   const metric=h?.filters.metric??'work',units=h?.filters.group==='unit';
   const windowColumns=metric==='spend'?1:3;
   return <section className="panel effort"><header className="panel-head"><div><h2>Effort</h2><p className="muted">Work finished and time spent waiting.</p></div></header>
-    <FilterBar label="Effort" resetKey={state.path} search={state.params.get('q')??''} searchHelp="Find a unit by id or title." dirty={fields.some(k=>current.query.has(k))} activeFilters={['unit','milestone','system','state','from','to'].filter(k=>current.query.get(k)).length} apply={values=>{const next:Record<string,string|null>={};for(const key of ['unit','milestone','system','state','q','limit','from','to'])next[key]=String(values.get(key)??'')||null;if(next['from']||next['to'])next['window']=null;state.navigate(next);}} reset={()=>state.navigate(Object.fromEntries(fields.map(k=>[k,null])),true)}
+    <FilterBar label="Effort" ignored={ignoredFilters(current.query,state.facets,{unit:"unit",milestone:"milestone",system:"system"})} resetKey={state.path} search={state.params.get('q')??''} searchHelp="Find a unit by id or title." dirty={fields.some(k=>current.query.has(k))} activeFilters={['unit','milestone','system','state','from','to'].filter(k=>current.query.get(k)).length} apply={values=>{const next:Record<string,string|null>={};for(const key of ['unit','milestone','system','state','q','limit','from','to'])next[key]=String(values.get(key)??'')||null;if(next['from']||next['to'])next['window']=null;state.navigate(next);}} reset={()=>state.navigate(Object.fromEntries(fields.map(k=>[k,null])),true)}
       window={<WindowSelect label="Effort time window" query={current.query} navigate={state.navigate} latest={latest}/>}
       extra={<>
         <select aria-label="Effort window metrics" className="filter-window" value={state.params.get('metric')??'work'} onChange={ev=>state.navigate({metric:ev.target.value})}><option value="work">Show work</option><option value="waiting">Show waiting</option><option value="spend">Show spend</option></select>
         <select aria-label="Effort group" className="filter-window" value={state.params.get('group')??'unit'} onChange={ev=>state.navigate({group:ev.target.value,sort:'plan',direction:null})}><option value="unit">Group by unit</option><option value="role">Group by role</option><option value="system-set">Group by systems</option></select>
       </>}>
-      <details className="activity-range"><summary>Custom time range</summary><label>From<input name="from" defaultValue={state.params.get('from')??''}/></label><label>To<input name="to" defaultValue={state.params.get('to')??''}/></label><Button type="submit">Apply time range</Button></details>
+      <CustomRange from={state.params.get('from')} to={state.params.get('to')}/>
       <div className="filter-row"><Button type="button" onClick={()=>state.navigate({window:'arc',from:null,to:null},true)}>Whole arc</Button><Button type="button" disabled={!h?.scope.from||!h.scope.to} onClick={()=>shift(-1)}>Previous window</Button><Button type="button" disabled={!h?.scope.from||!h.scope.to} onClick={()=>shift(1)}>Next window</Button><Button type="button" onClick={()=>state.navigate({window:state.params.get('window')==='7d'?'7d':'24h',from:null,to:null},true)}>{h?.bounds.terminalAt?'Arc end':'Now'}</Button></div>
-      <div className="filter-grid">{(['unit','milestone','system'] as const).map(key=><label key={key}>{key[0]!.toUpperCase()+key.slice(1)}<input name={key} defaultValue={state.params.get(key)??''}/></label>)}
-      <label>Unit state<select name="state" defaultValue={state.params.get('state')??''}><option value="">Any state</option>{unitStates.map(v=><option key={v} value={v}>{stateWords(v)}{['held','parked'].includes(v)?` (${v==='held'?'held':'parked'})`:v==='awaiting-admission'?' to start':''}</option>)}</select></label>
+      <div className="filter-grid">{(['unit','milestone','system'] as const).map(key=><FacetSelect key={key} name={key} label={key[0]!.toUpperCase()+key.slice(1)} all={`All ${key==='system'?'systems':`${key}s`}`} values={state.facets?.[key]??null} value={current.query.get(key)??''}/>)}
+      <label>Unit state<select name="state" defaultValue={state.params.get('state')??''}><option value="">Any state</option>{stateChoices(unitStates).map(c=><option key={c.value} value={c.value}>{c.label}</option>)}</select></label>
       <label>Rows per page<select name="limit" defaultValue={state.params.get('limit')??'50'}>{[25,50,100].map(n=><option key={n}>{n}</option>)}</select></label></div>
     </FilterBar>
-    <PlainPageStatus {...state} data={h} reload={reload} version="effort" noun="unit" count={h?countLine(h.rowCounts):undefined}/>
+    <PlainPageStatus {...state} data={h} reload={reload} version="effort" noun="unit" count={h?`${countLine(h.rowCounts)}${h.filters.sort==='plan'&&h.rowCounts.job>0&&h.rowCounts.unit>0?'. Jobs are listed after the units':''}`:undefined}/>
     {h&&<>
       <section className="effort-window" aria-labelledby="effort-window-title">
         <div className="effort-window-head"><h3 id="effort-window-title">Finished {h.scope.from?<>between {short(h.scope.from)} and {short(h.scope.to??h.bounds.to)}</>:<>up to {short(h.scope.to??h.bounds.to)}</>} <span className="muted">{zoneLabel(safeZone)}</span></h3><Hint label="How these are counted"><p>{countingHelp}</p><p>{waitingHelp}</p></Hint></div>

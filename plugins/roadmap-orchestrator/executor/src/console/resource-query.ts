@@ -60,10 +60,12 @@ export class ConsoleResources {
     const integration=resources.filter(r=>r.resource==='integration-slot'&&r.holder!==null),publication=queues.filter(q=>q.publication).map((q,n)=>({...q,position:n+1}));
     const pressure=blockers.filter(b=>e.data.display.status.units.find(u=>u.unit===b.subject.id)?.waitingFor?.pressureBlocked);
     const now:ResourceNow={queueAvailable:rawNow.queueAvailable,cpuReservation:rawNow.cpuReservation,integration:{rows:integration.slice(0,5),matching:integration.length},queues:{rows:publication.slice(0,5),matching:publication.length},blockers:{rows:pressure.slice(0,5),matching:pressure.length},counts:{resources:resources.length,queues:queues.length,pools:pools.length,blockers:blockers.length},unknownQueueStarts:queues.filter(q=>q.queuedAt===null).length};
-    known(f.unit,[...identities.keys()],'unit');
-    const resourceIds=[...new Set([...(e.data.plan?.resources??[]).map(r=>String(r.name)),...queues.flatMap(q=>[...q.named,...q.pools,...(q.publication?['integration-slot']:[]),...(q.cpu>0?['@cpu']:[])]),...allBookings.flatMap(b=>[b.resource,...(b.instance?[b.instance]:[])]),...resources.map(r=>r.resource),...pools.map(p=>p.resource)])];known(f.resource,resourceIds,'resource');
-    known(f.state,['holding','done'],'booking state');known(f.stage,[...new Set(['pre-build','build','lanes','gate','candidate','ff','snapshot',...allCalls.map(c=>c.stage),...waits.flatMap(w=>w.stage?[w.stage]:[])])],'stage');
-    known(f.reason,[...new Set(['cpu-pressure','memory-pressure','cpu-tokens','publication-slot','queue-precedence',...ADMISSION_HOLDS.map(r=>`admission-hold:${r}`),...waits.flatMap(w=>w.reasons.map(r=>r.reason))])],'waiting reason');
+    const resourceIds=[...new Set([...(e.data.plan?.resources??[]).map(r=>String(r.name)),...queues.flatMap(q=>[...q.named,...q.pools,...(q.publication?['integration-slot']:[]),...(q.cpu>0?['@cpu']:[])]),...allBookings.flatMap(b=>[b.resource,...(b.instance?[b.instance]:[])]),...resources.map(r=>r.resource),...pools.map(p=>p.resource)])];
+    // The values the text filters accept; served so the browser offers only these.
+    const facets={resource:resourceIds.sort(),unit:[...identities.keys()],stage:[...new Set(['pre-build','build','lanes','gate','candidate','ff','snapshot',...allCalls.map(c=>c.stage),...waits.flatMap(w=>w.stage?[w.stage]:[])])],
+      reason:[...new Set(['cpu-pressure','memory-pressure','cpu-tokens','publication-slot','queue-precedence',...ADMISSION_HOLDS.map(r=>`admission-hold:${r}`),...waits.flatMap(w=>w.reasons.map(r=>r.reason))])]};
+    known(f.unit,facets.unit,'unit');known(f.resource,facets.resource,'resource');
+    known(f.state,['holding','done'],'booking state');known(f.stage,facets.stage,'stage');known(f.reason,facets.reason,'waiting reason');
     const matches=(s:ResourceSubject|ResourceWait['subject'])=>(!f.unit.length||s.type==='unit'&&f.unit.includes(s.id));
     const search=(...values:string[])=>!f.q||values.join(' ').toLowerCase().includes(f.q);
     const title=(s:ResourceSubject|ResourceWait['subject'])=>identities.get(s.id)?.title??s.title;
@@ -92,7 +94,7 @@ export class ConsoleResources {
     const arcHolds=f.section==='schedule'?backendHolds(e.data.events,e.epoch):[],holds=f.section==='schedule'?arcHolds.filter(h=>intersects(h.startedAt,h.endedAt??h.terminalAt,scope.from,scope.to,bounds.terminalAt??e.checkedAt)):null;
     const overview={backendHolds:holds?{rows:holds.slice(0,25),matching:holds.length}:null,resourceCount:resourceIds.filter(r=>r!=='@cpu').length,arc:f.section==='schedule'?arcOverview(bounds,matchingBookings.map(b=>b.startedAt),arcHolds):null,lanes:f.section==='schedule'?{rows:lanes.slice(0,24),matching:lanes.length}:null,reasons:f.section==='waiting'?reasonRows.slice(0,25):[],reasonCount:f.section==='waiting'?reasonRows.length:0,totalWaitingMs:f.section==='waiting'&&measurements.length?measurements.reduce((n,w)=>n+w.totalMs,0):null,unallocatedMs:f.section==='waiting'&&measurements.length?measurements.reduce((n,w)=>n+w.unallocatedMs,0):null};
     const rows:ResourceView['rows']=f.section==='schedule'?bookings:f.section==='cpu'?groups:f.section==='waiting'?measurements:nowRows;
-    const context={...versioned({section:f.section,filters:f,bounds,now,counts,coverage,overview},f.section==='now'?{basis:'current' as const,from:null,to:null}:scope),viewVersion:sourceVersion??sha256Hex(canonicalJson([e.data.capture.source,'resources']))};
+    const context={...versioned({section:f.section,filters:f,facets,bounds,now,counts,coverage,overview},f.section==='now'?{basis:'current' as const,from:null,to:null}:scope),viewVersion:sourceVersion??sha256Hex(canonicalJson([e.data.capture.source,'resources']))};
     return {rows,context,allBookings,allCalls,groups,measurements,reasonRows,subject,resources};
   }
   content(e:Envelope,id:string,params:Record<string,string>) {

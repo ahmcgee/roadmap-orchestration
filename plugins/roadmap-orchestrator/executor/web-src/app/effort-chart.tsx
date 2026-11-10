@@ -20,11 +20,11 @@ export const series: Record<EffortMetric, Series[]> = {
 };
 export const waitingHelp = 'On hold: stopped by a pause, failing baseline checks or a decision. Waiting its turn: waiting for dependencies, a milestone, CPU or the integration slot. Mixed reasons: one wait had reasons of both kinds, so it is not split. Each wait counts once.';
 const format = (metric: EffortMetric, n: number) => metric === 'spend' ? money(n) : elapsed(n);
-/** One figure in words: a missing value is "Not recorded" only when something of that kind went unmeasured. */
+/** One figure in words: a missing value is "Not recorded" only when something of that kind went unmeasured; otherwise none fell in the window. */
 export function figure(metric: EffortMetric, s: Series, v: EffortTotals) {
   const n = s.value(v);
   if (n !== null) return format(metric, n);
-  return (metric === 'work' ? v.coverage.execution.unmeasured : metric === 'spend' ? v.spend.unavailable : 0) > 0 ? 'Not recorded' : 'None';
+  return (metric === 'work' ? v.coverage.execution.unmeasured : metric === 'spend' ? v.spend.unavailable : 0) > 0 ? 'Not recorded' : 'None in this window';
 }
 export function EffortChart({h, metric, open, time}: {h: EffortView; metric: EffortMetric; open: (from: string, to: string) => void; time: (at: string) => string}) {
   const [active, setActive] = useState<number | null>(null);

@@ -5,18 +5,16 @@ import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, displayZone, elapsed, formatInstant, link, pluralise, route, SignalMark, zoneLabel } from './shared.tsx';
 import { useView } from './view-state.ts';
-import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, moveRowFocus, FilterBar, useLatestWindow, WindowSelect } from './plain-query.tsx';
+import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, moveRowFocus, CustomRange, FacetSelect, FilterBar, ignoredFilters, useLatestWindow, WindowSelect } from './plain-query.tsx';
 import type { TimelineView, IntervalsView, HoldsView, TrackSummary } from '../../src/console/temporal-protocol.ts';
-import { classWords, closureWords, lanes, Overview, tickGrid, ticks } from './time-axis.tsx';
+import { ContinuesCap, continuesWords, lanes, Overview, tickGrid, ticks } from './time-axis.tsx';
 import type { BackendHold } from '../../src/console/activity-protocol.ts';
 import type { Interval, TrackMark, Signal } from '../../src/console/view-protocol.ts';
-import { plainWords, roleWords, stageWords, stateWords } from '../../src/console/vocabulary.ts';
+import { agentWords, closureWords, holdClassWords as classWords, outcomeSignal, runOutcomeWords, stageWords, stateChoices, stateWords } from '../../src/console/vocabulary.ts';
 const fields=['window','from','to','zone','unit','milestone','state','stage','execution','q','sort','cursor','limit'] as const;
 const unitStates=['preparing','ready','waiting','awaiting-admission','blocked','held','parked','running','merged','cut','superseded'];
-/** A recorded run result, as words and the status signal it shows. */
-const results:Record<string,[string,Signal]>={running:['Running','active'],pass:['Passed','passed'],green:['Passed','passed'],success:['Succeeded','passed'],approve:['Approved','passed'],published:['Published','passed'],'probe passed':['Probe passed','passed'],
-  fail:['Failed','failed'],red:['Failed','failed'],'process-fault':['Process fault','failed'],'executor-fault':['Executor fault','failed'],'probe failed':['Probe failed','failed'],revise:['Changes requested','held'],'pre-delivery':['Not delivered yet','pending']};
-export const resultWords=(outcome:string):[string,Signal]=>results[outcome]??[plainWords(outcome),'pending'];
+/** A run's result in the shared vocabulary, with the status signal it shows. */
+const resultWords=(outcome:string):[string,Signal]=>[runOutcomeWords(outcome),outcomeSignal(outcome)];
 export function Timeline({arc}:{arc:string}) {
   const current=route(),zone=current.query.get('zone')??displayZone(),explicit=current.query.has('window')||current.query.has('from')||current.query.has('to'),latest=useLatestWindow();
   const state=usePlainQuery<TimelineView>(arc,'timeline',fields,explicit?{zone}:latest?{...latest,zone}:null),data=state.data;
@@ -57,10 +55,14 @@ export function Timeline({arc}:{arc:string}) {
   function trackRow(t:TrackSummary){
     const href=t.detail?link(arc,'timeline','units',t.detail.id):null,id=kinds(t);
     const {placed,count}=lanes(t.marks,m=>m.type==='cluster'?span(m.from,m.to):span(m.startedAt,m.endedAt),m=>m.type==='cluster'?2.4:0);
+    // Open runs read in the row itself, and a run that outlasts the window says so at the window's edge.
+    const open=t.marks.flatMap(m=>m.type!=='cluster'&&m.endedAt===null?[m]:[]).sort((a,b)=>a.startedAt.localeCompare(b.startedAt))[0];
+    const past=placed.flatMap(p=>p.item.type!=='cluster'&&(p.item.endedAt?Date.parse(p.item.endedAt):clock)>hi?[{m:p.item,lane:p.lane}]:[]);
     return <TableRow key={t.id} className={subject===t.id?'timeline-selected':undefined} onClick={ev=>activateRow(ev,href)}>
       <td className="unit-identity timeline-identity"><div className="timeline-identity-head">{href?<a href={href} title={`${id.id}: ${id.title}`}><strong>{id.id}</strong><span>{id.title}</span></a>:<span><strong>{id.id}</strong><span>{id.title}</span></span>}{toggle(t)}</div>
-        <span className="cell-line">{t.state?<>{t.signal&&<SignalMark state={t.signal}/>} {stateWords(t.state)}. </>:''}{pluralise(t.intervalCount,'run')}, {t.openCount} open</span></td>
-      <td className="timeline-lane" style={{height:`${count*22+8}px`}} onKeyDown={moveMark}>{placed.map(p=>mark(p.item,t,p.lane,p.a,p.b))}</td>
+        <span className="cell-line">{t.state?<>{t.signal&&<SignalMark state={t.signal}/>} {stateWords(t.state)}. </>:''}{pluralise(t.intervalCount,'run')}, {t.openCount} open</span>
+        {open&&<span className="cell-line timeline-running-since">Running since {short(open.startedAt)}{clock>hi?'. Continues past this window':''}</span>}</td>
+      <td className="timeline-lane" style={{height:`${count*22+8}px`}} onKeyDown={moveMark}>{placed.map(p=>mark(p.item,t,p.lane,p.a,p.b))}{past.map(({m,lane})=><ContinuesCap key={`past-${m.id}`} href={link(arc,'timeline','invocations',m.invocation)} top={lane*22+4} label={`${stageWords(m.stage)}: ${continuesWords(m.startedAt,m.endedAt,clock,short)}`}/>)}</td>
     </TableRow>;
   }
   function runRows(rows:Interval[]){
@@ -86,7 +88,7 @@ export function Timeline({arc}:{arc:string}) {
   const windowHolds=data?data.overview.backendHolds.rows.filter(h=>{const end=h.endedAt??h.terminalAt;return Date.parse(h.startedAt)<hi&&(end===null||Date.parse(end)>lo);}):[];
   const activity=new URLSearchParams();if(data?.scope.from)activity.set('from',data.scope.from);if(data?.scope.to)activity.set('to',data.scope.to);if(subject?.startsWith('unit:'))activity.set('unit',subject.slice(5));
   return <section className="panel timeline"><header className="panel-head"><div><h2>Timeline</h2><p className="muted">When each agent and command ran, and when a backend was unavailable.</p></div></header>
-    <FilterBar label="Timeline" resetKey={state.params.toString()} search={state.params.get('q')??''} searchHelp="Find a unit by id or title." dirty={[...fields,'track','holds','holdCursor','intervalCursor','layout'].some(k=>current.query.has(k))} activeFilters={['unit','milestone','state','stage','execution','from','to'].filter(k=>current.query.get(k)).length}
+    <FilterBar label="Timeline" ignored={ignoredFilters(current.query,state.facets,{unit:'unit',milestone:'milestone',stage:'stage'})} resetKey={state.params.toString()} search={state.params.get('q')??''} searchHelp="Find a unit by id or title." dirty={[...fields,'track','holds','holdCursor','intervalCursor','layout'].some(k=>current.query.has(k))} activeFilters={['unit','milestone','state','stage','execution','from','to'].filter(k=>current.query.get(k)).length}
       apply={values=>{const next:Record<string,string|null>={track:null};for(const key of ['unit','milestone','state','stage','execution','q','limit','from','to'])next[key]=String(values.get(key)??'')||null;if(next['from']||next['to'])next['window']=null;state.navigate(next,true);}}
       reset={()=>state.navigate(Object.fromEntries([...fields,'track','holds','holdCursor','intervalCursor','layout'].map(k=>[k,null])),true)}
       window={<WindowSelect label="Timeline time window" query={current.query} navigate={state.navigate} latest={latest}/>}
@@ -96,10 +98,10 @@ export function Timeline({arc}:{arc:string}) {
         <Button type="button" aria-pressed={asTable} onClick={()=>state.navigate({layout:asTable?null:'table'})}>{asTable?'Show as chart':'Show as table'}</Button>
         <a className="filter-link" href={`#/arcs/${encodeURIComponent(arc)}/activity${activity.size?`?${activity}`:''}`}>Open this window in Activity</a>
       </>}>
-      <details className="activity-range"><summary>Custom time range</summary><label>From<input name="from" defaultValue={state.params.get('from')??''}/></label><label>To<input name="to" defaultValue={state.params.get('to')??''}/></label><Button type="submit">Apply time range</Button></details>
-      <div className="filter-grid"><label>Unit<input name="unit" defaultValue={state.params.get('unit')??''}/></label><label>Milestone<input name="milestone" defaultValue={state.params.get('milestone')??''}/></label>
-      <label>Unit state<select name="state" defaultValue={state.params.get('state')??''}><option value="">Any state</option>{unitStates.map(v=><option key={v} value={v}>{stateWords(v)}{['held','parked'].includes(v)?` (${v})`:v==='awaiting-admission'?' to start':''}</option>)}</select></label>
-      <label>Stage<input name="stage" defaultValue={state.params.get('stage')??''} title="A recorded stage, such as build, lanes or gate"/></label>
+      <CustomRange from={state.params.get('from')} to={state.params.get('to')}/>
+      <div className="filter-grid"><FacetSelect name="unit" label="Unit" all="All units" values={state.facets?.['unit']??null} value={current.query.get('unit')??''}/><FacetSelect name="milestone" label="Milestone" all="All milestones" values={state.facets?.['milestone']??null} value={current.query.get('milestone')??''}/>
+      <label>Unit state<select name="state" defaultValue={state.params.get('state')??''}><option value="">Any state</option>{stateChoices(unitStates).map(c=><option key={c.value} value={c.value}>{c.label}</option>)}</select></label>
+      <FacetSelect name="stage" label="Stage" all="All stages" values={state.facets?.['stage']??null} value={current.query.get('stage')??''} words={stageWords}/>
       <label>Kind<select name="execution" defaultValue={state.params.get('execution')??''}><option value="">Agents and commands</option><option value="agent">Agents only</option><option value="command">Commands and checks only</option><option value="unknown">Kind not recorded</option></select></label>
       <label>Rows per page<select name="limit" defaultValue={state.params.get('limit')??'50'}>{[25,50,100].map(n=><option key={n}>{n}</option>)}</select></label></div>
     </FilterBar>
@@ -137,8 +139,8 @@ export function Timeline({arc}:{arc:string}) {
     </>}
   </section>;
 }
-/** Who ran it: the role when it differs from the stage, then the recorded backend and model. */
-function actorWords(i:Interval){const role=roleWords(i.actor.role);return [role===stageWords(i.stage)?null:role,i.actor.backend,i.actor.model].filter(Boolean).join(', ')||role;}
+/** Who ran it, in the one shared form: role, then model. */
+const actorWords=(i:Interval)=>agentWords(i.actor);
 function trackCount(data:TimelineView){const units=data.rows.filter(r=>r.subject.type==='unit').length;return `${pluralise(data.page.matching,'track')} with runs in this window${data.rows.length<data.page.matching?'':`: ${pluralise(units,'unit')}${data.rows.length>units?` and ${pluralise(data.rows.length-units,'other track')}`:''}`}`;}
 function HoldList({arc,rows,time}:{arc:string;rows:BackendHold[];time:(at:string|null)=>ReactNode}) {
   return <Table aria-label="Every backend hold in this window"><thead><TableRow>{['Backend','Reason','Started','Ended'].map(t=><TableHead key={t}>{t}</TableHead>)}</TableRow></thead><tbody>{rows.map(h=><TableRow key={h.id} onClick={ev=>activateRow(ev,link(arc,'timeline','events',h.detail.id))}><td><a href={link(arc,'timeline','events',h.detail.id)}>{h.backend}</a></td><td>{classWords(h.effectiveClass)}</td><td>{time(h.startedAt)}</td><td>{h.endedAt?time(h.endedAt):h.terminalAt?time(h.terminalAt):'Still unavailable'}<span className="cell-line">{closureWords(h)}</span></td></TableRow>)}</tbody></Table>;

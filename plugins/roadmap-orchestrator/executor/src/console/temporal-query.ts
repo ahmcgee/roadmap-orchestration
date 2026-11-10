@@ -67,10 +67,12 @@ export class ConsoleTemporal {
       const {scope, bounds} = resolveTime(e, filters), index = projectionIndex(e), intervals = timelineIntervals(e, index);
       const states = new Map(e.data.display.status.units.map(u => [String(u.unit), u.state]));
       const execution = new Map(index.invocations.rows.map(r => [invocationDirName(invocationIdOf(r.invocation.id)), r.invocation.execution ?? 'unknown']));
-      known(filters.unit, [...index.identities.keys()], 'unit');
-      known(filters.milestone, (e.data.plan?.milestones ?? []).map(m => m.id), 'milestone');
+      // The recorded values the text filters accept; served with tracks so the browser offers only these.
+      const facets = {unit: [...index.identities.keys()], milestone: (e.data.plan?.milestones ?? []).map(m => String(m.id)), stage: [...new Set(intervals.map(r => r.stage))].sort()};
+      known(filters.unit, facets.unit, 'unit');
+      known(filters.milestone, facets.milestone, 'milestone');
       known(filters.state, ['preparing','ready','running','waiting','blocked','held','parked','awaiting-admission','merged','cut','superseded'], 'current unit state');
-      known(filters.stage, [...new Set(intervals.map(r => r.stage))], 'stage');
+      known(filters.stage, facets.stage, 'stage');
       known(filters.execution, ['agent','command','unknown'], 'execution');
       if (filters.subject !== null) known([filters.subject], [...new Set(intervals.map(r => `${r.subject.type}:${r.subject.id}`))], 'subject');
       const matching = intervals.filter(r => {
@@ -104,7 +106,7 @@ export class ConsoleTemporal {
       };
       rows.sort((a,b) => (filters.sort === 'open' ? Number(b.openCount > 0) - Number(a.openCount > 0) : filters.sort === 'longest-open' ? (Number(a.openCount === 0) - Number(b.openCount === 0) || (a.openCount && b.openCount ? longest(a) - longest(b) : 0)) : 0) || order(a,b));
       // The overview covers the whole Arc whatever the window, so the owner can see where to look. Each run counts at its recorded start.
-      return {rows, context: {...base, overview: arcOverview(bounds, matching.map(i => i.startedAt), arcHolds)}};
+      return {rows, context: {...base, facets, overview: arcOverview(bounds, matching.map(i => i.startedAt), arcHolds)}};
     });
     return responseBound(e, data, limit >= 100 && section !== 'intervals' || limit === 200 ? 256*1024 : 128*1024) as TimelineView | IntervalsView | HoldsView;
   }

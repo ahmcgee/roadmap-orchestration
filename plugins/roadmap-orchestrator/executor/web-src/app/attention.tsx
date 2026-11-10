@@ -16,18 +16,19 @@ function RequestRow({arc,r,zone}:{arc:string;r:RequestSummary;zone:string}) {
     <td className="col-request"><a className="request-link" href={href}>{r.summary.text}{r.summary.truncated?'… Open full request':''}</a>
       <p className="request-recommendation"><b>Recommended: </b>{r.recommendationPreview.text}{r.recommendationPreview.truncated&&<span className="muted">… Open to read the rest</span>}</p></td>
     <td>{r.subject.type==='unit'?<><span className="unit-id">{r.subject.id}</span><span className="cell-line">{r.subject.title}</span></>:subjectLabel(r.subject)}</td>
-    <td>{requestReasonWords(r.reason)}<span className="cell-line">{r.id}</span></td>
+    <td>{requestReasonWords(r.reason)}</td>
     <td><time dateTime={r.raisedAt}>{formatInstant(r.raisedAt,zone)}</time><span className="cell-line"><Time at={r.raisedAt}/></span></td>
     <td className="number">{r.evidenceCount?pluralise(r.evidenceCount,'file'):'None'}</td>
+    <td className="col-request-id">{r.id}</td>
   </TableRow>;
 }
-const headers=['','Request','Subject','Reason','Raised','Evidence'];
+const headers=['','Request','Subject','Reason','Raised','Evidence','ID'];
 export function Attention({arc}:{arc:string}) {
   const state=usePlainQuery<AttentionView>(arc,'attention',['blocking','subjectType','reason','q','sort','cursor','limit']),h=state.data;
   const zone=displayZone(),reload=()=>state.navigate({cursor:null},true);
   const blocking=h?.rows.filter(r=>r.blocking)??[],informational=h?.rows.filter(r=>!r.blocking)??[];
   const group=(label:string,rows:RequestSummary[])=>rows.length>0&&<>
-    <tr className="group-row"><th colSpan={6} scope="colgroup">{label} ({rows.length})</th></tr>
+    <tr className="group-row"><th colSpan={headers.length} scope="colgroup">{label} ({rows.length})</th></tr>
     {rows.map(r=><RequestRow key={r.id} arc={arc} r={r} zone={zone}/>)}
   </>;
   return <section className="panel"><header className="panel-head"><div><h2>Attention</h2><p className="muted">Decisions waiting for you{h&&h.counts.total>0?`. ${countLine(h.counts)}`:''}</p></div></header>

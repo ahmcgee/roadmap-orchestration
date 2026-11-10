@@ -4,7 +4,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { COLLECTION_RETENTION } from './collection-pages.ts';
 import { ConsoleError, type Envelope } from '../observation/protocol.ts';
-import { ACTIVITY_KINDS, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
+import { ACTIVITY_KINDS, type ActivityFacets, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
 import { activityRequest, buildActivityIndex, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
 import { versioned } from './views.ts';
 
@@ -65,15 +65,22 @@ function queryOf(params: Record<string, string>): Query {
   if (!['25', '50', '100'].includes(params['limit'] ?? '50')) invalid('Activity limit is 25, 50 or 100');
   return {filters, window: window as Query['window'], limit, hash: sha256Hex(canonicalJson({filters: {...filters, q: filters.q.toLowerCase()}, window, limit}))};
 }
+/** The recorded values each Activity filter accepts, in display order. Also served, so the browser offers only these. */
+const facetCache = new WeakMap<ActivityIndex, ActivityFacets>();
+function activityFacets(index: ActivityIndex): ActivityFacets {
+  let facets = facetCache.get(index); if (facets) return facets;
+  const sorted = (values: Iterable<string>) => [...new Set(values)].sort((a, b) => a.localeCompare(b, 'en', {numeric: true}));
+  facets = {unit: [...index.units], milestone: index.milestones.map(m => m.id),
+    stage: sorted(index.entries.flatMap(e => e.row.stage ? [e.row.stage] : [])),
+    role: sorted(index.entries.flatMap(e => e.actors.flatMap(a => a.role ? [a.role] : []))),
+    backend: ['claude', 'codex'], model: sorted(index.entries.flatMap(e => e.actors.flatMap(a => a.model ? [a.model] : []))),
+    outcome: sorted(index.entries.flatMap(e => e.row.outcome ? [e.row.outcome] : []))};
+  facetCache.set(index, facets); return facets;
+}
 function checkFilters(index: ActivityIndex, query: Query) {
-  const f = query.filters;
-  for (const [field, known] of [
-    ['unit', index.units], ['milestone', index.milestones.map(m => m.id)],
-    ['stage', index.entries.flatMap(e => e.row.stage ? [e.row.stage] : [])],
-    ['role', index.entries.flatMap(e => e.actors.flatMap(a => a.role ? [a.role] : []))],
-    ['backend', ['claude', 'codex']], ['model', index.entries.flatMap(e => e.actors.flatMap(a => a.model ? [a.model] : []))],
-    ['outcome', index.entries.flatMap(e => e.row.outcome ? [e.row.outcome] : [])],
-  ] as const) if (f[field].some(value => !(known as readonly string[]).includes(value))) invalid(`unknown Activity ${field} filter`);
+  const f = query.filters, facets = activityFacets(index);
+  for (const field of ['unit', 'milestone', 'stage', 'role', 'backend', 'model', 'outcome'] as const)
+    if (f[field].some(value => !facets[field].includes(value))) invalid(`unknown Activity ${field} filter`);
 }
 const keyOf = (e: ActivityEntry): [number, string] => [e.row.seq, e.row.id];
 const compare = (a: [number, string], b: [number, string]) => a[0] - b[0] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0);
@@ -182,7 +189,7 @@ export class ConsoleActivity {
     // Every recorded day stays reachable while one day is selected, so day counts ignore the time range.
     const anyTime = {...g.query.filters, from: null, to: null};
     for (const entry of index.entries) if (matches(entry, anyTime, index)) {const day = formatter.format(new Date(entry.row.at)); days.set(day, (days.get(day) ?? 0) + 1);}
-    const data: ActivityView = {...versioned({rows, filters: g.query.filters, membership: 'applied-plan-at-anchor' as const,
+    const data: ActivityView = {...versioned({rows, filters: g.query.filters, facets: activityFacets(index), membership: 'applied-plan-at-anchor' as const,
       days: [...days].sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({date, count})),
       page: {anchor: this.#token(id), next: end < g.keys.length && last !== undefined ? this.#token(id, keyOf(index.entries[last]!), 'next') : null,
         previous: start > 0 && first !== undefined ? this.#token(id, keyOf(index.entries[first]!), 'previous') : null,

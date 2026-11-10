@@ -7,7 +7,7 @@ import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { completedWaiting } from '../status/waiting.ts';
 import { resourceQueue } from './resources.ts';
 import { stageWords, stateWords, reasonWords, waitWords } from './vocabulary.ts';
-import { identityIndex, stageIndex, invocationIndex } from './indexes.ts';
+import { identityIndex, journeyMs, stageIndex, invocationIndex } from './indexes.ts';
 import { enrichReports } from './reports.ts';
 export function selectedUnitJourney(e:Envelope, selectedUnit: string, reportStepIds: ReadonlySet<string>){
  const s=e.data.display.status,events=e.data.events;
@@ -36,5 +36,5 @@ export function selectedUnitJourney(e:Envelope, selectedUnit: string, reportStep
   const queue=s.host.queue.find(q=>q.unit===u.unit);
   const reasons=waitWords(u.waitingFor);if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${journey.at(-1)?`: ${journey.at(-1)!.outcome}`:''}`);
   if(queue?.request.publication)reasons.push(`Integration queue position ${resourceQueue(s.host).filter(q=>q.request.publication).findIndex(q=>q.unit===u.unit)+1}`);
-  return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:first?Math.max(0,Date.parse(last??ended?.at??e.checkedAt)-Date.parse(first)):null,rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,reasons,waitSince:queue?.queuedAt!==undefined?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
+  return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:journeyMs(first,last,ended?.at??e.checkedAt),rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,reasons,waitSince:queue?.queuedAt!==undefined?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
 }

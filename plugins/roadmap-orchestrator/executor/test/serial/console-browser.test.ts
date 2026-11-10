@@ -134,7 +134,7 @@ describe('console browser', { concurrency: false }, () => {
     agent = await consoleAgentFixture(f);
     await browser.call('browser_resize', { width: 1280, height: 1000 });
     await browser.evaluate(`() => { location.hash = '#/arcs/${f.d.arc}/graph/units/u3'; return true; }`);
-    await until(async () => /Build/.test(await text()), 10_000, 'active agentic activity');
+    await until(async () => /Build/.test(await text()) && await browser.evaluate<boolean>('() => [...document.querySelectorAll("[role=dialog] a")].some(b => /history/i.test(b.textContent))'), 10_000, 'active agentic activity');
     await browser.evaluate('() => { [...document.querySelectorAll("[role=dialog] a")].find(b => /history/i.test(b.textContent)).click(); return true; }');
     await until(async () => /Build, attempt 1/.test(await text()) && /Agent is working/.test(await text()), 10_000, 'live AgentHistory');
     assert.match(await browser.evaluate<string>('() => location.hash'), new RegExp(`invocations/${agent.routeId}`));
