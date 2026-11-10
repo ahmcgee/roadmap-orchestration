@@ -720,7 +720,9 @@ export type RedClassRecord =
   | Readonly<{ kind: 'host-signature' | 'signature-without-evidence'; signatures: readonly HostSignatureId[] }>
   | Readonly<{ kind: 'no-rerun'; reason: 'base-red' | 'deterministic' }>
   | Readonly<{ kind: 'diagnostic' }>
-  | Readonly<{ kind: 'repeat'; attempt: number; inv: InvocationId }>;
+  | Readonly<{ kind: 'repeat'; attempt: number; inv: InvocationId }>
+  /** dev.59: a test-only run's red (src/pipeline/lanes.ts `testOnlyRun`): its rerun is the lane's argv, whose verdict counts. */
+  | Readonly<{ kind: 'targeted' }>;
 export type RedFile = Readonly<{ v: SchemaVersion; class: RedClassRecord; failure: Sha256Hex; redRev: RedRev }>;
 export const RED_FILE = 'red.json';
 
@@ -738,6 +740,7 @@ const redClass: Read<RedClassRecord> = tagged('kind', {
   'no-rerun': object((f): RedClassRecord => ({ kind: f.get('kind', literal('no-rerun')), reason: f.get('reason', oneOf(['base-red', 'deterministic'] as const)) })),
   diagnostic: object((f): RedClassRecord => ({ kind: f.get('kind', literal('diagnostic')) })),
   repeat: object((f): RedClassRecord => ({ kind: f.get('kind', literal('repeat')), attempt: f.get('attempt', positive), inv: f.get('inv', inv) })),
+  targeted: object((f): RedClassRecord => ({ kind: f.get('kind', literal('targeted')) })),
 });
 export const redFile: Read<RedFile> = object((f) => ({
   v: f.get('v', version), class: f.get('class', redClass), failure: f.get('failure', (v, p) => sha256(v, p)), redRev: f.get('redRev', positive),

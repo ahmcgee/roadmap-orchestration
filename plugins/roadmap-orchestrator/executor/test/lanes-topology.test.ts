@@ -12,6 +12,7 @@ import { absPath } from '../src/core/values.ts';
 import { type StageContext, type StageParent, pinDispatch } from '../src/pipeline/dispatch.ts';
 import { type LaneRuntime, type Series, laneOrder, reserveNow, runLaneSeries, seriesLedger, seriesOrder, specSeriesRoot } from '../src/pipeline/lanes.ts';
 import { laneFailures } from '../src/pipeline/failures.ts';
+import { readRedClass } from '../src/pipeline/redlane.ts';
 import { forcedLanes, lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
 import { commitAll, tmpDir, writeFiles } from './helpers/repo.ts';
 import { type LaneJson, SCENARIO_TIMEOUT_MS, type SetupOptions, type StageRun, U1, keptSpec, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
@@ -134,6 +135,61 @@ describe('lanes.test-only (dev.17)', () => {
     const whole = await series(run, 6, specLanes(run), helper);
     assert.deepEqual(whole.ledger.map((l) => l.argv), [['node', '--test', 'test/add1.test.js']]);
     assert.equal(laneSpawns(run, 'tests').length, 3);
+  });
+});
+
+describe('lanes.test-only-own-tree (dev.59)', () => {
+  // A lane whose cwd is its package: `proxy` depends on `web`, so web's leaf tests are in the lane's input, but outside
+  // its tree (field: nu-124943, nu-129114, `../web-access/test/*.test.ts` handed to a lane in apps/agent-proxy).
+  const PKG_MAP = {
+    systems: {
+      proxy: { paths: ['apps/proxy/src/**'], tests: ['apps/proxy/test/*.test.js'], dependsOn: ['web'] },
+      web: { paths: ['apps/web/src/**'], tests: ['apps/web/test/*.test.js'] },
+    },
+  };
+  const proxyLane = { id: 'proxy', cadence: 'build', cwd: 'apps/proxy', argv: ['node', '--test', 'test/a.test.js'], testArgv: ['node', '--test', '{files}'], systems: ['proxy'] } as const;
+
+  test('lanes.test-only-own-tree: a changed leaf test outside the lane\'s cwd runs the lane\'s argv; only in-tree leaf tests run testArgv', T, async () => {
+    const run = unitRun({ files: { 'apps/proxy/test/a.test.js': PASSING, 'apps/web/test/w.test.js': PASSING }, lanes: [proxyLane], systemsMap: PKG_MAP });
+    assert.equal((await series(run, 1, specLanes(run), run.base)).end.kind, 'green');
+    const outside = commit(run, { 'apps/web/test/w2.test.js': PASSING });
+    const whole = await series(run, 2, specLanes(run), outside);
+    assert.deepEqual(whole.ledger.map((l) => [l.reused, l.argv]), [[null, ['node', '--test', 'test/a.test.js']]], 'another package\'s test: the lane\'s own argv, never ../web/test/w2.test.js');
+    const both = commit(run, { 'apps/web/test/w3.test.js': PASSING, 'apps/proxy/test/b.test.js': PASSING });
+    assert.deepEqual((await series(run, 3, specLanes(run), both)).ledger.map((l) => l.argv), [['node', '--test', 'test/a.test.js']], 'one out-of-tree test among in-tree ones: the whole lane');
+    const inside = commit(run, { 'apps/proxy/test/c.test.js': PASSING });
+    assert.deepEqual((await series(run, 4, specLanes(run), inside)).ledger.map((l) => l.argv), [['node', '--test', 'test/c.test.js']], 'in-tree only: testArgv over them, relative to the cwd');
+  });
+
+  test('lanes.test-only-red-confirmed: a red test-only run is never the lane\'s verdict: its rerun is the lane\'s argv, which decides', T, async () => {
+    // testArgv exits 1 the way a runner that finds no test files does; the lane's own argv passes.
+    const noTests = { ...proxyLane, testArgv: ['sh', '-c', 'echo "No test files found, exiting with code 1" >&2; exit 1', 'sh', '{files}'] };
+    const run = unitRun({ files: { 'apps/proxy/test/a.test.js': PASSING }, lanes: [noTests], systemsMap: PKG_MAP });
+    assert.equal((await series(run, 1, specLanes(run), run.base)).end.kind, 'green');
+    const leaf = commit(run, { 'apps/proxy/test/b.test.js': PASSING });
+    const s = await series(run, 2, specLanes(run), leaf);
+    assert.equal(s.end.kind, 'green', 'no test files found on the targeted run: the lane passes on its own argv, nothing charged');
+    const [record] = s.ledger;
+    assert.deepEqual([record!.argv, record!.verdict, record!.voided?.argv, record!.flaky], [['node', '--test', 'test/a.test.js'], 'pass', noTests.testArgv.map((a) => (a === '{files}' ? 'test/b.test.js' : a)), false]);
+    assert.deepEqual(readRedClass(record!.voided!.evidenceDir)?.class, { kind: 'targeted' });
+    assert.deepEqual(seriesLedger(run.ctx, parentOf(2), specLanes(run), 'spec', leaf, specSeriesRoot(run.runDir, parentOf(2))), s.ledger, 'read back as the series combined it');
+    const spawned = laneSpawns(run, 'proxy').filter((i) => i.parent.type === 'stage' && i.parent.attempt === 2);
+    assert.deepEqual(spawned.map((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.files !== undefined), [true, false], 'the targeted run, then the lane\'s argv');
+    closeAttempt(run, 2, 'green');
+    assert.deepEqual(laneFailures(run.ctx, run.unit), []);
+  });
+
+  test('lanes.test-only-red-confirmed: a targeted red the lane\'s argv repeats is the lane\'s red, read from the full run', T, async () => {
+    const failing = "import { test } from 'node:test';\ntest('broken', () => { throw new Error('B-MARKER'); });\n";
+    const run = unitRun({ files: { 'apps/proxy/test/a.test.js': PASSING }, lanes: [{ ...proxyLane, argv: ['node', '--test'] }], systemsMap: PKG_MAP });
+    assert.equal((await series(run, 1, specLanes(run), run.base)).end.kind, 'green');
+    const leaf = commit(run, { 'apps/proxy/test/b.test.js': failing });
+    const s = await series(run, 2, specLanes(run), leaf);
+    assert.equal(s.end.kind, 'red');
+    const [record] = s.ledger;
+    assert.deepEqual([record!.argv, record!.verdict, record!.voided?.argv, record!.diagnostic, record!.flaky], [['node', '--test'], 'fail', ['node', '--test', 'test/b.test.js'], null, false]);
+    assert.equal(laneSpawns(run, 'proxy').filter((i) => i.parent.type === 'stage' && i.parent.attempt === 2).length, 2, 'the targeted run and the lane\'s argv: no third run');
+    assert.deepEqual(seriesLedger(run.ctx, parentOf(2), specLanes(run), 'spec', leaf, specSeriesRoot(run.runDir, parentOf(2))), s.ledger);
   });
 });
 

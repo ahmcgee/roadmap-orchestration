@@ -423,9 +423,11 @@ const MUL_BROKEN = { ...MUL, 'src/mul.js': 'export function mul(a, b) {\n  retur
 /** The one label a crash row's cell crashes (test/matrix.ts). */
 const labelOf = (row: string): string => crashCells(row).map((c) => c.label).join();
 
-async function crashThenResume(steps: Parameters<typeof setupArc>[0]['steps'], label: string): Promise<Readonly<{ d: ReturnType<typeof setupArc> }>> {
-  const d = setupArc({ steps, units: [{ id: 'u1', lanes: [STABLE, MUL_LANE] }], systemsMap: CRASH_MAP });
-  const trigger = writeTrigger(tmpDir('rev3-crash'), { label, occurrence: 1, unit: 'u1' });
+async function crashThenResume(
+  steps: Parameters<typeof setupArc>[0]['steps'], label: string, opts: Readonly<{ lanes?: readonly LaneJson[]; systemsMap?: JsonValue; occurrence?: number }> = {},
+): Promise<Readonly<{ d: ReturnType<typeof setupArc> }>> {
+  const d = setupArc({ steps, units: [{ id: 'u1', lanes: opts.lanes ?? [STABLE, MUL_LANE] }], systemsMap: opts.systemsMap ?? CRASH_MAP });
+  const trigger = writeTrigger(tmpDir('rev3-crash'), { label, occurrence: opts.occurrence ?? 1, unit: 'u1' });
   const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
   const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
   assert.equal(first.signal, 'SIGKILL', `killed at ${label}: ${first.stderr}`);
@@ -529,6 +531,29 @@ describe('crash rows', () => {
     const crashed = muls[0]!;
     const dir = join(specSeriesRoot(absPath(d.runDir), crashed.parent as StageParent), 'mul');
     assert.deepEqual(readRedClass(dir)?.class, { kind: 'diagnostic' }, 'the crashed attempt\'s class stays on disk');
+  });
+
+  test('crash RED_CLASS (redlane.after-class), a test-only run (dev.59): killed after its `targeted` class, before the lane\'s argv reruns; the restart runs the lane\'s argv once', T, async () => {
+    // `tests` passes on its argv; its testArgv fails as a runner that finds no test files does. The fix commit adds a leaf
+    // test of its system, so the lanes after it run `tests` test-only, red, classed `targeted` (the second red class
+    // written: the first is mul's red before the fix).
+    const map: JsonValue = { systems: { add: { paths: ['src/add.js'], tests: ['test/add*.test.js'] }, mul: { paths: ['src/mul.js', 'test/mul.test.js'] } } };
+    const tests: LaneJson = { id: 'tests', argv: ['node', '--test', 'test/add.test.js'], testArgv: ['sh', '-c', 'echo "No test files found" >&2; exit 1', 'sh', '{files}'], systems: ['add'] };
+    const passing = "import { test } from 'node:test';\ntest('ok', () => {});\n";
+    const steps = [
+      planCheckStep({ decision: 'approve' }),
+      codexStep([{ type: 'commit', message: 'add mul', files: MUL_BROKEN }], { argv: ['exec', '-C'] }),
+      codexStep([{ type: 'commit', message: 'fix mul', files: { 'src/mul.js': MUL['src/mul.js'], 'test/add2.test.js': passing } }], { argv: ['exec', 'resume'] }),
+      gateStep({ decision: 'approve' }),
+    ];
+    const { d } = await crashThenResume(steps, labelOf(RED_CLASS), { lanes: [tests, MUL_LANE], systemsMap: map, occurrence: 2 });
+    assert.deepEqual(outcomes(d), FIX_OUTCOMES, 'the outcomes of an uncrashed run: the targeted red charged nothing');
+    const runs = arcSpawns(d, 'tests').filter((i) => i.parent.type === 'stage' && i.parent.stage === 'lanes')
+      .map((i) => [i.parent.type === 'stage' ? i.parent.attempt : 0, i.expect.subject.purpose === 'lane' && i.expect.subject.files !== undefined] as const);
+    const [first, targeted, restarted, ...more] = runs;
+    assert.ok(first![1] === false && targeted![1] === true && restarted![1] === false && first![0] < targeted![0] && targeted![0] < restarted![0] && more.length === 0, JSON.stringify(runs));
+    const crashed = arcSpawns(d, 'tests').find((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.files !== undefined)!;
+    assert.deepEqual(readRedClass(join(specSeriesRoot(absPath(d.runDir), crashed.parent as StageParent), 'tests'))?.class, { kind: 'targeted' }, 'the crashed attempt\'s class stays on disk');
   });
 });
 

@@ -185,7 +185,9 @@ The architect records owner answers with `roadmap answer P-n --text "<answer>"` 
 immediately. Open questions retain working assumptions; chaining within the acknowledged bound need not wait for every
 answer. Each lane series runs earlier reds first, then cadence order, stopping at the first red. Explicit `timeoutMin`
 yields a timeout red; without it the six-hour runner backstop applies. Eligible certified passes reuse only when their
-execution/environment identity and input hashes match.
+execution/environment identity and input hashes match. A lane with `testArgv` runs only the changed leaf tests inside its
+own cwd (a changed test elsewhere runs its whole argv), and a red targeted run is confirmed by the lane's own argv, whose
+verdict counts: a runner that finds no test files never charges the unit.
 
 Diagnosis begins at 8 builds or 20 judged build/lanes/gate attempts, counting interrupted and uncharged work. It
 supplies a note and moves remaining mixed-profile builds to Claude. The fixed 16-build/40-stage boundary raises an

@@ -157,6 +157,9 @@ units. Selected milestone lanes must be suite batch lanes explicitly shared-reso
 Systems select impacted checks conservatively; unmapped paths select. Reuse input is explicit inputs-filtered ls-tree,
 else unit systems for implicit spec lanes or lane systems. Command/environment/lane identity, clean series certificate and
 completed evidence metadata still bind reuse. `testArgv` has exactly one `{files}` element for changed leaf-test files.
+dev.59: a test-only run needs every changed leaf test inside the lane's cwd; one outside it (a dependency's) runs the
+lane's argv. A red test-only run is classed `{kind:'targeted'}` (after a host signature, before every other class): its
+rerun is the lane's argv and that run's verdict is the lane's, so a runner finding no test files among `{files}` charges nothing.
 Stochastic `{runs,minPasses}` requires runs >= 2 and minPasses <= runs and bypasses ordinary flake classification.
 TimeoutMin is positive; absent uses the six-hour runner backstop rather than a red timeout verdict. ReadsComments true
 remains parseable but enables no special pass carryover.
@@ -1342,7 +1345,8 @@ share the same idempotent inspection. Old logs need no new fields; the new fact 
 When supplied it is nonempty and each literal substring is nonempty. A substring in the failed command's stdout/stderr
 tail suppresses its diagnostic rerun. Host signatures take precedence; timeout verdicts do not use this opt-out.
 Stochastic lanes keep their runs/minPasses rule. The persisted red class adds
-`{kind:'no-rerun', reason:'base-red'|'deterministic'}`; older red classes remain readable without changes.
+`{kind:'no-rerun', reason:'base-red'|'deterministic'}` and (dev.59) `{kind:'targeted'}`, a test-only run's red; older red
+classes remain readable without changes.
 A failing `lane-base-compared` for the same unit/lane/diffBase also suppresses diagnostics, retaining original evidence.
 Specific failure signatures skip make `***`, npm lifecycle, exit-status and FAIL wrapper lines and generic summaries;
 masking still replaces checkout paths, timestamps, hashes and digits. Spec base-red raises a blocking arc `base-red`

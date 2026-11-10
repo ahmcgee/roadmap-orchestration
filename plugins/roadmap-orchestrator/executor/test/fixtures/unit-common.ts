@@ -90,6 +90,7 @@ export function laneJson(l: LaneJson): Record<string, unknown> {
     ...(l.kind === undefined ? {} : { kind: l.kind }), ...(l.capture === undefined ? {} : { capture: l.capture }),
     ...(l.inputs === undefined ? {} : { inputs: l.inputs }), ...(l.systems === undefined ? {} : { systems: l.systems }),
     ...(l.readsComments === undefined ? {} : { readsComments: l.readsComments }),
+    ...(l.testArgv === undefined ? {} : { testArgv: l.testArgv }),
   };
 }
 

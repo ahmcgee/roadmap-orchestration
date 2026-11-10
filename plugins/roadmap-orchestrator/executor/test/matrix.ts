@@ -1893,7 +1893,7 @@ export const MATRIX: readonly Row[] = [
       B5: {
         status: 'crash',
         labels: ['redlane.after-class'],
-        recovery: 'the class persisted, the rerun not begun: the crashed lanes attempt is abandoned; the restart runs the series again (its first run, then the diagnostic rerun) and the crashed attempt\'s class stays on disk; the outcomes of an uncrashed run',
+        recovery: 'the class persisted, the rerun not begun: the crashed lanes attempt is abandoned; the restart runs the series again (its first run, then the diagnostic rerun; dev.59: after a crashed test-only run\'s `targeted` class, the lane\'s argv once, its newest run being red) and the crashed attempt\'s class stays on disk; the outcomes of an uncrashed run',
       },
     },
   },

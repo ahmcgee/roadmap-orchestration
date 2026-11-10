@@ -12,6 +12,10 @@
 //                               earlier red of the same spec lane (`repeatOf`, lanes.ts: not flaky, no pass since,
 //                               equal lane rev and environment) with the same specific failure signature: red, not
 //                               flaky, and no rerun: the failure is the tree's.
+//   targeted (dev.59)           a test-only run (lanes.ts `testOnlyRun`) without a signature: no diagnostic, repeat or
+//                               no-rerun reading of a run over some files only; its rerun is the lane's own argv, at
+//                               once, and that run's verdict is the lane's (green: it passes; red: red, not flaky). So a
+//                               runner that finds no test files among them is never a charge.
 //   no signature                one diagnostic rerun. Red again: red. Green: `flaky`, a flake (dev.17,
 //                               src/pipeline/deflake.ts): the series records it with the tree it was seen on, and a
 //                               tip's flake (the flaky ledger's) passes on its green rerun, but for a deflake unit of
@@ -51,7 +55,7 @@ export type RedEvidence = Readonly<{ signatures: readonly HostSignatureId[]; hos
 /** Why a red lane is rerun, or why it is not (persisted as `red.json`'s class). */
 export type RedClass = RedClassRecord;
 
-export type RerunReason = 'host-signature' | 'diagnostic';
+export type RerunReason = 'host-signature' | 'diagnostic' | 'targeted';
 
 /** The unit's earlier red execution a run repeats: its stage attempt and its invocation. */
 export type RepeatOf = Readonly<{ attempt: number; inv: InvocationId }>;
@@ -62,12 +66,14 @@ export const hostWasBusy = (host: LaneHost | null): boolean => host !== null && 
 /**
  * The protocol's reading of a red run. `repeat`: the earlier red execution this run repeats (`repeatOf`, lanes.ts, which
  * checks the history, the identity and the specific failure signature), or null; it counts only without a signature, on
- * a host its samples show clear at both ends.
+ * a host its samples show clear at both ends. `targeted`: the run was a test-only run (dev.59), read before anything but a
+ * host signature.
  */
-export function classifyRed(first: RedEvidence, repeat: RepeatOf | null, noRerun: 'base-red' | 'deterministic' | null = null): RedClass {
+export function classifyRed(first: RedEvidence, repeat: RepeatOf | null, noRerun: 'base-red' | 'deterministic' | null = null, targeted = false): RedClass {
   if (first.signatures.length > 0) {
     return hostWasBusy(first.host) ? { kind: 'host-signature', signatures: first.signatures } : { kind: 'signature-without-evidence', signatures: first.signatures };
   }
+  if (targeted) return { kind: 'targeted' };
   if (noRerun !== null) return { kind: 'no-rerun', reason: noRerun };
   if (repeat !== null && first.host !== null && !hostWasBusy(first.host)) return { kind: 'repeat', attempt: repeat.attempt, inv: repeat.inv };
   return { kind: 'diagnostic' };
@@ -231,7 +237,7 @@ export async function redLane<R, E>(
     if (waited.kind === 'interrupted') return waited;
     if (waited.kind === 'timeout') return { kind: 'blocked', detail: `red with host signature ${cls.signatures.join(', ')}, and the host was not clear within ${HOST_CLEAR_WAIT_MS / 60_000} minutes` };
   }
-  const reason: RerunReason = cls.kind === 'diagnostic' ? 'diagnostic' : 'host-signature';
+  const reason: RerunReason = cls.kind;
   const ran = await rerun();
   if (ran.kind === 'ended') return ran;
   return { kind: 'reran', reason, verdict: afterRerun(reason, ran.verdict), rerun: ran.run };
