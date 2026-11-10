@@ -99,6 +99,8 @@ import { type Certification,type WorkRun,certificationReader,workRuns } from './
 //                      src/pipeline/failures.ts: the log and each red run's red.json, never raw evidence); the lanes
 //                      park's needs-user lists the same
 //   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
+//   units[].running.session  (dev.59) the running Claude build's cross-session name, the exact SendMessage address; null
+//                      when no Claude build runs (it disappears when the build ends)
 //   units[].gate  (dev.12 round 2) the latest gate answer: decision, findings by class, and `unreviewed` (src/pipeline/gate.ts)
 //   units[].lineageAttempts  (dev.59) the lineage's builds and judged stages against the total-attempt caps (16/40)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
@@ -123,7 +125,7 @@ OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
+import { type ArcId,type BuildSessionName,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
@@ -156,6 +158,8 @@ import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
 import type { BriefArc,OwnerAnswer,StageTiming } from './phase0/types.ts';
 import { lineageAttempts } from './pipeline/attempts.ts';
+import { invocationDir } from './pipeline/invoke.ts';
+import { runnerFiles } from './runner/files.ts';
 import { type LaneFailure,laneFailures } from './pipeline/failures.ts';
 import { type GateAnswerView,latestGateAnswer } from './pipeline/gate.ts';
 import { observations } from './pipeline/lanes.ts';
@@ -258,6 +262,11 @@ export type UnitRunning = Readonly<{
   stage: Stage; attempt: number; elapsed: number | null; deadline: IsoTime | null; resources: readonly ResourceUnit[];
   /** M4a rev 3 (8c): the lane run open in the attempt now (the latest open lane, journey or mutant spawn); null between runs. */
   lane: RunningLane | null;
+  /**
+   * dev.59: the cross-session name of the Claude build running in the attempt now, the exact `SendMessage` address (its
+   * launch.json `terminal.name`); null when none runs: between builds, on a Codex build, or a build launched before dev.59.
+   */
+  session: BuildSessionName | null;
 }>;
 
 /** A lane run in progress: a spec or suite lane, an arc lane's journey run (witness presence, candidate), or a mutant run. */
@@ -724,27 +733,36 @@ function intentTimes(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
   return out;
 }
 
-function runningOf(view: JournalView, u: UnitState, times: Readonly<{ starts: ReadonlyMap<string, IsoTime>; intents: ReadonlyMap<string, IsoTime> }>, holds: readonly ResourceUnit[], now: number): UnitRunning {
+/** dev.59: the session name of a Claude build spawn's launch, read once its launch.json exists (null before, or for Codex). */
+function buildSessionOf(runDir: AbsPath, inv: InvocationId): BuildSessionName | null {
+  const terminal = runnerFiles(invocationDir(runDir, inv), inv).read('launch.json')?.terminal;
+  return terminal?.type === 'backend' && terminal.role === 'build' ? terminal.name ?? null : null;
+}
+
+function runningOf(runDir: AbsPath, view: JournalView, u: UnitState, times: Readonly<{ starts: ReadonlyMap<string, IsoTime>; intents: ReadonlyMap<string, IsoTime> }>, holds: readonly ResourceUnit[], now: number): UnitRunning {
   const { stage, attempt } = u.open ?? { stage: u.stage, attempt: u.counters.attempts };
   const started = times.starts.get(`${u.unit}/${stage}#${attempt}`);
   const mine = view.openIntents().filter((i) => i.parent.type === 'stage' && i.parent.unit === u.unit && i.parent.stage === stage && i.parent.attempt === attempt);
   const deadlines = mine.flatMap((i) => (i.deadlineAt !== null ? [i.deadlineAt] : [])).sort();
   // 8c: the latest open lane-like spawn of the attempt.
   let lane: RunningLane | null = null;
+  let session: BuildSessionName | null = null;
   for (const i of mine) {
     if (i.kind !== 'proc.spawn') continue;
     const s = i.expect.subject;
+    if (s.purpose === 'backend' && s.role === 'build') session = buildSessionOf(runDir, invocationId(i.op, i.ordinal)) ?? session;
     const set = s.purpose === 'lane' ? s.set : s.purpose === 'journey' || s.purpose === 'mutant' ? s.purpose : null;
     if (set === null || (s.purpose !== 'lane' && s.purpose !== 'journey' && s.purpose !== 'mutant')) continue;
     const startedAt = times.intents.get(`${i.op}#${i.ordinal}`);
     if (startedAt === undefined) throw new Error(`open intent ${i.op}#${i.ordinal} is not in the log's events`);
     if (lane === null || startedAt >= lane.startedAt) lane = { id: s.lane, set, inv: invocationId(i.op, i.ordinal), startedAt };
   }
-  return { stage, attempt, elapsed: started === undefined ? null : now - Date.parse(started), deadline: deadlines[0] ?? null, resources: holds, lane };
+  return { stage, attempt, elapsed: started === undefined ? null : now - Date.parse(started), deadline: deadlines[0] ?? null, resources: holds, lane, session };
 }
 
 /** What the per-unit derivation reads besides the log: the scheduler's view (null without a live executor). */
 type Inputs = Readonly<{
+  runDir: AbsPath;
   view: JournalView;
   plan: PlanM1;
   sched: SchedFile | null;
@@ -851,7 +869,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     carries: unit.carries ?? null,
     carriedBy: plan.units.filter((p) => p.carries?.unit === unit.id).map((p) => p.id),
     buildTier: u.buildTier,
-    running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
+    running: state === 'running' || state === 'preparing' ? runningOf(x.runDir, view, u, times, holds, now) : null,
   };
 }
 
@@ -982,7 +1000,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)), plan: () => plan! });
   const inputs: Inputs | null = plan === null ? null : {
-    view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
+    runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
   };
   const times = { starts: attemptStarts(events), intents: intentTimes(events) };
   const now = timing?.clock ?? Date.now();

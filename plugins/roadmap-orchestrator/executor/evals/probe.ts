@@ -41,6 +41,11 @@ import { systemName } from '../src/core/ids.ts';
 //                       must carry the token, which only the killed conversation holds
 //   codex.killed-resume the same with gpt-5.6-luna, effort low: killed after thread.started and the file;
 //                       the resume uses the thread id the adapter read into result.json
+//   claude.build.inbox  (dev.59) claude-sonnet-5-5 low implementer argv (`--name`, `crossSessionInbound: "accept"`) under
+//                       BUILD_SCHEMA, told to run five slow steps; once its first tool call is on stdout, a separate
+//                       `claude -p` sender (default permission mode, Haiku) SendMessages a random token to the name in its
+//                       launch.json: the build's report must list a message carrying the token (`messages`); after the
+//                       build has exited a second send to the same name must fail as unreachable
 //   m3.campaign-audit   production campaignAudit prompt and schema on its summit seat over a tiny range
 //   m3.pre-build        production verifier prompt and schema in pre-build mode over one spec
 //   routing.m4a         the default table's packReview.arc is claude-opus-5-5 medium, campaignAudit.arc claude-opus-5-5 high
@@ -233,6 +238,63 @@ async function killedResume(
   if (!ok || session === null) return;
   after();
   await backend(ctx, name, { ...resume, request: resumeOf(session) }, grade);
+}
+
+/** One `claude -p` sender session (Haiku, default permission mode, no settings sources): told to send `text` to `name`. */
+function send(cwd: AbsPath, name: string, text: string): string {
+  const prompt = `Use the ToolSearch tool with the query "select:SendMessage" to load the SendMessage tool, then call SendMessage once with to set to exactly ${JSON.stringify(name)} and message set to exactly ${JSON.stringify(text)}. Do not retry and do not list sessions. Then reply with the SendMessage tool result verbatim and nothing else.`;
+  const out = spawnSync('claude', ['-p', '--output-format', 'json', '--setting-sources', '', '--strict-mcp-config', '--model', 'claude-haiku-5-5', '--no-session-persistence', prompt], {
+    cwd, env: backendEnv(process.env), encoding: 'utf8', timeout: 180_000,
+  });
+  const parsed = JSON.parse(out.stdout === '' ? 'null' : out.stdout) as { result?: unknown } | null;
+  return typeof parsed?.result === 'string' ? parsed.result : `exit=${out.status} stdout=${out.stdout} stderr=${out.stderr}`;
+}
+
+/** claude.build.inbox: see the header. */
+async function inbox(ctx: InvocationContext, rev: ResolvedRouting['rev'], cwd: AbsPath): Promise<void> {
+  const token = `INBOX-${randomBytes(6).toString('hex')}`;
+  let settled = false;
+  const running = invokeBackend(ctx, {
+    check: 'claude-build-inbox', routingRev: rev, tier: 'low', system: SYSTEM, schema: BUILD_SCHEMA, cwd,
+    rendered: 'Run these five shell commands one after another, each as its own Bash tool call, waiting for each to finish: `sleep 10; echo step 1`, `sleep 10; echo step 2`, `sleep 10; echo step 3`, `sleep 10; echo step 4`, `sleep 10; echo step 5`. Then report: summary what you ran; blockers, experiments and notes empty; grounding {specWrong: null, touches: []}; tooBig null; messages every message another Claude session sent you during this run; final true.',
+    request: { kind: 'claude-build', triple: { ...SONNET, effort: 'low' }, session: freshClaudeImplementerSession(), evidenceDirs: [] },
+  }).finally(() => { settled = true; });
+  let name: string | null = null;
+  const until = Date.now() + KILL_WAIT_MS;
+  while (!settled && Date.now() < until) {
+    const intent = ctx.journal.view.openIntents().find((i) => i.kind === 'proc.spawn' && i.expect.subject.purpose === 'smoke' && i.expect.subject.check === 'claude-build-inbox');
+    if (intent !== undefined) {
+      const inv = invocationId(intent.op, intent.ordinal);
+      const invDir = invocationDir(ctx.runDir, inv);
+      const terminal = runnerFiles(invDir, inv).read('launch.json')?.terminal;
+      const stdout = join(invDir, STDOUT_FILE);
+      if (terminal?.type === 'backend' && terminal.role === 'build' && terminal.name !== undefined && existsSync(stdout) && readFileSync(stdout, 'utf8').includes('"tool_use"')) {
+        name = terminal.name;
+        break;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const sent = name === null ? 'never sent: the build did not reach its first tool call' : send(cwd, name, `NOTE FROM ROOT: ${token}`);
+  const done = await running;
+  meter('claude', done.result.role, done.result.usage);
+  report(name !== null && /"success":\s*true/.test(sent), 'claude.build.inbox.sent', `name=${name} result=${sent}`);
+  const o = done.result.outcome;
+  let messages = '[]';
+  let received = false;
+  try {
+    if (o.kind === 'success') {
+      const out = buildOutput(o.value, 'build');
+      messages = JSON.stringify(out.messages);
+      received = out.messages.some((m) => m.text.includes(token));
+    }
+  } catch (e) {
+    messages = e instanceof Error ? e.message : String(e);
+  }
+  report(received, 'claude.build.inbox.received', `messages=${messages} ${describe(done)}`);
+  if (name === null) return;
+  const ended = send(cwd, name, `NOTE FROM ROOT: ${token} (after the build ended)`);
+  report(/not reachable|"success":\s*false/i.test(ended), 'claude.build.inbox.ended', `result=${ended}`);
 }
 
 // M3 fixture: the smallest inputs that exercise each arc prompt's real structure. Built with the production
@@ -533,6 +595,9 @@ async function main(): Promise<void> {
     (id) => ({ kind: 'codex-build', triple: LUNA, session: { backend: 'codex', mode: 'resume', id } }), () => rmSync(codexKillFile),
     { ...codexBase, check: 'codex-killed-resume', rendered: CONTINUE }, (v) => JSON.stringify(v) === JSON.stringify({ token: codexToken }));
   }
+
+  // dev.59: cross-session messaging to a running Claude build, by the name the executor launched it with.
+  await inbox(ctx, rev, dir(join(root, 'inbox')));
 
   // M3 judgment roles: the real prompt modules and strict schemas, on their own seats, holistic routing in force.
   const holistic = resolveRouting({ ...arcStack(profile, null, null), arcScope: 'architecture-doc' });

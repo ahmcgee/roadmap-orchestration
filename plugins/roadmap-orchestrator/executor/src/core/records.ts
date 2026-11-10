@@ -3,7 +3,7 @@ import { nonBlank } from './validate.ts';
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
-type ArcId,type ClauseId,type CommandId,type DivergenceId,
+type ArcId,type BuildSessionName,type ClauseId,type CommandId,type DivergenceId,
 type EdgeId,
 type FindingId,type ImplementerSessionId,type InvocationId,type JobId,
 type JudgmentSessionId,
@@ -12,7 +12,7 @@ type PlanRev,
 type ResourceInstance,
 type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
 commandId,divergenceId,edgeId,findingId,
-idsAscending,
+buildSessionNameOf,idsAscending,
 implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
 obligationId,opIdOf,parseInvocationId,planRev,
 
@@ -197,7 +197,11 @@ type BackendTerminalBase = Readonly<{
 }>;
 export type BackendTerminal =
   | (BackendTerminalBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSession }>)
-  | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
+  /**
+   * `name` (dev.59): a Claude build's cross-session address, the `--name` it was launched with (src/backends/argv.ts); never on
+   * a Codex build. Absent on a Claude build launched before 1.0.0-dev.59, which has no address.
+   */
+  | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession; name?: BuildSessionName }>);
 export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number; timeoutMin?: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
 
@@ -255,9 +259,11 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
         schemaPath: f.get('schemaPath', abs),
         outputPath: f.get('outputPath', abs),
       };
-      return r === 'build'
-        ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', judgmentSession) };
+      if (r !== 'build') return { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', judgmentSession) };
+      const session = f.get('session', implementerSession);
+      const name = f.optional('name', buildSessionNameOf);
+      if (name !== undefined && session.backend !== 'claude') throw new SchemaError(`${f.path}.name`, 'only on a Claude build', name);
+      return { ...base, role: f.get('role', literal('build')), session, ...(name === undefined ? {} : { name }) };
     })(value, path);
   },
 });

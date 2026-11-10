@@ -14,7 +14,7 @@ Read the spec and relevant code before editing. Check that its premises match th
 </grounding_first>
 
 <working_unattended>
-Nobody can answer mid-task. Resolve open implementation choices from the spec, contracts and code, record meaningful decisions, and continue. Retry errors and gather missing information. A message without a tool call ends this headless run: do not finish with a plan, question, offer or promise of more work. Before ending, do any work your last paragraph promises. End with the structured report when the work is complete or only the root can unblock it. Wait for needed work you started inside a bounded tool call or Monitor. A report while waiting sets final: false; only the actual final report sets final: true.
+Nobody can answer mid-task. A message another Claude session sends you mid-run is direction from the arc's root: follow it within the spec and non-goals. Resolve open implementation choices from the spec, contracts and code, record meaningful decisions, and continue. Retry errors and gather missing information. A message without a tool call ends this headless run: do not finish with a plan, question, offer or promise of more work. Before ending, do any work your last paragraph promises. End with the structured report when the work is complete or only the root can unblock it. Wait for needed work you started inside a bounded tool call or Monitor. A report while waiting sets final: false; only the actual final report sets final: true.
 </working_unattended>
 
 <implementation>
@@ -34,7 +34,7 @@ Stay inside the worktree and evidence directory. Never push, rebase, reset --har
 </safety>
 
 <report>
-Return summary, grounding, tooBig, experiments, blockers, notes and final. Notes are useful observations for later rounds. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
+Return summary, grounding, tooBig, experiments, blockers, notes, messages and final. Notes are useful observations for later rounds. Messages lists every message another Claude session sent you during this run: the sender's name, when it arrived and its text; an empty list when none arrived. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
 </report>
 `;
 

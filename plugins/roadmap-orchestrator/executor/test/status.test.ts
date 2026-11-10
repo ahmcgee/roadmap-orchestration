@@ -36,7 +36,7 @@ import { type ArcDescriptor,type ArcRun,MUL,MUL_LANE,codexStep,contextFor,gateSt
 import { reached,release } from './helpers/barrier.ts';
 import { type Owner,assertNoSurvivors } from './helpers/reap.ts';
 import { git,tmpDir } from './helpers/repo.ts';
-import type { Step } from './helpers/scenario.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 
 // Every supervised run a test here started is stopped by its teardown; nothing of them outlives the file.
 after(assertNoSurvivors);
@@ -214,6 +214,37 @@ function assertNoModelIds(r: ExecRun): number {
   }
   return checked;
 }
+
+test('status.build-session: a running Claude build shows its cross-session name, the --name it launched with; once the build ends it is gone (dev.59)', T, async (t) => {
+  const barrier = (name: string) => ({ type: 'barrier', name, timeoutMs: 120_000 } as const);
+  const r = setupExec(t, {
+    steps: [
+      ...SMOKE_CLAUDE_ONLY, planCheckStep({ decision: 'approve' }),
+      { as: 'claude', expect: { argv: ['-p', '--model', 'claude-sonnet-5-5', '--advisor', 'claude-opus-5-5', '--permission-mode'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, barrier('build'), { type: 'advised', value: BUILD_REPORT }] },
+      gateStep({ decision: 'approve' }, {}, [barrier('gate')]),
+    ],
+  });
+  const run = startExec(r, ['--profile', 'claude-only']);
+  await reached(r.scenarioDir, 'build', 120_000);
+  let s = await statusOf(r);
+  await until(async () => (s = await statusOf(r)).units[0]?.running?.session != null, 60_000, 'the build session in status');
+  const name = s.units[0]!.running!.session!;
+  assert.equal(s.units[0]!.running!.stage, 'build');
+  assert.match(name, new RegExp(`^${r.arc}-u1-[0-9]+-1$`));
+  // The startup smoke is a Claude build too (named by its check); the unit's build is the last one.
+  const build = readCalls(r.scenarioPath).filter((c) => c.argv.includes('--advisor')).at(-1)!;
+  assert.equal(build.argv[build.argv.indexOf('--name') + 1], name, 'the exact name the build was launched with');
+  assert.equal(JSON.parse(build.argv[build.argv.indexOf('--settings') + 1]!).crossSessionInbound, 'accept');
+  release(r.scenarioDir, 'build');
+  await reached(r.scenarioDir, 'gate', 120_000);
+  const gate = (await statusOf(r)).units[0]!;
+  assert.equal(gate.running?.stage, 'gate');
+  assert.equal(gate.running.session, null, 'no build runs: the name is gone');
+  release(r.scenarioDir, 'gate');
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.equal((await statusOf(r)).units[0]?.running, null);
+});
 
 test('state.no-model-ids: after full runs under the default and claude-only profiles, no executor-written file and no snapshot names a model', { timeout: 2 * EXEC_TIMEOUT_MS }, async (t) => {
   const runs = [await completeRun(t, DEFAULT_STEPS), await completeRun(t, CLAUDE_ONLY_STEPS, ['--profile', 'claude-only'])];

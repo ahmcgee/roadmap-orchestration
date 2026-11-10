@@ -331,7 +331,7 @@ export function planCheckRepairStep(a: PlanCheckAnswer, stdinContains: readonly 
   };
 }
 
-export const BUILD_REPORT = { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true } as const;
+export const BUILD_REPORT = { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final: true } as const;
 
 /** Stdin-matching pattern for a failing lane's stdout/stderr dir of this run, as a fix round lists it. */
 export function laneEvidencePattern(run: StageRun, lane: string): string {

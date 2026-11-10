@@ -349,7 +349,7 @@ test('sched.backend-limit-others-run: with codex parked on a usage limit, u1 (bu
       ...of('u1', [planCheckStep({ decision: 'approve' }), mulBuild({ 'src/one.js': 'export const one = 1;\n' }), gateStep({ decision: 'approve' })]),
       ...of('u2', [
         planCheckStep({ decision: 'approve', risk: 'high' }),
-        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true } }] },
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { summary: 'Did the work.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final: true } }] },
         gateStep({ decision: 'approve' }),
       ]),
       { as: 'codex', expect: { argv: ['exec'] }, acts: [{ type: 'emit', value: OK }] },
@@ -510,7 +510,7 @@ test('steer running unit: cancels its workload, then starts one fresh steer roun
     {...build, acts: [], expect: {argv: ['exec', '-C'], argvLacks: ['resume'], stdinContains: [brief]}} as Step, gateStep({decision: 'approve'})]});
   // The steered builder emits a valid report while retaining the first round's commit.
   const scenario = JSON.parse(readFileSync(d.scenarioPath, 'utf8')) as {steps: {acts: unknown[]}[]};
-  scenario.steps[2]!.acts = [{type: 'emit', value: {summary: 'mul retained', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true}}];
+  scenario.steps[2]!.acts = [{type: 'emit', value: {summary: 'mul retained', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final: true}}];
   writeFileSync(d.scenarioPath, JSON.stringify(scenario));
   const r = contextFor(d); const s = startScheduler(r);
   try {

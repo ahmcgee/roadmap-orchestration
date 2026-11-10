@@ -47,7 +47,7 @@ import { usageLimitResets } from '../backends/errors.ts';
 import {
 BACKEND_PARK_CLASSES,type BackendParkClass,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OpOutcome,type Parent,
 } from '../core/events.ts';
-import { type ArcId,type InvocationId,type JobId,type RoutingRev,type SeatRev,type UnitId,invocationId,opKey,seatRev } from '../core/ids.ts';
+import { type ArcId,type BuildSessionName,type InvocationId,type JobId,type RoutingRev,type SeatRev,type UnitId,buildSessionName,invocationId,opKey,seatRev } from '../core/ids.ts';
 import type { IntentBody,Journal,JournalView } from '../core/interfaces.ts';
 import { type JsonValue,canonicalJson,sha256Hex } from '../core/json.ts';
 import type { PromptSize } from '../core/records.ts';
@@ -420,7 +420,7 @@ export function inputFile(runDir: AbsPath, text: string, ext: string): AbsPath {
   return inputPath(runDir, keepInput(runDir, Buffer.from(text, 'utf8'), ext), ext);
 }
 
-function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath, mcpConfig: AbsPath | null, denyWrites: readonly AbsPath[]): BackendCall {
+function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, invDir: AbsPath, name: BuildSessionName, mcpConfig: AbsPath | null, denyWrites: readonly AbsPath[]): BackendCall {
   const r = spec.request;
   if (r.kind === 'judgment') {
     const { role, triple } = r.dispatch;
@@ -433,7 +433,7 @@ function call(spec: BackendCallSpec, schemaText: string, schemaPath: AbsPath, in
   const s = r.session;
   if (triple.backend === 'claude') {
     if (s.backend !== 'claude') throw new Error(`a ${s.backend} session on the Claude implementer seat`);
-    return { kind: 'claude-build', triple, session: s, schemaText, system: spec.system, mcpConfig, evidenceDirs: r.evidenceDirs };
+    return { kind: 'claude-build', triple, session: s, name, schemaText, system: spec.system, mcpConfig, evidenceDirs: r.evidenceDirs };
   }
   if (s.backend !== 'codex') throw new Error(`a ${s.backend} session on the Codex implementer seat`);
   if (mcpConfig !== null) throw new Error(`${spec.unit}: an MCP config on the Codex implementer seat`);
@@ -448,7 +448,7 @@ function terminal(spec: BackendCallSpec, c: BackendCall, schemaPath: AbsPath, in
     case 'claude-acting-judge':
       return { ...base, outputPath: stdout, role: c.role, session: c.session };
     case 'claude-build':
-      return { ...base, outputPath: stdout, role: 'build', session: c.session };
+      return { ...base, outputPath: stdout, role: 'build', session: c.session, name: c.name };
     case 'codex-build':
       return { ...base, outputPath: c.outputPath, role: 'build', session: c.session };
   }
@@ -535,11 +535,12 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
   const schemaText = canonicalJson(spec.schema);
   const schemaPath = inputFile(ctx.runDir, `${schemaText}\n`, 'schema.json');
   const mcpConfig = r.kind === 'implementer' && r.mcpConfig !== null ? inputFile(ctx.runDir, r.mcpConfig, MCP_CONFIG_INPUT) : null;
-  // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir.
+  // promptBytes reads only the call's kind and system text, neither of which depends on the invocation dir or its name.
   // dev.13: the gate (and, dev.17, pre-build) writes only in its own checkout (its cwd); its file-writing tools are denied the
   // repository and the run dir.
   const denyWrites = r.kind === 'judgment' ? actingWriteDenials(ctx, [spec.cwd]) : [];
-  const stdin = inputFile(ctx.runDir, promptBytes(call(spec, schemaText, schemaPath, ctx.runDir, mcpConfig, denyWrites), spec.rendered), 'prompt.txt');
+  const nameOf = (inv: InvocationId): BuildSessionName => buildSessionName(ctx.plan().arc, spec.unit, inv);
+  const stdin = inputFile(ctx.runDir, promptBytes({ kind: r.kind === 'judgment' ? 'claude-acting-judge' : r.dispatch.triple.backend === 'claude' ? 'claude-build' : 'codex-build', system: spec.system }, spec.rendered), 'prompt.txt');
   // Build tooling retains its owner label; pool-instance bindings belong to executor lanes and their reservations.
   const env = role === 'build' ? { ...backendEnv(ctx.hostEnv), [OWNER_ENV]: ownerLabel(ctx.plan().arc, spec.unit) } : backendEnv(ctx.hostEnv);
   const launch = (origin: SpawnOrigin): LaunchSpec => ({
@@ -547,8 +548,8 @@ export async function callBackend(ctx: StageContext, given: BackendCallSpec): Pr
     origin,
     ...(r.kind === 'implementer' ? { cpuKey: buildCpuKey({ role: 'build', class: ctx.routing(spec.unit).classes.build[r.dispatch.tier], routingRev: r.dispatch.routingRev }) } : {}),
     subject: { purpose: 'backend', ...(spec.prompt === null ? {} : { prompt: spec.prompt }), ...seat, routingRev: spec.request.dispatch.routingRev, unit: spec.unit, attempt: spec.parent.attempt },
-    launch: (invDir) => {
-      const c = call(spec, schemaText, schemaPath, invDir, mcpConfig, denyWrites);
+    launch: (invDir, inv) => {
+      const c = call(spec, schemaText, schemaPath, invDir, nameOf(inv), mcpConfig, denyWrites);
       return { argv: backendArgv(c), cwd: spec.cwd, env, stdinPath: stdin, stallMs: null, graceMs: BACKEND_GRACE_MS, terminal: terminal(spec, c, schemaPath, invDir) };
     },
   });

@@ -137,24 +137,55 @@ export type DesignAnswer = Readonly<{
 export type Experiment = Readonly<{ name: string; argv: readonly string[]; exit: number }>;
 export type Grounding = Readonly<{ specWrong: string | null; touches: readonly string[] }>;
 export type TooBig = Readonly<{ estimate: string; suggestedChildren: readonly string[] }>;
+/**
+ * dev.59 (owner ruling 2026-11-10): a message another Claude session sent the builder mid-run (cross-session `SendMessage`,
+ * src/backends/argv.ts): the sender's name, when it arrived, and its text verbatim or its opening (the wire description
+ * bounds it), so the exception leaves a trace in the build's evidence.
+ */
+export type ReceivedMessage = Readonly<{ from: string; at: string; text: string }>;
 export type BuildOutput = Readonly<{
   summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
-  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[]; final: true;
+  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[];
+  /** dev.59: every cross-session message received; read as none from a report written before 1.0.0-dev.59 (`buildOutput`). */
+  messages: readonly ReceivedMessage[];
+  final: true;
 }>;
+/** The longest message text a build report quotes whole; a longer one is quoted by its opening this long. */
+export const MESSAGE_EXCERPT_CHARS = 500;
 const S_FINAL: Schema = { type: 'boolean', description: 'true for the final report consumed by the role parser; false only for an interim turn while waiting for something you started. The final-report parser rejects false.' };
 export const BUILD_SCHEMA: Schema = sObj({
   summary: S_STR, blockers: sArr(S_STR), experiments: sArr(sObj({ name: S_STR, argv: sArr(S_TEXT, 1), exit: S_EXIT })),
   grounding: sObj({ specWrong: sNullable(S_TEXT), touches: sArr(S_TEXT) }),
-  tooBig: sNullable(sObj({ estimate: S_TEXT, suggestedChildren: sArr(S_TEXT, 1) })), notes: sArr(S_STR), final: S_FINAL,
+  tooBig: sNullable(sObj({ estimate: S_TEXT, suggestedChildren: sArr(S_TEXT, 1) })), notes: sArr(S_STR),
+  messages: sDescribe(sArr(sObj({
+    from: sDescribe(S_STR, 'The sending session\'s name, as the message names it.'),
+    at: sDescribe(S_TEXT, 'When it arrived, as precisely as you know it; empty when unknown.'),
+    text: sDescribe(S_STR, `The message verbatim, or its first ${MESSAGE_EXCERPT_CHARS} characters when longer.`),
+  })), 'Every message another Claude session sent you during this run, in arrival order; empty when none arrived.'),
+  final: S_FINAL,
 });
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
-export const buildOutput: Read<BuildOutput> = object((f) => ({
-  summary: f.get('summary', str), blockers: f.get('blockers', arrayOf(str)), experiments: f.get('experiments', arrayOf(experiment)),
-  grounding: f.get('grounding', object((g) => ({ specWrong: g.get('specWrong', nullable(text)), touches: g.get('touches', arrayOf(text)) }))),
-  tooBig: f.get('tooBig', nullable(object((g) => ({ estimate: g.get('estimate', text), suggestedChildren: g.get('suggestedChildren', arrayOf(text, { nonEmpty: true })) })))),
-  notes: f.get('notes', arrayOf(str)), final: f.get('final', literal(true)),
-}));
+const receivedMessage: Read<ReceivedMessage> = object((g) => ({ from: g.get('from', str), at: g.get('at', text), text: g.get('text', str) }));
+/** dev.59 upgrade warning latch: the missing-`messages` notice prints once per process. */
+let legacyMessagesWarned = false;
+/**
+ * A build report. `messages` (dev.59) is read as none from a report an earlier release's build wrote (its launch's schema had no
+ * such field), with a warning; temporary scaffolding, deleted once no arc started before 1.0.0-dev.59 is in flight.
+ */
+export const buildOutput: Read<BuildOutput> = object((f) => {
+  const messages = f.optional('messages', arrayOf(receivedMessage));
+  if (messages === undefined && !legacyMessagesWarned) {
+    process.emitWarning('reading a build report from before 1.0.0-dev.59 as having received no cross-session messages (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+    legacyMessagesWarned = true;
+  }
+  return {
+    summary: f.get('summary', str), blockers: f.get('blockers', arrayOf(str)), experiments: f.get('experiments', arrayOf(experiment)),
+    grounding: f.get('grounding', object((g) => ({ specWrong: g.get('specWrong', nullable(text)), touches: g.get('touches', arrayOf(text)) }))),
+    tooBig: f.get('tooBig', nullable(object((g) => ({ estimate: g.get('estimate', text), suggestedChildren: g.get('suggestedChildren', arrayOf(text, { nonEmpty: true })) })))),
+    notes: f.get('notes', arrayOf(str)), messages: messages ?? [], final: f.get('final', literal(true)),
+  };
+});
 export function validateBuildOutput(value: unknown): BuildOutput { return buildOutput(value, 'build'); }
 
 /**

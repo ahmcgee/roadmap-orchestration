@@ -6,13 +6,15 @@
 // 2.1.301 capture claude-judgment-subagents is the whole argv, token for token. The implementer captures predate dev.13,
 // which dropped `--disable-slash-commands` from the build argv, and dev.17, which added `--advisor <id>`: the builder's argv
 // less the advisor pair equals the capture less that flag; the 2.1.301 capture claude-build-advisor is the whole build argv. `npm run probe` runs the full argv against
-// the real CLIs. All Claude captures predate dev.28: their expected argv adds the exact plugin setting pair.
+// the real CLIs. All Claude captures predate dev.28: their expected argv adds the exact plugin setting pair. The build captures
+// predate dev.59, which names every Claude build (`--name <BuildSessionName>` after its session flag) and adds
+// `crossSessionInbound: "accept"` to its settings: the builder's build argv less both equals the capture (`withoutInbox`).
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { backendArgv, promptBytes } from '../src/backends/argv.ts';
-import { implementerSessionId, judgmentSessionId } from '../src/core/ids.ts';
+import { arcId, buildSessionName, buildSessionNameOf, implementerSessionId, invocationId, judgmentSessionId, opId, unitId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { BACKEND_FIXTURES, capturedArgv } from './helpers/scenario.ts';
 
@@ -23,6 +25,16 @@ function claudeCapture(name: string): readonly string[] {
   const i = argv.indexOf('--strict-mcp-config');
   assert.ok(i >= 0);
   return [...argv.slice(0, i), ...SETTINGS, ...argv.slice(i)];
+}
+
+const BUILD_SETTINGS = '{"enabledPlugins":{"cc-plugin-plugin-authoring@builtin":false},"crossSessionInbound":"accept"}';
+const NAME = buildSessionName(arcId('atlas2'), unitId('u-web-read-card'), invocationId(opId(arcId('atlas2'), 124899), 1));
+/** A dev.59 build argv as a capture before it: no `--name` pair, and the plain settings. */
+function withoutInbox(argv: readonly string[]): readonly string[] {
+  const i = argv.indexOf('--name');
+  assert.equal(argv[i + 1], NAME);
+  assert.equal(argv[argv.indexOf('--settings') + 1], BUILD_SETTINGS);
+  return [...argv.slice(0, i), ...argv.slice(i + 2)].map((t) => (t === BUILD_SETTINGS ? SETTINGS[1] : t));
 }
 
 const CLAUDE = { backend: 'claude', model: 'claude-opus-5-5', effort: 'high' } as const;
@@ -98,13 +110,14 @@ describe('argv', () => {
     const id = implementerSessionId(value(fresh, '--session-id'));
     const schemaText = value(fresh, '--json-schema');
     const system = CAPTURED_SYSTEM;
-    const build = { kind: 'claude-build', triple: CLAUDE, schemaText, system, mcpConfig: null, evidenceDirs: [] } as const;
-    assert.deepEqual(capturedShape(withoutAdvisor(backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } }))), fresh);
-    assert.deepEqual(capturedShape(withoutAdvisor(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id } }))), resumed);
+    const build = { kind: 'claude-build', triple: CLAUDE, schemaText, system, mcpConfig: null, evidenceDirs: [], name: NAME } as const;
+    const shape = (argv: readonly string[]): readonly string[] => capturedShape(withoutAdvisor(withoutInbox(argv)));
+    assert.deepEqual(shape(backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } })), fresh);
+    assert.deepEqual(shape(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id } })), resumed);
     assert.equal(value(fresh, '--append-system-prompt'), system);
     const dirs = [absPath('/run/work/u1'), absPath('/run/evidence/u1/lane')];
     assert.deepEqual(
-      capturedShape(withoutAdvisor(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs }))),
+      shape(backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id }, evidenceDirs: dirs })),
       [...resumed, '--add-dir', dirs[0], '--add-dir', dirs[1]],
     );
     assert.equal(exitCode('claude-implementer-resume'), '0');
@@ -113,7 +126,7 @@ describe('argv', () => {
     const mcp = absPath('/run/inputs/0f.mcp.json');
     const strict = fresh.indexOf('--strict-mcp-config');
     assert.deepEqual(
-      capturedShape(withoutAdvisor(backendArgv({ ...build, mcpConfig: mcp, session: { backend: 'claude', mode: 'fresh', id } }))),
+      shape(backendArgv({ ...build, mcpConfig: mcp, session: { backend: 'claude', mode: 'fresh', id } })),
       [...fresh.slice(0, strict + 1), '--mcp-config', mcp, ...fresh.slice(strict + 1)],
     );
   });
@@ -121,13 +134,42 @@ describe('argv', () => {
     const c = claudeCapture('claude-build-advisor');
     const call = {
       kind: 'claude-build', triple: { backend: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' }, schemaText: value(c, '--json-schema'),
-      session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, mcpConfig: null, evidenceDirs: [],
+      session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(value(c, '--session-id')) }, system: CAPTURED_SYSTEM, mcpConfig: null, evidenceDirs: [], name: NAME,
     } as const;
-    assert.deepEqual(backendArgv(call), c);
+    assert.deepEqual(withoutInbox(backendArgv(call)), c);
     assert.equal(value(c, '--advisor'), 'claude-opus-5-5');
     assert.equal(exitCode('claude-build-advisor'), '0');
     // A resume passes the advisor again: the flag holds for one process's session.
     assert.equal(value(backendArgv({ ...call, session: { ...call.session, mode: 'resume' } }), '--advisor'), 'claude-opus-5-5');
+  });
+  it('claude build names its session and accepts cross-session messages, fresh and resumed; codex and judgments have neither (dev.59)', () => {
+    const id = implementerSessionId('7b0c2f4e-1d3a-4c5b-9e8f-0a1b2c3d4e5f');
+    const build = { kind: 'claude-build', triple: CLAUDE, schemaText: '{"type":"object"}', system: SYSTEM, mcpConfig: null, evidenceDirs: [], name: NAME } as const;
+    assert.deepEqual(backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } }), [
+      'claude', '-p', '--output-format', 'stream-json', '--verbose', '--settings', BUILD_SETTINGS, '--strict-mcp-config',
+      '--setting-sources', 'project', '--json-schema', '{"type":"object"}', '--model', 'claude-opus-5-5', '--effort', 'high',
+      '--advisor', 'claude-opus-5-5', '--permission-mode', 'bypassPermissions', '--session-id', id, '--name', NAME, '--append-system-prompt', SYSTEM,
+    ]);
+    const resumed = backendArgv({ ...build, session: { backend: 'claude', mode: 'resume', id } });
+    assert.equal(value(resumed, '--name'), NAME);
+    assert.equal(value(resumed, '--settings'), BUILD_SETTINGS);
+    for (const argv of [resumed, backendArgv({ ...build, session: { backend: 'claude', mode: 'fresh', id } })]) assert.ok(!argv.includes('--bare'));
+    const judged = [
+      backendArgv({ kind: 'claude-judgment', role: 'verifier', triple: CLAUDE, schemaText: '{}', session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(id) }, system: SYSTEM, evidenceDirs: [] }),
+      backendArgv({ kind: 'claude-acting-judge', role: 'verifier', triple: CLAUDE, schemaText: '{}', session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(id) }, system: SYSTEM, mcpConfig: null, evidenceDirs: [], denyWrites: [] }),
+      backendArgv({ kind: 'codex-build', triple: CODEX, session: { backend: 'codex', mode: 'fresh' }, system: SYSTEM, cwd: absPath('/w'), outputPath: absPath('/o'), schemaPath: absPath('/s') }),
+      backendArgv({ kind: 'codex-build', triple: CODEX, session: { backend: 'codex', mode: 'resume', id }, system: SYSTEM, cwd: absPath('/w'), outputPath: absPath('/o'), schemaPath: absPath('/s') }),
+    ];
+    for (const argv of judged) {
+      assert.ok(!argv.includes('--name'), argv.join(' '));
+      assert.ok(!argv.join(' ').includes('crossSessionInbound'), argv.join(' '));
+    }
+  });
+  it('a build session name is <arc>-<unit>-<seq>-<ordinal>, letters, digits, hyphens and underscores only (dev.59)', () => {
+    assert.equal(NAME, 'atlas2-u-web-read-card-124899-1');
+    assert.equal(buildSessionName(arcId('probe'), 'backend-claude', invocationId(opId(arcId('probe'), 3), 2)), 'probe-backend-claude-3-2');
+    for (const bad of ['', 'probe.arc-1', 'unit:b', 'inv/2', 'inv#2', 'two words', 'x'.repeat(201)]) assert.throws(() => buildSessionNameOf(bad), /BuildSessionName/, bad);
+    assert.throws(() => buildSessionName(arcId('a'), 'check.with.dots', invocationId(opId(arcId('a'), 1), 1)), /BuildSessionName/);
   });
   it('claude acting judge, fresh with MCP servers and resumed without (dev.13)', () => {
     // No capture: verified by hand against Claude Code 2.1.301 (argv.ts ACTING_JUDGE_TOOLS); the probe runs it for real.

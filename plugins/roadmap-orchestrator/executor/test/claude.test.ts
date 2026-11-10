@@ -6,7 +6,7 @@ import { adapt, writeResult } from '../src/backends/adapter.ts';
 import { type BackendCall, backendArgv, freshClaudeImplementerSession, freshJudgmentSession, resumedJudgmentSession } from '../src/backends/argv.ts';
 import { readClaude } from '../src/backends/claude.ts';
 import { classifyBackendError, usageLimitResets } from '../src/backends/errors.ts';
-import { type InvocationId, judgmentSessionId } from '../src/core/ids.ts';
+import { type InvocationId, buildSessionNameOf, judgmentSessionId } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
 import { repairTurnOf } from '../src/pipeline/dispatch.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
@@ -274,13 +274,16 @@ describe('claude', () => {
     });
     it('the argv carries the flags that make it so: no setting sources or skills for a judgment, project settings and skills for an implementer', () => {
       const judgment = backendArgv({ kind: 'claude-judgment', role: 'verifier', triple: TRIPLE, session: freshJudgmentSession(), schemaText: '{}', system: 'S', evidenceDirs: [] });
-      const build = backendArgv({ kind: 'claude-build', triple: TRIPLE, session: freshClaudeImplementerSession(), schemaText: '{}', system: 'S', mcpConfig: null, evidenceDirs: [] });
+      const build = backendArgv({ kind: 'claude-build', triple: TRIPLE, session: freshClaudeImplementerSession(), name: buildSessionNameOf('arc-u1-7-1'), schemaText: '{}', system: 'S', mcpConfig: null, evidenceDirs: [] });
       for (const argv of [judgment, build]) {
         for (const flag of ['--strict-mcp-config', '--verbose']) assert.ok(argv.includes(flag), flag);
         assert.equal(argv[argv.indexOf('--output-format') + 1], 'stream-json');
         assert.equal(argv.includes('--mcp-config'), false);
-        assert.deepEqual(JSON.parse(argv[argv.indexOf('--settings') + 1]!), { enabledPlugins: { 'cc-plugin-plugin-authoring@builtin': false } });
       }
+      const plugins = { enabledPlugins: { 'cc-plugin-plugin-authoring@builtin': false } };
+      assert.deepEqual(JSON.parse(judgment[judgment.indexOf('--settings') + 1]!), plugins);
+      // dev.59: a build's inbox accepts cross-session messages (argv.ts).
+      assert.deepEqual(JSON.parse(build[build.indexOf('--settings') + 1]!), { ...plugins, crossSessionInbound: 'accept' });
       assert.ok(judgment.includes('--disable-slash-commands'), 'a judgment loads no skill');
       assert.ok(!build.includes('--disable-slash-commands'), 'a build loads the project skills (dev.13)');
       assert.equal(judgment[judgment.indexOf('--setting-sources') + 1], '');

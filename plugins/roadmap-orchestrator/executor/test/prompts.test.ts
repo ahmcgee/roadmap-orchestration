@@ -330,7 +330,7 @@ const OUTPUTS: Record<keyof TestInputs, unknown> = {
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
   },
   build: {
-    summary: 'Added the parser.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [],  final: true,
+    summary: 'Added the parser.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final: true,
   },
   gate: {rulings: [],
     decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
@@ -492,7 +492,7 @@ describe('prompts', () => {
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const text = mod.render({mode, brief: {...SAMPLES.verifier[0].brief, history: [], vision: null}}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
 
-  it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => { for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) { const mod = promptFor('build', model); assert.ok(mod.system.includes(UNIT_POLICY)); const text = mod.render(SAMPLES.build[1]); assert.match(text, /\/run\/inv\/9-1/); assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.deepEqual(Object.keys((ROLE_SCHEMAS.build as {properties: object}).properties), ['summary', 'blockers', 'experiments', 'grounding', 'tooBig', 'notes', 'final']); } });
+  it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => { for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) { const mod = promptFor('build', model); assert.ok(mod.system.includes(UNIT_POLICY)); const text = mod.render(SAMPLES.build[1]); assert.match(text, /\/run\/inv\/9-1/); assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.deepEqual(Object.keys((ROLE_SCHEMAS.build as {properties: object}).properties), ['summary', 'blockers', 'experiments', 'grounding', 'tooBig', 'notes', 'messages', 'final']); } });
 
   it('dev.13: a milestone unit\'s pre-build, build and gate embed its design references as documents and name its milestones; others carry none', () => {
     for (const role of ['build', 'gate'] as const) for (const model of MODEL_IDS) {
