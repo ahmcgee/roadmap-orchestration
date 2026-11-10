@@ -109,6 +109,10 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    design references, bring-up, journeys and selected integration lanes. Approved compaction carries source-backed
    K-n curation; debt resolutions link B-n and K-n in the plain C-n ledger. Phase 0 checks typed inputs, committed
    target bytes, proof reachability and readiness; system overlap, possible future-witness vacuity, spanning proof and design ordering advise judgment.
+   Phase 0 and every apply refuse a witness file its lane would never run: outside the lane's `testPaths`, or left out
+   of an explicit file list anywhere in its argv (past wrapper layers, a shell's `-c` script included); a spec witness
+   item's file is the test file its testId leads with; a lane an apply adds must declare `testPaths`. A builder that finds a witness file its lane never runs reports it as a spec error,
+   which parks the unit for the root, uncharged.
 2. **Start and review.** Startup validates the pack, claims the host and smokes its routed backends. A fresh pack
    review checks it against the target and census and must end before admission. Blocking unit findings hold the named
    units and their transitive dependents; other blocking targets hold the arc. The architect fixes the pack for a
@@ -119,15 +123,23 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    independent pre-build review annotates risky traits, non-local proof or changed meaning. Builders ground their
    specs first, implement, run targeted checks and report evidence. A judgment park or a build `spec-wrong` park
    re-opens after the architect applies a spec revision and runs `resume <unit>`: pre-build on the new rev, with
-   branch, worktree and implementer session kept. Other build design parks require re-entry under a new unit id. Every Claude build gets the configured
+   branch, worktree and implementer session kept. A park at the chargeable bound is re-entered with `reenters.reset`
+   instead, as its item says: a revision keeps the count. Other build design parks require re-entry under a new unit id. Every Claude build gets the configured
    `walkthrough.mcp` servers. A declared server unavailable at init raises a non-blocking `walkthrough-mcp` notice,
    once per server/error signature; a later connected build or acting walk explicitly settles its named notices. Bring-ups list its member/design milestones and origin milestones of findings its spec
    `repairs` cites, once each in plan order; empty is valid. Without the config, builds get no servers and no new
    refusal. Codex builds have no MCP path; acting judges keep their own rules. Bootstrap still refuses browser
    journeys without this config. The executor quiesces workloads, captures evidence,
    salvages changes and tears resources down before running full lanes and witnesses. A fresh gate judges the diff,
-   actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
-   revisions feed fix rounds with original evidence and base comparisons. A spec lane red on its diff base
+   actual reach against intent/non-goals, and evidence-backed responses to standing findings. An acceptance clause that
+   every gate round of the lineage holds unmet (a blocking `requirement-unmet` finding naming its id), from the second
+   round on, goes to the architect once as a non-blocking split proposal while the unit goes on.
+   Failed checks and gate revisions feed fix rounds with original evidence and base comparisons. A lanes red the architect traces outside the
+   tree (the estate it runs against, or infrastructure) is waived with `roadmap rerun <unit>/lanes#<n>/<lane> --cause
+   estate|infra --evidence "<line>"`: the lanes run again at the same commit in a fresh checkout, every lane on its own
+   argv, with no build. The red's charge stands; the rerun charges nothing and counts as one judged stage, once per lane
+   per head. Green goes on to the gate; a red rerun parks `rerun-red` for the architect, and `resume <unit>` restores the
+   waived decision (a waived bound park stands). A spec lane red on its diff base
    raises an arc notice with a known-defect apply fragment; the root names its fix unit. That lane gets no
    further fix round: the gate continues, while candidate publication waits for the notice to be resolved.
    Verification checkouts keep stable paths and ignored caches between series. Every judgment begins in a fresh named
@@ -138,7 +150,12 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    Free real-output replays and schema/parser parity checks guard the contract before paid probes.
 4. **Publish the tested head.** An approved unit plans a candidate on the current integration tip and atomically takes the publication slot plus the first scheduled lane’s resources (spec first, otherwise the selected suite). A moved tip reselects the entry; unused entry resources are cleaned and released. Candidate lanes
    retain unit attribution; only a green exact head is fast-forwarded. Candidate reds durably name their cause,
-   grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. Every successful integration fast-forward
+   grading records (RUN or REUSED) and original evidence; a bounded park retains that diagnosis. A candidate red that
+   is red on the tip alone too parks `base-red` and holds merges: once the estate or base is fixed, the architect acks
+   the item and `resume <unit>` re-runs the candidate uncharged; when the red is the unit's own (its candidate run left
+   state that broke the tip too), `steer <unit> --brief <file> --budget <min> --resume`, then ack. A candidate red whose
+   only red lanes are declared static checks (`kind: static`: lint, typecheck) gets one uncharged fix round of its own;
+   a second is read as any candidate red. Every successful integration fast-forward
    (unit, repair batch, docs revision or close-out) queues a background push to `origin` with user credentials.
    Pushes use an explicit lease and require the remote tip to be an ancestor; `main` is never pushed. Startup
    retries the current head after a crash; an up-to-date remote is a no-op. Snapshots and retirement continue
@@ -149,8 +166,12 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    `roadmap pr` still prepares the stacked PR and its push is a no-op when already current. A spike
    answers a declared question and retires its gated report without merging. Cheap local checks run early;
    expensive local checks run on candidates, with scarce shared/cross-system checks at batch/milestone boundaries.
-5. **Judge the experience and campaign.** Once milestone units retire, its selected lanes run and one experience
-   role walks its journeys and judges polish comparisons. Breaks hold downstream work; deviations can be repaired
+5. **Judge the experience and campaign.** Once a milestone's live members merge, its selected lanes run and one experience
+   role walks its journeys and judges polish comparisons. A milestone's members are its units, every unit re-entering
+   one of them and every unit carrying a cut one forward (`carries`); superseded and cut members are withdrawn from its
+   counts and readiness. A revision that leaves a milestone no live member is refused (carry the work forward with
+   `carries`, re-point the milestone or remove it), and one adopted that way from an earlier release is a blocking item;
+   the executor never marks it reached. Breaks hold downstream work; deviations can be repaired
    alongside it. A break requires a failed product action, an interface repair that reworks dependents, or a measured
    declared floor violation. Copy, visuals, diagnostics and stale docs against a correct interface deviate; sanctioned
    choices are not findings. Fresh whole-range campaign audits run at milestones, on request and at the final boundary, judging
@@ -169,8 +190,15 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    and deadline. Plain `stop` keeps its immediate abort behavior. Status shows the drain and deadline.
    Interventions and every arc-wide control go in the external operator log. The root never patches the plugin or run directory. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
-   exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
-   unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
+   exported base; untouched files take current bytes, and edited specs advance automatically. An apply that touches
+   running work queues to its stage boundary: a suite-lane edit waits behind a running lanes attempt (a lanes red's fix
+   round still reads the series as it ran) and is refused only while a candidate is under way. Steer cancels an
+   unfinished unit into a directed round; note informs its next build without interruption. To reach a build while it
+   runs, the architect `SendMessage`s a running Claude build at the exact session name `status` shows
+   (`units[].running.session`, `<arc>-<unit>-<seq>-<ordinal>`, gone once the build ends); the build reads it between
+   tool calls and lists it in its report's `messages`. A successful send is not proof of delivery, a name whose build
+   has ended fails as unreachable, and only builds in the same container are reachable. A Codex build, or one not yet
+   running, gets `note`, then `pause` and `resume`: the resumed session reads the note. Unit/host actions close
    their notices. Resolve an audit’s arc requests with the apply that answers them: add `--resolves nu-ID[,nu-ID...]`. Unit requests require that unit’s change/re-entry and grouped findings require every named repair. No-op/stale applies close nothing; the receipt lists actual closures. Other arc items accept named `ack <id>` after review.
    A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests
    close when their findings settle or a root apply supplies all named repairs. Dismissal suppresses the same finding
@@ -185,7 +213,9 @@ The architect records owner answers with `roadmap answer P-n --text "<answer>"` 
 immediately. Open questions retain working assumptions; chaining within the acknowledged bound need not wait for every
 answer. Each lane series runs earlier reds first, then cadence order, stopping at the first red. Explicit `timeoutMin`
 yields a timeout red; without it the six-hour runner backstop applies. Eligible certified passes reuse only when their
-execution/environment identity and input hashes match.
+execution/environment identity and input hashes match. A lane with `testArgv` runs only the changed leaf tests inside its
+own cwd (a changed test elsewhere runs its whole argv), and a red targeted run is confirmed by the lane's own argv, whose
+verdict counts: a runner that finds no test files never charges the unit.
 
 Diagnosis begins at 8 builds or 20 judged build/lanes/gate attempts, counting interrupted and uncharged work. It
 supplies a note and moves remaining mixed-profile builds to Claude. The fixed 16-build/40-stage boundary raises an
@@ -199,7 +229,11 @@ structured decisions, making later work and crash recovery intelligible.
 
 Certification allows three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that
 allowance. Gate revisions and candidate reds have separate bounds. Re-entry keeps lineage counters; `reenters.reset`
-with a reason clears chargeable failures while lifetime attempts and other counters remain. A re-entry must repair
+with a reason clears chargeable failures while lifetime attempts and other counters remain. The 16/40 caps count the
+whole lineage: `status` (`units[].lineageAttempts`), the chargeable-bound and base-red items, and every re-entry's apply
+receipt and dry run show its builds and judged stages against them. To continue a long lineage's work fresh, cut its
+head and add a unit with `carries: {unit, tip}` (a commit of the cut unit's branch): status points each at the other,
+and the carrier counts toward the cut unit's milestones. A re-entry must repair
 the recorded cause, such as a surviving mutant or dirty lane outputs. Fresh build sessions with earlier lineage receive
 a handover of diagnosis, findings, unmet clauses, witness failures, decisions and original evidence. Exact witness ids
 can be checked with `witness-check --lane-file` before requesting certification.

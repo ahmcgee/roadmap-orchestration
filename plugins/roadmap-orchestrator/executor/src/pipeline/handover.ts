@@ -25,6 +25,7 @@ import type { ClauseId, UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specWitnesses } from '../core/records.ts';
 import { type AbsPath, type RepoPath, absPath } from '../core/values.ts';
+import { lineageBack } from '../input/lineage.ts';
 import { SPEC_INPUT, inputPath, requirePlanInForce, specBytesOf, specShaInForce } from '../input/inforce.ts';
 import type { Handover, ParkDiagnosis } from '../prompts/inputs.ts';
 import { validateBuildOutput, validateGateOutput } from '../prompts/schemas.ts';
@@ -40,12 +41,8 @@ export const HANDOVER_ITEMS_MAX = 10;
 
 const recent = <T>(items: readonly T[]): readonly T[] => items.slice(-HANDOVER_ITEMS_MAX);
 
-/** The unit, then each unit it re-enters, from the log. */
-export function lineageOf(view: JournalView, unit: UnitId): readonly UnitId[] {
-  const out = [unit];
-  for (let l = view.unit(unit).lineage; l !== null; l = view.unit(l.reenters).lineage) out.push(l.reenters);
-  return out;
-}
+/** The unit, then each unit it re-enters, from the log (src/input/lineage.ts `lineageBack`). */
+export const lineageOf = lineageBack;
 
 /**
  * Arc feedback 2026-10-16 (ckpt re-entered u1e1 without finding why its 41 attempts failed): the lineage of `unit` as the

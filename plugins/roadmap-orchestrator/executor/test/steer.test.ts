@@ -17,7 +17,7 @@ import { describe,test } from 'node:test';
 import { type CommandOutcome,applyCommand } from '../src/commands/apply.ts';
 import { readReceipt,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import type { Fact } from '../src/core/events.ts';
-import { type CommandId,type NeedsUserId,arcId,commandId } from '../src/core/ids.ts';
+import { type CommandId,type NeedsUserId,arcId,commandId,invocationId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import type { CommandBody,NeedsUserContent } from '../src/core/records.ts';
 import { fold } from '../src/core/state.ts';
@@ -29,13 +29,15 @@ import { handoverOf } from '../src/pipeline/handover.ts';
 import { BRIEF_INPUT } from '../src/pipeline/rounds.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { type Gate,runUnit,step } from '../src/pipeline/unit.ts';
-import { STEER_DIRECTIVE } from '../src/prompts/directives.ts';
+import { CONTINUE_DIRECTIVE,STEER_DIRECTIVE } from '../src/prompts/directives.ts';
 import { handoverText } from '../src/prompts/inputs.ts';
 import { recover } from '../src/recover/recover.ts';
 import { bytesSha256,fileSha256 } from '../src/spec/spec.ts';
 import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import { followingContext,unitInForce } from './fixtures/steer-common.ts';
-import { type ArcDescriptor,type ArcRun,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc } from './fixtures/unit-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL,U1,applyBody,codexStep,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { reached } from './helpers/barrier.ts';
+import { killWorkload } from '../src/pipeline/invoke.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { tmpDir } from './helpers/repo.ts';
@@ -456,6 +458,33 @@ test('note delivery: records a fact without reopening, and the next build receiv
   } finally {r.journal.close();}
 });
 
+
+test('note.pause-resume (dev.59, the path to a running Codex build): a note recorded while the build runs, then pause and resume: the continued thread\'s prompt carries it', T, async () => {
+  const text = 'NOTE-MIDBUILD-MARKER: keep the v1 endpoint';
+  const thread = '00000000-0000-4000-8000-0000000c0de2';
+  const d = setupArc({steps: [
+    planCheckStep({decision: 'approve'}),
+    {as: 'codex', threadId: thread, expect: {argv: ['exec', '-C']}, acts: [{type: 'threadStarted'}, {type: 'dirty', files: MUL}, {type: 'barrier', name: 'b1', timeoutMs: 120_000}]},
+    codexStep([], {argv: ['exec', 'resume', thread], stdinContains: [CONTINUE_DIRECTIVE, text]}),
+  ]});
+  const r = contextFor(d);
+  try {
+    const running = runUnit(r.ctx, r.unit('u1'), live());
+    await reached(d.scenarioDir, 'b1', 60_000);
+    const path = join(d.scenarioDir, 'note.md'); writeFileSync(path, text);
+    const noted = await command(r, {type: 'note', unit: U1, brief: {path: absPath(path), sha256: bytesSha256(Buffer.from(text))}});
+    assert.equal(noted.outcome.kind, 'applied');
+    const spawn = r.journal.view.openIntents().find((i) => i.kind === 'proc.spawn');
+    assert.ok(spawn !== undefined, 'the build invocation is open');
+    await killWorkload(r.ctx, {inv: invocationId(spawn.op, spawn.ordinal), scope: 'invocation', reason: 'pause'});
+    assert.deepEqual(await running, {kind: 'held', needsUser: null});
+    await stepUntil(r, 'u1', (f) => f.stage === 'build' && f.outcome === 'success');
+    assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:interrupted', 'build:success']);
+    const continued = readCalls(d.scenarioPath).at(-1)!;
+    assert.deepEqual(continued.argv.slice(0, 3), ['exec', 'resume', thread]);
+    assert.ok(continued.stdin.includes(text), 'the note reaches the continued session');
+  } finally {r.journal.close();}
+});
 
 test('steer.unprepared-reentry: a new successor keeps its predecessor branch before its first build', T, async () => {
   const d = setupArc({steps: TO_PARK});

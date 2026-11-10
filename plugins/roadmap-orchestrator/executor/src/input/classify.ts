@@ -28,7 +28,9 @@ import type { Phase0Record } from '../phase0/types.ts';
 import { citedFailure,laneFailures,outcomeRef } from '../pipeline/failures.ts';
 import { designFaults,pinDesign } from '../pipeline/design.ts';
 import { verificationReasons } from '../pipeline/deflake.ts';
-import { revParse } from '../git/git.ts';
+import { catFileType,refTarget,revParse } from '../git/git.ts';
+import { isAncestor } from '../git/ff.ts';
+import { unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { environmentState } from '../resources/environments.ts';
 import { cpuCapacity,overCapacity } from '../resources/pool.ts';
@@ -42,8 +44,8 @@ import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../s
 import { baseFiles,compareAndSwap } from './cas.ts';
 import { type InForce,type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,inForceFiles,inputPath,keptInput,phase0RecordOf,planInForce,planRouting,readInputFiles,revisionInForce,revisionManifestOf,unitRouting } from './inforce.ts';
 import {
-type KnownDefect,type PlanM1,type PlanUnit,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestonesNeedHolistic,milestonesOf,parsePlan,
-planFieldValue,priorityOf,reservedUnitIdReason,
+type KnownDefect,type PlanM1,type PlanUnit,ALL_WITHDRAWN_WAYS_OUT,allWithdrawnText,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestoneMembers,milestonesNeedHolistic,milestonesOf,parsePlan,
+planFieldValue,priorityOf,reservedUnitIdReason,withdrawnMembers,
 } from './plan.ts';
 
 /** Who proposes a revision: root input or one of the executor's narrowly scoped machine edits. */
@@ -202,9 +204,25 @@ export const busyText = (b: BusyAttempt): string => `unit ${b.unit} is running $
  * A plan unit without its M2 lifecycle fields, its M3 routing layer and limits and its M4a rev 3 priority (their own edit
  * classes), for comparing the rest of its entry.
  */
-function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters' | 'routing' | 'limits' | 'priority'> {
-  const { cut: _cut, reenters: _reenters, routing: _routing, limits: _limits, priority: _priority, ...rest } = u;
+function entryOf(u: PlanUnit): Omit<PlanUnit, 'cut' | 'reenters' | 'carries' | 'routing' | 'limits' | 'priority'> {
+  const { cut: _cut, reenters: _reenters, carries: _carries, routing: _routing, limits: _limits, priority: _priority, ...rest } = u;
   return rest;
+}
+
+/**
+ * dev.59 (C4): why an added unit may not carry `carries.unit`'s work forward: the plan must hold that unit cut (before, or
+ * by this apply), and `carries.tip` must be a commit of its branch. Empty when it may.
+ */
+function carryReasons(repo: AbsPath, plan: PlanM1, unit: PlanUnit): readonly string[] {
+  const c = unit.carries;
+  if (c === undefined) throw new Error(`carryReasons of ${unit.id}, which carries nothing`);
+  const from = plan.units.find((u) => u.id === c.unit);
+  if (from === undefined) return [`unit ${unit.id} carries ${c.unit}, which the plan does not hold`];
+  if (from.cut === undefined) return [`unit ${unit.id} carries ${c.unit}, which is not cut: cut it in the same apply, or re-enter it instead`];
+  const head = refTarget(repo, unitBranch(plan.arc, c.unit));
+  if (head === null) return [`unit ${unit.id} carries ${c.unit}, which has no branch: it left no work to carry`];
+  if (catFileType(repo, c.tip) !== 'commit' || !isAncestor(repo, c.tip, head)) return [`unit ${unit.id} carries ${c.unit} from ${c.tip}, which is not a commit of ${c.unit}'s branch (its head is ${head})`];
+  return [];
 }
 
 /** The revision's ledger: its rulings, or why it does not load. */
@@ -429,6 +447,7 @@ export function classify(input: ClassifyInput): Classified {
   const nextIds = plan.units.map((u) => u.id);
   const planned = new Set(view.plannedUnits());
   const reentering: PlanUnit[] = [];
+  const carrying: PlanUnit[] = [];
   for (const u of cur.units) {
     if (nextIds.includes(u.id)) continue;
     if (started(view, u.id)) reasons.push(`unit ${u.id} has started; it cannot be removed`);
@@ -444,6 +463,7 @@ export function classify(input: ClassifyInput): Classified {
       changes.push({ type: 'unit-added', unit: u.id });
       scoped.add(u.id);
       if (u.reenters !== undefined) reentering.push(u);
+      if (u.carries !== undefined) carrying.push(u);
     }
   }
   // G3: a DAG arc starts units out of plan order, so the started ones keep only their relative order. A re-entry
@@ -492,6 +512,7 @@ export function classify(input: ClassifyInput): Classified {
 
     if (was === undefined) continue;
     if (!same(was.reenters, unit.reenters)) reasons.push(`unit ${unit.id}: \`reenters\` is set when a unit is added, never after`);
+    if (!same(was.carries, unit.carries)) reasons.push(`unit ${unit.id}: \`carries\` is set when a unit is added, never after`);
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
@@ -572,6 +593,7 @@ export function classify(input: ClassifyInput): Classified {
       scoped.add(row.reenters);
     } else reasons.push(...row);
   }
+  for (const unit of carrying) reasons.push(...carryReasons(next.repo, plan, unit));
   if (chains.length === 0) {
     const cycle = findCycle(effectiveGraph(plan.units));
     if (cycle !== null) reasons.push(`the unit graph has a cycle once each re-entered unit stands for its lineage's head: ${cycle.join(' → ')}`);
@@ -679,17 +701,16 @@ export function classify(input: ClassifyInput): Classified {
       return s.decided?.stage === 'candidate' && (s.status === 'active' || s.status === 'held');
     });
     const open = view.openIntents().some((i) => i.kind === 'candidate.merge' || (i.parent.type === 'stage' && i.parent.stage === 'candidate'));
-    // A lanes attempt runs the fast suite lanes, and its fix round reads them back by their definitions in force.
-    const atLanes = cur.units.filter((u) => {
-      const s = view.unit(u.id);
-      if (s.status !== 'active' && s.status !== 'held') return false;
-      return s.open?.stage === 'lanes' || (s.decided?.stage === 'lanes' && (s.decided.outcome === 'red' || s.decided.outcome === 'not-certified'));
-    });
     if (open || atCandidate.length > 0) {
       reasons.push(`the suite lanes may not change while a candidate is under way (${open ? 'a candidate op is open' : `unit ${atCandidate.map((u) => u.id).join(', ')} is past a candidate attempt`})`);
-    } else if (atLanes.length > 0) {
-      reasons.push(`the suite lanes may not change while a lanes attempt runs them or its fix round reads them (unit ${atLanes.map((u) => u.id).join(', ')})`);
     } else {
+      // dev.59 (item 8, cmd-01a1b06537057bbe): a running lanes attempt runs the fast suite lanes, so the edit waits for its
+      // boundary (`busy`), as a spec edit of a running unit does; the arc-wide drain holds every other admission meanwhile.
+      // A lanes red's fix round reads its series by the plan it ran under (unit.ts `lanesFixRound`), so it never waits.
+      for (const u of cur.units) {
+        const o = openAttempt(view, u.id);
+        if (o?.live === true && o.stage === 'lanes' && !busy.some((b) => b.unit === u.id)) busy.push({ unit: u.id, stage: o.stage, attempt: o.attempt });
+      }
       changes.push({ type: 'suite' });
     }
   }
@@ -851,13 +872,23 @@ function routingRows(
  * walked on; one being walked (started, not ended) does not change until its walk ends; a milestone added, or whose units
  * change, lists a unit still to merge (it is reached on the publication that retires its last unit). On every revision, by
  * any proposer: no milestone lists a cut unit, which never merges, so the milestone would never be reached and its
- * descendants would wait on it for ever.
+ * descendants would wait on it for ever; nor (dev.59) does a revision leave a milestone with no live member.
  */
 function milestoneRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: PlanChange[], reasons: string[]): void {
   const cut = new Set(plan.units.filter((u) => u.cut !== undefined).map((u) => u.id));
   for (const m of milestonesOf(plan)) {
     const on = m.units.filter((u) => cut.has(u));
     if (on.length > 0) reasons.push(`milestone ${m.id} lists ${on.join(', ')}, cut: a cut unit never merges, so the milestone would never be reached; drop it from the milestone's units in the same apply`);
+  }
+  // dev.59 (pass 3 follow-up): a revision that withdraws a milestone's last live member (a cut of its re-entry, say) is
+  // refused the same way; one already without a live member in force (adopted from an earlier release) is not this
+  // revision's, so it refuses nothing here: the scheduler raises it as a blocking item (`allWithdrawnItem`).
+  for (const m of milestonesOf(plan)) {
+    const withdrawn = withdrawnMembers(plan, m);
+    if (withdrawn.length < milestoneMembers(plan, m).length) continue;
+    const prior = milestonesOf(cur).find((x) => x.id === m.id);
+    if (prior !== undefined && withdrawnMembers(cur, prior).length === milestoneMembers(cur, prior).length) continue;
+    reasons.push(`${allWithdrawnText(m.id, withdrawn)}: ${ALL_WITHDRAWN_WAYS_OUT} in the same apply`);
   }
   const was = milestonesOf(cur);
   const now = milestonesOf(plan);
@@ -1329,7 +1360,7 @@ export type ScopeContext = Readonly<{
 
 /**
  * A12's `ScopeOf`, bound to what an apply's classification reads: `resume` (all) → the arc; `resume <u>` →
- * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` → none; `steer`, `merge-in` and
+ * {u}; `resume --backend`, `sweep`, `resolve-edge`, `run-only` → none; `steer`, `merge-in`, `rerun` (dev.59) and
  * `note` → their unit; `apply` → its changes' scope
  * (`changesScope`) over its proposal (the files rebased onto the files in force, its `--ruling` records landed); none when it would be rejected (a ruling
  * record that no longer reads included) or change nothing (it then
@@ -1356,6 +1387,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
         return ARC;
       case 'steer':
       case 'merge-in':
+      case 'rerun':
         return unitsScope([body.unit]);
       case 'apply': {
         const inForce = planInForce(sc.runDir, view);

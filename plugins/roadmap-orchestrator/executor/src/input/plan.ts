@@ -110,6 +110,12 @@ export type ReentryPoint = (typeof REENTRY_POINTS)[number];
 export type Reentry = Readonly<{ unit: UnitId; enterAt?: ReentryPoint; reset?: Readonly<{ reason: string }>; fixes?: FailureRef }>;
 /** `cut` (M2): the unit is out of scope; a ruling may back the reason. */
 export type Cut = Readonly<{ reason: string }>;
+/**
+ * `carries` (dev.59, C4): this fresh unit carries forward the work of `unit`, a cut unit, from `tip` (a commit of the cut
+ * unit's branch: what the carrying unit's spec has it check files out of). Set when the unit is added, never after; the
+ * cut unit's status line points back (`carriedBy`), and a carrying unit counts toward the cut unit's milestones. Absent: none.
+ */
+export type Carry = Readonly<{ unit: UnitId; tip: Sha }>;
 
 /**
  * M3 (`limits`): overrides of the built-in bounds (`DEFAULT_BOUNDS`), all positive. A unit's override its own;
@@ -171,6 +177,8 @@ export type PlanUnit = Readonly<{
   cpu?: number;
   reenters?: Reentry;
   cut?: Cut;
+  /** dev.59 (C4): the cut unit whose work this one carries forward; never with `reenters`. */
+  carries?: Carry;
   /** M3 (`route`, `steer --class`): the unit routing layer, the stack's highest. */
   routing?: RoutingLayer;
   /** M3 (`limits`): this unit's bound overrides. */
@@ -282,8 +290,45 @@ export function milestoneOf(plan: Pick<PlanM1, 'milestones'>, id: MilestoneId): 
   if (m === undefined) throw new Error(`no milestone ${id} in the plan`);
   return m;
 }
-/** The milestones that list `unit` in their `units`, in plan order. */
-export const milestonesOfUnit = (plan: Pick<PlanM1, 'milestones'>, unit: UnitId): readonly Milestone[] => milestonesOf(plan).filter((m) => m.units.includes(unit));
+/**
+ * dev.59 (scope item 3, C4): the units that count toward milestone `m`, in plan order: the units it lists, every unit that
+ * re-enters one of them (a re-entry inherits its parent's milestone) and every unit that carries a cut one's work forward
+ * (`carries`), transitively. Which of them are withdrawn (superseded, cut) is the log's (src/walk/milestones.ts).
+ */
+export function milestoneMembers(plan: Pick<PlanM1, 'units'>, m: Pick<Milestone, 'units'>): readonly UnitId[] {
+  const members = new Set<UnitId>(m.units);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const u of plan.units) {
+      const from = u.reenters?.unit ?? u.carries?.unit;
+      if (from !== undefined && members.has(from) && !members.has(u.id)) { members.add(u.id); grew = true; }
+    }
+  }
+  return plan.units.map((u) => u.id).filter((id) => members.has(id));
+}
+/**
+ * dev.59: the members of `m` the plan withdraws, in plan order: cut, or re-entered by another unit (superseded; its re-entry
+ * is a member instead). What the fold reads as the units' statuses (src/walk/milestones.ts `milestoneMembership`), from
+ * the plan alone, so a revision is judged before it is in force.
+ */
+export function withdrawnMembers(plan: Pick<PlanM1, 'units'>, m: Pick<Milestone, 'units'>): readonly UnitId[] {
+  const reentered = new Set(plan.units.flatMap((u) => (u.reenters === undefined ? [] : [u.reenters.unit])));
+  const cut = new Set(plan.units.flatMap((u) => (u.cut === undefined ? [] : [u.id])));
+  return milestoneMembers(plan, m).filter((u) => cut.has(u) || reentered.has(u));
+}
+/**
+ * dev.59: why milestone `id`, every member of which (`withdrawn`) is withdrawn, is a defect, and the ways out. It has no
+ * live member, so it is never reached (src/walk/milestones.ts `milestoneReached`) and the units after it wait for ever.
+ */
+export const allWithdrawnText = (id: MilestoneId, withdrawn: readonly UnitId[]): string =>
+  `milestone ${id} has no live member: ${withdrawn.join(', ')} ${withdrawn.length === 1 ? 'is' : 'are'} withdrawn (superseded or cut), so it is never reached `
+  + 'and the units after it wait on it for ever';
+/** The ways out of `allWithdrawnText`. The executor never marks such a milestone reached on the root's behalf. */
+export const ALL_WITHDRAWN_WAYS_OUT = 'carry the work forward into a unit that counts for it (a unit added with `carries: {unit, tip}` naming '
+  + 'a cut member), or apply a revision that re-points its units to live units or removes it';
+/** The milestones `unit` is a member of (`milestoneMembers`), in plan order. */
+export const milestonesOfUnit = (plan: Pick<PlanM1, 'milestones' | 'units'>, unit: UnitId): readonly Milestone[] =>
+  milestonesOf(plan).filter((m) => milestoneMembers(plan, m).includes(unit));
 /** The milestone's design unit, or null when its design was supplied. */
 export const designUnitOf = (m: Milestone): UnitId | null => ('unit' in m.design ? m.design.unit : null);
 /** The walks a milestone may take (`limits.walkRounds`); 3 when absent. */
@@ -526,6 +571,8 @@ const cut: Read<Cut> = object((f) => {
   return { reason: f.get('reason', str) };
 });
 
+const carry: Read<Carry> = object((f) => ({ unit: f.get('unit', (v, p) => unitId(v, p)), tip: f.get('tip', (v, p) => sha(v, p)) }));
+
 const planUnit: Read<PlanUnit> = object((f) => {
   const systems = f.get('systems', arrayOf((v, p) => systemName(v, p), { nonEmpty: true }));
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
@@ -544,6 +591,7 @@ const planUnit: Read<PlanUnit> = object((f) => {
   const cpu = f.optional('cpu', positive);
   const reenters = f.optional('reenters', reentry);
   const cutField = f.optional('cut', cut);
+  const carries = f.optional('carries', carry);
   const routing = f.optional('routing', routingLayer);
   const limits = f.optional('limits', unitLimits);
   const priority = f.optional('priority', oneOf(UNIT_PRIORITIES));
@@ -554,9 +602,11 @@ const planUnit: Read<PlanUnit> = object((f) => {
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
   assertUnique(out.after, (u) => u, `${f.path}.after`);
   if (reenters?.unit === out.id) throw new SchemaError(`${f.path}.reenters.unit`, 'a unit other than itself', reenters.unit);
+  if (carries?.unit === out.id) throw new SchemaError(`${f.path}.carries.unit`, 'a unit other than itself', carries.unit);
+  if (carries !== undefined && reenters !== undefined) throw new SchemaError(`${f.path}.carries`, 'absent on a re-entry (a re-entry continues its own lineage)', carries);
   return {
     ...out, systems, ...(origin === undefined ? {} : { origin }), ...(cpu === undefined ? {} : { cpu }), ...(reenters === undefined ? {} : { reenters }),
-    ...(cutField === undefined ? {} : { cut: cutField }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
+    ...(cutField === undefined ? {} : { cut: cutField }), ...(carries === undefined ? {} : { carries }), ...(routing === undefined ? {} : { routing }), ...(limits === undefined ? {} : { limits }),
     ...(priority === undefined ? {} : { priority }), ...(polish === undefined ? {} : { polish }), ...(deflake === undefined ? {} : { deflake }),
   };
 });

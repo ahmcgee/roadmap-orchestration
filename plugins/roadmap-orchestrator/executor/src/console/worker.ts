@@ -2,6 +2,8 @@ import type { ConsoleRequest } from './messages.ts';
 import { existsSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
+import { ObservationRace } from '../observation/retry.ts';
+import { PREPARATION } from './preparation.ts';
 import { type ArcId, invocationDirName, invocationIdOf, parseInvocationId } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { RUNNER_FILE_READERS } from '../core/records.ts';
@@ -207,14 +209,17 @@ function request(m: ConsoleRequest): unknown {
   }
   return null;
 }
-parentPort!.on('message', (m: ConsoleRequest & { id: number }) => {
+parentPort!.on('message', (m: ConsoleRequest & { id: number }) => answer(m, m.kind === 'read' && m.patient || m.kind === 'subscribe' ? Date.now() + PREPARATION.racePatienceMs : 0));
+/** Answers `m`. A browser read or subscription that raced a writer waits for it, off this thread, until `patience` ends. */
+function answer(m: ConsoleRequest & { id: number }, patience: number) {
   try {
     parentPort!.postMessage({ id: m.id, value: request(m) });
   } catch (error) {
+    if (error instanceof ObservationRace && Date.now() < patience) { setTimeout(() => answer(m, patience), 250); return; }
     const code = (error as NodeJS.ErrnoException).code;
     parentPort!.postMessage({ id: m.id, error: code === 'ENOENT' ? { code: 'not-found', message: 'evidence is absent or pruned' } : err(error) });
   }
-});
+}
 let timer: NodeJS.Timeout | null = null;
 function tick() {
   timer = null;
@@ -238,7 +243,12 @@ function tick() {
           } catch (error) { parentPort!.postMessage({ kind: 'history-error', arc, invocation: subscription.invocation, error: err(error) }); }
         }
       }
-      catch (error) { parentPort!.postMessage({ kind: 'error', arc, error: err(error) }); }
+      catch (error) {
+        // A background check that raced a writer (a ref update, a record landing) waits for the next check, never reported:
+        // the last verified observation still stands, and an error notice would put a still arc into an error state.
+        if (error instanceof ObservationRace) continue;
+        parentPort!.postMessage({ kind: 'error', arc, error: err(error) });
+      }
     }
   } catch (error) { parentPort!.postMessage({ kind: 'error', error: err(error) }); }
 }

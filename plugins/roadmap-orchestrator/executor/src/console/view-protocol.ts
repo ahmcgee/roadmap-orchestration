@@ -24,7 +24,12 @@ export type GraphEdge =
   | {kind: 'contingent'; target: string; edge: string; condition: Preview; resolved: boolean};
 export type GraphView = View & {
   units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; stageFinished: boolean; systems: string[]; lineageRef: string | null}[];
-  milestones: {id: string; name?: string; state: string; passed: boolean; memberIds: string[]}[];
+  /** `signal`: running only while its walkthrough runs or is due on a live arc; a stopped arc runs nothing.
+   * Counts and reasons come from console/milestones.ts, the one membership source: `memberIds` every member, `total` the live ones
+   * (superseded and cut members are withdrawn, `withdrawn` of them), `merged` the live ones merged. `costUsd`: status summary spend (its units, their re-entries and its walkthroughs). */
+  milestones: {id: string; name?: string; state: string; passed: boolean; memberIds: string[]; total: number; merged: number; withdrawn: number; signal: Signal; reason: string | null; costUsd: number}[];
+  /** Units in no milestone: the station that is not a gate. Counted as a milestone's members are. */
+  noMilestone: {ids: string[]; total: number; merged: number; withdrawn: number};
   edges: GraphEdge[];
   focus: {activeIds: string[]; firstUncleared: string | null};
 };
@@ -70,7 +75,8 @@ export type StageSummary = {
   outcome: string; housekeeping: boolean; detail: DetailRef;
 };
 export type HolisticRow =
-  | {type: 'audit'; id: string; at: string; job: string; outcome: string; coverageCount: number; findingCount: number; detail: DetailRef}
+  /** `verdict`: the audit job's judged result (its campaign-audit stage-outcome: pass, revise or abandoned); null when none was recorded. */
+  | {type: 'audit'; id: string; at: string; job: string; outcome: string; verdict: string | null; coverageCount: number; findingCount: number; detail: DetailRef}
   | {type: 'finding'; id: string; claim: Preview; state: string; detail: DetailRef}
   | {type: 'decision'; id: string; seq: number; at: string | null; kind: string; oneLine: Preview; ruledBy: {type: 'architect'; command: string | null} | {type: 'judgment'; role: 'verifier'} | {type: 'executor'}; detail: DetailRef};
 export type ResourceNow = {

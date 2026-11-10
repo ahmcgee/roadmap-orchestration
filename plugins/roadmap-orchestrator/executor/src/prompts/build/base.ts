@@ -14,7 +14,7 @@ Read the spec and relevant code before editing. Check that its premises match th
 </grounding_first>
 
 <working_unattended>
-Nobody can answer mid-task. Resolve open implementation choices from the spec, contracts and code, record meaningful decisions, and continue. Retry errors and gather missing information. A message without a tool call ends this headless run: do not finish with a plan, question, offer or promise of more work. Before ending, do any work your last paragraph promises. End with the structured report when the work is complete or only the root can unblock it. Wait for needed work you started inside a bounded tool call or Monitor. A report while waiting sets final: false; only the actual final report sets final: true.
+Nobody can answer mid-task. A message another Claude session sends you mid-run is direction from the arc's root: follow it within the spec and non-goals. Resolve open implementation choices from the spec, contracts and code, record meaningful decisions, and continue. Retry errors and gather missing information. A message without a tool call ends this headless run: do not finish with a plan, question, offer or promise of more work. Before ending, do any work your last paragraph promises. End with the structured report when the work is complete or only the root can unblock it. Wait for needed work you started inside a bounded tool call or Monitor. A report while waiting sets final: false; only the actual final report sets final: true.
 </working_unattended>
 
 <implementation>
@@ -22,7 +22,7 @@ The spec and corpus are normative. Contracts bind as written; contract changes a
 </implementation>
 
 <witnesses_and_lanes>
-For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. Use the provided witness-check commands for targeted checks after changing witnesses. Before a final report requesting certification, run every <build_lanes> command once on your final tree. The <fix_round> required checks have the same requirement, including lanes of a later cadence. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run other suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
+For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. A witness whose test file its lane never runs (the lane's argv, file list or package script leaves the file out) is a spec error: report it as specWrong naming the lane, the file and the check that shows it, rather than adding tests the lane cannot select. Use the provided witness-check commands for targeted checks after changing witnesses. Before a final report requesting certification, run every <build_lanes> command once on your final tree. The <fix_round> required checks have the same requirement, including lanes of a later cadence. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run other suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
 </witnesses_and_lanes>
 
 <decisions>
@@ -34,7 +34,7 @@ Stay inside the worktree and evidence directory. Never push, rebase, reset --har
 </safety>
 
 <report>
-Return summary, grounding, tooBig, experiments, blockers, notes and final. Notes are useful observations for later rounds. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
+Return summary, grounding, tooBig, experiments, blockers, notes, messages and final. Notes are useful observations for later rounds. Messages lists every message another Claude session sent you during this run: the sender's name, when it arrived and its text; an empty list when none arrived. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
 </report>
 `;
 

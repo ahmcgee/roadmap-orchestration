@@ -53,7 +53,7 @@ import { removeCheckout } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
 import { isActive, openFinding, raisedWith, ruleFinding } from '../holistic/findings.ts';
 import type { Vision } from '../holistic/types.ts';
-import { type Milestone, type PlanM1, advancesOf, milestoneOf, milestonesOf, resourceEnvironments, walkRoundsOf } from '../input/plan.ts';
+import { type Milestone, type PlanM1, advancesOf, milestoneMembers, milestoneOf, milestonesOf, resourceEnvironments, walkRoundsOf } from '../input/plan.ts';
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import {
   type BackendCallOutcome, type RepairTurn, type StageContext, arcSeat, callActingJudge, recordedArcCall, repairTurnOf, runOp, verdictOf,
@@ -165,7 +165,7 @@ function inputsOf(ctx: StageContext, w: WalkRecord, m: Milestone, product: Insta
     tweaks: keptTweaks(ctx, m),
     findings: openFindings(ctx, m),
     product,
-    units: ctx.plan().units.filter((u) => m.units.includes(u.id) && view.unit(u.id).status === 'retired').map((u) => {
+    units: ctx.plan().units.filter((u) => milestoneMembers(ctx.plan(), m).includes(u.id) && view.unit(u.id).status === 'retired').map((u) => {
       const spec = loadUnitSpec(ctx, u).spec;
       return { unit: u.id, rev: spec.rev, markdown: renderSpec(spec) };
     }),

@@ -23,6 +23,8 @@ export const outcomeWords = (outcome:string):string => outcomes[outcome]?.[0] ??
 export const outcomeSignal = (outcome:string):Signal => outcomes[outcome]?.[1] ?? 'pending';
 /** A run's own result. A run that succeeded only finished: a review's verdict is its stage result, not the run's. */
 export const runOutcomeWords = (outcome:string):string => outcome==='success'?'Run finished':outcomeWords(outcome);
+/** An audit's result: its judged verdict when recorded (as `status` shows it), else how its job ended. */
+export const auditResultWords = (a:{verdict:string|null;outcome:string}):string => a.verdict?({pass:'Pass (no problems found)',revise:'Revise (found problems)',abandoned:'Abandoned'} as Record<string,string>)[a.verdict]??plainWords(a.verdict):a.outcome==='completed'?'Finished':plainWords(a.outcome);
 export const decisionKindWords = (kind:string):string => ({ruling:'Ruling',patch:'Patched',reenter:'Re-entered',cut:'Withdrawn',steer:'Steered',divergence:'Divergence',reverse:'Reversed'} as Record<string,string>)[kind] ?? plainWords(kind);
 export const ruledByWords = (r:{type:string;role?:string}):string => r.type==='architect'?'Architect':r.type==='judgment'&&r.role?roleWords(r.role):plainWords(r.type);
 export const holdClassWords = (c:string):string => ({'usage-limit':'Usage limit','rate-limit':'Rate limit',auth:'Sign-in needed',outage:'Outage'} as Record<string,string>)[c] ?? plainWords(c);
@@ -42,25 +44,35 @@ export const signalWords = {passed:'Passed',active:'Running',held:'On hold',fail
 export const reasonWords = (reason:string):string => ({'cpu-tokens':'CPU capacity','cpu-pressure':'CPU pressure','memory-pressure':'Memory pressure','publication-slot':'Integration slot','admission-hold:base-red':'Baseline hold','admission-hold:dependency':'Dependency','admission-hold:milestone':'Milestone gate','admission-hold:paused':'Paused','admission-hold:host-pressure':'Host pressure'}[reason] ?? reason.replace(/^admission-hold:/,'').replace(/^named-resource:/,'Resource: ').replaceAll('-',' '));
 /** "u32", "u32 and u34", "u32, u34 and u36". */
 export const listWords = (items:readonly string[]):string => items.length<2?items.join(''):`${items.slice(0,-1).join(', ')} and ${items.at(-1)}`;
-export function waitWords(w:WaitingFor|null):string[] {
+/** What a unit waits for, in words. `milestones` says why each unpassed milestone has not passed (console/milestones.ts). */
+export function waitWords(w:WaitingFor|null,milestones:ReadonlyMap<string,string>):string[] {
  if(!w)return[];
- const deps=[...w.deps,...w.admission.flatMap(a=>a.type==='dependency'?[a.unit]:[])],out=[...(deps.length?[`Waiting for ${listWords([...new Set(deps)])}`]:[]),...w.milestones.map(m=>`Milestone ${m} has not passed`),...w.edges.map(d=>`Waiting for decision ${d}`)];
- for(const a of w.admission){switch(a.type){case 'dependency':break;case 'milestone':out.push(`Milestone ${a.milestone} has not passed`);break;case 'base-red':out.push('Baseline hold: baseline checks are failing');break;case 'blocking-item':out.push(`Human decision needed: ${a.id}`);break;case 'host-pressure':out.push('Host CPU pressure');break;case 'known-defect':out.push(`Waiting for fix from ${a.fixUnit}`);break;case 'backend-parked':out.push(`${a.backend} is parked`);break;default:out.push(reasonWords(a.type));}}
+ const unpassed=(m:string)=>`Milestone ${m} has not passed${milestones.has(m)?`: ${milestones.get(m)}`:''}`;
+ const deps=[...w.deps,...w.admission.flatMap(a=>a.type==='dependency'?[a.unit]:[])],out=[...(deps.length?[`Waiting for ${listWords([...new Set(deps)])}`]:[]),...w.milestones.map(unpassed),...w.edges.map(d=>`Waiting for decision ${d}`)];
+ for(const a of w.admission){switch(a.type){case 'dependency':break;case 'milestone':out.push(unpassed(a.milestone));break;case 'base-red':out.push('Baseline hold: baseline checks are failing');break;case 'blocking-item':out.push(`Human decision needed: ${a.id}`);break;case 'host-pressure':out.push('Host CPU pressure');break;case 'known-defect':out.push(`Waiting for fix from ${a.fixUnit}`);break;case 'backend-parked':out.push(`${a.backend} is parked`);break;default:out.push(reasonWords(a.type));}}
  if(w.pressureBlocked)out.push('Host CPU or memory pressure');if(w.envBlocked)out.push('Resource environment is unavailable');
  if(w.resources){if(w.resources.publication)out.push('Queued for the integration slot');if(w.resources.cpu)out.push(`Waiting for ${w.resources.cpu} CPU cores`);for(const r of [...w.resources.named,...w.resources.pools])out.push(`Waiting for resource ${r}`);}
  return [...new Set(out)];
 }
-/** Human display text is separate from the complete agent-facing intent. */
-export function shortUnitTitle(intent: string, fallback = 'Untitled unit'): string {
+/**
+ * Human display text is separate from the complete agent-facing intent. Code, paths and identifiers are dropped, except
+ * the ids of the arc's own `units` ("Continues u-web-read's work"); a leading ruling reference ("C-356: ...") stays a prefix.
+ */
+export function shortUnitTitle(intent: string, fallback = 'Untitled unit', units: ReadonlySet<string> = new Set()): string {
  const heading = /^# ([^\n]+)\n/.exec(intent)?.[1]?.trim();
- const prose = intent
+ const kept: string[] = [];
+ const restore = (text: string) => text.replace(/\uE000(\d+)\uE001/g, (_, n: string) => kept[Number(n)]!);
+ const stripped = intent
+  .replace(/`?([A-Za-z0-9][\w.-]*[A-Za-z0-9])`?/g, (match, id: string) => units.has(id) ? `\uE000${kept.push(id) - 1}\uE001` : match)
   .replace(/\b(?:contract|spec):[\w:#./-]+/gi, '')
   .replace(/`[^`]+`/g, '')
   .replace(/(?:https?:\/\/|(?:\.?\.?\/)?[\w@*{}.-]+\/)[^\s,;]+/g, '')
   .replace(/\b[\w*-]+\.(?:[cm]?[jt]sx?|json|md|css|html|ya?ml|toml|sh)\b/g, '')
-  .replace(/\b(?:[a-z]+(?:[A-Z][a-z0-9]+)+|[a-z0-9]+(?:[_-][a-z0-9]+)+)\b/g, '')
-  .split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
+  .replace(/\b(?:[a-z]+(?:[A-Z][a-z0-9]+)+|[a-z0-9]+(?:[_-][a-z0-9]+)+)\b/g, '');
+ const ruling = /^\s*([A-Z][A-Z0-9]*-\d+):\s+/.exec(stripped);
+ const first = (ruling ? stripped.slice(ruling[0].length) : stripped).split(/(?:[.;!?](?:\s|$)|\n|:\s)/, 1)[0]!
   .replace(/\s+/g, ' ').replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '').trim();
+ const prose = restore(ruling ? (first ? `${ruling[1]}: ${first}` : ruling[1]!) : first);
  const value = heading || prose || fallback;
  // Three condensed lines can carry the complete action and its system/slice.
  // Only genuinely long prose is elided, at the tail rather than in the middle.

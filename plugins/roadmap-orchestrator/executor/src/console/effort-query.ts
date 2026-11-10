@@ -10,6 +10,7 @@ import { resourceQueue } from './resources.ts';
 import { unitSignal } from './signals.ts';
 import { journeyMs, stageFinished } from './indexes.ts';
 import { waitWords, stageWords } from './vocabulary.ts';
+import { milestoneReasons } from './milestones.ts';
 import { preview, versioned } from './views.ts';
 import type { Subject } from './view-protocol.ts';
 import type { EffortFilters, EffortTotals, EffortUnit, EffortView, EffortContribution, EffortScopeView } from './effort-protocol.ts';
@@ -35,11 +36,11 @@ export class ConsoleEffort {
       const facets={unit:[...index.identities.keys()],milestone:(e.data.plan?.milestones??[]).map(m=>String(m.id)),system:[...new Set([...index.identities.values()].flatMap(u=>u.systems))].sort()};
       known(filters.unit,facets.unit,'unit');known(filters.milestone,facets.milestone,'milestone');known(filters.system,facets.system,'system');
       known(filters.state,['preparing','ready','running','waiting','blocked','held','parked','awaiting-admission','merged','cut','superseded'],'current unit state');
-      const queues=resourceQueue(e.data.display.status.host),rows=new Map<string,EffortUnit>();
+      const queues=resourceQueue(e.data.display.status.host),rows=new Map<string,EffortUnit>(),why=milestoneReasons(e);
       for(const b of base){
         const u=b.subject.type==='unit'?states.find(u=>u.unit===b.subject.id):undefined;
         // Use the complete source reasons, then bound each preview explicitly with a unit detail target.
-        const all=u?unitReasons(u,index,queues):[];
+        const all=u?unitReasons(u,index,queues,why):[];
         const elapsedMs=journeyMs(b.lifetime.startedAt,b.lifetime.endedAt,bounds.terminalAt??e.checkedAt);
         rows.set(key(b.subject),{...empty(),id:key(b.subject),subject:b.subject,detailKey:b.subject.type==='unit'&&u?null:effortDetailKey(key(b.subject)),contributorCount:0,titleTruncated:(index.identities.get(b.subject.id)?.title.length??b.subject.title.length)>b.subject.title.length,signal:u?unitSignal(u.state):null,state:b.state,stage:b.stage,stageFinished:u&&b.stage!==null?stageFinished(index.stages.byUnit.get(u.unit),b.stage):false,systems:b.systems,
           blockers:{reasons:all.slice(0,8).map(text=>preview(text,{type:'unit',id:b.subject.id})),count:all.length,waitSince:u?queues.find(q=>q.unit===u.unit)?.queuedAt===undefined?null:new Date(queues.find(q=>q.unit===u.unit)!.queuedAt!).toISOString():null},
@@ -50,7 +51,7 @@ export class ConsoleEffort {
       const selected=(s:Subject)=>{
         const u=s.type==='unit'?index.identities.get(s.id):undefined,r=rows.get(key(s));
         return (!filters.subject.length||filters.subject.includes(key(s)))&&(!filters.unit.length||!!u&&filters.unit.includes(s.id))&&(!filters.system.length||!!u&&u.systems.some(v=>filters.system.includes(v)))
-          &&(!filters.milestone.length||!!u&&(e.data.plan?.milestones??[]).some(m=>filters.milestone.includes(m.id)&&m.units.includes(s.id as never)))
+          &&(!filters.milestone.length||!!u&&e.data.display.status.milestones.some(m=>filters.milestone.includes(m.id)&&m.members.includes(s.id as never)))
           &&(!filters.state.length||!!r?.state&&filters.state.includes(r.state))&& (filters.blocked==='all'||!!r&&Boolean(r.blockers.count)===(filters.blocked==='1'))
           &&(!filters.q||`${s.id} ${u?.title??s.title}`.toLowerCase().includes(filters.q));
       };
@@ -110,8 +111,8 @@ export class ConsoleEffort {
   }
 
 }
-function unitReasons(u:Envelope['data']['display']['status']['units'][number],index:ReturnType<typeof projectionIndex>,queues:ReturnType<typeof resourceQueue>){
-  const reasons=waitWords(u.waitingFor),steps=index.stages.byUnit.get(u.unit)??[];
+function unitReasons(u:Envelope['data']['display']['status']['units'][number],index:ReturnType<typeof projectionIndex>,queues:ReturnType<typeof resourceQueue>,why:ReadonlyMap<string,string>){
+  const reasons=waitWords(u.waitingFor,why),steps=index.stages.byUnit.get(u.unit)??[];
   if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${steps.at(-1)?`: ${steps.at(-1)!.outcome}`:''}`);
   const position=queues.filter(q=>q.request.publication).findIndex(q=>q.unit===u.unit);if(position>=0)reasons.push(`Integration queue position ${position+1}`);
   return reasons;

@@ -79,6 +79,7 @@ export const QUEUED_APPLY = 'command.apply: an apply queued behind a running sta
 export const REVISION_COMMIT = 'revision.commit: a revision\'s activation (payload, docs ff, plan-applied; M3 G1)';
 export const STEER = 'command.apply: steer (M3: class revision, brief, pre-steer snapshot, steered)';
 export const MERGE_IN = 'command.apply: merge-in (M3: merge-tree plan, mergein.prepare, merged-in)';
+export const RERUN = 'command.apply: rerun (dev.59: lanes-rerun, the waived red\'s lanes again at its commit)';
 export const DOCS_PUBLICATION = 'command.apply: rule, its docs publication (M3 A4: slot, docs.commit, lanes, docs ff, activation, snapshot)';
 export const PREEMPT = 'docs publication preempting a candidate before green (M3 A4, A7: preempt kill of its suite lane)';
 export const LATCH = 'obligation-latched after a unit ff{published}, before its snapshot (M3 B2)';
@@ -927,6 +928,27 @@ export const MATRIX: readonly Row[] = [
         recovery: 'the merge is made (act-end: mergein.prepare done reconciled after recovery; else done live), or the merged-in fact written: nothing is merged twice; one merged-in fact, the applied receipt; the command done reconciled; the unit re-enters at its lanes',
       },
       B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op; the lanes that follow are the driver\'s (mergein.reenters-lanes)' },
+    },
+  },
+  {
+    // `rerun u1/lanes#n/estate` of a unit whose lanes just went red (its fix round decided), applied by a child
+    // (test/fixtures/mergein-child.ts, which applies any one pending command); recovery runs the command's reconciler.
+    row: RERUN,
+    test: 'test/rerun.test.ts',
+    cells: {
+      B1: { status: 'excluded', why: EXCLUDED_B1 },
+      B2: {
+        status: 'crash',
+        labels: ['command.apply.before-effect'],
+        recovery: 'accepted receipt only, op open: the reconciler checks the rerun again and writes the one lanes-rerun fact and the applied receipt; the command done reconciled',
+      },
+      B3: { status: 'excluded', why: 'no external operation: the effect is one durable journal fact' },
+      B4: {
+        status: 'crash',
+        labels: ['rerun.after-fact', 'command.apply.after-effect', 'command.apply.after-receipt'],
+        recovery: 'the lanes-rerun fact is the postcondition: no second fact; the applied receipt written if missing, or read; the command done reconciled; the unit\'s rerun entry replays from the fold',
+      },
+      B5: { status: 'excluded', why: 'the done is one journal append (journal.append) and closes the op; the lanes that follow are the driver\'s (rerun.green-from-fix-decision)' },
     },
   },
   {
@@ -1893,7 +1915,7 @@ export const MATRIX: readonly Row[] = [
       B5: {
         status: 'crash',
         labels: ['redlane.after-class'],
-        recovery: 'the class persisted, the rerun not begun: the crashed lanes attempt is abandoned; the restart runs the series again (its first run, then the diagnostic rerun) and the crashed attempt\'s class stays on disk; the outcomes of an uncrashed run',
+        recovery: 'the class persisted, the rerun not begun: the crashed lanes attempt is abandoned; the restart runs the series again (its first run, then the diagnostic rerun; dev.59: after a crashed test-only run\'s `targeted` class, the lane\'s argv once, its newest run being red) and the crashed attempt\'s class stays on disk; the outcomes of an uncrashed run',
       },
     },
   },

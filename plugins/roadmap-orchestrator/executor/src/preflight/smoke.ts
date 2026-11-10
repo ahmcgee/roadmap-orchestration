@@ -23,7 +23,7 @@ backendArgv,freshClaudeImplementerSession,freshJudgmentSession,promptBytes,
 import { detectContainmentMode } from '../contain/detect.ts';
 import type { BackendParkClass,SpawnSubject } from '../core/events.ts';
 import { durableMkdir,durableWrite } from '../core/fsx.ts';
-import { type InvocationId,type RoutingRev,invocationDirName,opKey,sha256 } from '../core/ids.ts';
+import { type ArcId,type InvocationId,type RoutingRev,buildSessionName,invocationDirName,opKey,sha256 } from '../core/ids.ts';
 import type { Journal } from '../core/interfaces.ts';
 import { type JsonValue,canonicalJson,sha256Hex } from '../core/json.ts';
 import { exitCpuOf } from '../core/projections.ts';
@@ -162,7 +162,7 @@ type Prepared = Readonly<{
  * runner, the adapter's result.json, for a backend the usage fact, then the done record.
  */
 async function run(
-  ctx: InvocationContext, subject: SmokeSubject, deadlineMs: number, prepare: (invDir: AbsPath) => Prepared,
+  ctx: InvocationContext, subject: SmokeSubject, deadlineMs: number, prepare: (invDir: AbsPath, inv: InvocationId) => Prepared,
 ): Promise<Invoked<ResultFile>> {
   const deadlineAt = isoTimeOf(new Date(Date.now() + deadlineMs));
   let planned: Readonly<{ invDir: AbsPath; prepared: Prepared; launch: LaunchFile }> | null = null;
@@ -173,7 +173,7 @@ async function run(
     deadlineAt,
     body: (op, inv) => {
       const invDir = absPath(join(ctx.runDir, 'inv', invocationDirName(inv)));
-      const prepared = prepare(invDir);
+      const prepared = prepare(invDir, inv);
       const launch = prepareLaunch({
         v: SCHEMA_VERSION, arc: ctx.journal.view.arc, op, inv, argv: prepared.argv, cwd: prepared.cwd, env: ctx.hostEnv,
         stdinPath: STDIN_FILE in prepared.inputs ? absPath(join(invDir, STDIN_FILE)) : null,
@@ -203,14 +203,15 @@ async function run(
   return { inv, invDir, argv: prepared.argv, exit: end.exit, result };
 }
 
-function backendCall(b: BackendInvocation, invDir: AbsPath): BackendCall {
+/** A smoke's Claude build is named as a unit's is (dev.59), its check name standing for the unit: it runs production's argv. */
+function backendCall(b: BackendInvocation, arc: ArcId, invDir: AbsPath, inv: InvocationId): BackendCall {
   const schemaText = canonicalJson(b.schema);
   const r = b.request;
   switch (r.kind) {
     case 'claude-judgment':
       return { ...r, system: b.system, schemaText };
     case 'claude-build':
-      return { ...r, system: b.system, schemaText, mcpConfig: null };
+      return { ...r, name: buildSessionName(arc, b.check, inv), system: b.system, schemaText, mcpConfig: null };
     case 'codex-build':
       return {
         ...r, system: b.system, cwd: b.cwd,
@@ -226,7 +227,7 @@ function backendTerminal(b: BackendInvocation, call: BackendCall, invDir: AbsPat
     case 'claude-acting-judge':
       return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: call.role, session: call.session };
     case 'claude-build':
-      return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'build', session: call.session };
+      return { ...base, outputPath: absPath(join(invDir, STDOUT_FILE)), role: 'build', session: call.session, name: call.name };
     case 'codex-build':
       return { ...base, outputPath: call.outputPath, role: 'build', session: call.session };
   }
@@ -241,8 +242,8 @@ export async function invokeBackend(ctx: InvocationContext, b: BackendInvocation
     check: b.check,
     target: { type: 'backend', backend: b.request.triple.backend, ...seatRef(roleOf(b.request), b.tier), routingRev: b.routingRev },
   };
-  const done = await run(ctx, subject, b.deadlineMs ?? SMOKE_DEADLINE_MS, (invDir) => {
-    const call = backendCall(b, invDir);
+  const done = await run(ctx, subject, b.deadlineMs ?? SMOKE_DEADLINE_MS, (invDir, inv) => {
+    const call = backendCall(b, ctx.journal.view.arc, invDir, inv);
     return {
       argv: backendArgv(call),
       cwd: b.cwd,

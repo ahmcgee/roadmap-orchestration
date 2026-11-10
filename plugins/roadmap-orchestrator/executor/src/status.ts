@@ -99,11 +99,16 @@ import { type Certification,type WorkRun,certificationReader,workRuns } from './
 //                      src/pipeline/failures.ts: the log and each red run's red.json, never raw evidence); the lanes
 //                      park's needs-user lists the same
 //   units[].running.lane  the lane, journey or mutant run open in the running attempt now (8c)
+//   units[].running.session  (dev.59) the running Claude build's cross-session name, the exact SendMessage address; null
+//                      when no Claude build runs (it disappears when the build ends)
 //   units[].gate  (dev.12 round 2) the latest gate answer: decision, findings by class, and `unreviewed` (src/pipeline/gate.ts)
+//   units[].lineageAttempts  (dev.59) the lineage's builds and judged stages against the total-attempt caps (16/40)
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
+//   units[].carries / carriedBy  (dev.59, C4) the cut unit a fresh unit carries forward (plan `carries`), and back
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
-//                 passed, its last round, its walks and its active walkthrough findings; `edges` adds each node edge
+//                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
+//                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge
 import { existsSync,statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -120,7 +125,7 @@ OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
+import { type ArcId,type BuildSessionName,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
@@ -152,6 +157,9 @@ import { type Supervision,supervision } from './watch-lease.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,type OpenBlockingDigest,supersededItems } from './needsuser.ts';
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
 import type { BriefArc,OwnerAnswer,StageTiming } from './phase0/types.ts';
+import { lineageAttempts } from './pipeline/attempts.ts';
+import { invocationDir } from './pipeline/invoke.ts';
+import { runnerFiles } from './runner/files.ts';
 import { type LaneFailure,laneFailures } from './pipeline/failures.ts';
 import { type GateAnswerView,latestGateAnswer } from './pipeline/gate.ts';
 import { observations } from './pipeline/lanes.ts';
@@ -175,7 +183,7 @@ type ArcHold,type CompletionBlocker,type HolisticContexts,type JobQueueEntry,typ
 readOnlyContexts,recordedLaneEnv,schedFile,unitSettled,
 } from './schedule/scheduler.ts';
 import type { AdmissionConstraint,Rank,ResourceRequest } from './schedule/types.ts';
-import { type MilestoneState,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
+import { type MilestoneState,milestoneMembership,milestoneProgress,milestoneState,walksOf } from './walk/milestones.ts';
 import { milestoneEdges,milestonePassed,milestoneWaits } from './walk/node.ts';
 
 export type OwnerState = Readonly<{ state: 'alive' | 'dead' | 'none'; generation: number | null; pid: number | null }>;
@@ -254,6 +262,11 @@ export type UnitRunning = Readonly<{
   stage: Stage; attempt: number; elapsed: number | null; deadline: IsoTime | null; resources: readonly ResourceUnit[];
   /** M4a rev 3 (8c): the lane run open in the attempt now (the latest open lane, journey or mutant spawn); null between runs. */
   lane: RunningLane | null;
+  /**
+   * dev.59: the cross-session name of the Claude build running in the attempt now, the exact `SendMessage` address (its
+   * launch.json `terminal.name`); null when none runs: between builds, on a Codex build, or a build launched before dev.59.
+   */
+  session: BuildSessionName | null;
 }>;
 
 /** A lane run in progress: a spec or suite lane, an arc lane's journey run (witness presence, candidate), or a mutant run. */
@@ -266,6 +279,11 @@ export type UnitStatusLine = Readonly<{
   status: string;
   attempts: number;
   chargeableFailures: number;
+  /**
+   * dev.59 (scope item 4): the lineage's builds and judged stages (the unit's and each unit it re-enters', `attemptCounts`)
+   * against the total-attempt caps, which a re-entry's `reset` never clears.
+   */
+  lineageAttempts: Readonly<{ builds: number; judged: number; buildCap: number; judgedCap: number }>;
   certification: Certification | null;
   work: readonly WorkRun[];
   risk: RiskTier | null;
@@ -282,6 +300,10 @@ export type UnitStatusLine = Readonly<{
   lineage: Lineage | null;
   /** The unit that re-entered this one, once it is superseded. */
   supersededBy: UnitId | null;
+  /** dev.59 (C4): the cut unit whose work this one carries forward, and from which commit (plan `carries`); null otherwise. */
+  carries: Readonly<{ unit: UnitId; tip: Sha }> | null;
+  /** dev.59 (C4): on a cut unit, the units of the plan carrying its work forward, in plan order. */
+  carriedBy: readonly UnitId[];
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
   running: UnitRunning | null;
@@ -405,7 +427,7 @@ export type DivergenceView = Readonly<{
   compensation: Compensation;
 }>;
 
-export const DECISION_KINDS = ['ruling', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
+export const DECISION_KINDS = ['ruling', 'patch', 'reenter', 'cut', 'steer', 'rerun', 'divergence', 'reverse'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 /** Who decided: the root, verifier or executor. */
 export type RuledBy =
@@ -553,6 +575,12 @@ export type Status = Readonly<{
 export type MilestoneView = Readonly<{
   id: MilestoneId; state: MilestoneState; passed: boolean; round: number; walks: readonly Readonly<{ job: JobId; round: number; outcome: WalkOutcome | null }>[];
   findings: readonly FindingId[];
+  /**
+   * dev.59 (scope item 3, C4; src/walk/milestones.ts `milestoneMembership`): who counts toward it. `members`: its units, their
+   * re-entries and the units carrying a cut one forward, in plan order; `withdrawn`: those superseded or cut; `live`: the
+   * rest, `merged` of them merged. It is reached when every live member merged.
+   */
+  members: readonly UnitId[]; withdrawn: readonly UnitId[]; live: number; merged: number;
 }>;
 
 export type KnownDefectView = Readonly<{ id: KnownDefectId; match: KnownDefectMatch; fixUnit: UnitId; fixMerged: boolean; holds: readonly UnitId[] }>;
@@ -705,27 +733,36 @@ function intentTimes(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
   return out;
 }
 
-function runningOf(view: JournalView, u: UnitState, times: Readonly<{ starts: ReadonlyMap<string, IsoTime>; intents: ReadonlyMap<string, IsoTime> }>, holds: readonly ResourceUnit[], now: number): UnitRunning {
+/** dev.59: the session name of a Claude build spawn's launch, read once its launch.json exists (null before, or for Codex). */
+function buildSessionOf(runDir: AbsPath, inv: InvocationId): BuildSessionName | null {
+  const terminal = runnerFiles(invocationDir(runDir, inv), inv).read('launch.json')?.terminal;
+  return terminal?.type === 'backend' && terminal.role === 'build' ? terminal.name ?? null : null;
+}
+
+function runningOf(runDir: AbsPath, view: JournalView, u: UnitState, times: Readonly<{ starts: ReadonlyMap<string, IsoTime>; intents: ReadonlyMap<string, IsoTime> }>, holds: readonly ResourceUnit[], now: number): UnitRunning {
   const { stage, attempt } = u.open ?? { stage: u.stage, attempt: u.counters.attempts };
   const started = times.starts.get(`${u.unit}/${stage}#${attempt}`);
   const mine = view.openIntents().filter((i) => i.parent.type === 'stage' && i.parent.unit === u.unit && i.parent.stage === stage && i.parent.attempt === attempt);
   const deadlines = mine.flatMap((i) => (i.deadlineAt !== null ? [i.deadlineAt] : [])).sort();
   // 8c: the latest open lane-like spawn of the attempt.
   let lane: RunningLane | null = null;
+  let session: BuildSessionName | null = null;
   for (const i of mine) {
     if (i.kind !== 'proc.spawn') continue;
     const s = i.expect.subject;
+    if (s.purpose === 'backend' && s.role === 'build') session = buildSessionOf(runDir, invocationId(i.op, i.ordinal)) ?? session;
     const set = s.purpose === 'lane' ? s.set : s.purpose === 'journey' || s.purpose === 'mutant' ? s.purpose : null;
     if (set === null || (s.purpose !== 'lane' && s.purpose !== 'journey' && s.purpose !== 'mutant')) continue;
     const startedAt = times.intents.get(`${i.op}#${i.ordinal}`);
     if (startedAt === undefined) throw new Error(`open intent ${i.op}#${i.ordinal} is not in the log's events`);
     if (lane === null || startedAt >= lane.startedAt) lane = { id: s.lane, set, inv: invocationId(i.op, i.ordinal), startedAt };
   }
-  return { stage, attempt, elapsed: started === undefined ? null : now - Date.parse(started), deadline: deadlines[0] ?? null, resources: holds, lane };
+  return { stage, attempt, elapsed: started === undefined ? null : now - Date.parse(started), deadline: deadlines[0] ?? null, resources: holds, lane, session };
 }
 
 /** What the per-unit derivation reads besides the log: the scheduler's view (null without a live executor). */
 type Inputs = Readonly<{
+  runDir: AbsPath;
   view: JournalView;
   plan: PlanM1;
   sched: SchedFile | null;
@@ -821,7 +858,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
   const after = u.status === 'active' ? unit.after.filter((d) => view.unit(effectiveDependency(view, d)).status !== 'retired') : [];
   return {
     unit: unit.id, stage: u.stage, status: after.length > 0 ? `held-after:${after.join(',')}` : u.status, attempts: u.counters.attempts,
-    chargeableFailures: u.counters.chargeableFailures, risk: u.risk, seat: seatOf(view, unit.id),
+    chargeableFailures: u.counters.chargeableFailures, lineageAttempts: lineageAttemptsOf(view, unit.id), risk: u.risk, seat: seatOf(view, unit.id),
     state,
     waitingFor,
     holds,
@@ -829,9 +866,16 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     park: parkOf(view, u),
     lineage: u.lineage,
     supersededBy: u.supersededBy,
+    carries: unit.carries ?? null,
+    carriedBy: plan.units.filter((p) => p.carries?.unit === unit.id).map((p) => p.id),
     buildTier: u.buildTier,
-    running: state === 'running' || state === 'preparing' ? runningOf(view, u, times, holds, now) : null,
+    running: state === 'running' || state === 'preparing' ? runningOf(x.runDir, view, u, times, holds, now) : null,
   };
+}
+
+function lineageAttemptsOf(view: JournalView, unit: UnitId): UnitStatusLine['lineageAttempts'] {
+  const { builds, judged, buildCap, judgedCap } = lineageAttempts(view, unit);
+  return { builds, judged, buildCap, judgedCap };
 }
 
 function edgesOf(view: JournalView, plan: PlanM1): readonly EdgeView[] {
@@ -956,7 +1000,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)), plan: () => plan! });
   const inputs: Inputs | null = plan === null ? null : {
-    view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
+    runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
   };
   const times = { starts: attemptStarts(events), intents: intentTimes(events) };
   const now = timing?.clock ?? Date.now();
@@ -1307,7 +1351,7 @@ function runDirDecisions(runDir: AbsPath, arc: ArcId): DecisionReader {
 
 /**
  * The decisions after `since`, in log order: each revision's rulings, root apply or reversal, cuts, re-entries and spec
- * patches; the executor's spec patches; steers; and divergences. The brief uses its coverage vector's high-water.
+ * patches; the executor's spec patches; steers; lanes reruns (dev.59); and divergences. The brief uses its coverage vector's high-water.
  */
 export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
@@ -1343,6 +1387,13 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
     if (f.kind === 'steered') {
       out.push({
         seq: e.seq, kind: 'steer', id: f.unit, oneLine: `${f.unit} steered for ${f.budgetMin} min${f.resume ? ', then resumes' : ', then parks'}`,
+        ruledBy: { type: 'architect', command: f.command },
+      });
+    }
+    // dev.59: a lanes rerun the root ordered, with the cause it gave.
+    if (f.kind === 'lanes-rerun') {
+      out.push({
+        seq: e.seq, kind: 'rerun', id: f.unit, oneLine: `${f.unit} lanes rerun at ${f.at.slice(0, 12)}: ${f.unit}/lanes#${f.attempt}/${f.lane} waived (${f.cause}: ${f.evidence})`,
         ruledBy: { type: 'architect', command: f.command },
       });
     }
@@ -1692,6 +1743,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
 function milestoneViews(view: JournalView, plan: PlanM1, repairs: readonly RepairUnit[]): readonly MilestoneView[] {
   return milestonesOf(plan).map((m) => {
     const walks = walksOf(view, m.id);
+    const membership = milestoneMembership(view, plan, m);
     return {
       id: m.id,
       state: milestoneState(view, m.id, milestoneProgress(view, plan, m, repairs)),
@@ -1699,6 +1751,7 @@ function milestoneViews(view: JournalView, plan: PlanM1, repairs: readonly Repai
       round: walks.filter((w) => w.ended !== null && w.ended.outcome !== 'abandoned').at(-1)?.round ?? 0,
       walks: walks.map((w) => ({ job: w.job, round: w.round, outcome: w.ended?.outcome ?? null })),
       findings: canonicalIds(view.holistic().findings.filter((f) => f.lens === 'walkthrough' && f.milestone === m.id && isActive(f)).map((f) => f.id)),
+      members: membership.members, withdrawn: membership.withdrawn, live: membership.live.length, merged: membership.merged.length,
     };
   });
 }

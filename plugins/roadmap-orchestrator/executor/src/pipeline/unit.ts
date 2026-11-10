@@ -61,7 +61,7 @@ import { basename,join } from 'node:path';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import { specReopenable,JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
+import { RERUN_REDS,specReopenable,JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
 import { type OpId,type ResourceInstance,type Sha,type UnitId,invocationId } from '../core/ids.ts';
 import { mutantOf } from '../core/projections.ts';
 import { type NeedsUserContent,type NeedsUserReason,STDERR_FILE,STDOUT_FILE,type Stage } from '../core/records.ts';
@@ -73,8 +73,9 @@ import { candidateLaneDir,smokeLaneDir } from '../git/snapshot.ts';
 import { WorktreeRecoveryError,standing } from '../git/worktree.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { regenerateLanes } from '../input/derived.ts';
-import type { PlanUnit } from '../input/plan.ts';
-import { raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
+import type { PlanM1,PlanUnit } from '../input/plan.ts';
+import { planOf } from '../input/inforce.ts';
+import { chargeableBoundRecommendation,raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
 import { dirtyLanesDirective,revertedPathsDirective } from '../prompts/directives.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
@@ -86,7 +87,7 @@ import { type Reservation,type StageHolder,heldReservation,holderUnits,resourceT
 import type { Role } from '../routing/types.ts';
 import { type NextStage,nextStage } from '../schedule/ready.ts';
 import { ADMISSION_STAGES } from '../schedule/types.ts';
-import { attemptSignals } from './attempts.ts';
+import { attemptSignals,lineageAttempts,lineageAttemptsText } from './attempts.ts';
 import { candidateRed,candidateReentryChange } from './candidate-red.ts';
 import {
 type Cancelled,type StageContext,type StageParent,dispatchOf,evidenceRoot,isCancelled,runOp,unitBranch,unitWorktree,verificationWorktree,witnessWorktree,workDir,
@@ -163,11 +164,13 @@ function haltEvidence(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact): r
 /**
  * The needs-user content of a halt the table decided (the unit's latest decided outcome), when the stage
  * had nothing more specific to say. A park's recommendation says exactly what `resume` does for it: a
- * `routing-changed` park re-enters once its implementer seat's routing is restored; any other park at a
- * judgment stage or build spec-wrong re-opens after a spec edit; any other is re-entered under a new unit id.
+ * `routing-changed` park re-enters once its implementer seat's routing is restored; a park at the chargeable bound is
+ * re-entered with `reset` (dev.59: a revision keeps the count), with the lineage's attempts against the caps; any other park
+ * at a judgment stage or build spec-wrong re-opens after a spec edit; any other is re-entered under a new unit id.
  */
 function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop', reason: NeedsUserReason, summary: string): NeedsUserContent {
-  const f = ctx.journal.view.unit(unit.id).decided;
+  const u = ctx.journal.view.unit(unit.id);
+  const f = u.decided;
   if (f === null) throw new Error(`unit ${unit.id} halted without a decided outcome`);
   const { path, spec } = loadUnitSpec(ctx, unit);
   const exceeded = f.detail?.kind === 'context-exceeded' ? f.detail : null;
@@ -195,11 +198,20 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
     : reason === 'steered'
       ? `Review the steer pass (its build and ${f.stage} evidence). \`roadmap resume ${unit.id}\` re-runs ${f.stage} with the pass over, so the pipeline goes on as usual `
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
+    : reason === 'rerun-red'
+      ? rerunRedRecommendation(ctx, unit.id)
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
+    : reason === 'chargeable-bound'
+      ? `${chargeableBoundRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id), u.counters.chargeableFailures, u.bounds.chargeable)} ${lineageAttemptsText(lineageAttempts(ctx.journal.view, unit.id))}`
       : specReopenable(f)
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
+  // dev.59: a lanes red park offers the rerun for a cause outside the tree (never a candidate's: the rerun is the lanes').
+  const offer = f.stage === 'lanes' && (RERUN_REDS as readonly string[]).includes(f.outcome)
+    ? ` If the red's cause is outside the tree (the estate it runs against, or infrastructure), \`roadmap rerun ${unit.id}/lanes#${f.attempt}/<lane> --cause estate|infra --evidence <line>\``
+      + ' runs the lanes again at this commit in a fresh checkout, no build and uncharged, once per lane per head; a red rerun parks for you.'
+    : '';
   return {
     // 1.0.0-dev.17: an executor fault is non-blocking (the arc goes on without the unit; src/schedule/fault.ts).
     blocking: faulted === null,
@@ -214,10 +226,24 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
     ]
       .filter((x) => x !== '').join(' '),
-    recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : recommendation,
+    recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : `${recommendation}${offer}`,
     options: [],
     evidence: haltEvidence(ctx, unit, f),
   };
+}
+
+/** dev.59: what a `rerun-red` park leaves the root: the rerun it ordered, and what `resume` restores. */
+function rerunRedRecommendation(ctx: StageContext, unit: UnitId): string {
+  const u = ctx.journal.view.unit(unit);
+  const ordered = ctx.journal.view.holistic().lanesReruns.filter((r) => r.unit === unit).at(-1);
+  if (u.rerun === null || ordered === undefined) throw new Error(`unit ${unit} parked rerun-red outside a rerun`);
+  const waived = u.rerun.waived;
+  const halts = waived.class === 'park' || waived.class === 'stop' || waived.class === 'retire';
+  return `The lanes rerun you ordered (${ordered.command}, cause ${ordered.cause}: ${ordered.evidence}) was red at ${ordered.at}: the cause is still there, or it is the tree's. `
+    + 'Read its lane failures and evidence. If something outside the tree is still broken, fix it and `roadmap rerun` a red lane of this attempt (each lane reruns once per head). '
+    + (halts
+      ? `\`roadmap resume ${unit}\` is refused: lanes#${waived.attempt}'s park stands, so steer the unit or re-enter it (\`fixes\`: ${unit}/${waived.stage}#${waived.attempt}).`
+      : `\`roadmap resume ${unit}\` ends the rerun and restores lanes#${waived.attempt}'s decision (its fix round, ${waived.chargeable ? 'already charged' : 'uncharged'}); or steer or re-enter the unit.`);
 }
 
 const factSummary = (f: StageOutcomeFact): string => `${f.stage} attempt ${f.attempt} ended ${f.outcome}`;
@@ -307,6 +333,9 @@ function stillRequired(refs: readonly TestRef[], required: readonly RequiredWitn
 /**
  * The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. A
  * red or dirty series is the spec series' or the fast suite's at the salvage SHA (stages.ts `fastSuite`): both are read.
+ * dev.59 (item 8): a suite edit may land while this round waits or runs (classify.ts queues it only behind a running lanes
+ * attempt), so the fast suite series is read by the definitions it ran under, the plan in force at `f`; the checks the round
+ * requires are the definitions in force, so a lane the edit changed is run as it now stands and one it removed is not required.
  */
 function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, tip: Sha): DecidedRound {
   const view = ctx.journal.view;
@@ -316,7 +345,8 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
   const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
   const definitions = [...spec.lanes, ...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes];
-  const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', tip, suiteRoot)];
+  const ran = planAsDecided(ctx, unit.id, f);
+  const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ran), ...ran.suite.lanes], 'suite', tip, suiteRoot)];
   const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
     case 'witnesses-missing': {
@@ -347,6 +377,17 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return laneFixRound(series, dirty, tip, definitions, compared);
     }
   }
+}
+
+/** The plan in force when the unit's decision `f` was recorded (dev.59): the revision its lanes attempt ran under. */
+function planAsDecided(ctx: StageContext, unit: UnitId, f: StageOutcomeFact): PlanM1 {
+  const view = ctx.journal.view;
+  const decided = view.unit(unit).decided;
+  if (decided?.stage !== f.stage || decided.attempt !== f.attempt) throw new Error(`unit ${unit}: ${f.stage}#${f.attempt} is not its decision`);
+  const seq = view.decidedSeq(unit);
+  const fact = seq === null ? null : view.planAppliedAt(seq);
+  if (fact === null) throw new Error(`unit ${unit}: no plan was in force at its decision ${f.stage}#${f.attempt}`);
+  return fact.rev === view.planApplied()?.rev ? ctx.plan() : planOf(ctx.runDir, fact);
 }
 
 /** A reopen keeps the latest failed series' dirty-checkout blocker, read from its snapshot records. */
@@ -443,10 +484,11 @@ const entryTarget = (entry: EntryPoint): Target => (entry.kind === 'steer' ? { s
 
 /**
  * Runs the stage an entry names: a steer round (R11: a fresh session, the brief kept by the command, the budget as its
- * window; the continue of it after a pause), or a merge-in's lanes at the merged unit commit.
+ * window; the continue of it after a pause), a merge-in's lanes at the merged unit commit, or (dev.59) a rerun's lanes at
+ * the unit commit the waived attempt ran on (the stage reads the rerun from the fold, stages.ts `lanes`).
  */
 async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): Promise<StageDone<OutcomeStage> | Cancelled> {
-  if (entry.kind === 'merge-in') return lanes(ctx, unit, unitTip(ctx, unit.id));
+  if (entry.kind === 'merge-in' || entry.kind === 'rerun') return lanes(ctx, unit, unitTip(ctx, unit.id));
   return build(ctx, unit, continued(ctx, unit, { kind: 'steer', brief: steerBrief(ctx.runDir, entry.brief), budgetMin: entry.budgetMin }));
 }
 

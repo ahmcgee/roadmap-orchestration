@@ -14,7 +14,8 @@ import { mapInForce } from './lanes.ts';
 // Plan defects (2026-10-16): before that round is charged, code asks why each missing id of an obligation's witness is
 // missing (`missingWitnessDefects`): a declared witness file its lane never runs (src/holistic/witnessfiles.ts
 // `laneMisses`), or one absent at the salvage SHA and outside the unit's effective scope, so no build of the unit could
-// create it. Any such defect makes the outcome `plan-defect{defects}`: an uncharged park naming them, never a fix round.
+// create it; dev.59 pass 7: or a spec witness item whose testId's file (`specWitnessFile`) its lane never runs. Any such
+// defect makes the outcome `plan-defect{defects}`: an uncharged park naming them, never a fix round.
 //
 // Implementer side (R56): before the build call the executor publishes, write-once, one lane file per fast required
 // witness lane, `<evidenceDir>/witness/<lane>.json` (`WitnessLaneFile`), and gives the build the exact command that runs
@@ -37,7 +38,7 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import { isAncestor } from '../git/ff.ts';
 import { type RequiredWitness, missingWitnesses, requiredWitnesses } from '../holistic/required.ts';
 import { type ArcLaneDef, type PlanDefect, type WitnessLaneFile, planDefectText } from '../holistic/types.ts';
-import { laneMisses } from '../holistic/witnessfiles.ts';
+import { laneMisses, specWitnessFile } from '../holistic/witnessfiles.ts';
 import { gitRun } from '../git/git.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { GateChecks, WitnessCheckCommand } from '../prompts/inputs.ts';
@@ -164,7 +165,8 @@ export async function witnessPresence(ctx: StageContext, unit: PlanUnit, parent:
 /**
  * The plan defects behind `missing` (plan defects, 2026-10-16): per obligation whose witness requires a missing id and
  * declares its files, each file its lane never runs (`witness-not-in-lane`), and each absent at `salvaged` and outside the
- * unit's effective scope (`witness-file-unreachable`, the unit named). Empty when every missing id is the build's to add.
+ * unit's effective scope (`witness-file-unreachable`, the unit named); per missing spec witness item (dev.59 pass 7), its
+ * testId's file when its lane never runs it (`spec-witness-not-in-lane`). Empty when every missing id is the build's to add.
  */
 export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvaged: Sha, missing: readonly TestRef[], required: readonly RequiredWitness[]): readonly PlanDefect[] {
   const { obligations } = holisticInForce(ctx);
@@ -173,7 +175,14 @@ export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvage
   const ids = new Set(required.flatMap((r) => (keys.has(testRefKey(r)) && r.source.type === 'obligation' ? [r.source.id] : [])));
   const map = mapInForce(ctx.journal.view);
   const present = (file: RepoPath): boolean => gitRun(ctx.repo, ['cat-file', '-e', `${salvaged}:${file}`], { okCodes: [0, 128] }).code === 0;
-  return obligations.obligations.filter((o) => ids.has(o.id)).flatMap((o) => {
+  const items = required.flatMap((r): PlanDefect[] => {
+    if (!keys.has(testRefKey(r)) || r.source.type !== 'witness-item') return [];
+    const lane = obligations.lanes.find((l) => l.id === r.lane);
+    const file = lane === undefined ? null : specWitnessFile(lane, r.testId);
+    const misses = lane === undefined || file === null ? null : laneMisses(lane, file);
+    return file === null || misses === null ? [] : [{ type: 'spec-witness-not-in-lane', unit: unit.id, item: r.source.id, lane: r.lane, file, missing: misses }];
+  });
+  const fromObligations = obligations.obligations.filter((o) => ids.has(o.id)).flatMap((o) => {
     const w = o.witness;
     if (w === null || w.files === undefined) return [];
     const lane = obligations.lanes.find((l) => l.id === w.lane);
@@ -184,6 +193,7 @@ export function missingWitnessDefects(ctx: StageContext, unit: PlanUnit, salvage
       return [];
     });
   });
+  return [...fromObligations, ...items];
 }
 
 /** The blocking item of a `plan-defect` park: the defects in sentences, and what fixes them. */

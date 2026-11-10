@@ -74,8 +74,17 @@
 //   purpose: the CLI rewrites `.credentials.json` by temp file and rename, so an arc-private dir linking the
 //   operator's file would fork it at the first OAuth refresh and leave the operator's login dead. An isolated
 //   dir would need a `claude setup-token` token passed as CLAUDE_CODE_OAUTH_TOKEN, which the CLI never refreshes.
+//
+// Cross-session messaging (dev.59, owner ruling 2026-11-10), probed against the real CLI (Claude Code 2.1.314, 2026-11-10):
+// every Claude build, fresh or resumed, passes `--name <BuildSessionName>` (src/core/ids.ts `buildSessionName`), the address
+// another Claude session's `SendMessage` reaches it by (its `--session-id` is not one), and `crossSessionInbound: "accept"`
+// in its `--settings` JSON. Without that setting a bypassPermissions receiver holds a message from a session in another
+// permission mode, and `-p` drops it after about 5 minutes while the sender's tool result still says `success: true`. The
+// receiver reads a message between tool calls; one sent to a name whose process has exited fails as unreachable; only
+// sessions in the same container are reachable. `--bare` would turn the inbox off and is never passed. A judgment gets no
+// name and no inbox. Codex has no inbox: its path is `note` + `pause` + `resume`.
 import { randomUUID } from 'node:crypto';
-import { type JudgmentSessionId, implementerSessionId, judgmentSessionId } from '../core/ids.ts';
+import { type BuildSessionName,type JudgmentSessionId,implementerSessionId,judgmentSessionId } from '../core/ids.ts';
 import type { ImplementerSession, JudgmentSession } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
 import { BUILD_ADVISOR } from '../routing/classes.ts';
@@ -145,6 +154,8 @@ export type BackendCall =
     kind: 'claude-build';
     triple: ClaudeTriple;
     session: ClaudeImplementerSession;
+    /** dev.59: its cross-session address, `--name` (src/core/ids.ts `buildSessionName`). */
+    name: BuildSessionName;
     schemaText: string;
     /** The prompt module's standing instructions: `--append-system-prompt`. */
     system: string;
@@ -198,12 +209,16 @@ export type BackendCall =
 
 export type Argv = readonly [string, ...string[]];
 
-/** Every Claude call: JSONL, plugin-authoring disabled, and no MCP server but its own `--mcp-config`. */
-const CLAUDE_COMMON = [
-  '--output-format', 'stream-json', '--verbose',
-  '--settings', JSON.stringify({ enabledPlugins: { 'cc-plugin-plugin-authoring@builtin': false } }),
-  '--strict-mcp-config',
-] as const;
+/** Every Claude call's settings: plugin-authoring disabled. */
+const CLAUDE_SETTINGS = { enabledPlugins: { 'cc-plugin-plugin-authoring@builtin': false } } as const;
+/** A Claude build's (dev.59): the common settings, and its inbox accepting every cross-session message. */
+const BUILD_SETTINGS = { ...CLAUDE_SETTINGS, crossSessionInbound: 'accept' } as const;
+
+/** Every Claude call: JSONL, its settings, and no MCP server but its own `--mcp-config`. */
+const claudeCommon = (settings: typeof CLAUDE_SETTINGS | typeof BUILD_SETTINGS): readonly string[] => [
+  '--output-format', 'stream-json', '--verbose', '--settings', JSON.stringify(settings), '--strict-mcp-config',
+];
+const CLAUDE_COMMON = claudeCommon(CLAUDE_SETTINGS);
 
 const mcpConfigArgs = (file: AbsPath | null): readonly string[] => (file === null ? [] : ['--mcp-config', file]);
 
@@ -220,8 +235,8 @@ export function backendArgv(call: BackendCall): Argv {
     case 'claude-build': {
       const session = call.session.mode === 'fresh' ? ['--session-id', call.session.id] : ['--resume', call.session.id];
       return [
-        'claude', '-p', ...CLAUDE_COMMON, ...mcpConfigArgs(call.mcpConfig), '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
-        '--effort', call.triple.effort, '--advisor', BUILD_ADVISOR, '--permission-mode', 'bypassPermissions', ...session, '--append-system-prompt', call.system,
+        'claude', '-p', ...claudeCommon(BUILD_SETTINGS), ...mcpConfigArgs(call.mcpConfig), '--setting-sources', 'project', '--json-schema', call.schemaText, '--model', call.triple.model,
+        '--effort', call.triple.effort, '--advisor', BUILD_ADVISOR, '--permission-mode', 'bypassPermissions', ...session, '--name', call.name, '--append-system-prompt', call.system,
         ...call.evidenceDirs.flatMap((dir) => ['--add-dir', dir]),
       ];
     }

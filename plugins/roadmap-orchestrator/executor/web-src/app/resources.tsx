@@ -39,7 +39,9 @@ export function Resources({arc}:{arc:string}) {
   useEffect(()=>{if(changed&&store?.metadata&&nowData?.viewVersion!==store.metadata.viewVersions.resources)void store.load(nowPath,true);},[changed,store?.metadata?.viewVersions.resources,nowData?.viewVersion]);
   const reasonParams=new URLSearchParams(state.params);reasonParams.delete('cursor');if(current.query.has('reasonCursor'))reasonParams.set('cursor',current.query.get('reasonCursor')!);
   const browseReasons=current.query.get('reasons')==='1',reasonState=useView(browseReasons&&section==='waiting'?`resources/reasons?${reasonParams}`:null),reasonData=reasonState.data as ResourceReasonsView|null;
-  const terminalAt=(store?.entries.get('shell')?.value?.data as ShellView|undefined)?.lifecycle.endedAt??data?.bounds.terminalAt;
+  const lifecycle=(store?.entries.get('shell')?.value?.data as ShellView|undefined)?.lifecycle,terminalAt=lifecycle?.endedAt??data?.bounds.terminalAt;
+  // A stop also ends the record, but the arc has not finished: it can be resumed.
+  const ending=lifecycle?.state==='complete'?'finished':'stopped';
   const now=nowData&&changed?nowData.now:data?.now,nowEnd=terminalAt?Date.parse(terminalAt):clock;
   let timeZone=zone;try{new Intl.DateTimeFormat('en',{timeZone});}catch{timeZone='UTC';}
   const short=(at:string)=>formatInstant(at,timeZone,true);
@@ -56,7 +58,7 @@ export function Resources({arc}:{arc:string}) {
   const timeline=new URLSearchParams();if(data?.scope.from)timeline.set('from',data.scope.from);if(data?.scope.to)timeline.set('to',data.scope.to);
   const windowTitle=data&&section!=='now'&&<h3 className="timeline-window-title">{data.scope.from?<>{short(data.scope.from)} to {short(data.scope.to??data.bounds.to)}</>:<>Up to {short(data.scope.to??data.bounds.to)}</>} <span className="muted">{zoneLabel(timeZone)}</span></h3>;
   return <section className="panel resources-panel"><header className="panel-head"><div><h2>Resources</h2><p className="muted">Who holds shared resources now, and who held them before.</p></div></header>
-    {now&&<NowStrip arc={arc} now={now} nowEnd={nowEnd} terminalAt={terminalAt??null} startedAt={data?.bounds.from??null} detail={detail} subject={subject} showAll={()=>select('now')} freshError={freshNow.error} retry={freshNow.retry}/>}
+    {now&&<NowStrip arc={arc} now={now} nowEnd={nowEnd} terminalAt={terminalAt??null} ending={ending} startedAt={data?.bounds.from??null} detail={detail} subject={subject} showAll={()=>select('now')} freshError={freshNow.error} retry={freshNow.retry}/>}
     <nav className="activity-subviews" aria-label="Resource sections">{(['schedule','cpu','waiting','now'] as const).map(s=><Button key={s} aria-pressed={section===s} onClick={()=>select(s)}>{sections[s]}</Button>)}</nav>
     <FilterBar label="Resources" ignored={ignoredFilters(current.query,state.facets,{resource:'resource',unit:'unit',stage:'stage',reason:'reason'})} resetKey={state.params.toString()} search={state.params.get('q')??''} searchHelp={section==='schedule'?'Find a resource, unit or holder.':'Find a unit, stage or reason.'} dirty={resourceFields.some(k=>k!=='section'&&current.query.has(k))} activeFilters={['resource','unit','stage','state','reason'].filter(k=>state.params.get(k)).length+(state.params.get('utilization')&&state.params.get('utilization')!=='all'?1:0)} apply={values=>{const next:Record<string,string|null>={};for(const key of ['resource','unit','stage','state','reason','utilization','q','sort','direction','limit','from','to'])if(values.has(key))next[key]=String(values.get(key))||null;if(next['from']||next['to'])next['window']=null;state.navigate(next,true);}} reset={()=>state.navigate(Object.fromEntries(resourceFields.filter(k=>k!=='section').map(k=>[k,null])),true)}
       window={section!=='now'?<WindowSelect label="Resources time window" query={current.query} navigate={state.navigate} latest={latest}/>:undefined}
@@ -112,11 +114,11 @@ const callWords=(c:ResourceCpuCall)=>`Reserved ${c.reservedCpu===null?'cores not
 /** Measured use against the reservation: the track is the reservation, the bar what was used. Over 100% fills and is marked. */
 function UseBullet({percent}:{percent:number|null}) {if(percent===null)return null;return <span className={`cpu-bullet${percent>100?' cpu-bullet-over':''}`} aria-hidden="true"><span style={{width:`${Math.min(100,Math.max(1,percent))}%`}}/></span>;}
 /** Now: the integration slot holder and its queue, reserved CPU, and units held back by host load. */
-function NowStrip({arc,now,nowEnd,terminalAt,startedAt,detail,subject,showAll,freshError,retry}:{arc:string;now:ResourceNow;nowEnd:number;terminalAt:string|null;startedAt:string|null;detail:(key:string)=>string;subject:(s:ResourceSubject)=>ReactNode;showAll:()=>void;freshError:string;retry:()=>void}) {
+function NowStrip({arc,now,nowEnd,terminalAt,ending,startedAt,detail,subject,showAll,freshError,retry}:{arc:string;now:ResourceNow;nowEnd:number;terminalAt:string|null;ending:'finished'|'stopped';startedAt:string|null;detail:(key:string)=>string;subject:(s:ResourceSubject)=>ReactNode;showAll:()=>void;freshError:string;retry:()=>void}) {
   const cpu=now.cpuReservation,others=now.counts.queues-now.queues.matching;
   return <section aria-label="Resources Now" className="resource-now">
-    <h3>{terminalAt?'When the arc finished':'Now'}</h3>
-    {terminalAt&&<p className="muted">Finished arc, after {startedAt?elapsed(Date.parse(terminalAt)-Date.parse(startedAt)):'a length that was not recorded'}.</p>}
+    <h3>{terminalAt?`When the arc ${ending}`:'Now'}</h3>
+    {terminalAt&&<p className="muted">{ending==='finished'?'Finished':'Stopped'} arc, after {startedAt?elapsed(Date.parse(terminalAt)-Date.parse(startedAt)):'a length that was not recorded'}.{ending==='stopped'&&' Nothing runs until it is resumed.'}</p>}
     <div className="resource-now-grid">
       <div><h4>Integration slot</h4>
         {now.integration.matching>0?<Table aria-label="Integration slot holder"><thead><TableRow><TableHead>Holder</TableHead><TableHead>State</TableHead><TableHead className="number">Held for</TableHead></TableRow></thead><tbody>{now.integration.rows.map(r=><TableRow key={r.id} onClick={ev=>activateRow(ev,detail(r.detailKey))}><td>{r.unitRef?subject({type:'unit',id:r.unitRef,title:r.holderTitle??r.unitRef,titleTruncated:(r.holderTitle?.length??0)>=96,unitRef:r.unitRef}):r.holder}<a className="cell-line" href={detail(r.detailKey)}>Who held it before</a></td><td>{r.holder?'Holds the integration slot':resourceStateWords(r.state)}{r.pending&&<span className="cell-line">A change is in progress</span>}</td><td className="number">{r.startedAt?elapsed(Math.max(0,nowEnd-Date.parse(r.startedAt))):'Not recorded'}</td></TableRow>)}</tbody></Table>

@@ -62,9 +62,13 @@ import { externalVerdict } from '../holistic/external.ts';
 // M4a run 11) still creates its verification checkout (the gate's cwd) and certifies it.
 //
 // Test-only runs (dev.17, `testOnlyRun`): with no reusable pass, a lane declaring `testArgv` whose latest clean pass's input
-// differs from now only in leaf test files of its systems (src/input/systems.ts `laneTestFiles`) runs `testArgv` over the
-// changed files that exist, its spawn naming them (`files`); with none left (only deletions) it reuses that pass. A
-// stochastic lane never runs test-only.
+// differs from now only in leaf test files of its systems (src/input/systems.ts `laneTestFiles`), every one inside the
+// lane's cwd, runs `testArgv` over the changed files that exist, its spawn naming them (`files`); with none left (only
+// deletions) it reuses that pass. A changed leaf test outside the lane's cwd (a dependency's, dev.59: field nu-124943)
+// runs the lane's argv: what the lane's runner finds is its own, never a path above its tree. A red test-only run is
+// never the lane's verdict (dev.59, class `targeted`): its rerun is the lane's argv, whose verdict counts, so a runner
+// that finds no test files among `files` costs a run, not a charge. A stochastic lane never runs test-only, and neither does
+// a lane of a rerun the root ordered (dev.59, `roadmap rerun`): it runs the lane's argv.
 //
 // Stochastic lanes (dev.17, `Stochastic`): up to `runs` runs, each its own spawn and reservation (`<lane>.runs/<n>/` past
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
@@ -459,6 +463,7 @@ function countedRerun(first: LaneVerdict, rerun: LaneVerdict | null, cls: RedCla
   if (cls === null) throw new Error(`lane ${first.lane} was rerun after ${first.inv}, whose red class (red.json) was never written: a stamped run's class is written before any rerun`);
   switch (cls.kind) {
     case 'host-signature':
+    case 'targeted':
       return { rerun: true, flaky: false };
     case 'diagnostic':
       if (forgiven && rerun.verdict !== 'pass') throw new Error(`lane ${first.lane}: a forgiven flake whose rerun ${rerun.inv} did not pass`);
@@ -758,10 +763,13 @@ export function testOnlyRun(ctx: StageContext, lane: LaneDef, at: Sha, now: Lane
   if (record === null || !cleanPass(ctx, record)) return null;
   const changed = diffPaths(ctx.repo, e.at, at).filter(laneInput(map, lane));
   const tests = laneTestFiles(map, lane, changed);
-  if (changed.length === 0 || tests.length !== changed.length) return null;
+  if (changed.length === 0 || tests.length !== changed.length || !tests.every((t) => inLaneTree(lane, t))) return null;
   const present = new Set(git(ctx.repo, ['ls-tree', '-r', '-z', '--name-only', at, '--', ...tests]).split('\0').filter((p) => p !== ''));
   return { files: tests.filter((t) => present.has(t as string)), base: { from: { parent: e.parent, inv: record.inv, at: e.at }, record: { ...record, reused: { at: e.at, inv: record.inv } } } };
 }
+
+/** Whether repo path `p` is inside the tree a lane runs in (its cwd; `.` is the whole repo). */
+const inLaneTree = (lane: LaneDef, p: RepoPath): boolean => lane.cwd === '.' || p.startsWith(`${lane.cwd}/`);
 
 /** `testArgv` with its `{files}` element replaced by `files` (repo paths), one argument each, relative to the lane's cwd. */
 export const testArgvOf = (lane: LaneDef, files: readonly RepoPath[]): readonly string[] => {
@@ -1105,6 +1113,8 @@ export async function runLaneSeries(
     return { record, end: { kind: 'red', lane: record } };
   };
 
+  // dev.59: a lanes rerun the root ordered runs every lane's own argv: never test-only (`testOnlyRun`).
+  const rootRerun = parent.stage === 'lanes' && ctx.journal.view.unit(parent.unit).rerun !== null;
   for (const lane of lanes) {
     const now = laneNow(ctx, lane, at, ctx.plan().units.find((u) => u.id === parent.unit)?.systems);
     // dev.17: a deflake unit's verification runs its lane fresh, `runs` times, every run passing (never reused, never test-only).
@@ -1121,7 +1131,7 @@ export async function runLaneSeries(
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
     const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
-    const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
+    const partial = reusable !== null || witnesses.has(lane.id) || rootRerun ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {
       // The stage's entry reservation was the first lane's: unused, it is released before the next lane takes its own.
@@ -1174,11 +1184,12 @@ export async function runLaneSeries(
     const baseRed = ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === parent.unit
       && f.lane === lane.id && f.result === 'fail' && f.base === diffBase(ctx.repo, revParse(ctx.repo, branchRef(ctx.plan().integrationBranch)), at));
     const deterministic = red.verdict === 'fail' && deterministicFailure(ctx.runDir, red.inv, lane);
-    const cls = classifyRed(evidenceOf(red), repeat, baseRed ? 'base-red' : deterministic ? 'deterministic' : null);
+    const cls = classifyRed(evidenceOf(red), repeat, baseRed ? 'base-red' : deterministic ? 'deterministic' : null, files !== null);
     writeRedClass(red.evidenceDir, cls, failure.failure, parent.unit);
     const rerun: { ran: Ran | null } = { ran: null };
     const result = await redLane<Ran, SeriesEnd>(cls, async () => {
-      const again = await attempt(lane, 'rerun', identity, files);
+      // dev.59: a test-only run's rerun is always the lane's own argv (the header).
+      const again = await attempt(lane, 'rerun', identity, null);
       rerun.ran = again.ran;
       if (again.kind === 'ended') return { kind: 'ended', end: again.end };
       const ended = runEnd(again.ran);

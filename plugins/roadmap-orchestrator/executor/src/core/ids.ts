@@ -222,6 +222,19 @@ export function invocationDirName(inv: InvocationId): string {
   return `${parseOpId(op).seq}-${ordinal}`;
 }
 
+/**
+ * dev.59 (owner ruling 2026-11-10): a Claude build's cross-session address, its `--name` (src/backends/argv.ts):
+ * `<arc>-<holder>-<seq>-<ordinal>`, the holder a unit (a smoke's check name for a startup or probe smoke). Unique per
+ * invocation, so a send never meets two sessions of one name. Letters, digits, hyphens and underscores only.
+ */
+export type BuildSessionName = Brand<string, 'BuildSessionName'>;
+export const buildSessionNameOf: IdReader<BuildSessionName> = textual('BuildSessionName', /^[A-Za-z0-9_-]{1,200}$/, 'letters, digits, hyphens and underscores, 1-200 chars');
+
+/** The one derivation of a build's session name (`BuildSessionName`). */
+export function buildSessionName(arc: ArcId, holder: UnitId | string, inv: InvocationId): BuildSessionName {
+  return buildSessionNameOf(`${arc}-${holder}-${invocationDirName(inv)}`);
+}
+
 // ---------------------------------------------------------------------------------------------------
 // M3 ids (SCHEMAS.md "Ids"). A numbered id's `<n>` is 1 for the first of its kind in the arc and one more for
 // each later one, in log order; the fold checks the order where a fact opens it (`nextFindingId`,

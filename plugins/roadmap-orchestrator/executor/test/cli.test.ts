@@ -232,6 +232,7 @@ describe('cli: M3 forms', () => {
       [['reverse', 'D-2'], { type: 'reverse', divergence: 'D-2' }],
       [['steer', 'u1', '--brief', record, '--budget', '30', '--class', 'frontier'], { type: 'steer', unit: 'u1', brief: { path: record, sha256: sha }, budgetMin: 30, class: 'frontier', resume: false }],
       [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
+      [['rerun', 'u1/lanes#7/mul', '--cause', 'infra', '--evidence', 'runner disk full 10:02'], { type: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'infra', evidence: 'runner disk full 10:02' }],
       [['audit'], { type: 'audit' }],
       [['close-admissions'], { type: 'close-admissions' }],
     ];
@@ -257,4 +258,18 @@ describe('cli: M3 forms', () => {
 it('dismiss requires a named finding and non-empty counter-evidence', () => {
   assert.deepEqual(parseCommand(['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8']), {command: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8', run: HOST});
   for (const args of [['dismiss', 'F-1'], ['dismiss', 'F-1', '--counter-evidence', '  '], ['dismiss', 'unknown', '--counter-evidence', 'proof']]) assert.throws(() => parseCommand(args), CliError);
+});
+
+it('cli.rerun (dev.59): a lane failure reference, a closed cause and non-empty evidence; a stage outcome or a candidate attempt is no lanes rerun', () => {
+  assert.deepEqual(parseCommand(['rerun', 'u1/lanes#7/mul', '--cause', 'estate', '--evidence', 'staging db down 10:02-10:40']),
+    { command: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'estate', evidence: 'staging db down 10:02-10:40', run: HOST });
+  for (const [args, error] of [
+    [['rerun', 'u1/lanes#7/mul', '--evidence', 'x'], /--cause estate\|infra is required/],
+    [['rerun', 'u1/lanes#7/mul', '--cause', 'flake', '--evidence', 'x'], /--cause/],
+    [['rerun', 'u1/lanes#7/mul', '--cause', 'estate'], /--evidence <line> is required/],
+    [['rerun', 'u1/lanes#7/mul', '--cause', 'estate', '--evidence', '  '], /must be non-empty/],
+    [['rerun', 'u1/lanes#7', '--cause', 'estate', '--evidence', 'x'], /name a lane failure/],
+    [['rerun', 'u1/candidate#7/suite', '--cause', 'estate', '--evidence', 'x'], /a failure reference/],
+    [['rerun', '--cause', 'estate', '--evidence', 'x'], /is required/],
+  ] as const) assert.throws(() => parseCommand([...args]), (e: unknown) => e instanceof CliError && error.test(e.message), args.join(' '));
 });

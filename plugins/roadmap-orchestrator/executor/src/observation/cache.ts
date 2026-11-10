@@ -83,7 +83,9 @@ export class ObservationCache {
           invocations: base.display.invocations.map((i) => i.endedAt !== null || i.quietMs === null ? i : { ...i, quietMs: i.quietMs + delta }) },
           summary: { ...base.summary, supervision: supervision(run.runDir) } };
       }
-      if (stable !== stableStamp() || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
+      // A race check guards a materialization against records changing under it. Without one, the cached observation was
+      // already verified against `stable`, and re-stamping every record (the costliest step of an idle capture) proves nothing more.
+      if ((materialize && stable !== stableStamp()) || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
         dependenciesChanged();
       }
       const changed = data !== c.envelope.data;

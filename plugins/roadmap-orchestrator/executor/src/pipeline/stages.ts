@@ -19,7 +19,7 @@ import { walkMcpConfig } from '../backends/mcp.ts';
 
 import type { Verification } from '../core/design.ts';
 import {
-BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
+BACKEND_PARK_CLASSES,RERUN_REDS,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
 } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
@@ -53,7 +53,7 @@ import { regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
 
 import { CORPUS_FILE_INPUT,type CorpusInForce,type LoadedSpec,OBLIGATIONS_INPUT,PLAN_INPUT,RULINGS_INPUT,SPEC_INPUT,VISION_INPUT,inputPath,keptInput,keptPayload,parseUnitSpec,requirePlanInForce,revisionInForce,specBytesOf,specShaInForce } from '../input/inforce.ts';
 import {
-type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
+type KnownDefect,type PlanUnit,boundsOf,advancesOf,designUnitOf,knownDefectsOf,milestoneMembers,milestonesOf,parsePlan,targetDocumentPaths,targetDocuments,
 } from '../input/plan.ts';
 
 import { NO_PARK_FACTS,type ParkFacts,repeatNeedsUser,stageOutcomeFact } from '../park/table.ts';
@@ -331,14 +331,15 @@ export function library(ctx: StageContext, spec: SpecM1, tip: Sha): Library {
 }
 
 /**
- * dev.13: the milestones `unit` takes part in under the plan in force (a member of their `units`, or their design unit), in
+ * dev.13: the milestones `unit` takes part in under the plan in force (a member, `milestoneMembers`: dev.59 a re-entry or carrier of
+ * one of their units too; or their design unit), in
  * plan order, with their design references at `tip` (`MilestonesInput`); null when it is in none. What its pre-build,
  * build and gate read.
  */
 export function unitMilestones(ctx: Pick<StageContext, 'plan' | 'repo'>, unit: UnitId, tip: Sha): MilestonesInput | null {
   const of = milestonesOf(ctx.plan()).flatMap((m): UnitMilestone[] => {
     if (designUnitOf(m) === unit) return [{ as: 'design', id: m.id, text: m.text, dirs: m.references, journeys: m.journeys }];
-    return m.units.includes(unit) ? [{ as: 'member', id: m.id, text: m.text, dirs: m.references }] : [];
+    return milestoneMembers(ctx.plan(), m).includes(unit) ? [{ as: 'member', id: m.id, text: m.text, dirs: m.references }] : [];
   });
   if (of.length === 0) return null;
   const files = referenceFiles(ctx.repo, tip, of.flatMap((m) => m.dirs));
@@ -360,7 +361,7 @@ export function buildBrowser(
   if (servers === undefined) return null;
   const repairs = new Set<string>(specRepairs(spec));
   const repairedMilestones = new Set(ctx.journal.view.holistic().findings.flatMap((f) => repairs.has(f.id) && f.milestone !== undefined ? [f.milestone] : []));
-  const milestones = milestonesOf(ctx.plan()).filter((m) => m.units.includes(spec.unit) || designUnitOf(m) === spec.unit || repairedMilestones.has(m.id));
+  const milestones = milestonesOf(ctx.plan()).filter((m) => milestoneMembers(ctx.plan(), m).includes(spec.unit) || designUnitOf(m) === spec.unit || repairedMilestones.has(m.id));
   return {
     input: { servers: Object.keys(servers), bringUps: milestones.map((m) => ({ milestone: m.id, bringUp: m.bringUp })) },
     mcpConfig: walkMcpConfig(servers, evidenceDir),
@@ -1350,11 +1351,14 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (isCancelled(entered)) return entered;
   // A faulted series may leave unreadable ignored evidence. A cache-preserving reset would retain it and fault again.
   // Discard that series' checkout through the normal evidence-backed removal, just like legacy/diagnostic checkouts.
+  // dev.59: a rerun the root ordered (`UnitState.rerun`) runs in a fresh checkout too, so no ignored cache of the red it
+  // waived survives into it.
   const previous = ctx.journal.view.completedLanesOutcome(unit.id);
+  const rerun = ctx.journal.view.unit(unit.id).rerun !== null;
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) {
     const faulted = previous?.outcome === 'executor-fault' && created.parent.type === 'stage'
       && created.parent.stage === 'lanes' && created.parent.attempt === previous.attempt;
-    if (faulted || created.expect.path !== verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
+    if (faulted || rerun || created.expect.path !== verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   }
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
@@ -1402,6 +1406,8 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     const checks = await executableChecks(ctx, unit, parent, salvaged, rt);
     if (checks.kind !== 'green') verdict = checks;
   }
+  // dev.59: a red series of a rerun the root ordered is `rerun-red`, the root's to decide: no fix round, no charge, no detail.
+  if (rerun && (RERUN_REDS as readonly string[]).includes(verdict.kind)) verdict = { kind: 'rerun-red' };
   const kind = verdict.kind;
   // The gate gets a tree binding only when it is next. The stable checkout itself survives other outcomes until retirement.
   const next = transition(ctx.journal.view.unit(unit.id), { stage: 'lanes', kind });

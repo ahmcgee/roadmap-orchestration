@@ -9,7 +9,8 @@ import { record } from '../tui/projection.ts';
 import { selectedUnitJourney } from './unit-journey.ts';
 import { stageFinished } from './indexes.ts';
 import { projectionIndex, timelineIntervals } from './tab-projections.ts';
-import { graphStatus } from './signals.ts';
+import { graphStatus, unitSignal } from './signals.ts';
+import { milestoneMembership, milestoneReason } from './milestones.ts';
 import { stageWords, stateWords } from './vocabulary.ts';
 import { arcBounds, versioned } from './views.ts';
 import type { DetailPage, InvocationSummary, UnitSummary, RelatedUnit, UnitView, MilestoneView, InvocationView } from './detail-protocol.ts';
@@ -112,13 +113,13 @@ function rawUnitView(e:Envelope,id:string,params:Record<string,string>):UnitView
   };
   const edges=s.edges.filter(x=>x.type==='after');
   const gates=(e.data.plan?.milestones??[]).map(g=>({id:String(g.id),name:g.name??null,passed:s.milestones.find(m=>m.id===g.id)!.passed}));
-  const feeds=gates.filter(g=>e.data.plan!.milestones!.find(m=>m.id===g.id)!.units.includes(id as never));
+  const feeds=gates.filter(g=>s.milestones.find(m=>m.id===g.id)!.members.includes(id as never));
   const waits=gates.filter(g=>s.edges.some(x=>x.type==='milestone'&&x.unit===id&&x.milestone===g.id));
   const w=runtime.waitingFor;
   const work=e.data.display.invocations.filter(i=>i.unit===id),waitingEvidence=completedWaiting(e.data.events.filter(ev=>ev.type==='done'||ev.type==='intent'&&ev.parent.type==='stage'&&ev.parent.unit===id||ev.type==='fact'&&ev.fact.kind==='stage-admitted'&&ev.fact.unit===id));
   const currentBlockers=w?{dependencies:[...w.deps],milestones:[...w.milestones],contingentEdges:[...w.edges],resources:w.resources?{named:[...w.resources.named],pools:[...w.resources.pools],cpu:w.resources.cpu,publication:w.resources.publication}:null,environmentBlocked:w.envBlocked,pressureBlocked:w.pressureBlocked??null,tokenWaitMs:w.tokenWaitMs??null,admission:w.admission.map(a=>({kind:a.type,references:Object.entries(a).filter(([k,v])=>['unit','milestone','edge','command','id','finding','obligation','fixUnit','inv','backend','deflake','lane'].includes(k)&&typeof v==='string').map(([field,v])=>({field,id:String(v)})),scope:'scope' in a?a.scope:null,parkClass:'class' in a?a.class:null,reason:'reason' in a?a.reason:null,decision:'decision' in a?a.decision:null,probe:'target' in a?{kind:a.target.type,id:a.target.type==='backend'?a.target.backend:a.target.type==='resource'?String(a.target.instance):a.target.type==='environment'?String(a.target.environment):null}:null})),drainCommands:[...w.drainFor]}:null;
   const coverage={money:{recorded:unit.spend.recorded,estimated:unit.spend.estimated,unavailable:unit.spend.unavailable+work.filter(i=>i.execution==='agent'&&!index.charges.byInvocation.has(i.id)).length},execution:{measured:work.filter(i=>i.work?.measured).length,unmeasured:work.filter(i=>!i.work?.measured).length},waiting:{measured:waitingEvidence.measurements.filter(w=>w.source==='admission'?w.unit===id:w.parent.type==='stage'&&w.parent.unit===id).length,unmeasured:waitingEvidence.unmeasuredReservations}};
-  return versioned({unit,systems:identities.get(id)!.systems,currentBlockers,supersededBy:runtime.supersededBy,coverage,feeds,waits,
+  return versioned({unit,systems:identities.get(id)!.systems,currentBlockers,supersededBy:runtime.supersededBy,carries:runtime.carries===null?null:{unit:String(runtime.carries.unit),tip:String(runtime.carries.tip)},carriedBy:runtime.carriedBy.map(String),coverage,feeds,waits,
     depends:page(e,edges.filter(x=>x.unit===id).map(x=>related(x.effective,x.unit)),params,'depends'),
     usedBy:page(e,edges.filter(x=>x.effective===id).map(x=>related(x.effective,x.unit)),params,'usedBy'),
     journey:page(e,u.journey,params,'journey'),invocations:page(e,invocationSummaries(e,index).filter(i=>i.subject.type==='unit'&&i.unit===id),params,'invocations'),
@@ -129,11 +130,11 @@ function rawMilestoneView(e:Envelope,id:string,params:Record<string,string>):Mil
   params={...params,_entity:`milestone:${id}`};
   const g=e.data.plan?.milestones?.find(g=>g.id===id),state=e.data.display.status.milestones.find(g=>g.id===id);
   if(!g||!state)throw new ConsoleError('not-found','milestone is not in the applied plan');
-  const identities=projectionIndex(e).identities;
-  const members=g.units.map(id=>{const u=e.data.display.status.units.find(u=>u.unit===id)!;return {id:String(id),title:identities.get(id)!.title,state:stateWords(u.state),signal:u.state==='cut'||u.state==='superseded'?'withdrawn' as const:graphStatus(u.state),source:String(id),target:`milestone:${g.id}`,unmet:false};});
+  const identities=projectionIndex(e).identities,membership=milestoneMembership(e),counts=membership.milestones.find(m=>m.id===id)!;
+  const members=counts.memberIds.map(id=>{const u=membership.states.get(id)!,head=u.state==='superseded'?u.supersededBy:null,h=head===null?null:membership.states.get(head)!;return {id,title:identities.get(id)!.title,state:stateWords(u.state),signal:unitSignal(u.state),source:id,target:`milestone:${g.id}`,unmet:false,...(h===null?{}:{replacedBy:{id:String(head),state:stateWords(h.state),signal:unitSignal(h.state)}})};});
   const order=['held','failed','active','pending','withdrawn','passed'];
   members.sort((a,b)=>order.indexOf(a.signal)-order.indexOf(b.signal)||a.id.localeCompare(b.id,undefined,{numeric:true}));
-  return versioned({id:String(g.id),name:g.name??null,state:state.state,passed:state.passed,total:members.length,merged:members.filter(u=>u.signal==='passed').length,members:page(e,members,params,'members'),intent:text(e,g.text,params)},scope);
+  return versioned({id:String(g.id),name:g.name??null,state:state.state,passed:state.passed,total:counts.total,merged:counts.merged,withdrawn:counts.withdrawn,reason:milestoneReason(e,membership,id),costUsd:e.data.summary.milestones.find(m=>m.id===id)!.costUsd,members:page(e,members,params,'members'),intent:text(e,g.text,params)},scope);
 }
 export function detailParams(params:Record<string,string>,sections:string[]) {
   for(const key of Object.keys(params))if(!['epoch','revision','minHighWater','section','cursor','limit'].includes(key))throw new ConsoleError('invalid','unknown detail query parameter');

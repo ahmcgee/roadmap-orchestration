@@ -24,7 +24,9 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //              - a conflict: `mergein.prepare` in the unit worktree (MERGE_HEAD = T), then the resolve
 //                round; uncharged, and the diff base is recomputed (T), so the unit is gated again;
 //              - red (or a suite that dirtied the checkout): the suite runs again on T alone in its own
-//                detached checkout: red there too → `base-red` (uncharged), else a fix round (C);
+//                detached checkout: red there too → `base-red` (uncharged), else a fix round (C); dev.59: when every
+//                red lane on the candidate is a static check (`kind: static`) and its checkout stayed clean,
+//                `static-red`: one uncharged fix round (the table's), then as `red`;
 //              - M4b rev 3 (RC-11): either suite with a lane its watchdog ended under host pressure (starved), or red
 //                under it and not the rerun after a hold → `interrupted`, a `host-pressure` hold, uncharged (starved.ts);
 //              - green → in a holistic arc, the held-claims brake (M3 B2, below): the arc lanes witnessing the
@@ -87,7 +89,6 @@ import { type ObligationEffect, completes, latches, obligationEffects } from '..
 import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
-import { reentryRecommendation } from '../needsuser.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
 import {
@@ -95,6 +96,7 @@ import {
 } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
+import { lineageAttempts, lineageAttemptsText } from './attempts.ts';
 import { type Cancelled, type StageContext, type StageParent, candidateVerificationWorktree, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
@@ -147,7 +149,7 @@ async function releasePublication(ctx: StageContext, held: Reservation<'running'
 
 type CandidateEnd = Readonly<{
   kind: 'green' | 'transient-violation' | 'conflict' | 'red' | 'base-red' | 'blocked' | 'occupied' | 'cleanup-failed' | 'interrupted' | 'preempted' | 'finding-blocked'
-    | 'env-unavailable';
+    | 'env-unavailable' | 'static-red';
   needsUser: NeedsUserContent | null;
   /** The instances a suite lane's cleanup failed (`cleanup-failed`): the park's targets. */
   failed: readonly ResourceInstance[];
@@ -237,6 +239,18 @@ async function suite(
 /** A suite that did not pass, or that changed its checkout (never certified under a SHA). */
 const failed = (series: Series): boolean => series.end.kind === 'red' || series.dirty.length > 0;
 
+/**
+ * dev.59: whether a red series on the candidate was red only on static lanes (`LaneDef.kind: static`, by the definitions
+ * it ran, `lanes`: every definition of a red lane's id static) and left its checkout clean.
+ */
+function staticOnly(series: Series, lanes: readonly LaneDef[]): boolean {
+  const red = series.ledger.filter((r) => r.verdict !== 'pass');
+  return series.end.kind === 'red' && series.dirty.length === 0 && red.length > 0 && red.every((r) => {
+    const defs = lanes.filter((l) => l.id === r.lane);
+    return defs.length > 0 && defs.every((l) => l.kind === 'static');
+  });
+}
+
 async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent, decision: CandidateDecision, entered = false): Promise<CandidateEnd> {
   if (ctx.signal.reason === 'preempt') return ended('preempted');
   switch (decision.kind) {
@@ -276,7 +290,10 @@ async function integrate(ctx: StageContext, unit: PlanUnit, parent: StageParent,
       const alone = await suite(ctx, parent, lanes, { path: baseWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: tip } }, baseSeriesRoot(ctx.runDir, parent), new Map());
       const baseFault = pressureHeld(ctx, unit.id, alone) ?? seriesFault(alone);
       if (baseFault !== null) return baseFault;
-      if (!failed(alone)) return ended('red');
+      if (!failed(alone)) {
+        const spec = loadUnitSpec(ctx, unit).spec.lanes.filter((l) => l.state === 'active' && l.cadence === 'candidate');
+        return ended(staticOnly(onCandidate, [...spec, ...lanes]) ? 'static-red' : 'red');
+      }
       return ended('base-red', baseRedNeedsUser(ctx, parent, tip, suiteBaseRed(alone), [candidateSeriesRoot(ctx.runDir, parent), baseSeriesRoot(ctx.runDir, parent)]));
     }
   }
@@ -312,11 +329,27 @@ function baseRedNeedsUser(ctx: StageContext, parent: StageParent, tip: Sha, base
     blocking: true,
     subject: { type: 'arc' },
     reason: 'base-red',
-    summary: `On ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: ${baseRedAccount(base)}. The base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
-    recommendation: `Repair ${ctx.plan().integrationBranch} (or the suite), then acknowledge this item: merges resume. ${reentryRecommendation(unit, 'candidate', parent.attempt, unitBranch(ctx.plan().arc, unit))}`,
+    summary: `On ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: ${baseRedAccount(base)}. The tip also fails without this unit (what the executor observed; the root rules on why). Merges halt; unit ${unit} is parked uncharged.`,
+    recommendation: baseRedRecommendation(ctx, unit, tip),
     options: [],
     evidence,
   };
+}
+
+/**
+ * dev.59 (scope item 2): the two designed ways out of a candidate base-red park, which is an env park (resume re-runs the
+ * candidate as a new, uncharged attempt) and holds every candidate while its item is open: the estate or the base was broken
+ * and is fixed now (ack, then resume), or the red is the unit's own, its candidate run having left state that turned T red
+ * too (steer --resume, then ack). Never a re-entry: the park is not final.
+ */
+function baseRedRecommendation(ctx: StageContext, unit: UnitId, tip: Sha): string {
+  const branch = ctx.plan().integrationBranch;
+  return `Read the evidence of both series, the candidate's and ${tip}'s alone, and decide whose red it is. `
+    + `If the estate the suite runs against, or ${branch} itself, was broken: repair it (or the suite) if it still is, acknowledge this item (merges resume), `
+    + `then \`roadmap resume ${unit}\` re-runs the candidate as a new attempt, uncharged. `
+    + `If the red is the unit's own (its candidate run left state that turned ${tip} red too): \`roadmap steer ${unit} --brief <file> --budget <min> --resume\`, `
+    + 'with a brief that cites both series\' evidence, gives it one build round and then lanes, gate and the candidate again; then acknowledge this item. '
+    + lineageAttemptsText(lineageAttempts(ctx.journal.view, unit));
 }
 
 /** An external integration move invalidates the selection before candidate refs are published. */
@@ -389,7 +422,7 @@ export async function candidate(ctx: StageContext, unit: PlanUnit): Promise<Stag
       end = { kind: 'cleanup-failed', needsUser: null, failed: entryFailures };
     }
     if (retry) { await releasePublication(ctx, held, parent); continue; }
-    const detail = end.kind === 'red' ? candidateRed(ctx, unit, parent, end.checkout ?? null).detail : undefined;
+    const detail = end.kind === 'red' || end.kind === 'static-red' ? candidateRed(ctx, unit, parent, end.checkout ?? null).detail : undefined;
     const done = record(ctx, parent, end.kind, end.needsUser, end.environment === undefined ? failedFacts(end.failed) : environmentFacts(end.environment), end.cause, detail);
     if (end.kind !== 'green') await releasePublication(ctx, held, parent);
     return done;

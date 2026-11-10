@@ -3,7 +3,7 @@ import { nonBlank } from './validate.ts';
 // dispatch record, spec.json (M1) and SpecPatch, host files, commands and receipts, needs-user. Each has
 // a type and a validator from `unknown`. SCHEMAS.md is the prose twin of this module.
 import {
-type ArcId,type ClauseId,type CommandId,type DivergenceId,
+type ArcId,type BuildSessionName,type ClauseId,type CommandId,type DivergenceId,
 type EdgeId,
 type FindingId,type ImplementerSessionId,type InvocationId,type JobId,
 type JudgmentSessionId,
@@ -12,7 +12,7 @@ type PlanRev,
 type ResourceInstance,
 type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
 commandId,divergenceId,edgeId,findingId,
-idsAscending,
+buildSessionNameOf,idsAscending,
 implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
 obligationId,opIdOf,parseInvocationId,planRev,
 
@@ -197,7 +197,11 @@ type BackendTerminalBase = Readonly<{
 }>;
 export type BackendTerminal =
   | (BackendTerminalBase & Readonly<{ role: JudgmentSessionRole; session: JudgmentSession }>)
-  | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession }>);
+  /**
+   * `name` (dev.59): a Claude build's cross-session address, the `--name` it was launched with (src/backends/argv.ts); never on
+   * a Codex build. Absent on a Claude build launched before 1.0.0-dev.59, which has no address.
+   */
+  | (BackendTerminalBase & Readonly<{ role: ImplementerRole; session: ImplementerSession; name?: BuildSessionName }>);
 export type CommandTerminal = Readonly<{ type: 'command'; purpose: CommandPurpose; expectedExit: number; timeoutMin?: number }>;
 export type LaunchTerminal = BackendTerminal | CommandTerminal;
 
@@ -255,9 +259,11 @@ const launchTerminal: Read<LaunchTerminal> = tagged('type', {
         schemaPath: f.get('schemaPath', abs),
         outputPath: f.get('outputPath', abs),
       };
-      return r === 'build'
-        ? { ...base, role: f.get('role', literal('build')), session: f.get('session', implementerSession) }
-        : { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', judgmentSession) };
+      if (r !== 'build') return { ...base, role: f.get('role', oneOf(JUDGMENT_SESSION_ROLES)), session: f.get('session', judgmentSession) };
+      const session = f.get('session', implementerSession);
+      const name = f.optional('name', buildSessionNameOf);
+      if (name !== undefined && session.backend !== 'claude') throw new SchemaError(`${f.path}.name`, 'only on a Claude build', name);
+      return { ...base, role: f.get('role', literal('build')), session, ...(name === undefined ? {} : { name }) };
     })(value, path);
   },
 });
@@ -720,7 +726,9 @@ export type RedClassRecord =
   | Readonly<{ kind: 'host-signature' | 'signature-without-evidence'; signatures: readonly HostSignatureId[] }>
   | Readonly<{ kind: 'no-rerun'; reason: 'base-red' | 'deterministic' }>
   | Readonly<{ kind: 'diagnostic' }>
-  | Readonly<{ kind: 'repeat'; attempt: number; inv: InvocationId }>;
+  | Readonly<{ kind: 'repeat'; attempt: number; inv: InvocationId }>
+  /** dev.59: a test-only run's red (src/pipeline/lanes.ts `testOnlyRun`): its rerun is the lane's argv, whose verdict counts. */
+  | Readonly<{ kind: 'targeted' }>;
 export type RedFile = Readonly<{ v: SchemaVersion; class: RedClassRecord; failure: Sha256Hex; redRev: RedRev }>;
 export const RED_FILE = 'red.json';
 
@@ -738,6 +746,7 @@ const redClass: Read<RedClassRecord> = tagged('kind', {
   'no-rerun': object((f): RedClassRecord => ({ kind: f.get('kind', literal('no-rerun')), reason: f.get('reason', oneOf(['base-red', 'deterministic'] as const)) })),
   diagnostic: object((f): RedClassRecord => ({ kind: f.get('kind', literal('diagnostic')) })),
   repeat: object((f): RedClassRecord => ({ kind: f.get('kind', literal('repeat')), attempt: f.get('attempt', positive), inv: f.get('inv', inv) })),
+  targeted: object((f): RedClassRecord => ({ kind: f.get('kind', literal('targeted')) })),
 });
 export const redFile: Read<RedFile> = object((f) => ({
   v: f.get('v', version), class: f.get('class', redClass), failure: f.get('failure', (v, p) => sha256(v, p)), redRev: f.get('redRev', positive),
@@ -888,6 +897,10 @@ export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] }
 /** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
 export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
 
+/** `LaneDef.kind`'s values. */
+export const LANE_KIND_FIELDS = ['capture', 'static'] as const;
+export type LaneKindField = (typeof LANE_KIND_FIELDS)[number];
+
 /** The `{files}` element of a lane's `testArgv`: the changed leaf test files, one argument each. */
 export const TEST_FILES_TOKEN = '{files}';
 
@@ -906,7 +919,12 @@ export type LaneDef = Readonly<{
   inputs?: readonly RepoPattern[];
   cost?: 'cheap' | 'expensive';
   placement?: 'local' | 'shared-resource' | 'cross-system';
-  kind?: 'capture';
+  /**
+   * `capture` (with `capture`): a capture lane. dev.59: `static`, a static check (a linter, a typechecker: it reads the
+   * source and runs none of it): a candidate red only on static lanes takes one uncharged fix round
+   * (src/pipeline/transitions.ts `static-red`). Absent: neither.
+   */
+  kind?: LaneKindField;
   capture?: Readonly<{ up: readonly string[]; script: readonly string[]; states: readonly string[]; port: ResourceName; portBase?: number }>;
 
   resources: readonly ResourceName[];
@@ -988,7 +1006,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   if (inputs !== undefined) assertUnique(inputs, (x) => x, `${f.path}.inputs`);
   const cost = f.optional('cost', oneOf(['cheap', 'expensive'] as const));
   const placement = f.optional('placement', oneOf(['local', 'shared-resource', 'cross-system'] as const));
-  const laneKind = f.optional('kind', literal('capture'));
+  const laneKind = f.optional('kind', oneOf(LANE_KIND_FIELDS));
   const capture = f.optional('capture', object((g) => ({ up: g.get('up', argv), script: g.get('script', argv), states: g.get('states', arrayOf(str, { nonEmpty: true })), port: g.get('port', resource), ...(g.optional('portBase', positive) === undefined ? {} : { portBase: g.get('portBase', positive) }) })));
   if ((laneKind === 'capture') !== (capture !== undefined)) throw new SchemaError(`${f.path}.capture`, 'present exactly for a capture lane', capture);
   if (capture !== undefined && capture.states.some((s) => !/^[a-zA-Z0-9_-]+$/.test(s))) throw new SchemaError(`${f.path}.capture.states`, 'safe file names', capture.states);
@@ -1580,6 +1598,12 @@ export type CommandBody =
   | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
+  /**
+   * `roadmap rerun <unit>/lanes#<attempt>/<lane> --cause estate|infra --evidence <line>` (dev.59): the unit's lanes again at the
+   * same commit, no build, in a fresh checkout, on the root's word that the named red lane's cause is outside the tree
+   * (`RERUN_CAUSES`). Scope {u}.
+   */
+  | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string }>
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ type: 'audit' }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
@@ -1590,6 +1614,10 @@ export type CommandBody =
    * host's demo instance. Scope ∅.
    */
   | Readonly<{ type: 'demo'; act: DemoAct }>;
+
+/** dev.59: why the root says a lanes red is not the tree's (`roadmap rerun --cause`): the estate it runs against, or the infrastructure. */
+export const RERUN_CAUSES = ['estate', 'infra'] as const;
+export type RerunCause = (typeof RERUN_CAUSES)[number];
 
 /** dev.13: the owner's acts on the demo (`roadmap demo <act>`). */
 export const DEMO_ACTS = ['up', 'down', 'hold', 'release'] as const;
@@ -1673,6 +1701,10 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     resume: f.get('resume', bool),
   })),
   'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),
+  rerun: object((f): CommandBody => ({
+    type: f.get('type', literal('rerun')), unit: f.get('unit', unit), attempt: f.get('attempt', positive), lane: f.get('lane', (v, p) => laneId(v, p)),
+    cause: f.get('cause', oneOf(RERUN_CAUSES)), evidence: f.get('evidence', nonBlank),
+  })),
   audit: object((f): CommandBody => ({
     type: f.get('type', literal('audit')),
   })),
@@ -1731,6 +1763,8 @@ export const NEEDS_USER_REASONS = [
   // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
+  // dev.59, blocking: a red during a root-ordered lanes rerun (`roadmap rerun`): the root's claim did not hold.
+  'rerun-red',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
   // the first (K14, H9).
   'pack-review',

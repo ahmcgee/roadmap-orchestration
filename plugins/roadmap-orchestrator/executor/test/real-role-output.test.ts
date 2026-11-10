@@ -40,11 +40,41 @@ test('real replay corpus covers every role, contains only sanitized values, and 
   }
 });
 
+/**
+ * Fields a role's schema gained after answers were recorded, which its reader defaults on an answer written before them (an
+ * upgrade-in-place read-time default). A replay lacking one must miss exactly that field on the wire, read with its default,
+ * and pass the current schema with the default supplied: the rest of the answer is still held to the schema in force.
+ */
+const READ_TIME_DEFAULTS: Partial<Record<Role, Readonly<Record<string, JsonValue>>>> = { build: { messages: [] } };
+function withDefaults(role: Role, value: JsonValue): JsonValue {
+  const defaults = READ_TIME_DEFAULTS[role] ?? {};
+  const record = value as Record<string, JsonValue>;
+  const missing = Object.keys(defaults).filter((k) => !Object.hasOwn(record, k));
+  for (const k of missing) {
+    const others = Object.fromEntries(missing.filter((m) => m !== k).map((m) => [m, defaults[m]!]));
+    assert.equal(schemaViolation(ROLE_SCHEMAS[role], { ...record, ...others }), `$.${k}: required, missing`);
+  }
+  return { ...record, ...Object.fromEntries(missing.map((k) => [k, defaults[k]!])) };
+}
+
+test('read-time defaults: every build replay predates messages (dev.59) and reads with none', () => {
+  const builds = cases.filter((c) => c.role === 'build' && c.expect === 'accepted');
+  assert.ok(builds.length > 0);
+  for (const c of builds) {
+    const value = JSON.parse(fixtureText(c.file)) as Record<string, JsonValue>;
+    assert.equal(Object.hasOwn(value, 'messages'), false, c.file);
+    assert.equal(schemaViolation(ROLE_SCHEMAS.build, value), '$.messages: required, missing', c.file);
+    assert.deepEqual(ROLE_VALIDATORS.build(value).messages, [], c.file);
+  }
+});
+
 for (const c of cases) test(`real replay ${c.file}: ${c.expect}`, () => {
-  const value = JSON.parse(fixtureText(c.file)) as JsonValue;
+  const recorded = JSON.parse(fixtureText(c.file)) as JsonValue;
   const schema = ROLE_SCHEMAS[c.role];
   // Older saved answers can fail current schemas. Record that explicitly rather than silently
-  // ignoring them; a future schema change must reclassify the actual replay result.
+  // ignoring them; a future schema change must reclassify the actual replay result, unless its reader defaults the field
+  // (READ_TIME_DEFAULTS), when the replay is checked as read: the value with the default supplied.
+  const value = c.expect === 'schema-rejected' ? recorded : withDefaults(c.role, recorded);
   const violation = schemaViolation(schema, value);
   if (c.expect === 'schema-rejected') {
     assert.equal(violation, c.schemaError);

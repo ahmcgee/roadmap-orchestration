@@ -188,6 +188,12 @@ describe('lanes.cadence', () => {
     assert.ok(cadenceAtOrBefore('build', 'candidate') && !cadenceAtOrBefore('batch', 'candidate'));
   });
 
+  it('kind static (dev.59): declared, never with a capture; any other kind refused', () => {
+    assert.equal(laneDefOf('suite')({ ...LANE, cadence: 'candidate', kind: 'static' }, 'l').kind, 'static');
+    assert.throws(() => laneDefOf('suite')({ ...LANE, cadence: 'candidate', kind: 'static', capture: { up: ['true'], script: ['true'], states: ['a'], port: 'p' }, resources: ['p'] }, 'l'), /capture/);
+    assert.throws(() => laneDefOf('suite')({ ...LANE, cadence: 'candidate', kind: 'lint' }, 'l'), SchemaError);
+  });
+
   it('systems, testArgv and stochastic: validated; never testArgv or stochastic on an arc lane', () => {
     const lane = laneDefOf('suite')({ ...LANE, cadence: 'candidate', systems: ['api'], testArgv: ['node', '--test', '{files}'], stochastic: { runs: 3, minPasses: 2 } }, 'l');
     assert.deepEqual([lane.systems, lane.testArgv, lane.stochastic], [['api'], ['node', '--test', '{files}'], { runs: 3, minPasses: 2 }]);

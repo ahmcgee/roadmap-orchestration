@@ -28,7 +28,8 @@ import { MILESTONE_REFERENCES_BUDGET } from '../src/phase0/rows.ts';
 import { type StartChecks,type StartInput,runChecks } from '../src/preflight/checks.ts';
 import type { StartupRejection } from '../src/preflight/startup.ts';
 import {
-type CorpusArc,PIN_FILE,corpusArc,editJsonFile,editPhase0,editPlan,filesOf,inForce,newHostDir,readJsonFile,runDirOfArc,visionRecord,withForge,
+type CorpusArc,PIN_FILE,W1_FILE,W_SCRIPTS_LISTED,corpusArc,editJsonFile,editPhase0,editPlan,filesOf,inForce,newHostDir,readJsonFile,runDirOfArc,
+visionRecord,w1Item,wScriptsArchitecture,withForge,withSpecWitness,
 } from './helpers/corpusarc.ts';
 import { commitAll,makeRepo,revParse,tmpDir,writeFiles } from './helpers/repo.ts';
 
@@ -548,6 +549,85 @@ describe('revision plan-defect delta', () => {
       const row = JSON.parse(why[0]!);
       assert.equal(row.kind, 'plan-defect');
       assert.deepEqual(row.defects.map((d: Json) => d['milestone']), ['MS-2']);
+    } finally { j.close(); }
+  });
+
+  // dev.59 (item 6, nu-119813, C-355): a witness whose file its lane's argv never selects is refused at apply, also when the
+  // lane runs its explicit file list through a shell command string.
+  const editLanes = (a: CorpusArc, lanes: (ls: Json[]) => Json[]): void => editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, lanes: lanes(o['lanes'] as Json[]) }));
+  it('apply.witness-argv-shell: a witness lane whose sh -c file list leaves out the witness file is refused; adding the file applies', T, async () => {
+    const a = await corpusArc();
+    const j = inForce(a);
+    try {
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: ['sh', '-c', 'node --test test/other.test.ts'] })));
+      const why = rejected(await apply(a, j));
+      assert.deepEqual(why.map((r) => JSON.parse(r)), [{ kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: 'I-1', lane: 'journey', file: 'test/berths.test.ts', missing: 'argv' }] }]);
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: ['sh', '-c', "node --test test/other.test.ts 'test/berths.test.ts'"] })));
+      accepted(await apply(a, j));
+    } finally { j.close(); }
+  });
+
+  it('apply.witness-lane-undeclared: an arc lane an apply adds without testPaths is refused (its argv could select nothing); one in force without them refuses nothing', T, async () => {
+    const a = await corpusArc();
+    editLanes(a, (ls) => ls.map(({ testPaths: _t, ...l }) => l));
+    const j = inForce(a);
+    try {
+      editPlan(a, (p) => ({ ...p, direction: 'Book berths safely.' }));
+      accepted(await apply(a, j));
+      editLanes(a, (ls) => [...ls, { ...ls[0]!, id: 'journey-2' }]);
+      const why = rejected(await apply(a, j));
+      assert.deepEqual(why.map((r) => JSON.parse(r)), [{ kind: 'plan-defect', defects: [{ type: 'lane-test-paths-undeclared', lane: 'journey-2' }] }]);
+      editLanes(a, (ls) => ls.map((l) => (l['id'] === 'journey-2' ? { ...l, testPaths: ['test'] } : l)));
+      accepted(await apply(a, j));
+    } finally { j.close(); }
+  });
+
+  // dev.59 pass 6 (nu-119813): atlas2's lane shape, two wrapper layers before an explicit file list, on a lane in force
+  // without testPaths (an earlier release's): its argv's file list alone decides, so leaving the witness file out is refused.
+  it('apply.witness-argv-file-list: a wrapped explicit file list without the witness file is refused, also on a lane without testPaths; adding the file applies', T, async () => {
+    const wrapped = (files: readonly string[]): readonly string[] => ['node', 'scripts/lane.mjs', '--build', '@harbour/core', '--', 'node', 'scripts/skip-guard.mjs', ...files, '--config=vitest.root.config.ts', '--maxWorkers=3'];
+    const a = await corpusArc();
+    editLanes(a, (ls) => ls.map(({ testPaths: _t, ...l }) => l));
+    const j = inForce(a);
+    try {
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: wrapped(['test/other.test.ts', 'test/more.spec.ts']) })));
+      const why = rejected(await apply(a, j));
+      assert.deepEqual(why.map((r) => JSON.parse(r)), [{ kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: 'I-1', lane: 'journey', file: 'test/berths.test.ts', missing: 'argv' }] }]);
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: wrapped(['test/other.test.ts', 'test/berths.test.ts', 'test/more.spec.ts']) })));
+      accepted(await apply(a, j));
+    } finally { j.close(); }
+  });
+
+  // dev.59 pass 7 (nu-119813, C-351): atlas2's W-1, a spec witness item without files whose testId leads with
+  // scripts/rehearse/assertions.test.mjs, on w-scripts-architecture, whose wrapped file list left it out until C-355.
+  it('apply.spec-witness-file: a spec witness item in force whose testId file its lane never runs is adopted; a revision that adds or changes the item or its lane is refused for it', T, async () => {
+    const a = await corpusArc();
+    const spec = (edit: (s: Json) => Json): void => editJsonFile(join(a.planDir, 'u1.json'), (s) => edit({ ...s, rev: 2 }));
+    const refusal = (item: string, file: string) => [{ kind: 'plan-defect', defects: [{ type: 'spec-witness-not-in-lane', unit: 'u1', item, lane: 'w-scripts-architecture', file, missing: 'argv' }] }];
+    withSpecWitness(a, wScriptsArchitecture(), [w1Item()]);
+    const j = inForce(a);
+    try {
+      // In force as an earlier release kept it: an unrelated revision applies.
+      editPlan(a, (p) => ({ ...p, direction: 'Book berths safely.' }));
+      accepted(await apply(a, j));
+      // The item changed (its skeleton), its file still unlisted: refused.
+      spec((s) => ({ ...s, witnesses: [{ ...w1Item(), skeleton: "it('fails closed without a card')" }] }));
+      assert.deepEqual(rejected(await apply(a, j)).map((r) => JSON.parse(r)), refusal('W-1', W1_FILE));
+      // The lane changed (another file listed), still without the item's file: refused.
+      withSpecWitness(a, wScriptsArchitecture([...W_SCRIPTS_LISTED, 'scripts/extra.test.mjs']), [w1Item()]);
+      editJsonFile(join(a.planDir, 'u1.json'), (s) => ({ ...s, rev: 1 }));
+      assert.deepEqual(rejected(await apply(a, j)).map((r) => JSON.parse(r)), refusal('W-1', W1_FILE));
+      // C-355: the file added to the list applies.
+      withSpecWitness(a, wScriptsArchitecture([...W_SCRIPTS_LISTED, W1_FILE]), [w1Item()]);
+      accepted(await apply(a, j));
+      // A new item whose file the lane never runs: refused, naming it.
+      withSpecWitness(a, wScriptsArchitecture(), [w1Item(), { ...w1Item('scripts/rehearse/journeys.test.mjs > read > x'), id: 'W-2' }]);
+      spec((s) => s);
+      assert.deepEqual(rejected(await apply(a, j)).map((r) => JSON.parse(r)), refusal('W-2', 'scripts/rehearse/journeys.test.mjs'));
+      // A new item whose testId leads with no file derives nothing: applies.
+      withSpecWitness(a, wScriptsArchitecture(), [w1Item(), { ...w1Item('web calls > read > x'), id: 'W-2' }]);
+      spec((s) => s);
+      accepted(await apply(a, j));
     } finally { j.close(); }
   });
 

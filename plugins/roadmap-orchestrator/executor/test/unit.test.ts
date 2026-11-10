@@ -244,6 +244,60 @@ test('fixture red candidate → fix → fresh gate → green: the suite is red o
   }
 });
 
+test('candidate.static-red: a candidate red only on a static lane takes one uncharged fix round; a second is read as a charged candidate red', T, async () => {
+  // dev.59 (field C-357, C-358): the suite's static lane (lint, typecheck: `kind: static`) runs at the candidate only.
+  const d = setupArc({ steps: [], suite: [{ ...SUITE_LANE, cadence: 'candidate', kind: 'static' }] });
+  const fixRound = (files: Readonly<Record<string, string>>) => codexStep([{ type: 'commit', message: 'fix', files }], { argv: ['exec', 'resume'] });
+  appendSteps(d, [
+    planCheckStep({ decision: 'approve' }),
+    mulBuild({ 'src/add.js': ADD_BROKEN }),
+    gateStep({ decision: 'approve' }),
+    // The uncharged round misses the cause; the candidate is red on the static lane again.
+    fixRound({ 'src/mul.js': `// Multiply.\n${MUL['src/mul.js']}` }),
+    gateStep({ decision: 'approve' }),
+    fixRound({ 'src/add.js': ADD_FIXED }),
+    gateStep({ decision: 'approve' }),
+  ]);
+  const r = contextFor(d);
+  try {
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    const round = ['build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve'];
+    assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 8), 'candidate:static-red', ...round, 'candidate:static-red', ...round, 'candidate:green', 'ff:published', 'snapshot:published']);
+    const u = r.journal.view.unit(U1);
+    assert.deepEqual([u.counters.staticReds, u.counters.candidateReds, u.counters.chargeableFailures], [1, 1, 1], 'the static round charged nothing and took no candidate-red round');
+    const reds = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && e.fact.stage === 'candidate' && e.fact.outcome !== 'green' ? [e.fact] : []));
+    assert.deepEqual(reds.map((f) => [f.outcome, f.class, f.chargeable, f.detail?.kind]), [['static-red', 'static-red', false, 'candidate-red'], ['static-red', 'candidate-red', true, 'candidate-red']], 'the second static red is read as a candidate red');
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('candidate.static-red reentrant: a driver killed right after the static-red outcome resumes into its uncharged fix round from the fold', T, async () => {
+  const d = setupArc({ steps: [
+    planCheckStep({ decision: 'approve' }), mulBuild({ 'src/add.js': ADD_BROKEN }), gateStep({ decision: 'approve' }),
+    codexStep([{ type: 'commit', message: 'fix add', files: { 'src/add.js': ADD_FIXED } }], { argv: ['exec', 'resume'] }), gateStep({ decision: 'approve' }),
+  ], suite: [{ ...SUITE_LANE, cadence: 'candidate', kind: 'static' }] });
+  const trigger = writeTrigger(tmpDir('unit-crash'), { label: 'unit.after-stage', occurrence: 9 });
+  const env = { ...process.env, ROADMAP_TEST_CRASH: trigger };
+  const first = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+  assert.equal(first.signal, 'SIGKILL', first.stderr);
+  assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 8), 'candidate:static-red'], 'killed right after the static-red outcome');
+  const second = await runFixture('unit-child.ts', [JSON.stringify(d), 'u1'], { env, timeoutMs: SCENARIO_TIMEOUT_MS });
+  assert.equal(second.code, 0, second.stderr);
+  assert.deepEqual(JSON.parse(second.stdout), { kind: 'merged' });
+  assert.deepEqual(outcomes(d), [...STRAIGHT.slice(0, 8), 'candidate:static-red',
+    'build:success', 'quiesce:empty', 'evidence:captured', 'salvage:committed', 'teardown:released', 'lanes:green', 'gate:approve', ...STRAIGHT.slice(8)]);
+  const r = contextFor(d);
+  try {
+    const u = r.journal.view.unit(U1);
+    assert.deepEqual([u.counters.staticReds, u.counters.candidateReds, u.counters.chargeableFailures], [1, 0, 0]);
+  } finally {
+    r.journal.close();
+  }
+  assert.equal(readCalls(d.scenarioPath).length, 5, 'no call twice');
+});
+
 test('codex.resume-collision-retry: a resume that collides with a live session is retried once as a new invocation', T, async () => {
   const d = setupArc({
     steps: [

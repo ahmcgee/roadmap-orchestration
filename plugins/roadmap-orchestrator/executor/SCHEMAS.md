@@ -85,7 +85,7 @@ PlanUnit = {
   origin?: 'planned'|'repair'|'polish'|'deflake'; cpu?: number;
   review?: 'always'|'never'; spike?: {question:string};
   reenters?: {unit:UnitId,enterAt?:'pre-build'|'build'|'verify',reset?:{reason:string},fixes?:FailureRef};
-  cut?: {reason:string}; routing?: RoutingLayer; limits?: UnitLimits;
+  cut?: {reason:string}; carries?: {unit:UnitId,tip:Sha}; routing?: RoutingLayer; limits?: UnitLimits;
   priority?: 'normal'|'high'; polish?: {milestone:MilestoneId,proposal:PolishId};
   deflake?: {keys:FlakyKey[]};
 }
@@ -99,6 +99,11 @@ refused and escalated to an owner request. Reserved new unit ids include batch-n
 Root splits conserve parent text, systems, obligations, dependencies and milestone ownership; deflake cannot split.
 Re-entry must identify a recorded failure where required and keeps lineage counters. `reenters.reset: {reason}` clears
 only chargeable failures; lifetime attempts and other counters remain. Cuts and reset carry reasons. All structural/runtime restrictions are applied again by the classifier, not only the parser.
+`carries` (dev.59, C4, additive: absent means none, no read-time default needed) records that a fresh unit continues a
+cut unit's work from `tip`, a commit of that unit's branch. It is set when the unit is added, never after; never on a
+re-entry or naming itself; the classifier requires the named unit cut (before or by the same apply), with a branch whose
+history holds `tip`. Status shows `units[].carries` on the carrier and `carriedBy` on the cut unit. A carrier stands for
+the unit it carries in milestone membership and the milestone node (`src/walk/node.ts` follows it as a lineage).
 
 ### Specs and design
 
@@ -157,6 +162,9 @@ units. Selected milestone lanes must be suite batch lanes explicitly shared-reso
 Systems select impacted checks conservatively; unmapped paths select. Reuse input is explicit inputs-filtered ls-tree,
 else unit systems for implicit spec lanes or lane systems. Command/environment/lane identity, clean series certificate and
 completed evidence metadata still bind reuse. `testArgv` has exactly one `{files}` element for changed leaf-test files.
+dev.59: a test-only run needs every changed leaf test inside the lane's cwd; one outside it (a dependency's) runs the
+lane's argv. A red test-only run is classed `{kind:'targeted'}` (after a host signature, before every other class): its
+rerun is the lane's argv and that run's verdict is the lane's, so a runner finding no test files among `{files}` charges nothing.
 Stochastic `{runs,minPasses}` requires runs >= 2 and minPasses <= runs and bypasses ordinary flake classification.
 TimeoutMin is positive; absent uses the six-hour runner backstop rather than a red timeout verdict. ReadsComments true
 remains parseable but enables no special pass carryover.
@@ -167,7 +175,12 @@ Capture shape:
 {kind:'capture', capture:{up:string[],script:string[],states:string[],port:ResourceName,portBase?:number}}
 ```
 
-Capture and kind appear together. States are safe filename stems. Port is in lane resources and names a declared pool;
+Capture and `kind:'capture'` appear together. dev.59: `kind:'static'` (additive; no capture) marks a static check, a
+linter or typechecker that reads the source and runs none of it. A candidate red with the tip alone green whose every red
+lane is static, its checkout clean, records candidate outcome `static-red` (detail as `candidate/red`): one uncharged fix
+round, class `static-red` (fold counter `staticReds`, 0 in older logs: none spent), taking no candidateReds round and no
+chargeable failure; a second `static-red` takes the `red` row (class `candidate-red`, charged, then the park). The kind is
+declared, never inferred from a lane's name. States are safe filename stems. Port is in lane resources and names a declared pool;
 script names a repo capture script path. The executor binds a leased slot/port, contains stack+script and requires every
 PNG. Only related milestone design/member gates get the evidence. Summary currently projects suite capture spawns.
 
@@ -245,7 +258,16 @@ journeys are nonempty where required; selected lanes default []. A design unit i
 Journeys have `{id,text,via:browser|shell,entry,budget:{steps,seconds}|null}`. BringUp has setup argv[], serve entries
 `{name,argv,ready:{http}|{log}}`, env map, seed argv[]. `{port:<serve-name>}` substitutes allocated ports consistently.
 References are design directories and have a 512 KiB text budget. Missing tools/MCP handshake refuse browser readiness.
-A planned descendant outside the milestone waits for milestone-passed; code follows lineage heads. Non-planned
+A planned descendant outside the milestone waits for milestone-passed; code follows lineage heads.
+Membership (dev.59, `milestoneMembers` in `src/input/plan.ts`): the listed units, every unit re-entering one of them
+and every unit carrying a cut one forward, transitively, in plan order. Superseded and cut members are withdrawn: a
+milestone is reached when it has a live member and every live member merged (an all-withdrawn milestone is never
+reached). A revision that leaves a milestone with members but no live one is refused (classifier, every proposer; the
+plan alone decides: cut, or re-entered); one already so in force, from an earlier release, is raised at scheduler start
+as a blocking arc `plan-defect` item naming the milestone and its withdrawn members (temporary adoption scaffolding,
+`allWithdrawnMilestones`). Members also receive the milestone's prompt inputs, and the walk reads every merged member's spec. Status
+`milestones[]` adds `members`, `withdrawn`, `live` and `merged`; summary milestones add `live` and `merged`; the
+console's graph, milestone detail (`total` live, `merged`) and filters read status's members. Non-planned
 lineages are exempt so repairs/polish can proceed. A reported walk with no active walkthrough P1 passes the node;
 polish may still be settling. Breaks hold, deviations can be repaired alongside work. Walk and
 before/after comparison share the experienceVerdict role. Demo records/controls are in `src/demo/records.ts`.
@@ -286,7 +308,21 @@ ObligationDef = {
 ```
 
 Fresh witness authoring requires files and arc lane testPaths through plan-defect checks, even where shape readers keep
-them optional. Census is required for corpus target validation and names every active rule exactly once; split-family
+them optional. dev.59: so does every revision for the lanes and binding witnesses it adds (Phase-0 mode `REVISION`; a
+revision is refused only for the defects it adds), and an argv's test paths include the words of a shell's `-c` script
+(`sh|bash|dash|zsh`), so a witness file left out of a file list there is `witness-not-in-lane{missing:'argv'}`. dev.59 pass 6
+(nu-119813): an argv word naming a test file (`*.test.*`, `*.spec.*`, `test_*.py`, `*_test.{go,py,rb,ex,exs}`, the bounded
+diff's rule), resolved against the lane's `cwd`, is a test path anywhere in the argv (past any number of `--` wrapper
+layers) and with or without `testPaths`; a word naming another file (an extension, no glob: a wrapper script) is none. So once
+the argv lists test files, the witness file must be listed (or under a listed directory or glob); with no test path in the
+argv, `testPaths` alone decides. dev.59 pass 7 (nu-119813, C-351): a spec witness item declares no files; its file is
+its `testId`'s first segment before ` > `, resolved against its lane's `cwd`, when that segment is a test file name (by the
+same rule; otherwise nothing is derived and the item is not checked). The same check refuses it as
+`spec-witness-not-in-lane{unit,item,lane,file,missing:'test-paths'|'argv'}` at a fresh start and at every revision (`REVISION`),
+and parks it uncharged at the lanes witness diagnosis (`plan-defect`). A revision adopts such a defect in force while the
+item and its lane are unchanged, and is refused for it when it adds or changes either; a restart adopts it. A witness the
+argv cannot show (a package script's file list, a spec witness item whose testId names no file) is the builder's to report
+as `grounding.specWrong`: a build `spec-wrong` park, uncharged, for the root. Census is required for corpus target validation and names every active rule exactly once; split-family
 census names the parent. Split parent witness/proof are null. New obligations start active at rev 1. Normative rev changes
 exactly for statement/anchor/activation changes. Intentional weakening needs root apply reason; disposition records bind
 reason/revision. Proof judgments must prove the current statement rev and ids/files. Lane/argv moves with identical proof
@@ -362,6 +398,12 @@ Apply still classifies safety/proof/risk/split/contract invariants and stores th
 activated under a fence with plan-applied last. Queued commands retain boundary provenance through restart. Executor CAS
 races retry and produce non-blocking notices; root commands do not auto-raise executor revision notices.
 
+dev.59: a suite-lane edit is refused only while a candidate is under way. While a lanes attempt runs, the apply is `busy`
+behind that attempt's boundary (`apply-queued`, a `queued` receipt), like a spec edit of a running unit. A lanes red's fix
+round reads its fast-suite series by the plan revision in force at that red (`JournalView.planAppliedAt(seq)`, derived from
+the `plan-applied` facts; no record change), and requires the suite checks in force: an edited lane runs as it now stands,
+a removed one is not required.
+
 Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for existing future witness files and `{kind:"spanning-proof",obligation,lane,units}` for multi-unit delivery without a spanning candidate/batch lane. They never refuse. Actual baseline vacuity remains execution-derived.
 
 ## Commands, receipts and needs-user
@@ -386,7 +428,22 @@ brief are not queued command bodies. Brief/note evidence is hashed before submit
 
 Command files are write-once incoming records with accepted/queued/applied/rejected receipts. Accepted/queued does not
 mean applied. Apply receipt may expose remaining plan-defect advisories while refusing new defects. Steer drains a live
-unit before applying; note informs the next build without cancelling it. Resume backend is explicit availability recovery. Dismiss requires a named active finding and non-whitespace counterEvidence. `finding-dismissed {id,command,counterEvidence,by:{role:"root",routingRev}}` folds as ruled/dismissed, including P1. Same-command replay is idempotent; a new command against an unknown/closed finding refuses. It suppresses unchanged-evidence re-raising through the existing admission predicate. Campaign dismisses/counterEvidence fields only raise a root request. If the finding settled while the audit ran, the request is informational and cannot re-block completion.
+unit before applying; note informs the next build without cancelling it. Resume backend is explicit availability recovery.
+Rerun (dev.59, scope {u}, never killing a live build: its pending drain holds the unit's next admission) names a lane
+failure `<unit>/lanes#<n>/<lane>`: lanes#n is the unit's latest decision and latest stage attempt (`counters.attempts = n`:
+nothing started since, else refused toward steer), its outcome one of `RERUNNABLE` (red, regression, flaky, not-certified,
+witnesses-missing, or a rerun's own rerun-red), the lane ran red there at commit `at`, the unit branch is still at `at`, and
+no earlier rerun named that lane at `at`. Its effect and postcondition is `lanes-rerun {unit,command,attempt,lane,at,cause,
+evidence,by:{role:"root",routingRev}}`; the generic command crash points cover it plus `rerun.after-fact`. The fold checks
+the log's side of them (the attempt, the outcome, one per lane and head) and sets `UnitState.entry {kind:"rerun",seq,command}` (ENTRY_STAGE lanes) and `UnitState.rerun
+{seq,command,waived}`, `waived` the decided outcome the first rerun of a series waived. The lanes stage under `rerun` removes
+the stable verification checkout first (a fresh checkout), runs no lane test-only, and records any `RERUN_REDS` series as
+lanes `rerun-red`: an uncharged operator env park (reason `rerun-red`), outside the certification allowance. `rerun` is kept
+through holds, retries and retryable/env parks (their restore sets the rerun entry again) and through its own rerun-red park,
+whose `resume` restores `waived` and ends it; `resume` refuses when `waived` halted (the chargeable bound, a steer park),
+pointing at re-entry. Any other lanes outcome, a steer, merge-in, reopen or stale reopen clears it. The rerun's lanes attempt
+counts toward the judged-stage total; no build runs. Status decisions list it as kind `rerun`. New union members only:
+older logs carry none, so nothing defaults and `SCHEMA_VERSION` is unchanged. Dismiss requires a named active finding and non-whitespace counterEvidence. `finding-dismissed {id,command,counterEvidence,by:{role:"root",routingRev}}` folds as ruled/dismissed, including P1. Same-command replay is idempotent; a new command against an unknown/closed finding refuses. It suppresses unchanged-evidence re-raising through the existing admission predicate. Campaign dismisses/counterEvidence fields only raise a root request. If the finding settled while the audit ran, the request is informational and cannot re-block completion.
 
 NeedsUserRecord `{v:2,id,arc,raisedAt,blocking,subject,reason,summary,recommendation,options,evidence}` has subject
 unit `{type:'unit',unit}`, arc, host or `{type:'findings',findings:FindingId[]}` (nonempty). A dismissal closes matching finding subjects only when every named finding is resolved or ruled. Options are `{id,label}`; evidence is absolute paths. Ack record is
@@ -414,8 +471,10 @@ Codex; M2/design/high risk and diagnosis fallback use Claude. M1/capture-only re
 frontier advisor remain. Effective fallback/profile changes have routing revisions so history resolves actual seats.
 Config also accepts chain, walkthrough.mcp, systemsMap and systemNotesDir; unknown keys refuse.
 
-Strict role output readers reject unknown fields. BuildOutput is summary/blockers/experiments/grounding/tooBig/notes/final
-(exact type below). Grounding contains specWrong nullable text and touches strings; tooBig is **top-level**. Structured
+Strict role output readers reject unknown fields. BuildOutput is summary/blockers/experiments/grounding/tooBig/notes/messages/final
+(exact type below). `messages` (dev.59) lists every cross-session message the build received, `{from,at,text}` (text verbatim or
+its first 500 characters); the wire schema requires it, and the reader takes a report written before dev.59 (its launch's
+schema had no such field) as none, with one `ROADMAP_UPGRADE` warning per process (temporary scaffolding). Grounding contains specWrong nullable text and touches strings; tooBig is **top-level**. Structured
 decisions come from decisions.json captured by evidence, not a BuildOutput decisions key. Final false is an intermediate
 wait protocol; the terminal build output must be final true.
 
@@ -456,7 +515,7 @@ Live fact families:
 |---|---|
 | Work/usage | dispatch, judgment-inputs, approval, stage-outcome, meter, usage-unavailable; exact attempt/role/routing attribution |
 | Control | paused, stop-requested, stop-completed, resumed, backend-park, probe, reopened/unparked, edge-resolved, run-only |
-| Inputs | plan-applied, apply-queued, finding-dismissed, noted, steered, merged-in, revision-link stale-set/answers/reopening |
+| Inputs | plan-applied, apply-queued, finding-dismissed, noted, steered, merged-in, lanes-rerun, revision-link stale-set/answers/reopening |
 | CI | external-witness/reopened, spike-completed, attempt-marker/capped, lane-base-compared, lane-reused, series-certified, smoke-ran |
 | Review | review-triggered/completed; gate round/findings-ledger/dispute facts |
 | Target | witnessed, obligation-latched, finding-opened/transition, audit-started/ended/requested, divergence |
@@ -513,6 +572,14 @@ spend `{costUsd,expectedUsd,differenceUsd,estimatedCalls,unavailableCalls}`, mil
 needsUser, waste, demo, completion. Caught is laneReds + gateRevisions + uniqueFindings, with byLens counts of unique keys;
 not a cross-seat unique-defect metric. Milestone costs include members/re-entries/polish and walk/compare jobs, not all
 arc costs. Captures lists suite capture spawns only. Waste findings use observed duration/evidence and durable cause keys.
+
+Full status `units[].running.session` (dev.59, derived) is the cross-session name of the Claude build running in the
+unit's attempt now, read from its launch.json `terminal.name`: the exact `SendMessage` address. It is null between builds,
+for a Codex build and for a build launched before dev.59, so it disappears when the build ends.
+
+Full status `units[].lineageAttempts` (dev.59, derived) is `{builds,judged,buildCap:16,judgedCap:40}`: the unit's lineage
+(itself and each unit it re-enters) against the total-attempt caps, which `reenters.reset` never clears. An accepted apply
+(and `apply --dry-run`'s `warnings`) states the same per `unit-reentered` change, one receipt line beginning `lineage:`.
 
 Full status and summary both expose `supervision: {state:'live'|'stale'|'none',pid?,lastPollAt?,executorVersion?}`.
 `none` has no other fields; `live` and `stale` include all three. Liveness is the lease's PID/start identity on the
@@ -608,8 +675,11 @@ export type TooBig = Readonly<{ estimate: string; suggestedChildren: readonly st
 ```ts
 export type BuildOutput = Readonly<{
   summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
-  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[]; final: true;
+  grounding: Grounding; tooBig: TooBig | null; notes: readonly string[];
+  messages: readonly ReceivedMessage[];
+  final: true;
 }>;
+export type ReceivedMessage = Readonly<{ from: string; at: string; text: string }>;
 ```
 
 ### DispatchRecord (`src/core/records.ts`)
@@ -659,6 +729,7 @@ export type CommandBody =
   | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
+  | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: 'estate' | 'infra'; evidence: string }>
   | Readonly<{ type: 'audit' }>
   | Readonly<{ type: 'close-admissions' }>
   | Readonly<{ type: 'demo'; act: DemoAct }>;
@@ -693,6 +764,7 @@ export const NEEDS_USER_REASONS = [
   'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',
   'park-escalated', 'env-blocked',
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
+  'rerun-red',
   'pack-review',
   'read-denied',
   'witness-lane-missing',
@@ -719,6 +791,7 @@ Constructors in `src/core/ids.ts` reject invalid forms before branding.
 | Pool instance / CPU token | `<pool>#<positive n>` / `@cpu#<positive n>` |
 | Command | `cmd-<16 lowercase hex>` |
 | Session | Lowercase UUID |
+| Build session name (dev.59) | `<arc>-<unit>-<seq>-<ordinal>` (`buildSessionName`, the one derivation); `[A-Za-z0-9_-]{1,200}` |
 | SHA / content hash | 40 / 64 lowercase hex |
 | Routing, seat, lane, environment rev; brief id | 16 lowercase hex |
 | Needs-user | `nu-<n>`, `sup-<n>-<n>`, or `host-<slug>` |
@@ -886,6 +959,21 @@ A held stage does not advance or consume a charge; backend/recovery holds retain
 | salvage commit-failed | host plus failed cleanup instances |
 | reproduce/lanes/candidate env-unavailable | Named environment |
 
+Lanes `rerun-red` (dev.59) is an operator env park: `resume` restores the decision the rerun waived (above, Commands).
+
+dev.59 gate split proposal (no schema change): a gate answer holds an active acceptance clause unmet when a blocking
+`requirement-unmet` finding names its id as a whole token (`src/pipeline/gate.ts` `unmetClauses`). A clause every gate
+answer of a lineage holds unmet, from the second answer on,
+raises one non-blocking unit `split-proposal` per lineage, parented by that gate attempt and raised before its outcome
+(a crash between them re-reads the answer and finds the item). The unit goes on.
+
+dev.59 park items (no record change): a `chargeable-bound` park's recommendation names a re-entry with `reenters.reset`,
+never a spec revision (a re-opened unit keeps its count and parks at its next charged failure), and a candidate `base-red`
+park, an operator env park, names its two ways out: estate or base fixed, `ack` then `resume` (the candidate re-runs as a
+new attempt, uncharged); the unit's own red, `steer --resume` then `ack`. Its summary states the executor's finding,
+"The tip also fails without this unit", not a verdict on the cause. Both state the lineage's builds and judged stages
+against the total-attempt caps (`src/pipeline/attempts.ts` `lineageAttemptsText`).
+
 `src/park/table.ts` supplies targets; `src/pipeline/transitions.ts` owns class/charge/re-entry decisions. Recovering then
 parking on the same target within six hours becomes operator env (`env-blocked`), preventing endless flapping retries.
 
@@ -1038,7 +1126,10 @@ ExitFile = InvocationBinding & {
 ```
 
 LaunchTerminal is command `{type,purpose,expectedExit,timeoutMin?}` or backend
-`{type,purpose,role,routingRev,schemaPath,outputPath,session}`. TimeoutMin is lane-only. Claude sessions have backend,
+`{type,purpose,role,routingRev,schemaPath,outputPath,session,name?}`. `name` (dev.59) is a Claude build's
+`BuildSessionName`, the `--name` it launched with (a startup or probe smoke's build is named by its check); it is refused on a
+Codex build and absent on a build launched before dev.59. Every Claude build also launches with
+`crossSessionInbound: "accept"` in its `--settings` and never `--bare`. TimeoutMin is lane-only. Claude sessions have backend,
 mode fresh/resume and id; fresh Codex lacks id until the result. Runner adds ROADMAP_OP/INV/ROLE to the declared env.
 Only launch argv can carry model ids among executor-written runtime files. Exit is published after containment empties,
 before adaptation; `reported` follows a validated final report's bounded descendant grace. Binding mismatch refuses.
@@ -1149,7 +1240,8 @@ Continued request churn yields unavailable instead of spinning until the deadlin
 not-found for absent/pruned evidence. Requests accept
 `minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and `fenceSize` captured cheaply
 from the journal. The cursor must inspect through that fence, excluding incomplete trailing lines. Request
-admission rechecks dependencies and coalesces catch-up, bounded to two seconds. Reset/conflict (409),
+admission rechecks dependencies and coalesces catch-up, bounded to two seconds counted from when the observation
+worker is ready (loaded and through its first check); a request arriving earlier waits for that. Reset/conflict (409),
 unavailable (503) and corruption (500) are explicit; old epochs/lower watermarks/unchecked caches are not
 silently returned. Absent/dead/unreachable servers, unavailable catch-up and console protocol/version mismatch fall back locally
 with a stderr diagnostic. Identity mismatch, malformed payload and corrupt evidence do not fall back.
@@ -1312,7 +1404,7 @@ arc across restarts, with no needs-user notice. `roadmap pr` retains its own can
 
 ### dev.45 candidate-red detail
 
-`candidate/red` stage outcomes carry `detail {kind: "candidate-red", path, causes, summary, evidence, directives, baseComparison}`.
+`candidate/red` and (dev.59) `candidate/static-red` stage outcomes carry `detail {kind: "candidate-red", path, causes, summary, evidence, directives, baseComparison}`.
 `path` is `suite red vs tip green`, `held-claims brake`, `mutant survivor`, or `repair batch`. The summary/directives name
 red obligations and declared repairs, unexplained/background lane failures, dirty/moved checkouts, mutant findings,
 and RUN/REUSED grading invocations with record/evidence paths. Fix rounds and bounded parks read this same diagnosis.
@@ -1342,7 +1434,8 @@ share the same idempotent inspection. Old logs need no new fields; the new fact 
 When supplied it is nonempty and each literal substring is nonempty. A substring in the failed command's stdout/stderr
 tail suppresses its diagnostic rerun. Host signatures take precedence; timeout verdicts do not use this opt-out.
 Stochastic lanes keep their runs/minPasses rule. The persisted red class adds
-`{kind:'no-rerun', reason:'base-red'|'deterministic'}`; older red classes remain readable without changes.
+`{kind:'no-rerun', reason:'base-red'|'deterministic'}` and (dev.59) `{kind:'targeted'}`, a test-only run's red; older red
+classes remain readable without changes.
 A failing `lane-base-compared` for the same unit/lane/diffBase also suppresses diagnostics, retaining original evidence.
 Specific failure signatures skip make `***`, npm lifecycle, exit-status and FAIL wrapper lines and generic summaries;
 masking still replaces checkout paths, timestamps, hashes and digits. Spec base-red raises a blocking arc `base-red`

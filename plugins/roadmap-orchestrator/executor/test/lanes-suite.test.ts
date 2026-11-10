@@ -4,19 +4,21 @@
 // red: `base-red`, uncharged, on to the gate; a base's verdict is run once per run. Real processes, real git, fake
 // backends. Named tests: lanes.fast-suite-own-red, lanes.fast-suite-base-red, lanes.fast-suite-base-is-salvage.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
 import { type Sha,sha } from '../src/core/ids.ts';
+import { readJournal } from '../src/core/log.ts';
 import { worktreeList } from '../src/git/git.ts';
+import { parsePlan } from '../src/input/plan.ts';
 import { pinDispatch,unitWorktree } from '../src/pipeline/dispatch.ts';
 import { stageSuiteLanes,suiteStandIns } from '../src/pipeline/lanes.ts';
 import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,preBuild } from '../src/pipeline/stages.ts';
 import { laneCommand } from '../src/prompts/inputs.ts';
 import { step } from '../src/pipeline/unit.ts';
 import {
-BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
+BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,applyFilesNow,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
 } from './fixtures/stage-common.ts';
 import { git } from './helpers/repo.ts';
 import { type CodexAct,type Expect,type Step,readCalls } from './helpers/scenario.ts';
@@ -105,6 +107,52 @@ test('lanes.fast-suite-own-red: a fast suite lane red on the unit\'s commit and 
   assert.equal(green?.outcome, 'green');
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
   assert.equal(run.journal.view.unit(U1).counters.unchargedLanesReds, 1);
+});
+
+// dev.59 (item 8): a suite edit is no longer refused while a lanes red awaits its fix round; the round reads its series by
+// the plan it ran under and requires the checks in force.
+test('lanes.fast-suite-edit-before-fix: a suite edit that removes the red lane lands before the fix round; the round still shows the red lane\'s evidence, no longer requires it, and the next lanes attempt runs the suite in force', T, async () => {
+  const lint: LaneJson = { id: 'lint', argv: ['sh', '-c', 'if grep -q TODO src/add.js; then echo "lint: TODO left in src/add.js" >&2; exit 1; fi'] };
+  const run = setupUnit({
+    lanes: [UNIT],
+    suite: [SAME, lint, E2E],
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      codexBuild([{ type: 'commit', message: 'add', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b; // TODO tidy\n}\n' } }], { argv: ['exec', '-C'] }),
+      codexBuild([{ type: 'commit', message: 'tidy', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' } }], { argv: ['exec', 'resume'] }),
+    ],
+  });
+  started(await preBuild(run.ctx, run.unit));
+  while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
+  const red = run.journal.view.unit(U1).decided;
+  assert.ok(red?.stage === 'lanes' && red.outcome === 'red');
+
+  // The root's apply lands now: lint leaves the suite.
+  const planPath = join(run.planDir, 'plan.json');
+  const edited = JSON.parse(readFileSync(planPath, 'utf8')) as { suite: { lanes: { id: string }[] } };
+  edited.suite.lanes = edited.suite.lanes.filter((l) => l.id !== 'lint');
+  writeFileSync(planPath, JSON.stringify(edited));
+  applyFilesNow(run);
+  const next = parsePlan(JSON.parse(readFileSync(planPath, 'utf8')));
+  const ctx = { ...run.ctx, plan: () => next };
+  // What the round reads is replayed from the log: the revision in force at the red is rev 1, the edit rev 2.
+  const replayed = readJournal(run.runDir, run.journal.view.arc).view;
+  assert.deepEqual([replayed.planAppliedAt(replayed.decidedSeq(U1)!)?.rev, replayed.planApplied()?.rev], [1, 2]);
+
+  assert.equal((await step(ctx, run.unit)).kind, 'continue');
+  const calls = readCalls(run.scenario.path);
+  assert.equal(calls.length, 3);
+  const suiteDir = fastSuiteRoot(run.runDir, { type: 'stage', unit: U1, stage: 'lanes', attempt: red.attempt }, 'suite');
+  assert.ok(calls[2]!.stdin.includes(join(suiteDir, 'lint', 'output', 'files')), 'the fix round still shows the red lane\'s evidence');
+  const required = calls[2]!.stdin.match(/<fix_round>[\s\S]*?<required_checks>([\s\S]*?)<\/required_checks>/)?.[1] ?? '';
+  assert.doesNotMatch(required, /grep -q TODO/, 'a lane the edit removed is not a required check');
+
+  while (run.journal.view.unit(U1).decided?.stage !== 'lanes' || run.journal.view.unit(U1).decided?.attempt === red.attempt) {
+    assert.equal((await step(ctx, run.unit)).kind, 'continue');
+  }
+  const green = run.journal.view.unit(U1).decided;
+  assert.equal(green?.outcome, 'green');
+  assert.deepEqual(laneSpawns(run).filter((s) => s.attempt === green.attempt && s.set === 'suite').map((s) => s.lane), [], 'the suite in force has no lane left to run at lanes');
 });
 
 test('lanes.fast-suite-base-red: a fast suite lane red on the unit\'s base alone too is base-red, uncharged, on to the gate; the base runs once for later attempts', T, async () => {

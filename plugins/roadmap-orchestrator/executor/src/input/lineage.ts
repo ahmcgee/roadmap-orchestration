@@ -11,3 +11,9 @@ export function lineageMembers(view: JournalView, root: UnitId): readonly UnitId
   return out;
 }
 
+/** The lineage behind `unit`, from the log: `unit`, then each unit it re-enters, back to the lineage's first unit. */
+export function lineageBack(view: JournalView, unit: UnitId): readonly UnitId[] {
+  const out = [unit];
+  for (let l = view.unit(unit).lineage; l !== null; l = view.unit(l.reenters).lineage) out.push(l.reenters);
+  return out;
+}

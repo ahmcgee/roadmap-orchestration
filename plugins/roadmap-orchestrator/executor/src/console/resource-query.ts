@@ -12,6 +12,7 @@ import { allowParams, choice, invalid, known, list, pageLimit, resolveTime, time
 import { bookingSummaries, projectionIndex, waitingMeasurements, resourceNow } from './tab-projections.ts';
 import { cpuStageGroups, resourceQueue } from './resources.ts';
 import { waitWords, reasonWords, stageWords } from './vocabulary.ts';
+import { milestoneReasons } from './milestones.ts';
 import { preview, versioned } from './views.ts';
 import type { ResourceFilters, ResourceSubject, ResourceBooking, ResourceCpu, ResourceCpuCall, ResourceWait, ResourceReason, ResourceNow, ResourceNowRow, ResourceView, ResourceDetail, ResourceCoverage, ResourceReasonsView, ResourceLane, BookingMark } from './resource-protocol.ts';
 const detailKey=(kind:string,arc:string,id:string)=>`${kind}-${sha256Hex(canonicalJson([arc,id]))}`;
@@ -55,7 +56,7 @@ export class ConsoleResources {
     const rawNow=resourceNow(e),queue=resourceQueue(e.data.display.status.host);
     const resources:Extract<ResourceNowRow,{kind:'resource'}>[]=rawNow.resources.map(r=>{const b=allBookings.findLast(b=>(b.instance??b.resource)===r.resource&&b.state==='holding');return {id:`resource:${r.resource}`,kind:'resource',...r,holderTitle:r.holder?identities.get(r.holder)?.title.slice(0,96)??null:null,unitRef:r.holder&&identities.has(r.holder)?r.holder:null,startedAt:b?.startedAt??null,detailKey:detailKey('resource',e.arc,r.resource)};});
     const queues:Extract<ResourceNowRow,{kind:'queue'}>[]=queue.map((q,n)=>({id:`queue:${n}`,kind:'queue',position:n+1,subject:q.unit?subject('unit',q.unit):'holder' in q&&(q.holder.type==='job'||q.holder.type==='docs')?subject('job',q.label):{...subject('arc',e.arc),title:`Batch ${q.label}`} ,queuedAt:q.queuedAt===undefined?null:new Date(q.queuedAt).toISOString(),publication:q.request.publication,named:[...q.request.named],pools:[...q.request.pools],cpu:q.request.cpu}));
-    const blockers:Extract<ResourceNowRow,{kind:'blocker'}>[]=e.data.display.status.units.flatMap(u=>{const reasons=waitWords(u.waitingFor);return reasons.length?[{id:`blocker:${u.unit}`,kind:'blocker' as const,subject:subject('unit',u.unit),reasons:reasons.slice(0,8).map(text=>preview(text,{type:'unit',id:u.unit})),reasonCount:reasons.length}]:[];});
+    const why=milestoneReasons(e),blockers:Extract<ResourceNowRow,{kind:'blocker'}>[]=e.data.display.status.units.flatMap(u=>{const reasons=waitWords(u.waitingFor,why);return reasons.length?[{id:`blocker:${u.unit}`,kind:'blocker' as const,subject:subject('unit',u.unit),reasons:reasons.slice(0,8).map(text=>preview(text,{type:'unit',id:u.unit})),reasonCount:reasons.length}]:[];});
     const pools:Extract<ResourceNowRow,{kind:'pool'}>[]=rawNow.pools.map(p=>({id:`pool:${p.id}`,kind:'pool',resource:p.id,detailKey:detailKey('resource',e.arc,p.id),size:p.size,used:p.used,dirty:p.dirty}));
     const integration=resources.filter(r=>r.resource==='integration-slot'&&r.holder!==null),publication=queues.filter(q=>q.publication).map((q,n)=>({...q,position:n+1}));
     const pressure=blockers.filter(b=>e.data.display.status.units.find(u=>u.unit===b.subject.id)?.waitingFor?.pressureBlocked);

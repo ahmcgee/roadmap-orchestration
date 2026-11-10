@@ -9,9 +9,10 @@ import { systemName } from '../src/core/ids.ts';
 // vision.experience-clause.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
-import { jobId, milestoneId, sha, unitId } from '../src/core/ids.ts';
+import { arcId, commandId, jobId, milestoneId, sha, unitId } from '../src/core/ids.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
 import { openFinding } from '../src/holistic/findings.ts';
@@ -19,15 +20,22 @@ import { parseVision } from '../src/holistic/types.ts';
 import { type Classified, type Proposer, changesScope, classify } from '../src/input/classify.ts';
 import { readInputFiles, recordPlan, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { milestonesOf, parsePlan } from '../src/input/plan.ts';
-import { openBlocking, raiseNeedsUser, supersededItems } from '../src/needsuser.ts';
-import { milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
+import { openBlocking, raiseNeedsUser, readNeedsUser, supersededItems } from '../src/needsuser.ts';
+import { allWithdrawnMilestones, milestoneProgress, walkItemsDue } from '../src/walk/milestones.ts';
 import { bringUpDraft } from '../src/walk/report.ts';
 import { FROM_REF, MILESTONE_REFERENCES_BUDGET, phase0Rows } from '../src/phase0/rows.ts';
 import { pinDispatch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { setupCorpusArc } from './fixtures/corpus-unit.ts';
-import { commitAll, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
+import { commitAll, git, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
+import { planDirOf } from './fixtures/route-common.ts';
+import { status } from '../src/status.ts';
+import { ObservationCache } from '../src/observation/cache.ts';
+import { graphView } from '../src/console/views.ts';
+import { milestoneView, unitView } from '../src/console/details.ts';
 import { type ArcDescriptor, type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
+import { startScheduler, stopScheduler } from './fixtures/sched-common.ts';
+import { until } from './fixtures/exec-common.ts';
 
 const T = { timeout: 60_000 };
 type Json = Record<string, unknown>;
@@ -210,6 +218,145 @@ describe('classify.milestones: the milestones edit class', () => {
       r.journal.close();
     }
   });
+});
+
+/** Adds unit `id` to the plan (after nothing), its spec a copy of u1's under its id with one more clause; `extra` over its entry. */
+function addUnit(d: ArcDescriptor, id: string, extra: Json = {}): void {
+  const dir = planDirOf(d);
+  const spec = JSON.parse(readFileSync(join(dir, 'u1.json'), 'utf8')) as Json;
+  spec['acceptance'] = [...(spec['acceptance'] as Json[]), { id: 'A2', clause: `${id} also holds`, failLoudIfUndelivered: true, state: 'active' }];
+  writeFileSync(join(dir, `${id}.json`), JSON.stringify({ ...spec, unit: id, rev: 1 }));
+  editPlan(d, (p) => void units(p).push({ ...units(p)[0]!, id, spec: `${id}.json`, after: [], ...extra }));
+}
+/** `unit` parked at gate attempt 1 (the park a re-entry `fixes`). */
+function park(r: ArcRun, unit: string): void {
+  const u = r.unit(unit);
+  const { spec, sha256 } = loadUnitSpec(r.ctx, u);
+  assert.equal(pinDispatch(r.ctx, u, { rev: spec.rev, sha256 }).kind, 'pinned');
+  r.journal.fact({ kind: 'stage-outcome', unit: unitId(unit), stage: 'gate', attempt: 1, outcome: 'escalate', class: 'park', chargeable: false } as Fact);
+}
+const membersOf = (r: ArcRun) => status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir).milestones.map((m) => ({ members: m.members, withdrawn: m.withdrawn, live: m.live, merged: m.merged }));
+
+describe('milestones.membership (dev.59 scope item 3, C2, C4)', () => {
+  test('milestones.reentry-and-carry: a re-entry and a unit carrying a cut one forward count toward the milestone; superseded and cut members are withdrawn; it is reached when its live members merged', T, () => onCorpusArc((r) => {
+    withMilestones({ ...MILESTONE, design: { supplied: true }, units: ['u2'] })(r.d);
+    accept(r);
+    park(r, 'u2');
+    addUnit(r.d, 'u3', { reenters: { unit: 'u2', fixes: 'u2/gate#1' } });
+    accept(r);
+    assert.deepEqual(membersOf(r), [{ members: ['u2', 'u3'], withdrawn: ['u2'], live: 1, merged: 0 }], 'the re-entry inherits its parent\'s milestone');
+
+    // u3's work is carried forward into a fresh unit: u3 (paused, so out of its task) is cut, u4 carries it from its branch's tip.
+    r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: unitId('u3') } });
+    git(r.d.repo, 'branch', `roadmap/${r.d.arc}/u3`, 'main');
+    const tip = git(r.d.repo, 'rev-parse', 'main');
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['cut'] = { reason: 'carried forward fresh past the attempt caps' }));
+    addUnit(r.d, 'u4', { carries: { unit: 'u3', tip } });
+    accept(r);
+    assert.deepEqual(membersOf(r), [{ members: ['u2', 'u3', 'u4'], withdrawn: ['u2', 'u3'], live: 1, merged: 0 }]);
+    const s = status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir);
+    assert.deepEqual(s.units.filter((u) => ['u3', 'u4'].includes(u.unit)).map((u) => [u.unit, u.state, u.carries, u.carriedBy]),
+      [['u3', 'cut', null, ['u4']], ['u4', 'ready', { unit: 'u3', tip }, []]], 'each end of the carry points at the other');
+    const plan = parsePlan(JSON.parse(readFileSync(r.d.planPath, 'utf8')));
+    const m = milestonesOf(plan)[0]!;
+    assert.equal(milestoneProgress(r.journal.view, plan, m, []).kind, 'building', 'u4 has not merged');
+    // u4 merges under the plan in force (the context's own plan is the arc's first).
+    const inForce = { ...r, ctx: { ...r.ctx, plan: () => plan }, unit: (id: string) => plan.units.find((u) => u.id === id)! };
+    merge(inForce, 'u4');
+    assert.deepEqual(milestoneProgress(r.journal.view, plan, m, []), { kind: 'walk-due', round: 1 }, 'reached: its one live member merged, the cut lineage withdrawn');
+    assert.deepEqual(membersOf(r), [{ members: ['u2', 'u3', 'u4'], withdrawn: ['u2', 'u3'], live: 1, merged: 1 }]);
+  }));
+
+  test('console.milestones-reentry-and-carry: the console counts a re-entry and a carrier for their milestone, never in No milestone, and the drawer links a cut unit and its carrier both ways', T, () => onCorpusArc((r) => {
+    withMilestones({ ...MILESTONE, design: { supplied: true }, units: ['u2'] })(r.d);
+    accept(r);
+    park(r, 'u2');
+    addUnit(r.d, 'u3', { reenters: { unit: 'u2', fixes: 'u2/gate#1' } });
+    accept(r);
+    r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: unitId('u3') } });
+    git(r.d.repo, 'branch', `roadmap/${r.d.arc}/u3`, 'main');
+    const tip = git(r.d.repo, 'rev-parse', 'main');
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['cut'] = { reason: 'carried forward fresh past the attempt caps' }));
+    addUnit(r.d, 'u4', { carries: { unit: 'u3', tip } });
+    accept(r);
+    const read = () => new ObservationCache(absPath(r.ctx.hostDir), 'milestones', 'reader').read({ runDir: absPath(r.ctx.runDir), arc: arcId(r.d.arc) });
+    let e = read(), graph = graphView(e);
+    assert.deepEqual(graph.milestones.map((g) => [g.id, g.memberIds, g.total, g.merged, g.withdrawn]), [['MS-1', ['u2', 'u3', 'u4'], 1, 0, 2]], 'the re-entry and the carrier are members; the superseded and the cut one are withdrawn');
+    assert.deepEqual(graph.noMilestone, { ids: ['u1'], total: 1, merged: 0, withdrawn: 0 }, 'neither the re-entry nor the carrier is in No milestone');
+    assert.deepEqual(graph.edges.filter((x) => x.kind === 'feeds').map((x) => x.source), ['u2', 'u3', 'u4']);
+    const drawer = milestoneView(e, 'MS-1', { limit: '100', section: 'members' });
+    assert.deepEqual([drawer.total, drawer.merged, drawer.withdrawn, drawer.reason], [1, 0, 2, '1 unit has not merged: u4']);
+    assert.deepEqual(drawer.members.rows.find((row) => row.id === 'u2')!.replacedBy, { id: 'u3', state: 'Withdrawn', signal: 'withdrawn' });
+    const cut = unitView(e, 'u3'), carrier = unitView(e, 'u4');
+    assert.ok('carriedBy' in cut && 'carries' in carrier);
+    assert.deepEqual([cut.carriedBy, cut.carries, carrier.carries, carrier.carriedBy], [['u4'], null, { unit: 'u3', tip }, []], 'the cut unit points at its carrier and back');
+    assert.deepEqual([cut.feeds.map((g) => g.id), carrier.feeds.map((g) => g.id)], [['MS-1'], ['MS-1']]);
+    // u4 merges under the plan in force: the milestone's one live member merged, so only its walkthrough is left.
+    const plan = parsePlan(JSON.parse(readFileSync(r.d.planPath, 'utf8')));
+    merge({ ...r, ctx: { ...r.ctx, plan: () => plan }, unit: (id: string) => plan.units.find((u) => u.id === id)! }, 'u4');
+    e = read(); graph = graphView(e);
+    assert.deepEqual(graph.milestones.map((g) => [g.total, g.merged, g.withdrawn]), [[1, 1, 2]]);
+    assert.doesNotMatch(milestoneView(e, 'MS-1').reason ?? '', /not merged/);
+  }));
+
+  // dev.59 (pass 3 follow-up): a milestone whose members are all withdrawn never waits silently.
+  const reenteredThenCut = (r: ArcRun): string => {
+    withMilestones({ ...MILESTONE, design: { supplied: true }, units: ['u2'] })(r.d);
+    accept(r);
+    park(r, 'u2');
+    addUnit(r.d, 'u3', { reenters: { unit: 'u2', fixes: 'u2/gate#1' } });
+    accept(r);
+    r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: unitId('u3') } });
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['cut'] = { reason: 'past the attempt caps' }));
+    return 'milestone MS-1 has no live member: u2, u3 are withdrawn (superseded or cut), so it is never reached and the units after it wait on it for ever';
+  };
+  test('milestones.all-withdrawn-refused: a revision that withdraws a milestone\'s last live member is refused, naming it, its withdrawn members and the ways out; carrying the work forward applies', T, () => onCorpusArc((r) => {
+    const text = reenteredThenCut(r);
+    assert.deepEqual(reasons(classifyNow(r)), [`${text}: carry the work forward into a unit that counts for it (a unit added with \`carries: {unit, tip}\` naming a cut member), or apply a revision that re-points its units to live units or removes it in the same apply`]);
+    git(r.d.repo, 'branch', `roadmap/${r.d.arc}/u3`, 'main');
+    addUnit(r.d, 'u4', { carries: { unit: 'u3', tip: git(r.d.repo, 'rev-parse', 'main') } });
+    accepted(classifyNow(r));
+  }));
+
+  test('milestones.all-withdrawn-adopted: one in force from an earlier release is a blocking plan-defect item the scheduler raises, never reached for the root', T, async () => {
+    const arc = await setupCorpusArc([], { units: TWO });
+    const r = contextFor(arc.d);
+    try {
+      const text = reenteredThenCut(r);
+      // As an earlier release let it in: the revision is put in force without this release's classifier.
+      recordPlan(r.journal, r.ctx.runDir, readInputFiles(absPath(r.d.planPath), absPath(r.d.repo)), [{ type: 'unit-cut', unit: unitId('u3') }], BASE);
+      r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000002'), target: { type: 'all' } });
+      const plan = parsePlan(JSON.parse(readFileSync(r.d.planPath, 'utf8')));
+      assert.deepEqual(allWithdrawnMilestones(r.journal.view, plan), [{ milestone: 'MS-1', withdrawn: ['u2', 'u3'] }]);
+      assert.notEqual(milestoneProgress(r.journal.view, plan, milestonesOf(plan)[0]!, []).kind, 'walk-due', 'never reached');
+      const s = startScheduler(r);
+      const item = () => openBlocking(r.journal.view).map((id) => readNeedsUser(r.ctx.runDir, id)!).find((n) => n.summary.startsWith('milestone MS-1'));
+      await until(() => item() !== undefined, 30_000, 'the blocking item');
+      assert.deepEqual([item()!.reason, item()!.blocking, item()!.subject, item()!.summary], ['plan-defect', true, { type: 'arc' }, `${text}.`]);
+      assert.match(item()!.recommendation, /carries: \{unit, tip\}.*re-points its units to live units or removes it; apply it with --resolves/);
+      await stopScheduler(r, s);
+      assert.equal(openBlocking(r.journal.view).filter((id) => readNeedsUser(r.ctx.runDir, id)!.summary === `${text}.`).length, 1, 'raised once');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('milestones.carry-refusals: a carry names a cut unit and a commit of its branch, set when the unit is added', T, () => onCorpusArc((r) => {
+    const tip = git(r.d.repo, 'rev-parse', 'main');
+    addUnit(r.d, 'u3', { carries: { unit: 'u2', tip } });
+    assert.deepEqual(reasons(classifyNow(r)), ['unit u3 carries u2, which is not cut: cut it in the same apply, or re-enter it instead']);
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u2')!['cut'] = { reason: 'out of scope' }));
+    assert.deepEqual(reasons(classifyNow(r)), ['unit u3 carries u2, which has no branch: it left no work to carry']);
+    git(r.d.repo, 'branch', `roadmap/${r.d.arc}/u2`, `${tip}~1`);
+    assert.deepEqual(reasons(classifyNow(r)), [`unit u3 carries u2 from ${tip}, which is not a commit of u2's branch (its head is ${git(r.d.repo, 'rev-parse', `${tip}~1`)})`]);
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['carries'] = { unit: 'u2', tip: git(r.d.repo, 'rev-parse', `${tip}~1`) }));
+    accept(r);
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['carries'] = { unit: 'u2', tip }));
+    assert.ok(reasons(classifyNow(r)).includes('unit u3: `carries` is set when a unit is added, never after'));
+    const raw = JSON.parse(readFileSync(r.d.planPath, 'utf8')) as Json;
+    units(raw).find((u) => u['id'] === 'u3')!['reenters'] = { unit: 'u2' };
+    assert.throws(() => parsePlan(raw), SchemaError, 'a re-entry carries nothing');
+  }));
 });
 
 describe('phase0.milestones: the shared rows', () => {

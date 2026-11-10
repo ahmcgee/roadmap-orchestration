@@ -454,10 +454,14 @@ export type InForce = Readonly<{ rev: PlanRev; plan: PlanM1; manifest: PlanManif
 export function planInForce(runDir: AbsPath, view: JournalView): InForce | null {
   const fact = view.planApplied();
   if (fact === null) return null;
+  return { rev: fact.rev, plan: planOf(runDir, fact), manifest: { planSha256: fact.planSha256, specs: fact.specs }, fact };
+}
+
+/** The plan revision `fact` put in force, parsed from its kept bytes (dev.59: also an earlier one, `planAppliedAt`). */
+export function planOf(runDir: AbsPath, fact: PlanAppliedFact): PlanM1 {
   const bytes = keptInput(runDir, fact.planSha256, PLAN_INPUT);
-  if (bytes === null) throw new Error(`the plan in force (rev ${fact.rev}) is ${fact.planSha256}, but ${inputPath(runDir, fact.planSha256, PLAN_INPUT)} does not exist`);
-  const plan = parsePlan(JSON.parse(bytes.toString('utf8')));
-  return { rev: fact.rev, plan, manifest: { planSha256: fact.planSha256, specs: fact.specs }, fact };
+  if (bytes === null) throw new Error(`plan rev ${fact.rev} is ${fact.planSha256}, but ${inputPath(runDir, fact.planSha256, PLAN_INPUT)} does not exist`);
+  return parsePlan(JSON.parse(bytes.toString('utf8')));
 }
 
 /** The plan in force, which every executor context has once its start recorded one. */

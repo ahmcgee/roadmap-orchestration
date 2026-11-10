@@ -41,7 +41,7 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import type { Sha } from '../core/ids.ts';
-import { type AbsPath, type RepoPath, type RepoPattern, absPath, matchesPattern, repoPath } from '../core/values.ts';
+import { type AbsPath, type RepoPath, type RepoPattern, absPath, isTestFileName, matchesPattern, repoPath } from '../core/values.ts';
 import { git } from './git.ts';
 
 /** What a changed file is, in inlining priority order (fixtures and other files share a rank); derived outputs never inline. */
@@ -173,14 +173,13 @@ const SOURCE_EXTENSIONS = new Set([
 ]);
 const FIXTURE = /(^|\/)(fixtures?|__fixtures__|__snapshots__|snapshots|goldens?|testdata|test-data)\/|\.(snap|golden)$/;
 const TEST_DIR = /(^|\/)(tests?|__tests__|specs?|e2e)\//;
-const TEST_NAME = /\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+\.py$|_test\.(go|py|rb|exs?)$/;
 
 /** A file's kind (see `DIFF_KINDS`): a derived output, a fixture, a test, source (new or modified), or anything else. */
 export function diffKind(path: RepoPath, added: boolean, derived: readonly RepoPattern[]): DiffKind {
   if (derived.some((p) => matchesPattern(path, p))) return 'derived';
   if (FIXTURE.test(path)) return 'fixture';
   const source = SOURCE_EXTENSIONS.has(extname(path).slice(1).toLowerCase());
-  if (TEST_NAME.test(path) || (TEST_DIR.test(path) && source)) return 'test';
+  if (isTestFileName(path) || (TEST_DIR.test(path) && source)) return 'test';
   if (TEST_DIR.test(path)) return 'fixture';
   if (source) return added ? 'new-source' : 'modified-source';
   return 'other';

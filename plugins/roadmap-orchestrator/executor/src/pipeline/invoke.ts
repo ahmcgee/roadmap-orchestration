@@ -67,13 +67,16 @@ export type SpawnOrigin =
   | Readonly<{ type: 'new'; key: OpKey; parent: Parent; deadlineAt: IsoTime }>
   | Readonly<{ type: 'retry'; op: OpId }>;
 
-/** `launch` is given the invocation dir, which output paths in argv and terminal name; it runs once, inside the intent. */
+/**
+ * `launch` is given the invocation dir, which output paths in argv and terminal name, and the invocation (a Claude build's
+ * session name, dev.59); it runs once, inside the intent.
+ */
 export type LaunchSpec = Readonly<{
   runDir: AbsPath;
   origin: SpawnOrigin;
   subject: SpawnSubject;
   cpuKey?: Sha256Hex;
-  launch: (invDir: AbsPath) => LaunchContent;
+  launch: (invDir: AbsPath, inv: InvocationId) => LaunchContent;
 }>;
 
 export type InvocationOutcome =
@@ -92,7 +95,7 @@ export type Settled = Readonly<{ outcome: InvocationOutcome; recoveredBy: Recove
 export async function invoke(journal: Journal, containment: Containment, spec: LaunchSpec): Promise<InvocationOutcome> {
   let launch: LaunchFile | undefined;
   const body = (op: OpId, inv: InvocationId, deadlineAt: IsoTime): IntentBody<'proc.spawn'> => {
-    const content = spec.launch(invocationDir(spec.runDir, inv));
+    const content = spec.launch(invocationDir(spec.runDir, inv), inv);
     assertPairing(spec.subject, content.terminal);
     launch = prepareLaunch({ v: SCHEMA_VERSION, arc: parseOpId(op).arc, op, inv, ...content, deadlineAt, containment: containment.mode });
     return { expect: { subject: spec.subject, launchSha256: launchSha256(launch), ...(spec.cpuKey === undefined ? {} : { cpuKey: spec.cpuKey }) }, post: null };

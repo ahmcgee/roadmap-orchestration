@@ -16,7 +16,7 @@ import type { FindingState } from '../src/core/state.ts';
 import { type AbsPath,absPath } from '../src/core/values.ts';
 import type { RepairUnit } from '../src/holistic/findings.ts';
 import type { Vision } from '../src/holistic/types.ts';
-import type { Milestone,PlanM1,PlanUnit } from '../src/input/plan.ts';
+import { type Milestone,type PlanM1,type PlanUnit,milestoneMembers,milestonesOf } from '../src/input/plan.ts';
 import { validateWalkthroughOutput } from '../src/prompts/schemas.ts';
 import { admitter } from '../src/schedule/ready.ts';
 import { substitutePorts } from '../src/walk/bringup.ts';
@@ -29,7 +29,7 @@ import { walkSessionMcp } from '../src/walk/walk.ts';
 import { J1_EVIDENCE,walkAnswer } from './fixtures/walk-common.ts';
 import { tmpDir } from './helpers/repo.ts';
 
-type U = Readonly<{ id: string; after?: readonly string[]; origin?: string; reenters?: string; polish?: Readonly<{ milestone: string; proposal: string }> }>;
+type U = Readonly<{ id: string; after?: readonly string[]; origin?: string; reenters?: string; carries?: string; polish?: Readonly<{ milestone: string; proposal: string }> }>;
 
 const MILESTONE = (id: string, units: readonly string[], extra: Partial<Milestone> = {}): Milestone => ({
   id: id as MilestoneId, text: `${id} text`, units: units as UnitId[], design: { supplied: true }, references: ['design' as never],
@@ -43,6 +43,7 @@ function planOf(units: readonly U[], milestones: readonly Milestone[], walkRound
   return {
     units: units.map((u) => ({
       id: u.id, after: u.after ?? [], ...(u.origin === undefined ? {} : { origin: u.origin }), ...(u.reenters === undefined ? {} : { reenters: { unit: u.reenters } }),
+      ...(u.carries === undefined ? {} : { carries: { unit: u.carries, tip: 'c'.repeat(40) } }),
       ...(u.polish === undefined ? {} : { polish: u.polish }),
     })),
     milestones,
@@ -107,6 +108,11 @@ describe('the milestone node (src/walk/node.ts)', () => {
     assert.deepEqual(edges(plan), { b: ['MS-1'], b2: ['MS-1'], c: ['MS-1'] });
   });
 
+  test('node.carry: a unit carrying a cut member forward stands for it, so it never waits on the node it counts toward; its descendants do', () => {
+    const plan = planOf([{ id: 'a' }, { id: 'c', after: ['a'] }, { id: 'c2', after: ['a'], carries: 'c' }, { id: 'd', after: ['c2'] }], [MILESTONE('MS-1', ['a', 'c'])]);
+    assert.deepEqual(edges(plan), { d: ['MS-1'] });
+  });
+
   test('node.exempt: repair, checkpoint-admitted and polish units below a milestone never wait on its node', () => {
     const plan = planOf([
       { id: 'a' }, { id: 'fix', after: ['a'], origin: 'repair' }, { id: 'ck', after: ['a'], origin: 'repair' },
@@ -140,9 +146,22 @@ describe('the rounds brake (src/walk/milestones.ts)', () => {
   test('brake.reach: building until every unit merged (by lineage head), then round 1 is due; a running walk is walking', () => {
     assert.equal(progress(plan(), viewOf({})).kind, 'building');
     assert.deepEqual(progress(plan(), viewOf({ status: { a: 'retired' } })), { kind: 'walk-due', round: 1 });
-    assert.equal(progress(plan(), viewOf({ status: { a: 'superseded', a2: 'active' }, superseded: { a: 'a2' } })).kind, 'building');
-    assert.deepEqual(progress(plan(), viewOf({ status: { a: 'superseded', a2: 'retired' }, superseded: { a: 'a2' } })), { kind: 'walk-due', round: 1 });
+    const reentered = plan([{ id: 'a' }, { id: 'a2', reenters: 'a' }]);
+    assert.equal(progress(reentered, viewOf({ status: { a: 'superseded', a2: 'active' }, superseded: { a: 'a2' } })).kind, 'building');
+    assert.deepEqual(progress(reentered, viewOf({ status: { a: 'superseded', a2: 'retired' }, superseded: { a: 'a2' } })), { kind: 'walk-due', round: 1 });
     assert.equal(progress(plan(), viewOf({ status: { a: 'retired' }, walks: [started(1, 1)] })).kind, 'walking');
+  });
+
+  test('brake.withdrawn: superseded and cut members are withdrawn; a re-entry or a carrier counts instead; a milestone with no live member is never reached', () => {
+    const two = (units: readonly U[]) => planOf(units, [MILESTONE('MS-1', ['a', 'b'])]);
+    const at = (p: PlanM1, v: JournalView) => milestoneProgress(v, p, milestonesOf(p)[0]!, []);
+    const lineageCut = two([{ id: 'a' }, { id: 'a2', reenters: 'a' }, { id: 'b' }]);
+    assert.deepEqual(at(lineageCut, viewOf({ status: { a: 'superseded', a2: 'cut', b: 'retired' }, superseded: { a: 'a2' } })), { kind: 'walk-due', round: 1 }, 'the cut lineage is withdrawn');
+    const carried = two([{ id: 'a' }, { id: 'a2', reenters: 'a' }, { id: 'a3', carries: 'a2' }, { id: 'b' }]);
+    assert.equal(at(carried, viewOf({ status: { a: 'superseded', a2: 'cut', a3: 'active', b: 'retired' }, superseded: { a: 'a2' } })).kind, 'building', 'its carrier counts');
+    assert.deepEqual(at(carried, viewOf({ status: { a: 'superseded', a2: 'cut', a3: 'retired', b: 'retired' }, superseded: { a: 'a2' } })), { kind: 'walk-due', round: 1 });
+    assert.equal(at(two([{ id: 'a' }, { id: 'b' }]), viewOf({ status: { a: 'cut', b: 'cut' } })).kind, 'building');
+    assert.deepEqual(milestoneMembers(carried, milestonesOf(carried)[0]!), ['a', 'a2', 'a3', 'b'], 'in plan order');
   });
 
   test('brake.abandoned: an abandoned walk is no round: the same round is due again', () => {

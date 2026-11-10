@@ -105,6 +105,12 @@ export const bootId = checked('BootId', 'lowercase uuid', (s) => /^[0-9a-f]{8}-[
 export type Nonce = Brand<string, 'Nonce'>;
 export const nonce = checked('Nonce', '32 lowercase hex', (s) => /^[0-9a-f]{32}$/.test(s));
 
+/**
+ * A path whose file name marks it a test file (`*.test.*`, `*.spec.*`, `test_*.py`, `*_test.{go,py,rb,ex,exs}`): the one
+ * name rule the bounded diff's kinds (src/git/boundeddiff.ts) and a lane argv's file list (src/holistic/witnessfiles.ts) share.
+ */
+export const isTestFileName = (path: string): boolean => /\.(test|spec)\.[^/]+$|(^|\/)test_[^/]+\.py$|_test\.(go|py|rb|exs?)$/.test(path);
+
 /** The literal prefix of a pattern (before its first glob character): two patterns may overlap when one's prefixes the other's. */
 const literalPrefix = (p: string): string => {
   const i = p.search(/[*?[{]/);

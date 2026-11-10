@@ -13,12 +13,12 @@ type MilestoneId,
 type ObligationId,
 
 type PlanRev,type QuestionId,type RoutingRev,type RuleId,
-type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,envId,idList,idsAscending,
+type RulingId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,type WitnessItemId,envId,idList,idsAscending,
 invocationIdOf,jobIdOf,jobIdOfKind,laneId,laneRev,
 milestoneId,
 obligationId,
 
-planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId
+planRev,questionId,routingRev,ruleId,rulingId,sha,sha256,unitId,visionClauseId,witnessItemId
 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import {
@@ -297,6 +297,9 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  * defects named (lanes `plan-defect`, src/pipeline/witnesscheck.ts).
  *   witness-not-in-lane       an obligation's witness file the lane would never run: outside its `testPaths`
  *                             (`missing: test-paths`), or not named by its argv where the argv names test paths (`argv`).
+ *   spec-witness-not-in-lane  (dev.59 pass 7, nu-119813) the same for a unit's spec witness item, whose file is its
+ *                             `testId`'s first segment (before " > ") against the lane's cwd, where that names a test file
+ *                             (src/holistic/witnessfiles.ts `specWitnessFile`); `item` the witness item, `unit` its spec's.
  *   witness-file-unreachable  a witness file absent at the tip (Phase 0) or the salvage SHA (run time) that no unit able
  *                             to create it covers: at Phase 0 the obligation's deliverers and every unit they depend on
  *                             (`units`: the deliverers), at run time the unit checked.
@@ -310,6 +313,7 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  */
 export type PlanDefect =
   | Readonly<{ type: 'witness-not-in-lane'; obligation: ObligationId; lane: LaneId; file: RepoPath; missing: 'test-paths' | 'argv' }>
+  | Readonly<{ type: 'spec-witness-not-in-lane'; unit: UnitId; item: WitnessItemId; lane: LaneId; file: RepoPath; missing: 'test-paths' | 'argv' }>
   | Readonly<{ type: 'witness-file-unreachable'; obligation: ObligationId; file: RepoPath; units: readonly UnitId[] }>
   | Readonly<{ type: 'witness-files-undeclared'; obligation: ObligationId }>
   | Readonly<{ type: 'lane-test-paths-undeclared'; lane: LaneId }>
@@ -323,6 +327,10 @@ export function planDefectText(d: PlanDefect): string {
       return d.missing === 'test-paths'
         ? `${d.obligation}'s witness file ${d.file} is outside lane ${d.lane}'s testPaths, so the lane never runs it.`
         : `${d.obligation}'s witness file ${d.file} is not named by lane ${d.lane}'s argv, which names its test files, so the lane never runs it.`;
+    case 'spec-witness-not-in-lane':
+      return d.missing === 'test-paths'
+        ? `${d.unit}'s witness item ${d.item} is in ${d.file} (its testId's file), which is outside lane ${d.lane}'s testPaths, so the lane never runs it.`
+        : `${d.unit}'s witness item ${d.item} is in ${d.file} (its testId's file), which lane ${d.lane}'s argv does not name among its test files, so the lane never runs it.`;
     case 'witness-file-unreachable':
       return d.units.length === 0
         ? `${d.obligation}'s witness file ${d.file} does not exist, and no unit delivers the obligation to create it.`
@@ -345,6 +353,10 @@ export const planDefect: Read<PlanDefect> = tagged('type', {
   'witness-not-in-lane': object((f): PlanDefect => ({
     type: f.get('type', literal('witness-not-in-lane')), obligation: f.get('obligation', oid), lane: f.get('lane', (v, p) => laneId(v, p)), file: f.get('file', pathR),
     missing: f.get('missing', oneOf(['test-paths', 'argv'] as const)),
+  })),
+  'spec-witness-not-in-lane': object((f): PlanDefect => ({
+    type: f.get('type', literal('spec-witness-not-in-lane')), unit: f.get('unit', (v, p) => unitId(v, p)), item: f.get('item', (v, p) => witnessItemId(v, p)),
+    lane: f.get('lane', (v, p) => laneId(v, p)), file: f.get('file', pathR), missing: f.get('missing', oneOf(['test-paths', 'argv'] as const)),
   })),
   'witness-file-unreachable': object((f): PlanDefect => ({
     type: f.get('type', literal('witness-file-unreachable')), obligation: f.get('obligation', oid), file: f.get('file', pathR),

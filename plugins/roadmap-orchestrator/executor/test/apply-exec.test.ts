@@ -4,9 +4,9 @@
 // apply.exec-revision-in-flight, apply.exec-routing-parks, apply.exec-resume-at-boundary,
 // apply.exec-respawn-ignores-unapplied-edit; the crash cells of the matrix row "start: a later start whose files
 // change the plan". dev.17: apply.exec-queued-at-boundary, apply.exec-queued-dropped and the crash cells of the row
-// QUEUED_APPLY (apply.exec-queued-crash).
+// QUEUED_APPLY (apply.exec-queued-crash). dev.59: apply.exec-suite-queued-at-lanes.
 import assert from 'node:assert/strict';
-import { cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { exportInputs } from '../src/commands/inputs.ts';
@@ -26,7 +26,7 @@ import { PLAN_START, QUEUED_APPLY, crashCells } from './matrix.ts';
 import { type Scenario, finalReason, layout, supervisedRun } from './fixtures/pm-common.ts';
 import { stateOf } from './fixtures/sup-common.ts';
 import { planCheckStep } from './fixtures/stage-common.ts';
-import { MUL, appendSteps, codexStep, gateStep, mulBuild, outcomes, workDirPattern } from './fixtures/unit-common.ts';
+import { MUL, SUITE_LANE, appendSteps, codexStep, gateStep, mulBuild, outcomes, workDirPattern } from './fixtures/unit-common.ts';
 import {
   EXEC_TIMEOUT_MS, type ExecRun, SMOKE_DEFAULT, cli, executorPid, journalOf, reasonOf, setupExec, startExec, statusOf, until,
 } from './fixtures/exec-common.ts';
@@ -257,6 +257,41 @@ test('apply.exec-queued-dropped: a spec edit queued behind a running gate that a
   const item = readNeedsUser(absPath(r.runDir), dropped[0]!.id)!;
   assert.match(item.summary, new RegExp(`^apply ${id}, queued behind the stage boundary of u1, was refused when it landed there; none of its edits is in force: apply rejected .*its spec is fixed`));
   assert.deepEqual(item.evidence, [join(r.runDir, 'commands', 'receipts', `${id}.rejected.json`)]);
+});
+
+// dev.59 (item 8, cmd-01a1b06537057bbe): a suite edit while a lanes attempt runs the fast suite was refused at once; it is
+// queued behind that attempt's boundary like any other apply.
+test('apply.exec-suite-queued-at-lanes: a suite lane edit applied while u1\'s lanes attempt runs that lane is queued (its receipt names the lanes attempt), lands at the lanes boundary with nothing killed, and the unit merges under the edited suite', T, async (t) => {
+  const gate = tmpDir('suite-hold');
+  const hold = { id: 'hold', argv: ['sh', '-c', `touch ${gate}/started; while [ ! -f ${gate}/release ]; do sleep 0.1; done`] };
+  const r = setupExec(t, {
+    suite: [SUITE_LANE, hold],
+    steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })],
+  });
+  const run = startExec(r);
+  await until(() => existsSync(join(gate, 'started')), WAIT_MS, 'the hold lane to run at lanes');
+  await exportForEdit(r);
+  editPlan(r, (p) => {
+    const suite = p['suite'] as { lanes: Json[] };
+    suite.lanes = suite.lanes.map((l) => (l['id'] === 'hold' ? { ...l, argv: ['true'] } : l));
+  });
+  const id = await apply(r);
+  await until(() => queuedReceipt(r, id) !== null, WAIT_MS, 'the queued receipt');
+  const queued = queuedReceipt(r, id);
+  assert.ok(queued?.state === 'queued', JSON.stringify(queued));
+  assert.deepEqual(queued.waitsFor, ['u1']);
+  assert.match(queued.reason, /^u1 is running lanes attempt \d+: the apply lands at its stage boundary and is evaluated there$/);
+  assert.equal(receiptOf(r, id), null, 'no terminal receipt while the lanes run');
+  writeFileSync(join(gate, 'release'), '');
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+  const receipt = receiptOf(r, id);
+  assert.ok(receipt?.state === 'applied', JSON.stringify(receipt));
+  assert.deepEqual(kills(r), [], 'the running lanes were not interrupted');
+  const applied = seqOf(r, (f) => f.kind === 'plan-applied' && f.command === id);
+  assert.ok(outcomeSeq(r, 'u1', 'lanes') < applied && applied < outcomeSeq(r, 'u1', 'gate'), 'applied at the lanes boundary, before the gate');
+  assert.deepEqual(outcomes(r, 'u1'), STRAIGHT);
 });
 
 for (const cell of crashCells(QUEUED_APPLY)) {

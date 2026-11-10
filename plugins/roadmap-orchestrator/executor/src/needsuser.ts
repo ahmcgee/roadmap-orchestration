@@ -234,6 +234,21 @@ export function reentryRecommendation(unit: UnitId, stage: Exclude<Stage, 'retir
     + `tip of ${branch}. Never create that branch by hand. Or acknowledge this item to leave the unit parked.`;
 }
 
+/**
+ * dev.59 (scope item 2, C-352): a unit parked at its chargeable bound, at any stage. A spec revision does not reset the
+ * count: a judgment park re-opened on one parks again at its next charged failure. So the item names the re-entry with
+ * `reset`, never "set rev N and resume".
+ */
+export function chargeableBoundRecommendation(unit: UnitId, stage: Exclude<Stage, 'retire'>, attempt: number, branch: string, failures: number, bound: number): string {
+  const fixes = failureRefOf({ type: 'outcome', unit, stage, attempt });
+  return `Read the evidence. Unit ${unit} has used ${failures} of its ${bound} chargeable failures, and a spec revision does not reset that count: `
+    + `a unit re-opened on one parks again at its next charged failure. To re-run the work with fresh chargeable rounds, add a unit with a new id to the plan `
+    + `that re-enters ${unit} (\`"reenters": {"unit": "${unit}", "fixes": "${fixes}", "reset": {"reason": "what changed to justify fresh rounds"}}\`, `
+    + 'its fixed spec, the same scope; the re-entry must change what that failure ran under, and `reset` needs `roadmap apply --reason`). '
+    + `Then acknowledge this item, then \`roadmap apply\` the revised plan: the new unit's prepare creates its branch roadmap/<arc>/<new id> at the tip of ${branch}. `
+    + 'Never create that branch by hand. Or acknowledge this item to leave the unit parked.';
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Open items, the journal's and the file-only ones
 

@@ -53,6 +53,7 @@ function show(n: Next): string {
 function flat(c: UnitCounters): Record<Counter, number> {
   const out: Record<string, number> = {
     chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
+    staticReds: c.staticReds,
   };
   for (const s of RETRY_STAGES) out[`retries.${s}`] = c.retries[s];
   return out as Record<Counter, number>;
@@ -167,6 +168,9 @@ const ROWS: readonly Row[] = [
   // repeated reverts hold the unit for the root agent.
   ['lanes', 'plan-defect', {}, 'park:plan-defect', 'park', {}],
   ['lanes', 'plan-defect', { counters: { chargeableFailures: 2 } }, 'park:plan-defect', 'park', {}],
+  // dev.59: a red series of a lanes rerun the root ordered parks for the root, uncharged, even at the bound's edge.
+  ['lanes', 'rerun-red', {}, 'park:rerun-red', 'park', {}],
+  ['lanes', 'rerun-red', { counters: { chargeableFailures: 2 } }, 'park:rerun-red', 'park', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
@@ -197,6 +201,13 @@ const ROWS: readonly Row[] = [
   ['candidate', 'conflict', {}, 'build/resolve@med', 'advance', {}],
   ['candidate', 'red', {}, 'build/fix@med', 'candidate-red', { candidateReds: 1, chargeableFailures: 1 }],
   ['candidate', 'red', { counters: { candidateReds: 1 } }, 'park:candidate-red', 'park', {}],
+  // dev.59: a candidate red only on static lanes (lint, typecheck: `kind: static`): one uncharged fix round, consuming no
+  // candidate-red round; a second is read as any candidate red.
+  ['candidate', 'static-red', {}, 'build/fix@med', 'static-red', { staticReds: 1 }],
+  ['candidate', 'static-red', { counters: { candidateReds: 1, chargeableFailures: 2 } }, 'build/fix@med', 'static-red', { staticReds: 1 }],
+  ['candidate', 'static-red', { counters: { staticReds: 1 } }, 'build/fix@med', 'candidate-red', { candidateReds: 1, chargeableFailures: 1 }],
+  ['candidate', 'static-red', { counters: { staticReds: 1, candidateReds: 1 } }, 'park:candidate-red', 'park', {}],
+  ['candidate', 'static-red', { counters: { staticReds: 1, chargeableFailures: 2 } }, 'park:chargeable-bound', 'park', { chargeableFailures: 1 }],
   ['candidate', 'base-red', {}, 'park:base-red', 'park', {}],
   ['candidate', 'blocked', {}, 'park:lane-blocked', 'park', {}],
   ['candidate', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
@@ -261,13 +272,13 @@ describe('transitions', () => {
       'pre-build redirect': 'design', 'pre-build infeasible': 'design', 'pre-build scope-widened': 'design', 'pre-build refusal': 'design',
       'pre-build malformed': 'design', 'pre-build process-fault': 'retryable', 'pre-build routing-changed': 'env', 'pre-build read-denied': 'env',
       'build spec-wrong':'design', 'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
-      'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env',
+      'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env', 'lanes rerun-red': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'salvage cleanup-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes regression': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
       'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
       'pre-build context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
-      'candidate red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
+      'candidate red': 'design', 'candidate static-red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
       'lanes env-unavailable': 'retryable', 'candidate env-unavailable': 'retryable',
       'reproduce not-reproduced': 'design', 'reproduce inapplicable': 'design', 'reproduce blocked': 'retryable', 'reproduce env-unavailable': 'retryable', 'reproduce cleanup-failed': 'retryable',
       ...Object.fromEntries(['prepare', 'reproduce', 'pre-build', 'build', 'quiesce', 'evidence', 'salvage', 'teardown', 'lanes', 'gate', 'candidate'].map((st) => [`${st} executor-fault`, 'env'])),

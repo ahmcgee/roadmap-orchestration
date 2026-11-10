@@ -23,6 +23,11 @@ export async function serveConsole(args: ConsoleServerArgs) {
   const instance = args.instance ?? randomUUID();
   const repoId = sha256Hex(args.common);
   const worker = new Worker(new URL('./worker.ts', import.meta.url), { workerData: { ...args, instance, repoId } });
+  // The worker says `ready` once it has loaded and made its first check. A read's budget (two seconds strict, thirty for a
+  // browser) is for catching up with the arc, so it starts then: on a busy host, loading the worker (the executor's whole module
+  // graph) can take longer than two seconds by itself. A worker that fails first releases the waiting reads as unavailable.
+  let admitting = false, admit!: () => void;
+  const ready = new Promise<void>(resolve => { admit = () => { admitting = true; resolve(); }; });
   let next = 0;
   let failed: Error | null = null;
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
@@ -37,6 +42,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
     return {invocation:d.invocation,identity:d.identity,cursor:d.cursor,state:d.state,endedAt:d.endedAt,reset:d.reset??false,changed:d.events?.length??0};
   };
   worker.on('message', (m: Notice & { id?: number; value?: unknown }) => {
+    if (m.kind === 'ready') { admit(); return; }
     if (m.id !== undefined) {
       const p = pending.get(m.id); if (!p) return;
       clearTimeout(p.timer); pending.delete(m.id);
@@ -58,10 +64,12 @@ export async function serveConsole(args: ConsoleServerArgs) {
       }
     }
   });
-  const fail = (e: Error) => { failed = e; for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
+  const fail = (e: Error) => { failed = e; admit(); for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
   worker.on('error', fail);
   worker.on('exit', (code) => fail(new Error(`observation worker exited ${code}`)));
   function ask(message: ConsoleRequest, timeoutMs = 2_000): Promise<unknown> {
+    // Asks made before then wait in order, so control messages keep theirs.
+    if (!admitting) return ready.then(() => ask(message, timeoutMs));
     if (failed) return Promise.reject(new ConsoleError('unavailable', failed.message));
     // Coalesce reads only. Subscription mutations must preserve add/remove/add order.
     const key = message.kind === 'read' ? `${timeoutMs}:${canonicalJson(message)}` : `control:${next + 1}`;
@@ -103,7 +111,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
           res.once('close', cleanup);
           let ready = false;
           try {
-            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {} }, PREPARATION.lifetimeMs) as { data: object } : null;
+            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {}, patient: true }, PREPARATION.lifetimeMs) as { data: object } : null;
             if (closed()) return;
             if (invocation && req.method !== 'HEAD') await ask({ kind: 'history-subscribe', arc, invocation }, PREPARATION.lifetimeMs);
             if (closed()) return;
@@ -138,7 +146,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
           const aborted = () => { if (!res.writableFinished) controller.abort(); };
           res.once('close', aborted);
           try {
-            const result = await preparation.read({instance, path, params: query}, () => ask({kind: 'read', path, params: query}, PREPARATION.lifetimeMs), controller.signal, token, cancel === '1');
+            const result = await preparation.read({instance, path, params: query}, () => ask({kind: 'read', path, params: query, patient: true}, PREPARATION.lifetimeMs), controller.signal, token, cancel === '1');
             if (controller.signal.aborted) return;
             if (result.state === 'preparing') {
               res.setHeader('retry-after', '1');

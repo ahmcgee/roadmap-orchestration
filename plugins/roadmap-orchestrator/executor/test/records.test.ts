@@ -80,6 +80,18 @@ describe('records', () => {
     assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], stallMs: 0 }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.stallMs');
   });
 
+  it('launch.json terminal.name (dev.59): a Claude build\'s session name, absent on a build launched before dev.59, refused on a Codex build or with characters outside the name form', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    const sample = RUNNER_SAMPLES['launch.json'] as { terminal: Record<string, unknown> };
+    const claude = { ...sample.terminal, outputPath: '/run/inv/7-1/stdout', session: { backend: 'claude', mode: 'fresh', id: UUID } };
+    const named = read({ ...sample, terminal: { ...claude, name: 'arc-1-u1-7-1' } }, 'launch.json').terminal;
+    assert.ok(named.type === 'backend' && named.role === 'build' && named.name === 'arc-1-u1-7-1');
+    const legacy = read({ ...sample, terminal: claude }, 'launch.json').terminal;
+    assert.ok(legacy.type === 'backend' && legacy.role === 'build' && legacy.name === undefined);
+    assert.throws(() => read({ ...sample, terminal: { ...sample.terminal, name: 'arc-1-u1-7-1' } }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.terminal.name');
+    assert.throws(() => read({ ...sample, terminal: { ...claude, name: 'arc-1/u1#7' } }, 'launch.json'), (e: unknown) => e instanceof SchemaError && e.field === 'launch.json.terminal.name');
+  });
+
   it('launch.json argv: an empty argument is allowed (`--setting-sources \'\'`), an empty program name is not', () => {
     const read = RUNNER_FILE_READERS['launch.json'];
     assert.deepEqual(read({ ...RUNNER_SAMPLES['launch.json'], argv: ['claude', '--setting-sources', ''] }, 'launch.json').argv, ['claude', '--setting-sources', '']);

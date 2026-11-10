@@ -8,7 +8,11 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { arcId } from '../src/core/ids.ts';
+import { arcId, invocationId } from '../src/core/ids.ts';
+import { schemaViolation } from '../src/backends/adapter.ts';
+import { invocationDir } from '../src/pipeline/invoke.ts';
+import { BUILD_SCHEMA, buildOutput } from '../src/prompts/schemas.ts';
+import { parseRepoConfig } from '../src/routing/layers.ts';
 import { unitBranch } from '../src/pipeline/dispatch.ts';
 import { loadUnitSpec } from '../src/pipeline/stages.ts';
 import { step } from '../src/pipeline/unit.ts';
@@ -29,6 +33,57 @@ const MERGED = ['gate:approve', 'candidate:green', 'ff:published', 'snapshot:pub
 
 const parentsOf = (repo: string, commit: string): readonly string[] => git(repo, 'rev-list', '--parents', '-n', '1', commit).split(' ').slice(1);
 const codexCalls = (d: ArcDescriptor): readonly CallRecord[] => readCalls(d.scenarioPath).filter((c) => c.as === 'codex');
+
+// ---------------------------------------------------------------------------------------------------
+// dev.59: the cross-session messages a build received, in its report
+
+describe('dev.59: received messages', () => {
+  // First in the file: the reader's upgrade warning prints once per process.
+  test('build.messages-read-time-default: a report without messages (written before dev.59) reads as none, with one upgrade warning; one with them reads them; the wire schema requires the field', async () => {
+    const warnings: Error[] = [];
+    const onWarning = (w: Error): void => { warnings.push(w); };
+    process.on('warning', onWarning);
+    try {
+      const { messages: _none, ...legacy } = BUILD_REPORT;
+      assert.equal(schemaViolation(BUILD_SCHEMA, legacy), '$.messages: required, missing');
+      assert.deepEqual(buildOutput(legacy, 'build').messages, []);
+      assert.deepEqual(buildOutput(legacy, 'build').messages, []);
+      const sent = [{ from: 'atlas2-root', at: '2026-11-10T09:12:03Z', text: 'Stop: the v2 endpoint is retired; keep v1.' }];
+      const current = { ...BUILD_REPORT, messages: sent };
+      assert.equal(schemaViolation(BUILD_SCHEMA, current), null);
+      assert.deepEqual(buildOutput(current, 'build').messages, sent);
+      assert.throws(() => buildOutput({ ...BUILD_REPORT, messages: [{ from: '', at: '', text: 'x' }] }, 'build'), /messages\[0\]\.from/);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', onWarning);
+    }
+    const upgrade = warnings.filter((w) => (w as Error & { code?: string }).code === 'ROADMAP_UPGRADE');
+    assert.equal(upgrade.length, 1);
+    assert.match(upgrade[0]!.message, /before 1\.0\.0-dev\.59.*no cross-session messages/);
+  });
+
+  test('build.messages-in-evidence: a Claude build\'s report listing a message it received is a success, and the invocation\'s result keeps the message', T, async () => {
+    const sent = [{ from: 'atlas2-root', at: '2026-11-10T09:12:03Z', text: 'Use the v1 endpoint.' }];
+    const d = setupArc({
+      units: [{ id: 'u1', risk: 'high' }],
+      steps: [
+        planCheckStep({ decision: 'approve', risk: 'high' }),
+        { as: 'claude', expect: { argv: ['--permission-mode', 'bypassPermissions', '--session-id'] }, acts: [{ type: 'commit', message: 'add mul', files: MUL }, { type: 'emit', value: { ...BUILD_REPORT, messages: sent } }] },
+      ],
+    });
+    // The repo seats build.high on frontier: a Claude build (as unit.test.ts continue.claude-session).
+    const r = contextFor({ ...d, config: parseRepoConfig({ routing: { seats: { build: { high: 'frontier' } } } }) });
+    try {
+      await stepUntil(r, 'u1', (f) => f.stage === 'build');
+      assert.deepEqual(outcomes(d), ['pre-build:approve', 'build:success']);
+      const build = r.journal.view.spawnsOfUnit(U1, 'build').at(-1)!;
+      const result = JSON.parse(readFileSync(join(invocationDir(r.ctx.runDir, invocationId(build.op, build.ordinal)), 'result.json'), 'utf8')) as { outcome: { value: { messages: unknown } } };
+      assert.deepEqual(result.outcome.value.messages, sent);
+    } finally {
+      r.journal.close();
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------------------------------
 // 8d: the resolve round's HEAD chain
@@ -133,7 +188,7 @@ describe('I3: the build answer schema', () => {
       const schema = schemaOf(build!) as unknown as JsonSchema;
       assert.equal(Object.hasOwn(schema.properties, 'lanesRun'), false);
       assert.equal(schema.required?.includes('lanesRun'), false);
-      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'experiments', 'final', 'grounding', 'notes', 'summary', 'tooBig']);
+      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'experiments', 'final', 'grounding', 'messages', 'notes', 'summary', 'tooBig']);
       const experiments = schema.properties['experiments']!;
       assert.deepEqual(Object.keys(experiments.items.properties).sort(), ['argv', 'exit', 'name']);
       assert.ok(schema.required?.includes('experiments'), 'experiments is required');

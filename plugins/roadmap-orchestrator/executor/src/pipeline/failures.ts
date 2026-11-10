@@ -89,6 +89,9 @@ function classified(parent: StageParent, lane: LaneId, cls: RedClass | null, rer
       return out('repeat', null);
     case 'diagnostic':
       return out(rerunVerdict === 'pass' ? 'flaky' : 'red', null);
+    case 'targeted':
+      // dev.59: the lane's argv after a red test-only run decides; passing, the targeted red is no failure.
+      return rerunVerdict === undefined || isRed(rerunVerdict) ? out('red', null) : null;
     case 'host-signature':
       // The rerun on a clear host counts; without one (the host never cleared) the first run does.
       return rerunVerdict === undefined || isRed(rerunVerdict) ? out('red', { signatures: cls.signatures, busy: true }) : null;

@@ -37,10 +37,11 @@ readInputFiles,requirePlanInForce,revisionInForce,
 revisionManifestOf,routingProvenanceOf
 } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,boundsOf,visionFile } from '../input/plan.ts';
-import { needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck } from '../needsuser.ts';
+import { lineageAttempts } from '../pipeline/attempts.ts';
+import { chargeableBoundRecommendation,needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck,reentryRecommendation } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
-import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,planDefects,underRoot } from '../phase0/rows.ts';
-import { dispatchOf,repin } from '../pipeline/dispatch.ts';
+import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,revisionDefects,underRoot } from '../phase0/rows.ts';
+import { dispatchOf,repin,unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
@@ -61,6 +62,7 @@ import { closeAdmissions } from './admissions.ts';
 import { requestAudit } from './audit.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
+import { rerun } from './rerun.ts';
 import { witness } from './witness.ts';
 import { dismiss } from './dismiss.ts';
 import { note } from './note.ts';
@@ -280,6 +282,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return steer(ctx, command.id, body);
     case 'merge-in':
       return mergeIn(ctx, command.id, body.unit);
+    case 'rerun':
+      return rerun(ctx, command.id, body);
     case 'audit':
       return requestAudit(ctx, command.id);
     case 'close-admissions':
@@ -404,6 +408,23 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
  */
 function unpark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
   const verified: string[] = [];
+  // dev.59: a rerun's red park restores the decision the rerun waived; one that ended the unit's lanes (the chargeable bound,
+  // a steer pass's park) stands: the unit re-enters, as that park said.
+  if (f.stage === 'lanes' && f.outcome === 'rerun-red') {
+    const waived = ctx.journal.view.unit(unitId).rerun?.waived;
+    if (waived === undefined) throw new Error(`unit ${unitId} is parked rerun-red at lanes#${f.attempt} outside a rerun`);
+    if (waived.class === 'park' || waived.class === 'stop' || waived.class === 'retire') {
+      return {
+        kind: 'rejected',
+        reason: `unit ${unitId} is parked (rerun-red) at lanes#${f.attempt}: the rerun was red, so lanes#${waived.attempt}'s park (${parkReason(waived)}) stands; `
+          + (parkReason(waived) === 'chargeable-bound'
+            ? chargeableBoundRecommendation(unitId, waived.stage, waived.attempt, unitBranch(ctx.plan().arc, unitId), ctx.journal.view.unit(unitId).counters.chargeableFailures, ctx.journal.view.unit(unitId).bounds.chargeable)
+            : reentryRecommendation(unitId, waived.stage, waived.attempt, unitBranch(ctx.plan().arc, unitId))),
+      };
+    }
+    ctx.journal.fact({ kind: 'unparked', unit: unitId, command: id });
+    return { kind: 'applied', verified: [`unit ${unitId}'s rerun is over: the decision of lanes#${waived.attempt} (${waived.outcome}) goes on`] };
+  }
   if (f.outcome === 'routing-changed') {
     const pinned = dispatchOf(ctx.journal.view, unitId);
     // The unit's own routing (its layer on the arc's stack), which its implementer seat was pinned under.
@@ -739,8 +760,7 @@ function evaluateClassifiedRevision(
   // absent: those rows refuse it).
   // Every revision refuses only the plan defects it adds (2026-10-27; 1.0.0-dev.26), including executor revisions.
   const before = inForceFiles(ctx.runDir, ctx.view, inForce, revision, ctx.planFile, proposal.repo);
-  const known = new Set(planDefects(phase0InputOf(before, ctx.routingBase.config, ctx.view), APPLY).map(canonicalJson));
-  const added = planDefects(phase0InputOf(proposal, ctx.routingBase.config, ctx.view), APPLY).filter((d) => !known.has(canonicalJson(d)));
+  const added = revisionDefects(phase0InputOf(before, ctx.routingBase.config, ctx.view), phase0InputOf(proposal, ctx.routingBase.config, ctx.view));
   if (added.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'plan-defect', defects: added })] };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
@@ -878,12 +898,18 @@ export async function evaluateApply(input: ApplyInput): Promise<ApplyVerdict> {
  *   changes is rejected stale at activation, its spend wasted;
  * - item 9: a re-entry without `reset` carries its predecessor's chargeable failures; at its bound less one, the next charged
  *   failure (a red series, a gate revise) parks it for the operator instead of a fix round, so a gate's directives reach the
- *   builder only through the operator.
+ *   builder only through the operator;
+ * - dev.59 (scope item 4): every re-entry inherits its lineage's builds and judged stages, which the total-attempt caps count
+ *   and `reset` never clears, so each re-entry's receipt (and the dry run) states them against the caps.
  */
 export function applyWarnings(view: JournalView, plan: PlanM1, changes: readonly PlanChange[]): readonly string[] {
   const out: string[] = [];
   for (const c of changes) {
-    if (c.type !== 'unit-reentered' || c.reset) continue;
+    if (c.type !== 'unit-reentered') continue;
+    const a = lineageAttempts(view, c.reenters);
+    out.push(`lineage: ${c.unit} inherits the attempts of ${c.reenters}'s lineage (${a.lineage.join(', ')}): ${a.builds} of ${a.buildCap} builds and ${a.judged} of ${a.judgedCap} judged stages; `
+      + `it parks at the cap after ${Math.max(0, a.buildCap - a.builds)} more builds or ${Math.max(0, a.judgedCap - a.judged)} more judged stages, whatever \`reset\` clears`);
+    if (c.reset) continue;
     const unit = plan.units.find((u) => u.id === c.unit);
     if (unit === undefined) throw new Error(`a re-entry of ${c.reenters} as ${c.unit}, which the plan does not list`);
     const failures = view.unit(c.reenters).counters.chargeableFailures;
