@@ -10,7 +10,8 @@ export function useObservation(arc:string|null,onSelection:(arc:string|null)=>vo
     stream.onopen=()=>{store.connected=true;store.emit();};
     const notice=(event:Event,reset=false)=>{try{const raw=JSON.parse((event as MessageEvent).data);store.notice(raw,reset);onSelection(raw.selected);}catch(err){store.error=err instanceof Error?err.message:String(err);if(err instanceof ApiError&&err.code==='protocol')store.reload=true;store.emit();}};
     stream.addEventListener('revision',ev=>notice(ev));stream.addEventListener('heartbeat',ev=>notice(ev));stream.addEventListener('reset',ev=>notice(ev,true));
-    stream.addEventListener('error',ev=>{store.connected=false;const data=(ev as MessageEvent).data;if(data){try{const raw=JSON.parse(data);store.error=raw.message;if(raw.code==='protocol')store.reload=true;}catch{store.error='Console observation error';}}store.emit();});
+    // A server notice named "error" carries data and arrives on an open stream; only a connection error (no data) disconnects.
+    stream.addEventListener('error',ev=>{const data=(ev as MessageEvent).data;if(data){try{const raw=JSON.parse(data);store.error=raw.message;if(raw.code==='protocol')store.reload=true;}catch{store.error='Console observation error';}}else store.connected=false;store.emit();});
     let alive=true,attempts=0,timer:ReturnType<typeof setTimeout>;
     const retry=async()=>{
       if(!store.checkedAt||Date.now()-Date.parse(store.checkedAt)>5000){
