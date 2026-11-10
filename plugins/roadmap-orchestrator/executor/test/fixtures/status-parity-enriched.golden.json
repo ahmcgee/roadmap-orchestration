@@ -21,6 +21,12 @@
         "status": "active",
         "attempts": 1,
         "chargeableFailures": 0,
+        "lineageAttempts": {
+          "builds": 0,
+          "judged": 1,
+          "buildCap": 16,
+          "judgedCap": 40
+        },
         "risk": "med",
         "seat": null,
         "state": "ready",
@@ -36,6 +42,8 @@
         "park": null,
         "lineage": null,
         "supersededBy": null,
+        "carries": null,
+        "carriedBy": [],
         "buildTier": "med",
         "running": null,
         "certification": {
@@ -98,6 +106,12 @@
         "status": "held-after:u1",
         "attempts": 1,
         "chargeableFailures": 0,
+        "lineageAttempts": {
+          "builds": 0,
+          "judged": 1,
+          "buildCap": 16,
+          "judgedCap": 40
+        },
         "risk": "med",
         "seat": null,
         "state": "waiting",
@@ -123,6 +137,8 @@
         "park": null,
         "lineage": null,
         "supersededBy": null,
+        "carries": null,
+        "carriedBy": [],
         "buildTier": "med",
         "running": null,
         "certification": {
@@ -185,6 +201,12 @@
         "status": "active",
         "attempts": 0,
         "chargeableFailures": 0,
+        "lineageAttempts": {
+          "builds": 0,
+          "judged": 0,
+          "buildCap": 16,
+          "judgedCap": 40
+        },
         "risk": null,
         "seat": null,
         "state": "ready",
@@ -200,6 +222,8 @@
         "park": null,
         "lineage": null,
         "supersededBy": null,
+        "carries": null,
+        "carriedBy": [],
         "buildTier": null,
         "running": null,
         "certification": {
@@ -693,7 +717,13 @@
         "passed": false,
         "round": 0,
         "walks": [],
-        "findings": []
+        "findings": [],
+        "members": [
+          "u1"
+        ],
+        "withdrawn": [],
+        "live": 1,
+        "merged": 0
       }
     ],
     "waiting": {
@@ -732,6 +762,8 @@
         "id": "MS-1",
         "state": "building",
         "round": 0,
+        "live": 1,
+        "merged": 0,
         "findings": 0,
         "costUsd": 0,
         "expectedUsd": 3
