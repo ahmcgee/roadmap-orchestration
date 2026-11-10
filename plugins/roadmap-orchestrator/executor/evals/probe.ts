@@ -294,7 +294,8 @@ async function inbox(ctx: InvocationContext, rev: ResolvedRouting['rev'], cwd: A
   report(received, 'claude.build.inbox.received', `messages=${messages} ${describe(done)}`);
   if (name === null) return;
   const ended = send(cwd, name, `NOTE FROM ROOT: ${token} (after the build ended)`);
-  report(/not reachable|"success":\s*false/i.test(ended), 'claude.build.inbox.ended', `result=${ended}`);
+  // Claude Code 2.1.314 words an ended or unknown target "No agent named '<name>' is reachable."
+  report(/no agent named .* is reachable|not reachable|"success":\s*false/i.test(ended), 'claude.build.inbox.ended', `result=${ended}`);
 }
 
 // M3 fixture: the smallest inputs that exercise each arc prompt's real structure. Built with the production
