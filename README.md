@@ -184,7 +184,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    and deadline. Plain `stop` keeps its immediate abort behavior. Status shows the drain and deadline.
    Interventions and every arc-wide control go in the external operator log. The root never patches the plugin or run directory. To change inputs, export the
    current pack, edit it, then `apply --from <dir> --rev <N> --reason "<line>"`. Edited files must still match their
-   exported base; untouched files take current bytes, and edited specs advance automatically. Steer cancels an
+   exported base; untouched files take current bytes, and edited specs advance automatically. An apply that touches
+   running work queues to its stage boundary: a suite-lane edit waits behind a running lanes attempt (a lanes red's fix
+   round still reads the series as it ran) and is refused only while a candidate is under way. Steer cancels an
    unfinished unit into a directed round; note informs its next build without interruption. Unit/host actions close
    their notices. Resolve an audit’s arc requests with the apply that answers them: add `--resolves nu-ID[,nu-ID...]`. Unit requests require that unit’s change/re-entry and grouped findings require every named repair. No-op/stale applies close nothing; the receipt lists actual closures. Other arc items accept named `ack <id>` after review.
    A passing later baseline settles baseline items; a superseding review settles pack-review items. Finding requests

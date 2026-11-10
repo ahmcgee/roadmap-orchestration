@@ -381,6 +381,12 @@ Apply still classifies safety/proof/risk/split/contract invariants and stores th
 activated under a fence with plan-applied last. Queued commands retain boundary provenance through restart. Executor CAS
 races retry and produce non-blocking notices; root commands do not auto-raise executor revision notices.
 
+dev.59: a suite-lane edit is refused only while a candidate is under way. While a lanes attempt runs, the apply is `busy`
+behind that attempt's boundary (`apply-queued`, a `queued` receipt), like a spec edit of a running unit. A lanes red's fix
+round reads its fast-suite series by the plan revision in force at that red (`JournalView.planAppliedAt(seq)`, derived from
+the `plan-applied` facts; no record change), and requires the suite checks in force: an edited lane runs as it now stands,
+a removed one is not required.
+
 Phase-0 advisories add `{kind:"vacuous-future-witness",obligation,files}` for existing future witness files and `{kind:"spanning-proof",obligation,lane,units}` for multi-unit delivery without a spanning candidate/batch lane. They never refuse. Actual baseline vacuity remains execution-derived.
 
 ## Commands, receipts and needs-user

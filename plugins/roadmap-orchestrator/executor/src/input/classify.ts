@@ -701,17 +701,16 @@ export function classify(input: ClassifyInput): Classified {
       return s.decided?.stage === 'candidate' && (s.status === 'active' || s.status === 'held');
     });
     const open = view.openIntents().some((i) => i.kind === 'candidate.merge' || (i.parent.type === 'stage' && i.parent.stage === 'candidate'));
-    // A lanes attempt runs the fast suite lanes, and its fix round reads them back by their definitions in force.
-    const atLanes = cur.units.filter((u) => {
-      const s = view.unit(u.id);
-      if (s.status !== 'active' && s.status !== 'held') return false;
-      return s.open?.stage === 'lanes' || (s.decided?.stage === 'lanes' && (s.decided.outcome === 'red' || s.decided.outcome === 'not-certified'));
-    });
     if (open || atCandidate.length > 0) {
       reasons.push(`the suite lanes may not change while a candidate is under way (${open ? 'a candidate op is open' : `unit ${atCandidate.map((u) => u.id).join(', ')} is past a candidate attempt`})`);
-    } else if (atLanes.length > 0) {
-      reasons.push(`the suite lanes may not change while a lanes attempt runs them or its fix round reads them (unit ${atLanes.map((u) => u.id).join(', ')})`);
     } else {
+      // dev.59 (item 8, cmd-01a1b06537057bbe): a running lanes attempt runs the fast suite lanes, so the edit waits for its
+      // boundary (`busy`), as a spec edit of a running unit does; the arc-wide drain holds every other admission meanwhile.
+      // A lanes red's fix round reads its series by the plan it ran under (unit.ts `lanesFixRound`), so it never waits.
+      for (const u of cur.units) {
+        const o = openAttempt(view, u.id);
+        if (o?.live === true && o.stage === 'lanes' && !busy.some((b) => b.unit === u.id)) busy.push({ unit: u.id, stage: o.stage, attempt: o.attempt });
+      }
       changes.push({ type: 'suite' });
     }
   }

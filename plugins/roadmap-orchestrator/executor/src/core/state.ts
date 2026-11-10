@@ -677,6 +677,8 @@ export class Fold implements JournalView {
   readonly #planSpecs = new Map<UnitId, SpecHistoryEntry[]>();
   readonly #patchedSpecs = new Map<AbsPath, SpecHistoryEntry[]>();
   readonly #appliedBy = new Map<CommandId, PlanAppliedFact>();
+  /** Every `plan-applied` fact with its seq, ascending (`planAppliedAt`). */
+  readonly #planRevisions: { seq: number; fact: PlanAppliedFact }[] = [];
   readonly #queuedApplies = new Map<CommandId, ApplyQueued>();
   readonly #tail: TailDiscarded[] = [];
   readonly #backendParks = new Map<Backend, BackendParkState>();
@@ -1680,6 +1682,7 @@ export class Fold implements JournalView {
     const architect = f.source.type === 'command';
     if (architect && f.changes.some((c) => c.type === 'unit-added')) this.#draining = null;
     this.#planApplied = f;
+    this.#planRevisions.push({ seq, fact: f });
     if (f.command !== null) this.#appliedBy.set(f.command, f);
     for (const unit of Object.keys(f.specs) as UnitId[]) {
       const history = this.#planSpecs.get(unit) ?? [];
@@ -2087,6 +2090,15 @@ export class Fold implements JournalView {
 
   planAppliedBy(command: CommandId): PlanAppliedFact | null {
     return this.#appliedBy.get(command) ?? null;
+  }
+
+  planAppliedAt(seq: number): PlanAppliedFact | null {
+    let found: PlanAppliedFact | null = null;
+    for (const r of this.#planRevisions) {
+      if (r.seq >= seq) break;
+      found = r.fact;
+    }
+    return found;
   }
 
   applyQueued(command: CommandId): ApplyQueued | null {

@@ -117,6 +117,8 @@ export interface JournalView {
   specHistory(unit: UnitId, path: AbsPath): readonly SpecHistoryEntry[];
   /** The `plan-applied` fact `command` wrote (an apply's postcondition), or null. */
   planAppliedBy(command: CommandId): PlanAppliedFact | null;
+  /** dev.59: the `plan-applied` fact in force just before event `seq` (the latest one with a lower seq), or null before the first. */
+  planAppliedAt(seq: number): PlanAppliedFact | null;
   /** dev.17: the `apply-queued` fact of `command` (its seq and the units it waits on), or null when it was never queued. */
   applyQueued(command: CommandId): ApplyQueued | null;
   /** M2 (rank, F17): the seq of the stage-outcome fact that is `unit(id).decided`, or null while it is null. */

@@ -411,8 +411,9 @@ const ROWS: readonly Row[] = [
     expect: [/suite lanes may not change while a candidate is under way \(unit u1 is past a candidate attempt\)/],
   },
   {
-    // The 2026-10-15 batch: a lanes red's fix round reads the fast suite lanes back by their definitions in force.
-    name: 'suite lanes while a unit\'s lanes red awaits its fix round: refused',
+    // dev.59 (item 8): a lanes red's fix round reads its series by the plan it ran under (unit.ts `lanesFixRound`), so the
+    // edit lands now (the 2026-10-15 batch refused it).
+    name: 'suite lanes while a unit\'s lanes red awaits its fix round: now',
     setup: (r) => {
       pin(r, 'u1');
       const state = r.journal.view.unit(U1);
@@ -421,7 +422,19 @@ const ROWS: readonly Row[] = [
       r.journal.fact(red);
     },
     edit: (d) => editPlan(d, (p) => void p.suite.lanes.push({ ...p.suite.lanes[0]!, id: 'suite2' })),
-    expect: [/suite lanes may not change while a lanes attempt runs them or its fix round reads them \(unit u1\)/],
+    expect: () => [{ type: 'suite' }],
+  },
+  {
+    // dev.59 (item 8, cmd-01a1b06537057bbe): a running lanes attempt runs the fast suite, so the edit waits for its boundary.
+    name: 'suite lanes while a lanes attempt runs: busy at the lanes boundary, not refused',
+    setup: (r) => {
+      inFlight(r);
+      r.journal.begin({ kind: 'worktree.create', key: opKey('worktree:u1:verify'), parent: { type: 'stage', unit: U1, stage: 'lanes', attempt: 2 }, deadlineAt: null, body: () => ({
+        expect: { path: absPath(tmpDir('apply-suite-wt')), checkout: { type: 'detached', at: sha('0'.repeat(40)) } }, post: null,
+      }) });
+    },
+    edit: (d) => editPlan(d, (p) => void p.suite.lanes.push({ ...p.suite.lanes[0]!, id: 'suite2' })),
+    expect: { busy: [{ unit: 'u1', stage: 'lanes', attempt: 2 }] },
   },
   {
     name: 'arc, integrationBranch, baseline, worktreeRoot: always refused',

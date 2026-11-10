@@ -73,7 +73,8 @@ import { candidateLaneDir,smokeLaneDir } from '../git/snapshot.ts';
 import { WorktreeRecoveryError,standing } from '../git/worktree.ts';
 import type { RequiredWitness } from '../holistic/required.ts';
 import { regenerateLanes } from '../input/derived.ts';
-import type { PlanUnit } from '../input/plan.ts';
+import type { PlanM1,PlanUnit } from '../input/plan.ts';
+import { planOf } from '../input/inforce.ts';
 import { chargeableBoundRecommendation,raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
 import { dirtyLanesDirective,revertedPathsDirective } from '../prompts/directives.ts';
@@ -332,6 +333,9 @@ function stillRequired(refs: readonly TestRef[], required: readonly RequiredWitn
 /**
  * The fix round after lanes attempt `f` (red, not certified, witnesses missing, smoke survivors), from what it recorded. A
  * red or dirty series is the spec series' or the fast suite's at the salvage SHA (stages.ts `fastSuite`): both are read.
+ * dev.59 (item 8): a suite edit may land while this round waits or runs (classify.ts queues it only behind a running lanes
+ * attempt), so the fast suite series is read by the definitions it ran under, the plan in force at `f`; the checks the round
+ * requires are the definitions in force, so a lane the edit changed is run as it now stands and one it removed is not required.
  */
 function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, tip: Sha): DecidedRound {
   const view = ctx.journal.view;
@@ -341,7 +345,8 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
   const ledger = seriesLedger(ctx, parent, spec.lanes, 'spec', tip, root);
   const suiteRoot = fastSuiteRoot(ctx.runDir, parent, 'suite');
   const definitions = [...spec.lanes, ...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes];
-  const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', tip, suiteRoot)];
+  const ran = planAsDecided(ctx, unit.id, f);
+  const series = [...ledger, ...seriesLedger(ctx, parent, [...regenerateLanes(ran), ...ran.suite.lanes], 'suite', tip, suiteRoot)];
   const dirty = [...seriesDirty(view, root), ...seriesDirty(view, suiteRoot)];
   switch (f.outcome) {
     case 'witnesses-missing': {
@@ -372,6 +377,17 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       return laneFixRound(series, dirty, tip, definitions, compared);
     }
   }
+}
+
+/** The plan in force when the unit's decision `f` was recorded (dev.59): the revision its lanes attempt ran under. */
+function planAsDecided(ctx: StageContext, unit: UnitId, f: StageOutcomeFact): PlanM1 {
+  const view = ctx.journal.view;
+  const decided = view.unit(unit).decided;
+  if (decided?.stage !== f.stage || decided.attempt !== f.attempt) throw new Error(`unit ${unit}: ${f.stage}#${f.attempt} is not its decision`);
+  const seq = view.decidedSeq(unit);
+  const fact = seq === null ? null : view.planAppliedAt(seq);
+  if (fact === null) throw new Error(`unit ${unit}: no plan was in force at its decision ${f.stage}#${f.attempt}`);
+  return fact.rev === view.planApplied()?.rev ? ctx.plan() : planOf(ctx.runDir, fact);
 }
 
 /** A reopen keeps the latest failed series' dirty-checkout blocker, read from its snapshot records. */
