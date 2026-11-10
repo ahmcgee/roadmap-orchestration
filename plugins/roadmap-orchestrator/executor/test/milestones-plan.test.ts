@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
-import { commandId, jobId, milestoneId, sha, unitId } from '../src/core/ids.ts';
+import { arcId, commandId, jobId, milestoneId, sha, unitId } from '../src/core/ids.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
 import { openFinding } from '../src/holistic/findings.ts';
@@ -30,6 +30,9 @@ import { setupCorpusArc } from './fixtures/corpus-unit.ts';
 import { commitAll, git, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
 import { planDirOf } from './fixtures/route-common.ts';
 import { status } from '../src/status.ts';
+import { ObservationCache } from '../src/observation/cache.ts';
+import { graphView } from '../src/console/views.ts';
+import { milestoneView, unitView } from '../src/console/details.ts';
 import { type ArcDescriptor, type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
 import { startScheduler, stopScheduler } from './fixtures/sched-common.ts';
 import { until } from './fixtures/exec-common.ts';
@@ -262,6 +265,38 @@ describe('milestones.membership (dev.59 scope item 3, C2, C4)', () => {
     merge(inForce, 'u4');
     assert.deepEqual(milestoneProgress(r.journal.view, plan, m, []), { kind: 'walk-due', round: 1 }, 'reached: its one live member merged, the cut lineage withdrawn');
     assert.deepEqual(membersOf(r), [{ members: ['u2', 'u3', 'u4'], withdrawn: ['u2', 'u3'], live: 1, merged: 1 }]);
+  }));
+
+  test('console.milestones-reentry-and-carry: the console counts a re-entry and a carrier for their milestone, never in No milestone, and the drawer links a cut unit and its carrier both ways', T, () => onCorpusArc((r) => {
+    withMilestones({ ...MILESTONE, design: { supplied: true }, units: ['u2'] })(r.d);
+    accept(r);
+    park(r, 'u2');
+    addUnit(r.d, 'u3', { reenters: { unit: 'u2', fixes: 'u2/gate#1' } });
+    accept(r);
+    r.journal.fact({ kind: 'paused', command: commandId('cmd-0000000000000001'), target: { type: 'unit', unit: unitId('u3') } });
+    git(r.d.repo, 'branch', `roadmap/${r.d.arc}/u3`, 'main');
+    const tip = git(r.d.repo, 'rev-parse', 'main');
+    editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['cut'] = { reason: 'carried forward fresh past the attempt caps' }));
+    addUnit(r.d, 'u4', { carries: { unit: 'u3', tip } });
+    accept(r);
+    const read = () => new ObservationCache(absPath(r.ctx.hostDir), 'milestones', 'reader').read({ runDir: absPath(r.ctx.runDir), arc: arcId(r.d.arc) });
+    let e = read(), graph = graphView(e);
+    assert.deepEqual(graph.milestones.map((g) => [g.id, g.memberIds, g.total, g.merged, g.withdrawn]), [['MS-1', ['u2', 'u3', 'u4'], 1, 0, 2]], 'the re-entry and the carrier are members; the superseded and the cut one are withdrawn');
+    assert.deepEqual(graph.noMilestone, { ids: ['u1'], total: 1, merged: 0, withdrawn: 0 }, 'neither the re-entry nor the carrier is in No milestone');
+    assert.deepEqual(graph.edges.filter((x) => x.kind === 'feeds').map((x) => x.source), ['u2', 'u3', 'u4']);
+    const drawer = milestoneView(e, 'MS-1', { limit: '100', section: 'members' });
+    assert.deepEqual([drawer.total, drawer.merged, drawer.withdrawn, drawer.reason], [1, 0, 2, '1 unit has not merged: u4']);
+    assert.deepEqual(drawer.members.rows.find((row) => row.id === 'u2')!.replacedBy, { id: 'u3', state: 'Withdrawn', signal: 'withdrawn' });
+    const cut = unitView(e, 'u3'), carrier = unitView(e, 'u4');
+    assert.ok('carriedBy' in cut && 'carries' in carrier);
+    assert.deepEqual([cut.carriedBy, cut.carries, carrier.carries, carrier.carriedBy], [['u4'], null, { unit: 'u3', tip }, []], 'the cut unit points at its carrier and back');
+    assert.deepEqual([cut.feeds.map((g) => g.id), carrier.feeds.map((g) => g.id)], [['MS-1'], ['MS-1']]);
+    // u4 merges under the plan in force: the milestone's one live member merged, so only its walkthrough is left.
+    const plan = parsePlan(JSON.parse(readFileSync(r.d.planPath, 'utf8')));
+    merge({ ...r, ctx: { ...r.ctx, plan: () => plan }, unit: (id: string) => plan.units.find((u) => u.id === id)! }, 'u4');
+    e = read(); graph = graphView(e);
+    assert.deepEqual(graph.milestones.map((g) => [g.total, g.merged, g.withdrawn]), [[1, 1, 2]]);
+    assert.doesNotMatch(milestoneView(e, 'MS-1').reason ?? '', /not merged/);
   }));
 
   // dev.59 (pass 3 follow-up): a milestone whose members are all withdrawn never waits silently.

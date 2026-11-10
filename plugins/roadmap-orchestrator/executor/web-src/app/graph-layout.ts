@@ -8,7 +8,7 @@ export const MIN_ID_PX = 10;
 // The space belongs to the relationships: never compress these floors to fit.
 export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };
-export type Band = { id: string; label: string; ids: string[]; passed: number; total: number; state: string; x: number; y: number; width: number; height: number };
+export type Band = { id: string; label: string; ids: string[]; passed: number; total: number; withdrawn: number; state: string; x: number; y: number; width: number; height: number };
 export function graphLayout(e: GraphData) {
   const started = performance.now(), m = e;
   const gates = e.milestones ?? [];
@@ -21,13 +21,11 @@ export function graphLayout(e: GraphData) {
   }
   for (let pass = 0; pass < gates.length + 1; pass++) for (const edge of e.dependencies) if (edge.type === 'after') assigned.set(edge.unit, Math.max(assigned.get(edge.unit) ?? 0, assigned.get(edge.effective) ?? 0));
   const bands: Band[] = gates.map(g => {
-    const state = e.milestones.find(v => v.id === g.id);
-    return { id: `milestone:${g.id}`, label: g.name ?? g.id, ids: [], passed: g.units.filter(id => m.graph.units.find(v => v.id === id)?.status === 'passed').length, total: g.units.length, state: state?.passed ? 'passed' : state?.state === 'walking' ? 'active' : state?.state === 'blocked' ? 'held' : 'pending', x: 0, y: 0, width: 0, height: 0 };
+    // Counts are membership (console/milestones.ts), never this band's placement: dependencies can draw a member further right.
+    return { id: `milestone:${g.id}`, label: g.name ?? g.id, ids: [], passed: g.merged, total: g.total, withdrawn: g.withdrawn, state: g.signal, x: 0, y: 0, width: 0, height: 0 };
   });
-  if ([...assigned.values()].some(i => i >= gates.length)) bands.push({ id: 'unbound', label: 'No milestone', ids: [], passed: 0, total: 0, state: 'pending', x: 0, y: 0, width: 0, height: 0 });
+  if ([...assigned.values()].some(i => i >= gates.length)) bands.push({ id: 'unbound', label: 'No milestone', ids: [], passed: e.noMilestone.merged, total: e.noMilestone.total, withdrawn: e.noMilestone.withdrawn, state: 'pending', x: 0, y: 0, width: 0, height: 0 });
   for (const [id, index] of assigned) bands[Math.min(index, bands.length - 1)]?.ids.push(id);
-  const last = bands.find(b => b.id === 'unbound');
-  if (last) { last.total = last.ids.length; last.passed = last.ids.filter(id => m.graph.units.find(v => v.id === id)?.status === 'passed').length; }
   const positions = new Map<string, Point>();
   const unitEdges = m.graph.edges.filter(([a,b]) => assigned.has(a) && (assigned.has(b) || b.startsWith('milestone:')));
   const incoming = new Map<string, string[]>();

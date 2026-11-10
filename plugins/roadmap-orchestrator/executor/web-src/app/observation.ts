@@ -7,7 +7,7 @@ export function useObservation(arc:string|null,onSelection:(arc:string|null)=>vo
   useEffect(()=>{
     if(!store||!arc)return;
     const stream=new EventSource(`${api}/arcs/${encodeURIComponent(arc)}/events`);
-    stream.onopen=()=>{store.connected=true;store.emit();};
+    stream.onopen=()=>{store.connected=true;store.opened=true;store.emit();};
     const notice=(event:Event,reset=false)=>{try{const raw=JSON.parse((event as MessageEvent).data);store.notice(raw,reset);onSelection(raw.selected);}catch(err){store.error=err instanceof Error?err.message:String(err);if(err instanceof ApiError&&err.code==='protocol')store.reload=true;store.emit();}};
     stream.addEventListener('revision',ev=>notice(ev));stream.addEventListener('heartbeat',ev=>notice(ev));stream.addEventListener('reset',ev=>notice(ev,true));
     // A server notice named "error" carries data and arrives on an open stream; only a connection error (no data) disconnects.

@@ -9,6 +9,7 @@ import { resourceQueue } from './resources.ts';
 import { stageWords, stateWords, reasonWords, waitWords } from './vocabulary.ts';
 import { identityIndex, journeyMs, stageIndex, invocationIndex } from './indexes.ts';
 import { enrichReports } from './reports.ts';
+import { milestoneReasons } from './milestones.ts';
 export function selectedUnitJourney(e:Envelope, selectedUnit: string, reportStepIds: ReadonlySet<string>){
  const s=e.data.display.status,events=e.data.events;
  const ended= [...events].reverse().find(ev=>ev.type==='fact'&&['arc-completed','stop-completed'].includes(ev.fact.kind));
@@ -34,7 +35,7 @@ export function selectedUnitJourney(e:Envelope, selectedUnit: string, reportStep
   const invs=invocations.byUnit.get(u.unit)??[];const first=journey[0]?.at??invs.at(-1)?.startedAt??null;
   const last=u.state==='merged'||u.state==='cut'||u.state==='superseded'||u.state==='parked'?journey.at(-1)?.endedAt??null:null;
   const queue=s.host.queue.find(q=>q.unit===u.unit);
-  const reasons=waitWords(u.waitingFor);if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${journey.at(-1)?`: ${journey.at(-1)!.outcome}`:''}`);
+  const reasons=waitWords(u.waitingFor,milestoneReasons(e));if(u.state==='parked')reasons.push(`Parked at ${stageWords(u.stage)}${journey.at(-1)?`: ${journey.at(-1)!.outcome}`:''}`);
   if(queue?.request.publication)reasons.push(`Integration queue position ${resourceQueue(s.host).filter(q=>q.request.publication).findIndex(q=>q.unit===u.unit)+1}`);
   return{id:u.unit,title,intent,summary:acceptance[0]??title,acceptance,state:stateWords(u.state),stage:stageWords(u.stage),startedAt:first,endedAt:last,elapsedMs:journeyMs(first,last,ended?.at??e.checkedAt),rounds:Math.max(0,...journey.map(r=>r.round)),attempts:journey.length,reasons,waitSince:queue?.queuedAt!==undefined?new Date(queue.queuedAt).toISOString():null,journey,lineage:u.lineage,waiting:waits.filter(w=>w.source==='admission'?w.unit===u.unit:w.parent.type==='stage'&&w.parent.unit===u.unit).map(w=>({at:w.at,stage:stageWords(w.source==='admission'?w.stage:w.parent.type==='stage'?w.parent.stage:'resource'),totalMs:w.waited.totalMs,reasons:Object.entries(w.waited.byReasonMs).filter(([,ms])=>ms!=null&&ms>0).map(([reason,ms])=>({reason:reasonWords(reason),ms}))}))};
 }

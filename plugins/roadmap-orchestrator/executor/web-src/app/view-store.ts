@@ -8,7 +8,8 @@ export class ViewStore {
   active=new Map<string,number>();
   ui=new Map<string,unknown>();
   entries=new Map<string,Entry>();listeners=new Set<()=>void>();metadata:Metadata|null=null;identity:ViewEnvelope<unknown>|null=null;
-  checkedAt:string|null=null;connected=false;error='';reload=false;generation=0;sequence=0;
+  /** `opened`: the event stream has connected at least once, so a drop is a reconnection, not a first connection. */
+  checkedAt:string|null=null;connected=false;opened=false;error='';reload=false;generation=0;sequence=0;
   readonly arc:string;readonly protocol:string;readonly read:(path:string,signal:AbortSignal)=>Promise<any>;
   constructor(arc:string,protocol:string,read:(path:string,signal:AbortSignal)=>Promise<any>){this.arc=arc;this.protocol=protocol;this.read=read;}
   emit=()=>{this.sequence++;for(const fn of this.listeners)fn();};

@@ -19,6 +19,7 @@ export type HolisticFinding = {type: 'finding'; id: string; claim: EvidencePrevi
 export type HolisticDecision = Omit<Extract<HolisticRow, {type: 'decision'}>, 'detail' | 'oneLine'> & {detail: DetailRef | null; recordId: string; oneLine: EvidencePreview};
 export type HolisticView = View & Page<HolisticAudit | HolisticFinding | HolisticDecision> & {
   section: HolisticSection; enabled: boolean; currentAudit: {running: boolean; job: string | null} | null;
-  latestOutcome: {at: string; job: string; outcome: string} | null;
-  counts: {audits: number; findings: number; decisions: number};
+  latestOutcome: {at: string; job: string; outcome: string; verdict: string | null} | null;
+  /** `findings`: active now; `raised`: every finding ever opened (status `caught.uniqueFindings`). */
+  counts: {audits: number; findings: number; raised: number; decisions: number};
 };

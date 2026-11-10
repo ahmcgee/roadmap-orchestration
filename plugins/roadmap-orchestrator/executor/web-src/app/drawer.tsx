@@ -1,13 +1,28 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Views } from './view-state.ts';
 import { HistoryMarkdown } from './markdown.tsx';
-import { ChevronLeft, X } from 'lucide-react';
+import { ChevronLeft, Maximize2, X } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, elapsed, glyph, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
+import { Clock, elapsed, fullLogLink, glyph, link, money, pluralise, route, SignalMark, Time } from './shared.tsx';
 
 
-export function Drawer({ title, close, children, headingLink, className = '' }: { title: string; close: () => void; children?: ReactNode; headingLink?: ReactNode; className?: string }) {
-  const panel = useRef<HTMLElement>(null),cache=useContext(Views),routeKey=location.hash;
+/** An invocation log that can open at full page width. `full` is the route's `/log` form; `onExpand` lets the log note its reading position first. */
+export type DrawerExpand = { arc: string; id: string; full: boolean; onExpand?: () => void };
+export function Drawer({ title, close, children, headingLink, className = '', expand }: { title: string; close: () => void; children?: ReactNode; headingLink?: ReactNode; className?: string; expand?: DrawerExpand }) {
+  const full=expand?.full??false;
+  // The drawer and its full-page view are one view at two widths: they share one scroll and disclosure memory.
+  const panel = useRef<HTMLElement>(null),cache=useContext(Views),routeKey=full?location.hash.replace(/\/log(?=\?|$)/,''):location.hash;
+  const fullRef=useRef(full),wasFull=useRef(full),expanded=useRef(false),drawerScroll=useRef<number|null>(null);
+  fullRef.current=full;
+  // Back is a history step when Expand opened the full view here; a deep-linked full view replaces itself with the drawer.
+  const back=()=>{if(!expand)return;if(expanded.current)history.back();else location.replace(link(expand.arc,route().tab,'invocations',expand.id));};
+  const backRef=useRef(back);backRef.current=back;
+  function openFull(){
+    if(!expand)return;
+    expand.onExpand?.();
+    drawerScroll.current=panel.current?.querySelector<HTMLElement>('.drawer-body')?.scrollTop??null;
+    expanded.current=true;location.hash=fullLogLink(expand.arc,expand.id);
+  }
   const disclosures=useRef({route:'',seen:new WeakSet<HTMLDetailsElement>()});
   useLayoutEffect(()=>{const body=panel.current?.querySelector<HTMLElement>('.drawer-body');if(!body||!cache)return;body.scrollTop=Number(cache.ui.get(`scroll:${routeKey}`)??0);const remember=()=>{cache.ui.delete(`scroll:${routeKey}`);cache.ui.set(`scroll:${routeKey}`,body.scrollTop);const keys=[...cache.ui.keys()].filter(k=>k.startsWith('scroll:'));for(const key of keys.slice(0,-24))cache.ui.delete(key);};body.addEventListener('scroll',remember);return()=>body.removeEventListener('scroll',remember);},[cache,routeKey]);
   useLayoutEffect(()=>{
@@ -21,17 +36,28 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
     const remember=(ev:Event)=>{const el=ev.target;if(!(el instanceof HTMLDetailsElement))return;cache.ui.set(key,{...(cache.ui.get(key) as object??{}),[el.querySelector('summary')?.textContent??'']:el.open});cache.trimUi();};
     body.addEventListener('toggle',remember,true);return()=>body.removeEventListener('toggle',remember,true);
   },[children,cache,routeKey]);
+  useLayoutEffect(()=>{
+    if(wasFull.current===full)return;wasFull.current=full;
+    const sheet=panel.current;if(!sheet)return;
+    const body=sheet.querySelector<HTMLElement>('.drawer-body');
+    if(!full&&body&&drawerScroll.current!==null){body.scrollTop=drawerScroll.current;cache?.ui.set(`scroll:${routeKey}`,body.scrollTop);}
+    // Focus lands on the control that leads back the other way: Back in the full view, Expand in the drawer.
+    const target=sheet.querySelector<HTMLElement>(full?'.drawer-back':'.drawer-expand');
+    (target&&target.getClientRects().length?target:sheet.querySelector<HTMLElement>('[aria-label="Close details"]'))?.focus({preventScroll:true});
+  },[full]);
   const [width, setWidth] = useState(() => { try { return Math.max(360, Math.min(960, Number(localStorage.getItem('roadmap.drawer-width')) || 520)); } catch { return 520; } });
   useEffect(() => {
     const previous=document.activeElement as HTMLElement|null;
     // Focus goes back to where the drawer was opened from (the Graph canvas on Graph).
     const returnFocus=()=>{const target=route().tab==='graph'?document.querySelector<HTMLElement>('.dag-canvas'):(previous?.isConnected&&previous!==document.body?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true });};
     window.dispatchEvent(new Event('roadmap-dismiss-popovers'));
-    panel.current?.querySelector<HTMLButtonElement>('[aria-label="Close details"]')?.focus({ preventScroll: true });
+    panel.current?.querySelector<HTMLButtonElement>(fullRef.current?'.drawer-back':'[aria-label="Close details"]')?.focus({ preventScroll: true });
     const key = (e: KeyboardEvent) => {
       const sheet=panel.current;if(!sheet)return;
       if(e.key==='Escape'){
         e.preventDefault();e.stopImmediatePropagation();
+        // The full view keeps the reader's expanded items: Escape goes straight back to the drawer.
+        if(fullRef.current){backRef.current();return;}
         const expanded=[...sheet.querySelectorAll<HTMLElement>('details[open],button[aria-expanded="true"]')].filter(el=>el.getClientRects().length>0).at(-1);
         if(expanded instanceof HTMLDetailsElement){expanded.open=false;expanded.querySelector('summary')?.focus();}
         else if(expanded)expanded.click();
@@ -53,9 +79,11 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
     const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop, { once: true });
   }
-  return <aside ref={panel} role="dialog" aria-modal="false" aria-labelledby="detail-title" className={`drawer ${className}`} style={{ width }}>
-    <div className="drawer-resize" role="separator" aria-label="Resize details" aria-orientation="vertical" tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { const next = Math.max(360, Math.min(960, width + (e.key === 'ArrowLeft' ? 40 : -40))); setWidth(next); try { localStorage.setItem('roadmap.drawer-width', String(next)); } catch {} } }}/>
-    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><Button variant="ghost" size="icon" onClick={close} aria-label="Close details" title="Close details"><X size={18}/></Button></header>
+  return <aside ref={panel} role="dialog" aria-modal="false" aria-labelledby="detail-title" className={`drawer ${full?'drawer-full ':''}${className}`} style={full?undefined:{ width }}>
+    {!full&&<div className="drawer-resize" role="separator" aria-label="Resize details" aria-orientation="vertical" tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { const next = Math.max(360, Math.min(960, width + (e.key === 'ArrowLeft' ? 40 : -40))); setWidth(next); try { localStorage.setItem('roadmap.drawer-width', String(next)); } catch {} } }}/>}
+    <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><div className="drawer-actions">
+      {expand&&(full?<Button variant="ghost" className="drawer-back" onClick={back} title="Return to the side panel"><ChevronLeft size={16}/>Back to details</Button>:<Button variant="ghost" className="drawer-expand" onClick={openFull} title="Show this log at full page width"><Maximize2 size={16}/>Expand</Button>)}
+      <Button variant="ghost" size="icon" onClick={close} aria-label="Close details" title="Close details"><X size={18}/></Button></div></header>
     <div className="drawer-body">{children}</div>
   </aside>;
 }

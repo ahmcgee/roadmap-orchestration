@@ -18,11 +18,12 @@ export type UnitIdentity = { id: string; title: string; systems: string[]; order
 export function identityIndex(e: Envelope): Map<string, UnitIdentity> {
   const specifications = new Map(e.data.display.estate.filter(r => r.kind === 'specification').map(r => [r.id, r]));
   const plan = new Map(e.data.plan?.units.map((u, order) => [String(u.id), {systems: u.systems, order}]));
+  const units = new Set(e.data.display.status.units.map(u => String(u.unit)));
   return new Map(e.data.display.status.units.map((u, order) => {
     const entry = specifications.get(u.unit), spec = entry ? record(JSON.parse(entry.body)) : {};
     const acceptance = Array.isArray(spec['acceptance']) ? spec['acceptance'].map(a => String(record(a)['clause'] ?? '')).filter(Boolean) : [];
     const intent = typeof spec['intent'] === 'string' ? spec['intent'] : acceptance.join('\n');
-    const title = typeof spec['title'] === 'string' && spec['title'].trim() ? spec['title'] : shortUnitTitle(intent, String(u.unit));
+    const title = typeof spec['title'] === 'string' && spec['title'].trim() ? spec['title'] : shortUnitTitle(intent, String(u.unit), units);
     return [u.unit, {id: u.unit, title, systems: [...(plan.get(u.unit)?.systems ?? [])], order: plan.get(u.unit)?.order ?? order}];
   }));
 }

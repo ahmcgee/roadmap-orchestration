@@ -280,7 +280,7 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.doesNotMatch(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/Current blocker|Waits on/);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.unit-gates a').filter({hasText:'MS-3 Concurrency and retries: pending'}).click();}`});
  await until(async()=>await b.evaluate('()=>document.querySelector("#detail-title")?.textContent==="MS-3 Concurrency and retries"'),5000,'named gate sheet');
- assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8\/9 passed.*Not passed yet[\s\S]*Outstanding units \(1\)[\s\S]*u30[\s\S]*u29/s, 'dev.59: the superseded u29 is withdrawn from the count, still listed');
+ assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8 of 9 units merged[\s\S]*1 withdrawn[\s\S]*Not passed yet[\s\S]*Outstanding units \(1\)[\s\S]*u30[\s\S]*Withdrawn units \(1\)[\s\S]*u29/s, 'dev.59: the superseded u29 is withdrawn from the count and listed apart');
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Focus this milestone',exact:true}).click();}`});
  await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.querySelector(".station[aria-pressed=true]")?.textContent.includes("MS-3")'),5000,'gate focus control');
  await b.openUnit('u39');

@@ -11,6 +11,7 @@ import { preview } from './views.ts';
 import { cpuStageGroups, resourceQueue } from './resources.ts';
 import { waitingBreakdown } from './waiting.ts';
 import { waitWords, stageWords } from './vocabulary.ts';
+import { milestoneReasons } from './milestones.ts';
 export { bookingSummaries } from './bookings.ts';
 import type { CpuStageGroup, EffortRow, HolisticRow, Interval, Money, RequestSummary, StageSummary, Subject, WaitMeasurement } from './view-protocol.ts';
 
@@ -93,10 +94,11 @@ export function effortRows(e: Envelope, index: Index = projectionIndex(e)): Effo
     }
     return value;
   };
+  const why = milestoneReasons(e);
   for (const u of e.data.display.status.units) {
     const identity = index.identities.get(u.unit)!, value = row({type: 'unit', id: u.unit, title: identity.title.slice(0, 96)});
     const steps = index.stages.byUnit.get(u.unit) ?? [], invs = index.invocations.byUnit.get(u.unit) ?? [];
-    const reasons = waitWords(u.waitingFor);
+    const reasons = waitWords(u.waitingFor, why);
     if (u.state === 'parked') reasons.push(`Parked at ${stageWords(u.stage)}${steps.at(-1) ? `: ${steps.at(-1)!.outcome}` : ''}`);
     const position = resourceQueue(e.data.display.status.host).filter(q => q.request.publication).findIndex(q => q.unit === u.unit);
     if (position >= 0) reasons.push(`Integration queue position ${position + 1}`);
@@ -150,9 +152,10 @@ export function stageSummaries(e: Envelope): StageSummary[] {
 /** D10 no checkpoint body, invented date or finding/request conflation. */
 export function holisticSummaries(e: Envelope): HolisticRow[] {
   const s = e.data.display.status, dates = new Map(e.data.events.map(ev => [Number(ev.seq), ev.at]));
+  const verdicts = new Map(e.data.events.flatMap(ev => ev.type === 'fact' && ev.fact.kind === 'stage-outcome' && 'job' in ev.fact && ev.fact.stage === 'campaign-audit' ? [[String(ev.fact.job), ev.fact.verdict] as const] : []));
   return [
     ...e.data.events.flatMap(ev => ev.type === 'fact' && ev.fact.kind === 'audit-ended' ? [{type: 'audit' as const, id: String(ev.seq), at: ev.at,
-      job: ev.fact.job, outcome: ev.fact.outcome, coverageCount: ev.fact.covered.length, findingCount: ev.fact.findings.length, detail: {type: 'event' as const, id: String(ev.seq)}}] : []),
+      job: ev.fact.job, outcome: ev.fact.outcome, verdict: verdicts.get(String(ev.fact.job)) ?? null, coverageCount: ev.fact.covered.length, findingCount: ev.fact.findings.length, detail: {type: 'event' as const, id: String(ev.seq)}}] : []),
     ...s.findings.active.map(f => ({type: 'finding' as const, id: String(f.id), claim: preview(f.claim, {type: 'event', id: String(f.id)}), state: f.state, detail: {type: 'event' as const, id: String(f.id)}})),
     ...s.decisionsSince.map(d => ({type: 'decision' as const, id: d.id, seq: Number(d.seq), at: dates.get(d.seq) ?? null, kind: d.kind,
       oneLine: preview(d.oneLine, {type: 'event', id: String(d.seq)}), ruledBy: d.ruledBy.type === 'architect' ? {type: 'architect' as const, command: d.ruledBy.command} : d.ruledBy.type === 'judgment' ? {type: 'judgment' as const, role: d.ruledBy.role} : {type: 'executor' as const}, detail: {type: 'event' as const, id: String(d.seq)}})),

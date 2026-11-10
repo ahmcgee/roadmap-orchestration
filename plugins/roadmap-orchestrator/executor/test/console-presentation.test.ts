@@ -22,7 +22,7 @@ test('recorded executor states become plain journeys, stage-local attempts, verd
  assert.deepEqual(d.journey.rows.filter(s=>s.stage==='build').map(s=>[s.attempt,s.round,s.outcome]),[[1,1,'Succeeded'],[2,2,'Succeeded'],[3,3,'Succeeded']]);
  const review=d.journey.rows.find(s=>s.stage==='gate')!;assert.equal(review.attempt,1);assert.equal(review.outcome,'Changes requested');assert.deepEqual(review.findingTitles,['Handle empty input before multiplying']);
  assert.deepEqual(u.reasons,['Baseline hold: baseline checks are failing']);assert.equal(u.waitSince,null,'admission wait starts are not invented');
- assert.deepEqual(detail(e,'u4').unit.reasons,['Waiting for u3']);assert.deepEqual(detail(e,'u5').unit.reasons,['Milestone MS-1 has not passed']);
+ assert.deepEqual(detail(e,'u4').unit.reasons,['Waiting for u3']);assert.deepEqual(detail(e,'u5').unit.reasons,['Milestone MS-1 has not passed: its walkthrough is due']);
  assert.match(detail(e,'u11').unit.reasons.join(' '),/pressure/);assert.ok(detail(e,'u11').unit.waitSince);assert.ok(detail(e,'u8').unit.reasons.includes('Integration queue position 1'));
  assert.equal(detail(e,'u14').unit.lineage?.reenters,'u12');assert.equal(detail(e,'u12').unit.state,'Replaced');assert.equal(detail(e,'u13').unit.state,'Withdrawn');
  const activity=new ConsoleActivity();let page=activityPage(e,activity,{limit:'25',window:'arc'}),rows=[...page.rows];while(page.page.next){page=activityPage(e,activity,{limit:'25',window:'arc',cursor:page.page.next});rows.push(...page.rows);}

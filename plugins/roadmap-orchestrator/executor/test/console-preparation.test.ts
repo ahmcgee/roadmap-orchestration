@@ -29,6 +29,26 @@ test('browser preparation coalesces immutable delivery, binds queries and isolat
   assert.deepEqual(await p.read({arc:'a',route:'graph'},run,signal(),b.pending),result,'short delivery retries are exact');
 });
 
+test('a read every reader left before its turn never runs, and cancelling twice is not an error', async t => {
+  // dev.59 C6: clicking through stations cancels reads; a cancelled read must not still occupy the worker.
+  const p = new BrowserPreparation(); t.after(() => p.close());
+  const gate = deferred(), ran: string[] = [];
+  const run = (key: string, value: Promise<unknown> | unknown) => () => { ran.push(key); return Promise.resolve(value); };
+  const first = await p.read('first', run('first', gate.promise), signal());
+  assert.equal(first.state, 'preparing');
+  const left = new AbortController(), leaving = p.read('left', run('left', 'never'), left.signal);
+  left.abort();
+  await assert.rejects(leaving, /browser read cancelled/);
+  const kept = await p.read('kept', run('kept', 'wanted'), signal());
+  assert.equal(kept.state, 'preparing'); if (kept.state !== 'preparing' || first.state !== 'preparing') return;
+  assert.deepEqual(ran, ['first'], 'reads wait their turn');
+  gate.resolve('done');
+  assert.deepEqual(await p.read('kept', run('kept', 'wanted'), signal(), kept.pending), {state: 'ready', value: 'wanted'});
+  assert.deepEqual(ran, ['first', 'kept'], 'the read its reader left was never run');
+  assert.deepEqual(await p.read('first', run('first', 'done'), signal(), first.pending, true), {state: 'ready', value: {state: 'cancelled'}});
+  assert.deepEqual(await p.read('first', run('first', 'done'), signal(), first.pending, true), {state: 'ready', value: {state: 'cancelled'}}, 'a second cancel of the same lease');
+});
+
 test('preparation re-admits stale envelopes without relabelling clocks, expires and does not cache ordinary reads', async t => {
   const p = new BrowserPreparation(); t.after(() => p.close());
   const gate = deferred(); let calls = 0;
