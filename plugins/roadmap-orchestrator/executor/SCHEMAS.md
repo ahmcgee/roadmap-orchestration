@@ -262,7 +262,10 @@ A planned descendant outside the milestone waits for milestone-passed; code foll
 Membership (dev.59, `milestoneMembers` in `src/input/plan.ts`): the listed units, every unit re-entering one of them
 and every unit carrying a cut one forward, transitively, in plan order. Superseded and cut members are withdrawn: a
 milestone is reached when it has a live member and every live member merged (an all-withdrawn milestone is never
-reached). Members also receive the milestone's prompt inputs, and the walk reads every merged member's spec. Status
+reached). A revision that leaves a milestone with members but no live one is refused (classifier, every proposer; the
+plan alone decides: cut, or re-entered); one already so in force, from an earlier release, is raised at scheduler start
+as a blocking arc `plan-defect` item naming the milestone and its withdrawn members (temporary adoption scaffolding,
+`allWithdrawnMilestones`). Members also receive the milestone's prompt inputs, and the walk reads every merged member's spec. Status
 `milestones[]` adds `members`, `withdrawn`, `live` and `merged`; summary milestones add `live` and `merged`; the
 console's graph, milestone detail (`total` live, `merged`) and filters read status's members. Non-planned
 lineages are exempt so repairs/polish can proceed. A reported walk with no active walkthrough P1 passes the node;
@@ -305,7 +308,9 @@ ObligationDef = {
 ```
 
 Fresh witness authoring requires files and arc lane testPaths through plan-defect checks, even where shape readers keep
-them optional. Census is required for corpus target validation and names every active rule exactly once; split-family
+them optional. dev.59: so does every revision for the lanes and binding witnesses it adds (Phase-0 mode `REVISION`; a
+revision is refused only for the defects it adds), and an argv's test paths include the words of a shell's `-c` script
+(`sh|bash|dash|zsh`), so a witness file left out of a file list there is `witness-not-in-lane{missing:'argv'}`. Census is required for corpus target validation and names every active rule exactly once; split-family
 census names the parent. Split parent witness/proof are null. New obligations start active at rev 1. Normative rev changes
 exactly for statement/anchor/activation changes. Intentional weakening needs root apply reason; disposition records bind
 reason/revision. Proof judgments must prove the current statement rev and ids/files. Lane/argv moves with identical proof
@@ -943,7 +948,8 @@ raises one non-blocking unit `split-proposal` per lineage, parented by that gate
 dev.59 park items (no record change): a `chargeable-bound` park's recommendation names a re-entry with `reenters.reset`,
 never a spec revision (a re-opened unit keeps its count and parks at its next charged failure), and a candidate `base-red`
 park, an operator env park, names its two ways out: estate or base fixed, `ack` then `resume` (the candidate re-runs as a
-new attempt, uncharged); the unit's own red, `steer --resume` then `ack`. Both state the lineage's builds and judged stages
+new attempt, uncharged); the unit's own red, `steer --resume` then `ack`. Its summary states the executor's finding,
+"The tip also fails without this unit", not a verdict on the cause. Both state the lineage's builds and judged stages
 against the total-attempt caps (`src/pipeline/attempts.ts` `lineageAttemptsText`).
 
 `src/park/table.ts` supplies targets; `src/pipeline/transitions.ts` owns class/charge/re-entry decisions. Recovering then

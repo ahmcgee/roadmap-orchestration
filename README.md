@@ -109,6 +109,8 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    design references, bring-up, journeys and selected integration lanes. Approved compaction carries source-backed
    K-n curation; debt resolutions link B-n and K-n in the plain C-n ledger. Phase 0 checks typed inputs, committed
    target bytes, proof reachability and readiness; system overlap, possible future-witness vacuity, spanning proof and design ordering advise judgment.
+   Phase 0 and every apply refuse a witness file its lane would never run: outside the lane's `testPaths`, or left out
+   of an explicit file list in its argv (a shell's `-c` script included); a lane an apply adds must declare `testPaths`.
 2. **Start and review.** Startup validates the pack, claims the host and smokes its routed backends. A fresh pack
    review checks it against the target and census and must end before admission. Blocking unit findings hold the named
    units and their transitive dependents; other blocking targets hold the arc. The architect fixes the pack for a
@@ -165,7 +167,9 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
 5. **Judge the experience and campaign.** Once a milestone's live members merge, its selected lanes run and one experience
    role walks its journeys and judges polish comparisons. A milestone's members are its units, every unit re-entering
    one of them and every unit carrying a cut one forward (`carries`); superseded and cut members are withdrawn from its
-   counts and readiness. Breaks hold downstream work; deviations can be repaired
+   counts and readiness. A revision that leaves a milestone no live member is refused (carry the work forward with
+   `carries`, re-point the milestone or remove it), and one adopted that way from an earlier release is a blocking item;
+   the executor never marks it reached. Breaks hold downstream work; deviations can be repaired
    alongside it. A break requires a failed product action, an interface repair that reworks dependents, or a measured
    declared floor violation. Copy, visuals, diagnostics and stale docs against a correct interface deviate; sanctioned
    choices are not findings. Fresh whole-range campaign audits run at milestones, on request and at the final boundary, judging
