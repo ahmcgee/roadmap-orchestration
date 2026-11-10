@@ -38,13 +38,11 @@ export class ObservationCache {
     const observer = c?.observer ?? new Observer();
     let evidenceStamp = c?.stable;
     return retryObservation((dependenciesChanged) => {
-      const startPath = join(run.runDir, 'start.json');
-      const common = existsSync(startPath) ? gitCommonDir(runStart(readJson(startPath), startPath).repo) : commonDirOfRun(run.runDir);
       const heart = join(run.runDir, 'heartbeat.json');
       const journalPath = join(run.runDir, EVENTS_FILE);
-      const stableStamp = () => observationStamp(run.runDir, common, this.hostDir) + JSON.stringify(ownerState(run.runDir, this.hostDir));
+      const { stable: stableStamp, volatile: volatileStamp } = this.#stamps(run);
       const stable = stableStamp();
-      const volatile = fileStamp(heart) + JSON.stringify(supervision(run.runDir));
+      const volatile = volatileStamp();
       const journal = fileStamp(journalPath);
       const materialize = !c || c.stable !== stable || c.journal !== journal;
       if (materialize) {
@@ -56,8 +54,11 @@ export class ObservationCache {
         const captured = observer.captured;
         const generation = observer.cursor!.generation;
         const epoch = !c || c.generation !== generation ? randomUUID() : c.epoch;
-        const data: ObservationData = structuredClone({ display: reply.display, summary: captured.summary, requests: captured.requests, events: captured.events, plan: captured.plan,
-          capture: { clock: captured.clock, foldMs: captured.foldMs, source: stable + journal, materializations: (c?.base.capture.materializations ?? 0) + 1 } });
+        // The derived models are copied so the observer's own caches never alias a published observation. The events are not:
+        // `captured.events` is already this capture's own array, and parsed events are never mutated, so a deep copy of the
+        // whole journal on every append would only cost time and memory in proportion to the log.
+        const data: ObservationData = { ...structuredClone({ display: reply.display, summary: captured.summary, requests: captured.requests, plan: captured.plan }), events: captured.events,
+          capture: { clock: captured.clock, foldMs: captured.foldMs, source: stable + journal, materializations: (c?.base.capture.materializations ?? 0) + 1 } };
         const at = new Date(captured.clock).toISOString();
         c = { observer, stable, volatile, journal, epoch, generation, base: data, envelope: {
           protocol: CONSOLE_PROTOCOL, instance: this.instance, repoId: this.repoId, arc: run.arc, epoch,
@@ -85,7 +86,10 @@ export class ObservationCache {
       }
       // A race check guards a materialization against records changing under it. Without one, the cached observation was
       // already verified against `stable`, and re-stamping every record (the costliest step of an idle capture) proves nothing more.
-      if ((materialize && stable !== stableStamp()) || volatile !== fileStamp(heart) + JSON.stringify(supervision(run.runDir)) || journal !== fileStamp(journalPath)) {
+      // The journal is not part of it: it is append-only and the observer verifies the prefix it read, so with the records unchanged
+      // across the capture, the capture is exactly the arc as of that prefix (its highWater). Events appended meanwhile are the next
+      // check's work. Counting them as a race discarded every capture of a live arc that appends faster than a capture takes.
+      if ((materialize && stable !== stableStamp()) || volatile !== volatileStamp()) {
         dependenciesChanged();
       }
       const changed = data !== c.envelope.data;
@@ -98,15 +102,42 @@ export class ObservationCache {
         if (!oldest) break;
         this.#runs.delete(oldest[0]);
       }
-      if (admission.epoch !== undefined && admission.epoch !== envelope.epoch) throw new ConsoleError('reset', `journal epoch changed to ${envelope.epoch}`);
-      if ((admission.minHighWater ?? 0) > envelope.highWater) throw new ConsoleError('unavailable', 'requested watermark is not yet verified');
-      if ((admission.revision ?? 0) > envelope.revision) throw new ConsoleError('conflict', 'requested revision is ahead of this server');
-      if (admission.fence) {
-        const st = statSync(journalPath);
-        if (`${st.dev}:${st.ino}` !== admission.fence.identity) throw new ConsoleError('reset', 'journal fence identity changed');
-        if (observer.cursor!.size < admission.fence.size) throw new ConsoleError('unavailable', 'journal fence not inspected');
-      }
-      return envelope;
+      return admit(envelope, admission, journalPath, observer);
     }, retry);
   }
+  /** The record stamps a capture is verified against: everything it reads but the journal (stable), and the heartbeat (volatile). */
+  #stamps(run: Run) {
+    const startPath = join(run.runDir, 'start.json');
+    const common = existsSync(startPath) ? gitCommonDir(runStart(readJson(startPath), startPath).repo) : commonDirOfRun(run.runDir);
+    return {
+      stable: () => observationStamp(run.runDir, common, this.hostDir) + JSON.stringify(ownerState(run.runDir, this.hostDir)),
+      volatile: () => fileStamp(join(run.runDir, 'heartbeat.json')) + JSON.stringify(supervision(run.runDir)),
+    };
+  }
+  /**
+   * The observation the background checks keep current, without catching up on the journal: what a browser read is served, so
+   * it never waits on a fold of the journal while the checks keep up. It stands only while its last check is recent, it reaches
+   * the requested watermark, and every record it was verified against is unchanged now: it is then the arc as of its highWater,
+   * and events appended since are the next check's work (a second away). Otherwise the reader catches up itself (`read`).
+   */
+  prepared(run: Run, admission: Admission = {}): Envelope | null {
+    const c = this.#runs.get(run.runDir);
+    if (!c || Date.now() - Date.parse(c.envelope.checkedAt) > PREPARED_MS || (admission.minHighWater ?? 0) > c.envelope.highWater) return null;
+    const stamps = this.#stamps(run);
+    if (stamps.stable() !== c.stable || stamps.volatile() !== c.volatile) return null;
+    return admit(c.envelope, admission, join(run.runDir, EVENTS_FILE), c.observer);
+  }
+}
+/** A prepared observation is current while the background check that made it is this recent (it checks every second). */
+export const PREPARED_MS = 2_000;
+function admit(envelope: Envelope, admission: Admission, journalPath: string, observer: Observer): Envelope {
+  if (admission.epoch !== undefined && admission.epoch !== envelope.epoch) throw new ConsoleError('reset', `journal epoch changed to ${envelope.epoch}`);
+  if ((admission.minHighWater ?? 0) > envelope.highWater) throw new ConsoleError('unavailable', 'requested watermark is not yet verified');
+  if ((admission.revision ?? 0) > envelope.revision) throw new ConsoleError('conflict', 'requested revision is ahead of this server');
+  if (admission.fence) {
+    const st = statSync(journalPath);
+    if (`${st.dev}:${st.ino}` !== admission.fence.identity) throw new ConsoleError('reset', 'journal fence identity changed');
+    if (observer.cursor!.size < admission.fence.size) throw new ConsoleError('unavailable', 'journal fence not inspected');
+  }
+  return envelope;
 }

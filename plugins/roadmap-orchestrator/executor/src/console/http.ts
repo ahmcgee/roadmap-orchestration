@@ -17,7 +17,7 @@ export const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
 };
-type Notice = Partial<Metadata> & { kind: string; invocation?: string; data?: unknown; arc?: string; epoch?: string; revision?: number; checkedAt?: string; error?: { code: ConsoleCode; message: string } };
+type Notice = Partial<Metadata> & { kind: string; message?: string; invocation?: string; data?: unknown; arc?: string; epoch?: string; revision?: number; checkedAt?: string; error?: { code: ConsoleCode; message: string } };
 export type ConsoleServerArgs = Readonly<{ repo: AbsPath; common: AbsPath; hostDir: AbsPath; host: string; port: number; instance?: string }>;
 export async function serveConsole(args: ConsoleServerArgs) {
   const instance = args.instance ?? randomUUID();
@@ -43,6 +43,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
   };
   worker.on('message', (m: Notice & { id?: number; value?: unknown }) => {
     if (m.kind === 'ready') { admit(); return; }
+    // The worker says when it falls behind an arc, and when it catches up, once each: the console log is stderr.
+    if (m.kind === 'log') { process.stderr.write(`${new Date().toISOString()} ${m.message}\n`); return; }
     if (m.id !== undefined) {
       const p = pending.get(m.id); if (!p) return;
       clearTimeout(p.timer); pending.delete(m.id);
