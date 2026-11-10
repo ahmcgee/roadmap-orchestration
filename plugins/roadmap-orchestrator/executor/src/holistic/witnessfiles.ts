@@ -22,10 +22,15 @@
 // A lane without `testPaths` (inputs recorded before 2026-10-16) is checked by its argv's test files alone; Phase 0 refuses
 // a fresh start's, and (dev.59) a revision's new one (src/phase0/rows.ts `witnessDefects`). A file list behind a package
 // script (`pnpm test:x`) is out of sight here: the builder reports a witness its lane never selects as `specWrong`.
+//
+// dev.59 pass 7 (nu-119813, C-351): a spec witness item (`WitnessItemDef`) declares no files. Its file is derived from its
+// `testId` (`specWitnessFile`): the first segment before " > ", against the lane's `cwd`, and only where that segment is a
+// test file name (`isTestFileName`): a vitest or jsonl id leads with its file, a node-test id is a name path and derives
+// nothing, so the item goes unchecked rather than guessed at. The derived file then meets the same `laneMisses`.
 import { posix } from 'node:path';
 import { type LaneDef, cadenceAtOrBefore } from '../core/records.ts';
 import type { RepoPath, RepoPattern } from '../core/values.ts';
-import { isTestFileName, matchesPattern, repoPattern } from '../core/values.ts';
+import { isTestFileName, matchesPattern, repoPath, repoPattern } from '../core/values.ts';
 import { mayOverlap } from '../input/classify.ts';
 import type { ArcLaneDef } from './types.ts';
 
@@ -62,6 +67,17 @@ function argvWords(argv: readonly string[]): readonly string[] {
   const flag = rest.findIndex((a) => /^-[a-z]*c[a-z]*$/.test(a));
   const script = flag === -1 ? undefined : rest[flag + 1];
   return script === undefined ? rest : script.split(/\s+/).map((w) => w.replace(/^['"]+|['"]+$/g, '')).filter((w) => w !== '');
+}
+
+/**
+ * The file a spec witness item's `testId` names (dev.59 pass 7): its first segment before " > ", resolved against the lane's
+ * `cwd`, when that is a test file name inside the repo; null otherwise (nothing is derived, so nothing is checked).
+ */
+export function specWitnessFile(lane: Pick<ArcLaneDef, 'cwd'>, testId: string): RepoPath | null {
+  const first = testId.split(' > ')[0]!.trim();
+  if (first === '' || posix.isAbsolute(first) || !isTestFileName(first)) return null;
+  const resolved = posix.normalize(posix.join(lane.cwd, first));
+  return resolved === '..' || resolved.startsWith('../') ? null : repoPath(resolved);
 }
 
 /**

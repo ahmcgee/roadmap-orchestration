@@ -14,7 +14,7 @@ import { type ArcLaneDef,type PlanDefect,laneRevOf,parseObligations } from '../s
 import { laneMisses } from '../src/holistic/witnessfiles.ts';
 import { parsePlan,regenerateLaneId } from '../src/input/plan.ts';
 import { APPLY,RESTART,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
-import { type CorpusArc,PIN_FILE,WITNESS_FILE,check,corpusArc,editJsonFile,editPlan,filesOf,kinds,rowOf } from './helpers/corpusarc.ts';
+import { type CorpusArc,PIN_FILE,W1_FILE,WITNESS_FILE,W_SCRIPTS_LISTED,check,corpusArc,editJsonFile,editPlan,filesOf,kinds,rowOf,w1Item,wScriptsArchitecture,withSpecWitness } from './helpers/corpusarc.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -117,6 +117,38 @@ describe('witness files against their lane', () => {
     // No file token (a directory or bare run): testPaths alone decides, and without testPaths nothing does.
     assert.equal(laneMisses(lane(['node', 'scripts/roadmap/lane.mjs', '--', 'vitest', 'run'], ['scripts/**/*.test.mjs']), witness), null);
     assert.equal(laneMisses(lane(['vitest', 'run', 'scripts'], null), witness), null);
+  });
+});
+
+// dev.59 pass 7 (nu-119813, C-351): atlas2's W-1, a spec witness item with no files on lane w-scripts-architecture
+// (test/helpers/corpusarc.ts `wScriptsArchitecture`, `w1Item`).
+describe('spec witness items against their lane', () => {
+  it('plan-defect.spec-witness-file: a spec witness item whose testId file its lane\'s argv list leaves out is refused; a testId that leads with no file is not checked', T, async () => {
+    const a = await corpusArc();
+    withSpecWitness(a, wScriptsArchitecture(), [w1Item()]);
+    assert.deepEqual(await defects(a), [{ type: 'spec-witness-not-in-lane', unit: 'u1', item: 'W-1', lane: 'w-scripts-architecture', file: W1_FILE, missing: 'argv' }]);
+    // C-355: the file added to the list.
+    withSpecWitness(a, wScriptsArchitecture([...W_SCRIPTS_LISTED, W1_FILE]), [w1Item()]);
+    assert.deepEqual(await defects(a), []);
+    // Against the lane's cwd: from scripts/, the testId's rehearse/assertions.test.mjs is the same file.
+    withSpecWitness(a, { ...wScriptsArchitecture([]), cwd: 'scripts', argv: ['node', '--test', 'other.test.mjs'] }, [w1Item('rehearse/assertions.test.mjs > web calls > x')]);
+    assert.deepEqual(await defects(a), [{ type: 'spec-witness-not-in-lane', unit: 'u1', item: 'W-1', lane: 'w-scripts-architecture', file: W1_FILE, missing: 'argv' }]);
+    // Outside the lane's testPaths.
+    withSpecWitness(a, wScriptsArchitecture(), [w1Item('e2e/web.test.mjs > web calls > x')]);
+    assert.deepEqual(await defects(a), [{ type: 'spec-witness-not-in-lane', unit: 'u1', item: 'W-1', lane: 'w-scripts-architecture', file: 'e2e/web.test.mjs', missing: 'test-paths' }]);
+    // A first segment that is no test file (a node-test name path, a bare name) derives nothing: no check; nor a struck item.
+    for (const testId of ['web calls > fetch-carded-or-permitted fails closed', 'fetch fails closed', 'scripts/rehearse > web calls']) {
+      withSpecWitness(a, wScriptsArchitecture(), [w1Item(testId)]);
+      assert.deepEqual(await defects(a), [], testId);
+    }
+    withSpecWitness(a, wScriptsArchitecture(), [{ ...w1Item(), state: 'struck' }]);
+    assert.deepEqual(await defects(a), []);
+  });
+
+  it('plan-defect.spec-witness-adopted: a restart adopts a spec witness item in force whose file its lane never runs', T, async () => {
+    const a = await corpusArc();
+    withSpecWitness(a, wScriptsArchitecture(), [w1Item()]);
+    assert.deepEqual(phase0Rows(phase0InputOf(filesOf(a), readRepoConfig(a.repo), null), RESTART).rows, []);
   });
 });
 

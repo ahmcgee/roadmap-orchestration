@@ -41,6 +41,10 @@ import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
 //                    (`REVISION`: a revision is refused only for the defects it adds). Otherwise (a restart) each lane and witness
 //                    is judged on its own (2026-10-21; 1.0.0-dev.16): a declared one is checked, an undeclared one is read
 //                    as undeclared with a logged warning, whatever the others declare.
+//                  - spec witness items (dev.59 pass 7, nu-119813): each active item's file, its testId's first segment
+//                    where that is a test file name (src/holistic/witnessfiles.ts `specWitnessFile`), inside its lane
+//                    (`spec-witness-not-in-lane`). Checked where declarations are required, so a fresh start refuses it and a
+//                    revision refuses it when it adds or changes the item or its lane (`revisionDefects`); a restart adopts it.
 //                  - milestone references (every arc; 2026-10-21, 1.0.0-dev.16): a milestone whose reference dirs hold more
 //                    than `MILESTONE_REFERENCES_BUDGET` bytes of text at the integration tip (the baseline before the branch
 //                    exists), naming its largest text files (`milestone-references-oversize`). Every such file is inlined
@@ -64,8 +68,8 @@ import { answerLog,latestAnswers,refQuestions,unappliedOf } from '../answers.ts'
 import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
 import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
-import { sha256Hex } from '../core/json.ts';
-import { type SpecM1,specForces } from '../core/records.ts';
+import { canonicalJson,sha256Hex } from '../core/json.ts';
+import { type SpecM1,specForces,specWitnesses } from '../core/records.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,type RepoPattern,absPath,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
@@ -81,7 +85,7 @@ import { censusProblems,specCensusMismatches } from '../holistic/rederive.ts';
 import {
 type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision,
 } from '../holistic/types.ts';
-import { laneMisses } from '../holistic/witnessfiles.ts';
+import { laneMisses,specWitnessFile } from '../holistic/witnessfiles.ts';
 import { sameExecution } from '../input/laneexecution.ts';
 import { unknownLaneSystems } from '../input/systems.ts';
 
@@ -100,8 +104,9 @@ type Row<K extends StartupRejection['kind']> = Extract<StartupRejection, { kind:
 
 /**
  * Which live rows run: the answers (5a) and the chain (8), a fresh start's; the tree (9). Rows 1-6 and 10 always run;
- * `fresh` is a fresh start (corpus drift); `declared` makes row 11 require declared test paths and witness files;
- * `defects` reports row 11 as refusals, else advisories.
+ * `fresh` is a fresh start (corpus drift); `declared` makes row 11 require declared test paths and witness files, and
+ * check spec witness items' testId files (dev.59 pass 7: a restart adopts the specs in force); `defects` reports row 11 as
+ * refusals, else advisories.
  */
 export type Phase0Mode = Readonly<{ chain: boolean; answers: boolean; tree: boolean; fresh: boolean; declared: boolean; defects: boolean }>;
 /** `start` of a fresh arc and `phase0 check --plan`: everything. */
@@ -320,9 +325,30 @@ export function planDefects(input: Phase0Input, mode: Phase0Mode): readonly Plan
   const pin = load(rows, 'plan.corpus', input.where, input.pin, parseCorpusPin);
   const set = pin === null || input.guide === null ? null : sameRepoCorpusSet(pin, input.guide);
   if (set !== null) defects.push(...derivedOnCorpus(input.plan, set));
-  const obligations = input.plan.holistic.obligations === undefined ? null : load(rows, 'plan.holistic.obligations', input.where, input.obligations, parseObligations);
+  const obligations = obligationsOf(input);
   if (obligations !== null) defects.push(...witnessDefects(input, obligations, mode.declared));
+  if (obligations !== null && mode.declared) defects.push(...specWitnessDefects(input, obligations).map((f) => f.defect));
   return defects;
+}
+
+/** The obligations a corpus arc names, parsed; null when it names none or they do not load (the other rows report that). */
+const obligationsOf = (input: Phase0Input): Obligations | null =>
+  input.plan.target !== 'corpus' || input.plan.holistic.obligations === undefined ? null : load([], 'plan.holistic.obligations', input.where, input.obligations, parseObligations);
+
+/**
+ * The plan defects a revision adds (dev.26; dev.59 item 6), `REVISION` over the inputs in force and the proposal: a defect in
+ * force is adopted, never refused. dev.59 pass 7: a spec witness item's defect is adopted only while the item and its lane
+ * stand as they were, so a revision that adds or changes either is refused for it.
+ */
+export function revisionDefects(before: Phase0Input, after: Phase0Input): readonly PlanDefect[] {
+  const keyOf = (input: Phase0Input): ((d: PlanDefect) => string) => {
+    const obligations = obligationsOf(input);
+    const bases = new Map((obligations === null ? [] : specWitnessDefects(input, obligations)).map((f) => [canonicalJson(f.defect), f.basis]));
+    return (d) => canonicalJson(d.type === 'spec-witness-not-in-lane' ? { defect: d, basis: bases.get(canonicalJson(d)) } : d);
+  };
+  const known = new Set(planDefects(before, REVISION).map(keyOf(before)));
+  const key = keyOf(after);
+  return planDefects(after, REVISION).filter((d) => !known.has(key(d)));
 }
 
 /**
@@ -436,6 +462,23 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, declared: 
     }
   }
   return out;
+}
+
+/**
+ * Row 11 over the specs' witness items (dev.59 pass 7, nu-119813): each active item on an arc lane whose `testId` names a
+ * test file (`specWitnessFile`) that the lane never runs (`laneMisses`). `basis`: the item and its lane as judged, which
+ * `revisionDefects` compares. Run where declarations are required (a fresh start, every revision), so a restart adopts the
+ * specs in force.
+ */
+function specWitnessDefects(input: Phase0Input, obligations: Obligations): readonly Readonly<{ defect: PlanDefect; basis: unknown }>[] {
+  return parsedSpecs(input).flatMap((spec) => specWitnesses(spec).flatMap((w) => {
+    const lane = obligations.lanes.find((l) => l.id === w.lane);
+    if (w.state !== 'active' || lane === undefined || lane.witnessClass === 'external') return [];
+    const file = specWitnessFile(lane, w.testId);
+    const missing = file === null ? null : laneMisses(lane, file);
+    if (file === null || missing === null) return [];
+    return [{ defect: { type: 'spec-witness-not-in-lane', unit: spec.unit, item: w.id, lane: w.lane, file, missing }, basis: { item: w, lane } }];
+  }));
 }
 
 // ---------------------------------------------------------------------------------------------------

@@ -164,6 +164,30 @@ export const phase0Of = (a: CorpusArc): Json => readJsonFile(join(a.planDir, PHA
 export const editPhase0 = (a: CorpusArc, edit: (j: Json) => Json): void => editJsonFile(join(a.planDir, PHASE0_FILE), edit);
 export const editPlan = (a: CorpusArc, edit: (j: Json) => Json): void => editJsonFile(a.planPath, edit);
 
+// dev.59 pass 7 (nu-119813, C-351): atlas2's W-1 was a spec witness item of u-web-read-journeys, with no files; its testId
+// leads with the file (atlas2 truncated the test name; the file segment is verbatim). Its lane is w-scripts-architecture
+// as in force at C-351, verbatim but for the 15 middle names of its 17-file list, which stand in for atlas2's.
+export const W_SCRIPTS_LISTED = ['scripts/anthropic-skills-seal.test.mjs', ...Array.from({ length: 15 }, (_, i) => `scripts/lane-${i}.test.mjs`), 'scripts/workspace-packages.test.mjs'];
+export const W1_FILE = 'scripts/rehearse/assertions.test.mjs';
+const W1_TEST_ID = `${W1_FILE} > web calls > fetch-carded-or-permitted fails closed`;
+export const wScriptsArchitecture = (files: readonly string[] = W_SCRIPTS_LISTED): Json => ({
+  id: 'w-scripts-architecture', cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl',
+  testPaths: ['scripts/**/*.test.mjs'],
+  argv: [
+    'node', 'scripts/roadmap/lane.mjs', '--build', '@atlas2/domain,@atlas2/agent-harness,@atlas2/mcp-server', '--', 'node', 'scripts/vitest-skip-guard.mjs',
+    ...files, '--config=vitest.root.config.ts', '--no-isolate', '--reporter=default', '--reporter=./scripts/roadmap/vitest-witness-reporter.mjs', '--maxWorkers=3',
+  ],
+});
+/** Puts `lane` beside the journey lane (replacing one of its id) and gives u1's spec the witness items `items`. */
+export function withSpecWitness(a: CorpusArc, lane: Json, items: readonly Json[]): void {
+  editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, lanes: [...(o['lanes'] as Json[]).filter((l) => l['id'] !== lane['id']), lane] }));
+  editJsonFile(join(a.planDir, 'u1.json'), (s) => ({
+    ...s, acceptance: [...(s['acceptance'] as Json[]).filter((c) => c['id'] !== 'A3-r'), { id: 'A3-r', clause: 'A web call is carded or permitted.', failLoudIfUndelivered: true, state: 'active' }],
+    witnesses: items,
+  }));
+}
+export const w1Item = (testId = W1_TEST_ID): Json => ({ id: 'W-1', lane: 'w-scripts-architecture', clause: 'A3-r', testId, skeleton: "it('fetch-carded-or-permitted fails closed')", state: 'active' });
+
 /** `phase0 check --plan` over the arc, with its forge on PATH. */
 export async function check(a: CorpusArc): Promise<Awaited<ReturnType<typeof phase0Check>>> {
   return withForge(a.forge, () => phase0Check({ repo: a.repo, source: { type: 'plan', plan: a.planPath } }));
