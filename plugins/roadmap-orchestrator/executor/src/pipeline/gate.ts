@@ -92,6 +92,9 @@ import { gateObligations } from '../holistic/impact.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
 import { type ObligationDef,isExempt } from '../holistic/types.ts';
 import { regenerateLane } from '../input/derived.ts';
+import { lineageBack } from '../input/lineage.ts';
+import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
+import { lineageAttempts,lineageAttemptsText } from './attempts.ts';
 import { type PlanUnit,derivedOf,targetDocumentPaths } from '../input/plan.ts';
 import { orderingReasons } from '../park/ordering.ts';
 import { baselineDebtAt } from '../phase0/rows.ts';
@@ -571,6 +574,7 @@ export async function gateRead(
     const fact = ledgerFact(ctx, unit.id, parent.attempt, fingerprint.unitCommit, out, banked);
     if (fact !== null) ctx.journal.fact(fact);
   };
+  neverMet(ctx, unit, parent, out);
   if (out.decision !== 'approve') {
     ledger(new Set());
     return done(record(ctx, parent, out.decision, null, { backend: null, failed: [], environment: null, ordering: out.decision === 'escalate' ? out.ordering ?? null : null }));
@@ -586,6 +590,45 @@ export async function gateRead(
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint, blobs });
   ledger(bankGateNotes(ctx, unit.id, parent.attempt, out.findings));
   return done(record(ctx, parent, 'approve'), fingerprint);
+}
+
+/**
+ * dev.59 (scope item 9, C-351): the active acceptance clauses a gate answer holds unmet, each named by id (a whole token) in
+ * the text of a blocking `requirement-unmet` finding. A clause every gate answer of the unit's lineage holds unmet, this
+ * answer the second or later, goes to the root once per lineage as a non-blocking `split-proposal` (the unit goes on), so a
+ * unit that never delivers part of its spec is split before its chargeable bound parks it. Raised before the attempt's
+ * outcome is recorded: a crash between the two re-reads the answer and finds the item (`raisedWithReason`).
+ */
+export function unmetClauses(out: GateOutput, clauses: readonly string[]): readonly string[] {
+  const named = (id: string, text: string): boolean => new RegExp(`(^|[^A-Za-z0-9-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9-])`).test(text);
+  return clauses.filter((id) => out.findings.some((f) => f.severity === 'blocking' && f.defect === 'requirement-unmet' && named(id, f.text)));
+}
+
+function neverMet(ctx: StageContext, unit: PlanUnit, parent: StageParent & Readonly<{ stage: 'gate' }>, out: GateOutput): void {
+  const view = ctx.journal.view;
+  if (raisedWithReason(view, ctx.runDir, parent, 'split-proposal') !== null) return;
+  // Each earlier gate attempt of the lineage, with its last answer (a route-up or repair turn spawns again in one attempt).
+  const byAttempt = new Map<string, Readonly<{ parent: StageParent; inv: AbsPath; out: GateOutput }>>();
+  for (const u of lineageBack(view, unit.id)) {
+    for (const s of judgmentSpawns(ctx, u, 'gate')) {
+      if (s.parent.type !== 'stage' || (s.parent.unit === unit.id && s.parent.attempt === parent.attempt)) continue;
+      const answer = judgmentOutput(ctx, s, validateGateOutput);
+      if (answer !== null) byAttempt.set(`${u}#${s.parent.attempt}`, { parent: s.parent, inv: invocationDir(ctx.runDir, invocationId(s.op, s.ordinal)), out: answer });
+    }
+  }
+  const earlier = [...byAttempt.values()];
+  if (earlier.length === 0 || earlier.some((e) => raisedWithReason(view, ctx.runDir, e.parent, 'split-proposal') !== null)) return;
+  const active = loadUnitSpec(ctx, unit).spec.acceptance.filter((a) => a.state === 'active');
+  const ids = active.map((a) => a.id);
+  const never = active.filter((a) => unmetClauses(out, ids).includes(a.id) && earlier.every((e) => unmetClauses(e.out, ids).includes(a.id)));
+  if (never.length === 0) return;
+  raiseNeedsUser(ctx.journal, ctx.runDir, {
+    blocking: false, subject: { type: 'unit', unit: unit.id }, reason: 'split-proposal',
+    summary: `Unit ${unit.id}: every one of its lineage's ${earlier.length + 1} gate rounds held ${never.map((a) => `${a.id} (${a.clause})`).join('; ')} unmet.`,
+    recommendation: `The unit goes on, but its bound may park it before it delivers ${never.map((a) => a.id).join(', ')}. Split them into a unit of their own `
+      + `(apply --reason, moving the clauses and their witnesses), or narrow the spec. ${lineageAttemptsText(lineageAttempts(view, unit.id))}`,
+    options: [], evidence: earlier.map((e) => e.inv),
+  }, parent);
 }
 
 /**
