@@ -581,6 +581,22 @@ describe('revision plan-defect delta', () => {
     } finally { j.close(); }
   });
 
+  // dev.59 pass 6 (nu-119813): atlas2's lane shape, two wrapper layers before an explicit file list, on a lane in force
+  // without testPaths (an earlier release's): its argv's file list alone decides, so leaving the witness file out is refused.
+  it('apply.witness-argv-file-list: a wrapped explicit file list without the witness file is refused, also on a lane without testPaths; adding the file applies', T, async () => {
+    const wrapped = (files: readonly string[]): readonly string[] => ['node', 'scripts/lane.mjs', '--build', '@harbour/core', '--', 'node', 'scripts/skip-guard.mjs', ...files, '--config=vitest.root.config.ts', '--maxWorkers=3'];
+    const a = await corpusArc();
+    editLanes(a, (ls) => ls.map(({ testPaths: _t, ...l }) => l));
+    const j = inForce(a);
+    try {
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: wrapped(['test/other.test.ts', 'test/more.spec.ts']) })));
+      const why = rejected(await apply(a, j));
+      assert.deepEqual(why.map((r) => JSON.parse(r)), [{ kind: 'plan-defect', defects: [{ type: 'witness-not-in-lane', obligation: 'I-1', lane: 'journey', file: 'test/berths.test.ts', missing: 'argv' }] }]);
+      editLanes(a, (ls) => ls.map((l) => ({ ...l, argv: wrapped(['test/other.test.ts', 'test/berths.test.ts', 'test/more.spec.ts']) })));
+      accepted(await apply(a, j));
+    } finally { j.close(); }
+  });
+
   it('an executor split that removes a deliverer dependency scope refuses the new unreachable witness', T, async () => {
     const a = await corpusArc({ activation: 'future' });
     editPlan(a, (p) => ({ ...p, units: (p['units'] as Json[]).map((u) => ({...u, systems: ['app', 'tests']})) }));

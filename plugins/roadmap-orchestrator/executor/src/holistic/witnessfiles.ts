@@ -4,36 +4,50 @@
 // a test name, a wrapper's id its own), so the files are declared and checked, never inferred.
 //
 // A file is in its lane when both hold:
-//   - test paths   a pattern of the lane's `testPaths` matches it (`matchesPattern`).
-//   - argv         when the lane's argv names test paths, one of them reaches it. An argv element names a test path when
-//                  it is no flag (`-…`), resolves inside the repo against the lane's `cwd`, and is the repo root or may
-//                  overlap one of the lane's `testPaths` (`mayOverlap`); a go package pattern's `/...` reads as its
-//                  directory. It reaches the file when it is the root, the file itself, a directory above it, or a glob
-//                  matching it (`matchesPattern`). An argv that names no test path (`npm test`, a bare `node --test`)
-//                  leaves selection to the runner: `testPaths` alone decides. dev.59 (item 6, nu-119813): a shell's
-//                  command string (`sh|bash|dash|zsh -c '<script>'`) is read as the words of its script, so an explicit
-//                  file list in it names test paths like one in argv.
-// A lane without `testPaths` (inputs recorded before 2026-10-16) decides nothing here; Phase 0 refuses a fresh start's,
-// and (dev.59) a revision's new one (src/phase0/rows.ts `witnessDefects`).
+//   - test paths   when the lane declares `testPaths`, a pattern of them matches it (`matchesPattern`).
+//   - argv         when the lane's argv names test paths, one of them reaches it. Two kinds of argv word name test paths,
+//                  each no flag (`-…`, so a flag's `=value` never counts) and resolving inside the repo against the lane's
+//                  `cwd`:
+//                    - a test file (dev.59 pass 6, nu-119813: `isTestFileName`, the bounded diff's name rule), whatever the
+//                      lane's `testPaths`; the whole argv is read, so a file list behind any number of wrapper layers
+//                      (`lane.mjs … -- node guard.mjs <files>`) is the list the runner gets;
+//                    - with `testPaths` declared, a directory or glob that is the repo root or may overlap one of them
+//                      (`mayOverlap`); a go package pattern's `/...` reads as its directory. A word naming another file (an
+//                      extension, no glob: a wrapper script, a config) names no test path.
+//                  It reaches the file when it is the root, the file itself, a directory above it, or a glob matching it
+//                  (`matchesPattern`). An argv that names no test path (`npm test`, a bare `node --test`, a wrapper
+//                  around a bare runner) leaves selection to the runner: `testPaths` alone decides. dev.59 (item 6): a
+//                  shell's command string (`sh|bash|dash|zsh -c '<script>'`) is read as the words of its script, so an
+//                  explicit file list in it names test paths like one in argv.
+// A lane without `testPaths` (inputs recorded before 2026-10-16) is checked by its argv's test files alone; Phase 0 refuses
+// a fresh start's, and (dev.59) a revision's new one (src/phase0/rows.ts `witnessDefects`). A file list behind a package
+// script (`pnpm test:x`) is out of sight here: the builder reports a witness its lane never selects as `specWrong`.
 import { posix } from 'node:path';
 import { type LaneDef, cadenceAtOrBefore } from '../core/records.ts';
 import type { RepoPath, RepoPattern } from '../core/values.ts';
-import { matchesPattern, repoPattern } from '../core/values.ts';
+import { isTestFileName, matchesPattern, repoPattern } from '../core/values.ts';
 import { mayOverlap } from '../input/classify.ts';
 import type { ArcLaneDef } from './types.ts';
 
-/** The repo patterns a lane's argv names test files by (empty: the runner selects). */
-export function argvTestPaths(lane: ArcLaneDef, testPaths: readonly RepoPattern[]): readonly RepoPattern[] {
+/**
+ * The repo patterns a lane's argv names test files by (empty: the runner selects): its test files, and with `testPaths`
+ * declared its directories and globs that may overlap them.
+ */
+export function argvTestPaths(lane: ArcLaneDef, testPaths: readonly RepoPattern[] | undefined): readonly RepoPattern[] {
   return argvWords(lane.argv).flatMap((arg) => {
     if (arg === '' || arg.startsWith('-')) return [];
     const dir = arg === '...' ? '.' : arg.endsWith('/...') ? arg.slice(0, -4) || '.' : arg;
     if (posix.isAbsolute(dir)) return [];
     const resolved = posix.normalize(posix.join(lane.cwd, dir)).replace(/\/+$/, '') || '.';
     if (resolved === '..' || resolved.startsWith('../')) return [];
-    if (resolved !== '.' && !testPaths.some((t) => mayOverlap(resolved, t))) return [];
+    if (isTestFileName(resolved)) return [repoPattern(resolved)];
+    if (testPaths === undefined || namesOtherFile(resolved) || (resolved !== '.' && !testPaths.some((t) => mayOverlap(resolved, t)))) return [];
     return [repoPattern(resolved)];
   });
 }
+
+/** A word naming a file that is no test file (a wrapper script such as `scripts/lane.mjs`, a config): no glob, and an extension. */
+const namesOtherFile = (path: string): boolean => !/[*?[{]/.test(path) && /\.[A-Za-z0-9]+$/.test(posix.basename(path));
 
 const SHELLS = new Set(['sh', 'bash', 'dash', 'zsh']);
 
@@ -60,8 +74,7 @@ export type LaneMiss = 'test-paths' | 'argv' | 'cadence' | 'systems';
 /** Why `lane` would never run `file`: outside its `testPaths`, or not named by an argv that names test paths; null when it runs it. */
 export function laneMisses(lane: ArcLaneDef, file: RepoPath): Extract<LaneMiss, 'test-paths' | 'argv'> | null {
   const testPaths = lane.testPaths;
-  if (testPaths === undefined) return null;
-  if (!testPaths.some((t) => matchesPattern(file, t))) return 'test-paths';
+  if (testPaths !== undefined && !testPaths.some((t) => matchesPattern(file, t))) return 'test-paths';
   const named = argvTestPaths(lane, testPaths);
   if (named.length > 0 && !named.some((p) => p === '.' || matchesPattern(file, p))) return 'argv';
   return null;

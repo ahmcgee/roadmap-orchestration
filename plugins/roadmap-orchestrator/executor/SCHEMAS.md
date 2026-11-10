@@ -310,7 +310,13 @@ ObligationDef = {
 Fresh witness authoring requires files and arc lane testPaths through plan-defect checks, even where shape readers keep
 them optional. dev.59: so does every revision for the lanes and binding witnesses it adds (Phase-0 mode `REVISION`; a
 revision is refused only for the defects it adds), and an argv's test paths include the words of a shell's `-c` script
-(`sh|bash|dash|zsh`), so a witness file left out of a file list there is `witness-not-in-lane{missing:'argv'}`. Census is required for corpus target validation and names every active rule exactly once; split-family
+(`sh|bash|dash|zsh`), so a witness file left out of a file list there is `witness-not-in-lane{missing:'argv'}`. dev.59 pass 6
+(nu-119813): an argv word naming a test file (`*.test.*`, `*.spec.*`, `test_*.py`, `*_test.{go,py,rb,ex,exs}`, the bounded
+diff's rule), resolved against the lane's `cwd`, is a test path anywhere in the argv (past any number of `--` wrapper
+layers) and with or without `testPaths`; a word naming another file (an extension, no glob: a wrapper script) is none. So once
+the argv lists test files, the witness file must be listed (or under a listed directory or glob); with no test path in the
+argv, `testPaths` alone decides. A witness the argv cannot show (a package script's file list, a spec witness item, which
+declares no files) is the builder's to report as `grounding.specWrong`: a build `spec-wrong` park, uncharged, for the root. Census is required for corpus target validation and names every active rule exactly once; split-family
 census names the parent. Split parent witness/proof are null. New obligations start active at rev 1. Normative rev changes
 exactly for statement/anchor/activation changes. Intentional weakening needs root apply reason; disposition records bind
 reason/revision. Proof judgments must prove the current statement rev and ids/files. Lane/argv moves with identical proof

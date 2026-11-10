@@ -49,6 +49,12 @@ describe('witness files against their lane', () => {
     assert.deepEqual(await defects(a), [{ type: 'witness-not-in-lane', obligation: 'I-1', lane: 'journey', file: WITNESS_FILE, missing: 'argv' }]);
     editWitness(a, { lane: (l) => ({ ...l, argv: ['node', '--test', 'test/other', 'test/berths.test.ts'] }) });
     assert.deepEqual(await defects(a), []);
+    // dev.59 pass 6 (nu-119813): a file list behind two wrapper layers.
+    const wrapped = (files: readonly string[]): readonly string[] => ['node', 'scripts/lane.mjs', '--', 'node', 'scripts/skip-guard.mjs', ...files, '--maxWorkers=3'];
+    editWitness(a, { lane: (l) => ({ ...l, argv: wrapped(['test/other.test.ts']) }) });
+    assert.deepEqual(await defects(a), [{ type: 'witness-not-in-lane', obligation: 'I-1', lane: 'journey', file: WITNESS_FILE, missing: 'argv' }]);
+    editWitness(a, { lane: (l) => ({ ...l, argv: wrapped(['test/other.test.ts', WITNESS_FILE]) }) });
+    assert.deepEqual(await defects(a), []);
   });
 
   it('plan-defect.argv-forms: the forms an argv names its test files by', () => {
@@ -81,6 +87,36 @@ describe('witness files against their lane', () => {
     assert.equal(laneMisses(lane(['/bin/bash', '-ec', "node --test test/other.test.ts 'test/unit/a.test.ts'"]), file), null);
     assert.equal(laneMisses(lane(['sh', '-c', 'cd unit && node --test other.test.ts'], 'test'), file), null);
     assert.equal(laneMisses(lane(['sh', '-c', 'npm test']), file), null);
+  });
+
+  // dev.59 pass 6 (item 6, nu-119813, C-355): atlas2's w-scripts-architecture at C-351, verbatim but for the 17 file names:
+  // two wrapper layers (lane.mjs -- node vitest-skip-guard.mjs) before an explicit file list without the witness file.
+  it('plan-defect.argv-file-list: an argv\'s literal test-file list selects exactly its files, past any number of wrappers, with or without testPaths', () => {
+    const lane = (argv: readonly string[], testPaths: readonly string[] | null, cwd = '.'): ArcLaneDef => parseObligations({
+      schema: 'roadmap/obligations-m3', cutLine: 'x', obligations: [], mapping: { systems: [] },
+      lanes: [{ id: 'w-scripts-architecture', argv, cwd, env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl', ...(testPaths === null ? {} : { testPaths }) }],
+    }).lanes[0]!;
+    const listed = ['scripts/anthropic-skills-seal.test.mjs', ...Array.from({ length: 15 }, (_, i) => `scripts/lane-${i}.test.mjs`), 'scripts/workspace-packages.test.mjs'];
+    const argv = (files: readonly string[]): readonly string[] => [
+      'node', 'scripts/roadmap/lane.mjs', '--build', '@atlas2/domain,@atlas2/agent-harness,@atlas2/mcp-server', '--', 'node', 'scripts/vitest-skip-guard.mjs',
+      ...files, '--config=vitest.root.config.ts', '--no-isolate', '--reporter=default', '--reporter=./scripts/roadmap/vitest-witness-reporter.mjs', '--maxWorkers=3',
+    ];
+    const witness = repoPath('scripts/rehearse/assertions.test.mjs');
+    // As declared: testPaths matches the file, the list leaves it out.
+    assert.equal(laneMisses(lane(argv(listed), ['scripts/**/*.test.mjs']), witness), 'argv');
+    // The list decides even where testPaths could not tell its files from the wrappers: a lane without testPaths (in force
+    // from an earlier release), or testPaths no listed file overlaps.
+    assert.equal(laneMisses(lane(argv(listed), null), witness), 'argv');
+    assert.equal(laneMisses(lane(argv(listed), ['scripts/rehearse']), witness), 'argv');
+    // C-355: the file added to the list.
+    for (const testPaths of [['scripts/**/*.test.mjs'], null, ['scripts/rehearse']]) assert.equal(laneMisses(lane(argv([...listed, witness]), testPaths), witness), null);
+    // Resolved against the lane's cwd; a flag's value is no file of the list.
+    assert.equal(laneMisses(lane(['node', '--test', 'rehearse/assertions.test.mjs'], null, 'scripts'), witness), null);
+    assert.equal(laneMisses(lane(['node', '--test', 'other.test.mjs'], null, 'scripts'), witness), 'argv');
+    assert.equal(laneMisses(lane(['vitest', 'run', '--config=scripts/rehearse/assertions.test.mjs'], null), witness), null);
+    // No file token (a directory or bare run): testPaths alone decides, and without testPaths nothing does.
+    assert.equal(laneMisses(lane(['node', 'scripts/roadmap/lane.mjs', '--', 'vitest', 'run'], ['scripts/**/*.test.mjs']), witness), null);
+    assert.equal(laneMisses(lane(['vitest', 'run', 'scripts'], null), witness), null);
   });
 });
 
