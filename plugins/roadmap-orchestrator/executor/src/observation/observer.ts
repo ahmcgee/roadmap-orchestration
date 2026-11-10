@@ -10,6 +10,7 @@ import { JUDGMENT_SESSION_ROLES } from '../routing/types.ts';
 import { runStart } from '../core/records.ts';
 import { absPath, type AbsPath } from '../core/values.ts';
 import { captureStatus } from '../status.ts';
+import { ForgeMemo, withForgeMemo } from '../commands/chain.ts';
 import { summarize } from '../status/summary.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { launchSha256 } from '../runner/launch.ts';
@@ -22,6 +23,7 @@ import { ModelReader } from '../tui/models.ts';
 import { TranscriptReader } from '../tui/transcript.ts';
 import { type Display, type Entry, type Invocation, type ObserveRequest, type ObserveReply, pretty } from '../tui/types.ts';
 
+const FORGE_REFRESH_MS = 60_000;
 const entry = (id: string, label: string, state: string, value: unknown): Entry => ({ id, label, state, body: pretty(value), links: [], provenance: 'validated runtime snapshot' });
 
 export class Observer {
@@ -35,6 +37,8 @@ export class Observer {
   #estate: { key: string; entries: Entry[] } | null = null;
   #view: LogSnapshot['view'] | null = null;
   #ended = new Map<string, Invocation>();
+  /** Forge pull requests are re-read at most once a minute, not on every capture (see ForgeMemo). */
+  #forge = new ForgeMemo(FORGE_REFRESH_MS);
 
   invalidateEvidence(): void {
     this.#ended.clear(); this.#estate = null; this.#models = new ModelReader(); this.#relations = new InvocationRelations();
@@ -61,7 +65,7 @@ export class Observer {
     const snapshot = this.#journal!.read();
     const timing = { clock: Date.now(), foldMs: Math.round(performance.now() - began) };
     if (snapshot.view !== this.#view) { this.#ended.clear(); this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view; }
-    const captured = captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing);
+    const captured = withForgeMemo(this.#forge, () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing));
     const s = captured.full;
     const work = new Map([...s.host.work, ...s.units.flatMap((u) => u.work)].map((w) => [String(w.inv), w]));
     const invocations = this.invocations(run, snapshot, s.run.owner.state === 'alive').map((i) => {

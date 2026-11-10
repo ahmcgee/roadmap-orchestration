@@ -77,8 +77,38 @@ const prOf = (p: Pull, needsRebase: boolean): BriefPr => ({
 const forgeFailure = (error: unknown): string | null =>
   error instanceof GhError || error instanceof PushError || error instanceof GitError ? error.message : null;
 
+/**
+ * The pull requests a long-lived observer (the console, the TUI) last read from the forge, each for `ttlMs`. Reading them takes
+ * `gh` round trips to the forge (and a fetch when a previous arc merged), seconds on a real remote: re-reading them on every
+ * journal append made each capture of a live arc slower than the appends. The forge is outside the arc's records, so no
+ * record stamp says when it changed; it is refreshed on this clock instead. A one-shot reader (`roadmap status`) reads it fresh.
+ */
+export class ForgeMemo {
+  readonly ttlMs: number;
+  #entries = new Map<string, { at: number; prs: ReadonlyMap<ArcId, BriefPr> }>();
+  constructor(ttlMs: number) { this.ttlMs = ttlMs; }
+  read(key: string, read: () => ReadonlyMap<ArcId, BriefPr>): ReadonlyMap<ArcId, BriefPr> {
+    const hit = this.#entries.get(key);
+    if (hit !== undefined && Date.now() - hit.at < this.ttlMs) return hit.prs;
+    const prs = read();
+    this.#entries.set(key, { at: Date.now(), prs });
+    while (this.#entries.size > 16) this.#entries.delete(this.#entries.keys().next().value!);
+    return prs;
+  }
+}
+let forgeMemo: ForgeMemo | null = null;
+/** Runs `read` with `prsOf` answered from `memo`. */
+export function withForgeMemo<T>(memo: ForgeMemo, read: () => T): T {
+  const previous = forgeMemo;
+  forgeMemo = memo;
+  try { return read(); } finally { forgeMemo = previous; }
+}
+
 /** Each link's pull request (see the header), by arc. */
 export function prsOf(repo: AbsPath, links: readonly ChainLink[]): ReadonlyMap<ArcId, BriefPr> {
+  return forgeMemo === null ? readPrs(repo, links) : forgeMemo.read(JSON.stringify([repo, links]), () => readPrs(repo, links));
+}
+function readPrs(repo: AbsPath, links: readonly ChainLink[]): ReadonlyMap<ArcId, BriefPr> {
   const out = new Map<ArcId, BriefPr>();
   let forge: RepoIdentity;
   try {

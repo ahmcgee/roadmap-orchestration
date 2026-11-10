@@ -1,4 +1,5 @@
 import { canonicalJson, sha256Hex } from '../core/json.ts';
+import type { Event } from '../core/events.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import { identityIndex, stageIndex } from './indexes.ts';
 import { CONSOLE_UI_SCHEMA, type ViewVersions, type Metadata } from './view-protocol.ts';
@@ -21,17 +22,21 @@ export class ConsoleMetadata {
         scope: i.scope ?? null, relatedUnits: i.relatedUnits ?? [], milestone: i.milestone ?? null, execution: i.execution ?? null,
         backend: i.backend ?? null, model: i.model ?? null, requestedModel: i.requestedModel ?? null,
         startedAt: i.startedAt, endedAt: i.endedAt, work: i.work ?? null}));
-      // Journal identity/order and captured side-file dependencies invalidate the typed
-      // activity index. This is a token, not a page or another journal fold.
-      const journal = hash(e.data.events), identity = hash([...identities]);
+      // Journal identity/order and captured side-file dependencies invalidate the typed views. These are tokens, not a page or
+      // another journal fold: within one epoch the journal is append-only and verified, so the seq of the last event in a
+      // category identifies every event of that category before it. Hashing the events themselves cost work and memory in
+      // proportion to the whole log on every append.
+      const through = (match: (ev: Event) => boolean) => ({epoch: e.epoch, seq: e.data.events.findLast(match)?.seq ?? 0});
+      const fact = (kinds: readonly string[]) => (ev: Event) => ev.type === 'fact' && kinds.includes(ev.fact.kind);
+      const journal = {epoch: e.epoch, seq: e.data.events.at(-1)?.seq ?? 0}, identity = hash([...identities]);
       const stageVersion = hash([...stages.steps]);
-      const parks = hash(e.data.events.filter(ev => ev.type === 'fact' && ['backend-park','resumed','probe','arc-completed','stop-completed'].includes(ev.fact.kind)));
-      const waiting = hash(e.data.events.filter(ev => ev.type === 'fact' && ev.fact.kind === 'stage-admitted'
-        || (ev.type === 'intent' || ev.type === 'done') && ev.kind === 'resource.transition'));
-      const money = hash(e.data.events.filter(ev => ev.type === 'fact' && ['meter','usage-unavailable'].includes(ev.fact.kind)));
+      const parks = through(fact(['backend-park','resumed','probe','arc-completed','stop-completed']));
+      const waiting = through(ev => ev.type === 'fact' && ev.fact.kind === 'stage-admitted'
+        || (ev.type === 'intent' || ev.type === 'done') && ev.kind === 'resource.transition');
+      const money = through(fact(['meter','usage-unavailable']));
       const attention = hash({identity,requests:e.data.requests});
       const holistic = hash({holistic: s.holistic, audit: s.audit, findings: s.findings, decisions: s.decisionsSince,
-        audits: e.data.events.filter(ev => ev.type === 'fact' && ['audit-started','audit-ended'].includes(ev.fact.kind))});
+        audits: through(fact(['audit-started','audit-ended']))});
       entry = {identities, stages, versions: {
         shell: views.shell(e).viewVersion, graph: views.graph(e).viewVersion,
         timeline: hash({identity, invocations, units, parks, stageVersion}),

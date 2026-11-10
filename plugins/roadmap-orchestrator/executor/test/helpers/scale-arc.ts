@@ -25,7 +25,8 @@ import { arcId, commandId, cpuToken, type ResourceUnit, edgeId, findingId, imple
 import { absPath, isoTime, repoPath } from '../../src/core/values.ts';
 import { sha256Hex } from '../../src/core/json.ts';
 import type { JsonValue } from '../../src/core/json.ts';
-import type { Parent, Holder } from '../../src/core/events.ts';
+import { prevHash, serializeEvent, type Parent, type Holder } from '../../src/core/events.ts';
+import { SCHEMA_VERSION } from '../../src/core/version.ts';
 import type { LaunchFile, ResultFile, Stage } from '../../src/core/records.ts';
 import { pinDispatch } from '../../src/pipeline/dispatch.ts';
 import { at, start, record } from '../../src/pipeline/stages.ts';
@@ -384,6 +385,24 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     j.close(); closeJournal=undefined;
     return manifest;
   } finally { closeJournal?.(); clock.restore(); for(const [i,key] of ['GIT_AUTHOR_DATE','GIT_COMMITTER_DATE'].entries()) { const old=oldDates[i]; if(old===undefined) delete process.env[key]; else process.env[key]=old; } }
+}
+
+/**
+ * Lengthens a generated arc's journal to a long arc's size with `count` owner `noted` facts, as one write: a week of live work
+ * journals far more events per unit than the fixture's milestones and stages do. Each line is canonical and chained exactly as
+ * the writer appends it (`openJournal` would fsync each one, minutes for a hundred thousand).
+ */
+export function padScaleJournal(manifest: Pick<ScaleManifest, 'runDir' | 'arc'>, count: number): void {
+  const path = join(manifest.runDir, 'events.jsonl'), bytes = readFileSync(path);
+  const lastStart = bytes.lastIndexOf(10, bytes.length - 2) + 1, last = bytes.subarray(lastStart);
+  let seq = (JSON.parse(last.toString('utf8')) as { seq: number }).seq, prev = prevHash(last);
+  const lines: string[] = [];
+  for (let n = 1; n <= count; n++) {
+    const line = serializeEvent({ v: SCHEMA_VERSION, seq: ++seq, prev, at: isoTime(new Date().toISOString()), arc: arcId(manifest.arc), type: 'fact',
+      fact: { kind: 'noted', unit: unitId(`u${1 + n % 40}`), command: commandId(`cmd-${String(n).padStart(16, '0')}`), brief: sha256(sha256Hex(`noted ${n}`)) } });
+    prev = prevHash(Buffer.from(line, 'utf8')); lines.push(line);
+  }
+  appendFileSync(path, lines.join(''));
 }
 
 /** Claim the same production owner lease used by investigationFixture. No executor or backend runs. */
