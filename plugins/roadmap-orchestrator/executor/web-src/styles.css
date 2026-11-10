@@ -332,11 +332,28 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .activity-day-jump select { min-height:32px; border:1px solid var(--rule); border-radius:6px; background:var(--surface); color:var(--ink); padding:4px 8px; max-width:100%; }
 
 /* Current scheduling stays readable beside the selected historical section. */
-.resource-now-grid { display:grid; grid-template-columns:minmax(360px,1fr) minmax(360px,1fr); gap:24px; margin:12px 0 20px; }
-.resource-now-grid h3 { margin-top:0; }
+.resource-now { border-top:1px solid var(--rule); border-bottom:1px solid var(--rule); padding:12px 0 8px; margin-bottom:16px; }
+.resource-now>h3 { margin:0; font-size:16px; }
+.resource-now>p { margin:2px 0 0; font-size:13px; }
+.resource-now-grid { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:8px 40px; margin:4px 0 0; }
+.resource-now-grid h4 { margin:12px 0 4px; font-size:13px; font-weight:600; color:var(--muted-ink); }
+.resource-now-grid p { margin:4px 0; }
 .resource-now-grid table { width:100%; }
+.resource-figure { font-size:18px; line-height:24px; font-weight:500; font-variant-numeric:tabular-nums; }
+.cpu-meter,.cpu-bullet { display:block; height:8px; border-radius:2px; background:color-mix(in srgb,var(--rule) 70%,transparent); box-shadow:inset 0 0 0 1px var(--rule); overflow:hidden; }
+.cpu-meter { max-width:320px; margin:4px 0; }
+.cpu-meter>span,.cpu-bullet>span { display:block; height:100%; background:var(--series-agent); }
+.cpu-bullet { width:96px; margin:4px 0 4px auto; }
+.cpu-bullet-over { box-shadow:inset 0 0 0 1px var(--ink); }
+.cpu-bullet-over>span { background:repeating-linear-gradient(135deg,var(--series-agent) 0 3px,color-mix(in srgb,var(--series-agent) 55%,var(--surface)) 3px 6px); }
+.resource-now-all { height:auto; padding:0; text-decoration:underline; }
 .resource-detail-drawer td { overflow-wrap:anywhere; }
-@media (max-width:800px) { .resource-now-grid { grid-template-columns:minmax(0,1fr); gap:16px; } }
+.resource-detail-drawer td.resource-reasons { min-width:180px; }
+.resource-detail-drawer td.resource-reasons>span { overflow-wrap:normal; }
+.resources-panel .filter-menu-body{left:auto;right:0;}
+/* Narrow screens scroll these tables inside their region rather than crushing the holder and unit names. */
+table.resource-table{min-width:720px;}
+@media (max-width:800px) { .resource-now-grid { grid-template-columns:minmax(0,1fr); gap:0; } }
 
 /* Shared tables: content-sized columns, sticky headers, visible row affordance. */
 .table-wrap{overflow:auto;max-height:80dvh;}
@@ -460,14 +477,14 @@ button.effort-bar:hover,.effort-bar:focus-visible{background:color-mix(in srgb,v
 .timeline-toggle{flex:0 0 auto;height:24px;padding:0 8px;font-size:12px;}
 .timeline-mark,.timeline-bar{position:absolute;height:18px;box-sizing:border-box;border-radius:3px;overflow:hidden;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink);text-decoration:none;container-type:inline-size;}
 .timeline-label{padding:0 4px;}
-@container (max-width:48px){.timeline-label{visibility:hidden;}}
+@container (max-width:48px){.timeline-label{display:none;}}
 .bar-passed{background:color-mix(in srgb,var(--sig-passed) 22%,var(--surface));border:1px solid var(--sig-passed);}
 .bar-failed{background:color-mix(in srgb,var(--sig-failed) 22%,var(--surface));border:1px solid var(--sig-failed);}
 .bar-held{background:color-mix(in srgb,var(--sig-held) 22%,var(--surface));border:1px solid var(--sig-held);}
 .bar-active{background:color-mix(in srgb,var(--sig-active) 22%,var(--surface));border:1px solid var(--sig-active);}
 .bar-pending,.bar-withdrawn{background:color-mix(in srgb,var(--sig-pending) 18%,var(--surface));border:1px solid var(--sig-pending);}
 .bar-open{border-right:3px dotted var(--sig-active);border-radius:3px 0 0 3px;}
-.timeline-cluster{display:flex;align-items:center;justify-content:center;padding:0;border:1px dashed var(--muted-ink);background:var(--paper);font-weight:600;cursor:zoom-in;}
+.timeline-cluster{display:flex;align-items:center;justify-content:flex-start;padding:0 0 0 3px;border:1px dashed var(--muted-ink);background:var(--paper);font-weight:600;cursor:zoom-in;}
 .timeline-cluster .timeline-label{padding:0 0 0 2px;font-weight:400;}
 .timeline-hold{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--sig-held) 35%,transparent) 0 3px,transparent 3px 7px),var(--surface);border:1px solid var(--sig-held);height:24px;line-height:22px;}
 .timeline-mark:hover,.timeline-mark:focus-visible{outline:2px solid var(--line);outline-offset:1px;z-index:2;}

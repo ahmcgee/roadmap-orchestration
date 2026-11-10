@@ -39,6 +39,21 @@ test('Resources booking boundaries span cleaning, retain pool instances, exact 8
  const d=tabs.detail(e,b.detailKey,{window:'arc'});assert.equal(d.booking!.id,b.id);assert.deepEqual(d.rows,[b]);assert.ok(resourceDetailShape(d));assert.throws(()=>tabs.detail({...e,arc:arcId('other')},b.detailKey,{window:'arc'}),/not recorded/);
  const now=tabs.read(e,{section:'now'});const integration=now.now.integration.rows[0]!;const resource=tabs.detail(e,integration.detailKey,{section:'now'});assert.equal(resource.kind,'resource');assert.equal(resource.scope.basis,'recorded-arc','selected resource history has lifetime scope even when opened from Now');assert.ok(resource.rows.length);assert.ok(resource.rows.every(r=>'resource' in r&&r.resource==='integration-slot'));
 });
+test('Schedule lanes keep pool instance identity, count crowded lanes in clusters, overview spans the whole arc, history leads with the current holder',async t=>{
+ const f=await investigationFixture();t.after(()=>f.close());const origin=Date.parse(capture(f).data.events[0]!.at);let n=0;
+ t.mock.timers.enable({apis:['Date'],now:origin+60_000});
+ const transition=(unit:string,resource:string,edge:{type:'reserve'}|{type:'release'}|{type:'clean';from:'reserved'})=>{const op=f.journal.begin({kind:'resource.transition',key:opKey(`lane-${n++}`),parent:{type:'arc'},deadlineAt:null,body:()=>({expect:{holder:{type:'stage' as const,unit:unitId(unit),stage:'build' as const,attempt:1},resources:[resourceUnit(resource)],edge,...(edge.type==='reserve'?{waited:{totalMs:0,byReasonMs:{}}}:{})},post:null})});f.journal.done(op.op,'resource.transition',{kind:'transitioned'},null);};
+ for(let i=0;i<20;i++){transition('u1','db#1',{type:'reserve'});t.mock.timers.tick(1000);transition('u1','db#1',{type:'clean',from:'reserved'});transition('u1','db#1',{type:'release'});t.mock.timers.tick(60_000);}
+ transition('u2','db#2',{type:'reserve'});t.mock.timers.tick(1000);
+ const e=capture(f);t.mock.timers.reset();const tabs=new ConsoleResources(),v=tabs.read(e,{window:'arc',resource:'db'});assert.ok(resourcesShape(v));
+ const lanes=v.overview.lanes!.rows;assert.deepEqual(lanes.map(l=>[l.id,l.resource,l.instance,l.count,l.open]),[['db#1','db','db#1',20,0],['db#2','db','db#2',1,1]]);
+ const crowded=lanes[0]!.marks;assert.ok(crowded.length<=16);assert.ok(crowded.some(m=>m.type==='cluster'));assert.equal(crowded.reduce((n,m)=>n+(m.type==='cluster'?m.count:1),0),20,'a cluster counts every booking it groups');
+ assert.deepEqual(lanes[1]!.marks.map(m=>m.type==='booking'?[m.holder,m.unitRef,m.state,m.endedAt]:null),[['u2','u2','holding',null]]);
+ const narrow=tabs.read(e,{from:new Date(origin).toISOString(),to:new Date(origin+120_000).toISOString(),resource:'db'});assert.deepEqual(narrow.overview.lanes!.rows.map(l=>[l.id,l.count]),[['db#1',1]]);
+ for(const view of [v,narrow])assert.equal(view.overview.arc!.buckets.reduce((n,b)=>n+b.count,0),21,'the overview counts every matching booking whatever the window');
+ const history=tabs.detail(e,lanes[0]!.resourceKey,{window:'arc'}),starts=history.rows.map(r=>(r as ResourceBooking).startedAt);assert.equal(history.page.matching,20);assert.deepEqual(starts,[...starts].sort().reverse(),'newest first');
+ assert.equal(tabs.read(e,{section:'cpu',window:'arc'}).overview.lanes,null);
+});
 test('Resources immutable pages preserve original CPU evidence and wait/booking order through append, bind identity/query and explicitly evict',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());for(let n=0;n<62;n++)f.journal.fact({kind:'stage-admitted',unit:unitId('u7'),stage:'build',waited:{totalMs:n,byReasonMs:{'cpu-tokens':n}}});
  const cache=new ObservationCache(f.hostDir,'resource','repo'),e=capture(f,cache),tabs=new ConsoleResources(),params={section:'waiting',window:'arc',limit:'25',sort:'duration',direction:'desc'},first=tabs.read(e,params);assert.equal(first.rows.length,25);const all=[...first.rows];let page=first;while(page.page.next){page=tabs.read(e,{...params,cursor:page.page.next});all.push(...page.rows);}assert.equal(new Set(all.map(r=>r.id)).size,all.length);assert.equal(all.length,first.page.matching);

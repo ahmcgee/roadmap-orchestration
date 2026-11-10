@@ -5,9 +5,9 @@ export type TimelineFilters = {window: 'arc' | '24h' | '7d' | null; from: string
   unit: string[]; milestone: string[]; state: string[]; stage: string[]; execution: string[]; q: string; sort: 'plan' | 'open' | 'longest-open'; subject: string | null};
 export type TrackSummary = {id: string; subject: Subject; state: string | null; signal: Signal | null; intervalCount: number; openCount: number;
   firstAt: string; lastAt: string | null; marks: TrackMark[]; detail: DetailRef | null};
-/** The whole Arc, independent of the selected window: run starts per slice, and every backend hold (up to 64). */
-export type TimelineOverview = {range: {from: string; to: string; widthMs: number}; buckets: {from: string; to: string; count: number}[]; backendHolds: {rows: BackendHold[]; matching: number}};
-export type TimelineView = View & Page<TrackSummary> & {filters: TimelineFilters; bounds: TemporalBounds; overview: TimelineOverview};
+/** The whole Arc, independent of the selected window: recorded starts (runs, or bookings) per slice, and every backend hold (up to 64). */
+export type ArcOverview = {range: {from: string; to: string; widthMs: number}; buckets: {from: string; to: string; count: number}[]; backendHolds: {rows: BackendHold[]; matching: number}};
+export type TimelineView = View & Page<TrackSummary> & {filters: TimelineFilters; bounds: TemporalBounds; overview: ArcOverview};
 export type IntervalsView = View & Page<Interval> & {filters: TimelineFilters; bounds: TemporalBounds};
 export type HoldsView = View & Page<BackendHold> & {filters: TimelineFilters; bounds: TemporalBounds};
 export type HolisticSection = 'audits' | 'findings' | 'decisions';

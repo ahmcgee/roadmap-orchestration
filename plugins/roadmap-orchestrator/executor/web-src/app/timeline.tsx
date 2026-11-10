@@ -1,12 +1,13 @@
 // Timeline: when each agent and command ran, on one time axis per window, with backend holds pinned above.
 // The chart is a native table (one row per unit, job or Arc-wide track); "Show as table" lists the same rows as exact text.
-import { useContext, useRef, useState, type ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, displayZone, elapsed, formatInstant, link, pluralise, route, SignalMark, zoneLabel } from './shared.tsx';
 import { useView } from './view-state.ts';
 import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, moveRowFocus, FilterBar, useLatestWindow, WindowSelect } from './plain-query.tsx';
 import type { TimelineView, IntervalsView, HoldsView, TrackSummary } from '../../src/console/temporal-protocol.ts';
+import { classWords, closureWords, lanes, Overview, tickGrid, ticks } from './time-axis.tsx';
 import type { BackendHold } from '../../src/console/activity-protocol.ts';
 import type { Interval, TrackMark, Signal } from '../../src/console/view-protocol.ts';
 import { plainWords, roleWords, stageWords, stateWords } from '../../src/console/vocabulary.ts';
@@ -16,31 +17,6 @@ const unitStates=['preparing','ready','waiting','awaiting-admission','blocked','
 const results:Record<string,[string,Signal]>={running:['Running','active'],pass:['Passed','passed'],green:['Passed','passed'],success:['Succeeded','passed'],approve:['Approved','passed'],published:['Published','passed'],'probe passed':['Probe passed','passed'],
   fail:['Failed','failed'],red:['Failed','failed'],'process-fault':['Process fault','failed'],'executor-fault':['Executor fault','failed'],'probe failed':['Probe failed','failed'],revise:['Changes requested','held'],'pre-delivery':['Not delivered yet','pending']};
 export const resultWords=(outcome:string):[string,Signal]=>results[outcome]??[plainWords(outcome),'pending'];
-const classWords=(c:string)=>({'usage-limit':'Usage limit','rate-limit':'Rate limit',auth:'Sign-in needed',outage:'Outage'}[c]??plainWords(c));
-const closureWords=(h:BackendHold)=>h.closure?h.closure.kind==='park-updated'?'Continued by a later hold':h.closure.kind==='probe'?'Ended by a successful check':'Resumed':h.terminalAt?'Arc ended; no resume recorded':'Still unavailable';
-/** Greedy lanes: runs that overlap in time never paint over each other. Runs that only touch at this scale share a lane. */
-function lanes<T>(items:T[],span:(t:T)=>[number,number],minWidth:(t:T)=>number){
-  const ends:number[]=[];
-  const placed=items.map(item=>({item,span:span(item)})).sort((a,b)=>a.span[0]-b.span[0]).map(({item,span:[a,b]})=>{
-    let lane=ends.findIndex(end=>end<=a);if(lane<0){lane=ends.length;ends.push(0);}ends[lane]=Math.max(b,a+minWidth(item));return {item,lane,a,b};
-  });
-  return {placed,count:Math.max(1,ends.length)};
-}
-/** Offset of a zone from UTC at an instant, so axis ticks land on that zone's round hours and midnights. */
-function zoneOffset(at:number,zone:string){
-  const p=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:zone,hourCycle:'h23',year:'numeric',month:'numeric',day:'numeric',hour:'numeric',minute:'numeric'}).formatToParts(new Date(at)).map(x=>[x.type,Number(x.value)]));
-  return Date.UTC(p['year']!,p['month']!-1,p['day']!,p['hour']!,p['minute']!)-Math.floor(at/60000)*60000;
-}
-const steps=[1/6,.5,1,2,5,15,30,60,120,180,360,720,1440,2880].map(m=>m*60000);
-function ticks(lo:number,hi:number,zone:string,target=8){
-  const step=steps.find(s=>(hi-lo)/s<=target)??steps.at(-1)!,offset=zoneOffset(lo,zone),out:number[]=[];
-  for(let t=Math.ceil((lo+offset)/step)*step-offset;t<hi;t+=step)out.push(t);
-  const day=(t:number)=>new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'short'}).format(new Date(t));
-  const hour=(t:number)=>new Intl.DateTimeFormat('en-GB',{timeZone:zone,hour:'2-digit',minute:'2-digit',...(step<60000?{second:'2-digit' as const}:{}),hourCycle:'h23'}).format(new Date(t));
-  // A window shorter than the smallest step still states its two ends.
-  if(out.length<2){const exact=(t:number)=>new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(t));return [{t:lo,label:exact(lo)},{t:hi,label:exact(hi),end:true}];}
-  return out.map((t,n)=>({t,end:false,label:step>=86400000||hour(t).startsWith('00:00')||n===0?`${day(t)}${step<86400000?` ${hour(t)}`:''}`:hour(t)}));
-}
 export function Timeline({arc}:{arc:string}) {
   const current=route(),zone=current.query.get('zone')??displayZone(),explicit=current.query.has('window')||current.query.has('from')||current.query.has('to'),latest=useLatestWindow();
   const state=usePlainQuery<TimelineView>(arc,'timeline',fields,explicit?{zone}:latest?{...latest,zone}:null),data=state.data;
@@ -106,11 +82,7 @@ export function Timeline({arc}:{arc:string}) {
         <td>{time(i.startedAt)}</td><td>{time(i.endedAt)}</td><td className="number">{i.endedAt?length(i.startedAt,i.endedAt):'Still running'}</td><td className="number">{elapsed(i.wallMs)}</td></TableRow>;}):runRows(intervals.rows)}</tbody></Table>
       {(intervals.page.next||intervals.page.previous)&&<PlainPaging page={intervals.page} navigate={changes=>state.navigate({intervalCursor:changes['cursor']??null})}/>}</>}
   </td></tr>;
-  const axis=data?ticks(lo,hi,timeZone,9):[];
-  // Faint guides under every lane at the axis ticks, so a bar reads against the shared clock.
-  // A background tile one step wide; a percentage position p places it at (lane-tile)*p, so p=first/(100-step).
-  const step=axis.length>1?x(axis[1]!.t)-x(axis[0]!.t):100,first=axis.length?x(axis[0]!.t):0;
-  const grid={'--tick-step':`${step}%`,'--tick-pos':step<100?`${first/(100-step)*100}%`:'0%'} as React.CSSProperties;
+  const axis=data?ticks(lo,hi,timeZone,9):[],grid=tickGrid(axis,x);
   const windowHolds=data?data.overview.backendHolds.rows.filter(h=>{const end=h.endedAt??h.terminalAt;return Date.parse(h.startedAt)<hi&&(end===null||Date.parse(end)>lo);}):[];
   const activity=new URLSearchParams();if(data?.scope.from)activity.set('from',data.scope.from);if(data?.scope.to)activity.set('to',data.scope.to);if(subject?.startsWith('unit:'))activity.set('unit',subject.slice(5));
   return <section className="panel timeline"><header className="panel-head"><div><h2>Timeline</h2><p className="muted">When each agent and command ran, and when a backend was unavailable.</p></div></header>
@@ -133,7 +105,7 @@ export function Timeline({arc}:{arc:string}) {
     </FilterBar>
     <PlainPageStatus {...state} reload={reload} version="timeline" noun="track" count={data?trackCount(data):undefined}/>
     {data&&<>
-      <Overview data={data} zone={timeZone} lo={lo} hi={hi} open={openWindow} short={short}/>
+      <Overview overview={data.overview} noun="run" zone={timeZone} lo={lo} hi={hi} open={openWindow} short={short}/>
       <h3 className="timeline-window-title">{data.scope.from?<>{short(data.scope.from)} to {short(data.scope.to??data.bounds.to)}</>:<>Up to {short(data.scope.to??data.bounds.to)}</>} <span className="muted">{zoneLabel(timeZone)}</span></h3>
       <section aria-label="Backend availability" className="timeline-holds">
         {windowHolds.length?<>
@@ -170,29 +142,4 @@ function actorWords(i:Interval){const role=roleWords(i.actor.role);return [role=
 function trackCount(data:TimelineView){const units=data.rows.filter(r=>r.subject.type==='unit').length;return `${pluralise(data.page.matching,'track')} with runs in this window${data.rows.length<data.page.matching?'':`: ${pluralise(units,'unit')}${data.rows.length>units?` and ${pluralise(data.rows.length-units,'other track')}`:''}`}`;}
 function HoldList({arc,rows,time}:{arc:string;rows:BackendHold[];time:(at:string|null)=>ReactNode}) {
   return <Table aria-label="Every backend hold in this window"><thead><TableRow>{['Backend','Reason','Started','Ended'].map(t=><TableHead key={t}>{t}</TableHead>)}</TableRow></thead><tbody>{rows.map(h=><TableRow key={h.id} onClick={ev=>activateRow(ev,link(arc,'timeline','events',h.detail.id))}><td><a href={link(arc,'timeline','events',h.detail.id)}>{h.backend}</a></td><td>{classWords(h.effectiveClass)}</td><td>{time(h.startedAt)}</td><td>{h.endedAt?time(h.endedAt):h.terminalAt?time(h.terminalAt):'Still unavailable'}<span className="cell-line">{closureWords(h)}</span></td></TableRow>)}</tbody></Table>;
-}
-/** The whole arc at a glance: runs started per slice, backend holds beneath, the selected window outlined.
- * Drag across it to choose a window; select a point to move the current window there. The Filters menu has the same range as text. */
-function Overview({data,zone,lo,hi,open,short}:{data:TimelineView;zone:string;lo:number;hi:number;open:(from:number,to:number)=>void;short:(at:string)=>string}) {
-  const o=data.overview,from=Date.parse(o.range.from),to=Date.parse(o.range.to),width=o.range.widthMs,plot=useRef<HTMLDivElement>(null),[drag,setDrag]=useState<[number,number]|null>(null);
-  const x=(t:number)=>Math.max(0,Math.min(100,(t-from)/(to-from)*100)),max=Math.max(1,...o.buckets.map(b=>b.count));
-  const at=(clientX:number)=>{const r=plot.current!.getBoundingClientRect();return from+Math.max(0,Math.min(1,(clientX-r.left)/r.width))*(to-from);};
-  const slice=width>=86400000?'day':width>=3600000?`${width/3600000===1?'hour':`${width/3600000} hours`}`:`${width/60000} minutes`;
-  const total=o.buckets.reduce((n,b)=>n+b.count,0);
-  return <figure className="timeline-overview">
-    <figcaption><strong>Whole arc</strong> <span className="muted">Runs started per {slice}. Drag to choose a window.</span></figcaption>
-    <div ref={plot} className="timeline-overview-plot" role="img" aria-label={`${pluralise(total,'run')} started across the whole arc, from ${short(o.range.from)} to ${short(o.range.to)}, with ${pluralise(o.backendHolds.matching,'backend hold')}. The selected window is ${short(new Date(lo).toISOString())} to ${short(new Date(hi).toISOString())}.`}
-      onPointerDown={ev=>{if(ev.button!==0)return;ev.currentTarget.setPointerCapture(ev.pointerId);const t=at(ev.clientX);setDrag([t,t]);}}
-      onPointerMove={ev=>{if(drag)setDrag([drag[0],at(ev.clientX)]);}}
-      onPointerUp={ev=>{if(!drag)return;const end=at(ev.clientX),[a,b]=[Math.min(drag[0],end),Math.max(drag[0],end)];setDrag(null);
-        if((b-a)/(to-from)*plot.current!.getBoundingClientRect().width>=6)open(a,b);else{const half=(hi-lo)/2;open(end-half,end+half);}}}
-      onPointerCancel={()=>setDrag(null)}>
-      {o.buckets.map(b=><span key={b.from} className="timeline-overview-bar" style={{left:`${x(Date.parse(b.from))}%`,width:`${Math.max(.3,x(Date.parse(b.to))-x(Date.parse(b.from)))}%`,height:`${Math.max(8,b.count/max*100)}%`}} title={`${short(b.from)} to ${short(b.to)}: ${pluralise(b.count,'run')} started`}/>)}
-      {o.backendHolds.rows.map(h=>{const end=h.endedAt??h.terminalAt;return <span key={h.id} className="timeline-overview-hold" style={{left:`${x(Date.parse(h.startedAt))}%`,width:`${Math.max(.3,x(end?Date.parse(end):to)-x(Date.parse(h.startedAt)))}%`}} title={`${h.backend} unavailable from ${short(h.startedAt)}${end?` to ${short(end)}`:''}`}/>;})}
-      <span className="timeline-overview-window" style={{left:`${x(lo)}%`,width:`${Math.max(.3,x(hi)-x(lo))}%`}}/>
-      {drag&&<span className="timeline-overview-brush" style={{left:`${x(Math.min(...drag))}%`,width:`${Math.abs(x(drag[1])-x(drag[0]))}%`}}/>}
-    </div>
-    <div className="timeline-overview-time" aria-hidden="true">{ticks(from,to,zone,7).map(a=><span key={a.t} className={a.end?'axis-end':undefined} style={a.end?{right:0}:{left:`${x(a.t)}%`}}>{a.label}</span>)}</div>
-    {o.backendHolds.matching>0&&<p className="timeline-overview-key muted"><i className="swatch timeline-hold-swatch" aria-hidden="true"/> Backend unavailable to new calls</p>}
-  </figure>;
 }
