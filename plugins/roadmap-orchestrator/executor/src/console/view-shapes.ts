@@ -38,7 +38,8 @@ const edge: Check = v => [
 ].some(check => check(v));
 export const graphShape = object({...base,
   units: array(object({id: str, title: str, titleTruncated: bool, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), state: str, stage: str, stageFinished: bool, systems: array(str), lineageRef: nullable(str)})),
-  milestones: array(object({id: str, state: str, passed: bool, memberIds: array(str)}, {name: str})),
+  milestones: array(object({id: str, state: str, passed: bool, memberIds: array(str), merged: nat, withdrawn: nat, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), reason: nullable(str), costUsd: num}, {name: str})),
+  noMilestone: object({ids: array(str), merged: nat, withdrawn: nat}),
   edges: array(edge), focus: object({activeIds: array(str), firstUncleared: nullable(str)}),
 });
 const signal=oneOf('passed','active','held','pending','failed','withdrawn');
@@ -49,7 +50,7 @@ const continuation=object({path:array(v=>(typeof v==='string'&&!['__proto__','co
 const expansions={continuations:array(continuation)};
 export const contentShape=object({...base,content:object({path:array(v=>str(v)||nat(v)),kind:oneOf('text','list'),value:v=>typeof v==='string'||Array.isArray(v),offset:nat,total:nat,next:oneOf(null)}),continuations:array(continuation)});
 const unit=object({id:str,title:str,state:str,stage:str,stageFinished:bool,signal,startedAt:nullable(date),endedAt:nullable(date),arcEndedAt:nullable(date),elapsedMs:nullable(num),attempts:nat,rounds:nat,spend:money,reasons:array(str),waitSince:nullable(date),lineage:nullable(object({reenters:str,root:str,prepared:bool}))});
-const related=object({id:str,title:str,state:str,signal,source:str,target:str,unmet:bool});
+const related=object({id:str,title:str,state:str,signal,source:str,target:str,unmet:bool},{replacedBy:object({id:str,state:str,signal})});
 const page=(row:Check)=>object({rows:array(row),asOf:object({epoch:str,highWater:nat,observedAt:date}),next:nullable(str),total:nat});
 const text=object({text:str,next:nullable(str)});
 const gate=object({id:str,name:nullable(str),passed:bool});
@@ -59,7 +60,7 @@ const coverageMoney=object({recorded:nat,estimated:nat,unavailable:nat}),coverag
 const availability=oneOf('available','pruned','not-recorded','not-applicable','unavailable');
 export const invocationShape=object({...base,invocation,actor:object({role:str,backend:nullable(str),model:nullable(str),requestedModel:nullable(str)}),measured:nullable(object({wallMs:num,runMs:num,waitMs:num})),reservedCpu:nullable(num),cpuBasis:nullable(object({kind:oneOf('explicit','default','calibrated'),value:num,samples:nullable(nat)})),parent:object({type:oneOf('unit','arc','job'),id:str,stage:nullable(str),sequence:nullable(nat)}),coverage:object({money:coverageMoney,execution:coverageTime}),detailAvailability:object({result:availability,prompt:availability,history:availability,logs:object({stdout:availability,stderr:availability,runner:availability})}),related:page(related)},expansions);
 export const unitShape=object({...base,unit,systems:array(str),supersededBy:nullable(str),coverage:object({money:coverageMoney,execution:coverageTime,waiting:coverageTime}),currentBlockers:nullable(object({dependencies:array(str),milestones:array(str),contingentEdges:array(str),resources:nullable(object({named:array(str),pools:array(str),cpu:num,publication:bool})),environmentBlocked:bool,pressureBlocked:nullable(bool),tokenWaitMs:nullable(num),admission:array(object({kind:str,references:array(object({field:str,id:str})),scope:nullable(str),parkClass:nullable(str),reason:nullable(str),decision:nullable(str),probe:nullable(object({kind:str,id:nullable(str)}))})),drainCommands:array(str)})),feeds:array(gate),waits:array(gate),depends:page(related),usedBy:page(related),journey:page(step),invocations:page(invocation),acceptance:page(str),waiting:page(object({at:date,stage:str,totalMs:num,reasons:array(object({reason:str,ms:num}))})),checks:page(object({id:str,outcome:str})),requests:page(object({id:str,summary:str,recommendation:str})),intent:text},expansions);
-export const milestoneShape=object({...base,id:str,name:nullable(str),state:str,passed:bool,total:nat,merged:nat,members:page(related),intent:text},expansions);
+export const milestoneShape=object({...base,id:str,name:nullable(str),state:str,passed:bool,total:nat,merged:nat,withdrawn:nat,reason:nullable(str),costUsd:num,members:page(related),intent:text},expansions);
 export const metadataShape=object({protocol:str,instance:str,repoId:str,arc:str,epoch:str,highWater:nat,revision:nat,observedAt:date,checkedAt:date,uiSchema:oneOf(CONSOLE_UI_SCHEMA),selected:nullable(str),viewVersions:object(Object.fromEntries(['shell','graph','timeline','activity','holistic','effort','resources','attention'].map(k=>[k,base.viewVersion])))},{kind:str});
 
 const actor=object({role:nullable(str),backend:nullable(str),model:nullable(str)});
@@ -90,10 +91,10 @@ export const holdsShape=object({...temporalBase,rows:array(backendHold),page:col
 const evidencePreview=object({text:str,truncated:bool,detail:nullable(detail)},{field:object({key:str,name:oneOf('claim','oneLine')})});
 export const holisticFieldShape=object({...base,key:str,name:oneOf('claim','oneLine'),text:str,offset:nat,next:nullable(nat),total:nat});
 const findingSource:Check=v=>object({type:oneOf('audit'),job:str})(v)||object({type:oneOf('stage'),unit:str,stage:str})(v)||object({type:oneOf('other')})(v);
-const holisticRow:Check=v=>object({type:oneOf('audit'),id:str,at:date,job:str,outcome:str,coverageCount:nat,findingCount:nat,detail,coverage:array(object({lens:str,from:str,to:str})),coverageTruncated:bool})(v)
+const holisticRow:Check=v=>object({type:oneOf('audit'),id:str,at:date,job:str,outcome:str,verdict:nullable(str),coverageCount:nat,findingCount:nat,detail,coverage:array(object({lens:str,from:str,to:str})),coverageTruncated:bool})(v)
   ||object({type:oneOf('finding'),id:str,claim:evidencePreview,state:str,detail:nullable(detail),foundBy:nullable(findingSource),foundAt:nullable(date)})(v)
   ||object({type:oneOf('decision'),id:str,recordId:str,seq:nat,at:nullable(date),kind:str,oneLine:evidencePreview,ruledBy:v=>object({type:oneOf('architect'),command:nullable(str)})(v)||object({type:oneOf('judgment'),role:oneOf('verifier')})(v)||object({type:oneOf('executor')})(v),detail:nullable(detail)})(v);
-export const holisticShape=object({...base,section:oneOf('audits','findings','decisions'),enabled:bool,currentAudit:nullable(object({running:bool,job:nullable(str)})),latestOutcome:nullable(object({at:date,job:str,outcome:str})),counts:object({audits:nat,findings:nat,decisions:nat}),rows:array(holisticRow),page:collectionPage(oneOf(25,50,100))});
+export const holisticShape=object({...base,section:oneOf('audits','findings','decisions'),enabled:bool,currentAudit:nullable(object({running:bool,job:nullable(str)})),latestOutcome:nullable(object({at:date,job:str,outcome:str,verdict:nullable(str)})),counts:object({audits:nat,findings:nat,raised:nat,decisions:nat}),rows:array(holisticRow),page:collectionPage(oneOf(25,50,100))});
 
 const requestSubject:Check=v=>object({type:oneOf('unit'),id:str,title:str})(v)||object({type:oneOf('arc','host')})(v)||object({type:oneOf('findings'),count:nat})(v);
 export const attentionShape=object({...base,filters:object({blocking:oneOf('all','1','0'),subjectType:array(oneOf('unit','arc','host','findings')),reason:array(str),q:str,sort:oneOf('oldest','newest')}),counts:object({total:nat,blocking:nat,informational:nat}),rows:array(object({id:str,raisedAt:date,blocking:bool,subject:requestSubject,reason:str,summary:preview,recommendationPreview:preview,evidenceCount:nat})),reasons:array(str),page:collectionPage(oneOf(25,50,100))});

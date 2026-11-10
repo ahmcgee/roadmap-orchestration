@@ -1,6 +1,6 @@
 /**
  * Deterministic console scale fixture; no paid backend or executor is started.
- * From executor/: node test/helpers/scale-arc.ts <outDir> [--units 300] [--days 7] [--seed console-week] [--live]
+ * From executor/: node test/helpers/scale-arc.ts <outDir> [--units 300] [--days 7] [--seed console-week] [--preset design [--field]] [--live]
  * Creates <outDir>/repo (outDir must be empty), retained production records and manifest.json;
  * prints the repo path to stdout. Then: bin/roadmap console start --repo <printed path>
  * --live owns the fixture and appends one paired stream-json event every 4 seconds,
@@ -39,7 +39,12 @@ import { publishOwner } from '../../src/host/owner.ts';
 import { selfIdentity } from '../../src/host/liveness.ts';
 import { HOST_DIR, openHostDir } from '../../src/host/hostdir.ts';
 
-export type ScaleOptions = { units?: number; days?: number; seed?: string; preset?: 'design' };
+/**
+ * `field` (with the design preset) adds the shapes a long real arc records and the design week lacks: chained re-entries
+ * of milestone members whose dependents follow the re-entry, unit ids and rulings in re-entry intents, revise audit
+ * verdicts with dismissed findings, coloured check output, and a stop: no owner, nothing running, completion unsealed.
+ */
+export type ScaleOptions = { units?: number; days?: number; seed?: string; preset?: 'design'; field?: boolean };
 export const SCALE_NOW = '2026-11-07T20:00:00.000Z';
 const DAY = 86_400_000;
 const SYSTEMS = ['identity', 'catalog', 'booking', 'billing', 'notifications', 'search', 'analytics', 'operations'];
@@ -73,6 +78,11 @@ export type ScaleManifest = {
   merged: number; withdrawn: number; parked: number; openAttention: number; ackedAttention: number; costUsd: number; events: number;
 };
 
+/** A check's output as a test runner writes it to a terminal: SGR colour around each line, a bold summary. */
+function colour(lines: readonly string[], failed: boolean): string {
+  const [code, reset] = failed ? ['\x1b[31m', '\x1b[39m'] : ['\x1b[32m', '\x1b[39m'];
+  return lines.map(line => `${code}${line}${reset}`).join('\n') + `\n\x1b[1m${failed ? '\x1b[31mfail 1' : '\x1b[32mpass 1'}\x1b[39m\x1b[22m\n`;
+}
 function random(seed: string) {
   let n = parseInt(sha256Hex(seed).slice(0, 8), 16);
   return () => { n ^= n << 13; n ^= n >>> 17; n ^= n << 5; return (n >>> 0) / 0x100000000; };
@@ -88,7 +98,8 @@ function historicalClock(initial: number) {
 }
 
 export async function generateScaleArc(outDir: string, options: ScaleOptions = {}) {
-  const design = options.preset === 'design';
+  const design = options.preset === 'design', field = options.field === true;
+  if (field && !design) throw new Error('--field needs --preset design');
   const count = options.units ?? (design ? 50 : 300), days = options.days ?? 7, seed = options.seed ?? 'console-week';
   if (!Number.isInteger(count) || count < 40 || count > 2000) throw new Error('--units must be an integer between 40 and 2000');
   if (!Number.isFinite(days) || days < 1 || days > 60) throw new Error('--days must be between 1 and 60');
@@ -183,6 +194,8 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     const milestones = design ? 5 : Math.min(10, Math.floor(count / 4)), passedMilestones = Math.floor(milestones / 2);
     const milestoneText = (m: number) => corpus.milestones[design ? Math.round(m * (corpus.milestones.length - 1) / (milestones - 1)) : m]!;
     plan.milestones = Array.from({ length: milestones }, (_, m) => ({ ...milestoneJson({ id: `MS-${m+1}`, text: milestoneText(m).text, units: Array.from({ length: Math.floor(count/milestones) }, (_, k) => `u${m * Math.floor(count/milestones)+k+1}`), journeys: [{ id: `J-${m+1}`, text: milestoneText(m).journey, via: 'shell', entry: unitText(m * Math.floor(count/milestones)+1).shell.command, budget: null }] }), name: milestoneText(m).name }));
+    // A plan may leave a milestone unnamed (its id is then its only name).
+    if (field) delete plan.milestones.at(-1).name;
     writeFileSync(planPath, JSON.stringify({...plan,units:plan.units.filter((u:{id:string})=>u.id!==`u${merged+2}`).map((u:{after:string[]})=>({...u,after:u.after.filter(id=>id!==`u${merged+2}`)})),milestones:plan.milestones.map((m:{units:string[]})=>({...m,units:m.units.filter(id=>id!==`u${merged+2}`)}))})); mkdirSync(runDir, { recursive: true });
     const d = { ...base.d, arc, repo, planPath, runDir, hostDir, config: readRepoConfig(absPath(repo))!, binDir: join(out,'forge','bin') };
     const r = contextFor(d), j = r.journal, head = sha(git(repo, 'rev-parse', 'HEAD')); closeJournal = () => j.close();
@@ -191,7 +204,7 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     const pinned = new Set<string>();
     const begin = (id: string, stage: Exclude<Stage,'retire'>) => { const u = unitId(id); if (!pinned.has(id)) { pinDispatch(r.ctx, requirePlanInForce(runDir,j.view).plan.units.find(u=>u.id===id)!, { rev: specRev(1), sha256: specShaInForce(j.view,u)! }); pinned.add(id); } return start(r.ctx,u,stage); };
     const excerpts = ['m1-live','m1-dev55'].map(name => readFileSync(new URL(`./scale-transcripts/${name}.jsonl`,import.meta.url),'utf8'));
-    let invocations = 0, agentInvocations = 0, costUsd = 0;
+    let invocations = 0, agentInvocations = 0, costUsd = 0; const transcripts: string[] = [];
     const invokedAttempts = new Map<string, Set<number>>();
     const buildRounds: Record<string,number> = {}, live: ScaleManifest['live'] = [];
     let cursor = origin;
@@ -203,7 +216,7 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     };
     const invoke = (parent: Parent, agent: boolean, active = false, failed = false, verdict?: JsonValue, limit = false) => {
       const unit = parent.type === 'stage' ? parent.unit : unitId('u1'), attempt = parent.type === 'stage' ? parent.attempt : 1;
-      const text = unitText(Number(unit.slice(1))), testPath = testFile(text);
+      const text = unitText(parseInt(unit.slice(1), 10)), testPath = testFile(text);
       verdict ??= parent.type === 'stage' && parent.stage === 'gate' ? gateVerdict(text, false) : { summary: text.approve };
       const reportText = typeof verdict === 'object' && verdict !== null && 'decision' in verdict && verdict['decision'] === 'revise' ? text.revise.reason : text.approve;
       const output = text.testOutput.join('\n') + '\n', testContent = `// ${text.acceptance}\n`;
@@ -225,6 +238,7 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
       const transcript = join(dir,'stdout');
       const emit = (event: unknown) => appendFileSync(transcript,JSON.stringify(event)+'\n');
       if(agent) {
+        transcripts.push(transcript);
         writeFileSync(transcript,JSON.stringify({type:'system',subtype:'init',model:'claude-opus-5-5',tools:['Read','Edit','Write','Bash','StructuredOutput']})+'\n');
         emit({type:'assistant',message:{role:'assistant',content:[{type:'thinking',thinking:text.thinking.join('\n\n')}]}});
         for(const [n,input,result] of [
@@ -253,7 +267,7 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
           if(block.type==='tool_result') block.content=results.get(block.tool_use_id) ?? reportText;
         }
         for(const row of rows) { if(active && row.message.content.some((b: {name?: string})=>b.name==='StructuredOutput')) break; emit(row); }
-      } else { writeFileSync(transcript,failed?`${text.revise.reason}\n${text.revise.finding}\n`:output); }
+      } else { writeFileSync(transcript,field?colour(failed?[text.revise.reason,text.revise.finding]:text.testOutput,failed):failed?`${text.revise.reason}\n${text.revise.finding}\n`:output); }
       writeFileSync(join(dir,'stderr'),failed?`${text.edit.file}:${text.revise.line}: ${text.revise.reason}\n`:'');
       if(agent) { const cost=Math.round((.45+rng()*1.65)*100)/100; costUsd+=cost; j.fact({kind:'meter',inv:spawned.inv,routingRev,subject:parent.type==='job'?{type:'job',job:parent.job,attempt:1,role:'campaignAudit',tier:'arc'}:{type:'seat',unit,attempt,role:role==='verifier'?'verifier':'build',tier:'med'},usage:{inputTokens:2200,outputTokens:1400,cacheReadTokens:24000,cacheWriteTokens:4000,turns:5,costUsd:cost}}); }
       if(active) { if(agent) live.push({unit,stage:parent.type==='stage'?parent.stage:'checkpoint',routeId:invocationDirName(spawned.inv),transcript}); return spawned.inv; }
@@ -269,9 +283,9 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     // Three revisions: initial plan, withdrawal/re-entry, later scope clarification.
     const parentPark=begin(`u${reentryParent}`,'build');
     j.fact({kind:'stage-outcome',unit:parentPark.unit,stage:'build',attempt:parentPark.attempt,outcome:'process-fault',class:'park',chargeable:false,park:{class:'operator',kind:'design'}});
-    const revisedPlan = {...plan,units:plan.units.map((u: {id:string},i:number)=>i>=count-withdrawn?{...u,cut:{reason:`Owner withdrew ${unitText(i+1).title}.`}}:i===merged+1?{...u,reenters:{unit:`u${reentryParent}`}}:u)};
-    commitRevisionNow(j,runDir,{...previous,manifest:{...previous.manifest,specs:{...previous.manifest.specs,[unitId(`u${merged+2}`)]:keepInput(runDir,readFileSync(join(planDir,`u${merged+2}.json`)),'spec.json')},planSha256:keepInput(runDir,Buffer.from(JSON.stringify(revisedPlan)),'plan.json')},source:{type:'command',command:commandId('cmd-0000000000000001')},base:planRev(1),rev:planRev(2),changes:[{type:'unit-added',unit:unitId(`u${merged+2}`)},...revisedPlan.units.slice(count-withdrawn).map((u:{id:string})=>({type:'unit-cut' as const,unit:unitId(u.id)})),{type:'unit-reentered',unit:unitId(`u${merged+2}`),reenters:unitId(`u${reentryParent}`),reset:false}],dispositions:[],divergences:[]},{type:'arc'});
-    const pulls: GhPull[]=[];
+    let currentPlan = {...plan,units:plan.units.map((u: {id:string},i:number)=>i>=count-withdrawn?{...u,cut:{reason:`Owner withdrew ${unitText(i+1).title}.`}}:i===merged+1?{...u,reenters:{unit:`u${reentryParent}`}}:u)};
+    commitRevisionNow(j,runDir,{...previous,manifest:{...previous.manifest,specs:{...previous.manifest.specs,[unitId(`u${merged+2}`)]:keepInput(runDir,readFileSync(join(planDir,`u${merged+2}.json`)),'spec.json')},planSha256:keepInput(runDir,Buffer.from(JSON.stringify(currentPlan)),'plan.json')},source:{type:'command',command:commandId('cmd-0000000000000001')},base:planRev(1),rev:planRev(2),changes:[{type:'unit-added',unit:unitId(`u${merged+2}`)},...currentPlan.units.slice(count-withdrawn).map((u:{id:string})=>({type:'unit-cut' as const,unit:unitId(u.id)})),{type:'unit-reentered',unit:unitId(`u${merged+2}`),reenters:unitId(`u${reentryParent}`),reset:false}],dispositions:[],divergences:[]},{type:'arc'});
+    const pulls: GhPull[]=[]; let rev=2, findings=0;
     const historicalCount=merged+Math.floor(count*.16);
     // Deterministic event agenda: topological units run in daytime bursts. Each day's
     // 23:00–07:00 backend usage-limit park contains no unit work.
@@ -298,27 +312,58 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
       }
       const audit=jobId('audit',day+1); j.fact({kind:'audit-started',job:audit,triggers:[{type:'final'}],generation:day+1,lenses:['invariants'],integrationSha:head,planRev:planRev(2),ledgerSha256:previous.manifest.rulings.ledgerSha256,obligationsSha256:previous.manifest.obligations,visionSha256:previous.manifest.vision!,owners:[],priorFindings:[],highWater:j.view.highWater(),diffBudget:24000});
       invoke({type:'job',job:audit},true,false,false,{decision:'approve',reasons:[unitText(1).approve],findings:[]});
-      j.fact({kind:'audit-ended',job:audit,covered:[{lens:'invariants',from:head,to:head}],findings:[],suppressed:0,outcome:'completed',refused:[]});
+      // A field audit files two findings and is judged revise (src/holistic/audit.ts writes the job's stage-outcome first); the root later dismisses one.
+      const filed=field?[1,2].map(n=>{const id=findingId(`F-${++findings}`),text=unitText(1+(day*2+n)%historicalCount);j.fact({kind:'finding-opened',id,key:sha256(sha256Hex(`field:${day}:${n}`)),lens:'invariants',severity:'P2',obligation:obligationId('I-1'),visionClauses:[visionClauseId('V-1')],claim:text.revise.reason,evidence:[{path:repoPath(text.edit.file),blob:null}],mutant:null,source:{type:'job',job:audit},gateHadPassed:true});return id;}):[];
+      if(field) j.fact({kind:'stage-outcome',stage:'campaign-audit',job:audit,milestone:null,verdict:'revise',findings:{P1:0,P2:filed.length,P3:0,total:filed.length}});
+      j.fact({kind:'audit-ended',job:audit,covered:[{lens:'invariants',from:head,to:head}],findings:filed,suppressed:0,outcome:'completed',refused:[]});
+      if(field) j.fact({kind:'finding-dismissed',id:filed[0]!,command:commandId(`cmd-${String(300+day).padStart(16,'0')}`),counterEvidence:unitText(1).approve,by:{role:'root',routingRev:r.ctx.routing(null).rev}});
       invoke({type:'job',job:jobId('ckpt',day+1)},true,false,false,{decision:day%3===0?'revise':'approve',reasons:[day%3===0?unitText(1).revise.reason:unitText(1).approve],findings:[]});
       if(day<days-1) { setTime(dayStart+15*3_600_000); j.fact({kind:'backend-park',backend:'claude',class:'usage-limit',inv:invoke({type:'job',job:jobId('ckpt',100+day)},true,false,false,{},true)}); setTime(dayStart+23*3_600_000); j.fact({kind:'resumed',command:commandId(`cmd-${String(100+day).padStart(16,'0')}`),target:{type:'backend',backend:'claude'}}); }
+    }
+    const added: string[] = [];
+    if(field) {
+      // A unit's whole merge path, as the history loop records it; a re-entry is prepared first.
+      const merge=(id:string)=>{
+        if(requirePlanInForce(runDir,j.view).plan.units.find(u=>u.id===id)!.reenters){const prep=begin(id,'prepare');record(r.ctx,at(prep,'prepare'),'clean-build');}
+        const build=begin(id,'build'),cpu=[1,2,3,4].map(cpuToken);resource(build,cpu,true,build);invoke(build,true);resource(build,cpu,false,build);record(r.ctx,at(build,'build'),'success');
+        const checks=begin(id,'lanes');invoke(checks,false);record(r.ctx,at(checks,'lanes'),'green');
+        const gate=begin(id,'gate');invoke(gate,true,false,false,gateVerdict(unitText(parseInt(id.slice(1),10)),false));record(r.ctx,at(gate,'gate'),'approve');
+        const candidate=begin(id,'candidate'),holder={type:'publication' as const,unit:unitId(id),attempt:candidate.attempt};resource(holder,[INTEGRATION_SLOT],true,candidate);invoke(candidate,false);record(r.ctx,at(candidate,'candidate'),'green');
+        const ff=begin(id,'ff');record(r.ctx,at(ff,'ff'),'published');const snapshot=begin(id,'snapshot');record(r.ctx,at(snapshot,'snapshot'),'published');resource(holder,[INTEGRATION_SLOT],false,snapshot);
+      };
+      const park=(id:string)=>{if(requirePlanInForce(runDir,j.view).plan.units.find(u=>u.id===id)!.reenters){const prep=begin(id,'prepare');record(r.ctx,at(prep,'prepare'),'clean-build');}const p=begin(id,'build');j.fact({kind:'stage-outcome',unit:p.unit,stage:'build',attempt:p.attempt,outcome:'process-fault',class:'park',chargeable:false,park:{class:'operator',kind:'design'}});};
+      // `reenter`: the new unit carries its parent's entry and dependencies, outside every milestone, as the command adds it.
+      const reenter=(parent:string,child:string,intent:string)=>{
+        const spec={...JSON.parse(readFileSync(join(planDir,`${parent}.json`),'utf8')),unit:child,intent};writeFileSync(join(planDir,`${child}.json`),JSON.stringify(spec));
+        const entry=currentPlan.units.find((u:{id:string})=>u.id===parent)!;currentPlan={...currentPlan,units:[...currentPlan.units,{...entry,id:child,spec:`${child}.json`,reenters:{unit:parent}}]};
+        const kept=keptPayload(runDir,j.view.planApplied()!.payloadSha256);
+        commitRevisionNow(j,runDir,{...kept,manifest:{...kept.manifest,specs:{...kept.manifest.specs,[unitId(child)]:keepInput(runDir,Buffer.from(JSON.stringify(spec)),'spec.json')},planSha256:keepInput(runDir,Buffer.from(JSON.stringify(currentPlan)),'plan.json')},source:{type:'command',command:commandId(`cmd-${String(700+rev).padStart(16,'0')}`)},base:planRev(rev),rev:planRev(rev+1),changes:[{type:'unit-added',unit:unitId(child)},{type:'unit-reentered',unit:unitId(child),reenters:unitId(parent),reset:false}],dispositions:[],divergences:[]},{type:'arc'});
+        rev++;added.push(child);
+      };
+      advance(600_000);merge(`u${reentryParent+1}`);
+      park('u32');reenter('u32','u32-flush-retry-r2',`C-356: Continue u32's flush retry work from its last green tip.\n\n${unitText(32).intent}`);
+      park('u32-flush-retry-r2');reenter('u32-flush-retry-r2','u32-flush-retry-r3',`Continues u32-flush-retry-r2's work on bounded flush retries.\n\n${unitText(32).intent}`);merge('u32-flush-retry-r3');
+      park('u33');reenter('u33','u33-rollup-export-r2',`Moved from u32-flush-retry-r2 by C-351: export the rollup once flush retries land.\n\n${unitText(33).intent}`);merge('u33-rollup-export-r2');
     }
     setTime(now-3_600_000);
     for(let m=1;m<=passedMilestones;m++) { const job=jobId('walk',m), milestone=milestoneId(`MS-${m}`); j.fact({kind:'walk-started',job,milestone,round:1,sha:head,ports:{}}); advance(60_000); j.fact({kind:'walk-ended',job,outcome:'reported',findings:[],proposals:[],dropped:[]}); j.fact({kind:'milestone-passed',milestone,job}); }
     for(let i=historicalCount+1;i<=historicalCount+parkedCount;i++) { const parent=begin(`u${i}`,'build'); j.fact({kind:'stage-outcome',unit:parent.unit,stage:'build',attempt:parent.attempt,outcome:'process-fault',class:'park',chargeable:false,park:{class:'operator',kind:'design'}}); }
     // Four genuinely unsettled agent spawns, plus one active deterministic lane.
     const activeStart=historicalCount+parkedCount+1;
-    for(let n=0;n<4;n++) { const id=`u${activeStart+n}`; setTime(now-(4-n)*180_000); const parent=begin(id,n===3?'gate':'build'); resource(parent,[cpuToken(n+1)],true,parent); invoke(parent,true,true); }
-    setTime(now-90_000); invoke(begin(`u${activeStart+4}`,'lanes'),false,true);
-    const slotUnit=`u${merged+2}`, slot=begin(slotUnit,'candidate'); resource({type:'publication',unit:unitId(slotUnit),attempt:slot.attempt},[INTEGRATION_SLOT],true,slot); invoke(slot,false,true);
+    if(!field) for(let n=0;n<4;n++) { const id=`u${activeStart+n}`; setTime(now-(4-n)*180_000); const parent=begin(id,n===3?'gate':'build'); resource(parent,[cpuToken(n+1)],true,parent); invoke(parent,true,true); }
+    const slotUnit=`u${merged+2}`;
+    if(!field) { setTime(now-90_000); invoke(begin(`u${activeStart+4}`,'lanes'),false,true);
+      const slot=begin(slotUnit,'candidate'); resource({type:'publication',unit:unitId(slotUnit),attempt:slot.attempt},[INTEGRATION_SLOT],true,slot); invoke(slot,false,true); }
     setTime(now-30_000);
     for(const u of r.ctx.plan().units) if(u.contingent.length && Number(u.id.slice(1))%2===0) j.fact({kind:'edge-resolved',edge:edgeId(u.contingent[0]!.id),command:commandId('cmd-0000000000000500'),evidence:`Owner confirmed readiness for ${unitText(Number(u.id.slice(1))).title}.`});
-    const finding=findingId('F-1'); j.fact({kind:'finding-opened',id:finding,key:sha256('1'.repeat(64)),lens:'invariants',severity:'P2',obligation:obligationId('I-1'),visionClauses:[visionClauseId('V-1')],claim:unitText(3).revise.reason,evidence:[{path:repoPath(unitText(3).edit.file),blob:null}],mutant:null,source:{type:'job',job:jobId('audit',1)},gateHadPassed:true});
-    for(let n=0;n<(design?3:16);n++) { const affected=unitText(historicalCount+1+n%parkedCount); const request=raiseNeedsUser(j,runDir,{reason:n<5?'owner-request':'revision-notice',blocking:n<5,subject:n%2?{type:'arc'}:{type:'unit',unit:unitId(`u${historicalCount+1+n%parkedCount}`)},summary:`${n<5?'Resolve the hold on':'Review the clarification for'} ${affected.title}`,recommendation:`Review ${affected.title} and record whether to resume or defer it.`,options:[{id:'retry',label:`Resume ${affected.title}`},{id:'defer',label:`Defer ${affected.title}`} ],evidence:[absPath(live[n%4]!.transcript)]},{type:'arc'}); if(n>=11) j.fact({kind:'needs-user-acked',id:request,command:commandId(`cmd-${String(600+n).padStart(16,'0')}`),choice:'defer'}); }
-    const rev2=keptPayload(runDir,j.view.planApplied()!.payloadSha256); commitRevisionNow(j,runDir,{...rev2,source:{type:'command',command:commandId('cmd-0000000000000900')},base:planRev(2),rev:planRev(3),changes:[],dispositions:[],divergences:[]},{type:'arc'});
+    const finding=findingId(`F-${++findings}`); j.fact({kind:'finding-opened',id:finding,key:sha256('1'.repeat(64)),lens:'invariants',severity:'P2',obligation:obligationId('I-1'),visionClauses:[visionClauseId('V-1')],claim:unitText(3).revise.reason,evidence:[{path:repoPath(unitText(3).edit.file),blob:null}],mutant:null,source:{type:'job',job:jobId('audit',1)},gateHadPassed:true});
+    for(let n=0;n<(design?3:16);n++) { const affected=unitText(historicalCount+1+n%parkedCount); const request=raiseNeedsUser(j,runDir,{reason:n<5?'owner-request':'revision-notice',blocking:n<5,subject:n%2?{type:'arc'}:{type:'unit',unit:unitId(`u${historicalCount+1+n%parkedCount}`)},summary:`${n<5?'Resolve the hold on':'Review the clarification for'} ${affected.title}`,recommendation:`Review ${affected.title} and record whether to resume or defer it.`,options:[{id:'retry',label:`Resume ${affected.title}`},{id:'defer',label:`Defer ${affected.title}`} ],evidence:[absPath(live.length?live[n%4]!.transcript:transcripts[n%transcripts.length]!)]},{type:'arc'}); if(n>=11) j.fact({kind:'needs-user-acked',id:request,command:commandId(`cmd-${String(600+n).padStart(16,'0')}`),choice:'defer'}); }
+    const last=keptPayload(runDir,j.view.planApplied()!.payloadSha256); commitRevisionNow(j,runDir,{...last,source:{type:'command',command:commandId('cmd-0000000000000900')},base:planRev(rev),rev:planRev(rev+1),changes:[],dispositions:[],divergences:[]},{type:'arc'});
     makeForge({dir:join(out,'forge'),repo:{host:'forge.test',owner:'tidewater',name:'platform'},pulls});
     const queue = Array.from({length:Math.max(4,Math.floor(count*.06))},(_,n)=>({unit:`u${merged+3+n}`,stage:'candidate',attempt:1,publication:n%3!==2,request:{named:[],pools:[],cpu:n%3===2?4:0,publication:n%3!==2},envBlocked:false,pressureBlocked:n%3===2,queuedAt:now-(n+1)*600_000,reasons:[n%3===2?'cpu-pressure':n%2?'admission-hold:base-red':'publication-slot']}));
-    writeFileSync(join(runDir,'sched.json'),JSON.stringify({v:2,arc,pid:process.pid,tasks:[...live.map(i=>({unit:i.unit,state:'in-stage'})),{unit:`u${activeStart+4}`,state:'in-stage'},{unit:slotUnit,state:'in-stage'}],queue,jobQueue:[],drains:[]}));
-    const manifest: ScaleManifest={arc,repo,runDir,hostDir,seed,days,now:SCALE_NOW,startedAt:new Date(origin).toISOString(),units:count,systems:SYSTEMS,milestones,passedMilestones,dependencies:plan.units.reduce((n:number,u:{after:string[]})=>n+u.after.length,0),contingentEdges:plan.units.reduce((n:number,u:{contingent?:unknown[]})=>n+(u.contingent?.length??0),0),invocations,agentInvocations,attempts:[...invokedAttempts.values()].reduce((n,a)=>n+a.size,0),stageAttempts:Object.values(j.derived().units).reduce((n,u)=>n+u.counters.attempts,0),buildRounds,live,merged,withdrawn:withdrawn+1,parked:parkedCount,openAttention:design?3:11,ackedAttention:design?0:5,costUsd:Math.round(costUsd*100)/100,events:j.view.highWater()};
+    if(field) { const stop=commandId('cmd-0000000000000950'); setTime(now-20_000); j.fact({kind:'stop-requested',command:stop,mode:'immediate',deadline:null}); j.fact({kind:'stop-completed',command:stop}); }
+    else writeFileSync(join(runDir,'sched.json'),JSON.stringify({v:2,arc,pid:process.pid,tasks:[...live.map(i=>({unit:i.unit,state:'in-stage'})),{unit:`u${activeStart+4}`,state:'in-stage'},{unit:slotUnit,state:'in-stage'}],queue,jobQueue:[],drains:[]}));
+    const manifest: ScaleManifest={arc,repo,runDir,hostDir,seed,days,now:SCALE_NOW,startedAt:new Date(origin).toISOString(),units:count+added.length,systems:SYSTEMS,milestones,passedMilestones,dependencies:plan.units.reduce((n:number,u:{after:string[]})=>n+u.after.length,0),contingentEdges:plan.units.reduce((n:number,u:{contingent?:unknown[]})=>n+(u.contingent?.length??0),0),invocations,agentInvocations,attempts:[...invokedAttempts.values()].reduce((n,a)=>n+a.size,0),stageAttempts:Object.values(j.derived().units).reduce((n,u)=>n+u.counters.attempts,0),buildRounds,live,merged:merged+(field?3:0),withdrawn:withdrawn+1+(field?3:0),parked:parkedCount,openAttention:design?3:11,ackedAttention:design?0:5,costUsd:Math.round(costUsd*100)/100,events:j.view.highWater()};
     writeFileSync(join(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
     j.close(); closeJournal=undefined;
     return manifest;
@@ -336,8 +381,8 @@ export async function ownScaleArc(manifest: ScaleManifest) {
 
 if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
   const [out,...args]=process.argv.slice(2), options: ScaleOptions={}; let live=false;
-  if(!out) throw new Error('Usage: node test/helpers/scale-arc.ts <outDir> [--units N] [--days D] [--seed S] [--live]');
-  for(let i=0;i<args.length;i++) { const arg=args[i]; if(arg==='--live')live=true; else if(arg==='--preset') { if(args[++i]!=='design') throw new Error('--preset must be design'); options.preset='design'; } else if(arg==='--units'||arg==='--days'||arg==='--seed') { const value=args[++i]; if(!value)throw new Error(`${arg} requires a value`); if(arg==='--seed')options.seed=value;else if(arg==='--units')options.units=Number(value);else options.days=Number(value); } else throw new Error(`Unknown option: ${arg}`); }
+  if(!out) throw new Error('Usage: node test/helpers/scale-arc.ts <outDir> [--units N] [--days D] [--seed S] [--preset design [--field]] [--live]');
+  for(let i=0;i<args.length;i++) { const arg=args[i]; if(arg==='--live')live=true; else if(arg==='--field')options.field=true; else if(arg==='--preset') { if(args[++i]!=='design') throw new Error('--preset must be design'); options.preset='design'; } else if(arg==='--units'||arg==='--days'||arg==='--seed') { const value=args[++i]; if(!value)throw new Error(`${arg} requires a value`); if(arg==='--seed')options.seed=value;else if(arg==='--units')options.units=Number(value);else options.days=Number(value); } else throw new Error(`Unknown option: ${arg}`); }
   const started=performance.now(), manifest=await generateScaleArc(out,options);
   process.stdout.write(manifest.repo+'\n'); process.stderr.write(`${manifest.units} units, ${manifest.invocations} invocations, ${manifest.events} events, $${manifest.costUsd.toFixed(2)} in ${((performance.now()-started)/1000).toFixed(2)}s\n`);
   if(live) {

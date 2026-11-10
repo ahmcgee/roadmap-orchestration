@@ -103,7 +103,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
           res.once('close', cleanup);
           let ready = false;
           try {
-            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {} }, PREPARATION.lifetimeMs) as { data: object } : null;
+            const page = invocation ? await ask({ kind: 'read', path: ['arcs', arc, 'invocations', invocation, 'history'], params: {}, patient: true }, PREPARATION.lifetimeMs) as { data: object } : null;
             if (closed()) return;
             if (invocation && req.method !== 'HEAD') await ask({ kind: 'history-subscribe', arc, invocation }, PREPARATION.lifetimeMs);
             if (closed()) return;
@@ -138,7 +138,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
           const aborted = () => { if (!res.writableFinished) controller.abort(); };
           res.once('close', aborted);
           try {
-            const result = await preparation.read({instance, path, params: query}, () => ask({kind: 'read', path, params: query}, PREPARATION.lifetimeMs), controller.signal, token, cancel === '1');
+            const result = await preparation.read({instance, path, params: query}, () => ask({kind: 'read', path, params: query, patient: true}, PREPARATION.lifetimeMs), controller.signal, token, cancel === '1');
             if (controller.signal.aborted) return;
             if (result.state === 'preparing') {
               res.setHeader('retry-after', '1');

@@ -251,7 +251,8 @@ function AgentEvent({ event, base, identity, onLayout }: any) {
       h("header", { className: "history-event-head" }, h("strong", null, title), event.at && h("time", null, relativeTime(event.at, now))),
       unknown ? h("details", null, h("summary", null, "Raw event payload"), h("pre", null, historyJson(event.text) ? JSON.stringify(historyJson(event.text), null, 2) : event.text), expansion("text")) : structured && event.status === "failed" ? h("details", { open: true, className: "tool-output" }, h("summary", null, "Output  error"), h("pre", null, event.output), expansion("output")) : !structured && event.type !== "result" && (event.type === "thinking" ? h(Thinking, { event, base, identity }) : h(R.Fragment, null, h(HistoryMarkdown, { text: event.text }), expansion("text")))
     ),
-    (event.tokens != null || event.elapsedMs != null) && h("small", { className: "muted history-event-meta" }, [event.tokens != null ? `${pluralise(event.tokens, "token")}` : "", event.elapsedMs != null ? elapsed(event.elapsedMs) : ""].filter(Boolean).join("  "))
+    // A model call's usage counts its whole context, everything earlier in the conversation included: say so, never a bare count.
+    (event.tokens != null || event.elapsedMs != null) && h("small", { className: "muted history-event-meta", title: event.tokens != null ? "Tokens this model call read and wrote, including the conversation before it" : void 0 }, [event.tokens != null ? `Context ${event.tokens.toLocaleString("en-US")} ${event.tokens === 1 ? "token" : "tokens"}` : "", event.elapsedMs != null ? elapsed(event.elapsedMs) : ""].filter(Boolean).join("  "))
   );
 }
 function TranscriptVerdict({ event, base, identity, onLayout, summary=false }: any) {

@@ -2,7 +2,7 @@ import { saveVisit } from './activity-query.ts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, displayZone, elapsed, formatInstant, get, link, loadError, money, route, tabs, Time } from './shared.tsx';
+import { Clock, displayZone, elapsed, formatInstant, get, link, loadError, money, relativeTime, route, tabs, Time } from './shared.tsx';
 import { useObservation } from './observation.ts';
 import { Graph } from './graph.tsx';
 import { UnitDetail } from './unit-detail.tsx';
@@ -48,7 +48,8 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
   const graphInput=useMemo(()=>graphEnvelope?graphData(graphEnvelope):null,[graphEnvelope]);
   const scrolls=useRef(new Map<string,number>());
   useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);};},[where.tab,Boolean(graphInput)]);
-  const stale=!checkedAt||now-Date.parse(checkedAt)>5000||Boolean(error||listError);
+  // `old`: nothing verified for five seconds. An error also freezes counters, but its banner explains it; only age is reported as age.
+  const old=!checkedAt||now-Date.parse(checkedAt)>5000,stale=old||Boolean(error||listError);
   const clock=stale?Date.parse(checkedAt||new Date(now).toISOString()):now;
   const arc=selected,tab=where.tab,open=(id:string)=>{if(arc)location.hash=link(arc,tab,'units',id).slice(1);},close=()=>{if(arc)location.replace(link(arc,tab));};
   const counts:Partial<Record<Signal,number>>={};
@@ -57,7 +58,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
   const total=p?.progress.total,day=p?.lifecycle.startedAt?Math.max(1,Math.floor(((p.lifecycle.endedAt?Date.parse(p.lifecycle.endedAt):clock)-Date.parse(p.lifecycle.startedAt))/86400_000)+1):null;
   // One connection state at a time, and no verified contact yet is never presented as stale data.
   const unreachable=!arc&&Boolean(listError);
-  const live=!checkedAt?unreachable||error?'Offline':'Connecting':stale?'Stale':connected?'Connected':'Reconnecting';
+  const live=!checkedAt?unreachable||error?'Offline':'Connecting':stale?'Stale':connected?'Connected':store?.opened?'Reconnecting':'Connecting';
   if(where.arc&&selected&&where.arc!==selected)return <main className="empty"><p>This console shows the current arc only</p><a href={link(selected,'graph')}>Open {selected}</a></main>;
   return <Clock.Provider value={clock}><div className="shell" data-stale={stale}>
     <a className="skip" href="#content" onClick={ev=>{ev.preventDefault();document.getElementById('content')?.focus();}}>Skip to content</a>
@@ -82,7 +83,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
       {arc&&tab==='resources'&&<Resources arc={arc}/>}
       {(tab==='graph'?!graphInput:!arc)&&(unreachable?<div className="empty" role="alert"><h1>Can't reach the console server.</h1><Button onClick={retryList}>Retry</Button></div>:<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error?loadError(error):'Connecting…':listed?'No current arc in this repository.':'Connecting…'}</p></div>)}
     </main>
-    {stale&&checkedAt&&<div className="stale-notice"><Time at={checkedAt} prefix="Last updated "/>. Live counters paused.</div>}
+    {old&&checkedAt&&<div className="stale-notice"><time dateTime={checkedAt} title={formatInstant(checkedAt,zone)}>Last updated {relativeTime(checkedAt,now)}</time>. Live counters paused.</div>}
     {arc&&where.resource&&<ResourceDetailDrawer key={where.resource} arc={arc} id={where.resource} close={close}/>}
     {arc&&where.scope&&<EffortScopeDetail key={where.scope} arc={arc} id={where.scope} close={close}/>}
     {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}

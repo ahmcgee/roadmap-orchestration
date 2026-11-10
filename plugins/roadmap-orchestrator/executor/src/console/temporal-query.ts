@@ -150,8 +150,8 @@ export class ConsoleTemporal {
       // Audits and decisions are latest first, findings retain canonical order.
       if (section === 'audits' || section === 'decisions') rows.reverse();
       return {rows, context: {...versioned({section, enabled:s.holistic, currentAudit:current ? {running:current.running !== null,job:current.running} : null,
-        latestOutcome: audits.length ? {at:audits.at(-1)!.at,job:audits.at(-1)!.job,outcome:audits.at(-1)!.outcome} : null,
-        counts:{audits:audits.length,findings:s.findings.active.length,decisions:s.decisionsSince.length}}, {basis:'current',from:null,to:null}), ...(sourceVersion ? {viewVersion:sourceVersion} : {})}};
+        latestOutcome: audits.length ? {at:audits.at(-1)!.at,job:audits.at(-1)!.job,outcome:audits.at(-1)!.outcome,verdict:audits.at(-1)!.verdict} : null,
+        counts:{audits:audits.length,findings:s.findings.active.length,raised:e.data.summary.caught.uniqueFindings,decisions:s.decisionsSince.length}}, {basis:'current',from:null,to:null}), ...(sourceVersion ? {viewVersion:sourceVersion} : {})}};
     });
     return responseBound(e,data,limit===100?128*1024:64*1024) as HolisticView;
   }

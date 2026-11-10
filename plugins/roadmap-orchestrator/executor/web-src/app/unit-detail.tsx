@@ -4,11 +4,10 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { Drawer, Intent } from './drawer.tsx';
 import { HistoryMarkdown } from './markdown.tsx';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, elapsed, link, money, pluralise, route, SignalMark, Time, get } from './shared.tsx';
+import { Clock, elapsed, link, money, pluralise, route, sentence, SignalMark, Time, get } from './shared.tsx';
 import { useSelectedDetail, Views } from './view-state.ts';
 import type { UnitView, MilestoneView, DetailPage } from '../../src/console/detail-protocol.ts';
 import { costWords, holdClassWords, plainWords, stageStatusWords, stageWords, stateWords, signalWords, timedWords, waitCountWords } from '../../src/console/vocabulary.ts';
-const milestoneStateWords=(state:string)=>({walking:'In progress',building:'In progress',blocked:'Blocked',pending:'Waiting to start'} as Record<string,string>)[state]??stateWords(state);
 function More({page,load}:{page:DetailPage<unknown>;load:()=>void}){return page.next?<Button onClick={load}>Show more ({page.rows.length} of {page.total})</Button>:null;}
 export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void;stale?:boolean}) {
   const cache=useContext(Views);
@@ -34,12 +33,15 @@ export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void;s
   const matches=detail&&(id.startsWith('milestone:')?detail.id===id.slice(10):detail.unit?.id===id);
   if(!matches)return <Drawer title={selected.error?'Details unavailable':'Reading details…'} close={close}><p role={selected.error?'alert':'status'}>{selected.error||'Waiting for verified detail…'}</p>{selected.error&&<Button onClick={selected.retry}>Retry</Button>}</Drawer>;
   if(id.startsWith('milestone:')){
-    const g=detail as MilestoneView,outstanding=g.members.rows.filter(r=>r.signal!=='passed');
+    const g=detail as MilestoneView,outstanding=g.members.rows.filter(r=>r.signal!=='passed'&&r.signal!=='withdrawn'),withdrawn=g.members.rows.filter(r=>r.signal==='withdrawn');
+    const row=(row:MilestoneView['members']['rows'][number])=><a className="dependency-row" key={row.id} href={link(arc,route().tab,'units',row.id)}><span className="unit-id">{row.id}</span><strong>{row.title}</strong><span><SignalMark state={row.signal}/>{row.state}</span>{row.replacedBy&&<small className="replaced-by">Replaced by {row.replacedBy.id}, <SignalMark state={row.replacedBy.signal}/>{row.replacedBy.state.toLowerCase()}</small>}</a>;
     return <Drawer title={`${g.id}${g.name?` ${g.name}`:''}`} close={close}>
       {(error||selected.error)&&<div><p role="alert">{error||selected.error}</p><Button onClick={reload}>Reload detail</Button></div>}
-      <div className="unit-meta"><strong>{g.merged}/{g.total} passed</strong><span><SignalMark state={g.passed?'passed':'pending'}/>{g.passed?'Passed':'Not passed yet'}</span><span>{g.passed?'':milestoneStateWords(g.state)}</span></div>
+      <div className="unit-meta"><strong>{g.merged} of {pluralise(g.total,'unit')} merged</strong>{g.withdrawn>0&&<span><SignalMark state="withdrawn"/>{g.withdrawn} withdrawn</span>}<span><SignalMark state={g.passed?'passed':'pending'}/>{g.passed?'Passed':'Not passed yet'}</span><span title="Its units, their re-entries and its walkthroughs">Spend {money(g.costUsd)}</span></div>
+      {g.reason&&<p className="milestone-reason">Not passed. {sentence(g.reason)}</p>}
       <Button variant="outline" onClick={()=>{close();window.dispatchEvent(new CustomEvent('roadmap-focus-milestone',{detail:id}));}}>Focus this milestone</Button>
-      <section><h3>Outstanding units ({g.total-g.merged})</h3><div className="outstanding-units">{outstanding.map(row=><a className="dependency-row" key={row.id} href={link(arc,route().tab,'units',row.id)}><span>{row.id}</span><strong>{row.title}</strong><span><SignalMark state={row.signal}/>{stateWords(row.state)}</span></a>)}</div><More page={g.members} load={()=>void more('members')}/>{outstanding.some(row=>row.signal==='withdrawn')&&<p className="muted">Withdrawn units are included for context; this list does not diagnose the gate's blocker.</p>}</section>{intent}{continuations}
+      <section><h3>Outstanding units ({g.total-g.merged-g.withdrawn})</h3><div className="outstanding-units">{outstanding.map(row)}</div>{!outstanding.length&&!g.members.next&&<p className="muted">None</p>}</section>
+      {g.withdrawn>0&&<section><h3>Withdrawn units ({g.withdrawn})</h3><div className="outstanding-units">{withdrawn.map(row)}</div></section>}<More page={g.members} load={()=>void more('members')}/>{intent}{continuations}
     </Drawer>;
   }
   const d=detail as UnitView,u=d.unit,signal=u.signal;

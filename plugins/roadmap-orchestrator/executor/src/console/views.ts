@@ -3,6 +3,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import { unitSignal } from './signals.ts';
 import { identityIndex, stageFinished, stageIndex } from './indexes.ts';
+import { milestoneMembership, milestoneReason, milestoneSignal } from './milestones.ts';
 import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
 export function preview(text: string, detail: DetailRef, limit = 240): Preview {
@@ -38,10 +39,11 @@ export function graphView(e: Envelope): GraphView {
       signal: unitSignal(u.state),
       state: u.state, stage: u.stage, stageFinished: stageFinished(steps.get(u.unit), u.stage), systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null};
   });
-  const states = new Map(s.milestones.map(m => [String(m.id), m]));
+  const states = new Map(s.milestones.map(m => [String(m.id), m])), membership = milestoneMembership(e);
   const milestones: GraphView['milestones'] = (e.data.plan?.milestones ?? []).map(m => {
-    const state = states.get(m.id)!;
-    return {id: String(m.id), ...(m.name === undefined ? {} : {name: m.name}), state: state.state, passed: state.passed, memberIds: [...m.units]};
+    const state = states.get(m.id)!, members = membership.milestones.find(g => g.id === m.id)!;
+    return {id: String(m.id), ...(m.name === undefined ? {} : {name: m.name}), state: state.state, passed: state.passed, memberIds: members.memberIds,
+      merged: members.merged, withdrawn: members.withdrawn, signal: milestoneSignal(e, state), reason: milestoneReason(e, membership, m.id), costUsd: e.data.summary.milestones.find(g => g.id === m.id)!.costUsd};
   });
   const edges: GraphView['edges'] = s.edges.map(edge => {
     switch (edge.type) {
@@ -51,7 +53,7 @@ export function graphView(e: Envelope): GraphView {
     }
   });
   for (const m of milestones) for (const unit of m.memberIds) edges.push({kind: 'feeds', source: unit, target: `milestone:${m.id}`});
-  return versioned({units, milestones, edges, focus: {activeIds: units.filter(u => u.signal === 'active').map(u => u.id), firstUncleared: milestones.find(m => !m.passed)?.id ?? null}}, {basis: 'current', from: null, to: null});
+  return versioned({units, milestones, noMilestone: {ids: membership.none.ids, merged: membership.none.merged, withdrawn: membership.none.withdrawn}, edges, focus: {activeIds: units.filter(u => u.signal === 'active').map(u => u.id), firstUncleared: milestones.find(m => !m.passed)?.id ?? null}}, {basis: 'current', from: null, to: null});
 }
 /** Each projection has its own bounded cache. No observations or report objects are retained here. */
 export class ConsoleViews {

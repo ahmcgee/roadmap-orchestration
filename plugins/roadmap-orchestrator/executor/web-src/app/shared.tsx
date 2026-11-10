@@ -31,6 +31,10 @@ export const link = (arc: string, tab: string = route().tab, kind?: 'units' | 'i
 export const fullLogLink = (arc: string, id: string) => { const [path, query] = link(arc, route().tab, 'invocations', id).split('?'); return `${path}/log${query ? `?${query}` : ''}`; };
 export const pluralise = (n: number, singular: string, plural = singular + 's') => `${n} ${n === 1 ? singular : plural}`;
 export const money = (n: number) => `$${n.toFixed(2)}`;
+/** Terminal control sequences (colour, cursor, title) removed: recorded check output is shown as text. */
+export const plainText = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '');
+/** A recorded clause as its own sentence: capitalised, ending in a full stop. */
+export const sentence = (clause: string) => `${clause.charAt(0).toUpperCase()}${clause.slice(1)}${/[.!?]$/.test(clause) ? '' : '.'}`;
 export function elapsed(ms: number | null | undefined): string { if (ms == null) return 'Not recorded'; if (ms < 1000) return `${Math.round(ms)} ms`; const n = Math.floor(ms / 1000); return n < 60 ? `${n}s` : n < 3600 ? `${Math.floor(n / 60)}m ${n % 60}s` : n < 86400 ? `${Math.floor(n / 3600)}h ${Math.floor(n % 3600 / 60)}m` : `${Math.floor(n / 86400)}d ${Math.floor(n % 86400 / 3600)}h`; }
 export const Clock = createContext(Date.now());
 /** One display timezone for the whole console. An explicit `zone` in a deep link still overrides it for that view. */

@@ -9,7 +9,8 @@ import { record } from '../tui/projection.ts';
 import { selectedUnitJourney } from './unit-journey.ts';
 import { stageFinished } from './indexes.ts';
 import { projectionIndex, timelineIntervals } from './tab-projections.ts';
-import { graphStatus } from './signals.ts';
+import { graphStatus, unitSignal } from './signals.ts';
+import { lineageHead, milestoneMembership, milestoneReason } from './milestones.ts';
 import { stageWords, stateWords } from './vocabulary.ts';
 import { arcBounds, versioned } from './views.ts';
 import type { DetailPage, InvocationSummary, UnitSummary, RelatedUnit, UnitView, MilestoneView, InvocationView } from './detail-protocol.ts';
@@ -129,11 +130,11 @@ function rawMilestoneView(e:Envelope,id:string,params:Record<string,string>):Mil
   params={...params,_entity:`milestone:${id}`};
   const g=e.data.plan?.milestones?.find(g=>g.id===id),state=e.data.display.status.milestones.find(g=>g.id===id);
   if(!g||!state)throw new ConsoleError('not-found','milestone is not in the applied plan');
-  const identities=projectionIndex(e).identities;
-  const members=g.units.map(id=>{const u=e.data.display.status.units.find(u=>u.unit===id)!;return {id:String(id),title:identities.get(id)!.title,state:stateWords(u.state),signal:u.state==='cut'||u.state==='superseded'?'withdrawn' as const:graphStatus(u.state),source:String(id),target:`milestone:${g.id}`,unmet:false};});
+  const identities=projectionIndex(e).identities,membership=milestoneMembership(e),counts=membership.milestones.find(m=>m.id===id)!;
+  const members=counts.memberIds.map(id=>{const u=membership.states.get(id)!,head=lineageHead(membership.states,id),h=membership.states.get(head)!;return {id,title:identities.get(id)!.title,state:stateWords(u.state),signal:unitSignal(u.state),source:id,target:`milestone:${g.id}`,unmet:false,...(head===id?{}:{replacedBy:{id:head,state:stateWords(h.state),signal:unitSignal(h.state)}})};});
   const order=['held','failed','active','pending','withdrawn','passed'];
   members.sort((a,b)=>order.indexOf(a.signal)-order.indexOf(b.signal)||a.id.localeCompare(b.id,undefined,{numeric:true}));
-  return versioned({id:String(g.id),name:g.name??null,state:state.state,passed:state.passed,total:members.length,merged:members.filter(u=>u.signal==='passed').length,members:page(e,members,params,'members'),intent:text(e,g.text,params)},scope);
+  return versioned({id:String(g.id),name:g.name??null,state:state.state,passed:state.passed,total:counts.total,merged:counts.merged,withdrawn:counts.withdrawn,reason:milestoneReason(e,membership,id),costUsd:e.data.summary.milestones.find(m=>m.id===id)!.costUsd,members:page(e,members,params,'members'),intent:text(e,g.text,params)},scope);
 }
 export function detailParams(params:Record<string,string>,sections:string[]) {
   for(const key of Object.keys(params))if(!['epoch','revision','minHighWater','section','cursor','limit'].includes(key))throw new ConsoleError('invalid','unknown detail query parameter');
