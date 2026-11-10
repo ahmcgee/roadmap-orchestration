@@ -2,10 +2,10 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-type FindingId,findingId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
+type FindingId,findingId,type LaneId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
 type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
-import { journalNeedsUserIds,DEMO_ACTS,type DemoAct,type PauseTarget,type ResumeTarget } from '../core/records.ts';
+import { journalNeedsUserIds,parseFailureRef,DEMO_ACTS,RERUN_CAUSES,type DemoAct,type PauseTarget,type RerunCause,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
 import { type BuildClass,type ProfileName,backend,buildClass,profileName } from '../routing/types.ts';
@@ -66,6 +66,8 @@ export type Command =
   | Readonly<{ command: 'dismiss'; finding: FindingId; counterEvidence: string; run: RunLocator }>
   | Readonly<{ command: 'note'; unit: UnitId; brief: string; run: RunLocator }>
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
+  /** dev.59: the lanes of `unit` again at the commit lanes#`attempt` ran on, its red on `lane` waived for `cause`. */
+  | Readonly<{ command: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string; run: RunLocator }>
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ command: 'audit'; run: RunLocator }>
   | Readonly<{ command: 'close-admissions'; run: RunLocator }>
@@ -339,6 +341,15 @@ export function parseCommand(argv: readonly string[]): Command {
       const p = parseRest(rest, LOCATOR, command);
       return { command, unit: arg(command, '<unit>', unitId, onePositional(p, command, '<unit>')), run: locator(p, command) };
     }
+    case 'rerun': {
+      const p = parseRest(rest, { ...LOCATOR, cause: 'value', evidence: 'value' }, command);
+      const ref = arg(command, '<unit>/lanes#<n>/<lane>', parseFailureRef, onePositional(p, command, '<unit>/lanes#<n>/<lane>'));
+      if (ref.type !== 'lane') throw new CliError(`rerun: name a lane failure, <unit>/lanes#<n>/<lane> (as \`roadmap status\` lists it); ${ref.unit}/${ref.stage}#${ref.attempt} is a stage outcome`);
+      const cause = arg(command, '--cause', (v, path = '--cause') => oneOf(RERUN_CAUSES)(v, path), required(p, command, 'cause', RERUN_CAUSES.join('|')));
+      const evidence = required(p, command, 'evidence', '<line>');
+      if (evidence.trim() === '') throw new CliError('rerun: --evidence <line> must be non-empty');
+      return { command, unit: ref.unit, attempt: ref.attempt, lane: ref.lane, cause, evidence, run: locator(p, command) };
+    }
     case 'audit': {
       const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);
@@ -440,7 +451,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
       );
   }
 }

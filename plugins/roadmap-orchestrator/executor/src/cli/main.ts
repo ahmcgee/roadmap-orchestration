@@ -148,6 +148,8 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       });
     case 'merge-in':
       return submit(command.run, hostDir, { type: 'merge-in', unit: command.unit });
+    case 'rerun':
+      return submit(command.run, hostDir, { type: 'rerun', unit: command.unit, attempt: command.attempt, lane: command.lane, cause: command.cause, evidence: command.evidence });
     case 'demo':
       return submit(command.run, hostDir, { type: 'demo', act: command.act });
     case 'audit':

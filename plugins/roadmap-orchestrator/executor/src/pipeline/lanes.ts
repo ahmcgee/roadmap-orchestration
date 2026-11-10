@@ -67,7 +67,8 @@ import { externalVerdict } from '../holistic/external.ts';
 // deletions) it reuses that pass. A changed leaf test outside the lane's cwd (a dependency's, dev.59: field nu-124943)
 // runs the lane's argv: what the lane's runner finds is its own, never a path above its tree. A red test-only run is
 // never the lane's verdict (dev.59, class `targeted`): its rerun is the lane's argv, whose verdict counts, so a runner
-// that finds no test files among `files` costs a run, not a charge. A stochastic lane never runs test-only.
+// that finds no test files among `files` costs a run, not a charge. A stochastic lane never runs test-only, and neither does
+// a lane of a rerun the root ordered (dev.59, `roadmap rerun`): it runs the lane's argv.
 //
 // Stochastic lanes (dev.17, `Stochastic`): up to `runs` runs, each its own spawn and reservation (`<lane>.runs/<n>/` past
 // the first), stopping once `minPasses` passed or can no longer pass; the lane passes with `minPasses` passes, and its
@@ -1112,6 +1113,8 @@ export async function runLaneSeries(
     return { record, end: { kind: 'red', lane: record } };
   };
 
+  // dev.59: a lanes rerun the root ordered runs every lane's own argv: never test-only (`testOnlyRun`).
+  const rootRerun = parent.stage === 'lanes' && ctx.journal.view.unit(parent.unit).rerun !== null;
   for (const lane of lanes) {
     const now = laneNow(ctx, lane, at, ctx.plan().units.find((u) => u.id === parent.unit)?.systems);
     // dev.17: a deflake unit's verification runs its lane fresh, `runs` times, every run passing (never reused, never test-only).
@@ -1128,7 +1131,7 @@ export async function runLaneSeries(
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
     const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
-    const partial = reusable !== null || witnesses.has(lane.id) ? null : testOnlyRun(ctx, lane, at, now);
+    const partial = reusable !== null || witnesses.has(lane.id) || rootRerun ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {
       // The stage's entry reservation was the first lane's: unused, it is released before the next lane takes its own.

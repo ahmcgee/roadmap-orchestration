@@ -22,12 +22,12 @@ type CommandVerdict,type ContainmentMode,type StopMode,stopFieldsAsWritten,
 type DemoAct,
 type DispatchRecord,type KillReason,type KnownDefectMatch,type LensKindName,type PauseTarget,type PlanManifest,
 type PromptSize,
-type RedRev,type ResidueRecord,type ResumeTarget,
+type RedRev,type RerunCause,type ResidueRecord,type ResumeTarget,
 type RevisionManifest,type SpecPatch,type Stage,
 type Stochastic,
 type TokenUsage,
 type UsageUnavailableReason,
-COMMAND_VERDICTS,DEMO_ACTS,LENS_KIND_NAMES,
+COMMAND_VERDICTS,DEMO_ACTS,LENS_KIND_NAMES,RERUN_CAUSES,
 approvalFingerprint,
 classUsages,
 containmentMode,
@@ -487,11 +487,12 @@ export const STAGE_OUTCOME_KINDS = {
   // (2026-10-15, arc feedback #3): as at build. Plan defects (2026-10-16): `plan-defect` (a missing witness the lane never
   // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
-  // environment, never a red lane), here and at the candidate.
+  // environment, never a red lane), here and at the candidate. dev.59: `rerun-red` (a red, regression, flaky, not-certified or
+  // witnesses-missing series of a lanes rerun the root ordered, `lanes-rerun`: an uncharged park for the root).
   lanes: [
     'checkout-residue',
     'green', 'red', 'regression', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable',
+    'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable', 'rerun-red',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
@@ -684,6 +685,11 @@ export type JobStageOutcomeFact = Readonly<{
   verdict: 'pass' | 'revise' | 'keep' | 'drop' | 'abandoned' | 'bring-up-failed';
   findings: Readonly<{ P1: number; P2: number; P3: number; total: number }>;
 }>;
+
+/** dev.59: the lanes outcomes a rerun the root ordered records as `rerun-red` (`roadmap rerun`); a rerun waives each of them. */
+export const RERUN_REDS = ['red', 'regression', 'flaky', 'not-certified', 'witnesses-missing'] as const;
+/** dev.59: the lanes outcomes `roadmap rerun` may waive: a red of `RERUN_REDS`, or a rerun's own `rerun-red`. */
+export const RERUNNABLE = [...RERUN_REDS, 'rerun-red'] as const;
 
 /** The lanes outcomes covered by the uncharged certification allowance. */
 export const certificationRed = (stage: string, outcome: string): boolean =>
@@ -998,6 +1004,14 @@ export type HolisticFact =
   | Readonly<{ kind: 'noted'; unit: UnitId; command: CommandId; brief: Sha256Hex }>
   | Readonly<{ kind: 'steered'; unit: UnitId; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
   | Readonly<{ kind: 'merged-in'; unit: UnitId; command: CommandId; integrationTip: Sha; head: Sha }>
+  /**
+   * dev.59 (`roadmap rerun`): the root waived lanes attempt `attempt`'s red on `lane` at commit `at`, citing `cause` and
+   * `evidence`; the unit runs its lanes again there (`UnitState.entry`, `rerun`). At most one per (unit, lane, at).
+   */
+  | Readonly<{
+    kind: 'lanes-rerun'; unit: UnitId; command: CommandId; attempt: number; lane: LaneId; at: Sha; cause: RerunCause; evidence: string;
+    by: Readonly<{ role: 'root'; routingRev: RoutingRev }>;
+  }>
   | Readonly<{ kind: 'audit-requested'; command: CommandId }>
   | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
@@ -2184,6 +2198,11 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   })),
   'merged-in': object((f): Fact => ({
     kind: f.get('kind', literal('merged-in')), unit: f.get('unit', unitR), command: f.get('command', cmdR), integrationTip: f.get('integrationTip', shaR), head: f.get('head', shaR),
+  })),
+  'lanes-rerun': object((f): Fact => ({
+    kind: f.get('kind', literal('lanes-rerun')), unit: f.get('unit', unitR), command: f.get('command', cmdR), attempt: f.get('attempt', positive),
+    lane: f.get('lane', (v, p) => laneId(v, p)), at: f.get('at', shaR), cause: f.get('cause', oneOf(RERUN_CAUSES)), evidence: f.get('evidence', nonBlank),
+    by: f.get('by', object((g) => ({ role: g.get('role', literal('root')), routingRev: g.get('routingRev', (v, p) => routingRev(v, p)) }))),
   })),
   'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR) })),
   'admissions-closed': object((f): Fact => ({ kind: f.get('kind', literal('admissions-closed')), command: f.get('command', cmdR) })),

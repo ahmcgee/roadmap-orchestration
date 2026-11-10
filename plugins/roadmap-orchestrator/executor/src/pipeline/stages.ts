@@ -19,7 +19,7 @@ import { walkMcpConfig } from '../backends/mcp.ts';
 
 import type { Verification } from '../core/design.ts';
 import {
-BACKEND_PARK_CLASSES,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
+BACKEND_PARK_CLASSES,RERUN_REDS,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
 } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
@@ -1350,11 +1350,14 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (isCancelled(entered)) return entered;
   // A faulted series may leave unreadable ignored evidence. A cache-preserving reset would retain it and fault again.
   // Discard that series' checkout through the normal evidence-backed removal, just like legacy/diagnostic checkouts.
+  // dev.59: a rerun the root ordered (`UnitState.rerun`) runs in a fresh checkout too, so no ignored cache of the red it
+  // waived survives into it.
   const previous = ctx.journal.view.completedLanesOutcome(unit.id);
+  const rerun = ctx.journal.view.unit(unit.id).rerun !== null;
   for (const created of presentCheckouts(ctx.journal.view, unit.id)) {
     const faulted = previous?.outcome === 'executor-fault' && created.parent.type === 'stage'
       && created.parent.stage === 'lanes' && created.parent.attempt === previous.attempt;
-    if (faulted || created.expect.path !== verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
+    if (faulted || rerun || created.expect.path !== verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id)) await removeCheckout(ctx, created, parent, laneGlobs(ctx, spec));
   }
   const checkout = { path: verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const rt = laneRuntime(ctx, unit.id);
@@ -1402,6 +1405,8 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
     const checks = await executableChecks(ctx, unit, parent, salvaged, rt);
     if (checks.kind !== 'green') verdict = checks;
   }
+  // dev.59: a red series of a rerun the root ordered is `rerun-red`, the root's to decide: no fix round, no charge, no detail.
+  if (rerun && (RERUN_REDS as readonly string[]).includes(verdict.kind)) verdict = { kind: 'rerun-red' };
   const kind = verdict.kind;
   // The gate gets a tree binding only when it is next. The stable checkout itself survives other outcomes until retirement.
   const next = transition(ctx.journal.view.unit(unit.id), { stage: 'lanes', kind });

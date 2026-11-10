@@ -1592,6 +1592,12 @@ export type CommandBody =
   | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
+  /**
+   * `roadmap rerun <unit>/lanes#<attempt>/<lane> --cause estate|infra --evidence <line>` (dev.59): the unit's lanes again at the
+   * same commit, no build, in a fresh checkout, on the root's word that the named red lane's cause is outside the tree
+   * (`RERUN_CAUSES`). Scope {u}.
+   */
+  | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string }>
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ type: 'audit' }>
   /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
@@ -1602,6 +1608,10 @@ export type CommandBody =
    * host's demo instance. Scope ∅.
    */
   | Readonly<{ type: 'demo'; act: DemoAct }>;
+
+/** dev.59: why the root says a lanes red is not the tree's (`roadmap rerun --cause`): the estate it runs against, or the infrastructure. */
+export const RERUN_CAUSES = ['estate', 'infra'] as const;
+export type RerunCause = (typeof RERUN_CAUSES)[number];
 
 /** dev.13: the owner's acts on the demo (`roadmap demo <act>`). */
 export const DEMO_ACTS = ['up', 'down', 'hold', 'release'] as const;
@@ -1685,6 +1695,10 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     resume: f.get('resume', bool),
   })),
   'merge-in': object((f): CommandBody => ({ type: f.get('type', literal('merge-in')), unit: f.get('unit', unit) })),
+  rerun: object((f): CommandBody => ({
+    type: f.get('type', literal('rerun')), unit: f.get('unit', unit), attempt: f.get('attempt', positive), lane: f.get('lane', (v, p) => laneId(v, p)),
+    cause: f.get('cause', oneOf(RERUN_CAUSES)), evidence: f.get('evidence', nonBlank),
+  })),
   audit: object((f): CommandBody => ({
     type: f.get('type', literal('audit')),
   })),
@@ -1743,6 +1757,8 @@ export const NEEDS_USER_REASONS = [
   // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
+  // dev.59, blocking: a red during a root-ordered lanes rerun (`roadmap rerun`): the root's claim did not hold.
+  'rerun-red',
   // M4a, blocking (fixed by `m3Blocking`, as the M3 reasons): a pack review's blocking finding, holding admission before
   // the first (K14, H9).
   'pack-review',

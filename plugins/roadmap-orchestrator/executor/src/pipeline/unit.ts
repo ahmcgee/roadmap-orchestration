@@ -61,7 +61,7 @@ import { basename,join } from 'node:path';
 import { scan } from '../contain/proc.ts';
 import { ENV_INV,ENV_ROLE } from '../contain/session.ts';
 import { crashPoint } from '../core/crash.ts';
-import { specReopenable,JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
+import { RERUN_REDS,specReopenable,JUDGMENT_STAGES,type OutcomeStage,type StageOutcomeFact,type TestRef,testRefKey } from '../core/events.ts';
 import { type OpId,type ResourceInstance,type Sha,type UnitId,invocationId } from '../core/ids.ts';
 import { mutantOf } from '../core/projections.ts';
 import { type NeedsUserContent,type NeedsUserReason,STDERR_FILE,STDOUT_FILE,type Stage } from '../core/records.ts';
@@ -195,11 +195,18 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
     : reason === 'steered'
       ? `Review the steer pass (its build and ${f.stage} evidence). \`roadmap resume ${unit.id}\` re-runs ${f.stage} with the pass over, so the pipeline goes on as usual `
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
+    : reason === 'rerun-red'
+      ? rerunRedRecommendation(ctx, unit.id)
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
       : specReopenable(f)
         ? reopenRecommendation(unit.id, path, spec.rev)
         : reentryRecommendation(unit.id, f.stage, f.attempt, unitBranch(ctx.plan().arc, unit.id));
+  // dev.59: a lanes red park offers the rerun for a cause outside the tree (never a candidate's: the rerun is the lanes').
+  const offer = f.stage === 'lanes' && (RERUN_REDS as readonly string[]).includes(f.outcome)
+    ? ` If the red's cause is outside the tree (the estate it runs against, or infrastructure), \`roadmap rerun ${unit.id}/lanes#${f.attempt}/<lane> --cause estate|infra --evidence <line>\``
+      + ' runs the lanes again at this commit in a fresh checkout, no build and uncharged, once per lane per head; a red rerun parks for you.'
+    : '';
   return {
     // 1.0.0-dev.17: an executor fault is non-blocking (the arc goes on without the unit; src/schedule/fault.ts).
     blocking: faulted === null,
@@ -214,10 +221,24 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
     ]
       .filter((x) => x !== '').join(' '),
-    recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : recommendation,
+    recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : `${recommendation}${offer}`,
     options: [],
     evidence: haltEvidence(ctx, unit, f),
   };
+}
+
+/** dev.59: what a `rerun-red` park leaves the root: the rerun it ordered, and what `resume` restores. */
+function rerunRedRecommendation(ctx: StageContext, unit: UnitId): string {
+  const u = ctx.journal.view.unit(unit);
+  const ordered = ctx.journal.view.holistic().lanesReruns.filter((r) => r.unit === unit).at(-1);
+  if (u.rerun === null || ordered === undefined) throw new Error(`unit ${unit} parked rerun-red outside a rerun`);
+  const waived = u.rerun.waived;
+  const halts = waived.class === 'park' || waived.class === 'stop' || waived.class === 'retire';
+  return `The lanes rerun you ordered (${ordered.command}, cause ${ordered.cause}: ${ordered.evidence}) was red at ${ordered.at}: the cause is still there, or it is the tree's. `
+    + 'Read its lane failures and evidence. If something outside the tree is still broken, fix it and `roadmap rerun` a red lane of this attempt (each lane reruns once per head). '
+    + (halts
+      ? `\`roadmap resume ${unit}\` is refused: lanes#${waived.attempt}'s park stands, so steer the unit or re-enter it (\`fixes\`: ${unit}/${waived.stage}#${waived.attempt}).`
+      : `\`roadmap resume ${unit}\` ends the rerun and restores lanes#${waived.attempt}'s decision (its fix round, ${waived.chargeable ? 'already charged' : 'uncharged'}); or steer or re-enter the unit.`);
 }
 
 const factSummary = (f: StageOutcomeFact): string => `${f.stage} attempt ${f.attempt} ended ${f.outcome}`;
@@ -443,10 +464,11 @@ const entryTarget = (entry: EntryPoint): Target => (entry.kind === 'steer' ? { s
 
 /**
  * Runs the stage an entry names: a steer round (R11: a fresh session, the brief kept by the command, the budget as its
- * window; the continue of it after a pause), or a merge-in's lanes at the merged unit commit.
+ * window; the continue of it after a pause), a merge-in's lanes at the merged unit commit, or (dev.59) a rerun's lanes at
+ * the unit commit the waived attempt ran on (the stage reads the rerun from the fold, stages.ts `lanes`).
  */
 async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): Promise<StageDone<OutcomeStage> | Cancelled> {
-  if (entry.kind === 'merge-in') return lanes(ctx, unit, unitTip(ctx, unit.id));
+  if (entry.kind === 'merge-in' || entry.kind === 'rerun') return lanes(ctx, unit, unitTip(ctx, unit.id));
   return build(ctx, unit, continued(ctx, unit, { kind: 'steer', brief: steerBrief(ctx.runDir, entry.brief), budgetMin: entry.budgetMin }));
 }
 

@@ -394,7 +394,22 @@ brief are not queued command bodies. Brief/note evidence is hashed before submit
 
 Command files are write-once incoming records with accepted/queued/applied/rejected receipts. Accepted/queued does not
 mean applied. Apply receipt may expose remaining plan-defect advisories while refusing new defects. Steer drains a live
-unit before applying; note informs the next build without cancelling it. Resume backend is explicit availability recovery. Dismiss requires a named active finding and non-whitespace counterEvidence. `finding-dismissed {id,command,counterEvidence,by:{role:"root",routingRev}}` folds as ruled/dismissed, including P1. Same-command replay is idempotent; a new command against an unknown/closed finding refuses. It suppresses unchanged-evidence re-raising through the existing admission predicate. Campaign dismisses/counterEvidence fields only raise a root request. If the finding settled while the audit ran, the request is informational and cannot re-block completion.
+unit before applying; note informs the next build without cancelling it. Resume backend is explicit availability recovery.
+Rerun (dev.59, scope {u}, never killing a live build: its pending drain holds the unit's next admission) names a lane
+failure `<unit>/lanes#<n>/<lane>`: lanes#n is the unit's latest decision and latest stage attempt (`counters.attempts = n`:
+nothing started since, else refused toward steer), its outcome one of `RERUNNABLE` (red, regression, flaky, not-certified,
+witnesses-missing, or a rerun's own rerun-red), the lane ran red there at commit `at`, the unit branch is still at `at`, and
+no earlier rerun named that lane at `at`. Its effect and postcondition is `lanes-rerun {unit,command,attempt,lane,at,cause,
+evidence,by:{role:"root",routingRev}}`; the generic command crash points cover it plus `rerun.after-fact`. The fold checks
+the log's side of them (the attempt, the outcome, one per lane and head) and sets `UnitState.entry {kind:"rerun",seq,command}` (ENTRY_STAGE lanes) and `UnitState.rerun
+{seq,command,waived}`, `waived` the decided outcome the first rerun of a series waived. The lanes stage under `rerun` removes
+the stable verification checkout first (a fresh checkout), runs no lane test-only, and records any `RERUN_REDS` series as
+lanes `rerun-red`: an uncharged operator env park (reason `rerun-red`), outside the certification allowance. `rerun` is kept
+through holds, retries and retryable/env parks (their restore sets the rerun entry again) and through its own rerun-red park,
+whose `resume` restores `waived` and ends it; `resume` refuses when `waived` halted (the chargeable bound, a steer park),
+pointing at re-entry. Any other lanes outcome, a steer, merge-in, reopen or stale reopen clears it. The rerun's lanes attempt
+counts toward the judged-stage total; no build runs. Status decisions list it as kind `rerun`. New union members only:
+older logs carry none, so nothing defaults and `SCHEMA_VERSION` is unchanged. Dismiss requires a named active finding and non-whitespace counterEvidence. `finding-dismissed {id,command,counterEvidence,by:{role:"root",routingRev}}` folds as ruled/dismissed, including P1. Same-command replay is idempotent; a new command against an unknown/closed finding refuses. It suppresses unchanged-evidence re-raising through the existing admission predicate. Campaign dismisses/counterEvidence fields only raise a root request. If the finding settled while the audit ran, the request is informational and cannot re-block completion.
 
 NeedsUserRecord `{v:2,id,arc,raisedAt,blocking,subject,reason,summary,recommendation,options,evidence}` has subject
 unit `{type:'unit',unit}`, arc, host or `{type:'findings',findings:FindingId[]}` (nonempty). A dismissal closes matching finding subjects only when every named finding is resolved or ruled. Options are `{id,label}`; evidence is absolute paths. Ack record is
@@ -464,7 +479,7 @@ Live fact families:
 |---|---|
 | Work/usage | dispatch, judgment-inputs, approval, stage-outcome, meter, usage-unavailable; exact attempt/role/routing attribution |
 | Control | paused, stop-requested, stop-completed, resumed, backend-park, probe, reopened/unparked, edge-resolved, run-only |
-| Inputs | plan-applied, apply-queued, finding-dismissed, noted, steered, merged-in, revision-link stale-set/answers/reopening |
+| Inputs | plan-applied, apply-queued, finding-dismissed, noted, steered, merged-in, lanes-rerun, revision-link stale-set/answers/reopening |
 | CI | external-witness/reopened, spike-completed, attempt-marker/capped, lane-base-compared, lane-reused, series-certified, smoke-ran |
 | Review | review-triggered/completed; gate round/findings-ledger/dispute facts |
 | Target | witnessed, obligation-latched, finding-opened/transition, audit-started/ended/requested, divergence |
@@ -667,6 +682,7 @@ export type CommandBody =
   | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
+  | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: 'estate' | 'infra'; evidence: string }>
   | Readonly<{ type: 'audit' }>
   | Readonly<{ type: 'close-admissions' }>
   | Readonly<{ type: 'demo'; act: DemoAct }>;
@@ -701,6 +717,7 @@ export const NEEDS_USER_REASONS = [
   'recovery-holder-dead', 'previous-arc-unreconciled', 'build-lost', 'routing-changed',
   'park-escalated', 'env-blocked',
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
+  'rerun-red',
   'pack-review',
   'read-denied',
   'witness-lane-missing',
@@ -893,6 +910,8 @@ A held stage does not advance or consume a charge; backend/recovery holds retain
 | build/salvage/teardown/reproduce/lanes/candidate cleanup-failed | Each failed resource instance |
 | salvage commit-failed | host plus failed cleanup instances |
 | reproduce/lanes/candidate env-unavailable | Named environment |
+
+Lanes `rerun-red` (dev.59) is an operator env park: `resume` restores the decision the rerun waived (above, Commands).
 
 `src/park/table.ts` supplies targets; `src/pipeline/transitions.ts` owns class/charge/re-entry decisions. Recovering then
 parking on the same target within six hours becomes operator env (`env-blocked`), preventing endless flapping retries.

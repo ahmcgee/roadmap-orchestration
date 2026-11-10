@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { type FindingId, type Sha, laneId, sha } from '../src/core/ids.ts';
+import { type FindingId, type Sha, commandId, laneId, sha } from '../src/core/ids.ts';
 import type { JournalView } from '../src/core/interfaces.ts';
 import { type LaneDef, type SpecM1 } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
@@ -190,6 +190,27 @@ describe('lanes.test-only-own-tree (dev.59)', () => {
     assert.deepEqual([record!.argv, record!.verdict, record!.voided?.argv, record!.diagnostic, record!.flaky], [['node', '--test'], 'fail', ['node', '--test', 'test/b.test.js'], null, false]);
     assert.equal(laneSpawns(run, 'proxy').filter((i) => i.parent.type === 'stage' && i.parent.attempt === 2).length, 2, 'the targeted run and the lane\'s argv: no third run');
     assert.deepEqual(seriesLedger(run.ctx, parentOf(2), specLanes(run), 'spec', leaf, specSeriesRoot(run.runDir, parentOf(2))), s.ledger);
+  });
+});
+
+describe('lanes.test-only-rerun (dev.59)', () => {
+  test('lanes.test-only-rerun: a lanes rerun the root ordered runs the lane\'s argv where a test-only run would apply', T, async () => {
+    const run = unitRun({
+      files: { 'test/add1.test.js': PASSING },
+      lanes: [{ id: 'tests', cadence: 'build', argv: ['node', '--test', 'test/add1.test.js'], testArgv: ['node', '--test', '{files}'], systems: ['add'] }],
+      systemsMap: MAP,
+    });
+    assert.equal((await series(run, 1, specLanes(run), run.base)).end.kind, 'green');
+    closeAttempt(run, 1, 'red');
+    run.journal.fact({
+      kind: 'lanes-rerun', unit: U1, command: commandId('cmd-0000000000000001'), attempt: 1, lane: laneId('tests'), at: run.base, cause: 'infra',
+      evidence: 'the runner\'s disk was full', by: { role: 'root', routingRev: run.ctx.routing(null).rev },
+    });
+    assert.equal(run.journal.view.unit(U1).rerun?.waived.attempt, 1);
+    const leaf = commit(run, { 'test/add2.test.js': PASSING });
+    const rerun = await series(run, 2, specLanes(run), leaf);
+    assert.deepEqual(rerun.ledger.map((l) => [l.reused, l.argv]), [[null, ['node', '--test', 'test/add1.test.js']]], 'never testArgv over test/add2.test.js');
+    assert.ok(laneSpawns(run, 'tests').every((i) => i.expect.subject.purpose === 'lane' && i.expect.subject.files === undefined));
   });
 });
 

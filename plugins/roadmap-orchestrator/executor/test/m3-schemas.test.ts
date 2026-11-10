@@ -78,6 +78,7 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
   noted: {kind: 'noted', unit: unitId('u1'), command: commandId('cmd-0000000000000001'), brief: sha256('a'.repeat(64))},
   steered: { kind: 'steered', unit: U1, command: CMD, brief: H, budgetMin: 30, resume: false },
   'merged-in': { kind: 'merged-in', unit: U1, command: CMD, integrationTip: A, head: B },
+  'lanes-rerun': { kind: 'lanes-rerun', unit: U1, command: CMD, attempt: 9, lane: 'mul', at: A, cause: 'estate', evidence: 'the staging database was down 10:02-10:40', by: { role: 'root', routingRev: routingRev('a'.repeat(16)) } },
   'audit-requested': { kind: 'audit-requested', command: CMD },
   'admissions-closed': { kind: 'admissions-closed', command: CMD },
   'docs-published': { kind: 'docs-published', pub: 'docs-2', source: 'close-out', commit: B },

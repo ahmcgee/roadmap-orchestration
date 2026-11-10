@@ -127,7 +127,12 @@ chain arcs beyond the last acknowledged brief. The **architect** is the root age
    journeys without this config. The executor quiesces workloads, captures evidence,
    salvages changes and tears resources down before running full lanes and witnesses. A fresh gate judges the diff,
    actual reach against intent/non-goals, and evidence-backed responses to standing findings. Failed checks and gate
-   revisions feed fix rounds with original evidence and base comparisons. A spec lane red on its diff base
+   revisions feed fix rounds with original evidence and base comparisons. A lanes red the architect traces outside the
+   tree (the estate it runs against, or infrastructure) is waived with `roadmap rerun <unit>/lanes#<n>/<lane> --cause
+   estate|infra --evidence "<line>"`: the lanes run again at the same commit in a fresh checkout, every lane on its own
+   argv, with no build. The red's charge stands; the rerun charges nothing and counts as one judged stage, once per lane
+   per head. Green goes on to the gate; a red rerun parks `rerun-red` for the architect, and `resume <unit>` restores the
+   waived decision (a waived bound park stands). A spec lane red on its diff base
    raises an arc notice with a known-defect apply fragment; the root names its fix unit. That lane gets no
    further fix round: the gate continues, while candidate publication waits for the notice to be resolved.
    Verification checkouts keep stable paths and ignored caches between series. Every judgment begins in a fresh named

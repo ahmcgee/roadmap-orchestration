@@ -19,6 +19,7 @@ type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKi
 type ResourceEdge,type RetryStage,type StageOutcomeFact,JUDGMENT_STAGES,specReopenable,RECLAIM_HOLDERS,RESIDUE_HOLDERS,
 RETRYABLE_BACKEND_PARKS,
 RETRY_STAGES,
+RERUNNABLE,
 certificationRed,
 prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
@@ -90,12 +91,23 @@ export type SpecState = Readonly<{ rev: SpecRev; sha256: Sha256Hex }>;
 /**
  * M3 (step A3): where an architect's command sends a unit next, outside the transition table, until the stage it
  * names records an outcome that is not a hold. `steer` (R11): one steer round, the build of a fresh session with
- * the brief (`steered`); `merge-in`: its lanes, after the integration tip was merged into its branch (`merged-in`).
+ * the brief (`steered`); `merge-in`: its lanes, after the integration tip was merged into its branch (`merged-in`); dev.59
+ * `rerun`: its lanes again at the same commit, no build, the root having waived a red (`lanes-rerun`; `UnitState.rerun`).
  * `seq` is the fact's.
  */
 export type EntryPoint =
   | Readonly<{ kind: 'steer'; seq: number; command: CommandId; brief: Sha256Hex; budgetMin: number; resume: boolean }>
-  | Readonly<{ kind: 'merge-in'; seq: number; command: CommandId }>;
+  | Readonly<{ kind: 'merge-in'; seq: number; command: CommandId }>
+  | Readonly<{ kind: 'rerun'; seq: number; command: CommandId }>;
+
+/**
+ * dev.59: a lanes rerun the root ordered (`lanes-rerun`, `roadmap rerun`), from its fact until its lanes reach a verdict that
+ * goes on: kept through holds, retries and the parks a rerun can end in short of one (retryable or env: its restore runs the
+ * rerun's lanes again, `entry`), and through its own `rerun-red` park, whose resume restores `waived`, the decision the first
+ * rerun of the series waived. Cleared by any other outcome, and by a steer, a merge-in or a reopen. `seq`, `command`: the
+ * latest `lanes-rerun`'s.
+ */
+export type RerunState = Readonly<{ seq: number; command: CommandId; waived: StageOutcomeFact }>;
 
 /** A unit's position and everything the transition table reads, derived from the log alone. */
 export type UnitState = Readonly<{
@@ -178,8 +190,10 @@ export type UnitState = Readonly<{
   supersededBy: UnitId | null;
   /** M3 (`limits`): the bounds its latest dispatch record pins (`DEFAULT_BOUNDS` before one, or when it names none). */
   bounds: Bounds;
-  /** M3: the entry a `steered` or `merged-in` fact set, until its stage records an outcome that is not a hold; else null. */
+  /** M3: the entry a `steered`, `merged-in` or (dev.59) `lanes-rerun` fact set, until its stage records an outcome that is not a hold; else null. */
   entry: EntryPoint | null;
+  /** dev.59: the lanes rerun in progress (`RerunState`); null otherwise. */
+  rerun: RerunState | null;
   /**
    * M3 (R11): the steer pass in progress, from `steered` to its exit (the transition table's steer rows): its seq and
    * whether a green exit goes on (`--resume`). Cleared by an outcome that parks, stops or retires the unit, and by a
@@ -227,7 +241,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
     approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, reviseRounds: 0, candidateReds: 0, staticReds: 0, smokeRounds: 0, retries },
     spec, reopened: null, pendingRevision: null, staleRev: null,
-    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, steering: null, failures: [],
+    park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, rerun: null, steering: null, failures: [],
   };
 }
 
@@ -236,8 +250,8 @@ export function maxTier(a: RiskTier, b: RiskTier | null): RiskTier {
   return b !== null && RISK_TIERS.indexOf(b) > RISK_TIERS.indexOf(a) ? b : a;
 }
 
-/** The stage an entry point runs (M3): a steer's round is a build, a merge-in re-enters at lanes. */
-export const ENTRY_STAGE = { steer: 'build', 'merge-in': 'lanes' } as const satisfies Readonly<Record<EntryPoint['kind'], Stage>>;
+/** The stage an entry point runs (M3): a steer's round is a build, a merge-in (and, dev.59, a rerun) re-enters at lanes. */
+export const ENTRY_STAGE = { steer: 'build', 'merge-in': 'lanes', rerun: 'lanes' } as const satisfies Readonly<Record<EntryPoint['kind'], Stage>>;
 
 const specOf = (record: DispatchRecord): SpecState => ({ rev: record.specRev, sha256: record.specSha256 });
 
@@ -429,6 +443,8 @@ export type HolisticFold = Readonly<{
   divergences: readonly (Omit<FactOf<'divergence'>, 'kind'> & Seq)[];
   steered: readonly (Omit<FactOf<'steered'>, 'kind'> & Seq)[];
   mergedIn: readonly (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[];
+  /** dev.59: the root's lanes reruns, in log order. */
+  lanesReruns: readonly (Omit<FactOf<'lanes-rerun'>, 'kind'> & Seq)[];
   /** M4a (R7): the debt this arc banked, in log order; one per source, id and key (src/debt/mint.ts `mintDebt`). */
   debt: readonly BankedDebt[];
   /** M4a: the pack reviews, in job order; at most one running (src/holistic/packreview.ts). */
@@ -702,6 +718,7 @@ export class Fold implements JournalView {
   readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
+  readonly #lanesReruns: (Omit<FactOf<'lanes-rerun'>, 'kind'> & Seq)[] = [];
   readonly #debt: BankedDebt[] = [];
   readonly #packReviews: { started: PackReviewState['started']; ended: PackReviewState['ended'] }[] = [];
   // Milestone job outcomes
@@ -1000,7 +1017,7 @@ export class Fold implements JournalView {
         this.#ciFacts.push(f);
         const u = this.#units.get(f.unit);
         if (u === undefined) return fail(`external witness reopens unknown unit ${f.unit}`);
-        this.#setUnitState(u, { ...u.state, status: 'active', stage: 'pre-build', decided: null, approval: null, open: null, park: null, entry: null });
+        this.#setUnitState(u, { ...u.state, status: 'active', stage: 'pre-build', decided: null, approval: null, open: null, park: null, entry: null, rerun: null });
         this.#completion = null;
         return;
       }
@@ -1130,7 +1147,9 @@ export class Fold implements JournalView {
         if (entry !== null && f.class !== 'hold' && f.stage !== ENTRY_STAGE[entry.kind]) fail(`stage-outcome for ${f.unit} ${key} while its ${entry.kind} entry is at ${ENTRY_STAGE[entry.kind]}`);
         if (f.class !== 'hold') {
           const ends = f.class === 'park' || f.class === 'stop' || f.class === 'retire' || (f.stage === 'gate' && f.class === 'advance');
-          this.#setUnitState(u, { ...u.state, entry: null, steering: ends ? null : u.state.steering });
+          // dev.59: a rerun short of a verdict (a retry, a retryable or env park, its own rerun-red park) stays in progress.
+          const rerunGoesOn = f.class === 'retry' || (f.class === 'park' && f.park !== undefined && (f.park.class === 'retryable' || f.park.kind === 'env'));
+          this.#setUnitState(u, { ...u.state, entry: null, steering: ends ? null : u.state.steering, rerun: rerunGoesOn ? u.state.rerun : null });
         }
         this.#setUnitState(u, afterStageOutcome(u.state, f));
         // A recovery hold continues nothing (its attempt made no call to continue): the re-run starts from the decision and
@@ -1566,6 +1585,9 @@ export class Fold implements JournalView {
         this.#mergeIn(f, seq, fail);
         return;
       }
+      case 'lanes-rerun':
+        this.#rerun(f, seq, fail);
+        return;
       case 'audit-requested': {
         const { kind: _k, ...rest } = f;
         this.#auditRequests.push({ ...rest, seq });
@@ -1725,7 +1747,7 @@ export class Fold implements JournalView {
     if (['retired', 'cut', 'superseded', 'stop-pending'].includes(s.status) || s.open !== null) fail(`steered finished or running unit ${f.unit} (${s.status})`);
     this.#setUnitState(u, {
       ...s, status: 'active', park: null, interrupted: null, pressureHold: null, approval: null,
-      entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume },
+      entry: { kind: 'steer', seq, command: f.command, brief: f.brief, budgetMin: f.budgetMin, resume: f.resume }, steering: { seq, resume: f.resume }, rerun: null,
     });
   }
 
@@ -1741,15 +1763,50 @@ export class Fold implements JournalView {
     if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`merged-in unit ${f.unit}, which is ${s.status}`);
     this.#setUnitState(u, {
       ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, pressureHold: null, approval: null,
-      entry: { kind: 'merge-in', seq, command: f.command }, steering: null,
+      entry: { kind: 'merge-in', seq, command: f.command }, steering: null, rerun: null,
     });
   }
 
-  /** The unit re-runs the stage its park decided at: decision and interruption as before the park. */
+  /**
+   * `rerun <u>/lanes#<n>/<lane>` (dev.59): the unit's lanes again at the commit lanes#n ran on (`entry`), whatever it had
+   * decided, in a rerun (`rerun`). Lanes#n is the unit's latest stage attempt (nothing started since), its outcome a red a
+   * rerun waives (`RERUNNABLE`), and no earlier rerun named the lane at that commit. A parked unit is active again; a held one
+   * stays held until resumed.
+   */
+  #rerun(f: Extract<Fact, { kind: 'lanes-rerun' }>, seq: number, fail: (detail: string) => never): void {
+    const u = this.#units.get(f.unit);
+    if (u === undefined || this.dispatchOf(f.unit) === null) return fail(`lanes-rerun of unit ${f.unit}, which was never dispatched`);
+    const s = u.state;
+    if (!(s.status === 'active' || s.status === 'held' || s.status === 'park-pending') || s.open !== null) fail(`lanes-rerun of unit ${f.unit}, which is ${s.status}`);
+    const d = s.decided;
+    if (d === null || d.stage !== 'lanes' || d.attempt !== f.attempt || s.counters.attempts !== f.attempt) fail(`lanes-rerun of ${f.unit} lanes#${f.attempt}, which is not its latest stage attempt`);
+    if (!(RERUNNABLE as readonly string[]).includes(d!.outcome)) fail(`lanes-rerun of ${f.unit} lanes#${f.attempt}, which ended ${d!.outcome}`);
+    if (this.#lanesReruns.some((r) => r.unit === f.unit && r.lane === f.lane && r.at === f.at)) fail(`second lanes-rerun of ${f.unit} lane ${f.lane} at ${f.at}`);
+    const { kind: _k, ...rest } = f;
+    this.#lanesReruns.push({ ...rest, seq });
+    this.#setUnitState(u, {
+      ...s, status: s.status === 'park-pending' ? 'active' : s.status, park: null, interrupted: null, pressureHold: null,
+      entry: { kind: 'rerun', seq, command: f.command }, steering: null, rerun: { seq, command: f.command, waived: s.rerun?.waived ?? d! },
+    });
+  }
+
+  /**
+   * The unit re-runs the stage its park decided at: decision and interruption as before the park. dev.59: in a rerun, a park
+   * short of its verdict runs the rerun's lanes again (`entry`); its `rerun-red` park restores the decision the rerun waived,
+   * the rerun over (which must go on: `resume` refuses a waived decision that halts).
+   */
   #restoreParked(u: UnitEntry, recovery: UnitState['lastRecovery']): void {
     const decided = u.state.decided;
     if (decided === null) throw new Error(`restore of unit ${u.state.unit}, which decided nothing`);
-    this.#setUnitState(u, { ...u.state, stage: decided.stage, status: 'active', ...u.beforeDecided, park: null, lastRecovery: recovery ?? u.state.lastRecovery });
+    const rerun = u.state.rerun;
+    const lastRecovery = recovery ?? u.state.lastRecovery;
+    if (rerun !== null && decided.stage === 'lanes' && decided.outcome === 'rerun-red') {
+      if (['park', 'stop', 'retire'].includes(rerun.waived.class)) throw new Error(`restore of unit ${u.state.unit}'s rerun-red park to lanes#${rerun.waived.attempt}, which ended it (${rerun.waived.class})`);
+      this.#setUnitState(u, { ...u.state, stage: rerun.waived.stage, status: 'active', decided: rerun.waived, interrupted: null, park: null, rerun: null, lastRecovery });
+      return;
+    }
+    const entry = rerun === null ? u.state.entry : { kind: 'rerun' as const, seq: rerun.seq, command: rerun.command };
+    this.#setUnitState(u, { ...u.state, stage: decided.stage, status: 'active', ...u.beforeDecided, park: null, lastRecovery, entry });
   }
 
   /**
@@ -1839,7 +1896,7 @@ export class Fold implements JournalView {
     if (spec === null || f.specRev !== spec.rev + 1) fail(`reopen of unit ${f.unit} at spec rev ${f.specRev}; its recorded rev is ${spec?.rev ?? 'none'}`);
     this.#setUnitState(u, {
       ...u.state, stage: 'pre-build', status: 'active', decided: null, interrupted: null, pressureHold: null, park: null, spec: { rev: f.specRev, sha256: f.specSha256 },
-      reopened: { command: f.command, specRev: f.specRev }, pendingRevision: null,
+      reopened: { command: f.command, specRev: f.specRev }, pendingRevision: null, rerun: null,
     });
   }
 
@@ -1858,7 +1915,7 @@ export class Fold implements JournalView {
     if (spec === null) return fail(`stale-reopened of unit ${f.unit}, which has no spec recorded`);
     this.#setUnitState(u, {
       ...u.state, stage: 'pre-build', decided: null, interrupted: null, pressureHold: null, park: null,
-      reopened: { command: null, specRev: spec.rev },
+      reopened: { command: null, specRev: spec.rev }, rerun: null,
     });
   }
 
@@ -2162,6 +2219,7 @@ export class Fold implements JournalView {
       divergences: this.#divergences,
       steered: this.#steered,
       mergedIn: this.#mergedIn,
+      lanesReruns: this.#lanesReruns,
       debt: this.#debt,
       packReviews: this.#packReviews.map((r) => ({ started: r.started, ended: r.ended })),
       draining: this.#draining,

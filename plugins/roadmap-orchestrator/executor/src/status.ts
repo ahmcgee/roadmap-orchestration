@@ -405,7 +405,7 @@ export type DivergenceView = Readonly<{
   compensation: Compensation;
 }>;
 
-export const DECISION_KINDS = ['ruling', 'patch', 'reenter', 'cut', 'steer', 'divergence', 'reverse'] as const;
+export const DECISION_KINDS = ['ruling', 'patch', 'reenter', 'cut', 'steer', 'rerun', 'divergence', 'reverse'] as const;
 export type DecisionKind = (typeof DECISION_KINDS)[number];
 /** Who decided: the root, verifier or executor. */
 export type RuledBy =
@@ -1307,7 +1307,7 @@ function runDirDecisions(runDir: AbsPath, arc: ArcId): DecisionReader {
 
 /**
  * The decisions after `since`, in log order: each revision's rulings, root apply or reversal, cuts, re-entries and spec
- * patches; the executor's spec patches; steers; and divergences. The brief uses its coverage vector's high-water.
+ * patches; the executor's spec patches; steers; lanes reruns (dev.59); and divergences. The brief uses its coverage vector's high-water.
  */
 export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
@@ -1343,6 +1343,13 @@ export function decisionsAfter(view: JournalView, events: readonly Event[], sinc
     if (f.kind === 'steered') {
       out.push({
         seq: e.seq, kind: 'steer', id: f.unit, oneLine: `${f.unit} steered for ${f.budgetMin} min${f.resume ? ', then resumes' : ', then parks'}`,
+        ruledBy: { type: 'architect', command: f.command },
+      });
+    }
+    // dev.59: a lanes rerun the root ordered, with the cause it gave.
+    if (f.kind === 'lanes-rerun') {
+      out.push({
+        seq: e.seq, kind: 'rerun', id: f.unit, oneLine: `${f.unit} lanes rerun at ${f.at.slice(0, 12)}: ${f.unit}/lanes#${f.attempt}/${f.lane} waived (${f.cause}: ${f.evidence})`,
         ruledBy: { type: 'architect', command: f.command },
       });
     }

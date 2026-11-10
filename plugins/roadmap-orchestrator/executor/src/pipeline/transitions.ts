@@ -39,6 +39,8 @@
 // - M3 step A3 (R11): a steered unit's pass (`UnitState.steering`) exits in `steerExit`, uncharged: a red series or a
 //   gate revise parks `steered` instead of a fix round, and so does a green gate unless the steer said `--resume`.
 //   The steer round itself is an entry outside the table (`UnitState.entry`, src/pipeline/unit.ts).
+// - dev.59: a lanes rerun the root ordered (`roadmap rerun`, `UnitState.rerun`) is also an entry outside the table; the lanes
+//   stage records a red series of it as `rerun-red`, an uncharged env park, so its red neither charges nor starts a fix round.
 import type { OrderingWait } from '../core/ordering.ts';
 import {
 type GateLargeDiff,type HoldCause,type JudgmentStage,type OperatorParkKind,type OutcomeClass,type OutcomeStage,type ParkRecord,type ProbeTarget,
@@ -238,6 +240,9 @@ export const TABLE: Table = {
     // dev.17: a lane's environment did not come up or failed its probe: no verdict on the tree, uncharged; the executor
     // probes the environment (up, then its probe) and re-runs the lanes once it passes.
     'env-unavailable': park('env-unavailable', 'retryable'),
+    // dev.59: a red series of a lanes rerun the root ordered (`roadmap rerun`): its claim that the cause is outside the tree did
+    // not hold. Uncharged; the root decides (`resume <unit>` restores the decision the rerun waived).
+    'rerun-red': park('rerun-red', 'env'),
   },
   gate: {
     'checkout-residue': checkoutResidue,

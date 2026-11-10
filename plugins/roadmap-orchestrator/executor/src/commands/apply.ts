@@ -37,10 +37,10 @@ readInputFiles,requirePlanInForce,revisionInForce,
 revisionManifestOf,routingProvenanceOf
 } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,boundsOf,visionFile } from '../input/plan.ts';
-import { needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck } from '../needsuser.ts';
+import { needsUserAckPath,openNeedsUser,raiseNeedsUser,raisedWithReason,readNeedsUser,readNeedsUserAck,reentryRecommendation } from '../needsuser.ts';
 import type { ProberHandle } from '../park/probe.ts';
 import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,planDefects,underRoot } from '../phase0/rows.ts';
-import { dispatchOf,repin } from '../pipeline/dispatch.ts';
+import { dispatchOf,repin,unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
@@ -61,6 +61,7 @@ import { closeAdmissions } from './admissions.ts';
 import { requestAudit } from './audit.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
+import { rerun } from './rerun.ts';
 import { witness } from './witness.ts';
 import { dismiss } from './dismiss.ts';
 import { note } from './note.ts';
@@ -280,6 +281,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return steer(ctx, command.id, body);
     case 'merge-in':
       return mergeIn(ctx, command.id, body.unit);
+    case 'rerun':
+      return rerun(ctx, command.id, body);
     case 'audit':
       return requestAudit(ctx, command.id);
     case 'close-admissions':
@@ -404,6 +407,21 @@ function reopen(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutc
  */
 function unpark(ctx: CommandContext, id: CommandId, unitId: UnitId, f: StageOutcomeFact): Effect {
   const verified: string[] = [];
+  // dev.59: a rerun's red park restores the decision the rerun waived; one that ended the unit's lanes (the chargeable bound,
+  // a steer pass's park) stands: the unit re-enters, as that park said.
+  if (f.stage === 'lanes' && f.outcome === 'rerun-red') {
+    const waived = ctx.journal.view.unit(unitId).rerun?.waived;
+    if (waived === undefined) throw new Error(`unit ${unitId} is parked rerun-red at lanes#${f.attempt} outside a rerun`);
+    if (waived.class === 'park' || waived.class === 'stop' || waived.class === 'retire') {
+      return {
+        kind: 'rejected',
+        reason: `unit ${unitId} is parked (rerun-red) at lanes#${f.attempt}: the rerun was red, so lanes#${waived.attempt}'s park (${parkReason(waived)}) stands; `
+          + reentryRecommendation(unitId, waived.stage, waived.attempt, unitBranch(ctx.plan().arc, unitId)),
+      };
+    }
+    ctx.journal.fact({ kind: 'unparked', unit: unitId, command: id });
+    return { kind: 'applied', verified: [`unit ${unitId}'s rerun is over: the decision of lanes#${waived.attempt} (${waived.outcome}) goes on`] };
+  }
   if (f.outcome === 'routing-changed') {
     const pinned = dispatchOf(ctx.journal.view, unitId);
     // The unit's own routing (its layer on the arc's stack), which its implementer seat was pinned under.
