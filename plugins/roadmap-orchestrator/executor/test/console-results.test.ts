@@ -25,7 +25,11 @@ test('recorded result verdicts validate identity and hash; valid-schema tamperin
   const body = await response.json() as { data: { record: { verdict: string }; lines: string[] } };
   assert.equal(body.data.record.verdict, 'pass'); assert.ok(body.data.lines.some((l) => l.includes('pass')));
   writeFileSync(path, JSON.stringify({ ...JSON.parse(original.toString()), verdict: 'fail', exitCode: 1 }));
-  const corrupt = await fetch(`${api}/shell`); assert.equal(corrupt.status, 500); assert.match(await corrupt.text(), /resultSha256/);
+  // The tampered bytes force a fresh capture. On a busy host it can outlast a browser read's first quarter second (202);
+  // the read's pending poll then carries its answer, as it does for the browser.
+  let corrupt = await fetch(`${api}/shell`);
+  while (corrupt.status === 202) corrupt = await fetch(`${api}/shell?pending=${(await corrupt.json() as { pending: string }).pending}`);
+  assert.equal(corrupt.status, 500); assert.match(await corrupt.text(), /resultSha256/);
   writeFileSync(path, original); rmSync(path);
   const pruned = await fetch(`${api}/invocations/${invocationDirName(spawn.inv)}/result`); assert.equal(pruned.status, 404);
   assert.match(await pruned.text(), /absent|pruned/);
