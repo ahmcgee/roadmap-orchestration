@@ -24,6 +24,8 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
   const [width, setWidth] = useState(() => { try { return Math.max(360, Math.min(960, Number(localStorage.getItem('roadmap.drawer-width')) || 520)); } catch { return 520; } });
   useEffect(() => {
     const previous=document.activeElement as HTMLElement|null;
+    // Focus goes back to where the drawer was opened from (the Graph canvas on Graph).
+    const returnFocus=()=>{const target=route().tab==='graph'?document.querySelector<HTMLElement>('.dag-canvas'):(previous?.isConnected&&previous!==document.body?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true });};
     window.dispatchEvent(new Event('roadmap-dismiss-popovers'));
     panel.current?.querySelector<HTMLButtonElement>('[aria-label="Close details"]')?.focus({ preventScroll: true });
     const key = (e: KeyboardEvent) => {
@@ -33,7 +35,8 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
         const expanded=[...sheet.querySelectorAll<HTMLElement>('details[open],button[aria-expanded="true"]')].filter(el=>el.getClientRects().length>0).at(-1);
         if(expanded instanceof HTMLDetailsElement){expanded.open=false;expanded.querySelector('summary')?.focus();}
         else if(expanded)expanded.click();
-        else close();
+        // Return focus as the key closes the drawer, not a render later when the route change unmounts it.
+        else {close();returnFocus();}
       }
       if(e.key==='Tab'){
         const targets=[...sheet.querySelectorAll<HTMLElement>('a[href],button,input,select,textarea,summary,[tabindex="0"]')].filter(el=>!el.matches(':disabled')&&el.getClientRects().length>0);
@@ -42,7 +45,7 @@ export function Drawer({ title, close, children, headingLink, className = '' }: 
       }
     };
     window.addEventListener('keydown', key);
-    return () => { window.removeEventListener('keydown', key); const target=route().tab==='graph'?document.querySelector<HTMLElement>('.dag-canvas'):(previous?.isConnected&&previous!==document.body?previous:document.querySelector<HTMLElement>('.tabs [aria-current]'));target?.focus({ preventScroll: true }); };
+    return () => { window.removeEventListener('keydown', key); returnFocus(); };
   }, []);
   function resize(e: React.PointerEvent<HTMLDivElement>) {
     e.currentTarget.setPointerCapture(e.pointerId);
