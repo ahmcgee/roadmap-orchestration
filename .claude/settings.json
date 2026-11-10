@@ -1,6 +1,6 @@
 {
   "enabledPlugins": {
-    "playwright@anthropic-plugin-directory": true,
+    "playwright@anthropic-plugin-directory": false,
     "frontend-design@anthropic-plugin-directory": true
   }
 }
