@@ -102,7 +102,8 @@ describe('the held-claims brake', () => {
       if (result.kind !== 'parked') throw new Error(JSON.stringify(result));
       assert.match(result.needsUser.summary, /held-claims brake.*I-1/s);
       assert.match(result.needsUser.summary, reused ? /REUSED/ : /RUN/);
-      assert.match(result.needsUser.recommendation, /reenters\.reset.*reason/s);
+      // dev.59 pass 3: the chargeable-bound text spells the re-entry out as its plan entry.
+      assert.match(result.needsUser.recommendation, /"reenters": \{"unit": "u1", "fixes": "u1\/candidate#\d+", "reset": \{"reason": /);
       assert.match(result.needsUser.recommendation, /held-claims brake.*make.*obligations/s);
       assert.ok(result.needsUser.evidence.some((p) => p.endsWith('witness.json')));
       const detail = r.journal.view.unit(U1).decided!.detail;
@@ -122,7 +123,7 @@ describe('the held-claims brake', () => {
       assert.equal(r.journal.view.unit(U1).counters.chargeableFailures, 0);
       assert.ok(parked.kind === 'parked');
       assert.equal(parked.needsUser.reason, 'base-red');
-      assert.match(parked.needsUser.summary, /alone, without unit u1: lane journey red; obligation I-1 not held\. The base is broken/, 'the item names what was red on the tip alone');
+      assert.match(parked.needsUser.summary, /alone, without unit u1: lane journey red; obligation I-1 not held\. The tip also fails without this unit \(what the executor observed; the root rules on why\)\. Merges halt/, 'the item names what was red on the tip alone');
     } finally {
       r.journal.close();
     }

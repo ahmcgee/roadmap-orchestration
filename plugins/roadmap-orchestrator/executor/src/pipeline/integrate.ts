@@ -329,7 +329,7 @@ function baseRedNeedsUser(ctx: StageContext, parent: StageParent, tip: Sha, base
     blocking: true,
     subject: { type: 'arc' },
     reason: 'base-red',
-    summary: `On ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: ${baseRedAccount(base)}. The base is broken, not the unit. Merges halt; unit ${unit} is parked uncharged.`,
+    summary: `On ${ctx.plan().integrationBranch} at ${tip} alone, without unit ${unit}: ${baseRedAccount(base)}. The tip also fails without this unit (what the executor observed; the root rules on why). Merges halt; unit ${unit} is parked uncharged.`,
     recommendation: baseRedRecommendation(ctx, unit, tip),
     options: [],
     evidence,
