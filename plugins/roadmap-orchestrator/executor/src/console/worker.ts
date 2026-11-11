@@ -1,5 +1,5 @@
 import type { ConsoleRequest } from './messages.ts';
-import { existsSync, watch } from 'node:fs';
+import { existsSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
 import { ObservationRace } from '../observation/retry.ts';
@@ -44,11 +44,11 @@ const attention = new ConsoleAttention(temporal.pages);
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
-/** A strict read (the CLI's status, API discovery) catches up with the arc before it answers. A browser read is served the
- * observation the background checks keep current (`tick`), so it never waits on a capture of its own while they keep up. */
+/** A strict read (the CLI's status, API discovery) catches up with the arc, verified unchanged across its capture, before it
+ * answers. A browser read is served the observation the background checks keep current (`tick`, `ObservationCache.browse`). */
 function read(arc: string, admission: Admission = {}, browser = false) {
   const run = retainedRun(args.common, args.hostDir, arc);
-  return (browser ? cache.prepared(run, admission) : null) ?? cache.read(run, admission);
+  return browser ? cache.browse(run, admission) : cache.read(run, admission);
 }
 function notice(e: Envelope) { return metadata.read(e, views, retainedRuns(args.common, args.hostDir).selected); }
 function result(e: Envelope, id: string) {
@@ -246,6 +246,7 @@ function lagging(arc: string, lag: Lag | null) {
 const published = new Map<string, number>();
 function tick() {
   timer = null;
+  const started = Date.now();
   try {
     const runs = retainedRuns(args.common, args.hostDir);
     const defaults = new Set<string>([runs.selected].filter((a): a is ArcId => a !== null && a !== undefined));
@@ -253,6 +254,7 @@ function tick() {
     maintained.clear();
     for (const arc of defaults) { maintained.add(arc); cache.pin(arc); }
     const arcs = new Set([...defaults, ...subscribed]);
+    watchRuns(runs, arcs);
     for (const arc of arcs) {
       const began = Date.now();
       try {
@@ -283,11 +285,36 @@ function tick() {
       }
     }
   } catch (error) { parentPort!.postMessage({ kind: 'error', error: err(error) }); }
+  idleUntil = Date.now() + (Date.now() - started);
+  schedule(1_000);
 }
-setInterval(tick, 1_000);
-for (const dir of ['roadmap-runtime', 'refs', 'roadmap']) {
-  const path = join(args.common, dir);
-  if (existsSync(path)) watch(path, { recursive: true }, () => { timer ??= setTimeout(tick, 100); }).on('error', (e) => parentPort!.postMessage({ kind: 'error', error: err(e) }));
+/**
+ * Checks run a second apart and 100 ms after a watched change, but never closer than the last check took: background checks
+ * use at most half the worker's time, so a busy arc cannot starve the reads it answers.
+ */
+let idleUntil = 0, dueAt = Infinity;
+function schedule(delayMs: number) {
+  const at = Math.max(Date.now() + delayMs, idleUntil);
+  if (timer !== null && dueAt <= at) return;
+  if (timer !== null) clearTimeout(timer);
+  dueAt = at; timer = setTimeout(tick, at - Date.now());
+}
+const watched = (path: string, recursive: boolean): FSWatcher =>
+  watch(path, { recursive }, () => schedule(100)).on('error', (e) => parentPort!.postMessage({ kind: 'error', error: err(e) }));
+// Refs and answers are small trees. The runtime directory is not watched recursively: it holds every retained arc's
+// invocation output and evidence snapshots, which the recursive watcher lists and tracks path by path (memory, and seconds
+// of start-up, in proportion to the tree). A maintained arc's own directory is watched, flat: its journal, schedule and
+// heartbeat land there; so is each followed history's invocation directory, whose output streams there. The one-second
+// check covers the rest.
+for (const dir of ['refs', 'roadmap']) { const path = join(args.common, dir); if (existsSync(path)) watched(path, true); }
+const runWatchers = new Map<string, FSWatcher>();
+function watchRuns(runs: ReturnType<typeof retainedRuns>, arcs: ReadonlySet<string>) {
+  const runDirs = new Map<string, string>(runs.arcs.filter((r) => arcs.has(r.arc)).map((r) => [r.arc, r.runDir]));
+  const dirs = new Set<string>([...runDirs.values(), ...[...historySubscriptions.values()].flatMap((h) => {
+    const runDir = runDirs.get(h.arc); return runDir === undefined ? [] : [join(runDir, 'inv', h.invocation)];
+  })]);
+  for (const [dir, w] of runWatchers) if (!dirs.has(dir)) { w.close(); runWatchers.delete(dir); }
+  for (const dir of dirs) if (!runWatchers.has(dir) && existsSync(dir)) runWatchers.set(dir, watched(dir, false));
 }
 tick();
 parentPort!.postMessage({kind: 'ready'});
