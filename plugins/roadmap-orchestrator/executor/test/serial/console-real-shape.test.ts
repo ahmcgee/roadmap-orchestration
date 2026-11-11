@@ -45,7 +45,11 @@ test('a busy arc of real shape: cold start once, every read answered from memory
   const url = await new Promise<string>((resolve, reject) => { child.on('message', (msg: { kind: string; url?: string }) => { if (msg.kind === 'ready') resolve(msg.url!); }); child.once('exit', (code) => reject(new Error(`console exited ${code}: ${log}`))); });
   let asked = 0; const answers = new Map<number, (v: ArcStats | null) => void>();
   child.on('message', (msg: { kind: string; id?: number; value?: ArcStats | null }) => { if (msg.kind === 'stats') { answers.get(msg.id!)?.(msg.value ?? null); answers.delete(msg.id!); } });
-  const stats = () => new Promise<ArcStats>((resolve, reject) => { const id = ++asked; answers.set(id, (v) => v ? resolve(v) : reject(new Error('no collector for the arc'))); child.send({ kind: 'stats', id, arc: m.arc }); });
+  const stats = () => new Promise<ArcStats>((resolve, reject) => {
+    if (!child.connected) { reject(new Error(`the console exited: ${log}`)); return; }
+    const id = ++asked; answers.set(id, (v) => v ? resolve(v) : reject(new Error('no collector for the arc'))); child.send({ kind: 'stats', id, arc: m.arc });
+    child.once('exit', () => reject(new Error(`the console exited: ${log.slice(-2000)}`)));
+  });
   const rss = () => Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${child.pid}/status`, 'utf8'))![1]) / 1024;
   const api = `${url}/api/${CONSOLE_PROTOCOL}`, base = `${api}/arcs/${m.arc}`;
 
@@ -108,7 +112,6 @@ test('a busy arc of real shape: cold start once, every read answered from memory
   const sampler = (async () => { while (loading) { lags.push(writer.lagMs(latest)); await sleep(500); } })();
 
   // 2, 3. Twenty seconds of that.
-  const warm = (await stats()).captures.length;
   const touched = readdirSync(join(m.runDir, 'inv')).map((d) => join(m.runDir, 'inv', d, 'launch.json')).find((p) => { try { readFileSync(p); return !m.live.some((l) => p.includes(`/${l.routeId}/`)); } catch { return false; } })!;
   const at = new Date(); utimesSync(touched, at, at); // touched, unchanged: the sweep re-reads it and finds nothing wrong
   await sleep(20_000);
@@ -122,7 +125,7 @@ test('a busy arc of real shape: cold start once, every read answered from memory
   assert.deepEqual(streams, [], 'no stream errors');
 
   // 4. Work per capture after the cold start: in proportion to the open invocations, never to the arc's records.
-  const work = (await stats()).captures.slice(warm);
+  const work = (await stats()).captures.slice(1); // every capture after the cold one
   assert.ok(work.length >= 5, `${work.length} captures`);
   for (const w of work) {
     assert.ok(w.statCalls <= 1_500 + 8 * running, `statCalls ${w.statCalls}`);
