@@ -16,9 +16,9 @@
 // - **Answers** (`chain status` only): the owner's recorded answers no Phase-0 record applies yet (src/answers.ts
 //   `unappliedAnswers`), each with its line: the act the root agent owes now.
 import { answerLine, unappliedAnswers } from '../answers.ts';
-import { type ArcRef, arcsWithRefs, chainBack, committedAcks, nextStartOf, readArcRef, unackedStarts } from '../chain.ts';
+import { type ArcRef, type ChainLink, type CompletedHead, arcsWithRefs, chainBack, committedAcks, completedHeadOf, nextStartOf, readArcRef, unackedStarts } from '../chain.ts';
 import type { ArcId } from '../core/ids.ts';
-import type { AbsPath, BranchName } from '../core/values.ts';
+import type { AbsPath } from '../core/values.ts';
 import { GhError, resolveRepo } from '../forge/gh.ts';
 import { type Pull, onlyIn, pullsByHead } from '../forge/pr.ts';
 import { MAIN_BRANCH, PushError } from '../forge/push.ts';
@@ -36,18 +36,15 @@ export type ChainQuota = Readonly<{ k: number | null; unackedStarts: readonly Ar
 /** The chain oldest first: each arc's previous arc, whether its start is acked, and its PR; K, the unacked starts and the next start. */
 export type ChainStatus = Readonly<{ arcs: readonly Readonly<{ arc: ArcId; previousArc: ArcId | null; acked: boolean; pr: BriefPr }>[] }> & ChainQuota;
 
-/** The chain's head as the quota reads it: its plan (K at its baseline) and its verified ref (null: none published yet). */
-export type ChainEnd = Readonly<{ plan: PlanM1; ref: ArcRef | null }>;
+/** The chain's head as the quota reads it: its plan (K at its baseline) and its completed head (null: no ref published yet, or no completion). */
+export type ChainEnd = Readonly<{ plan: PlanM1; completed: CompletedHead | null }>;
 
 /** The quota of the chain `ids` (oldest first) ending at `head` (see the header). */
 export function chainQuota(repo: AbsPath, ids: readonly ArcId[], head: ChainEnd, acks: readonly AckMarker[]): ChainQuota {
   if (ids.at(-1) !== head.plan.arc) throw new Error(`the chain ${ids.join(', ')} does not end at ${head.plan.arc}`);
   const k = committedRepoConfig(repo, head.plan.baseline)?.chain?.k ?? null;
-  return { k, unackedStarts: unackedStarts(ids, acks), nextStart: nextStartOf(ids, head.ref, k, acks) };
+  return { k, unackedStarts: unackedStarts(ids, acks), nextStart: nextStartOf(ids, head.completed, k, acks) };
 }
-
-/** An arc of the chain as the PR lookup needs it. */
-export type ChainLink = Readonly<{ arc: ArcId; branch: BranchName; previousArc: ArcId | null }>;
 
 export const linkOf = (ref: ArcRef): ChainLink => ({ arc: ref.arc, branch: ref.plan.integrationBranch, previousArc: ref.plan.chain?.previousArc ?? null });
 
@@ -158,7 +155,7 @@ export async function chainStatus(args: ChainStatusArgs): Promise<ChainStatusRep
   const head = chainHead(args.repo);
   if (head === null) throw new CliError(`chain status: no arc of ${args.repo} has published a snapshot (refs/roadmap/*)`);
   return {
-    ...chainStatusOf(args.repo, chainTo(args.repo, head).map(linkOf), { plan: head.plan, ref: head }),
+    ...chainStatusOf(args.repo, chainTo(args.repo, head).map(linkOf), { plan: head.plan, completed: completedHeadOf(head) }),
     answers: unappliedAnswers(gitCommonDir(args.repo)).map((a) => ({ ...a, line: answerLine(a) })),
   };
 }

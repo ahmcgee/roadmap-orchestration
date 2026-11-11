@@ -1,4 +1,4 @@
-import { type LogSnapshot, verifiedJournalPrefix } from '../core/log.ts';
+import type { LogSnapshot } from '../core/log.ts';
 // `snapshot.publish`: copy the run's authoritative records one-way to `refs/roadmap/<arc>` (DESIGN §2.9), so no
 // PR diff carries them and the arc's history survives the run dir.
 //
@@ -626,6 +626,30 @@ export function verifySnapshot(repo: AbsPath, commit: Sha): SnapshotVerification
   return check;
 }
 
+/**
+ * The live journal's first `highWater` events, when they stand for the blob's (`log`, complete lines only): the live journal
+ * of the same arc holds at least that many, and the blob's last line hashes to the `prev` of the live event after them (or to
+ * the live fold's last hash when there is none). The hash chain binds every earlier line, so the prefix is the blob's. Else null.
+ */
+function liveEvents(log: Buffer, manifest: SnapshotManifest): readonly Event[] | null {
+  const live = snapshotReads?.live, highWater = manifest.highWater;
+  if (live === undefined || live.view.arc !== manifest.arc || highWater === 0 || live.events.length < highWater) return null;
+  const tip = prevHash(log.subarray(log.lastIndexOf(0x0a, log.length - 2) + 1));
+  const chained = live.events.length > highWater ? live.events[highWater]!.prev : live.view.lastHash();
+  return chained === tip ? live.events.slice(0, highWater) : null;
+}
+
+/** The blob's events (complete lines only), parsed line by line from the buffer. */
+function parsedEvents(log: Buffer): readonly Event[] {
+  const events: Event[] = [];
+  for (let start = 0; start < log.length;) {
+    const nl = log.indexOf(0x0a, start);
+    events.push(parseEventLine(log.subarray(start, nl).toString('utf8')));
+    start = nl + 1;
+  }
+  return events;
+}
+
 function readSnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {
   const mismatch = (detail: string): SnapshotVerification => ({ kind: 'mismatch', detail });
   const entries = lsTree(repo, commit);
@@ -648,11 +672,11 @@ function readSnapshot(repo: AbsPath, commit: Sha): SnapshotVerification {
   if (absent.length > 0) return mismatch(`manifest lists missing files ${absent.join(', ')}`);
   const log = blobs.get(EVENTS_FILE);
   if (log === undefined) return mismatch('no events.jsonl');
-  const lines = log.toString('utf8').split('\n');
-  if (lines.pop() !== '' || lines.length !== manifest.highWater) return mismatch(`events.jsonl holds ${lines.length} lines, high-water mark ${manifest.highWater}`);
-  const live = snapshotReads?.live;
-  const prefix = live === undefined || live.view.arc !== manifest.arc ? null : verifiedJournalPrefix(live, manifest.highWater);
-  const events = prefix !== null && prefix.equals(log) ? live!.events.slice(0, manifest.highWater) : lines.map(parseEventLine);
+  let lines = 0;
+  for (let nl = log.indexOf(0x0a); nl !== -1; nl = log.indexOf(0x0a, nl + 1)) lines++;
+  const highWater = manifest.highWater;
+  if ((log.length > 0 && log[log.length - 1] !== 0x0a) || lines !== highWater) return mismatch(`events.jsonl holds ${lines} lines, high-water mark ${highWater}`);
+  const events = liveEvents(log, manifest) ?? parsedEvents(log);
   if (events[events.length - 1]!.seq !== manifest.highWater) return mismatch(`events.jsonl ends at another seq than ${manifest.highWater}`);
   const verified: SnapshotVerification = { kind: 'verified', manifest, manifestSha256: sha256(sha256Hex(manifestBytes)), files: blobs, events };
 

@@ -580,7 +580,7 @@ function chainRow(input: Phase0Input, guide: CorpusGuide | null, arcs: readonly 
     return baseline === null ? null : { type: 'baseline', baseline };
   }
   const previous = missing === chain.previousArc ? null : arcs.at(-1) ?? null;
-  const incomplete = previousIncomplete(chain.previousArc, previous);
+  const incomplete = previousIncomplete(chain.previousArc, previous === null ? null : completedHeadOf(previous));
   if (incomplete !== null) return incomplete;
   // No row: the previous arc's ref holds a done completion.
   const baseline = baselineProblem(input, chain.previousHead, completedHeadOf(previous!)!.head, guide);

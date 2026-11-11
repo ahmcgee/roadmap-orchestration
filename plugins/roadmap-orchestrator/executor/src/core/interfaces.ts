@@ -39,6 +39,8 @@ export interface JournalView {
   readonly arc: ArcId;
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
+  /** The chain hash of the last line (the next line's `prev`); null for an empty log. */
+  lastHash(): import('./ids.ts').Sha256Hex | null;
   ciFacts(): readonly CiFact[];
   walkMcp(): readonly import('./events.ts').WalkMcpFact[];
   integrationPushes(): readonly Readonly<{ seq: number; fact: import('./events.ts').IntegrationPushFact }>[];

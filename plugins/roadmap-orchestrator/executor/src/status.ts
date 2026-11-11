@@ -114,8 +114,8 @@ import { existsSync,statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { answerLine,commonDirOfRun,unappliedAnswers } from './answers.ts';
-import { chainBack,readArcRef } from './chain.ts';
-import { type ChainStatus,chainStatusOf,linkOf } from './commands/chain.ts';
+import { arcRefDigest,chainDigestsBack } from './chain.ts';
+import { type ChainStatus,chainStatusOf } from './commands/chain.ts';
 import { type Sealing,sealingOf } from './commands/gc.ts';
 import { incomingPath,pendingCommandIds,readCommand } from './commands/queue.ts';
 import {
@@ -1599,9 +1599,10 @@ function debtOf(view: JournalView, ledger: DebtLedger): DebtView {
 
 /** The chain up to `arc` (its plan in force names its previous arc); the arc is its last link whether or not it has a ref yet. */
 function chainOf(repo: AbsPath, plan: PlanM1): ChainView {
-  const back = plan.chain === undefined ? [] : chainBack(repo, plan.chain.previousArc).arcs.map(linkOf);
+  // Digests only: each snapshot commit is verified once per observer, and only its link and completion are kept.
+  const back = plan.chain === undefined ? [] : chainDigestsBack(repo, plan.chain.previousArc).arcs.map((d) => d.link);
   const links = [...back, { arc: plan.arc, branch: plan.integrationBranch, previousArc: plan.chain?.previousArc ?? null }];
-  return { ...chainStatusOf(repo, links, { plan, ref: readArcRef(repo, plan.arc) }), position: links.length };
+  return { ...chainStatusOf(repo, links, { plan, completed: arcRefDigest(repo, plan.arc)?.completed ?? null }), position: links.length };
 }
 
 // ---------------------------------------------------------------------------------------------------
