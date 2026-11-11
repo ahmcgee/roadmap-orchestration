@@ -4,7 +4,7 @@ import { readClaim } from '../host/lock.ts';
 import { locate, type Run } from '../cli/locate.ts';
 import { ObserverJournal, type LogSnapshot } from '../core/log.ts';
 import { sha256Hex } from '../core/json.ts';
-import { invocationId } from '../core/ids.ts';
+import { invocationDirName, invocationId, invocationIdOf } from '../core/ids.ts';
 import { readJson } from '../core/fsx.ts';
 import { JUDGMENT_SESSION_ROLES } from '../routing/types.ts';
 import { runStart } from '../core/records.ts';
@@ -40,8 +40,18 @@ export class Observer {
   /** Forge pull requests are re-read at most once a minute, not on every capture (see ForgeMemo). */
   #forge = new ForgeMemo(FORGE_REFRESH_MS);
 
-  invalidateEvidence(): void {
-    this.#ended.clear(); this.#estate = null; this.#models = new ModelReader(); this.#relations = new InvocationRelations();
+  /**
+   * Forgets what `changed` (record paths) invalidates: each ended invocation whose directory holds a changed record, and the
+   * estate when a kept input changed (it reads content-addressed inputs and git blobs its key already names). Every other ended
+   * invocation's row stands, so a check costs reading what changed rather than every invocation's records again. Model and
+   * relation readers check their own files.
+   */
+  invalidateEvidence(changed: readonly string[]): void {
+    if (changed.length === 0 || this.#run === null) return;
+    const inv = join(this.#run.runDir, 'inv') + '/', inputs = join(this.#run.runDir, 'inputs');
+    if (changed.some((path) => path === inputs || path.startsWith(inputs + '/'))) this.#estate = null;
+    const dirs = new Set(changed.filter((path) => path.startsWith(inv)).map((path) => path.slice(inv.length).split('/')[0]!));
+    for (const id of this.#ended.keys()) if (dirs.has(invocationDirName(invocationIdOf(id)))) this.#ended.delete(id);
   }
 
   observe(request: ObserveRequest): ObserveReply {
