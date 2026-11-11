@@ -47,6 +47,8 @@ export class InvocationTable {
   #sorted: Invocation[] | null = [];
   /** How many rows the last refresh read from their records. */
   lastReads = 0;
+  /** How many invocations the table holds. */
+  get size(): number { return this.#slots.size; }
   /** Folds `events[from..]`: new spawn intents become open rows; a settlement marks its row for one final read. */
   extend(events: readonly Event[], from: number): void {
     for (let i = from; i < events.length; i++) {

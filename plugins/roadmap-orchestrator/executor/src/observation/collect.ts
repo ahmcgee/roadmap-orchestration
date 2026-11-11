@@ -19,12 +19,16 @@ import { type Supervision, supervision } from '../watch-lease.ts';
 import { ChangeDetector, openMoved, type Sample } from './changes.ts';
 import { checkContained, checkRunContainment } from './containment.ts';
 import { stampOf } from './memo.ts';
+import { listingEntriesKept } from '../git/reusekey.ts';
+import type { MemoSizes } from './memo.ts';
 import { type CapturePhase, Observer } from './observer.ts';
 import { ConsoleError, type ConsoleCode } from './protocol.ts';
 
 export type CollectorPhase = 'load' | CapturePhase | 'idle';
 /** What one capture did: product telemetry, in the console's behind line and `server.stats(arc)`. */
 export type CaptureWork = Readonly<{ eventsFolded: number; rowsRead: number; statCalls: number; recordReads: number; gitSpawns: number; deriveMs: number; captureMs: number }>;
+/** What a collector holds: its journal's events, invocation rows (open ones), the memo, estate entries, records the sweep re-checks, tree listing entries. */
+export type CollectorSizes = Readonly<{ events: number; rows: number; open: number; memo: MemoSizes; estate: number; swept: number; listings: number }>;
 export type JournalPosition = Readonly<{ identity: string; offset: number; size: number; seq: number }>;
 export type Summary = ReturnType<typeof summarize>;
 export type CollectorMessage =
@@ -55,6 +59,8 @@ class Sweep {
   #at = 0;
   #walk: string[] = [];
   constructor(runDir: string) { this.#runDir = runDir; }
+  /** The records this pass of the sweep holds to re-check. */
+  get held(): number { return this.#records.length; }
   /**
    * Re-checks the next slice of `stamped` for `budgetMs`, then walks the next slice of the run directory for `budgetMs`.
    * Returns the records found rewritten or removed, and the entries found escaping the run.
@@ -112,6 +118,8 @@ export class ArcCollector {
     this.#changes = new ChangeDetector(run.runDir, common, hostDir);
     this.#sweep = new Sweep(run.runDir);
   }
+  /** What this collector holds, for the console's heap reports. */
+  sizes(): CollectorSizes { return { ...this.#observer.sizes(), swept: this.#sweep.held, listings: listingEntriesKept() }; }
   /** A watched path changed, or a strict read asked for a check: the next step runs as soon as the floor allows. Returns the delay. */
   poke(now: number): number { this.#poked = true; return Math.max(COLLECT.pokeMs, this.#floorUntil - now); }
   /** One iteration. Returns how long the loop may sleep (ms). Never throws for a race. */

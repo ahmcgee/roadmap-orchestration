@@ -5,12 +5,13 @@ import { join } from 'node:path';
 import { type MessagePort, parentPort, workerData } from 'node:worker_threads';
 import type { Run } from '../cli/locate.ts';
 import type { AbsPath } from '../core/values.ts';
-import { ArcCollector, type CollectorMessage } from '../observation/collect.ts';
-import type { ToCollector } from './messages.ts';
+import { ArcCollector, type CollectorMessage, type CollectorSizes } from '../observation/collect.ts';
+import { type HeapReport, type ToCollector, heapNear, heapReport } from './messages.ts';
 
-/** What a collector tells main besides its observations: progress, log lines, and each capture's work counts. */
+/** What a collector tells main besides its observations: progress, log lines, each capture's work counts, and heap reports. */
 export type CollectorReport =
   | Extract<CollectorMessage, { kind: 'progress' | 'log' }>
+  | HeapReport<CollectorSizes>
   | Readonly<{ kind: 'captured'; arc: string; at: number; seq: number | null; offset: number | null; work: Extract<CollectorMessage, { kind: 'observation' }>['work'] }>;
 
 const { run, hostDir, common, port } = workerData as { run: Run; hostDir: AbsPath; common: AbsPath; port: MessagePort };
@@ -26,9 +27,14 @@ function schedule(delayMs: number): void {
   if (timer !== null) clearTimeout(timer);
   dueAt = Date.now() + delayMs; timer = setTimeout(loop, delayMs);
 }
+/** Whether the used heap was past HEAP_NEAR of its limit at the end of the last step: a crossing is reported once. */
+let near = false;
 function loop(): void {
   timer = null; dueAt = Infinity;
   schedule(collector.step(Date.now()));
+  const now = heapNear();
+  if (now && !near) report(heapReport(collector.sizes(), true));
+  near = now;
 }
 function poke(): void {
   const delay = collector.poke(Date.now());
@@ -44,5 +50,9 @@ function follow(dirs: readonly string[]): void {
   for (const [dir, w] of followed) if (!dirs.includes(dir)) { w.close(); followed.delete(dir); }
   for (const dir of dirs) if (!followed.has(dir) && existsSync(dir)) followed.set(dir, watch(dir, poke).on('error', (e) => report({ kind: 'log', message: `console collector for arc ${run.arc}: watching ${dir} failed: ${e.message}` })));
 }
-parentPort!.on('message', (m: ToCollector) => { if (m.kind === 'check-now') poke(); else follow(m.dirs); });
+parentPort!.on('message', (m: ToCollector) => {
+  if (m.kind === 'check-now') poke();
+  else if (m.kind === 'report') report(heapReport(collector.sizes(), false));
+  else follow(m.dirs);
+});
 schedule(0);

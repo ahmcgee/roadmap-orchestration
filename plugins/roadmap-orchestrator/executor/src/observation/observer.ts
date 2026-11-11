@@ -19,7 +19,7 @@ import { ModelReader } from '../tui/models.ts';
 import { TranscriptReader } from '../tui/transcript.ts';
 import { type Display, type Entry, type Invocation, type ObserveRequest, type ObserveReply, pretty } from '../tui/types.ts';
 import { InvocationTable, type OpenInvocation } from './invocations.ts';
-import { type MemoWork, RecordMemo, withRecordMemo } from './memo.ts';
+import { type MemoSizes, type MemoWork, RecordMemo, withRecordMemo } from './memo.ts';
 import type { WorkRun } from '../status-work.ts';
 
 const FORGE_REFRESH_MS = 60_000;
@@ -81,6 +81,10 @@ export class Observer {
   lastWork: Readonly<MemoWork> = { gitSpawns: 0, gitHits: 0, recordReads: 0, recordHits: 0 };
   /** What the last capture (successful or not) folded from the journal, read of invocation rows, and spent deriving status. */
   lastFold: FoldWork = { eventsFolded: 0, rowsRead: 0, deriveMs: 0 };
+  /** What this observer holds, for the console's heap reports. */
+  sizes(): Readonly<{ events: number; rows: number; open: number; memo: MemoSizes; estate: number }> {
+    return { events: this.#journal?.events ?? 0, rows: this.#table?.size ?? 0, open: this.open().length, memo: this.#memo.sizes(), estate: this.#estate?.entries.length ?? 0 };
+  }
   /** The write-once records read through the memo, each with its stamp when read: what an integrity sweep re-checks. */
   stamped(): ReadonlyMap<string, string> { return this.#memo.stamped(); }
   #lastRefresh: Readonly<{ alive: boolean; work: ReadonlyMap<string, WorkRun> }> = { alive: false, work: new Map() };
