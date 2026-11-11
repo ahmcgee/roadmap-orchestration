@@ -358,7 +358,7 @@ function attempt(p: Parked): boolean {
  * when its admission allows; the next build starts for the newest capture someone waits on.
  */
 const indexJobs = new Map<string, Envelope>();
-const SLICE_MS = 20;
+const SLICE_MS = 20, STALE_VIEW_MS = 5_000;
 const admits = (e: Envelope, a: Admission): boolean => (a.epoch === undefined || a.epoch === e.epoch) && (a.revision ?? 0) <= e.revision && (a.minHighWater ?? 0) <= e.highWater && a.fence === undefined;
 function buildIndex(arc: string, e: Envelope): void {
   if (indexJobs.has(arc)) return;
@@ -377,8 +377,18 @@ function buildIndex(arc: string, e: Envelope): void {
     }
     if (!step.done) { setImmediate(slice); return; }
     indexJobs.delete(arc);
+    // A browser refuses a view older than the notices it has seen, so a read is answered from the newest capture whose index
+    // is built: this one while the arc has not moved past it, or once the read has waited five seconds; otherwise the next
+    // build (for the newest capture) is started by `revisit`.
+    const current = models.get(arc)?.envelope() ?? null;
     const waiting = parked.filter((p) => p.arc === arc && p.park === 'view');
-    for (const p of waiting) if (p.m.kind === 'read' && admits(e, admissionOf(p.m.params))) { parked = parked.filter((q) => q !== p); try { answerFrom(p.m, e); } catch (error) { fail(p.m, error); } }
+    for (const p of waiting) {
+      if (p.m.kind !== 'read' || !admits(e, admissionOf(p.m.params))) continue;
+      const moved = current !== null && current.highWater > e.highWater && !activity.has(current);
+      if (moved && Date.now() - p.m.arrivedAt < STALE_VIEW_MS) continue;
+      parked = parked.filter((q) => q !== p);
+      try { answerFrom(p.m, current !== null && activity.has(current) ? current : e); } catch (error) { fail(p.m, error); }
+    }
     revisit(arc);
   };
   setImmediate(slice);

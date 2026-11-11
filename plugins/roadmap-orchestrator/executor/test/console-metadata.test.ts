@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { consoleFixture } from './fixtures/console.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
 import { ConsoleViews } from '../src/console/views.ts';
+import { metadataShape } from '../src/console/view-shapes.ts';
 import { Observations } from './helpers/observations.ts';
 import { CONSOLE_PROTOCOL, type Envelope } from '../src/observation/protocol.ts';
 import { serveConsole } from '../src/console/http.ts';
@@ -47,6 +48,7 @@ test('SSE registers an atomic metadata watermark with no snapshot/model read and
   const r = await fetch(`${base}/events`,{signal:c.signal}); assert.equal(r.status,200);
   const {body,value} = await firstNotice(r.body!.getReader());
   assert.match(body,/event: revision/); assert.ok(Buffer.byteLength(body)<4096);
+  assert.ok(metadataShape(value), 'a stream notice is exactly the metadata the browser validates');
   assert.equal(value.protocol,CONSOLE_PROTOCOL); assert.equal(value.instance,s.instance); assert.equal(value.repoId,s.repoId);
   assert.equal(value.arc,f.arc); assert.equal(value.selected,f.arc); assert.equal(value.uiSchema,1); assert.ok(value.highWater>0);
   assert.equal('data' in value,false); assert.equal('events' in value,false);

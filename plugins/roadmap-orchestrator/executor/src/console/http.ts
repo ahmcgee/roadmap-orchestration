@@ -98,13 +98,15 @@ export async function serveConsole(args: ConsoleServerArgs) {
       case 'release': wanted.delete(m.arc); stopCollector(m.arc); return;
       case 'check-now': collectors.get(m.arc)?.worker.postMessage({ kind: 'check-now' } satisfies ToCollector); return;
       case 'checked': {
+        // The journal byte is the lag monitor's; streams carry the metadata notice alone.
+        const { offset, ...notice } = m;
         const c = collectors.get(m.arc);
-        if (c) { c.noticeAt = Date.now(); c.offset = m.offset; c.seq = m.highWater; c.observed = true; }
-        latest.delete(m.arc); latest.set(m.arc, m);
+        if (c) { c.noticeAt = Date.now(); c.offset = offset; c.seq = m.highWater; c.observed = true; }
+        latest.delete(m.arc); latest.set(m.arc, notice);
         while (latest.size > 24) latest.delete(latest.keys().next().value!);
         const id = `${m.epoch}:${m.revision}`;
         for (const [res, s] of streams) if (s.arc === m.arc) {
-          send(res, s.last === id ? 'heartbeat' : s.last && !s.last.startsWith(`${m.epoch}:`) ? 'reset' : 'revision', m, id);
+          send(res, s.last === id ? 'heartbeat' : s.last && !s.last.startsWith(`${m.epoch}:`) ? 'reset' : 'revision', notice, id);
           s.last = id;
         }
         return;
