@@ -12,6 +12,7 @@ import type { IsoTime } from '../core/values.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import type { CaptureWork, CollectorMessage, JournalPosition, Summary } from '../observation/collect.ts';
 import { exceptionsOf } from '../observation/observer.ts';
+import { byTime } from '../observation/invocations.ts';
 import { type Admission, type ConsoleCode, type Envelope, type ObservationData, CONSOLE_PROTOCOL, ConsoleError } from '../observation/protocol.ts';
 import type { Status } from '../status.ts';
 import type { Entry, Invocation } from '../tui/types.ts';
@@ -28,7 +29,7 @@ type Base = Readonly<{ run: Run; clock: number; foldMs: number; seq: number; sta
 
 const SLICE_MS = 20, CHUNK = 1 << 20;
 const sortRows = (rows: Invocation[], order: ReadonlyMap<string, number>): Invocation[] =>
-  rows.sort((a, b) => Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? a.startedAt.localeCompare(b.startedAt) : b.endedAt!.localeCompare(a.endedAt))
+  rows.sort((a, b) => Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? byTime(a.startedAt, b.startedAt) : byTime(b.endedAt!, a.endedAt))
     || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 
 /** The journal as parsed here: complete lines of the verified prefix the collector named, up to `target`. */
@@ -136,7 +137,8 @@ export class ArcModel {
         this.#tokens.rows(m.rows);
         this.#upsert(m.rows, this.#parsed!.order);
         this.#base = { ...this.#base, work: m.work };
-        this.#publish(m.asOf);
+        // Not a capture: the views built for this capture stand (the rows' quiet time and latest output move).
+        this.#publish(m.asOf, false);
         return 'published';
       }
       case 'checked': {
@@ -209,8 +211,9 @@ export class ArcModel {
     for (const row of rows) this.#rows.set(row.id, row);
     this.#sorted = sortRows([...this.#rows.values()], order);
   }
-  #publish(asOf: number): void {
-    this.#materializations++; this.#revision++;
+  #publish(asOf: number, capture = true): void {
+    if (capture) this.#materializations++;
+    this.#revision++;
     this.#observedAt = asOf; this.checkedAt = Math.max(this.checkedAt, asOf);
     this.#exceptions = exceptionsOf(this.#base!.status, this.#base!.requests, this.#sorted);
     this.#envelope = this.#build();

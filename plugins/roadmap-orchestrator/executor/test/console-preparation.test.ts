@@ -30,22 +30,27 @@ test('browser preparation coalesces immutable delivery, binds queries and isolat
   assert.deepEqual(await p.read({arc:'a',route:'graph'},run,signal(),b.pending),result,'short delivery retries are exact');
 });
 
-test('a read every reader left before its turn never runs, and cancelling twice is not an error', async t => {
-  // dev.59 C6: clicking through stations cancels reads; a cancelled read must not still occupy the worker.
+test('a read every reader left never reaches the worker, reads do not wait on each other, and cancelling twice is not an error', async t => {
+  // dev.59 C6: clicking through stations cancels reads; a cancelled read must not still occupy the worker. The serve worker
+  // parks a read it cannot answer yet without holding up another, so reads run side by side; a left one is aborted.
   const p = new BrowserPreparation(); t.after(() => p.close());
-  const gate = deferred(), ran: string[] = [];
-  const run = (key: string, value: Promise<unknown> | unknown) => () => { ran.push(key); return Promise.resolve(value); };
+  const gate = deferred(), ran: string[] = [], aborted: string[] = [];
+  // As src/console/http.ts sends a browser read: not at all once its signal aborted, and cancelled at the worker when it aborts.
+  const run = (key: string, value: Promise<unknown> | unknown) => (abandoned: AbortSignal) => {
+    if (abandoned.aborted) { aborted.push(key); return Promise.reject(new Error('cancelled')); }
+    ran.push(key); abandoned.addEventListener('abort', () => aborted.push(key)); return Promise.resolve(value);
+  };
   const first = await p.read('first', run('first', gate.promise), signal());
   assert.equal(first.state, 'preparing');
   const left = new AbortController(), leaving = p.read('left', run('left', 'never'), left.signal);
   left.abort();
   await assert.rejects(leaving, /browser read cancelled/);
   const kept = await p.read('kept', run('kept', 'wanted'), signal());
-  assert.equal(kept.state, 'preparing'); if (kept.state !== 'preparing' || first.state !== 'preparing') return;
-  assert.deepEqual(ran, ['first'], 'reads wait their turn');
+  assert.equal(kept.state, 'ready', 'a read does not wait behind one still preparing'); if (first.state !== 'preparing') return;
+  assert.deepEqual(kept, {state: 'ready', value: 'wanted'});
+  assert.deepEqual(ran, ['first', 'kept'], 'the read its reader left never reached the worker');
+  assert.deepEqual(aborted, ['left']);
   gate.resolve('done');
-  assert.deepEqual(await p.read('kept', run('kept', 'wanted'), signal(), kept.pending), {state: 'ready', value: 'wanted'});
-  assert.deepEqual(ran, ['first', 'kept'], 'the read its reader left was never run');
   assert.deepEqual(await p.read('first', run('first', 'done'), signal(), first.pending, true), {state: 'ready', value: {state: 'cancelled'}});
   assert.deepEqual(await p.read('first', run('first', 'done'), signal(), first.pending, true), {state: 'ready', value: {state: 'cancelled'}}, 'a second cancel of the same lease');
 });

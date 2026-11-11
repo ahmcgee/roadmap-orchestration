@@ -11,7 +11,8 @@ const hash = (value: unknown) => sha256Hex(canonicalJson(value));
 export class ConsoleMetadata {
   #entries = new Map<string, {versions: ViewVersions}>();
   read(e: Envelope, views: ConsoleViews, selected: string | null): Metadata {
-    const key = captureKey(e);
+    // A rows-only refresh keeps the capture; a changed row it read again still changes the versions.
+    const key = `${captureKey(e)}:${tokensFor(e.data).invocations().digest}`;
     let entry = this.#entries.get(key);
     if (!entry) {
       const s = e.data.display.status, t = tokensFor(e.data);

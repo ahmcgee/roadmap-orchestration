@@ -109,7 +109,7 @@ export class InvocationTable {
     if (this.#sorted === null) {
       const rows: Invocation[] = [];
       for (const slot of this.#slots.values()) if (slot.row !== null) rows.push(slot.row);
-      this.#sorted = rows.sort((a, b) => Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? a.startedAt.localeCompare(b.startedAt) : b.endedAt!.localeCompare(a.endedAt)));
+      this.#sorted = rows.sort((a, b) => Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? byTime(a.startedAt, b.startedAt) : byTime(b.endedAt!, a.endedAt)));
     }
     return this.#sorted;
   }
@@ -129,6 +129,8 @@ export class InvocationTable {
   reset(): void { this.#slots.clear(); this.#ordinal.clear(); this.#changed.clear(); this.#sorted = []; }
 }
 
+/** Recorded times are fixed-width ISO instants: their code-point order is their time order (localeCompare is slower, same answer). */
+export const byTime = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const sameRelations = (a: Relations | undefined, b: Relations | undefined): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 function readRow(slot: Slot, alive: boolean, readers: Readonly<{ models: ModelReader; logs: TranscriptReader }>): Invocation {

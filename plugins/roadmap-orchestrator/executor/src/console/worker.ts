@@ -109,7 +109,9 @@ const requestedTabs = new Map<string, { arc: string; path: string[]; params: Rec
 const WARM = { standMs: 500, keepMs: 5 * 60_000, views: 32 } as const;
 function route(path: string[], params: Record<string, string>, e: Envelope) {
   if (!isTabList(path, params)) return build(path, params, e);
-  const key = `${path.join('/')}?${canonicalJson(params)}`, capture = captureKey(e), hit = tabViews.get(key);
+  // Admission-only parameters (the watermark and revision a notice carried) do not change the view.
+  const { minHighWater: _minHighWater, revision: _revision, ...query } = params;
+  const key = `${path.join('/')}?${canonicalJson(query)}`, capture = captureKey(e), hit = tabViews.get(key);
   requestedTabs.set(key, { arc: path[1]!, path, params, at: Date.now() });
   if (hit?.capture === capture) { tabViews.delete(key); tabViews.set(key, hit); return { ...e, data: hit.data }; }
   const value = build(path, params, e) as { data: unknown };

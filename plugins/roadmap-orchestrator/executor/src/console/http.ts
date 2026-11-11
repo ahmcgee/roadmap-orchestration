@@ -248,19 +248,27 @@ export async function serveConsole(args: ConsoleServerArgs) {
     });
   }
   /** Sends `message` to the serve worker. A read resolves to its serialized reply; a control request to its value. */
-  function request(message: ConsoleRequest, timeoutMs: number): Promise<unknown> {
+  function request(message: ConsoleRequest, timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
     // Requests made before then wait in order, so control messages keep theirs.
-    if (!admitting) return ready.then(() => request(message, timeoutMs));
+    if (!admitting) return ready.then(() => request(message, timeoutMs, signal));
+    if (signal?.aborted) return Promise.reject(new ConsoleError('unavailable', 'browser read cancelled'));
     if (failed) return Promise.reject(new ConsoleError('unavailable', failed.message));
     if (serveDown) return Promise.reject(new ConsoleError('unavailable', serveDown.message));
     if (message.kind === 'read' && message.path.length === 1 && message.path[0] === 'arcs') return discover();
     // Coalesce reads only. Subscription mutations must preserve add/remove/add order.
-    const key = message.kind === 'read' ? `${timeoutMs}:${canonicalJson(message)}` : `control:${next + 1}`;
+    // A read its caller can abandon (a browser read) is never shared: its abort cancels it at the serve worker.
+    const key = message.kind === 'read' && signal === undefined ? `${timeoutMs}:${canonicalJson(message)}` : `control:${next + 1}`;
     const known = coalesced.get(key); if (known) return known;
     const id = ++next;
     const task = new Promise<unknown>((resolve, reject) => {
       const p: Pending = { resolve, reject, timer: null, timeoutMs, strict: message.kind === 'read' && message.patient !== true };
       pending.set(id, p); start(p, id);
+      signal?.addEventListener('abort', () => {
+        if (pending.get(id) !== p) return;
+        if (p.timer) clearTimeout(p.timer); pending.delete(id);
+        serve.postMessage({ kind: 'cancel', id } satisfies ToServe);
+        reject(new ConsoleError('unavailable', 'browser read cancelled'));
+      }, { once: true });
       serve.postMessage({ ...message, id, arrivedAt: Date.now() } satisfies ToServe);
     }).finally(() => { coalesced.delete(key); });
     coalesced.set(key, task); return task;
@@ -336,7 +344,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
           const aborted = () => { if (!res.writableFinished) controller.abort(); };
           res.once('close', aborted);
           try {
-            const result = await preparation.read({instance, path, params: query}, () => request({kind: 'read', path, params: query, patient: true}, BUDGETS.browserMs), controller.signal, token, cancel === '1');
+            const result = await preparation.read({instance, path, params: query}, (abandoned) => request({kind: 'read', path, params: query, patient: true}, BUDGETS.browserMs, abandoned), controller.signal, token, cancel === '1');
             if (controller.signal.aborted) return;
             if (result.state === 'preparing') {
               res.setHeader('retry-after', '1');
