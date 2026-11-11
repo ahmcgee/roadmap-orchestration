@@ -48,7 +48,7 @@ export type CollectorMessage =
   | Readonly<{ kind: 'failed'; arc: ArcId; at: number; error: Readonly<{ code: ConsoleCode; message: string }> }>
   | Readonly<{ kind: 'log'; message: string }>;
 
-/** How long the loop sleeps: a second, 100 ms after a poke, never closer to a capture than its floor (150 ms or half its time). */
+/** How long the loop sleeps: a second, 100 ms after a poke, never closer to a capture than its floor (150 ms, or half its time when it was not the cold one). */
 export const COLLECT = { idleMs: 1_000, pokeMs: 100, floorMs: 150, rowsMs: 5_000, sweepMs: 20, racesBeforeLog: 5 } as const;
 
 /** The integrity sweep: write-once records re-stamped against their read-time stamp, and the run walked for escaping symlinks. */
@@ -199,7 +199,8 @@ export class ArcCollector {
       work: { ...o.lastFold, eventsFolded: o.lastFold.eventsFolded + this.#folded, statCalls: sample.statCalls, recordReads: o.lastWork.recordReads, gitSpawns: o.lastWork.gitSpawns, captureMs } });
     this.#folded = 0;
     this.#published = sample; this.#rowsAt = now;
-    this.#floorUntil = Date.now() + Math.max(COLLECT.floorMs, captureMs / 2);
+    // The cold capture read the whole arc: its time says nothing of the next one's, which folds what was appended since.
+    this.#floorUntil = Date.now() + Math.max(COLLECT.floorMs, cold ? 0 : captureMs / 2);
     return true;
   }
   #rows(sample: Sample, now: number): void {
