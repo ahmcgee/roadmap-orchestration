@@ -192,7 +192,7 @@ export async function runMutantLane(
     launch: (invDir) => {
       mkdirSync(run.dirOf(invDir), { recursive: true });
       return {
-        argv: lane.argv, cwd: absPath(join(worktree, lane.cwd)), env: mutantEnv(ctx, parent.unit, lane, run.held, absPath(join(run.dirOf(invDir), WITNESS_LINES))), stdinPath: null,
+        argv: lane.argv, cwd: absPath(join(worktree, lane.cwd)), env: mutantEnv(ctx, parent.unit, lane, run.held, absPath(join(run.dirOf(invDir), WITNESS_LINES))), pass: lane.env.pass, stdinPath: null,
         ...command.launch,
       };
     },

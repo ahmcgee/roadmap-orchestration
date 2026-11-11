@@ -31,10 +31,21 @@ export function invocationEnv(inv: InvocationId, role: 'runner' | 'workload'): R
   return { [ENV_ARC]: parseOpId(op).arc, [ENV_OP]: op, [ENV_INV]: inv, [ENV_ROLE]: role };
 }
 
-/** The workload's environment: exactly the declared env, the invocation variables and the crash trigger if any. */
+/**
+ * The workload's environment: exactly the declared env, the passed variables (`envPass`, from the runner's own
+ * environment, where the executor set them: src/runner/launch.ts), the invocation variables and the crash trigger if any.
+ * Runs in the runner process.
+ */
 export function workloadEnv(launch: LaunchFile): Record<string, string> {
+  const passed: Record<string, string> = {};
+  for (const name of launch.envPass ?? []) {
+    const value = process.env[name];
+    if (value === undefined) throw new Error(`${launch.inv}: launch.json passes ${name}, which the runner's environment lacks`);
+    passed[name] = value;
+  }
   return {
     ...launch.env,
+    ...passed,
     ...invocationEnv(launch.inv, 'workload'),
     ...(launch.test === null ? {} : { [ENV_TEST_CRASH]: launch.test.crash }),
   };

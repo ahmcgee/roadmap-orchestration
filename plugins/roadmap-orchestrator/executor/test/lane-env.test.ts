@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { readHostSample } from '../src/host/sample.ts';
@@ -45,6 +46,37 @@ test('journey-job-and-zero-cpu-env', async () => {
     const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(process.env.ROADMAP_CPU ?? "missing")'], { env: laneEnv(run.ctx, U1, lane, []), encoding: 'utf8' });
     assert.equal(child.status, 0);
     assert.equal(child.stdout, '0');
+  } finally { run.journal.close(); }
+});
+
+/** Every file under `dir` whose bytes contain `needle`. */
+function filesContaining(dir: string, needle: string): readonly string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && readFileSync(join(e.parentPath, e.name)).includes(needle))
+    .map((e) => join(e.parentPath, e.name));
+}
+
+// Field report 2026-11-11: launch.json held passed `*_API_KEY` values in plaintext. A passed variable reaches the
+// workload by value and the run's records by name only.
+test('passed-env-value-reaches-workload-not-records', async () => {
+  const secret = `sk-test-${randomBytes(16).toString('hex')}`;
+  const digest = createHash('sha256').update(secret).digest('hex');
+  const output = join(tmpDir('pass-env'), 'digest');
+  const argv = [process.execPath, '-e', 'require("node:fs").writeFileSync(process.env.OUTPUT, require("node:crypto").createHash("sha256").update(process.env.FIELD_API_KEY ?? "").digest("hex"))'];
+  const run = setupUnit({ steps: [], lanes: [{ id: 'pass-env', argv, env: { set: { OUTPUT: output }, pass: ['FIELD_API_KEY', 'PATH'] } }] });
+  try {
+    const ctx = { ...run.ctx, hostEnv: { ...run.ctx.hostEnv, FIELD_API_KEY: secret } };
+    pinDispatch(ctx, run.unit, keptSpec(run.journal));
+    const lane = loadUnitSpec(ctx, run.unit).spec.lanes[0]!;
+    const result = await runLaneSeries(ctx, { type: 'stage', unit: U1, stage: 'lanes', attempt: 1 }, [lane], 'spec', {
+      path: absPath(join(tmpDir('pass-tree'), 'tree')), checkout: { type: 'detached', at: run.base },
+    }, absPath(join(tmpDir('pass-series'), 'series')), { acquire: reserveNow(ctx), rank: () => { throw new Error('not ranked'); }, signal: ctx.signal, sampleHost: readHostSample }, false);
+    assert.equal(result.end.kind, 'green', JSON.stringify(result.end));
+    assert.equal(readFileSync(output, 'utf8'), digest, 'the workload got the passed value');
+    const launch = launchOf(run, spawnIntents(run).find((i) => i.expect.subject.purpose === 'lane')!);
+    assert.deepEqual(launch.envPass, ['FIELD_API_KEY', 'PATH']);
+    assert.equal(Object.hasOwn(launch.env, 'FIELD_API_KEY'), false);
+    assert.deepEqual(filesContaining(run.runDir, secret), [], 'no file under the run dir holds the value');
   } finally { run.journal.close(); }
 });
 

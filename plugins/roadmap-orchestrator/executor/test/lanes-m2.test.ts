@@ -273,7 +273,7 @@ test('lanes.instance-env: a DAG arc\'s lanes reserve @cpu tokens and a pool inst
     assert.equal(done.end.kind, 'green', JSON.stringify(done.end));
     const spawns = journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'lane');
     const envs = spawns.map((s) => launchOf({ ...run, runDir }, s).env);
-    assert.deepEqual(envs[0], { PATH: run.ctx.hostEnv['PATH'], RESOURCE_OWNER: `${plan.arc}/${U1}`, ROADMAP_CPU: '2' }, 'a lane without a pool instance binds none');
+    assert.deepEqual(envs[0], { RESOURCE_OWNER: `${plan.arc}/${U1}`, ROADMAP_CPU: '2' }, 'a lane without a pool instance binds none');
     assert.equal(envs[1]?.['RESOURCE_INSTANCE_ESTATE'], '1');
     assert.match(readFileSync(join(done.ledger[0]!.evidenceDir, 'output', 'files', 'stdout'), 'utf8'), /instance=none/);
     // Reservations: the fast lane's 2 tokens, then the estate lane's instance and 4 tokens, each all at once.

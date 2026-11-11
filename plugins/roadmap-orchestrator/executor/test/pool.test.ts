@@ -112,6 +112,7 @@ describe('res.instance-binding-persisted', () => {
     assert.equal(residue.key.resource, instance);
     assert.equal(residue.teardown.env['RESOURCE_INSTANCE_ESTATE'], '2', 'the binding is in the recorded recipe');
     assert.equal(residue.teardown.env['RESOURCE_OWNER'], `${r.arc}/u1`);
+    assert.deepEqual([residue.teardown.envPass, residue.teardown.env['PATH']], [['PATH'], undefined], 'a passed variable is recorded by name, its value never');
     assert.equal(ctx.journal.view.resources().get(DB)?.status.state, 'free');
 
     // The retry replays the recorded recipe: the fake tears down estate#2, then the residue is disposed and it is released.

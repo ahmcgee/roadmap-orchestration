@@ -40,23 +40,35 @@ export function resourceDecl(plan: PlanM1, resource: ResourceInstance): Resource
 }
 
 /**
- * A declared command resolved against the repo root and this process's environment, with the owner label
- * and the holder's instance binding `instances` (`instanceEnv` of its whole set).
+ * A declared command resolved against the repo root, with the owner label and the holder's instance binding `instances`
+ * (`instanceEnv` of its whole set). Its `pass` variables are named in `envPass`, never resolved here: a recipe is
+ * recorded (residues.jsonl), and `commandEnv` takes their values from this process's environment when it runs.
  */
 export function resolveCommand(repo: AbsPath, command: ToolCommand, label: string, instances: Readonly<Record<string, string>>): TeardownRecipe {
   const env: Record<string, string> = { ...command.env.set };
-  for (const name of command.env.pass) {
-    const value = process.env[name];
-    // Startup refuses a declared pass variable the host lacks (spec-lane-unrunnable), so this is a bug.
-    if (value === undefined) throw new Error(`declared variable ${name} of ${JSON.stringify(command.argv)} is not set`);
-    env[name] = value;
-  }
+  const pass = [...command.env.pass].sort();
   for (const name of [OWNER_ENV, ...Object.keys(instances)]) {
-    if (Object.hasOwn(env, name)) throw new Error(`${JSON.stringify(command.argv)} declares ${name}, which the executor sets`);
+    if (Object.hasOwn(env, name) || pass.includes(name)) throw new Error(`${JSON.stringify(command.argv)} declares ${name}, which the executor sets`);
   }
   env[OWNER_ENV] = label;
   Object.assign(env, instances);
-  return { argv: command.argv, cwd: absPath(join(repo, command.cwd)), env };
+  return { argv: command.argv, cwd: absPath(join(repo, command.cwd)), env, ...(pass.length === 0 ? {} : { envPass: pass }) };
+}
+
+/**
+ * The launch env of a recipe: its literal `env` plus its `envPass` values from this process's environment, named as the
+ * launch's `pass` so launch.json records the names only. A recipe recorded before `envPass` carries its values in `env`.
+ */
+export function commandEnv(recipe: TeardownRecipe): Readonly<{ env: Readonly<Record<string, string>>; pass: readonly string[] }> {
+  const env: Record<string, string> = { ...recipe.env };
+  const pass = recipe.envPass ?? [];
+  for (const name of pass) {
+    const value = process.env[name];
+    // Startup refuses a declared pass variable the host lacks (spec-lane-unrunnable), so this is a bug.
+    if (value === undefined) throw new Error(`declared variable ${name} of ${JSON.stringify(recipe.argv)} is not set`);
+    env[name] = value;
+  }
+  return { env, pass };
 }
 
 /**
@@ -117,7 +129,7 @@ export async function runResourceCommand(
     origin: { type: 'new', key: opKey(`${purpose}:${resource}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + timeout)) },
     subject: { purpose, unit, resource },
     launch: () => ({
-      argv: recipe.argv, cwd: recipe.cwd, env: recipe.env, stdinPath: null, stallMs: null, graceMs: GRACE_MS,
+      argv: recipe.argv, cwd: recipe.cwd, ...commandEnv(recipe), stdinPath: null, stallMs: null, graceMs: GRACE_MS,
       terminal: { type: 'command', purpose, expectedExit: 0 },
     }),
   });

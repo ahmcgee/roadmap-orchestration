@@ -207,12 +207,19 @@ export type LaunchTerminal = BackendTerminal | CommandTerminal;
 
 /**
  * launch.json: the only executor-written file that may contain a model id, and only inside `argv`.
- * `env` is the declared environment; the runner adds ROADMAP_OP, ROADMAP_INV and ROADMAP_ROLE=workload.
+ * `env` is the declared environment's literal values; the runner adds ROADMAP_OP, ROADMAP_INV and ROADMAP_ROLE=workload.
  */
 export type LaunchFile = InvocationBinding & Readonly<{
   argv: readonly string[];
   cwd: AbsPath;
   env: Readonly<Record<string, string>>;
+  /**
+   * The workload variables taken from the executor's environment (a lane's or declared command's `env.pass`): names
+   * only, sorted, disjoint from `env`. Their values ride in the runner's process environment and are never written
+   * (src/runner/launch.ts). Absent when none, so a launch without one hashes as it did before the field existed; a
+   * launch written before it carries passed values inside `env`.
+   */
+  envPass?: readonly string[];
   stdinPath: AbsPath | null;
   deadlineAt: IsoTime;
   /**
@@ -286,6 +293,20 @@ const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
 };
 
 /**
+ * An optional `envPass`: the names of variables passed from the executor's environment, never their values. Sorted,
+ * non-empty when present (absent is none), never ROADMAP_* and disjoint from the record's literal `env`.
+ */
+function passedNames(f: Fields, env: Readonly<Record<string, string>>): Readonly<{ envPass?: readonly string[] }> {
+  const names = f.optional('envPass', sortedBy(envName, (n) => n, { nonEmpty: true }));
+  if (names === undefined) return {};
+  for (const n of names) {
+    if (n.startsWith('ROADMAP_')) throw new SchemaError(`${f.path}.envPass`, 'a passed variable (ROADMAP_* are set by the executor)', n);
+    if (Object.hasOwn(env, n)) throw new SchemaError(`${f.path}.envPass`, 'names absent from env', n);
+  }
+  return { envPass: names };
+}
+
+/**
  * The smallest grace a launch may carry. The executor's backstop kills a hung runner at deadline + 2 * grace
  * and the runner polls cancel and deadline every 500 ms, so a shorter grace could let the backstop fire
  * before the runner has written exit.json (lead ruling, step 13).
@@ -293,19 +314,20 @@ const declaredEnv: Read<Readonly<Record<string, string>>> = (value, path) => {
 export const MIN_GRACE_MS = 1_000;
 const graceMs = int(MIN_GRACE_MS, Number.MAX_SAFE_INTEGER);
 
-export const launchFile: Read<LaunchFile> = object((f) => ({
-  ...binding(f),
-  argv: f.get('argv', argv),
-  cwd: f.get('cwd', abs),
-  env: f.get('env', declaredEnv),
-  stdinPath: f.get('stdinPath', nullable(abs)),
-  deadlineAt: f.get('deadlineAt', time),
-  stallMs: f.get('stallMs', nullable(positive)),
-  graceMs: f.get('graceMs', graceMs),
-  containment: f.get('containment', containmentMode),
-  test: f.get('test', nullable(object((g) => ({ crash: g.get('crash', abs) })))),
-  terminal: f.get('terminal', launchTerminal),
-}));
+export const launchFile: Read<LaunchFile> = object((f) => {
+  const head = { ...binding(f), argv: f.get('argv', argv), cwd: f.get('cwd', abs), env: f.get('env', declaredEnv) };
+  return {
+    ...head,
+    ...passedNames(f, head.env),
+    stdinPath: f.get('stdinPath', nullable(abs)),
+    deadlineAt: f.get('deadlineAt', time),
+    stallMs: f.get('stallMs', nullable(positive)),
+    graceMs: f.get('graceMs', graceMs),
+    containment: f.get('containment', containmentMode),
+    test: f.get('test', nullable(object((g) => ({ crash: g.get('crash', abs) })))),
+    terminal: f.get('terminal', launchTerminal),
+  };
+});
 
 /** runner.json: written with `child: null` before the spawn, rewritten with the child after. */
 export type RunnerFile = InvocationBinding & Readonly<{
@@ -1461,7 +1483,12 @@ export function residueOwner(key: ResidueKey): ResidueOwner {
   throw new Error(`residue key ${JSON.stringify(key)} names no owner`);
 }
 
-export type TeardownRecipe = Readonly<{ argv: readonly string[]; cwd: AbsPath; env: Readonly<Record<string, string>> }>;
+/**
+ * A resolved declared command. `env`: its literal values (env.set, owner label, instance binding); `envPass`: the names
+ * it takes from the executor's environment at run time (absent when none), never their values. A recipe recorded before
+ * `envPass` existed carries passed values inside `env`.
+ */
+export type TeardownRecipe = Readonly<{ argv: readonly string[]; cwd: AbsPath; env: Readonly<Record<string, string>>; envPass?: readonly string[] }>;
 
 /**
  * The body of one residues.jsonl line (`ResidueLine` in events.ts: same chain and tail rules as events.jsonl, no `arc`).
@@ -1477,7 +1504,10 @@ export const residueRecord: Read<ResidueRecord> = tagged('type', {
   residue: object((f): ResidueRecord => ({
     type: f.get('type', literal('residue')),
     key: f.get('key', residueKey),
-    teardown: f.get('teardown', object((g) => ({ argv: g.get('argv', argv), cwd: g.get('cwd', abs), env: g.get('env', stringMap) }))),
+    teardown: f.get('teardown', object((g): TeardownRecipe => {
+      const recipe = { argv: g.get('argv', argv), cwd: g.get('cwd', abs), env: g.get('env', stringMap) };
+      return { ...recipe, ...passedNames(g, recipe.env) };
+    })),
     label: f.get('label', str),
   })),
   disposition: (value, path) => {

@@ -42,7 +42,7 @@ import { SCHEMA_VERSION } from '../core/version.ts';
 import { launchPressure } from '../host/pressure.ts';
 import { unitSeatRef } from '../routing/types.ts';
 import { runnerFiles } from '../runner/files.ts';
-import { awaitRunner,cancel,launchSha256,prepareLaunch,startRunner } from '../runner/launch.ts';
+import { awaitRunner,cancel,launchSha256,prepareLaunch,splitEnv,startRunner } from '../runner/launch.ts';
 
 /** Where an invocation's files live: `<runDir>/inv/<seq>-<ordinal>/` (SCHEMAS.md "Runner files"). */
 export function invocationDir(runDir: AbsPath, inv: InvocationId): AbsPath {
@@ -55,7 +55,10 @@ export type ProcContext = Readonly<{ journal: Journal; containment: Containment;
 export type LaunchContent = Readonly<{
   argv: readonly string[];
   cwd: AbsPath;
+  /** The workload's whole environment, passed values included; launch.json records only the literal ones (`pass`). */
   env: Readonly<Record<string, string>>;
+  /** The names in `env` whose values came from the executor's environment: launch.json names them, never their values. */
+  pass?: readonly string[];
   stdinPath: AbsPath | null;
   stallMs: number | null;
   graceMs: number;
@@ -94,10 +97,16 @@ export type Settled = Readonly<{ outcome: InvocationOutcome; recoveredBy: Recove
 
 export async function invoke(journal: Journal, containment: Containment, spec: LaunchSpec): Promise<InvocationOutcome> {
   let launch: LaunchFile | undefined;
+  let inherited: Readonly<Record<string, string>> = {};
   const body = (op: OpId, inv: InvocationId, deadlineAt: IsoTime): IntentBody<'proc.spawn'> => {
-    const content = spec.launch(invocationDir(spec.runDir, inv), inv);
+    const { env, pass, ...content } = spec.launch(invocationDir(spec.runDir, inv), inv);
     assertPairing(spec.subject, content.terminal);
-    launch = prepareLaunch({ v: SCHEMA_VERSION, arc: parseOpId(op).arc, op, inv, ...content, deadlineAt, containment: containment.mode });
+    const split = splitEnv(env, pass ?? []);
+    inherited = split.inherited;
+    launch = prepareLaunch({
+      v: SCHEMA_VERSION, arc: parseOpId(op).arc, op, inv, ...content, env: split.env, ...(split.envPass === undefined ? {} : { envPass: split.envPass }),
+      deadlineAt, containment: containment.mode,
+    });
     return { expect: { subject: spec.subject, launchSha256: launchSha256(launch), ...(spec.cpuKey === undefined ? {} : { cpuKey: spec.cpuKey }) }, post: null };
   };
   const { origin } = spec;
@@ -108,7 +117,7 @@ export async function invoke(journal: Journal, containment: Containment, spec: L
   const unit = parentUnit(spawnIntent(journal.view, durable.op).parent, (op) => journal.view.latestIntent(op));
   crashPoint('spawn.after-intent', unit);
 
-  const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch, unit);
+  const handle = startRunner(invocationDir(spec.runDir, durable.inv), launch, unit, inherited);
   const mcpContext = {journal, runDir:spec.runDir};
   const inspectInit = mcpInitInspector(mcpContext, launch);
   const mcpTimer = setInterval(() => { if (inspectInit()) clearInterval(mcpTimer); }, 250);
