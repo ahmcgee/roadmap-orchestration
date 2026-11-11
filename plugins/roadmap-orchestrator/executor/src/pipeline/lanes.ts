@@ -1609,7 +1609,7 @@ function storeOf(ctx: WitnessedView, witnessed: readonly WitnessedEntry[]): Obse
   }));
 }
 
-// A synchronous projection shares verified witness bytes with the completion reader. Never retained across calls.
+// A synchronous projection shares one observation store with the completion reader. Never retained across calls.
 let observationReads: Map<JournalView, ObservationStore> | null = null;
 export function withObservationReads<T>(read: () => T): T {
   if (observationReads !== null) return read();
