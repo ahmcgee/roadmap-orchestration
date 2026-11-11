@@ -904,7 +904,10 @@ load/apply. A build retains its reservation through cleanup; a publication holde
 Release requires confirmed quiescence and teardown. CPU tokens have no teardown or residue.
 
 Residue identity binds arc/invocation/resource instance and exactly one unit or job owner, plus recorded cleanup
-recipe/provenance. Startup refuses **all foreign undispositioned residues**, even for resources this arc does not use;
+recipe/provenance. The recipe is `TeardownRecipe {argv,cwd,env,envPass?}`: `env` holds literal values (env.set, owner
+label, instance binding), `envPass` the sorted names of the declared `pass` variables, whose values are read from the
+executor's environment when the teardown runs and are never recorded (absent when none; a recipe recorded before it carries
+passed values in `env` and runs as recorded). Startup refuses **all foreign undispositioned residues**, even for resources this arc does not use;
 clean or isolate them. A readable journal proving this arc owns a residue permits start so recovery/probes can reclaim
 it. Its dirty instance remains unavailable. Cleaned/isolated/transferred dispositions are durable, not manual deletion.
 
@@ -1114,7 +1117,7 @@ kept before spawning. Adapters read only quiescent files and write deterministic
 
 ```ts
 LaunchFile = InvocationBinding & {
- argv:string[]; cwd:AbsPath; env:Record<string,string>; stdinPath:AbsPath|null;
+ argv:string[]; cwd:AbsPath; env:Record<string,string>; envPass?:string[]; stdinPath:AbsPath|null;
  deadlineAt:IsoTime; stallMs:number|null; graceMs:number; containment:'session'|'cgroup';
  test:{crash:AbsPath}|null; terminal:LaunchTerminal;
 };
@@ -1131,6 +1134,12 @@ LaunchTerminal is command `{type,purpose,expectedExit,timeoutMin?}` or backend
 Codex build and absent on a build launched before dev.59. Every Claude build also launches with
 `crossSessionInbound: "accept"` in its `--settings` and never `--bare`. TimeoutMin is lane-only. Claude sessions have backend,
 mode fresh/resume and id; fresh Codex lacks id until the result. Runner adds ROADMAP_OP/INV/ROLE to the declared env.
+`env` holds literal values only. `envPass` names the variables a launch takes from the executor's environment (a lane's or
+declared command's `env.pass`): sorted, non-empty, never ROADMAP_*, disjoint from `env`, absent when none. Their values never
+reach a file: the executor sets them in the runner's process environment and the runner copies them into the workload's, so
+launch.json and its `launchSha256` carry names only. A launch.json written before `envPass` (1.0.0-dev.61 and earlier)
+carries passed values inside `env`; it reads and hashes as written and is never rewritten. Backend and bring-up launches
+pass nothing: their host PATH, HOME and CLI config-dir values stay literal in `env`.
 Only launch argv can carry model ids among executor-written runtime files. Exit is published after containment empties,
 before adaptation; `reported` follows a validated final report's bounded descendant grace. Binding mismatch refuses.
 

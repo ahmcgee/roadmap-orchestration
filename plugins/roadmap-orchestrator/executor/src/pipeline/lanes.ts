@@ -295,6 +295,7 @@ function executorEnv(label: string, held: readonly ResourceUnit[]): Readonly<Rec
   return { [OWNER_ENV]: label, ...instanceEnv(held), ROADMAP_CPU: String(held.filter((u) => parseResourceUnit(u).type === 'cpu').length) };
 }
 
+/** A launch of it names `lane.env.pass` as its `pass`, so launch.json keeps those names and never their values. */
 function declaredEnv(ctx: Pick<StageContext, 'hostEnv'>, lane: LaneDef, executor: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
   const env: Record<string, string> = { ...lane.env.set };
   for (const name of lane.env.pass) {
@@ -906,7 +907,7 @@ async function runLane(
         for (const name of Object.keys(extra)) if (Object.hasOwn(env, name)) throw new Error(`lane ${lane.id} declares ${name}, which the executor sets`);
       }
       return {
-        ...captureLaunch({ ...lane, argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()) }, { ...env, ...extra }, absPath(join(invDir, 'captures'))), cwd: absPath(join(tree, lane.cwd)), stdinPath: null,
+        ...captureLaunch({ ...lane, argv: files === null ? lane.argv : testArgvOf(lane, [...files].sort()) }, { ...env, ...extra }, absPath(join(invDir, 'captures'))), pass: lane.env.pass, cwd: absPath(join(tree, lane.cwd)), stdinPath: null,
         ...command.launch,
       };
     },
@@ -1717,7 +1718,7 @@ export async function runJourneySeries(
       launch: (invDir) => {
         mkdirSync(dirOf(lane, invDir), { recursive: true });
         return {
-          ...captureLaunch(lane.def, envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), absPath(join(invDir, 'captures'))), cwd: absPath(join(checkout.path, lane.def.cwd)), stdinPath: null,
+          ...captureLaunch(lane.def, envOf(lane, held, absPath(join(dirOf(lane, invDir), WITNESS_LINES))), absPath(join(invDir, 'captures'))), pass: lane.def.env.pass, cwd: absPath(join(checkout.path, lane.def.cwd)), stdinPath: null,
           ...command.launch,
         };
       },

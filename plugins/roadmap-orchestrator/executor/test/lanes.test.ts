@@ -52,7 +52,8 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
   assert.equal(done.next.kind === 'stage' && done.next.stage, 'gate');
   assert.deepEqual(done.ledger.map((l) => [l.lane, l.verdict, l.exitCode]), [['fast1', 'pass', 0], ['fast2', 'pass', 0], ['estate1', 'pass', 0]]);
 
-  // Verbatim: each launch is the spec's argv, cwd under the checkout, and exactly the declared env plus the owner label and granted CPU count.
+  // Verbatim: each launch is the spec's argv, cwd under the checkout, and exactly the declared env plus the owner label and granted CPU count
+  // (the passed PATH by name).
   const spawns = laneSpawns(run);
   const order = ['fast1', 'fast2', 'estate1'];
   assert.deepEqual(spawns.map((s) => s.expect.subject.purpose === 'lane' && s.expect.subject.lane), order);
@@ -61,7 +62,8 @@ test('verify.verbatim-serial: lanes run one at a time, fast before estate, with 
     const launch = launchOf(run, s);
     assert.deepEqual(launch.argv, spec.argv, `${order[i]} argv`);
     assert.equal(launch.cwd, done.verification?.path);
-    assert.deepEqual(launch.env, { LOG: log, PATH: run.ctx.hostEnv['PATH'], RESOURCE_OWNER: `${run.ctx.plan().arc}/${U1}`, ROADMAP_CPU: spec.tier === 'estate' ? '4' : '2' });
+    assert.deepEqual(launch.env, { LOG: log, RESOURCE_OWNER: `${run.ctx.plan().arc}/${U1}`, ROADMAP_CPU: spec.tier === 'estate' ? '4' : '2' });
+    assert.deepEqual(launch.envPass, ['PATH'], 'a passed variable is recorded by name, its value never');
     assert.equal(s.expect.subject.purpose === 'lane' && s.expect.subject.at, run.base);
     // The stall watchdog, not a short deadline, ends a hung lane.
     assert.equal(launch.stallMs, LANE_STALL_MS);

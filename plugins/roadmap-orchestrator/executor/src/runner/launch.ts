@@ -25,6 +25,27 @@ export const RUNNER_LOG = 'runner.log';
 const RUNNER_SCRIPT = fileURLToPath(new URL('../entry/runner.ts', import.meta.url));
 const POLL_MS = 100;
 
+/**
+ * A workload environment split for persistence. `env` is what launch.json records; `envPass` (absent when none) names
+ * the variables passed from the executor's environment; `inherited` holds their values, which reach the workload only
+ * through the runner's process environment (`startRunner`, then `workloadEnv`) and are never written to a file.
+ */
+export type SplitEnv = Readonly<{ env: Readonly<Record<string, string>>; envPass?: readonly string[]; inherited: Readonly<Record<string, string>> }>;
+
+/** Splits `env` so the `passed` names' values leave the record. Every passed name must be in `env`: a caller bug otherwise. */
+export function splitEnv(env: Readonly<Record<string, string>>, passed: readonly string[]): SplitEnv {
+  const literal: Record<string, string> = { ...env };
+  const inherited: Record<string, string> = {};
+  for (const name of [...passed].sort()) {
+    const value = env[name];
+    if (value === undefined) throw new Error(`passed variable ${name} has no value in the launch env`);
+    inherited[name] = value;
+    delete literal[name];
+  }
+  const names = Object.keys(inherited);
+  return { env: literal, ...(names.length === 0 ? {} : { envPass: names }), inherited };
+}
+
 /** Completes a launch record: the crash trigger in the executor's environment, if any, rides into test.crash. */
 export function prepareLaunch(base: Omit<LaunchFile, 'test'>): LaunchFile {
   const crash = crashTriggerFromEnv();
@@ -42,10 +63,14 @@ function required(name: string): string {
   return value;
 }
 
-function runnerEnv(launch: LaunchFile): Record<string, string> {
+function runnerEnv(launch: LaunchFile, inherited: Readonly<Record<string, string>>): Record<string, string> {
+  const names = Object.keys(inherited).sort();
+  const declared = launch.envPass ?? [];
+  if (names.join('\0') !== declared.join('\0')) throw new Error(`${launch.inv}: inherited values for [${names.join(', ')}], launch.json passes [${declared.join(', ')}]`);
   return {
     PATH: required('PATH'),
     HOME: required('HOME'),
+    ...inherited,
     ...invocationEnv(launch.inv, 'runner'),
     ...(launch.test === null ? {} : { [ENV_TEST_CRASH]: launch.test.crash }),
   };
@@ -55,9 +80,11 @@ export type RunnerHandle = Readonly<{ files: RunnerFiles; launch: LaunchFile; ru
 
 /**
  * Writes launch.json (write-once) into `invDir` and starts the runner. Returns once the runner exists. `unit`: the
- * unit whose stage launches it, for crash attribution (G8).
+ * unit whose stage launches it, for crash attribution (G8). `inherited`: the values of `launch.envPass` (`splitEnv`),
+ * set in the runner's environment for its workload and never written.
  */
-export function startRunner(invDir: AbsPath, launch: LaunchFile, unit?: UnitId): RunnerHandle {
+export function startRunner(invDir: AbsPath, launch: LaunchFile, unit?: UnitId, inherited: Readonly<Record<string, string>> = {}): RunnerHandle {
+  const env = runnerEnv(launch, inherited);
   durableMkdir(invDir);
   const files = runnerFiles(invDir, launch.inv);
   files.write('launch.json', launch);
@@ -65,7 +92,7 @@ export function startRunner(invDir: AbsPath, launch: LaunchFile, unit?: UnitId):
   const log = openSync(join(invDir, RUNNER_LOG), 'wx');
   const child = spawn(process.execPath, [RUNNER_SCRIPT, invDir], {
     cwd: invDir,
-    env: runnerEnv(launch),
+    env,
     stdio: ['ignore', log, log],
     detached: true,
   });

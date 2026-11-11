@@ -63,6 +63,15 @@ describe('records', () => {
     for (const name of ['ROADMAP_OP', 'ROADMAP_INV', 'ROADMAP_ROLE', 'ROADMAP_ARBITRARY']) assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], env: { [name]: 'forged' } }, 'launch.json'), SchemaError);
   });
 
+  it('launch.json envPass: passed variable names, sorted, non-empty, never ROADMAP_* or a literal env name; absent before it existed', () => {
+    const read = RUNNER_FILE_READERS['launch.json'];
+    assert.equal('envPass' in read(RUNNER_SAMPLES['launch.json'], 'launch.json'), false, 'a launch without passed variables reads without the field');
+    assert.deepEqual(read({ ...RUNNER_SAMPLES['launch.json'], envPass: ['FIELD_API_KEY', 'PATH'] }, 'launch.json').envPass, ['FIELD_API_KEY', 'PATH']);
+    for (const envPass of [[], ['PATH', 'FIELD_API_KEY'], ['PATH', 'PATH'], ['ROADMAP_CPU'], ['HOME'], ['1BAD']]) {
+      assert.throws(() => read({ ...RUNNER_SAMPLES['launch.json'], envPass }, 'launch.json'), SchemaError, JSON.stringify(envPass));
+    }
+  });
+
   it('launch.json refuses a grace under MIN_GRACE_MS (the backstop at deadline + 2 * grace must not beat exit.json)', () => {
     const read = RUNNER_FILE_READERS['launch.json'];
     assert.equal(MIN_GRACE_MS, 1_000);

@@ -36,7 +36,7 @@ import { type EnvironmentDecl, type PlanM1, type ToolCommand, environmentOf, env
 import { raiseNeedsUser, raisedFor } from '../needsuser.ts';
 import { invocationDir, invoke } from '../pipeline/invoke.ts';
 import type { ResourceContext } from './reserve.ts';
-import { resolveCommand } from './teardown.ts';
+import { commandEnv,resolveCommand } from './teardown.ts';
 
 /** An up or a down may take a while (a cloud stack); a probe is a health check. Declarations carry no timeouts. */
 export const ENV_LIFECYCLE_TIMEOUT_MS = 30 * 60_000;
@@ -137,7 +137,7 @@ async function runCommand(ctx: ResourceContext, name: ResourceName, action: Envi
     origin: { type: 'new', key: opKey(action === 'probe' ? `env-probe:${name}` : `env:${name}`), parent, deadlineAt: isoTimeOf(new Date(Date.now() + timeout)) },
     subject: { purpose: 'environment', environment: name, action },
     launch: () => ({
-      argv: recipe.argv, cwd: recipe.cwd, env: recipe.env, stdinPath: null, stallMs: null, graceMs: GRACE_MS,
+      argv: recipe.argv, cwd: recipe.cwd, ...commandEnv(recipe), stdinPath: null, stallMs: null, graceMs: GRACE_MS,
       terminal: { type: 'command', purpose: 'environment', expectedExit: 0 },
     }),
   });
