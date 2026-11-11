@@ -136,6 +136,7 @@ import { CPU_COST } from '../schedule/types.ts';
 import { flakeOf,observeFlake } from './deflake.ts';
 import { type StageContext,type StageParent,candidateVerificationWorktree,evidenceRoot,matchesVerificationPath,runOp,verificationWorktree } from './dispatch.ts';
 import { invocationDir,invoke } from './invoke.ts';
+import { writeOnce } from '../observation/memo.ts';
 import {
 type FailureSignature,type LaneCancel,type LaneHost,type RedClass,type RedEvidence,type RepeatOf,classifyRed,failureSignature,hostWasBusy,
 laneAbortReason,laneCancelOf,readRedClass,redLane,writeRedClass,
@@ -1594,7 +1595,7 @@ type WitnessedView = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir
 function storeOf(ctx: WitnessedView, witnessed: readonly WitnessedEntry[]): ObservationStore {
   return observationStore(witnessed.flatMap((w) => {
     const path = witnessRecordPath(ctx.runDir, w);
-    const o = observationOf(w, existsSync(path) ? readFileSync(path, 'utf8') : null);
+    const o = observationOf(w, writeOnce(path, () => existsSync(path) ? readFileSync(path, 'utf8') : null));
     return o === null ? [] : [o];
   }));
 }

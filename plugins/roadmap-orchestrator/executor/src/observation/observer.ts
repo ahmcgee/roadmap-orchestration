@@ -19,6 +19,7 @@ import { ModelReader } from '../tui/models.ts';
 import { TranscriptReader } from '../tui/transcript.ts';
 import { type Display, type Entry, type Invocation, type ObserveRequest, type ObserveReply, pretty } from '../tui/types.ts';
 import { InvocationTable, type OpenInvocation } from './invocations.ts';
+import { type MemoWork, RecordMemo, withRecordMemo } from './memo.ts';
 
 const FORGE_REFRESH_MS = 60_000;
 const entry = (id: string, label: string, state: string, value: unknown): Entry => ({ id, label, state, body: pretty(value), links: [], provenance: 'validated runtime snapshot' });
@@ -69,6 +70,12 @@ export class Observer {
   #changes: Readonly<{ rows: readonly Invocation[]; estate: boolean }> = { rows: [], estate: false };
   /** Forge pull requests are re-read at most once a minute, not on every capture (see ForgeMemo). */
   #forge = new ForgeMemo(FORGE_REFRESH_MS);
+  /** Immutable git answers, write-once records and parsed inputs, read once per journal (src/observation/memo.ts). */
+  #memo = new RecordMemo();
+  /** What the memo did since this observer was made: git spawns and record reads, with the hits that saved them. */
+  get work(): Readonly<MemoWork> { return this.#memo.work; }
+  /** What the last capture (successful or not) spawned and read. */
+  lastWork: Readonly<MemoWork> = { gitSpawns: 0, gitHits: 0, recordReads: 0, recordHits: 0 };
 
   /** The rows and whether the estate changed in the last successful capture, against the one before it. */
   changes(): Readonly<{ rows: readonly Invocation[]; estate: boolean }> { return this.#changes; }
@@ -82,6 +89,7 @@ export class Observer {
    */
   invalidate(paths: readonly string[]): void {
     if (paths.length === 0 || this.#run === null) return;
+    this.#memo.forget(paths);
     const inv = join(this.#run.runDir, 'inv') + '/', inputs = join(this.#run.runDir, 'inputs'), evidence = join(this.#run.runDir, 'evidence') + '/';
     if (paths.some((path) => path === inputs || path.startsWith(inputs + '/'))) this.#estate = null;
     if (paths.some((path) => path.startsWith(evidence))) this.#relationsDue = true;
@@ -111,7 +119,14 @@ export class Observer {
     if (snapshot.view !== this.#view) {
       this.#table = new InvocationTable(run); this.#folded = 0; this.#relationsDue = true;
       this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view;
+      this.#memo = new RecordMemo();
     }
+    const memo = this.#memo, before = { ...memo.work };
+    try { return withRecordMemo(memo, () => this.#capture(request, run, snapshot, timing)); }
+    finally { this.lastWork = { gitSpawns: memo.work.gitSpawns - before.gitSpawns, gitHits: memo.work.gitHits - before.gitHits, recordReads: memo.work.recordReads - before.recordReads, recordHits: memo.work.recordHits - before.recordHits }; }
+  }
+
+  #capture(request: ObserveRequest, run: Run, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>): ObserveReply {
     const table = this.#table!;
     const captured = withForgeMemo(this.#forge, () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing));
     const s = captured.full;

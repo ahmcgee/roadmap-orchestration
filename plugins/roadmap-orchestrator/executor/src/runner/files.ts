@@ -10,6 +10,7 @@ import type { RunnerFiles } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { RUNNER_FILE_READERS, type RunnerFileMap, type RunnerFileName } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
+import { writeOnce } from '../observation/memo.ts';
 
 export class BindingMismatchError extends Error {
   constructor(path: string, field: string, expected: string, got: string) {
@@ -33,10 +34,14 @@ export function runnerFiles(invDir: AbsPath, inv: InvocationId): RunnerFiles {
     inv,
     read<N extends RunnerFileName>(name: N): RunnerFileMap[N] | null {
       const path = join(invDir, name);
-      if (!existsSync(path)) return null;
-      const file = RUNNER_FILE_READERS[name](readJson(path), name);
-      checkBinding(path, file);
-      return file;
+      const read = (): RunnerFileMap[N] | null => {
+        if (!existsSync(path)) return null;
+        const file = RUNNER_FILE_READERS[name](readJson(path), name);
+        checkBinding(path, file);
+        return file;
+      };
+      // runner.json is rewritten once (child: null, then the child); the others are write-once.
+      return name === 'runner.json' ? read() : writeOnce(path, read);
     },
     write<N extends RunnerFileName>(name: N, content: RunnerFileMap[N]): void {
       const path = join(invDir, name);

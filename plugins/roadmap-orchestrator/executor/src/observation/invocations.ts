@@ -6,6 +6,7 @@ import type { AbsPath } from '../core/values.ts';
 import { invocationDirName, invocationId, invocationIdOf } from '../core/ids.ts';
 import { sha256Hex } from '../core/json.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
+import { withoutRecordMemo } from './memo.ts';
 import { JUDGMENT_SESSION_ROLES } from '../routing/types.ts';
 import { launchSha256 } from '../runner/launch.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -72,7 +73,8 @@ export class InvocationTable {
     for (const [id, slot] of this.#slots) {
       let dirty = false;
       if (slot.due) {
-        try { slot.base = readRow(slot, alive, readers); }
+        // An open invocation's records are read past the memo: its runner is still writing them, and a rewrite must show.
+        try { slot.base = slot.terminal === null ? withoutRecordMemo(() => readRow(slot, alive, readers)) : readRow(slot, alive, readers); }
         catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || slot.base === null) throw error;
           continue;

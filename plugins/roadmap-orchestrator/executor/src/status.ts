@@ -1,5 +1,6 @@
 import { type WaitingTotals, waitingTotals } from './status/waiting.ts';
-import { canonicalJson } from './core/json.ts';
+import { canonicalJson, sha256Hex } from './core/json.ts';
+import { parsedOnce } from './observation/memo.ts';
 import { terminalReceipts } from './commands/queue.ts';
 import { withArcRefReads } from './chain.ts';
 import { withSnapshotReads } from './git/snapshot.ts';
@@ -616,7 +617,7 @@ function commandsOf(runDir: AbsPath, arc: ArcId, view: JournalView) {
 function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
   const bytes = keptInput(runDir, f.planSha256, PLAN_INPUT);
   if (bytes === null) throw new Error(`plan revision ${f.rev} is ${f.planSha256}, which the run dir does not keep`);
-  return parsePlan(JSON.parse(bytes.toString('utf8')));
+  return parsedOnce(`plan:${f.planSha256}`, () => parsePlan(JSON.parse(bytes.toString('utf8'))));
 }
 
 /**
@@ -628,6 +629,11 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
  * attributed to today's bindings. An alias never displaces a rev HEAD resolves.
  */
 function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
+  // The tables are a function of the plan revisions' kept plans and recorded provenance alone.
+  const applied = events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'plan-applied' ? [[e.fact.planSha256, e.fact.routingProvenance]] : []);
+  return parsedOnce(`routing:${sha256Hex(canonicalJson(applied))}`, () => readRoutingTables(runDir, events));
+}
+function readRoutingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
   const out = new Map<RoutingRev, ResolvedRouting>();
   const aliases = new Map<RoutingRev, ResolvedRouting>();
   const plans = new Map<Sha256Hex, PlanM1>();
