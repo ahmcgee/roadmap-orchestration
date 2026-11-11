@@ -5,7 +5,7 @@ import { terminalReceipts } from './commands/queue.ts';
 import { withArcRefReads } from './chain.ts';
 import { withSnapshotReads } from './git/snapshot.ts';
 import { systemsMapInForce } from './input/systems.ts';
-import { listingChunks, prefetchTreeListings } from './git/reusekey.ts';
+import { inputKnown, listingChunks, prefetchTreeListings } from './git/reusekey.ts';
 import { type EnvId } from './core/ids.ts';
 import { laneRevOf } from './holistic/types.ts';
 import { withObservationReads } from './pipeline/lanes.ts';
@@ -1106,6 +1106,23 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
   const observationOn = dischargingObservationReader({ repo, journal: { view } }, store, (lane) => environments.get(`${lane.id}/${revs.get(lane)!}`) ?? null);
   const byTree = new Map<Sha, Map<ObligationDef, ObligationLeaf>>();
   const observationsByTree = new Map<Sha, Map<ArcLaneDef, Observation | null>>();
+  // An obligation's blocking units do not depend on the tree: computed once, however many trees a history walk asks.
+  const blocking = new Map<ObligationDef, readonly UnitId[]>();
+  const blockingUnits = (o: ObligationDef): readonly UnitId[] => {
+    let units = blocking.get(o);
+    if (units === undefined) { units = obligationBlockingUnits(view, o); blocking.set(o, units); }
+    return units;
+  };
+  const readable = (lane: ArcLaneDef): boolean => {
+    const rev = revs.get(lane)!, env = environments.get(`${lane.id}/${rev}`);
+    return env !== undefined && compatible.has(`${lane.id}/${rev}/${env}`);
+  };
+  /** The local lanes whose observation `o`'s leaf reads on a tree (a split parent's: its children's). */
+  const lanesRead = (o: ObligationDef): readonly ArcLaneDef[] => {
+    if (o.state.type === 'split') return o.state.children.flatMap((id) => { const child = defs.get(id); return child === undefined || isExempt(child) ? [] : lanesRead(child); });
+    const lane = o.witness === null ? undefined : lanes.get(o.witness.lane);
+    return lane === undefined || lane.witnessClass === 'external' || !readable(lane) ? [] : [lane];
+  };
   const canObserve = (o: ObligationDef): boolean => {
     if (o.state.type === 'split') return o.state.children.some((id) => { const child = defs.get(id); return child !== undefined && !isExempt(child) && canObserve(child); });
     const lane = lanes.get(o.witness!.lane)!;
@@ -1117,10 +1134,7 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
   const leavesOn = (tree: Sha, memo: Map<ObligationDef, ObligationLeaf>, observed: Map<ArcLaneDef, Observation | null>) => {
     const onTree = (lane: ArcLaneDef): Observation | null => {
       if (observed.has(lane)) return observed.get(lane)!;
-      const rev = revs.get(lane)!;
-      const env = environments.get(`${lane.id}/${rev}`) ?? null;
-      const found = env === null || !compatible.has(`${lane.id}/${rev}/${env}`) ? null
-        : observationOn(tree, lane);
+      const found = readable(lane) ? observationOn(tree, lane) : null;
       observed.set(lane, found); return found;
     };
     const compute = (o: ObligationDef): ObligationLeaf => {
@@ -1134,7 +1148,7 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
       if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
       const lane = lanes.get(o.witness.lane);
       if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-      const units = obligationBlockingUnits(view, o);
+      const units = blockingUnits(o);
       if (lane.witnessClass === 'external') {
         const result = external(tree, lane, o);
         return { verdict: result === null ? 'not-covered' : result.result === 'pass' ? 'held' : 'not-held', witnessed: [], units };
@@ -1160,7 +1174,7 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
   };
   /** The leaves on `tree`, remembered only while the caller holds the returned function (a historical tree, asked once). */
   const passing = (tree: Sha) => leavesOn(tree, new Map(), new Map());
-  return Object.assign(evaluate, { canObserve, passing });
+  return Object.assign(evaluate, { canObserve, passing, lanesRead });
 }
 
 export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
@@ -1191,7 +1205,8 @@ function truths(
   const onHead = evaluate(trees[0]!);
   const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));
   const definitions = new Map(obligations.obligations.map((o) => [o.id, o]));
-  const needsListings = systemsMapInForce(view.planApplied()) !== null || obligations.lanes.some((l) => l.inputs !== undefined);
+  const map = systemsMapInForce(view.planApplied());
+  const needsListings = map !== null || obligations.lanes.some((l) => l.inputs !== undefined);
   /**
    * Each obligation's last observation before the head: the newest earlier tree where its verdict is not `not-covered`.
    * Tree-major, newest first: each tree's listings are prefetched by chunk and each tree is let go once its pending
@@ -1202,7 +1217,11 @@ function truths(
     let left = pending.filter((o) => evaluate.canObserve(o));
     const history = trees.slice(1);
     for (const chunk of left.length === 0 ? [] : needsListings ? listingChunks(repo, trees[0]!, history) : [history]) {
-      if (needsListings) prefetchTreeListings(repo, chunk);
+      // A tree whose inputs are already known for every lane still asked needs no listing: later captures prefetch nothing.
+      if (needsListings) {
+        const asked = [...new Set(left.flatMap((o) => evaluate.lanesRead(o)))];
+        prefetchTreeListings(repo, chunk.filter((tree) => asked.some((lane) => !inputKnown(tree, lane, map))));
+      }
       for (const tree of chunk) {
         const at = evaluate.passing(tree);
         left = left.filter((o) => {

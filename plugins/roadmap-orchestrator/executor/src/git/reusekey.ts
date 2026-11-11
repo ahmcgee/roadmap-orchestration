@@ -121,12 +121,20 @@ export function treeOfCommit(repo: AbsPath, commit: Sha): Sha {
  * hashes share one memo across plan revisions and callers (including external witnesses). Only implicit inputs
  * depend on the map's identity and lane systems. The listing above is the one source for both kinds of input.
  */
+const inputAt = (tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>): string => `${tree}/${JSON.stringify(lane.inputs === undefined ? lane.systems ?? null : lane.inputs)}`;
+
+/** Whether `inputShaOf` answers for `lane` on `tree` without the tree's listing: a history walk prefetches only the others. */
+export function inputKnown(tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>, map: SystemsMap | null): boolean {
+  if (map === null && lane.inputs === undefined) return true;
+  return INPUTS.get(lane.inputs === undefined ? map! : NO_MAP)?.has(inputAt(tree, lane)) === true;
+}
+
 export function inputShaOf(repo: AbsPath, tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>, map: SystemsMap | null): Sha {
   if (map === null && lane.inputs === undefined) return tree;
   const scope = lane.inputs === undefined ? map! : NO_MAP;
   const memo = INPUTS.get(scope) ?? new Map<string, Sha>();
   INPUTS.set(scope, memo);
-  const at = `${tree}/${JSON.stringify(lane.inputs === undefined ? lane.systems ?? null : lane.inputs)}`;
+  const at = inputAt(tree, lane);
   const known = memo.get(at);
   if (known !== undefined) return known;
   let out = tree;

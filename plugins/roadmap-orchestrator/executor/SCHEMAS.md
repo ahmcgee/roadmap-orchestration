@@ -1245,9 +1245,12 @@ inode/truncation/anchor resets change epoch. A capture folds only appended event
 settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
 memory (src/observation/memo.ts); a ref lookup is asked once per capture. What it remembers is bounded by bytes, not by
 the arc: git answers 64 MiB and records 128 MiB (a witness record as its parsed observation, never its text), least
-recently used first, neither keeping one entry over an eighth of its bound; parsed inputs only while captures ask for them;
-tree listings 200,000 entries, read by the last-observation walk tree by tree in chunks that fit; and a snapshot ref only
-as its digest (commit, chain link, completed head), verified once per commit. A capture is published as of the sample taken
+recently used first, neither keeping one entry over an eighth of its bound, and no record the capture under way used is
+dropped for another (a capture reading more than the bound keeps a stable set and reads only the rest again); parsed
+inputs only while captures ask for them, dropped when a record the memo had read is found rewritten; tree listings 200,000
+entries, read by the last-observation walk tree by tree in chunks that fit, and only for trees whose lane inputs are not
+yet known; and a snapshot ref only as its digest (commit, chain link, completed head), verified once per commit and kept
+while captures ask for it. A capture is published as of the sample taken
 before it read anything: every record it read is complete and at least that new, and whatever changed meanwhile is the
 next step's capture. A capture that races a writer (`ENOENT`) publishes nothing, keeps its cursor and rows, and is retried
 at the next step; five in a row are logged once. Any other failure is published, answers that arc's reads, and stands
@@ -1274,7 +1277,7 @@ collector needs 384 MB plus three times its journal; the serve worker 256 MB plu
 is sized 64 MB over for their growth; a maintained set past its limit restarts it). Each worker reports its heap (used,
 limit, external) with what it holds at its first observation, every ten minutes, and once each time its used heap passes
 80% of its limit; the HTTP thread logs one line per report (`console collector for arc <arc>: heap <used> of <limit> MB
-(external <n> MB); events …, rows …, open …; records … (<n> MB, <n> evicted), git … (<n> MB), stamps …, parsed …; …;
+(external <n> MB); events …, rows …, open …; records … (<n> MB, <n> evicted, <n> not kept), git … (<n> MB), stamps …, parsed …; …;
 process RSS <n> MB`, the same shape for `console serve worker:`, ` NEAR ITS LIMIT` on the 80% report). One that exits is
 logged with its reason (out of memory: its limit, its last report or `no report yet`, and a collector's phase) and
 restarted after 5, 30, then 60 s, and its arc's reads answer unavailable with that reason meanwhile. A worker out of

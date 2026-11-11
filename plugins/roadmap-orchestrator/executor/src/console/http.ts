@@ -49,7 +49,7 @@ const heapText = (r: HeapReport<unknown>): string => `heap ${r.usedMb} of ${r.li
 /** One collector heap report as a log line's body. */
 export function collectorReportText(r: HeapReport<CollectorSizes>): string {
   const z = r.sizes, m = z.memo, mb = (bytes: number) => Math.round(bytes / 1048576);
-  return `${heapText(r)}; events ${z.events}, rows ${z.rows}, open ${z.open}; records ${m.records} (${mb(m.recordBytes)} MB, ${m.recordEvictions} evicted), git ${m.gitAnswers} (${mb(m.gitBytes)} MB), stamps ${m.stamps}, parsed ${m.parsed}; estate ${z.estate}, swept ${z.swept}, listing entries ${z.listings}`;
+  return `${heapText(r)}; events ${z.events}, rows ${z.rows}, open ${z.open}; records ${m.records} (${mb(m.recordBytes)} MB, ${m.recordEvictions} evicted, ${m.recordOverflow} not kept), git ${m.gitAnswers} (${mb(m.gitBytes)} MB), stamps ${m.stamps}, parsed ${m.parsed}; estate ${z.estate}, swept ${z.swept}, listing entries ${z.listings}`;
 }
 /** One serve worker heap report as a log line's body. */
 export function serveReportText(r: HeapReport<ServeSizes>): string {

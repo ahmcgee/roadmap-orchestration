@@ -30,7 +30,7 @@ import { durableRename } from './core/fsx.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { runDir } from './input/cli.ts';
 import { DEMO_REF } from './demo/records.ts';
-import { parsedOnce } from './observation/memo.ts';
+import { objectOnce } from './observation/memo.ts';
 
 /** A snapshot ref that exists but does not verify, or holds another arc: loud, never a row. */
 export class ArcRefError extends Error {
@@ -118,7 +118,7 @@ export type ArcRefDigest = Readonly<{ arc: ArcId; commit: Sha; link: ChainLink; 
 export function arcRefDigest(repo: AbsPath, arc: ArcId): ArcRefDigest | null {
   const commit = refTarget(repo, snapshotRef(arc));
   if (commit === null) return null;
-  return parsedOnce(`arc-ref:${arc}:${commit}`, () => {
+  return objectOnce(`arc-ref:${arc}:${commit}`, () => {
     const ref = arcRefAt(repo, arc, commit);
     return { arc, commit, link: { arc, branch: ref.plan.integrationBranch, previousArc: ref.plan.chain?.previousArc ?? null }, completed: completedHeadOf(ref) };
   });

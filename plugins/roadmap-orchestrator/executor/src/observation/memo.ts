@@ -4,8 +4,10 @@
 //
 // Memory is bounded by bytes, not by how much evidence or history an arc has: git answers by GIT_BYTES and records by
 // RECORD_BYTES, each least recently used first, and neither keeps one entry heavier than an eighth of its bound (it would
-// flush every other entry and then itself). Parsed values are kept only while captures ask for them (`settle`). The stamps of
-// records read are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read.
+// flush every other entry and then itself). A record the capture under way has used is never dropped for another, so a
+// capture that reads more than RECORD_BYTES keeps a stable set and reads only the rest again. Parsed values, and values fixed
+// by a git object id (an arc ref's digest), are kept only while captures ask for them (`settle`). The stamps of records read
+// are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read.
 import { lstatSync } from 'node:fs';
 
 /** A git command's answer, as the memo keeps it. */
@@ -17,7 +19,7 @@ const GIT_BYTES = 64 * 1024 * 1024;
 /** The weighed bytes of remembered records (see `weightOf`). */
 export const RECORD_BYTES = 128 * 1024 * 1024;
 /** What the memo holds, for the console's heap reports. */
-export type MemoSizes = Readonly<{ records: number; recordBytes: number; recordEvictions: number; gitAnswers: number; gitBytes: number; stamps: number; parsed: number }>;
+export type MemoSizes = Readonly<{ records: number; recordBytes: number; recordEvictions: number; recordOverflow: number; gitAnswers: number; gitBytes: number; stamps: number; parsed: number }>;
 const OBJECT = /^[0-9a-f]{40}(\^\{tree\}|:.*)?$/;
 const COMMANDS = new Set(['diff-tree', 'ls-tree', 'cat-file', 'log', 'merge-base', 'rev-parse']);
 /** Options that make a command read refs, reflogs or the repository's layout, so its answer can change. */
@@ -55,20 +57,25 @@ export class RecordMemo {
   #git = new Map<string, Spawned>();
   #gitBytes = 0;
   /** Remembered records by `form\0path`, least recently used first, with each one's weight. */
-  #records = new Map<string, Readonly<{ value: unknown; path: string; bytes: number }>>();
+  #records = new Map<string, { readonly value: unknown; readonly path: string; readonly bytes: number; used: number }>();
+  /** Counts captures (`beginCapture`): a record used in the capture under way is never dropped for another. */
+  #generation = 0;
   #recordBytes = 0;
   #recordEvictions = 0;
+  /** Records read but not kept because the capture under way already used every kept one. */
+  #recordOverflow = 0;
   /** Each path's kept forms (their keys in `#records`). */
   #forms = new Map<string, string[]>();
   /** Each write-once record read, with its stamp taken before the read: what the integrity sweep re-checks. */
   #stamps = new Map<string, string>();
   #parsed = new Map<string, unknown>();
-  /** Parsed values asked for since the last `settle`. */
+  #objects = new Map<string, unknown>();
+  /** Parsed and object values asked for since the last `settle`. */
   #asked = new Set<string>();
   /** Answers of commands that can move, for the capture under way (`withRecordMemo` starts one). */
   #capture = new Map<string, Spawned>();
   /** A new capture: what moving commands answered in the last one is asked again. */
-  beginCapture(): void { this.#capture.clear(); }
+  beginCapture(): void { this.#capture.clear(); this.#generation++; }
   /**
    * The answer of an immutable git command (`key` names it), run once; `key` null: a command that is run every time. Only a
    * success is remembered, or an answer `settled` says is final: an object missing now can be fetched later.
@@ -97,13 +104,14 @@ export class RecordMemo {
   /**
    * A write-once record, kept from its second read on: a record read once (a settled invocation's launch record, read for its
    * row) is not held for nothing. Absence is never remembered: the record may land later. A hit makes it the most recently used;
-   * past RECORD_BYTES the least recently used are dropped (their stamps stay: the record was read, and the sweep re-checks it).
+   * past RECORD_BYTES the least recently used that this capture has not used are dropped (their stamps stay: the record was read,
+   * and the sweep re-checks it).
    */
   record<T>(form: string, path: string, read: () => T | null): T | null {
     // Readers keep different forms of one file (its text, its parsed record): each is kept under its own key.
     const key = `${form}\0${path}`;
     const hit = this.#records.get(key);
-    if (hit !== undefined) { this.#records.delete(key); this.#records.set(key, hit); this.work.recordHits++; return hit.value as T; }
+    if (hit !== undefined) { hit.used = this.#generation; this.#records.delete(key); this.#records.set(key, hit); this.work.recordHits++; return hit.value as T; }
     const seen = this.#stamps.get(path), stamp = seen ?? stampOf(path);
     const value = read();
     // A record found absent costs a stat, and is looked for again.
@@ -114,12 +122,15 @@ export class RecordMemo {
     if (seen === 'missing') return value;
     const bytes = weightOf(value, seen);
     if (bytes > RECORD_BYTES / 8) return value;
-    this.#records.set(key, { value, path, bytes }); this.#recordBytes += bytes;
-    this.#forms.set(path, [...(this.#forms.get(path) ?? []), key]);
+    // Room is made from records no read of this capture used. When every kept record was used in it, this one is not kept: a
+    // capture that reads more than RECORD_BYTES keeps a stable set and reads the rest again, never the whole set.
     for (const [old, kept] of this.#records) {
-      if (this.#recordBytes <= RECORD_BYTES) break;
+      if (this.#recordBytes + bytes <= RECORD_BYTES || kept.used === this.#generation) break;
       this.#drop(old, kept.path); this.#recordEvictions++;
     }
+    if (this.#recordBytes + bytes > RECORD_BYTES) { this.#recordOverflow++; return value; }
+    this.#records.set(key, { value, path, bytes, used: this.#generation }); this.#recordBytes += bytes;
+    this.#forms.set(path, [...(this.#forms.get(path) ?? []), key]);
     return value;
   }
   #drop(key: string, path: string): void {
@@ -141,20 +152,34 @@ export class RecordMemo {
     this.#parsed.set(key, value);
     return value;
   }
-  /** Drops every parsed value not asked for since the previous `settle`: the observer calls it after each full capture. */
+  /**
+   * A value fixed by a git object id (`key` carries it: an arc ref's digest at one commit), computed once while captures keep
+   * asking for it. No record of the run directory can change it, so `forget` leaves it.
+   */
+  object<T>(key: string, read: () => T): T {
+    this.#asked.add(key);
+    if (this.#objects.has(key)) return this.#objects.get(key) as T;
+    const value = read();
+    this.#objects.set(key, value);
+    return value;
+  }
+  /** Drops every parsed or object value not asked for since the previous `settle`: the observer calls it after each full capture. */
   settle(): void {
-    for (const key of this.#parsed.keys()) if (!this.#asked.has(key)) this.#parsed.delete(key);
+    for (const held of [this.#parsed, this.#objects]) for (const key of held.keys()) if (!this.#asked.has(key)) held.delete(key);
     this.#asked.clear();
   }
   sizes(): MemoSizes {
-    return { records: this.#records.size, recordBytes: this.#recordBytes, recordEvictions: this.#recordEvictions, gitAnswers: this.#git.size,
-      gitBytes: this.#gitBytes, stamps: this.#stamps.size, parsed: this.#parsed.size };
+    return { records: this.#records.size, recordBytes: this.#recordBytes, recordEvictions: this.#recordEvictions, recordOverflow: this.#recordOverflow, gitAnswers: this.#git.size,
+      gitBytes: this.#gitBytes, stamps: this.#stamps.size, parsed: this.#parsed.size + this.#objects.size };
   }
-  /** Forgets these records (found rewritten or removed) and every parsed value, which may rest on them. */
+  /**
+   * Forgets these records (found rewritten or removed). When one of them was a record this memo had read, every parsed value
+   * goes too: it may rest on it. A path the memo never read (the schedule, an open invocation's output) forgets nothing.
+   */
   forget(paths: readonly string[]): void {
-    if (paths.length === 0) return;
-    for (const path of paths) { for (const key of this.#forms.get(path) ?? []) this.#drop(key, path); this.#stamps.delete(path); }
-    this.#parsed.clear(); this.#asked.clear();
+    let read = false;
+    for (const path of paths) { for (const key of this.#forms.get(path) ?? []) this.#drop(key, path); if (this.#stamps.delete(path)) read = true; }
+    if (read) for (const key of this.#parsed.keys()) { this.#parsed.delete(key); this.#asked.delete(key); }
   }
 }
 
@@ -177,6 +202,8 @@ export const recordMemo = (): RecordMemo | null => ambient;
 export const writeOnce = <T>(form: string, path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(form, path, read);
 /** `parse` of content-addressed bytes named by `key`, through the ambient memo when there is one. */
 export const parsedOnce = <T>(key: string, parse: () => T): T => ambient === null ? parse() : ambient.parsed(key, parse);
+/** `read` of a value fixed by the git object id in `key`, through the ambient memo when there is one. */
+export const objectOnce = <T>(key: string, read: () => T): T => ambient === null ? read() : ambient.object(key, read);
 
 /** A record's weight: a string's or a Buffer's length, anything else the size of the file it was read from (from its stamp). */
 function weightOf(value: unknown, stamp: string): number {
