@@ -16,7 +16,7 @@ import { CONSOLE_PROTOCOL, type Envelope } from '../../src/observation/protocol.
 import { consoleGet } from '../helpers/console-http.ts';
 import type { AttentionView, RequestView } from '../../src/console/attention-protocol.ts';
 import type { UnitView } from '../../src/console/detail-protocol.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { invocationSummaries, unitView } from '../../src/console/details.ts';
 import type { GraphView } from '../../src/console/view-protocol.ts';
 import type { IntervalsView } from '../../src/console/temporal-protocol.ts';
@@ -35,7 +35,7 @@ test('scale arc: real server serves the manifest, attempts and four active histo
   const base=`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}`;
   async function get<T>(route:string):Promise<T> {const response=await consoleGet(`${base}/${route}`);assert.equal(response.status,200,`${route}: ${await response.clone().text().then(s=>s.slice(0,500))}`);return await response.json() as T;}
   const status=await get<{data:Envelope['data']['display']['status']}>('status');
-  const capture=new ObservationCache(absPath(m.hostDir),'scale-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
+  const capture=new Observations(absPath(m.hostDir),'scale-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
   const graph=(await get<{data:GraphView}>('graph')).data;
   let intervals=(await get<{data:IntervalsView}>('timeline/intervals?window=arc')).data;const calls=[...intervals.rows];
   while(intervals.page.next){intervals=(await get<{data:IntervalsView}>(`timeline/intervals?window=arc&cursor=${encodeURIComponent(intervals.page.next)}`)).data;calls.push(...intervals.rows);}
@@ -107,7 +107,7 @@ test('default 300-unit week is fast and covers scale hazards in the validated jo
   const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
   const response=await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/graph`);assert.equal(response.status,200,await response.clone().text());
   const graph=(await response.json() as {data:GraphView}).data;
-  const capture=new ObservationCache(absPath(m.hostDir),'scale-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
+  const capture=new Observations(absPath(m.hostDir),'scale-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
   const geometry=assertGraphGeometry(capture);t.diagnostic(`300-unit layout + direct curves: ${geometry.elapsed.toFixed(1)}ms; ${geometry.curves} complete edges`);
   assert.equal(capture.data.display.status.units.length,300);
   for(let i=1;i<=300;i++) {
@@ -162,7 +162,7 @@ test('design preset spans the corpus through rollout in five named milestones', 
  const release=await ownScaleArc(m);t.after(release);
  const server=await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0});t.after(()=>server.close());
  const response=await consoleGet(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${m.arc}/graph`);assert.equal(response.status,200);const graph=(await response.json() as {data:GraphView}).data;
- const s=new ObservationCache(absPath(m.hostDir),'design-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
+ const s=new Observations(absPath(m.hostDir),'design-fixture','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
  assert.deepEqual(s.data.plan!.milestones!.map(g=>g.name),[0,2,5,7,9].map(i=>corpus.milestones[i].name));
  for(let i=1;i<=50;i++) {
   const expected=corpus.systems[m.systems[(i-1)%8]!][Math.floor((i-1)*38/50)];

@@ -218,10 +218,14 @@ which supplies the URL printed by `roadmap console status` and start/resume. A z
 existing live console on the same host; its concrete bound port remains positive. No authentication is provided;
 loopback binding is the option for exposed hosts, and logs/results can contain sensitive text.
 
-One observation worker continuously maintains the active/latest and subscribed runs with bounded older-run
-caches. TUI, console and local CLI observation share the verified ObserverJournal capture and status core.
+A collector worker per maintained arc (the selected arc, and at most two recently subscribed or read) gathers: it captures
+when the journal or a stable record moves, doing work for what changed, and publishes each change to one serve worker that
+answers every read from memory, so no request reads the journal, stats the run or derives status, and no read load slows
+gathering. Lag is visible in every envelope and in the console log. TUI, console and local CLI observation share the
+verified ObserverJournal capture and status core.
 HTTP status contains the same canonical full/summary objects as CLI stdout, with clock and measured fold telemetry
-captured once, not independently timed reads. Requests fence the journal and revalidate side files/liveness;
+captured once, not independently timed reads. A strict read fences the journal and is answered by a check made after it
+arrived;
 unavailable transport/catch-up and console version/protocol mismatch fall back locally with a stderr diagnostic,
 while identity mismatch, malformed payload and corrupt evidence failures remain loud. Watch's actionable filtering, cursor and lease stay local.
 Envelopes bind package-version protocol, service instance, repo, arc, epoch, highWater and revision with observation

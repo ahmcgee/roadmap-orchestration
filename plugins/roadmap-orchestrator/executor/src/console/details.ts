@@ -3,7 +3,7 @@ import { completedWaiting } from '../status/waiting.ts';
 import { boundDetail, contentDetail } from './detail-content.ts';
 import { sha256Hex } from '../core/json.ts';
 import { createHmac, randomBytes } from 'node:crypto';
-import { ConsoleError, type Envelope } from '../observation/protocol.ts';
+import { ConsoleError, captureKey, type Envelope } from '../observation/protocol.ts';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { record } from '../tui/projection.ts';
 import { selectedUnitJourney } from './unit-journey.ts';
@@ -28,7 +28,7 @@ function remember(e:Envelope,rows:unknown[],section:string) {
   const hashes=bytes>MAX_GENERATION_BYTES?rows.map(r=>rowHash(r,section)):null;
   if(hashes)bytes=hashes.length*128;
   if(bytes>MAX_GENERATION_BYTES)throw new ConsoleError('unavailable','Selected collection index exceeds retained paging capacity');
-  const key=randomBytes(12).toString('hex');generations.set(key,{sourceHash:sha256Hex(e.data.capture.source),revision:e.revision,rows:hashes?[]:structuredClone(rows),hashes,ids:section==='journey'?rows.map(r=>(r as {id:string}).id):[],bytes,touched:Date.now(),asOf:{epoch:e.epoch,highWater:e.highWater,observedAt:e.observedAt}});generationBytes+=bytes;
+  const key=randomBytes(12).toString('hex');generations.set(key,{sourceHash:sha256Hex(captureKey(e)),revision:e.revision,rows:hashes?[]:structuredClone(rows),hashes,ids:section==='journey'?rows.map(r=>(r as {id:string}).id):[],bytes,touched:Date.now(),asOf:{epoch:e.epoch,highWater:e.highWater,observedAt:e.observedAt}});generationBytes+=bytes;
   while(generations.size>64||generationBytes>MAX_GENERATION_BYTES){const k=generations.keys().next().value!;generationBytes-=generations.get(k)!.bytes;generations.delete(k);}
   return key;
 }
@@ -45,7 +45,7 @@ function cursorOf(e:Envelope,params:Record<string,string>, section:string) {
   if(parsed.limit!==(section==='intent'?4096:limitOf(params))||parsed.entity!==params['_entity']||parsed.instance!==e.instance||parsed.repoId!==e.repoId||parsed.arc!==e.arc||parsed.epoch!==e.epoch||parsed.section!==section||!Number.isSafeInteger(parsed.offset)||parsed.offset<0)throw new ConsoleError('invalid','foreign detail cursor');
   if(!generations.has(parsed.version)||Date.now()-generations.get(parsed.version)!.touched>15*60*1000)throw new ConsoleError('reset','Detail page expired; reopen this detail');
   const retained=generations.get(parsed.version)!;
-  if(retained.sourceHash!==sha256Hex(e.data.capture.source)&&e.revision<=retained.revision&&e.highWater<=retained.asOf.highWater)throw new ConsoleError('reset','Observation capture changed without a newer verified prefix; reopen this detail');
+  if(retained.sourceHash!==sha256Hex(captureKey(e))&&e.revision<=retained.revision&&e.highWater<=retained.asOf.highWater)throw new ConsoleError('reset','Observation capture changed without a newer verified prefix; reopen this detail');
   retained.touched=Date.now();generations.delete(parsed.version);generations.set(parsed.version,retained);
   return parsed;
 }

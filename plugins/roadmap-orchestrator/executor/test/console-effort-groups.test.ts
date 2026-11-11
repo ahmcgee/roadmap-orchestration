@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { investigationFixture } from './fixtures/console-investigations.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { ConsoleEffort } from '../src/console/effort-query.ts';
 import { effortContributions, systemSetKey } from '../src/console/effort-contributions.ts';
 import { effortShape, effortScopeShape } from '../src/console/view-shapes.ts';
@@ -24,7 +24,7 @@ function pages(tabs:ConsoleEffort,e:Parameters<ConsoleEffort['read']>[0],key:str
  assert.equal(new Set(rows.map(r=>r.id)).size,rows.length);assert.equal(rows.length,p.page.matching);return {data:p,rows};
 }
 test('Effort role/system-set groups partition every work/charge/wait exactly once, expose all selected evidence and preserve canonical bytes',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'effort-groups','repo').read({runDir:f.runDir,arc:f.arc}),tabs=new ConsoleEffort(),before=[statusBytes(e,false),statusBytes(e,true)],units=tabs.read(e,{window:'arc'});
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'effort-groups','repo').read({runDir:f.runDir,arc:f.arc}),tabs=new ConsoleEffort(),before=[statusBytes(e,false),statusBytes(e,true)],units=tabs.read(e,{window:'arc'});
  const contributions=effortContributions(e);assert.ok(contributions.some(c=>c.role!==null&&c.invocation));assert.ok(contributions.some(c=>c.kind==='waiting'&&c.role===null));
  for(const group of ['role','system-set'] as EffortGroup[]){
   const h=tabs.read(e,{window:'arc',group});assert.ok(effortShape(h));assert.deepEqual(h.totals,units.totals);reconciles(h.rows,h.totals);
@@ -41,7 +41,7 @@ test('Effort role/system-set groups partition every work/charge/wait exactly onc
  assert.deepEqual([statusBytes(e,false),statusBytes(e,true)],before);
 });
 test('System sets preserve every membership, never multiply charges, retain empty groups and filter before ranking/window/counts',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const original=new ObservationCache(f.hostDir,'effort-groups','repo').read({runDir:f.runDir,arc:f.arc}),plan=original.data.plan!,e={...original,data:{...original.data,plan:{...plan,units:plan.units.map(u=>u.id==='u7'?{...u,systems:[systemName('two'),systemName('one')]}:u)}}},tabs=new ConsoleEffort();
+ const f=await investigationFixture();t.after(()=>f.close());const original=new Observations(f.hostDir,'effort-groups','repo').read({runDir:f.runDir,arc:f.arc}),plan=original.data.plan!,e={...original,data:{...original.data,plan:{...plan,units:plan.units.map(u=>u.id==='u7'?{...u,systems:[systemName('two'),systemName('one')]}:u)}}},tabs=new ConsoleEffort();
  const h=tabs.read(e,{window:'arc',group:'system-set'}),r=h.rows.find(r=>r.systems.includes('one'))!;assert.equal(h.rows[0]!.subject.type,'system-set');assert.deepEqual(r.systems,['one','two']);assert.equal(r.spend.costUsd,2.25);reconciles(h.rows,h.totals);
  assert.equal(tabs.read(e,{window:'arc',group:'system-set',system:'one,two'}).rows.length,1);
  const selected=tabs.read(e,{window:'arc',systemSet:systemSetKey(['two','one'])});assert.equal(selected.rows.length,1);assert.equal(selected.rows[0]!.subject.id,'u7');assert.equal(selected.totals.spend.costUsd,2.25);
@@ -61,7 +61,7 @@ test('System sets preserve every membership, never multiply charges, retain empt
  for(const params of [{group:'role',sort:'elapsed'},{group:'system-set',sort:'rounds'},{role:'nonexistent'},{systemSet:'forged'},{subject:'job:absent'}])assert.throws(()=>tabs.read(e,params),ConsoleError);
 });
 test('Selected Effort scope has immutable exhaustive evidence pages, strict query/identity binding and explicit eviction/reset',async t=>{
- const f=await investigationFixture(65);t.after(()=>f.close());for(let n=0;n<30;n++)f.journal.fact({kind:'stage-admitted',unit:unitId('u7'),stage:'build',waited:{totalMs:n,byReasonMs:{'cpu-tokens':n}}});const cache=new ObservationCache(f.hostDir,'groups','repo'),e=cache.read({runDir:f.runDir,arc:f.arc}),tabs=new ConsoleEffort(),group='role',h=tabs.read(e,{window:'arc',group}),r=h.rows.find(r=>r.contributorCount>25)!;assert.ok(r);
+ const f=await investigationFixture(65);t.after(()=>f.close());for(let n=0;n<30;n++)f.journal.fact({kind:'stage-admitted',unit:unitId('u7'),stage:'build',waited:{totalMs:n,byReasonMs:{'cpu-tokens':n}}});const cache=new Observations(f.hostDir,'groups','repo'),e=cache.read({runDir:f.runDir,arc:f.arc}),tabs=new ConsoleEffort(),group='role',h=tabs.read(e,{window:'arc',group}),r=h.rows.find(r=>r.contributorCount>25)!;assert.ok(r);
  const params={window:'arc',group,section:'measurements',limit:'25'},first=tabs.detail(e,r.detailKey!,params);assert.ok(first.page.next);const second=tabs.detail(e,r.detailKey!,{...params,cursor:first.page.next!});assert.deepEqual(tabs.detail(e,r.detailKey!,{...params,cursor:second.page.previous!}).rows,first.rows);
  f.finishLive();const newer=cache.read({runDir:f.runDir,arc:f.arc});assert.ok(newer.highWater>e.highWater);assert.deepEqual(tabs.detail(newer,r.detailKey!,{...params,cursor:second.page.previous!}).rows,first.rows);assert.deepEqual(tabs.detail(newer,r.detailKey!,{...params,cursor:first.page.next!}).page.asOf,first.page.asOf);
  for(const changed of [{...params,section:'subjects'},{...params,unit:'u7'},{...params,group:'system-set'}])assert.throws(()=>tabs.detail(newer,r.detailKey!,{...changed,cursor:first.page.next!}),/foreign/);
@@ -70,7 +70,7 @@ test('Selected Effort scope has immutable exhaustive evidence pages, strict quer
  for(let n=0;n<33;n++)tabs.read(newer,{window:'arc',q:String(n)});assert.throws(()=>tabs.detail(newer,r.detailKey!,{...params,cursor:first.page.next!}),/expired/);
 });
 test('Scope HTTP and client admit only the selected typed identity with bounded GET/HEAD and no monolith fallback',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'groups','repo').read({runDir:f.runDir,arc:f.arc}),tabs=new ConsoleEffort(),r=tabs.read(e,{window:'arc',group:'role'}).rows[0]!,key=r.detailKey!;
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'groups','repo').read({runDir:f.runDir,arc:f.arc}),tabs=new ConsoleEffort(),r=tabs.read(e,{window:'arc',group:'role'}).rows[0]!,key=r.detailKey!;
  const s=await serveConsole({repo:absPath(f.d.repo),common:gitCommonDir(absPath(f.d.repo)),hostDir:f.hostDir,host:'127.0.0.1',port:0});t.after(()=>s.close());const base=`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/resources/details/${key}`;
  const response=await consoleGet(base+'?window=arc&group=role');assert.equal(response.status,200,await response.clone().text());const raw=await response.json() as {data:EffortScopeView};assert.ok(effortScopeShape(raw.data));assert.equal(raw.data.page.limit,25,'selected evidence defaults to one bounded detail page');assert.match(response.headers.get('cache-control')!,/no-store/);assert.equal(response.headers.get('access-control-allow-origin'),null);
  const head=await fetch(base+'?window=arc&group=role',{method:'HEAD'});assert.equal(head.status,200);assert.equal(await head.text(),'');

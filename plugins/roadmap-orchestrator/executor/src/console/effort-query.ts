@@ -1,5 +1,5 @@
 // Recorded-completions projection; no presentation adapter, report reads or observation retention.
-import type { Envelope } from '../observation/protocol.ts';
+import { captureKey, type Envelope } from '../observation/protocol.ts';
 import { ConsoleError } from '../observation/protocol.ts';
 import { sha256Hex } from '../core/json.ts';
 import { completedWaiting } from '../status/waiting.ts';
@@ -91,7 +91,7 @@ export class ConsoleEffort {
       const value=(r:EffortUnit):number|null=>filters.sort==='work'?r.agentMs===null&&r.commandMs===null?null:(r.agentMs??0)+(r.commandMs??0):filters.sort==='spend'?r.spend.costUsd:filters.sort==='elapsed'?r.lifetime.elapsedMs:filters.sort==='redChecks'?r.lifetime.redChecks:filters.sort==='rounds'?r.lifetime.rounds:filters.sort==='held'?r.heldMs:r.queuedMs;
       result.sort((a,b)=>{if(filters.sort==='plan')return order(a,b);const av=value(a),bv=value(b);return av===null||bv===null?av===null?(bv===null?order(a,b):1):-1:(filters.direction==='desc'?bv-av:av-bv)||order(a,b);});
       const rowCounts={unit:0,arc:0,job:0,role:0,'system-set':0,unattributed:0};for(const r of result)rowCounts[r.subject.type]++;
-      return {rows:result,contributions:chosen,context:{...versioned({filters,bounds,facets,totals,buckets:[],histogram:{from:new Date(lo).toISOString(),to:new Date(hi).toISOString(),widthMs:width},rowCounts,membership:'applied-plan-at-anchor' as const,attribution:{unit:unitTotals,arcJob:arcJobTotals}},scope),viewVersion:sourceVersion??sha256Hex(JSON.stringify([e.data.capture.source,'effort'])),
+      return {rows:result,contributions:chosen,context:{...versioned({filters,bounds,facets,totals,buckets:[],histogram:{from:new Date(lo).toISOString(),to:new Date(hi).toISOString(),widthMs:width},rowCounts,membership:'applied-plan-at-anchor' as const,attribution:{unit:unitTotals,arcJob:arcJobTotals}},scope),viewVersion:sourceVersion??sha256Hex(JSON.stringify([captureKey(e),'effort'])),
         buckets:[...buckets].sort(([a],[b])=>a-b).map(([n,v])=>({...v,from:new Date(lo+n*width).toISOString(),to:new Date(Math.min(hi,lo+(n+1)*width)).toISOString()}))}};
   }
   detail(e:Envelope,id:string,params:Record<string,string>,sourceVersion?:string):EffortScopeView {

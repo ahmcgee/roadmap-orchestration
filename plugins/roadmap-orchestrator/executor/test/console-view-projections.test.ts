@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, unlinkSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { Event } from '../src/core/events.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { statusBytes } from '../src/observation/protocol.ts';
 import { identityIndex } from '../src/console/indexes.ts';
 import { unitView } from '../src/console/details.ts';
@@ -15,7 +15,7 @@ import { invocationDirName, invocationIdOf } from '../src/core/ids.ts';
 import { waited } from '../src/core/waiting.ts';
 import { waitingBreakdown } from '../src/console/waiting.ts';
 
-const capture = (f: Awaited<ReturnType<typeof investigationFixture>>) => new ObservationCache(f.hostDir, 'view-projections', 'reader').read({runDir: f.runDir, arc: f.arc});
+const capture = (f: Awaited<ReturnType<typeof investigationFixture>>) => new Observations(f.hostDir, 'view-projections', 'reader').read({runDir: f.runDir, arc: f.arc});
 function noWorkingSet(value: unknown) {
   if (!value || typeof value !== 'object') return;
   for (const [key, child] of Object.entries(value)) {
@@ -116,7 +116,7 @@ test('D8/D11 heartbeat reuse keeps versions and terminal bounds fixed; source ch
   assert.equal(views.shell(later), shell); assert.equal(views.graph(later), graph);
   assert.equal(shell.lifecycle.state, 'complete'); assert.ok(shell.lifecycle.endedAt);
   assert.equal(shellView(later).viewVersion, shell.viewVersion);
-  const changed = {...e, data: {...e.data, capture: {...e.data.capture, source:'request-change'}, requests: []}};
+  const changed = {...e, data: {...e.data, capture: {...e.data.capture, materializations: e.data.capture.materializations + 1}, requests: []}};
   assert.notEqual(views.shell(changed).viewVersion, shell.viewVersion);
   assert.equal(views.graph(changed).viewVersion, graph.viewVersion);
   assert.equal(resourceNow({...e,data:{...e.data,display:{...e.data.display,status:{...e.data.display.status,host:{...e.data.display.status.host,pools:{}}}}}}).cpuReservation, null);

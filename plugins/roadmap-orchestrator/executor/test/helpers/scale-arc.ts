@@ -46,7 +46,8 @@ import { HOST_DIR, openHostDir } from '../../src/host/hostdir.ts';
  * verdicts with dismissed findings, a fresh unit carrying a cut one forward (`carries`), units in no milestone (one
  * re-entered), coloured check output, and a stop: no owner, nothing running, completion unsealed.
  */
-export type ScaleOptions = { units?: number; days?: number; seed?: string; preset?: 'design'; field?: boolean };
+/** `invocations`: at least this many invocations in all (extra lane runs in the history's checks stages), not only what the units' stages record. */
+export type ScaleOptions = { units?: number; days?: number; seed?: string; preset?: 'design'; field?: boolean; invocations?: number };
 export const SCALE_NOW = '2026-11-07T20:00:00.000Z';
 const DAY = 86_400_000;
 const SYSTEMS = ['identity', 'catalog', 'booking', 'billing', 'notifications', 'search', 'analytics', 'operations'];
@@ -289,6 +290,25 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
     commitRevisionNow(j,runDir,{...previous,manifest:{...previous.manifest,specs:{...previous.manifest.specs,[unitId(`u${merged+2}`)]:keepInput(runDir,readFileSync(join(planDir,`u${merged+2}.json`)),'spec.json')},planSha256:keepInput(runDir,Buffer.from(JSON.stringify(currentPlan)),'plan.json')},source:{type:'command',command:commandId('cmd-0000000000000001')},base:planRev(1),rev:planRev(2),changes:[{type:'unit-added',unit:unitId(`u${merged+2}`)},...currentPlan.units.slice(count-withdrawn).map((u:{id:string})=>({type:'unit-cut' as const,unit:unitId(u.id)})),{type:'unit-reentered',unit:unitId(`u${merged+2}`),reenters:unitId(`u${reentryParent}`),reset:false}],dispositions:[],divergences:[]},{type:'arc'});
     const pulls: GhPull[]=[]; let rev=2, findings=0;
     const historicalCount=merged+Math.floor(count*.16);
+    const roundsOf=(i:number)=>i%37===0?6:i%19===0?4:i%7===0?2:1;
+    let laneStages=0; for(let i=1;i<=historicalCount;i++) if(i!==reentryParent) laneStages+=roundsOf(i);
+    // `invocations`: arc smoke checks (command runs with all four records and their output) between the units' rounds.
+    const extraChecks=options.invocations===undefined?0:Math.ceil(options.invocations/laneStages);
+    const smoke=()=>{
+      let launch!: LaunchFile;
+      const spawned=j.begin({kind:'proc.spawn',key:opKey(`scale:inv:${invocations+1}`),parent:{type:'arc'},deadlineAt:null,body:(op,inv)=>{
+        launch={v:2,arc,op,inv,argv:['sh','-c','node --test test/smoke.test.ts'],cwd:absPath(repo),env:{},stdinPath:null,deadlineAt:isoTime('2026-12-01T00:00:00.000Z'),stallMs:null,graceMs:1000,containment:'session',test:null,terminal:{type:'command',purpose:'smoke',expectedExit:0}};
+        return {expect:{subject:{purpose:'smoke',check:'command',target:{type:'command'}},launchSha256:launchSha256(launch)},post:null};
+      }});
+      invocations++;
+      const dir=invocationDir(runDir,spawned.inv); mkdirSync(dir,{recursive:true}); const files=runnerFiles(dir,spawned.inv); files.write('launch.json',launch);
+      writeFileSync(join(dir,'stdout'),'ok 1 - smoke\n'); writeFileSync(join(dir,'stderr'),'');
+      const wallMs=2_000+Math.floor(rng()*8_000); advance(wallMs);
+      const binding={v:2 as const,arc,op:spawned.op,inv:spawned.inv}, endedAt=isoTime(new Date().toISOString());
+      files.write('result.json',{...binding,type:'command',purpose:'smoke',expectedExit:0,exitCode:0,verdict:'pass'});
+      files.write('exit.json',{...binding,child:{type:'exited',code:0},cause:'exited',endedAt,quiescedAt:endedAt,cpu:{wallMs,runMs:Math.round(wallMs*1.5),waitMs:Math.round(wallMs*.03)}});
+      j.done(spawned.op,'proc.spawn',{kind:'result',pressure:null,resultSha256:sha256(sha256Hex(readFileSync(join(dir,'result.json')))),summary:{type:'command',verdict:'pass'}},null);
+    };
     // Deterministic event agenda: topological units run in daytime bursts. Each day's
     // 23:00–07:00 backend usage-limit park contains no unit work.
     for(let day=0, i=1; day<Math.ceil(days); day++) {
@@ -298,10 +318,11 @@ export async function generateScaleArc(outDir: string, options: ScaleOptions = {
       for(;i<=endIndex;i++) {
         if(i===reentryParent) continue;
         setTime(dayStart + Math.floor((i-startIndex)/Math.max(1,endIndex-startIndex+1)*12*3_600_000));
-        const id=`u${i}`, rounds=i%37===0?6:i%19===0?4:i%7===0?2:1; buildRounds[id]=rounds;
+        const id=`u${i}`, rounds=roundsOf(i); buildRounds[id]=rounds;
         for(let round=1;round<=rounds;round++) {
           const build=begin(id,'build'); const cpu=[1,2,3,4].map(cpuToken); resource(build,cpu,true,build); invoke(build,true); resource(build,cpu,false,build); record(r.ctx,at(build,'build'),'success');
           const checks=begin(id,'lanes'); const red=round<rounds; invoke(checks,false,false,red); record(r.ctx,at(checks,'lanes'),red?'red':'green');
+          for(let n=0;n<extraChecks;n++) smoke();
           const gate=begin(id,'gate'); invoke(gate,true,false,false,gateVerdict(unitText(i),red)); record(r.ctx,at(gate,'gate'),red?'revise':'approve');
         }
         const waited={'cpu-tokens':60_000*(i%9),'cpu-pressure':120_000*(i%7),'memory-pressure':90_000*(i%3),'publication-slot':180_000*(i%11),'admission-hold:base-red':300_000*(i%5)};

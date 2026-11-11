@@ -132,6 +132,8 @@ export class ObserverJournal {
   #generation = 0;
   /** Cursor identity changes on replacement, truncation, anchor reset or failed verification. */
   get cursor() { return { generation: this.#generation, identity: this.#identity, offset: this.#offset, size: this.#size }; }
+  /** How many events the cursor holds. */
+  get events(): number { return this.#events.length; }
   #size = 0;
   #mtime = 0;
   #anchor = Buffer.alloc(0);
@@ -162,7 +164,8 @@ export class ObserverJournal {
     this.#reset();
     return finishOpen(absPath(dirname(this.path)), this.path, fold, validEnd, size);
   }
-  read(): LogSnapshot {
+  /** `onProgress(done, of)`: bytes read of the journal's size, after each chunk. */
+  read(onProgress?: (done: number, of: number) => void): LogSnapshot {
     if (!existsSync(this.path)) {
       this.#reset();
       return { view: this.#fold, events: this.#events };
@@ -192,6 +195,7 @@ export class ObserverJournal {
           start = nl + 1;
         }
         carry = Buffer.from(buf.subarray(start));
+        onProgress?.(pos, st.size);
       }
       this.#anchor = Buffer.alloc(Math.min(4096, this.#offset));
       readSync(fd, this.#anchor, 0, this.#anchor.length, this.#offset - this.#anchor.length);

@@ -2,7 +2,7 @@
 // transcript parsing, canonical blobs or alternate execution-state fold.
 import type { Event } from '../core/events.ts';
 import { invocationDirName, invocationIdOf, invocationId, parseInvocationId, needsUserId } from '../core/ids.ts';
-import { canonicalJson, sha256Hex } from '../core/json.ts';
+import { sha256Hex } from '../core/json.ts';
 import { needsUserRecord, type NeedsUserRecord } from '../core/records.ts';
 import { needsUserPath } from '../needsuser.ts';
 import { ConsoleError, type Envelope } from '../observation/protocol.ts';
@@ -17,7 +17,7 @@ import type { Subject, Money, Interval } from './view-protocol.ts';
 export type RequestRef = {id: string; sha256: string};
 export type ActivityEntry = {row: ActivityRow; actors: Actor[]; invocations: string[]; request: RequestRef | null; search: string};
 export type ActivityIndex = {
-  version: string; entries: ActivityEntry[]; holds: BackendHold[];
+  version: string; bytes: number; entries: ActivityEntry[]; holds: BackendHold[];
   units: string[]; milestones: {id: string; units: string[]}[];
 };
 /** D9: never trust a query path or cached/open record in place of its recorded digest. */
@@ -40,6 +40,11 @@ const aggregateMoney = (rows: Interval[]): Money | null => {
   return sum;
 };
 export function buildActivityIndex(e: Envelope): ActivityIndex {
+  const steps = activityIndexSteps(e);
+  for (;;) { const step = steps.next(); if (step.done) return step.value; }
+}
+/** The index, built in steps a caller may run one per turn of its event loop (the console's serve worker does). */
+export function* activityIndexSteps(e: Envelope): Generator<undefined, ActivityIndex, undefined> {
   const index = projectionIndex(e), intervals = timelineIntervals(e, index), byRoute = new Map(intervals.map(i => [i.id, i]));
   const byStep = new Map<string, string[]>(), byOp = new Map<string, string[]>(), byJob = new Map<string, string[]>();
   const agents = new Set(index.invocations.rows.filter(i => i.invocation.execution === 'agent').map(i => invocationDirName(invocationIdOf(i.invocation.id))));
@@ -53,14 +58,20 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
     }
   }
   const entries: ActivityEntry[] = [], holds = backendHolds(e.data.events, e.epoch);
+  const holdStarts = new Map<number, BackendHold>(), holdClosures = new Map<number, BackendHold>();
+  for (const h of holds) {
+    if (!holdStarts.has(h.startSeq)) holdStarts.set(h.startSeq, h);
+    if (h.closure && h.closure.kind !== 'park-updated' && !holdClosures.has(h.closure.seq)) holdClosures.set(h.closure.seq, h);
+  }
   const arc: Subject = {type: 'arc', id: e.arc, title: 'Arc'};
   const unit = (id: string): Subject => ({type: 'unit', id, title: index.identities.get(id)?.title.slice(0, 96) ?? id});
   const add = (ev: Event, kind: ActivityKind, text: string, fields: Partial<Omit<ActivityRow, 'result'>> & {result?: string} = {}, refs: string[] = [], request: RequestRef | null = null, subkey = '') => {
     const id = activityKey(e.epoch, ev.seq, kind) + (subkey ? `-${sha256Hex(subkey).slice(0, 24)}` : ''), detail = {type: 'event' as const, id};
     const joined = refs.map(id => byRoute.get(id)!).filter(Boolean), completed = joined.filter(i => i.endedAt !== null);
     const measured = completed.filter(i => i.wallMs !== null), actors = new Map<string, Actor>();
-    for (const i of joined) actors.set(canonicalJson(i.actor), i.actor);
-    if (fields.actor) actors.set(canonicalJson(fields.actor), fields.actor);
+    // Actors and entries are built here in a fixed key order, so their JSON is already canonical for identity and hashing.
+    for (const i of joined) actors.set(JSON.stringify(i.actor), i.actor);
+    if (fields.actor) actors.set(JSON.stringify(fields.actor), fields.actor);
     const row: ActivityRow = {id, seq: ev.seq, at: ev.at, kind, subject: arc, stage: null, attempt: null, round: null,
       actor: actors.size === 1 ? [...actors.values()][0]! : null, actorCount: actors.size,
       outcome: null, summary: preview(text, detail), workMs: measured.length ? measured.reduce((n, i) => n + i.wallMs!, 0) : null,
@@ -70,9 +81,12 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
       ...[...actors.values()].flatMap(a => [a.role, a.backend, a.model])].filter(v => v != null).join(' ').toLowerCase();
     entries.push({row, actors: [...actors.values()], invocations: refs, request, search});
   };
+  yield;
   const findings = new Map(e.data.events.flatMap(ev => ev.type === 'fact' && ev.fact.kind === 'finding-opened' ? [[String(ev.fact.id), ev.fact] as const] : []));
   const raises = new Map(e.data.events.flatMap(ev => ev.type === 'intent' && ev.kind === 'needsuser.raise' ? [[String(ev.expect.id), {id: String(ev.expect.id), sha256: ev.post.sha256}] as const] : []));
+  let n = 0;
   for (const ev of e.data.events) {
+    if (++n % 2_000 === 0) yield;
     if (ev.type === 'intent' && ev.kind === 'needsuser.raise') {
       const ref = raises.get(ev.expect.id)!, request = activityRequest(e, ref);
       add(ev, 'request-raised', `Decision requested: ${request?.summary ?? `Request ${ref.id}; evidence pruned`}`,
@@ -105,21 +119,26 @@ export function buildActivityIndex(e: Envelope): ActivityIndex {
         add(ev, f.kind, `${f.id}: ${finding?.claim ?? 'Finding'} — ${f.kind === 'finding-opened' ? 'open' : f.to.state}`,
           {subject, outcome: f.kind === 'finding-opened' ? 'open' : f.to.state, result: `${f.id}: ${finding?.claim ?? 'Finding'} (${plainWords(f.kind === 'finding-opened' ? 'open' : f.to.state)})`});
       } else if (f.kind === 'backend-park') {
-        const h = holds.find(h => h.startSeq === ev.seq)!;
+        const h = holdStarts.get(ev.seq)!;
         add(ev, 'backend-park', `${backendWords(f.backend)} unavailable to new calls: ${holdClassWords(h.effectiveClass).toLowerCase()}`,
           {actor: {role: null, backend: f.backend, model: null}, actorCount: 1, outcome: h.effectiveClass});
       }
-      const closed = holds.find(h => h.closure?.seq === ev.seq && h.closure.kind !== 'park-updated');
+      const closed = holdClosures.get(ev.seq);
       if (closed) add(ev, 'backend-closure', `${backendWords(closed.backend)} available again (${closed.closure!.kind === 'probe' ? 'a check passed' : 'resumed'})`,
         {actor: {role: null, backend: closed.backend, model: null}, actorCount: 1, outcome: 'available'});
     }
   }
   // D10 root decisions can share a source event; subkind is part of their stable identity.
+  const bySeq = new Map(e.data.display.status.decisionsSince.length ? e.data.events.map(ev => [ev.seq, ev]) : []);
   for (const d of e.data.display.status.decisionsSince) {
-    const ev = e.data.events.find(ev => ev.seq === d.seq); if (!ev) continue;
+    const ev = bySeq.get(d.seq); if (!ev) continue;
     add(ev, 'decision', `${d.id}: ${d.oneLine}`, {outcome: d.kind}, [], null, d.id);
   }
+  yield;
   entries.sort((a, b) => a.row.seq - b.row.seq || (a.row.id < b.row.id ? -1 : a.row.id > b.row.id ? 1 : 0));
+  yield;
   const units = [...index.identities.keys()], milestones = e.data.display.status.milestones.map(m => ({id: String(m.id), units: m.members.map(String)}));
-  return {version: sha256Hex(canonicalJson({entries, units, milestones})), entries, holds, units, milestones};
+  // One serialization gives the index's identity and its retained size.
+  const json = JSON.stringify({entries, units, milestones});
+  return {version: sha256Hex(json), bytes: Buffer.byteLength(json) + Buffer.byteLength(JSON.stringify(holds)), entries, holds, units, milestones};
 }

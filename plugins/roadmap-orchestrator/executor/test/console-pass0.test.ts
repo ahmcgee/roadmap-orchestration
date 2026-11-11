@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { effortRows, cpuSummaries, waitingMeasurements, holisticSummaries } from '../src/console/tab-projections.ts';
 import { reasonWords } from '../src/console/vocabulary.ts';
 import { cpuStageGroups, resourceQueue } from '../src/console/resources.ts';
@@ -11,7 +11,7 @@ import type { WorkRun } from '../src/status-work.ts';
 
 test('Pass 0 uses recorded unit identity, CPU stage coverage, waiting counts and finding state',async t=>{
   const f=await investigationFixture();t.after(()=>f.close());
-  const e=new ObservationCache(f.hostDir,'pass0','reader').read({runDir:f.runDir,arc:f.arc});
+  const e=new Observations(f.hostDir,'pass0','reader').read({runDir:f.runDir,arc:f.arc});
   const rows=effortRows(e);assert.equal(rows.filter(r=>r.subject.type==='unit').length,14);
   const unit=rows.find(u=>u.subject.id==='u7')!;
   assert.equal(unit.lifetime.redChecks,1);assert.equal(unit.lifetime.rounds,3);assert.equal(unit.spend.costUsd,2.25);
@@ -26,7 +26,7 @@ test('Pass 0 uses recorded unit identity, CPU stage coverage, waiting counts and
 
 test('CPU groups weight matching calls and keep missing, zero-wall and over-reservation evidence explicit',async t=>{
   const f=await investigationFixture();t.after(()=>f.close());
-  const e=new ObservationCache(f.hostDir,'cpu-math','reader').read({runDir:f.runDir,arc:f.arc});
+  const e=new Observations(f.hostDir,'cpu-math','reader').read({runDir:f.runDir,arc:f.arc});
   const base=e.data.display.status.units.flatMap(u=>u.work).find(w=>w.reservedCpu===4&&w.measured)!;
   const call=(n:number,reservedCpu:number|null,wallMs:number|null,runMs=0):WorkRun=>({...base,inv:invocationId(opId(f.arc,100000+n),1),reservedCpu,measured:wallMs===null?null:{wallMs,runMs,waitMs:99999}});
   const calls=[call(1,4,100,20),call(2,1,900,1800),call(3,null,1000,8000),call(4,4,0,0),call(5,4,null)];
@@ -44,7 +44,7 @@ test('CPU groups weight matching calls and keep missing, zero-wall and over-rese
 
 test('resource queue preserves scheduler priority including unknown starts and non-age order',async t=>{
   const f=await investigationFixture();t.after(()=>f.close());
-  const host=new ObservationCache(f.hostDir,'queue-order','reader').read({runDir:f.runDir,arc:f.arc}).data.display.status.host;
+  const host=new Observations(f.hostDir,'queue-order','reader').read({runDir:f.runDir,arc:f.arc}).data.display.status.host;
   const first=host.queue[0]!,second=host.queue[1]!;
   const queue=resourceQueue({...host,queue:[{...first,queuedAt:200},{...second,queuedAt:100}],jobQueue:[{holder:{type:'job',job:jobId('audit',1)},request:first.request,envBlocked:false}]});
   assert.deepEqual(queue.map(q=>q.label),['audit-1','u8','u9']);

@@ -1228,32 +1228,62 @@ identity-checks SIGTERM then bounded SIGKILL, awaits death and rebuilds caches. 
 executor or actionable watch. Only console lease/log metadata is written; schema remains 2, including
 adoption of dev.54 state.
 
-A dedicated observation worker polls every second without browser clients; filesystem notices accelerate
-polling. It discovers retained (including refused) arcs, maintains active/latest/subscribed arcs and an LRU
-of eight older captures. `/arcs` selects this repo's claimed arc, otherwise the latest retained; the browser
-shows only that arc (another arc's link reads "This console shows the current arc only"). Only ObserverJournal.read verifies journal prefixes, retaining incomplete
-tails without repair; inode/truncation/anchor resets change epoch. Derived materialized values are detached
-from the cursor before another read. Dependency stamps include identity/size/mtime/ctime and membership;
-refs, owner/liveness, scheduler, heartbeat, needs-user, answers, receipts and retained result/exit records
-invalidate independently of the journal. Streaming stdout/stderr/runner logs, supervisor logs and unrelated
-run directories are excluded; paged log/history readers track stream changes separately. A heartbeat updates volatile fields without rebuilding expensive evidence. Existing hash-keyed
-Git/snapshot and ended-invocation/transcript caches remain in use.
+Gathering and serving run on separate threads. Each maintained arc has a collector worker: the selected arc (this
+repo's claimed arc, otherwise the latest retained) always, and up to two more that were subscribed or read in the last
+minute, least recently used out first; a released arc's collector is terminated and the arc returns with a new epoch. The
+browser shows only the selected arc (another arc's link reads "This console shows the current arc only"). A collector
+steps every second (100 ms after a filesystem notice or a strict read's request, never closer to a capture than 150 ms or
+half that capture's time); it watches the run directory flat, the refs and answers trees, and the directory of each
+invocation whose history a stream follows. A step samples what changed: the journal's stamp; the run's start, rejection and schedule
+records, the host claim, owner and demo files, `HEAD`, `packed-refs`, `config`, the refs and answers trees, incoming
+commands, receipts and needs-user records with their membership, the kept inputs' names, and each open invocation's
+runner records (identity/size/mtime/ctime, never following symlinks); the heartbeat and watch lease as a volatile overlay;
+open invocations' output streams. Nothing it stats grows with settled invocations or evidence. A moved journal or stable
+record captures and publishes the change; moved output re-reads the open rows at most every five seconds; otherwise the
+step publishes a check. Only ObserverJournal.read verifies journal prefixes, retaining incomplete tails without repair;
+inode/truncation/anchor resets change epoch. A capture folds only appended events, reads open invocations' rows and newly
+settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
+memory (src/observation/memo.ts); a ref lookup is asked once per capture. A capture is published as of the sample taken
+before it read anything: every record it read is complete and at least that new, and whatever changed meanwhile is the
+next step's capture. A capture that races a writer (`ENOENT`) publishes nothing, keeps its cursor and rows, and is retried
+at the next step; five in a row are logged once. Any other failure is published, answers that arc's reads, and stands
+until a capture succeeds.
+
+Write-once records are trusted once read. An integrity sweep re-stamps them (settled invocations' runner records, red and
+witness records, kept inputs) against their stamps when read, at most 20 ms per step, and walks the run for symlinks that
+escape it, at most 20 ms per step: a rewritten or removed record is read again (a tampered one fails the capture, a pruned
+result shows pruned) within one pass, about 47 s on an arc of 40,000 records. That is the detection bound for a record
+nobody opens; routes that open a record (result, log, history, content) verify it on that read.
+
+The serve worker holds each maintained arc's latest observation and parses the verified journal prefix itself. Every API
+read is answered from memory: shell, graph, metadata versions, status and summary are kept per capture (their inputs are
+accumulators extended with the appended events and changed rows); tab views build on their first request per capture and
+are rebuilt for each new capture the last five minutes asked for once it has stood half a second; the Activity index
+builds in 20 ms slices between other reads. API discovery is answered by the HTTP thread from the serve worker's reported
+selection, once the selected arc is observed. The HTTP thread logs, once each, when an arc falls behind (its journal is
+past what was published, or nothing was checked for three seconds, for five seconds): `console is behind arc <arc>:
+published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; last capture <ms> ms (<events> events,
+<reads> record reads, <git> git)`, and when it catches up: `console caught up with arc <arc> after <t>s behind`; a cold
+read says how far it got every ten seconds (`console is reading arc <arc>: <phase> <percent>%`). Workers run with heap
+limits (a collector 256 MB plus three times its journal; the serve worker 128 MB plus two and a half times the maintained
+journals, and 64 MB for their growth; more maintained journals restart it); one that exits is logged with its reason and
+restarted after 5, 30, then 60 s, and its arc's reads answer unavailable with that reason meanwhile.
 
 An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
 Protocol is the exact executor package version. HighWater is the verified event prefix; revision also changes
-with side files/liveness. This is a verified journal prefix plus sampled external state, not a filesystem
-transaction. Request capture checks dependency stamps before/after and gives changed inputs and disappearing-file
-read races one immediate retry within the same admission deadline, retaining its observer and staged capture.
-Background maintenance makes one attempt and defers races to the next watch/poll check.
-Continued request churn yields unavailable instead of spinning until the deadline; explicit evidence routes retain
-not-found for absent/pruned evidence. Requests accept
-`minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and `fenceSize` captured cheaply
-from the journal. The cursor must inspect through that fence, excluding incomplete trailing lines. Request
-admission rechecks dependencies and coalesces catch-up, bounded to two seconds counted from when the observation
-worker is ready (loaded and through its first check); a request arriving earlier waits for that. Reset/conflict (409),
-unavailable (503) and corruption (500) are explicit; old epochs/lower watermarks/unchecked caches are not
-silently returned. Absent/dead/unreachable servers, unavailable catch-up and console protocol/version mismatch fall back locally
-with a stderr diagnostic. Identity mismatch, malformed payload and corrupt evidence do not fall back.
+with side files/liveness and the clock overlay. This is a verified journal prefix plus sampled external state, not a
+filesystem transaction; `checkedAt` moves only when a step found nothing newer than the published observation, or
+published one. Requests accept `minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and
+`fenceSize` captured cheaply from the journal. A browser read is answered from the published observation; one whose
+watermark is ahead waits for an observation reaching it, and is unavailable once a check made after it arrived found
+nothing newer. A strict read (status, the CLI) is answered only by a check made after it arrived that covers its fence
+(the cursor inspected through it, excluding incomplete trailing lines), within two seconds; one arriving before its arc's
+first observation waits for that observation and gets its two seconds from then, otherwise it answers unavailable
+(`console has not verified the arc since this request arrived`). A request whose caller left is dropped unanswered.
+Reset/conflict (409), unavailable (503) and corruption (500) are explicit; old epochs, lower watermarks and unchecked
+observations are not silently returned. Absent/dead/unreachable servers, unavailable catch-up and console
+protocol/version mismatch fall back locally with a stderr diagnostic. Identity mismatch, malformed payload and corrupt
+evidence do not fall back; explicit evidence routes retain not-found for absent/pruned evidence.
 `host.log.foldMs` and compactionDue retain measured fold semantics; elapsed time is not zeroed for parity.
 
 All API paths start `/api/<executorVersion>`. GET and HEAD only (other methods 405), no-store, no CORS.

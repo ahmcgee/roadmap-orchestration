@@ -7,7 +7,7 @@ import { until } from '../fixtures/exec-common.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { effortContributions } from '../../src/console/effort-contributions.ts';
 import { ConsoleEffort } from '../../src/console/effort-query.ts';
@@ -16,7 +16,7 @@ import { serveConsole } from '../../src/console/http.ts';
 import { consoleGet } from '../helpers/console-http.ts';
 test('300-unit role/system-set attribution, exhaustive selected evidence, bounded scope reads and repeated browser group/drawer cycles',{timeout:120_000},async t=>{
  const at=performance.now(),m=await generateScaleArc(tmpDir('console-effort-groups-scale')),generationMs=performance.now()-at,release=await ownScaleArc(m);t.after(release);
- const capture=performance.now(),e=new ObservationCache(absPath(m.hostDir),'groups-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
+ const capture=performance.now(),e=new Observations(absPath(m.hostDir),'groups-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
  assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
  const tabs=new ConsoleEffort(),expected=effortContributions(e).map(c=>c.id).sort(),metrics=[];let largestView=0,largestDetail=0;
  for(const group of ['role','system-set'] as const){

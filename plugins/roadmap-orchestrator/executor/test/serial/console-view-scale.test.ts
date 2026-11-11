@@ -5,7 +5,7 @@ import { generateScaleArc, ownScaleArc } from '../helpers/scale-arc.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { canonicalJson } from '../../src/core/json.ts';
 import { ConsoleViews } from '../../src/console/views.ts';
 import { projectionIndex, timelineIntervals, effortRows, attentionSummaries, cpuSummaries, bookingSummaries, waitingMeasurements, stageSummaries, holisticSummaries } from '../../src/console/tab-projections.ts';
@@ -23,7 +23,7 @@ test('300-unit/7-day projection budgets preserve every relationship and independ
   const generated = performance.now(), m = await generateScaleArc(tmpDir('console-view-scale'));
   const generationMs = performance.now() - generated;
   const release = await ownScaleArc(m); t.after(release);
-  const start = performance.now(), e = new ObservationCache(absPath(m.hostDir),'view-scale','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
+  const start = performance.now(), e = new Observations(absPath(m.hostDir),'view-scale','reader').read({runDir:absPath(m.runDir),arc:arcId(m.arc)});
   const captureMs = performance.now() - start, views = new ConsoleViews(), shellStart = performance.now(), shell = views.shell(e);
   const shellMs = performance.now() - shellStart, graphStart = performance.now(), graph = views.graph(e), graphMs = performance.now() - graphStart;
   assert.equal(e.data.display.status.units.length,300); assert.equal(e.data.events.length,7523); assert.equal(e.data.display.invocations.length,1088);

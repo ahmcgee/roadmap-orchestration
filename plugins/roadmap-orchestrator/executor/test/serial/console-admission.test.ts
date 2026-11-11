@@ -13,14 +13,13 @@ import { consoleFixture } from '../fixtures/console.ts';
 import { ConsoleBrowser } from '../helpers/console-browser.ts';
 import { until } from '../fixtures/exec-common.ts';
 
-test('300-unit cold browser preparation survives a worker delay beyond two seconds', {timeout:90_000}, async t => {
+test('300-unit cold browser preparation survives a first observation later than two seconds', {timeout:90_000}, async t => {
   const m = await generateScaleArc(tmpDir('console-admission-scale')), release = await ownScaleArc(m); t.after(release);
   const original = Worker.prototype.postMessage; const reads:string[] = [];
+  // The arc's collector channel reaches the serve worker 2.3 s late: its first observation does too.
   t.mock.method(Worker.prototype,'postMessage',function(this:Worker,message:any,...rest:any[]) {
-    if (message.kind==='read') {
-      reads.push(message.path[2]);
-      if (['shell','graph'].includes(message.path[2])) { setTimeout(()=>original.call(this,message,...rest),2300); return; }
-    }
+    if (message.kind==='read') reads.push(message.path[2]);
+    if (message.kind==='collector') { setTimeout(()=>original.call(this,message,...rest),2300); return; }
     return original.call(this,message,...rest);
   });
   const started = performance.now(), s = await serveConsole({repo:absPath(m.repo),common:gitCommonDir(absPath(m.repo)),hostDir:absPath(m.hostDir),host:'127.0.0.1',port:0}); t.after(()=>s.close());
@@ -43,8 +42,9 @@ test('300-unit cold browser preparation survives a worker delay beyond two secon
 
 test('Chromium waits through preparation and renders the existing console without a catch-up error', {timeout:45_000}, async t => {
   const f = consoleFixture(), original = Worker.prototype.postMessage;
+  // The arc's first observation reaches the serve worker 2.3 s late: discovery, shell and graph all wait on it.
   t.mock.method(Worker.prototype,'postMessage',function(this:Worker,m:any,...rest:any[]) {
-    if (m.kind==='read' && (['shell','graph'].includes(m.path[2]) || m.path.length===1)) { setTimeout(()=>original.call(this,m,...rest),2300); return; }
+    if (m.kind==='collector') { setTimeout(()=>original.call(this,m,...rest),2300); return; }
     return original.call(this,m,...rest);
   });
   const s = await serveConsole({...f,host:'127.0.0.1',port:0}); t.after(()=>s.close());
@@ -55,8 +55,9 @@ test('Chromium waits through preparation and renders the existing console withou
   const text = await b.evaluate<string>('()=>document.body.innerText'); assert.doesNotMatch(text,/catch-up exceeded|Malformed observation payload/);
   const responses = await b.evaluate<{url:string;status:number}[]>('()=>window.__preparationResponses');
   assert.ok(responses.some(r=>r.url.endsWith('/arcs')&&r.status===202),'browser discovery also prepares instead of using the strict status deadline');
-  assert.ok(responses.some(r=>r.url.includes('/graph')&&r.status===202));
-  assert.ok(responses.some(r=>r.url.includes('/graph')&&r.url.includes('pending=')&&r.status===200));
+  // Discovery is the read that waits for the arc's first observation; the Graph it then loads is prepared already.
+  assert.ok(responses.some(r=>/\/arcs\?pending=/.test(r.url)&&r.status===200),'discovery waited through its preparation');
+  assert.ok(responses.some(r=>r.url.includes('/graph')&&r.status===200));
   assert.equal(responses.some(r=>r.status===503),false);
   assert.equal(responses.some(r=>/\/(snapshot|status|activity)(?:\?|$)/.test(r.url)),false,'Graph boot fetches no adapter, canonical status or inactive-tab data');
   assert.equal(responses.filter(r=>r.url.includes('/graph')&&!r.url.includes('pending=')).length,1,'initial SSE notice does not duplicate Graph');

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { investigationFixture } from './fixtures/console-investigations.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { ConsoleError, CONSOLE_PROTOCOL, statusBytes, type Envelope } from '../src/observation/protocol.ts';
 import { ConsoleAttention } from '../src/console/attention-query.ts';
 import { requestDetail, requestGuidance } from '../src/console/request-detail.ts';
@@ -17,7 +17,7 @@ import { absPath } from '../src/core/values.ts';
 import { gitCommonDir } from '../src/git/git.ts';
 import { serveConsole } from '../src/console/http.ts';
 import { consoleGet } from './helpers/console-http.ts';
-const capture=(f:Awaited<ReturnType<typeof investigationFixture>>,cache=new ObservationCache(f.hostDir,'attention','repo'))=>cache.read({runDir:f.runDir,arc:f.arc});
+const capture=(f:Awaited<ReturnType<typeof investigationFixture>>,cache=new Observations(f.hostDir,'attention','repo'))=>cache.read({runDir:f.runDir,arc:f.arc});
 function noMonolith(value:unknown){if(!value||typeof value!=='object')return;for(const [key,v] of Object.entries(value)){assert.ok(!['events','display','plan','body','report','raw','capture','transcript','console'].includes(key),key);noMonolith(v);}}
 function fileRecord(f:Awaited<ReturnType<typeof investigationFixture>>,n:number,overrides:Partial<NeedsUserRecord>={}) {
   const r=needsUserRecord({v:2,id:`sup-1-${n}`,arc:f.arc,raisedAt:`2026-11-01T00:00:00.000Z`,blocking:true,subject:{type:'host'},reason:'supervisor-crash-limit',summary:'Duplicate request summary',recommendation:'Inspect the recorded environment.',options:[],evidence:[],...overrides},'fixture request');
@@ -26,7 +26,7 @@ function fileRecord(f:Awaited<ReturnType<typeof investigationFixture>>,n:number,
 
 test('Attention canonical file-only/open records, exact counts, frozen filtering and complete keysets preserve canonical bytes',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());for(let n=1;n<=62;n++)fileRecord(f,n);
- const cache=new ObservationCache(f.hostDir,'attention','repo'),e=capture(f,cache),before=[statusBytes(e,false),statusBytes(e,true)],tabs=new ConsoleAttention();
+ const cache=new Observations(f.hostDir,'attention','repo'),e=capture(f,cache),before=[statusBytes(e,false),statusBytes(e,true)],tabs=new ConsoleAttention();
  const first=tabs.read(e,{limit:'25'});assert.ok(attentionShape(first));noMonolith(first);assert.deepEqual(first.counts,{total:65,blocking:64,informational:1});assert.equal(first.page.matching,65);
  assert.ok(first.rows.every(r=>r.blocking));assert.equal(first.rows.filter(r=>r.summary.text==='Duplicate request summary').length,25);
  const all=[...first.rows];let page=first;while(page.page.next){page=tabs.read(e,{limit:'25',cursor:page.page.next});all.push(...page.rows);}
@@ -70,7 +70,7 @@ test('selected requests retain exact recommendations/options/evidence and valid 
 
 test('selected request fields and nested lists reconstruct exactly within hard envelopes; revalidation refuses digest, identity, symlink and pruning changes',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());const long='Exact recorded text \\" <script> 🛰️\n'.repeat(3000),r=fileRecord(f,1,{summary:long,recommendation:long,options:Array.from({length:130},(_,n)=>({id:`choice-${n}`,label:long.slice(0,300)+n})),evidence:Array.from({length:130},(_,n)=>absPath(`/recorded/path/${n}`))});
- const cache=new ObservationCache(f.hostDir,'attention','repo'),e=capture(f,cache);let d=requestDetail(e,r.id,{}) as RequestView;assert.ok(requestShape(d));assert.ok(Buffer.byteLength(JSON.stringify({...e,data:d}))+1<=32*1024);
+ const cache=new Observations(f.hostDir,'attention','repo'),e=capture(f,cache);let d=requestDetail(e,r.id,{}) as RequestView;assert.ok(requestShape(d));assert.ok(Buffer.byteLength(JSON.stringify({...e,data:d}))+1<=32*1024);
  let reads=0;while(d.continuations?.length){const ref=d.continuations[0]!,page=requestDetail(e,r.id,{section:'content',cursor:ref.next});assert.ok(contentShape(page));assert.ok(Buffer.byteLength(JSON.stringify({...e,data:page}))+1<=16*1024);d=applyContent(d,page as never,ref);assert.ok(++reads<1000);}
  assert.equal(d.fields.summary,long);assert.equal(d.fields.recommendation,long);assert.equal(d.options.length,130);assert.deepEqual(d.options.map(o=>({id:o.id,label:o.label})),r.options);assert.deepEqual(d.evidenceRefs.map(p=>p.path),r.evidence);
  const original=needsUserPath(f.runDir,f.request),bytes=readFileSync(original);writeFileSync(original,Buffer.from(bytes.toString().replace('Compiler process failed','Compiler process changed')));

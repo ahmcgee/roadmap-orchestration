@@ -54,17 +54,19 @@ test('real HTTP worker observes retained runs, enforces GET/HEAD, immutable stat
   assert.equal((await fetch(`${api}/arcs`)).headers.get('access-control-allow-origin'), null);
 });
 
-test('a strict read sent while the worker is still loading gets its two seconds once the worker is ready', async (t) => {
-  // A worker that takes 2.5 s to load and make its first check, as on a busy host: nothing it says arrives before then.
-  const f = consoleFixture(), emit = Worker.prototype.emit, held: [Worker, unknown[]][] = []; let loading = true;
-  t.mock.method(Worker.prototype, 'emit', function (this: Worker, event: string | symbol, ...rest: unknown[]) {
-    if (event === 'message' && loading) { held.push([this, rest]); return true; }
-    return emit.call(this, event, ...rest);
+test('a strict read sent before its arc\'s first observation gets its two seconds once the observation arrives', async (t) => {
+  // A collector that takes 2.5 s to load and publish its first observation, as on a busy host: the serve worker sees nothing of
+  // the arc before then.
+  const f = consoleFixture(), original = Worker.prototype.postMessage;
+  t.mock.method(Worker.prototype, 'postMessage', function (this: Worker, m: any, ...rest: any[]) {
+    if (m.kind === 'collector') { setTimeout(() => original.call(this, m, ...rest), 2_500); return; }
+    return original.call(this, m, ...rest);
   });
-  setTimeout(() => { loading = false; for (const [worker, m] of held.splice(0)) emit.call(worker, 'message', ...m); }, 2_500);
   const s = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => s.close());
+  const began = performance.now();
   const status = await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/status`);
   assert.equal(status.status, 200, await status.clone().text());
+  assert.ok(performance.now() - began >= 2_000, 'it waited past two seconds for the observation');
 });
 
 test('occupied explicit port refuses binding without choosing another', async (t) => {

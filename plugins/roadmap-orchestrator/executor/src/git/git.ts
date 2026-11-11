@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import type { CommitInputs, Signature } from '../core/events.ts';
 import { type Sha, sha } from '../core/ids.ts';
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
+import { immutableGit, recordMemo } from '../observation/memo.ts';
 
 export class GitError extends Error {
   readonly args: readonly string[];
@@ -59,13 +60,30 @@ function environment(opts: GitOptions): NodeJS.ProcessEnv {
 
 /** Runs `git -C <repo> <args>`; throws GitError unless the exit code is in `okCodes`. */
 export function gitRun(repo: AbsPath, args: readonly string[], opts: GitOptions = {}): GitResult {
-  const full = ['-C', repo, ...FIXED_CONFIG, ...args];
-  const r = spawnSync('git', full, { env: environment(opts), input: opts.input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
-  if (r.error !== undefined) throw r.error;
-  const ok = opts.okCodes ?? [0];
-  if (r.status === null || !ok.includes(r.status)) throw new GitError(args, r.status, r.stderr);
-  return { code: r.status, stdout: r.stdout };
+  let stderr = '';
+  const run = (): GitResult => {
+    const full = ['-C', repo, ...FIXED_CONFIG, ...args];
+    const r = spawnSync('git', full, { env: environment(opts), input: opts.input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+    if (r.error !== undefined) throw r.error;
+    const ok = opts.okCodes ?? [0];
+    if (r.status === null || !ok.includes(r.status)) throw new GitError(args, r.status, r.stderr);
+    stderr = r.stderr;
+    return { code: r.status, stdout: r.stdout };
+  };
+  const memo = recordMemo();
+  if (memo === null) return run();
+  // Under a long-lived observer (src/observation/memo.ts), a command naming only object ids is answered once. So is a path
+  // that a commit it resolved does not have: that commit can never gain it.
+  const fixed = opts.identity === undefined && opts.indexFile === undefined && immutableGit(args, opts.input);
+  // Any other read-only command (a ref lookup) is answered once per capture.
+  const moving = !fixed && opts.identity === undefined && opts.indexFile === undefined && READ_ONLY.has(args[0] ?? '') ? memoKey(repo, args, opts.input) : null;
+  return memo.git(fixed ? memoKey(repo, args, opts.input) : null, run, (r) => r.code === 0 || r.code === 128 && ABSENT_PATH.test(stderr), moving);
 }
+/** Commands that only read the repository: within one capture, the same one answers the same. */
+const READ_ONLY = new Set(['rev-parse', 'cat-file', 'ls-tree', 'diff-tree', 'log', 'merge-base', 'for-each-ref', 'show-ref', 'rev-list', 'diff']);
+const ABSENT_PATH = /^fatal: path '[^']*' (does not exist|exists on disk, but not) in '[0-9a-f]{40}'\n?$/;
+const memoKey = (repo: AbsPath, args: readonly string[], input: string | Uint8Array | undefined): string =>
+  JSON.stringify([repo, args, input === undefined ? null : typeof input === 'string' ? input : Buffer.from(input).toString('latin1')]);
 
 /** Runs git and returns its stdout, untrimmed. */
 export function git(repo: AbsPath, args: readonly string[], opts: GitOptions = {}): string {
@@ -144,10 +162,15 @@ function catFileObjects(repo: AbsPath, blobs: readonly Sha[], type: 'blob' | 'tr
   const out = new Map<Sha, Buffer>();
   if (wanted.length === 0) return out;
   const args = ['cat-file', '--batch'];
-  const r = spawnSync('git', ['-C', repo, ...FIXED_CONFIG, ...args], { env: environment({}), input: `${wanted.join('\n')}\n`, maxBuffer: BATCH_MAX_BUFFER });
-  if (r.error !== undefined) throw r.error;
-  if (r.status !== 0) throw new GitError(args, r.status, r.stderr.toString('utf8'));
-  const stdout = r.stdout;
+  const input = `${wanted.join('\n')}\n`;
+  const run = (): Readonly<{ code: number; stdout: Buffer }> => {
+    const r = spawnSync('git', ['-C', repo, ...FIXED_CONFIG, ...args], { env: environment({}), input, maxBuffer: BATCH_MAX_BUFFER });
+    if (r.error !== undefined) throw r.error;
+    if (r.status !== 0) throw new GitError(args, r.status, r.stderr.toString('utf8'));
+    return { code: 0, stdout: r.stdout };
+  };
+  const memo = recordMemo();
+  const stdout = (memo === null ? run() : memo.git(memoKey(repo, args, input), run)).stdout;
   let at = 0;
   for (const object of wanted) {
     const eol = stdout.indexOf(0x0a, at);

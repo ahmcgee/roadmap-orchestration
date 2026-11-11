@@ -98,7 +98,7 @@ for (const mode of ['absent', 'unavailable'] as const) {
     restoreSpies(t);
     const f = consoleFixture();
     if (mode === 'unavailable') {
-      const server = createServer((_req, res) => res.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { code: 'unavailable', message: 'observation dependencies changed at request admission' } })));
+      const server = createServer((_req, res) => res.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { code: 'unavailable', message: 'console has not verified the arc since this request arrived' } })));
       await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
       t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
       const port = (server.address() as AddressInfo).port, url = `http://127.0.0.1:${port}`;
@@ -119,7 +119,7 @@ for (const mode of ['absent', 'unavailable'] as const) {
     assert.equal(JSON.parse(await consoleStatus(f, f.hostDir, false, l => lines.push(l))).arc, f.arc);
     assert.equal(races, 1);
     assert.equal(captures.mock.callCount(), 1, 'a vanished temporary needs no recapture');
-    assert.ok(lines.some(l => l.includes(`${mode === 'absent' ? 'server is absent' : 'observation dependencies changed at request admission'}; using local observation`)));
+    assert.ok(lines.some(l => l.includes(`${mode === 'absent' ? 'server is absent' : 'console has not verified the arc since this request arrived'}; using local observation`)));
   });
 }
 

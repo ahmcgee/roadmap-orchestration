@@ -1,16 +1,17 @@
-import type { ConsoleRequest } from './messages.ts';
-import { existsSync, watch, type FSWatcher } from 'node:fs';
+// The serve worker: one ArcModel per maintained arc, fed by that arc's collector (src/console/collector.ts) over its own
+// port. Every API read is answered from the model in memory; the only files read here are the journal prefix a collector
+// verified (parsed into the model) and one selected invocation's evidence. No timers, no journal fold, no status derivation.
+import type { MessagePort } from 'node:worker_threads';
 import { join } from 'node:path';
 import { parentPort, workerData } from 'node:worker_threads';
-import { ObservationRace } from '../observation/retry.ts';
-import { PREPARATION } from './preparation.ts';
 import { type ArcId, invocationDirName, invocationIdOf, parseInvocationId } from '../core/ids.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { RUNNER_FILE_READERS } from '../core/records.ts';
 import type { AbsPath } from '../core/values.ts';
+import type { Run } from '../cli/locate.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
-import { ObservationCache } from '../observation/cache.ts';
-import { CONSOLE_PROTOCOL, ConsoleError, type Admission, type Envelope } from '../observation/protocol.ts';
+import type { CollectorMessage } from '../observation/collect.ts';
+import { CONSOLE_PROTOCOL, ConsoleError, captureKey, type Admission, type Envelope } from '../observation/protocol.ts';
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
 import { ConsoleHistories } from './history.ts';
@@ -24,36 +25,47 @@ import { ConsoleTemporal } from './temporal-query.ts';
 import { ConsoleActivity } from './activity-query.ts';
 import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
+import { activityIndexSteps } from './activity-index.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
 import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape, effortScopeShape, resourcesShape, resourceDetailShape, resourceReasonsShape } from './view-shapes.ts';
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
+import { ArcModel, type ParkKind } from './model.ts';
+import { MAINTAIN, type ConsoleRequest, type FromServe, type ToServe } from './messages.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
-const cache = new ObservationCache(args.hostDir, args.instance, args.repoId);
-const subscribed = new Set<string>();
+const post = (m: FromServe) => parentPort!.postMessage(m);
+const models = new Map<string, ArcModel>();
+const ports = new Map<string, MessagePort>();
+/** The arcs main runs a collector for, as this worker asked. */
 const maintained = new Set<string>();
+const runsOf = new Map<string, Run>();
+/** When each arc was last read or subscribed: the maintained set keeps the most recent. */
+const used = new Map<string, number>();
+const subscribed = new Map<string, number>();
+let selected: ArcId | null = null;
 const views = new ConsoleViews();
 const metadata = new ConsoleMetadata();
-const activity = new ConsoleActivity();
+// The Activity index is a function of what the Activity view version hashes, and the milestones' members.
+const activity = new ConsoleActivity((e) => sha256Hex(canonicalJson([notice(e).viewVersions.activity, e.data.display.status.milestones.map((m) => [m.id, m.members])])));
 const temporal = new ConsoleTemporal();
 const effort = new ConsoleEffort(temporal.pages);
 const resources = new ConsoleResources(temporal.pages);
 const attention = new ConsoleAttention(temporal.pages);
 const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
-const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption', message: error instanceof Error ? error.message : String(error) });
-/** A strict read (the CLI's status, API discovery) catches up with the arc, verified unchanged across its capture, before it
- * answers. A browser read is served the observation the background checks keep current (`tick`, `ObservationCache.browse`). */
-function read(arc: string, admission: Admission = {}, browser = false) {
-  const run = retainedRun(args.common, args.hostDir, arc);
-  return browser ? cache.browse(run, admission) : cache.read(run, admission);
-}
-function notice(e: Envelope) { return metadata.read(e, views, retainedRuns(args.common, args.hostDir).selected); }
+type Asked = ConsoleRequest & { id: number; arrivedAt: number };
+/** A read waiting for its arc: it uses no CPU while parked, and every applied message looks at it again. */
+/** `view`: admitted, waiting for the Activity index its envelope needs, which is built in steps (`buildIndex`). */
+type Parked = { m: Asked; arc: string; park: ParkKind | 'view' | null };
+let parked: Parked[] = [];
+const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption' as const, message: error instanceof Error ? error.message : String(error) });
+
+function notice(e: Envelope) { return metadata.read(e, views, selected); }
 function result(e: Envelope, id: string) {
-  const selected = e.data.display.invocations.find((i) => i.id === id);
-  if (!selected) throw new ConsoleError('not-found', 'invocation is not recorded in this arc');
+  const chosen = e.data.display.invocations.find((i) => i.id === id);
+  if (!chosen) throw new ConsoleError('not-found', 'invocation is not recorded in this arc');
   const inv = invocationIdOf(id);
   const dir = invocationDir(e.data.display.run.runDir, inv);
   const bytes = readEvidence(e.data.display.run.runDir, join(dir, 'result.json'));
@@ -69,29 +81,75 @@ function result(e: Envelope, id: string) {
   }
   return { record, report, raw: JSON.stringify(record, null, 2), lines: project(record, { fieldFirstEmpty: true }).map((r) => r.text) };
 }
-function admissionOf(params: Record<string, string>) {
+function admissionOf(params: Record<string, string>): Admission {
   return {
     ...(params['epoch'] !== undefined ? { epoch: params['epoch'] } : {}),
     ...(params['revision'] !== undefined ? { revision: integer(params['revision']) } : {}),
     ...(params['minHighWater'] !== undefined ? { minHighWater: integer(params['minHighWater']) } : {}),
     ...(params['fenceIdentity'] !== undefined && params['fenceSize'] !== undefined ? { fence: { identity: params['fenceIdentity'], size: integer(params['fenceSize']) } } : {}),
-  } satisfies Admission;
+  };
 }
-function route(path: string[], params: Record<string, string>, browser: boolean) {
-  if (path.length === 1 && path[0] === 'arcs') return { protocol: CONSOLE_PROTOCOL, uiSchema: CONSOLE_UI_SCHEMA, selected: retainedRuns(args.common, args.hostDir).selected };
-  const [runs, arc, section, id, file] = path;
+/** The arc a read is about, after the checks that need no observation. */
+function arcOf(path: string[], params: Record<string, string>): string {
+  const [runs, arc, section] = path;
   if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
   if (path.length === 3 && (section === 'shell' || section === 'graph' || section === 'metadata')) {
     for (const key of Object.keys(params)) if (!['epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown view query parameter');
   }
   if (section === 'snapshot' || section === 'activity-legacy') throw new ConsoleError('not-found', 'unknown console route');
-  const admission = admissionOf(params);
-  let e: Envelope;
-  try { e = read(arc, admission, browser); }
-  catch (error) {
-    if (error instanceof ConsoleError && error.code === 'not-found' && section === 'status') throw new ConsoleError('unavailable', 'arc has no retained observation yet');
-    throw error;
-  }
+  return arc;
+}
+/** A tab's list view: built on its first request per capture, then served from this cache (and warmed, `warm`). */
+const TAB_SECTIONS = new Set(['activity', 'timeline', 'effort', 'resources', 'attention', 'holistic']);
+const isTabList = (path: readonly string[], params: Record<string, string>): boolean =>
+  TAB_SECTIONS.has(path[2] ?? '') && (path.length === 3 || path[2] === 'timeline' && path.length === 4 && (path[3] === 'intervals' || path[3] === 'holds'))
+  && !('cursor' in params) && !('anchor' in params);
+const tabViews = new Map<string, { capture: string; data: unknown }>();
+/** The tab list views requested lately, which `warm` builds for each new capture before anyone asks. */
+const requestedTabs = new Map<string, { arc: string; path: string[]; params: Record<string, string>; at: number }>();
+const WARM = { standMs: 500, keepMs: 5 * 60_000, views: 32 } as const;
+function route(path: string[], params: Record<string, string>, e: Envelope) {
+  if (!isTabList(path, params)) return build(path, params, e);
+  // Admission-only parameters (the watermark and revision a notice carried) do not change the view.
+  const { minHighWater: _minHighWater, revision: _revision, ...query } = params;
+  const key = `${path.join('/')}?${canonicalJson(query)}`, capture = captureKey(e), hit = tabViews.get(key);
+  requestedTabs.set(key, { arc: path[1]!, path, params, at: Date.now() });
+  if (hit?.capture === capture) { tabViews.delete(key); tabViews.set(key, hit); return { ...e, data: hit.data }; }
+  const value = build(path, params, e) as { data: unknown };
+  tabViews.delete(key); tabViews.set(key, { capture, data: value.data });
+  while (tabViews.size > WARM.views) tabViews.delete(tabViews.keys().next().value!);
+  return value;
+}
+let warmTimer: NodeJS.Timeout | null = null;
+/**
+ * Once a capture has stood for half a second with no read waiting, builds the tab views requested in the last five minutes
+ * for it, one per turn of the event loop, so a visit is served from prepared data. A read that arrives meanwhile is answered
+ * between two builds.
+ */
+function warm(): void {
+  if (warmTimer !== null) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    const now = Date.now();
+    for (const [key, r] of requestedTabs) if (now - r.at > WARM.keepMs) requestedTabs.delete(key);
+    const queue = [...requestedTabs.entries()];
+    const next = () => {
+      if (warmTimer !== null || queue.length === 0) return;
+      if (parked.length > 0) { warm(); return; }
+      const [key, r] = queue.shift()!, e = models.get(r.arc)?.envelope();
+      if (e && r.path[2] === 'activity' && models.get(r.arc)!.failed === null && !activity.has(e)) buildIndex(r.arc, e);
+      else if (e && models.get(r.arc)!.failed === null && tabViews.get(key)?.capture !== captureKey(e)) {
+        const at = r.at;
+        try { route(r.path, r.params, e); } catch { /* the read that asks for it reports what failed */ }
+        requestedTabs.set(key, { ...r, at });
+      }
+      setImmediate(next);
+    };
+    setImmediate(next);
+  }, WARM.standMs);
+}
+function build(path: string[], params: Record<string, string>, e: Envelope) {
+  const [, , section, id, file] = path;
   if (path.length === 3 && (section === 'shell' || section === 'graph')) {
     return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : views.graph(e)}, section, e);
   }
@@ -190,131 +248,245 @@ function integer(raw: string) {
   if (!/^(0|[1-9][0-9]*)$/.test(raw) || !Number.isSafeInteger(n)) throw new ConsoleError('invalid', 'cursor must be a non-negative safe integer');
   return n;
 }
-function request(m: ConsoleRequest): unknown {
+
+/**
+ * A reply's body. An envelope's data is serialized once per data object (a capture's views, a revision's status) and the
+ * envelope around it per reply: the clock fields change every check, the data does not.
+ */
+const bodies = new WeakMap<object, string>();
+const MARK = `console-data-${sha256Hex(String(Math.random())).slice(0, 16)}`;
+function serialize(value: { checkedAt?: string; data?: unknown }): string {
+  if (typeof value.checkedAt !== 'string' || value.data === null || typeof value.data !== 'object') return canonicalJson(value);
+  const data = value.data as object;
+  let body = bodies.get(data);
+  if (body === undefined) { body = canonicalJson(data); bodies.set(data, body); }
+  return canonicalJson({ ...value, data: MARK }).replace(JSON.stringify(MARK), () => body!);
+}
+/** The arc a request is about, or null for API discovery and the unsubscriptions, which need no observation. */
+function arcOfRequest(m: Asked): string | null {
   switch (m.kind) {
-    case 'read': return route(m.path, m.params, m.patient === true);
+    case 'read': return m.path.length === 1 && m.path[0] === 'arcs' ? null : arcOf(m.path, m.params);
     case 'subscribe': {
-      // Registration and watermark capture are one synchronous worker operation. No journal
-      // notification can be lost between an independent read and subscription installation.
-      const params = m.params ?? {};
-      for (const key of Object.keys(params)) if (!['invocation', 'epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown events query parameter');
-      const e = read(m.arc, admissionOf(params), true);
-      subscribed.add(m.arc); cache.pin(m.arc);
-      return notice(e);
+      for (const key of Object.keys(m.params ?? {})) if (!['invocation', 'epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown events query parameter');
+      return m.arc;
     }
-    case 'unsubscribe': subscribed.delete(m.arc); if (!maintained.has(m.arc)) cache.unpin(m.arc); break;
-    case 'history-unsubscribe': historySubscriptions.delete(`${m.arc}:${m.invocation}`); break;
     case 'history-subscribe': {
       const key = `${m.arc}:${m.invocation}`;
       if (!historySubscriptions.has(key) && historySubscriptions.size >= 16) throw new ConsoleError('unavailable', 'sixteen open histories already subscribed');
-      histories.selected(read(m.arc, {}, true), m.invocation);
-      historySubscriptions.set(key, { arc: m.arc, invocation: m.invocation });
-      break;
+      return m.arc;
     }
-  }
-  return null;
-}
-parentPort!.on('message', (m: ConsoleRequest & { id: number }) => answer(m, m.kind === 'read' && m.patient || m.kind === 'subscribe' ? Date.now() + PREPARATION.racePatienceMs : 0));
-/** Answers `m`. A browser read or subscription that raced a writer waits for it, off this thread, until `patience` ends. */
-function answer(m: ConsoleRequest & { id: number }, patience: number) {
-  try {
-    parentPort!.postMessage({ id: m.id, value: request(m) });
-  } catch (error) {
-    if (error instanceof ObservationRace && Date.now() < patience) { setTimeout(() => answer(m, patience), 250); return; }
-    const code = (error as NodeJS.ErrnoException).code;
-    parentPort!.postMessage({ id: m.id, error: code === 'ENOENT' ? { code: 'not-found', message: 'evidence is absent or pruned' } : err(error) });
+    case 'unsubscribe': case 'history-unsubscribe': return null;
   }
 }
-let timer: NodeJS.Timeout | null = null;
-/** When each maintained arc's checks fell behind, and whether the console log has said so. */
-const behind = new Map<string, { since: number; said: boolean }>();
-/** Behind: a check slower than the strict budget, or no check published for ten seconds (every one raced a writer). */
-const BEHIND = { checkMs: 2_000, silentMs: 10_000 } as const;
-type Lag = Readonly<{ kind: 'slow' | 'silent'; since: number; reason: string }>;
-/** Says once, in the console log, that the worker is behind an arc, and once when it has caught up again. */
-function lagging(arc: string, lag: Lag | null) {
-  const now = Date.now(), state = behind.get(arc);
-  if (lag === null) {
-    if (state?.said) parentPort!.postMessage({ kind: 'log', message: `console caught up with arc ${arc} after ${Math.round((now - state.since) / 1000)}s behind` });
-    behind.delete(arc); return;
-  }
-  const since = state?.since ?? lag.since;
-  const say = !state?.said && (lag.kind === 'slow' || now - since >= BEHIND.silentMs);
-  if (say) parentPort!.postMessage({ kind: 'log', message: `console is behind arc ${arc}: ${lag.reason}; views wait for its checks and strict reads (status) may exceed their two-second budget` });
-  behind.set(arc, { since, said: say || (state?.said ?? false) });
-}
-const published = new Map<string, number>();
-function tick() {
-  timer = null;
-  const started = Date.now();
-  try {
-    const runs = retainedRuns(args.common, args.hostDir);
-    const defaults = new Set<string>([runs.selected].filter((a): a is ArcId => a !== null && a !== undefined));
-    for (const arc of maintained) if (!defaults.has(arc) && !subscribed.has(arc)) cache.unpin(arc);
-    maintained.clear();
-    for (const arc of defaults) { maintained.add(arc); cache.pin(arc); }
-    const arcs = new Set([...defaults, ...subscribed]);
-    watchRuns(runs, arcs);
-    for (const arc of arcs) {
-      const began = Date.now();
-      try {
-        const e = cache.maintain(retainedRun(args.common, args.hostDir, arc));
-        // The first check of an arc reads its whole journal, which the ready signal and the strict budget already allow for.
-        const took = published.has(arc) ? Date.now() - began : 0;
-        published.set(arc, Date.now());
-        lagging(arc, took > BEHIND.checkMs ? { kind: 'slow', since: began, reason: `a check took ${(took / 1000).toFixed(1)}s, over the two-second budget (journal at seq ${e.highWater})` } : null);
-        parentPort!.postMessage({kind: 'checked', ...notice(e)});
-        for (const subscription of historySubscriptions.values()) if (subscription.arc === arc) {
-          try {
-            const delta = histories.poll(e, subscription.invocation);
-            const state = `${delta.state}:${delta.endedAt}`;
-            if (delta.reset || delta.events.length || subscription.state !== state) parentPort!.postMessage({ kind: 'history', arc, invocation: subscription.invocation, data: delta });
-            subscription.state = state;
-          } catch (error) { parentPort!.postMessage({ kind: 'history-error', arc, invocation: subscription.invocation, error: err(error) }); }
-        }
-      }
-      catch (error) {
-        // A background check that raced a writer (a ref update, a record landing) waits for the next check, never reported:
-        // the last verified observation still stands, and an error notice would put a still arc into an error state.
-        if (error instanceof ObservationRace) {
-          const since = published.get(arc) ?? began;
-          lagging(arc, { kind: 'silent', since, reason: `no check has published since ${new Date(since).toISOString()} (${error.message})` });
-          continue;
-        }
-        parentPort!.postMessage({ kind: 'error', arc, error: err(error) });
-      }
+/** Answers `m` from `e`, its arc's envelope. */
+function answerFrom(m: Asked, e: Envelope): void {
+  switch (m.kind) {
+    case 'read': {
+      const value = route(m.path, m.params, e) as { checkedAt?: string; data?: unknown };
+      post({ kind: 'reply', id: m.id, json: serialize(value), checkedAt: value.checkedAt ?? null });
+      return;
     }
-  } catch (error) { parentPort!.postMessage({ kind: 'error', error: err(error) }); }
-  idleUntil = Date.now() + (Date.now() - started);
-  schedule(1_000);
+    case 'subscribe': {
+      // Registration and watermark capture are one synchronous worker operation. No journal
+      // notification can be lost between an independent read and subscription installation.
+      subscribed.set(m.arc, (subscribed.get(m.arc) ?? 0) + 1);
+      post({ kind: 'value', id: m.id, value: notice(e) });
+      return;
+    }
+    case 'history-subscribe': {
+      histories.selected(e, m.invocation);
+      historySubscriptions.set(`${m.arc}:${m.invocation}`, { arc: m.arc, invocation: m.invocation });
+      follow(m.arc);
+      post({ kind: 'value', id: m.id, value: null });
+      return;
+    }
+    case 'unsubscribe': case 'history-unsubscribe': throw new Error(`${m.kind} needs no observation`);
+  }
+}
+function fail(m: Asked, error: unknown, section?: string) {
+  const code = (error as NodeJS.ErrnoException).code;
+  const e = error instanceof ConsoleError && error.code === 'not-found' && section === 'status' ? new ConsoleError('unavailable', 'arc has no retained observation yet') : error;
+  post({ kind: 'error', id: m.id, error: code === 'ENOENT' ? { code: 'not-found', message: 'evidence is absent or pruned' } : err(e) });
+}
+/** Answers `m`, or parks it until its arc's model can. */
+function handle(m: Asked): void {
+  let arc: string | null;
+  try { arc = arcOfRequest(m); } catch (error) { fail(m, error); return; }
+  if (arc === null) {
+    if (m.kind === 'read') throw new Error('API discovery is answered by main from the reported selection');
+    if (m.kind === 'unsubscribe') {
+      const n = (subscribed.get(m.arc) ?? 1) - 1;
+      if (n > 0) subscribed.set(m.arc, n); else subscribed.delete(m.arc);
+      post({ kind: 'value', id: m.id, value: null });
+    } else if (m.kind === 'history-unsubscribe') {
+      historySubscriptions.delete(`${m.arc}:${m.invocation}`);
+      follow(m.arc);
+      post({ kind: 'value', id: m.id, value: null });
+    }
+    return;
+  }
+  used.set(arc, Date.now());
+  if (!models.has(arc)) {
+    try { retainedRun(args.common, args.hostDir, arc); } catch (error) { fail(m, error, m.kind === 'read' ? m.path[2] : undefined); return; }
+    if (!maintained.has(arc)) reconcile();
+  }
+  const p: Parked = { m, arc, park: null };
+  if (!attempt(p)) parked.push(p);
+}
+/** Tries a request against its arc's model: answers it (true), or says why it still waits. */
+function attempt(p: Parked): boolean {
+  const { m, arc } = p, model = models.get(arc);
+  const strict = m.kind === 'read' && m.patient !== true;
+  try {
+    const verdict = model === undefined ? { kind: 'park' as const, park: 'cold' as const } : model.admit(admissionOf(m.kind === 'read' ? m.params : m.kind === 'subscribe' ? m.params ?? {} : {}), m.arrivedAt, strict);
+    if (verdict.kind === 'ready') {
+      // An Activity read waits for its capture's index, built in steps between other reads rather than on their way.
+      if (m.kind === 'read' && m.path[2] === 'activity' && !activity.has(verdict.envelope)) { buildIndex(arc, verdict.envelope); p.park = 'view'; return false; }
+      answerFrom(m, verdict.envelope); return true;
+    }
+    if (verdict.park !== p.park) {
+      // A strict read's two seconds start once its arc has its first observation (the rule for the worker's first check).
+      if (strict && verdict.park === 'cold') post({ kind: 'cold', id: m.id });
+      else if (strict && p.park === 'cold') post({ kind: 'admitted', id: m.id });
+      if (verdict.park !== 'cold') post({ kind: 'check-now', arc: arc as ArcId });
+    }
+    p.park = verdict.park;
+    return false;
+  } catch (error) { fail(m, error, m.kind === 'read' ? m.path[2] : undefined); return true; }
 }
 /**
- * Checks run a second apart and 100 ms after a watched change, but never closer than the last check took: background checks
- * use at most half the worker's time, so a busy arc cannot starve the reads it answers.
+ * The Activity index of one capture per arc, built a slice of at most twenty milliseconds per turn of the event loop, so a
+ * shell or status read waits at most a slice behind it. A read parked on an older capture's index is answered from that capture
+ * when its admission allows; the next build starts for the newest capture someone waits on.
  */
-let idleUntil = 0, dueAt = Infinity;
-function schedule(delayMs: number) {
-  const at = Math.max(Date.now() + delayMs, idleUntil);
-  if (timer !== null && dueAt <= at) return;
-  if (timer !== null) clearTimeout(timer);
-  dueAt = at; timer = setTimeout(tick, at - Date.now());
+const indexJobs = new Map<string, Envelope>();
+const SLICE_MS = 20, STALE_VIEW_MS = 5_000;
+const admits = (e: Envelope, a: Admission): boolean => (a.epoch === undefined || a.epoch === e.epoch) && (a.revision ?? 0) <= e.revision && (a.minHighWater ?? 0) <= e.highWater && a.fence === undefined;
+function buildIndex(arc: string, e: Envelope): void {
+  if (indexJobs.has(arc)) return;
+  indexJobs.set(arc, e);
+  const steps = activityIndexSteps(e);
+  const slice = () => {
+    const until = performance.now() + SLICE_MS;
+    let step;
+    try { do step = steps.next(); while (!step.done && performance.now() < until); if (step.done) activity.store(e, step.value); }
+    catch (error) {
+      indexJobs.delete(arc);
+      const failed = parked.filter((p) => p.arc === arc && p.park === 'view');
+      parked = parked.filter((p) => !failed.includes(p));
+      for (const p of failed) fail(p.m, error);
+      return;
+    }
+    if (!step.done) { setImmediate(slice); return; }
+    indexJobs.delete(arc);
+    // A browser refuses a view older than the notices it has seen, so a read is answered from the newest capture whose index
+    // is built: this one while the arc has not moved past it, or once the read has waited five seconds; otherwise the next
+    // build (for the newest capture) is started by `revisit`.
+    const current = models.get(arc)?.envelope() ?? null;
+    const waiting = parked.filter((p) => p.arc === arc && p.park === 'view');
+    for (const p of waiting) {
+      if (p.m.kind !== 'read' || !admits(e, admissionOf(p.m.params))) continue;
+      const moved = current !== null && current.highWater > e.highWater && !activity.has(current);
+      if (moved && Date.now() - p.m.arrivedAt < STALE_VIEW_MS) continue;
+      parked = parked.filter((q) => q !== p);
+      try { answerFrom(p.m, current !== null && activity.has(current) ? current : e); } catch (error) { fail(p.m, error); }
+    }
+    revisit(arc);
+  };
+  setImmediate(slice);
 }
-const watched = (path: string, recursive: boolean): FSWatcher =>
-  watch(path, { recursive }, () => schedule(100)).on('error', (e) => parentPort!.postMessage({ kind: 'error', error: err(e) }));
-// Refs and answers are small trees. The runtime directory is not watched recursively: it holds every retained arc's
-// invocation output and evidence snapshots, which the recursive watcher lists and tracks path by path (memory, and seconds
-// of start-up, in proportion to the tree). A maintained arc's own directory is watched, flat: its journal, schedule and
-// heartbeat land there; so is each followed history's invocation directory, whose output streams there. The one-second
-// check covers the rest.
-for (const dir of ['refs', 'roadmap']) { const path = join(args.common, dir); if (existsSync(path)) watched(path, true); }
-const runWatchers = new Map<string, FSWatcher>();
-function watchRuns(runs: ReturnType<typeof retainedRuns>, arcs: ReadonlySet<string>) {
-  const runDirs = new Map<string, string>(runs.arcs.filter((r) => arcs.has(r.arc)).map((r) => [r.arc, r.runDir]));
-  const dirs = new Set<string>([...runDirs.values(), ...[...historySubscriptions.values()].flatMap((h) => {
-    const runDir = runDirs.get(h.arc); return runDir === undefined ? [] : [join(runDir, 'inv', h.invocation)];
-  })]);
-  for (const [dir, w] of runWatchers) if (!dirs.has(dir)) { w.close(); runWatchers.delete(dir); }
-  for (const dir of dirs) if (!runWatchers.has(dir) && existsSync(dir)) runWatchers.set(dir, watched(dir, false));
+/** Looks at every request parked on `arc` again. */
+function revisit(arc: string): void {
+  if (parked.some((p) => p.arc === arc)) parked = parked.filter((p) => p.arc !== arc || !attempt(p));
 }
-tick();
-parentPort!.postMessage({kind: 'ready'});
+
+/** The arcs kept current: the selected arc always, then subscribed and recently read arcs, the most recent two. */
+/** Tells main the selected arc, and whether it is observed yet: main answers API discovery from this. */
+let reportedSelection = '';
+function report(): void {
+  const model = selected === null ? undefined : models.get(selected);
+  const ready = selected === null || model?.observed === true || model?.failed != null;
+  const key = JSON.stringify([selected, ready]);
+  if (key !== reportedSelection) { reportedSelection = key; post({ kind: 'selected', selected, ready }); }
+}
+function reconcile(): void {
+  const runs = retainedRuns(args.common, args.hostDir);
+  selected = runs.selected;
+  report();
+  const now = Date.now();
+  for (const arc of subscribed.keys()) used.set(arc, now);
+  const want = new Set<string>(selected === null ? [] : [selected]);
+  const recent = [...used].filter(([arc, at]) => arc !== selected && (subscribed.has(arc) || now - at <= MAINTAIN.recentMs) && runs.arcs.some((r) => r.arc === arc))
+    .sort((a, b) => b[1] - a[1]).slice(0, MAINTAIN.extra);
+  for (const [arc] of recent) want.add(arc);
+  for (const arc of maintained) if (!want.has(arc)) {
+    maintained.delete(arc); models.delete(arc); ports.get(arc)?.close(); ports.delete(arc);
+    post({ kind: 'release', arc: arc as ArcId });
+    for (const p of parked) if (p.arc === arc) fail(p.m, new ConsoleError('unavailable', 'arc is no longer kept current; retry'));
+    parked = parked.filter((p) => p.arc !== arc);
+  }
+  for (const arc of want) if (!maintained.has(arc)) {
+    const run = runs.arcs.find((r) => r.arc === arc)!;
+    maintained.add(arc); runsOf.set(arc, run);
+    post({ kind: 'maintain', arc: arc as ArcId, run });
+  }
+  for (const [arc, at] of used) if (now - at > MAINTAIN.recentMs && !want.has(arc)) used.delete(arc);
+}
+function collector(arc: string, port: MessagePort): void {
+  // Main starts the selected arc's collector before this worker has said which arcs it maintains.
+  if (!maintained.has(arc)) reconcile();
+  // A collector main runs for an arc this worker does not maintain (a restart of this worker): adopt it as just read.
+  if (!maintained.has(arc)) { maintained.add(arc); runsOf.set(arc, retainedRun(args.common, args.hostDir, arc)); used.set(arc, Date.now()); }
+  const run = runsOf.get(arc)!;
+  ports.get(arc)?.close();
+  ports.set(arc, port);
+  const model = new ArcModel(run, args.instance, args.repoId, () => revisit(arc));
+  models.set(arc, model);
+  port.on('message', (m: CollectorMessage) => {
+    if (models.get(arc) !== model) return;
+    const applied = model.apply(m, Date.now());
+    if (m.kind === 'failed') post({ kind: 'arc-error', arc: arc as ArcId, error: m.error });
+    if (applied !== 'none') published(arc, model);
+    if (arc === selected) report();
+    revisit(arc);
+    if (applied === 'published' && (m.kind === 'observation' || m.kind === 'rows')) warm();
+  });
+}
+/** Tells main which invocation directories of `arc` subscribed histories follow, for its collector to watch. */
+function follow(arc: string): void {
+  const run = runsOf.get(arc) ?? models.get(arc)?.run;
+  if (run === undefined) return;
+  const dirs = [...historySubscriptions.values()].filter((h) => h.arc === arc).map((h) => join(run.runDir, 'inv', h.invocation));
+  post({ kind: 'follow', arc: arc as ArcId, dirs });
+}
+/** Tells main what changed (the stream's revision and heartbeat notices) and follows subscribed histories. */
+function published(arc: string, model: ArcModel): void {
+  const e = model.envelope();
+  if (e === null || model.failed !== null) return;
+  post({ kind: 'checked', ...notice(e), offset: model.journal.offset });
+  for (const subscription of historySubscriptions.values()) if (subscription.arc === arc) {
+    try {
+      const delta = histories.poll(e, subscription.invocation);
+      const state = `${delta.state}:${delta.endedAt}`;
+      if (delta.reset || delta.events.length || subscription.state !== state) post({ kind: 'history', arc: arc as ArcId, invocation: subscription.invocation, data: delta });
+      subscription.state = state;
+    } catch (error) { post({ kind: 'history-error', arc: arc as ArcId, invocation: subscription.invocation, error: err(error) }); }
+  }
+}
+
+parentPort!.on('message', (m: ToServe) => {
+  switch (m.kind) {
+    case 'cancel': parked = parked.filter((p) => p.m.id !== m.id); return;
+    case 'tick': reconcile(); return;
+    case 'collector': collector(m.arc, m.port); return;
+    case 'collector-down': {
+      const model = models.get(m.arc);
+      if (model === undefined) return;
+      model.failed = m.error; post({ kind: 'arc-error', arc: m.arc, error: m.error }); revisit(m.arc);
+      return;
+    }
+    default: handle(m);
+  }
+});
+reconcile();
+post({ kind: 'ready' });

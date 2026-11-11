@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { consoleFixture } from './fixtures/console.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
 import { ConsoleViews } from '../src/console/views.ts';
 import { ConsoleAttention } from '../src/console/attention-query.ts';
 import { requestDetail } from '../src/console/request-detail.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 const {ViewStore}=await import(new URL('../web-src/app/view-store.ts',import.meta.url).href);
-function fixture(){const f=consoleFixture(),e=new ObservationCache(f.hostDir,'attention-client','repo').read({runDir:f.runDir,arc:f.arc}),metadata=new ConsoleMetadata().read(e,new ConsoleViews(),e.arc);return {e,metadata};}
+function fixture(){const f=consoleFixture(),e=new Observations(f.hostDir,'attention-client','repo').read({runDir:f.runDir,arc:f.arc}),metadata=new ConsoleMetadata().read(e,new ConsoleViews(),e.arc);return {e,metadata};}
 
 test('Attention initial notice deduplicates reads; changed versions preserve the frozen page until explicit refresh',async()=>{
  const {e,metadata}=fixture(),tabs=new ConsoleAttention(),first=tabs.read(e,{},metadata.viewVersions.attention);let finish:(v:unknown)=>void=()=>{},count=0;

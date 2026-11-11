@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { arcId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { ConsoleError, statusBytes, validateEnvelope } from '../src/observation/protocol.ts';
 import { parityArc } from './fixtures/status-parity.ts';
 
 function fixture() {
   const f = parityArc();
   const run = { runDir: f.runDir, arc: arcId(f.d.arc) };
-  const cache = new ObservationCache(f.hostDir, 'instance', 'repo');
+  const cache = new Observations(f.hostDir, 'instance', 'repo');
   return { ...f, run, cache };
 }
 
@@ -93,11 +93,41 @@ test('owner death and owner-validated scheduler invalidation advance revision wi
 });
 
 
-test('maintained runs survive the bounded older-run LRU; an evicted cursor requires an explicit new epoch', () => {
-  const first = fixture(); first.cache.pin(first.run.arc);
-  const initial = first.cache.read(first.run);
-  const others = Array.from({ length: 9 }, () => { const f = parityArc(); const run = { runDir: f.runDir, arc: arcId(f.d.arc) }; return { run, envelope: first.cache.read(run) }; });
-  assert.equal(first.cache.read(first.run).data, initial.data, 'active/subscribed captures are pinned');
-  const oldest = others[0]!;
-  assert.throws(() => first.cache.read(oldest.run, { epoch: oldest.envelope.epoch }), /epoch changed/);
+test('the maintained set is the selected arc plus the two most recent; a released arc returns with a new epoch', { timeout: 60_000 }, async (t) => {
+  const { serveConsole } = await import('../src/console/http.ts');
+  const { consoleFixture } = await import('./fixtures/console.ts');
+  const { mkdirSync } = await import('node:fs');
+  const f = consoleFixture();
+  // Three more retained arcs of the same repository, each started after the fixture's, so the fixture's arc stays selected.
+  const others = [1, 2, 3].map((n) => {
+    const arc = `${f.arc}-other${n}`, runDir = join(f.common, 'roadmap-runtime', arc);
+    mkdirSync(runDir, { recursive: true });
+    const start = JSON.parse(readFileSync(join(f.runDir, 'start.json'), 'utf8'));
+    writeFileSync(join(runDir, 'start.json'), JSON.stringify({ ...start, at: new Date(Date.parse(start.at) - n * 60_000).toISOString() }));
+    writeFileSync(join(runDir, 'events.jsonl'), '');
+    return arc;
+  });
+  const s = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => s.close());
+  const { CONSOLE_PROTOCOL } = await import('../src/observation/protocol.ts');
+  const status = async (arc: string) => { const r = await fetch(`${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${arc}/status`); return { code: r.status, body: await r.json() as { epoch: string } }; };
+  const selected = await status(f.arc); assert.equal(selected.code, 200);
+  const first = await status(others[0]!); assert.equal(first.code, 200, JSON.stringify(first.body));
+  await status(others[1]!);
+  assert.ok(s.stats(f.arc) && s.stats(others[0]!) && s.stats(others[1]!), 'the selected arc and two read arcs are kept current');
+  await status(others[2]!);
+  assert.ok(s.stats(others[2]!), 'the most recently read arc is kept current');
+  assert.equal(s.stats(others[0]!), null, 'the least recently read is released: its collector stops');
+  assert.ok(s.stats(f.arc), 'the selected arc is always kept current');
+  const again = await status(others[0]!); assert.equal(again.code, 200);
+  assert.notEqual(again.body.epoch, first.body.epoch, 'a released arc returns with a new epoch');
+});
+
+test('an arc with open invocations is captured once while nothing changes', async (t) => {
+  const { investigationFixture } = await import('./fixtures/console-investigations.ts');
+  const f = await investigationFixture(); t.after(() => f.close());
+  const arc = new Observations(f.hostDir, 'open-set', 'repo').arc(f);
+  const first = arc.read();
+  assert.ok(first.data.display.invocations.some((i) => i.endedAt === null), 'the fixture has open invocations');
+  for (let n = 0; n < 3; n++) arc.read();
+  assert.equal(arc.messages.filter((m) => m.kind === 'observation').length, 1, 'learning the open set after the cold capture is not a change');
 });

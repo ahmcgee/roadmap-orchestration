@@ -35,6 +35,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { type JourneyContext, type JourneyEnd, arcJourneyLane, jobSeriesCheckout, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
 import { holisticInForce } from './stages.ts';
+import { writeOnce } from '../observation/memo.ts';
 
 export type BaselineContext = JourneyContext & Readonly<{ acquireFirst: AcquireFirst }>;
 
@@ -71,7 +72,8 @@ function recordsOf(ctx: Reader, job: JobId, tree: Sha): ReadonlyMap<LaneId, Witn
       equivalent.set(w.treeSha, same);
     }
     if (!same) continue;
-    out.set(w.lane, witnessRecord(JSON.parse(readFileSync(witnessRecordPath(ctx.runDir, w), 'utf8')), 'witness'));
+    const path = witnessRecordPath(ctx.runDir, w);
+    out.set(w.lane, writeOnce('witness-record', path, () => witnessRecord(JSON.parse(readFileSync(path, 'utf8')), 'witness'))!);
   }
   return out;
 }

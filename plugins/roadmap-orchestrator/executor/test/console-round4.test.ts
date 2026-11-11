@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {round4Fixture} from './fixtures/console-round4.ts';
-import {ObservationCache} from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import {unitView} from '../src/console/details.ts';
 import type {UnitView} from '../src/console/detail-protocol.ts';
 import {buildActivityIndex} from '../src/console/activity-index.ts';
 test('terminal completion, meaningful waits and housekeeping are faithful to recorded evidence',async t=>{
- const f=await round4Fixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'round4','reader').read({runDir:f.runDir,arc:f.arc});const d=unitView(e,'u1') as UnitView,u=d.unit;
+ const f=await round4Fixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'round4','reader').read({runDir:f.runDir,arc:f.arc});const d=unitView(e,'u1') as UnitView,u=d.unit;
  assert.equal(d.journey.rows.find(s=>s.stage==='retire')!.outcome,'Done');assert.ok(u.endedAt);
  assert.deepEqual(d.waiting.rows.map(w=>[w.totalMs,w.reasons]),[[80000,[{reason:'Dependency',ms:80000}]]]);
  const rows=buildActivityIndex(e).entries.map(e=>e.row).filter(r=>r.kind==='stage-outcome');

@@ -5,6 +5,7 @@ import type { Display } from '../tui/types.ts';
 import type { summarize } from '../status/summary.ts';
 import type { Event } from '../core/events.ts';
 import type { PlanM1 } from '../input/plan.ts';
+import type { CaptureWork } from './collect.ts';
 
 export const CONSOLE_PROTOCOL = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
 export type ConsoleCode = 'reset' | 'conflict' | 'unavailable' | 'corruption' | 'protocol' | 'not-found' | 'invalid';
@@ -15,8 +16,11 @@ export class ConsoleError extends Error {
 export type ObservationData = Readonly<{
   requests: readonly import('../core/records.ts').NeedsUserRecord[];
   display: Display; summary: ReturnType<typeof summarize>; events: readonly Event[]; plan: PlanM1 | null;
-  capture: Readonly<{ clock: number; foldMs: number; source: string; materializations: number }>;
+  /** `materializations` counts the captures published in this console, so it names one: view caches key on it (`captureKey`). */
+  capture: Readonly<{ clock: number; foldMs: number; materializations: number; work: CaptureWork }>;
 }>;
+/** Which capture an envelope's data is, within its console: what derived views are cached by. A clock overlay keeps it. */
+export const captureKey = (e: Envelope): string => `${e.instance}:${e.arc}:${e.epoch}:${e.data.capture.materializations}`;
 export type Envelope<T = ObservationData> = Readonly<{
   protocol: string; instance: string; repoId: string; arc: ArcId; epoch: string;
   highWater: number; revision: number; observedAt: string; checkedAt: string; data: T;

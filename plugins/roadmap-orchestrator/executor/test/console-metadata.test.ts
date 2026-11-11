@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { consoleFixture } from './fixtures/console.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
 import { ConsoleViews } from '../src/console/views.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { metadataShape } from '../src/console/view-shapes.ts';
+import { Observations } from './helpers/observations.ts';
 import { CONSOLE_PROTOCOL, type Envelope } from '../src/observation/protocol.ts';
 import { serveConsole } from '../src/console/http.ts';
 import type { Metadata } from '../src/console/view-protocol.ts';
@@ -16,14 +17,15 @@ function firstNotice(reader: ReadableStreamDefaultReader<Uint8Array>) {
   return (async () => { let body = ''; for (;;) { const {value,done} = await reader.read(); if (done) throw new Error('stream ended before metadata'); body += new TextDecoder().decode(value); const frame = body.split('\n\n')[0]!; if (body.includes('\n\n')) return {body:frame, value:JSON.parse(frame.split('\n').find(l=>l.startsWith('data: '))!.slice(6)) as Metadata}; } })();
 }
 test('metadata hashes exclude verification clocks and invalidate independent semantic dependencies', () => {
-  const f = consoleFixture(), cache = new ObservationCache(f.hostDir,'metadata','reader'), views = new ConsoleViews(), metadata = new ConsoleMetadata();
+  const f = consoleFixture(), cache = new Observations(f.hostDir,'metadata','reader'), views = new ConsoleViews(), metadata = new ConsoleMetadata();
   const read = () => cache.read({runDir:f.runDir,arc:f.arc});
   const e = read(), a = metadata.read(e,views,f.arc);
   assert.equal(a.viewVersions.shell,views.shell(e).viewVersion); assert.equal(a.viewVersions.graph,views.graph(e).viewVersion);
   assert.equal('data' in a,false); assert.ok(Buffer.byteLength(JSON.stringify(a))<4096);
   const now = new Date().toISOString(); writeFileSync(join(f.runDir,'heartbeat.json'),JSON.stringify({v:2,generation:1,at:now}));
   const heartbeat = metadata.read(read(),views,f.arc); assert.deepEqual(heartbeat.viewVersions,a.viewVersions);
-  const changed = (patch: Partial<Envelope['data']>): Envelope => ({...e,data:{...e.data,...patch,capture:{...e.data.capture,source:e.data.capture.source+JSON.stringify(patch)}}});
+  let captures = e.data.capture.materializations;
+  const changed = (patch: Partial<Envelope['data']>): Envelope => ({...e,data:{...e.data,...patch,capture:{...e.data.capture,materializations:++captures}}});
   const request = e.data.requests[0]; assert.ok(request);
   const requests = metadata.read(changed({requests:[{...request,summary:request.summary+' updated'}]}),views,f.arc);
   assert.notEqual(requests.viewVersions.attention,a.viewVersions.attention);
@@ -46,6 +48,7 @@ test('SSE registers an atomic metadata watermark with no snapshot/model read and
   const r = await fetch(`${base}/events`,{signal:c.signal}); assert.equal(r.status,200);
   const {body,value} = await firstNotice(r.body!.getReader());
   assert.match(body,/event: revision/); assert.ok(Buffer.byteLength(body)<4096);
+  assert.ok(metadataShape(value), 'a stream notice is exactly the metadata the browser validates');
   assert.equal(value.protocol,CONSOLE_PROTOCOL); assert.equal(value.instance,s.instance); assert.equal(value.repoId,s.repoId);
   assert.equal(value.arc,f.arc); assert.equal(value.selected,f.arc); assert.equal(value.uiSchema,1); assert.ok(value.highWater>0);
   assert.equal('data' in value,false); assert.equal('events' in value,false);
@@ -60,4 +63,23 @@ test('SSE registers an atomic metadata watermark with no snapshot/model read and
   const head = await fetch(`${base}/events`,{method:'HEAD'}); assert.equal(head.status,200); assert.equal(await head.text(),'');
   assert.equal((await fetch(`${base}/events?epoch=old`,{method:'HEAD'})).status,409);
   c.abort();
+});
+
+test('view versions of a model extended across captures equal those built cold at the same position', async t => {
+  const { investigationFixture } = await import('./fixtures/console-investigations.ts');
+  const f = await investigationFixture(); t.after(() => f.close());
+  const arc = new Observations(f.hostDir, 'incremental', 'reader').arc(f);
+  const versions = (e: Envelope) => new ConsoleMetadata().read(e, new ConsoleViews(), f.arc).viewVersions;
+  const cold = (e: Envelope): Envelope => ({ ...e, data: { ...e.data } });
+  const first = arc.read();
+  assert.deepEqual(versions(first), versions(cold(first)));
+  // Appended events, a settled row and a terminal fact: each extends the model's tokens, as captures do on a live arc.
+  for (let n = 0; n < 3; n++) { const p = f.begin('u7', 'build'); f.journal.fact({ kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false }); }
+  const second = arc.read();
+  f.finishLive(); f.complete();
+  const third = arc.read();
+  assert.ok(second.highWater > first.highWater && third.highWater > second.highWater);
+  assert.equal(third.data.capture.materializations, 3, 'three captures extended one model');
+  for (const e of [second, third]) assert.deepEqual(versions(e), versions(cold(e)), `at ${e.highWater}`);
+  assert.notDeepEqual(versions(third), versions(first), 'the versions moved with what changed');
 });

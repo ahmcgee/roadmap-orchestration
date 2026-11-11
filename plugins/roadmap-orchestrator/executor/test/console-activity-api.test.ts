@@ -46,9 +46,13 @@ test('typed Activity HTTP is independent of the model, preserves security/admiss
   assert.equal((await consoleGet(url + '/changes')).status, 400); assert.equal((await consoleGet(url + '/foreign')).status, 404);
   const invalid = {...e.data, raw: {hidden: true}}; assert.equal(activityShape(invalid), false); assert.equal(activityShape({...e.data, uiSchema: 999}), false);
   assert.equal(messages.some(m => m.kind === 'read' && ['snapshot', 'activity-legacy', 'status'].includes(m.path[2])), false);
-  // The canonical observer's evidence integrity still precedes every view admission.
+  // The canonical observer's evidence integrity still holds for views: the integrity sweep finds the rewritten record within
+  // its detection bound (a step or two on this fixture), and reads answer the corruption from then on.
   const path = join(f.runDir, 'inv', f.review.routeId, 'result.json'), original = readFileSync(path); writeFileSync(path, '{}');
-  const refused = await consoleGet(url); assert.equal(refused.status, 500); assert.match(await refused.text(), /corruption|invalid|result|digest/);
+  const deadline = Date.now() + 10_000;
+  let refused = await consoleGet(url);
+  while (refused.status !== 500 && Date.now() < deadline) { await new Promise((r) => setTimeout(r, 200)); refused = await consoleGet(url); }
+  assert.equal(refused.status, 500); assert.match(await refused.text(), /corruption|invalid|result|digest/);
   writeFileSync(path, original);
 });
 

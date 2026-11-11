@@ -1,8 +1,9 @@
 // Independent, allowlisted shell and graph projections. D1/D2/D4/D8/D9/D11.
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import type { Envelope } from '../observation/protocol.ts';
+import { captureKey, type Envelope } from '../observation/protocol.ts';
 import { unitSignal } from './signals.ts';
-import { identityIndex, stageFinished, stageIndex } from './indexes.ts';
+import { identityIndex, stageFinished } from './indexes.ts';
+import { tokensFor } from './tokens.ts';
 import { milestoneMembership, milestoneReason, milestoneSignal } from './milestones.ts';
 import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
@@ -10,21 +11,20 @@ export function preview(text: string, detail: DetailRef, limit = 240): Preview {
   return {text: text.length > limit ? text.slice(0, limit) : text, truncated: text.length > limit, detail};
 }
 export function arcBounds(e: Envelope) {
-  const ended = e.data.events.findLast(ev => ev.type === 'fact' && (ev.fact.kind === 'arc-completed' || ev.fact.kind === 'stop-completed'));
-  return {from: e.data.events[0]?.at ?? null, to: ended?.at ?? null};
+  const t = tokensFor(e.data);
+  return {from: t.firstAt, to: t.terminal?.at ?? null};
 }
 export function versioned<T extends object>(data: T, scope: Scope): T & View {
   return {...data, uiSchema: CONSOLE_UI_SCHEMA, scope, viewVersion: sha256Hex(canonicalJson({data, scope}))};
 }
 export function shellView(e: Envelope): ShellView {
-  const s = e.data.display.status, bounds = arcBounds(e);
-  const terminal = e.data.events.findLast(ev => ev.type === 'fact' && (ev.fact.kind === 'arc-completed' || ev.fact.kind === 'stop-completed'));
+  const s = e.data.display.status, bounds = arcBounds(e), terminal = tokensFor(e.data).terminal;
   const countsByState: Record<string, number> = {};
   for (const u of s.units) countsByState[u.state] = (countsByState[u.state] ?? 0) + 1;
   const blocking = e.data.requests.filter(r => r.blocking).length;
   return versioned({
     identity: {arc: String(e.arc), direction: e.data.plan?.direction.trim() ? {text: e.data.plan.direction.trim().slice(0, 600), truncated: e.data.plan.direction.trim().length > 600} : null},
-    lifecycle: {state: terminal?.type === 'fact' ? terminal.fact.kind === 'arc-completed' ? 'complete' : 'no-owner' : s.run.state, startedAt: bounds.from, endedAt: bounds.to},
+    lifecycle: {state: terminal !== null ? terminal.fact.kind === 'arc-completed' ? 'complete' : 'no-owner' : s.run.state, startedAt: bounds.from, endedAt: bounds.to},
     progress: {total: s.units.length, countsByState, merged: countsByState['merged'] ?? 0, withdrawn: (countsByState['cut'] ?? 0) + (countsByState['superseded'] ?? 0)},
     spend: {costUsd: e.data.summary.spend.costUsd, estimatedCalls: e.data.summary.spend.estimatedCalls, unavailableCalls: e.data.summary.spend.unavailableCalls},
     attention: {total: e.data.requests.length, blocking, informational: e.data.requests.length - blocking},
@@ -32,7 +32,7 @@ export function shellView(e: Envelope): ShellView {
   }, {basis: 'current', ...bounds});
 }
 export function graphView(e: Envelope): GraphView {
-  const s = e.data.display.status, identities = identityIndex(e), steps = stageIndex(e.data.events).byUnit;
+  const s = e.data.display.status, identities = identityIndex(e), steps = tokensFor(e.data).stages.byUnit;
   const units: GraphView['units'] = s.units.map(u => {
     const identity = identities.get(u.unit)!;
     return {id: String(u.unit), title: identity.title.slice(0, 96), titleTruncated: identity.title.length > 96,
@@ -62,7 +62,7 @@ export class ConsoleViews {
   shell(e: Envelope) { return this.#read(this.#shell, e, shellView); }
   graph(e: Envelope) { return this.#read(this.#graph, e, graphView); }
   #read<T>(cache: Map<string, T>, e: Envelope, build: (e: Envelope) => T): T {
-    const key = `${e.instance}:${e.arc}:${e.epoch}:${e.data.capture.source}`;
+    const key = captureKey(e);
     let value = cache.get(key);
     if (!value) value = build(e);
     cache.delete(key); cache.set(key, value);

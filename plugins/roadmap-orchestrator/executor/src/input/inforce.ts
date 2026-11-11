@@ -22,6 +22,7 @@ import { raiseNeedsUser,raisedWithReason } from '../needsuser.ts';
 // `inputs/<sha>.corpus.json`, `.phase0.json` and `.corpus-guide.md`; its vision record is `<repo>/.roadmap/vision.json` (R1). The corpus files the pin names are kept as
 // `inputs/<sha>.corpus-file` from the source the pin re-derived from (`keepCorpusFiles`, src/phase0/rows.ts).
 import { existsSync,readFileSync } from 'node:fs';
+import { parsedOnce, writeOnce } from '../observation/memo.ts';
 import { dirname,join } from 'node:path';
 import { crashPoint } from '../core/crash.ts';
 import {
@@ -83,10 +84,12 @@ export function keepInput(runDir: AbsPath, bytes: Buffer, ext: string): Sha256He
 /** The kept bytes hashing to `sha`, or null when none were kept. */
 export function keptInput(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer | null {
   const path = inputPath(runDir, sha, ext);
-  if (!existsSync(path)) return null;
-  const bytes = readFileSync(path);
-  if (bytesSha256(bytes) !== sha) throw new Error(`${path} does not hash to its name`);
-  return bytes;
+  return writeOnce('kept-bytes', path, () => {
+    if (!existsSync(path)) return null;
+    const bytes = readFileSync(path);
+    if (bytesSha256(bytes) !== sha) throw new Error(`${path} does not hash to its name`);
+    return bytes;
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -461,7 +464,7 @@ export function planInForce(runDir: AbsPath, view: JournalView): InForce | null 
 export function planOf(runDir: AbsPath, fact: PlanAppliedFact): PlanM1 {
   const bytes = keptInput(runDir, fact.planSha256, PLAN_INPUT);
   if (bytes === null) throw new Error(`plan rev ${fact.rev} is ${fact.planSha256}, but ${inputPath(runDir, fact.planSha256, PLAN_INPUT)} does not exist`);
-  return parsePlan(JSON.parse(bytes.toString('utf8')));
+  return parsedOnce(`plan:${fact.planSha256}`, () => parsePlan(JSON.parse(bytes.toString('utf8'))));
 }
 
 /** The plan in force, which every executor context has once its start recorded one. */
@@ -501,6 +504,9 @@ const json = (bytes: Buffer): unknown => JSON.parse(bytes.toString('utf8'));
 
 /** The inputs in force beyond plan and specs: the latest `plan-applied`'s payload manifest's. */
 export function revisionInForce(runDir: AbsPath, inForce: InForce): RevisionInForce {
+  return parsedOnce(`revision:${inForce.fact.payloadSha256}`, () => readRevisionInForce(runDir, inForce));
+}
+function readRevisionInForce(runDir: AbsPath, inForce: InForce): RevisionInForce {
   const { manifest } = keptPayload(runDir, inForce.fact.payloadSha256);
   const parsed = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): Readonly<{ sha256: Sha256Hex; bytes: Buffer; value: T }> | null => {
     if (sha === null) return null;

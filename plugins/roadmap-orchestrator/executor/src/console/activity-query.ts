@@ -3,7 +3,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { COLLECTION_RETENTION } from './collection-pages.ts';
-import { ConsoleError, type Envelope } from '../observation/protocol.ts';
+import { ConsoleError, captureKey, type Envelope } from '../observation/protocol.ts';
 import { ACTIVITY_KINDS, type ActivityFacets, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
 import { activityRequest, buildActivityIndex, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
 import { versioned } from './views.ts';
@@ -106,6 +106,10 @@ function bounded<T>(e: Envelope, data: T, ceiling: number): T {
   return data;
 }
 export class ConsoleActivity {
+  /** What an index is built from: by default its capture; the serve worker passes the Activity view version, so a capture
+   * that changed nothing Activity shows (a schedule rewrite, a moved ref) reuses the index. */
+  readonly #version: (e: Envelope) => string;
+  constructor(version: (e: Envelope) => string = captureKey) { this.#version = version; }
   #secret = randomBytes(32);
   #indexes = new Map<string, StoredIndex>();
   #queries = new Map<string, Generation>();
@@ -133,12 +137,19 @@ export class ConsoleActivity {
     this.#sweep();
     const key = this.#indexKey(e), old = this.#indexes.get(key);
     if (old) {old.touched = Date.now(); this.#indexes.delete(key); this.#indexes.set(key, old); return old.index;}
-    const index = buildActivityIndex(e), size = bytes(index);
-    if (size > ACTIVITY_RETENTION.bytes) throw new ConsoleError('unavailable', 'Activity index exceeds retained capacity');
-    this.#indexes.set(key, {index, bytes: size, touched: Date.now()}); this.#bytes += size; this.#sweep();
+    return this.store(e, buildActivityIndex(e));
+  }
+  /** Whether `e`'s index is built. */
+  has(e: Envelope): boolean { return this.#indexes.has(this.#indexKey(e)); }
+  /** Keeps an index built for `e` elsewhere (in steps, src/console/worker.ts). */
+  store(e: Envelope, index: ActivityIndex): ActivityIndex {
+    if (index.bytes > ACTIVITY_RETENTION.bytes) throw new ConsoleError('unavailable', 'Activity index exceeds retained capacity');
+    const key = this.#indexKey(e);
+    if (!this.#indexes.has(key)) { this.#indexes.set(key, {index, bytes: index.bytes, touched: Date.now()}); this.#bytes += index.bytes; }
+    this.#sweep();
     return index;
   }
-  #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.instance, e.repoId, e.arc, e.epoch, e.data.capture.source]));}
+  #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.instance, e.repoId, e.arc, this.#version(e)]));}
   #admit(e: Envelope, token: string, query: Query, anchor: boolean): {id: string; g: Generation; parsed: Token} {
     this.#sweep();
     let parsed: Token;

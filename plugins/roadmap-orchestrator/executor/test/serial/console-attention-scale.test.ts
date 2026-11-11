@@ -7,7 +7,7 @@ import { until } from '../fixtures/exec-common.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { ConsoleAttention } from '../../src/console/attention-query.ts';
 import { requestDetail } from '../../src/console/request-detail.ts';
@@ -18,7 +18,7 @@ import type { RequestView } from '../../src/console/attention-protocol.ts';
 test('300-unit/7-day Attention independent query, selected request cold routes, exact request evidence and decoded/DOM/heap budgets',{timeout:90_000},async t=>{
  const began=performance.now(),m=await generateScaleArc(tmpDir('console-attention-scale')),generationMs=performance.now()-began;
  const release=await ownScaleArc(m);t.after(release);
- const startCapture=performance.now(),e=new ObservationCache(absPath(m.hostDir),'attention-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-startCapture;
+ const startCapture=performance.now(),e=new Observations(absPath(m.hostDir),'attention-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-startCapture;
  assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
  const tabs=new ConsoleAttention(),bytes=(data:unknown)=>Buffer.byteLength(JSON.stringify({...e,data}))+1;
  const projectionStart=performance.now();let page=tabs.read(e,{});const projectionMs=performance.now()-projectionStart,rows=[...page.rows];let largest=bytes(page);
