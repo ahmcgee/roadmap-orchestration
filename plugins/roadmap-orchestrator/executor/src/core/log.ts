@@ -162,7 +162,8 @@ export class ObserverJournal {
     this.#reset();
     return finishOpen(absPath(dirname(this.path)), this.path, fold, validEnd, size);
   }
-  read(): LogSnapshot {
+  /** `onProgress(done, of)`: bytes read of the journal's size, after each chunk. */
+  read(onProgress?: (done: number, of: number) => void): LogSnapshot {
     if (!existsSync(this.path)) {
       this.#reset();
       return { view: this.#fold, events: this.#events };
@@ -192,6 +193,7 @@ export class ObserverJournal {
           start = nl + 1;
         }
         carry = Buffer.from(buf.subarray(start));
+        onProgress?.(pos, st.size);
       }
       this.#anchor = Buffer.alloc(Math.min(4096, this.#offset));
       readSync(fd, this.#anchor, 0, this.#anchor.length, this.#offset - this.#anchor.length);

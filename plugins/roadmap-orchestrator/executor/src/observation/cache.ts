@@ -85,7 +85,7 @@ export class ObservationCache {
       if (materialize) {
         checkRunContainment(run.runDir);
         // Only the invocations whose records changed are read again; every other ended invocation's row stands.
-        if (evidence !== undefined) observer.invalidateEvidence(changedPaths(evidence, rows));
+        if (evidence !== undefined) observer.invalidate(changedPaths(evidence, rows));
         evidence = rows;
         const reply = observer.capture({ locator: { type: 'host' }, pinned: run, hostDir: this.hostDir, token: 0 });
         if (reply.error || !reply.display || !observer.captured) throw new ConsoleError('corruption', reply.error ?? 'no captured observation');
