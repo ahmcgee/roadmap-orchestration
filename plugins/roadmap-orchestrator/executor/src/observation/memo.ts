@@ -1,6 +1,11 @@
 // What a long-lived observer remembers across captures: the answers of git commands that name only object ids, the
 // write-once records of a run directory, and parsed content-addressed inputs. A one-shot reader (`roadmap status`, the CLI's
 // local fallback) runs without one and reads everything, as before.
+//
+// Memory is bounded by bytes, not by how much evidence or history an arc has: git answers by GIT_BYTES and records by
+// RECORD_BYTES, each least recently used first, and neither keeps one entry heavier than an eighth of its bound (it would
+// flush every other entry and then itself). Parsed values are kept only while captures ask for them (`settle`). The stamps of
+// records read are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read.
 import { lstatSync } from 'node:fs';
 
 /** A git command's answer, as the memo keeps it. */
@@ -9,6 +14,10 @@ export type Spawned = Readonly<{ code: number; stdout: string | Buffer }>;
 export type MemoWork = { gitSpawns: number; gitHits: number; recordReads: number; recordHits: number };
 
 const GIT_BYTES = 64 * 1024 * 1024;
+/** The weighed bytes of remembered records (see `weightOf`). */
+export const RECORD_BYTES = 128 * 1024 * 1024;
+/** What the memo holds, for the console's heap reports. */
+export type MemoSizes = Readonly<{ records: number; recordBytes: number; recordEvictions: number; gitAnswers: number; gitBytes: number; stamps: number; parsed: number }>;
 const OBJECT = /^[0-9a-f]{40}(\^\{tree\}|:.*)?$/;
 const COMMANDS = new Set(['diff-tree', 'ls-tree', 'cat-file', 'log', 'merge-base', 'rev-parse']);
 /** Options that make a command read refs, reflogs or the repository's layout, so its answer can change. */
@@ -45,12 +54,17 @@ export class RecordMemo {
   readonly work: MemoWork = { gitSpawns: 0, gitHits: 0, recordReads: 0, recordHits: 0 };
   #git = new Map<string, Spawned>();
   #gitBytes = 0;
-  #records = new Map<string, unknown>();
+  /** Remembered records by `form\0path`, least recently used first, with each one's weight. */
+  #records = new Map<string, Readonly<{ value: unknown; path: string; bytes: number }>>();
+  #recordBytes = 0;
+  #recordEvictions = 0;
   /** Each path's kept forms (their keys in `#records`). */
   #forms = new Map<string, string[]>();
   /** Each write-once record read, with its stamp taken before the read: what the integrity sweep re-checks. */
   #stamps = new Map<string, string>();
   #parsed = new Map<string, unknown>();
+  /** Parsed values asked for since the last `settle`. */
+  #asked = new Set<string>();
   /** Answers of commands that can move, for the capture under way (`withRecordMemo` starts one). */
   #capture = new Map<string, Spawned>();
   /** A new capture: what moving commands answered in the last one is asked again. */
@@ -72,7 +86,7 @@ export class RecordMemo {
     this.work.gitSpawns++;
     const answer = run();
     if (moving !== null) this.#capture.set(moving, answer);
-    if (key === null || !settled(answer)) return answer;
+    if (key === null || !settled(answer) || answer.stdout.length > GIT_BYTES / 8) return answer;
     this.#git.set(key, answer); this.#gitBytes += answer.stdout.length;
     for (const [old, value] of this.#git) {
       if (this.#gitBytes <= GIT_BYTES) break;
@@ -82,37 +96,65 @@ export class RecordMemo {
   }
   /**
    * A write-once record, kept from its second read on: a record read once (a settled invocation's launch record, read for its
-   * row) is not held for nothing. Absence is never remembered: the record may land later.
+   * row) is not held for nothing. Absence is never remembered: the record may land later. A hit makes it the most recently used;
+   * past RECORD_BYTES the least recently used are dropped (their stamps stay: the record was read, and the sweep re-checks it).
    */
   record<T>(form: string, path: string, read: () => T | null): T | null {
     // Readers keep different forms of one file (its text, its parsed record): each is kept under its own key.
     const key = `${form}\0${path}`;
-    if (this.#records.has(key)) { this.work.recordHits++; return this.#records.get(key) as T; }
+    const hit = this.#records.get(key);
+    if (hit !== undefined) { this.#records.delete(key); this.#records.set(key, hit); this.work.recordHits++; return hit.value as T; }
     const seen = this.#stamps.get(path), stamp = seen ?? stampOf(path);
     const value = read();
     // A record found absent costs a stat, and is looked for again.
     if (value === null) return value;
     this.work.recordReads++;
-    if (seen !== undefined) { this.#records.set(key, value); this.#forms.set(path, [...(this.#forms.get(path) ?? []), key]); }
-    else this.#stamps.set(path, stamp);
+    if (seen === undefined) { this.#stamps.set(path, stamp); return value; }
+    // Stamped missing (the record landed between its stat and its read): the sweep finds it changed and it is read again.
+    if (seen === 'missing') return value;
+    const bytes = weightOf(value, seen);
+    if (bytes > RECORD_BYTES / 8) return value;
+    this.#records.set(key, { value, path, bytes }); this.#recordBytes += bytes;
+    this.#forms.set(path, [...(this.#forms.get(path) ?? []), key]);
+    for (const [old, kept] of this.#records) {
+      if (this.#recordBytes <= RECORD_BYTES) break;
+      this.#drop(old, kept.path); this.#recordEvictions++;
+    }
     return value;
+  }
+  #drop(key: string, path: string): void {
+    const kept = this.#records.get(key);
+    if (kept === undefined) return;
+    this.#records.delete(key); this.#recordBytes -= kept.bytes;
+    const forms = this.#forms.get(path)!.filter((k) => k !== key);
+    if (forms.length === 0) this.#forms.delete(path); else this.#forms.set(path, forms);
   }
   /** A write-once record read past the memo (runner.json, rewritten once while open): the sweep re-checks it from now on. */
   track(path: string): void { if (!this.#stamps.has(path)) { const stamp = stampOf(path); if (stamp !== 'missing') this.#stamps.set(path, stamp); } }
   /** The records the sweep re-checks, with the stamp each had when read. */
   stamped(): ReadonlyMap<string, string> { return this.#stamps; }
-  /** A value parsed from content-addressed bytes (`key` carries their hash), parsed once. */
+  /** A value parsed from content-addressed bytes (`key` carries their hash), parsed once while captures keep asking for it. */
   parsed<T>(key: string, parse: () => T): T {
+    this.#asked.add(key);
     if (this.#parsed.has(key)) return this.#parsed.get(key) as T;
     const value = parse();
     this.#parsed.set(key, value);
     return value;
   }
+  /** Drops every parsed value not asked for since the previous `settle`: the observer calls it after each full capture. */
+  settle(): void {
+    for (const key of this.#parsed.keys()) if (!this.#asked.has(key)) this.#parsed.delete(key);
+    this.#asked.clear();
+  }
+  sizes(): MemoSizes {
+    return { records: this.#records.size, recordBytes: this.#recordBytes, recordEvictions: this.#recordEvictions, gitAnswers: this.#git.size,
+      gitBytes: this.#gitBytes, stamps: this.#stamps.size, parsed: this.#parsed.size };
+  }
   /** Forgets these records (found rewritten or removed) and every parsed value, which may rest on them. */
   forget(paths: readonly string[]): void {
     if (paths.length === 0) return;
-    for (const path of paths) { for (const key of this.#forms.get(path) ?? []) this.#records.delete(key); this.#forms.delete(path); this.#stamps.delete(path); }
-    this.#parsed.clear();
+    for (const path of paths) { for (const key of this.#forms.get(path) ?? []) this.#drop(key, path); this.#stamps.delete(path); }
+    this.#parsed.clear(); this.#asked.clear();
   }
 }
 
@@ -135,6 +177,14 @@ export const recordMemo = (): RecordMemo | null => ambient;
 export const writeOnce = <T>(form: string, path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(form, path, read);
 /** `parse` of content-addressed bytes named by `key`, through the ambient memo when there is one. */
 export const parsedOnce = <T>(key: string, parse: () => T): T => ambient === null ? parse() : ambient.parsed(key, parse);
+
+/** A record's weight: a string's or a Buffer's length, anything else the size of the file it was read from (from its stamp). */
+function weightOf(value: unknown, stamp: string): number {
+  if (typeof value === 'string' || Buffer.isBuffer(value)) return value.length;
+  const size = stamp.split(':')[2];
+  if (size === undefined) throw new Error(`memo: record stamp ${stamp} carries no size`);
+  return Number(size);
+}
 
 /** A file's identity and version, or `missing` (the same stamp as src/observation/changes.ts `fileStamp`). */
 export function stampOf(path: string): string {

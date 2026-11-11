@@ -150,8 +150,12 @@ export class Observer {
       this.#memo = new RecordMemo();
     }
     const memo = this.#memo, before = { ...memo.work };
-    try { return withRecordMemo(memo, () => this.#capture(request, run, snapshot, timing)); }
-    finally { this.lastWork = { gitSpawns: memo.work.gitSpawns - before.gitSpawns, gitHits: memo.work.gitHits - before.gitHits, recordReads: memo.work.recordReads - before.recordReads, recordHits: memo.work.recordHits - before.recordHits }; }
+    try {
+      const reply = withRecordMemo(memo, () => this.#capture(request, run, snapshot, timing));
+      // Parsed inputs this capture did not ask for (a superseded plan, a snapshot commit the arc ref moved past) are let go.
+      memo.settle();
+      return reply;
+    } finally { this.lastWork = { gitSpawns: memo.work.gitSpawns - before.gitSpawns, gitHits: memo.work.gitHits - before.gitHits, recordReads: memo.work.recordReads - before.recordReads, recordHits: memo.work.recordHits - before.recordHits }; }
   }
 
   #capture(request: ObserveRequest, run: Run, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>): ObserveReply {

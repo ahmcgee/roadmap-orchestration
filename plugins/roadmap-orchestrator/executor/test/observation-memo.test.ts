@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { arcId, invocationDirName, invocationIdOf } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
-import { RecordMemo, immutableGit } from '../src/observation/memo.ts';
+import { RECORD_BYTES, RecordMemo, immutableGit } from '../src/observation/memo.ts';
 import { Observer } from '../src/observation/observer.ts';
 import { enrichedParityArc } from './fixtures/status-parity.ts';
 
@@ -85,4 +85,59 @@ test('two readers of one record keep their own forms of it', () => {
     assert.equal(memo.record('text', path, () => readFileSync(path, 'utf8')), '{"a":2}');
     assert.deepEqual(memo.record('parsed', path, () => JSON.parse(readFileSync(path, 'utf8'))), { a: 2 });
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('records are bounded by weighed bytes, least recently used first; an evicted record keeps its stamp and is read again', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'roadmap-memo-bound-'));
+  try {
+    const memo = new RecordMemo(), size = RECORD_BYTES / 10, text = 'x'.repeat(size);
+    const paths = Array.from({ length: 12 }, (_, i) => join(dir, `r${i}.json`));
+    for (const path of paths) writeFileSync(path, '{}');
+    let reads = 0;
+    const read = (path: string) => memo.record('text', path, () => { reads++; return text; });
+    // Two reads each keep a record: ten fit, then the least recently used go.
+    for (const path of paths.slice(0, 10)) { read(path); read(path); }
+    assert.equal(memo.sizes().records, 10);
+    read(paths[0]!); // a hit: r0 is now the most recently used
+    for (const path of paths.slice(10)) { read(path); read(path); }
+    const sizes = memo.sizes();
+    assert.ok(sizes.recordBytes <= RECORD_BYTES, `${sizes.recordBytes}`);
+    assert.equal(sizes.records, 10); assert.equal(sizes.recordEvictions, 2);
+    assert.equal(sizes.stamps, 12, 'an evicted record is still stamped for the sweep');
+    reads = 0;
+    read(paths[0]!); assert.equal(reads, 0, 'the refreshed record was kept');
+    read(paths[1]!); assert.equal(reads, 1, 'the least recently used was dropped and is read again');
+    // A parsed form weighs its file's size, from the stamp.
+    const parsed = join(dir, 'parsed.json'), fresh = new RecordMemo();
+    writeFileSync(parsed, JSON.stringify({ pad: 'y'.repeat(1000) }));
+    for (let n = 0; n < 2; n++) fresh.record('parsed', parsed, () => JSON.parse(readFileSync(parsed, 'utf8')));
+    assert.equal(fresh.sizes().recordBytes, readFileSync(parsed).length);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a record heavier than an eighth of the bound is read every time, never kept', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'roadmap-memo-heavy-')), path = join(dir, 'witness.json');
+  try {
+    writeFileSync(path, '{}');
+    const memo = new RecordMemo(), heavy = 'x'.repeat(RECORD_BYTES / 8 + 1);
+    let reads = 0;
+    for (let n = 0; n < 3; n++) memo.record('text', path, () => { reads++; return heavy; });
+    assert.equal(reads, 3);
+    assert.deepEqual({ records: memo.sizes().records, recordBytes: memo.sizes().recordBytes, stamps: memo.sizes().stamps }, { records: 0, recordBytes: 0, stamps: 1 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('settle drops the parsed values not asked for since the previous settle', () => {
+  const memo = new RecordMemo();
+  let parses = 0;
+  const parse = (key: string) => memo.parsed(key, () => { parses++; return { key }; });
+  parse('a'); parse('b');
+  memo.settle();
+  assert.equal(memo.sizes().parsed, 2, 'both were asked for since the memo was made');
+  parse('a');
+  memo.settle();
+  assert.equal(memo.sizes().parsed, 1);
+  parses = 0;
+  parse('a'); assert.equal(parses, 0, 'a value still asked for stands');
+  parse('b'); assert.equal(parses, 1, 'a value let go is parsed again');
 });
