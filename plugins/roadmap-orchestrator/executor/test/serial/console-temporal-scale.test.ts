@@ -7,7 +7,7 @@ import { until } from '../fixtures/exec-common.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { ConsoleTemporal } from '../../src/console/temporal-query.ts';
 import { ConsoleActivity } from '../../src/console/activity-query.ts';
@@ -18,7 +18,7 @@ import { consoleGet } from '../helpers/console-http.ts';
 test('300-unit/7-day Timeline and Holistic typed pages, all six parks, cold browser request counts and decoded ceilings',{timeout:90_000},async t=>{
  const generation=performance.now(),m=await generateScaleArc(tmpDir('console-temporal-scale'));const generationMs=performance.now()-generation;
  const release=await ownScaleArc(m);t.after(release);
- const capture=performance.now(),e=new ObservationCache(absPath(m.hostDir),'temporal-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
+ const capture=performance.now(),e=new Observations(absPath(m.hostDir),'temporal-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
  assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
  const tabs=new ConsoleTemporal(),activity=new ConsoleActivity(),bytes=(data:unknown)=>Buffer.byteLength(JSON.stringify({...e,data}))+1,measured:Record<string,number>={};
  const projected=performance.now();let tracks=tabs.timeline(e,{window:'arc'}) as TimelineView;const projectionMs=performance.now()-projected,serial=performance.now(),serialized=JSON.stringify({...e,data:tracks}),serializationMs=performance.now()-serial,parsed=performance.now();JSON.parse(serialized);const parseMs=performance.now()-parsed;const allTracks=[...tracks.rows];let largest=bytes(tracks);

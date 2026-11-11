@@ -10,13 +10,13 @@ import { readBootId } from '../src/contain/proc.ts';
 import { selfIdentity } from '../src/host/liveness.ts';
 import { consoleStatus } from '../src/console/client.ts';
 import { publishConsoleLease, serviceDir } from '../src/console/lease.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { consoleFixture } from './fixtures/console.ts';
 
 test('CLI refuses malformed, mismatched and corrupt responses; version/unavailable/timeout/unreachable fall back locally', { timeout: 15_000 }, async (t) => {
   const f = consoleFixture(); const instance = nonce('a'.repeat(32));
-  const capture = new ObservationCache(f.hostDir, instance, sha256Hex(f.common)).read(f);
+  const capture = new Observations(f.hostDir, instance, sha256Hex(f.common)).read(f);
   let mode = 'good';
   const server = createServer((req, res) => {
     if (mode === 'timeout') return;

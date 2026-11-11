@@ -1,6 +1,7 @@
 // What a long-lived observer remembers across captures: the answers of git commands that name only object ids, the
 // write-once records of a run directory, and parsed content-addressed inputs. A one-shot reader (`roadmap status`, the CLI's
 // local fallback) runs without one and reads everything, as before.
+import { lstatSync } from 'node:fs';
 
 /** A git command's answer, as the memo keeps it. */
 export type Spawned = Readonly<{ code: number; stdout: string | Buffer }>;
@@ -45,6 +46,8 @@ export class RecordMemo {
   #git = new Map<string, Spawned>();
   #gitBytes = 0;
   #records = new Map<string, unknown>();
+  /** Each write-once record read, with its stamp taken before the read: what the integrity sweep re-checks. */
+  #stamps = new Map<string, string>();
   #parsed = new Map<string, unknown>();
   /**
    * The answer of an immutable git command (`key` names it), run once; `key` null: a command that is run every time. Only a
@@ -68,11 +71,16 @@ export class RecordMemo {
   /** A write-once record, read once. Absence is never remembered: the record may land later. */
   record<T>(path: string, read: () => T | null): T | null {
     if (this.#records.has(path)) { this.work.recordHits++; return this.#records.get(path) as T; }
+    const stamp = stampOf(path);
     const value = read();
     // A record found absent costs a stat, and is looked for again.
-    if (value !== null) { this.work.recordReads++; this.#records.set(path, value); }
+    if (value !== null) { this.work.recordReads++; this.#records.set(path, value); this.#stamps.set(path, stamp); }
     return value;
   }
+  /** A write-once record read past the memo (runner.json, rewritten once while open): the sweep re-checks it from now on. */
+  track(path: string): void { if (!this.#stamps.has(path)) { const stamp = stampOf(path); if (stamp !== 'missing') this.#stamps.set(path, stamp); } }
+  /** The records the sweep re-checks, with the stamp each had when read. */
+  stamped(): ReadonlyMap<string, string> { return this.#stamps; }
   /** A value parsed from content-addressed bytes (`key` carries their hash), parsed once. */
   parsed<T>(key: string, parse: () => T): T {
     if (this.#parsed.has(key)) return this.#parsed.get(key) as T;
@@ -83,7 +91,7 @@ export class RecordMemo {
   /** Forgets these records (found rewritten or removed) and every parsed value, which may rest on them. */
   forget(paths: readonly string[]): void {
     if (paths.length === 0) return;
-    for (const path of paths) this.#records.delete(path);
+    for (const path of paths) { this.#records.delete(path); this.#stamps.delete(path); }
     this.#parsed.clear();
   }
 }
@@ -107,3 +115,11 @@ export const recordMemo = (): RecordMemo | null => ambient;
 export const writeOnce = <T>(path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(path, read);
 /** `parse` of content-addressed bytes named by `key`, through the ambient memo when there is one. */
 export const parsedOnce = <T>(key: string, parse: () => T): T => ambient === null ? parse() : ambient.parsed(key, parse);
+
+/** A file's identity and version, or `missing` (the same stamp as src/observation/changes.ts `fileStamp`). */
+export function stampOf(path: string): string {
+  try { const s = lstatSync(path, { bigint: true }); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return 'missing'; throw e; }
+}
+/** Tracks a record read past the memo for the sweep, when there is a memo. */
+export const trackOnce = (path: string): void => { ambient?.track(path); };

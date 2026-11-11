@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync, writeFileSync, unlinkSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { statusBytes, type Envelope } from '../src/observation/protocol.ts';
 import { ConsoleActivity, ACTIVITY_RETENTION } from '../src/console/activity-query.ts';
 import { activityDetail } from '../src/console/activity-detail.ts';
@@ -17,7 +17,7 @@ import { needsUserRecord } from '../src/core/records.ts';
 import { needsUserPath } from '../src/needsuser.ts';
 import type { ActivityView, ActivityRow } from '../src/console/activity-protocol.ts';
 
-const capture = (f: Awaited<ReturnType<typeof investigationFixture>>, cache = new ObservationCache(f.hostDir, 'activity', 'repo')) => cache.read({runDir: f.runDir, arc: f.arc});
+const capture = (f: Awaited<ReturnType<typeof investigationFixture>>, cache = new Observations(f.hostDir, 'activity', 'repo')) => cache.read({runDir: f.runDir, arc: f.arc});
 function exhaust(a: ConsoleActivity, e: Envelope, query: Record<string, string> = {}) {
   const pages: ActivityView[] = [], rows: ActivityRow[] = [];
   let page = a.page(e, query);
@@ -65,7 +65,7 @@ test('Activity keysets exhaust equal/skewed timestamps, both orders, filtered co
 test('Activity appends do not move anchored rows; changes count only matching new facts and heartbeats do not change versions', async t => {
   const f = await investigationFixture(); t.after(() => f.close());
   for (let n = 0; n < 45; n++) {const p = f.begin('u7', 'build'); f.journal.fact({kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false});}
-  const cache = new ObservationCache(f.hostDir, 'activity-append', 'repo'), e = capture(f, cache), a = new ConsoleActivity(), query = {unit: 'u7', kind: 'stage-outcome', limit: '25'};
+  const cache = new Observations(f.hostDir, 'activity-append', 'repo'), e = capture(f, cache), a = new ConsoleActivity(), query = {unit: 'u7', kind: 'stage-outcome', limit: '25'};
   const first = a.page(e, query), before = exhaust(a, e, query);
   const p = f.begin('u7', 'build'); f.journal.fact({kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false});
   const unrelated = f.begin('u6', 'build'); f.journal.fact({kind: 'stage-outcome', unit: unrelated.unit, stage: 'build', attempt: unrelated.attempt, outcome: 'success', class: 'advance', chargeable: false});
@@ -76,7 +76,7 @@ test('Activity appends do not move anchored rows; changes count only matching ne
   const heartbeat = {...appended, checkedAt: new Date(Date.parse(appended.checkedAt) + 1000).toISOString(), revision: appended.revision + 1};
   assert.equal(a.page(heartbeat, query).viewVersion, a.page(appended, query).viewVersion);
   // File-only open-list changes are current Attention facts, never fabricated journal Activity.
-  const fileOnly = {...appended, data: {...appended.data, capture: {...appended.data.capture, source: 'file-only'}, requests: []}};
+  const fileOnly = {...appended, data: {...appended.data, capture: {...appended.data.capture, materializations: appended.data.capture.materializations + 1}, requests: []}};
   assert.equal(a.changes(fileOnly, {...query, anchor: first.page.anchor}).newMatching, 1);
   assert.equal(buildActivityIndex(fileOnly).entries.length, buildActivityIndex(appended).entries.length);
 });
@@ -141,7 +141,7 @@ test('D8 backend epochs preserve usage-limit dominance, exact covered probes, co
   const typed = buildActivityIndex({...e, highWater: events.at(-1)!.seq, data: {...e.data, events}});
   assert.equal(typed.entries.filter(r => r.row.kind === 'backend-park').length, 6);
   assert.equal(typed.entries.filter(r => r.row.kind === 'backend-closure').length, 3);
-  const parked = {...e, highWater: events.at(-1)!.seq, data: {...e.data, capture: {...e.data.capture, source: 'park-sequence'}, events}}, a = new ConsoleActivity();
+  const parked = {...e, highWater: events.at(-1)!.seq, data: {...e.data, capture: {...e.data.capture, materializations: e.data.capture.materializations + 1}, events}}, a = new ConsoleActivity();
   const detail = activityDetail(parked, a, holds[4]!.id, {}) as any;
   assert.equal(detail.backendHold.startSeq, dominated, 'a new park detail opens its own epoch, not the prior continued hold');
   assert.equal(detail.backendHold.effectiveClass, 'usage-limit');
@@ -170,7 +170,7 @@ test('selected event evidence keeps exact review findings, request digest/contai
   assert.throws(() => activityDetail(e, a, entry.row.id, {path: '/etc/passwd'}), /query/);
   const long = 'Recorded recommendation \"\\\n𝄞界'.repeat(2000), r = needsUserRecord({...JSON.parse(bytes.toString()), summary: long, recommendation: long}, 'long request');
   const longBytes = canonicalJson(r); writeFileSync(path, longBytes);
-  const changed = {...e, data: {...e.data, capture: {...e.data.capture, source: 'long-request'}, events: e.data.events.map(ev =>
+  const changed = {...e, data: {...e.data, capture: {...e.data.capture, materializations: e.data.capture.materializations + 1}, events: e.data.events.map(ev =>
     ev.type === 'intent' && ev.kind === 'needsuser.raise' && ev.expect.id === f.request ? {...ev, post: {sha256: sha256(sha256Hex(longBytes))}} : ev)}};
   const b = new ConsoleActivity(), key = b.index(changed).entries.find(r => r.request?.id === f.request)!.row.id;
   const preview = b.page(changed, {q: 'Recorded recommendation'}); assert.equal(preview.rows[0]!.summary.truncated, true); assert.ok(preview.rows[0]!.summary.text.length <= 240);

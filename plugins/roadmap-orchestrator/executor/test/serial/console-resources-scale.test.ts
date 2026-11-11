@@ -7,7 +7,7 @@ import { until } from '../fixtures/exec-common.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { ConsoleResources } from '../../src/console/resource-query.ts';
 import { cpuStageGroups } from '../../src/console/resources.ts';
@@ -17,7 +17,7 @@ import { consoleGet } from '../helpers/console-http.ts';
 import type { ResourceCpu, ResourceBooking, ResourceWait } from '../../src/console/resource-protocol.ts';
 test('300-unit Resources sections and selected evidence reconcile complete populations and cold request/body/DOM budgets',{timeout:90_000},async t=>{
  const generation=performance.now(),m=await generateScaleArc(tmpDir('console-resources-scale')),generationMs=performance.now()-generation,release=await ownScaleArc(m);t.after(release);
- const capture=performance.now(),e=new ObservationCache(absPath(m.hostDir),'resources-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
+ const capture=performance.now(),e=new Observations(absPath(m.hostDir),'resources-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
  const tabs=new ConsoleResources(),bytes=(data:unknown)=>Buffer.byteLength(JSON.stringify({...e,data}))+1;const sizes:Record<string,number>={},populations:Record<string,number>={};let largestDetail=0,projectionMs=0,serializationMs=0,parseMs=0;
  for(const section of ['schedule','cpu','waiting','now']){const params={section,...(section==='now'?{}:{window:'arc'})};const at=performance.now();let page=tabs.read(e,params);projectionMs+=performance.now()-at;const first=page,all=[...page.rows];let largest=bytes(page);while(page.page.next){page=tabs.read(e,{...params,cursor:page.page.next});all.push(...page.rows);largest=Math.max(largest,bytes(page));}assert.equal(new Set(all.map(r=>r.id)).size,all.length);assert.equal(all.length,first.page.matching);assert.ok(largest<=128*1024,`${section}: ${largest}`);sizes[section]=largest;populations[section]=all.length;
   const serializedAt=performance.now(),json=JSON.stringify({...e,data:first});serializationMs+=performance.now()-serializedAt;const parsedAt=performance.now();JSON.parse(json);parseMs+=performance.now()-parsedAt;

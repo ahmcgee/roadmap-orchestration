@@ -7,7 +7,7 @@ import { until } from '../fixtures/exec-common.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { projectionIndex } from '../../src/console/tab-projections.ts';
 import { ConsoleEffort } from '../../src/console/effort-query.ts';
@@ -15,7 +15,7 @@ import { serveConsole } from '../../src/console/http.ts';
 import { consoleGet } from '../helpers/console-http.ts';
 test('300-unit Effort completions reconcile with canonical spend, exhaustive frozen ranking and cold browser request/body budgets',{timeout:90_000},async t=>{
  const generation=performance.now(),m=await generateScaleArc(tmpDir('console-effort-scale')),generationMs=performance.now()-generation,release=await ownScaleArc(m);t.after(release);
- const capture=performance.now(),e=new ObservationCache(absPath(m.hostDir),'effort-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
+ const capture=performance.now(),e=new Observations(absPath(m.hostDir),'effort-scale','repo').read({runDir:absPath(m.runDir),arc:arcId(m.arc)}),captureMs=performance.now()-capture;
  assert.equal(e.data.display.status.units.length,300);assert.equal(e.data.display.invocations.length,1088);assert.equal(e.data.events.length,7523);
  const tabs=new ConsoleEffort(),projection=performance.now();let page=tabs.read(e,{window:'arc',sort:'work'});const projectionMs=performance.now()-projection,first=page;
  const serialization=performance.now(),serialized=JSON.stringify({...e,data:page}),serializationMs=performance.now()-serialization,parse=performance.now();JSON.parse(serialized);const parseMs=performance.now()-parse;

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { consoleFixture } from './fixtures/console.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { shellView, graphView } from '../src/console/views.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
 import { ConsoleViews } from '../src/console/views.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 const {ViewStore}=await import(new URL('../web-src/app/view-store.ts',import.meta.url).href);
-function fixture(){const f=consoleFixture(),e=new ObservationCache(f.hostDir,'client','repo').read({runDir:f.runDir,arc:f.arc});return {e,notice:new ConsoleMetadata().read(e,new ConsoleViews(),e.arc)};}
+function fixture(){const f=consoleFixture(),e=new Observations(f.hostDir,'client','repo').read({runDir:f.runDir,arc:f.arc});return {e,notice:new ConsoleMetadata().read(e,new ConsoleViews(),e.arc)};}
 test('initial semantic notice coalesces pending reads; heartbeat and cached Back need no fetch',async()=>{
  const {e,notice}=fixture();let finish:(v:unknown)=>void=()=>{},count=0;
  const store=new ViewStore(e.arc,CONSOLE_PROTOCOL,async()=>{count++;return new Promise(r=>finish=r);});

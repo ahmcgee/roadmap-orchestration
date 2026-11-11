@@ -2,7 +2,7 @@
 // design week lacks. The field fixture records them with production writers (scale-arc.ts --field).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { absPath } from '../src/core/values.ts';
 import { graphView } from '../src/console/views.ts';
 import { milestoneView, unitView } from '../src/console/details.ts';
@@ -14,7 +14,7 @@ import { tmpDir } from './helpers/repo.ts';
 
 test('a stopped field arc reads its milestones, re-entries and audits as recorded', { timeout: 120_000 }, async t => {
   const m = await generateScaleArc(tmpDir('console-field'), { preset: 'design', field: true });
-  const e = new ObservationCache(absPath(m.hostDir), 'field', 'reader').read({ runDir: absPath(m.runDir), arc: m.arc as never });
+  const e = new Observations(absPath(m.hostDir), 'field', 'reader').read({ runDir: absPath(m.runDir), arc: m.arc as never });
   const graph = graphView(e), states = new Map(e.data.display.status.units.map(u => [String(u.unit), u.state]));
 
   await t.test('C1: No milestone counts the units in no milestone, once; re-entries count for their parent\'s milestone', () => {

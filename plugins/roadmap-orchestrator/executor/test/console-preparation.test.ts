@@ -6,6 +6,7 @@ import { serveConsole } from '../src/console/http.ts';
 import { CONSOLE_PROTOCOL, ConsoleError } from '../src/observation/protocol.ts';
 import { consoleFixture } from './fixtures/console.ts';
 import { preparedRead } from '../web-src/app/prepared-read.ts';
+import { consoleGet } from './helpers/console-http.ts';
 
 const signal = () => new AbortController().signal;
 const deferred = () => { let resolve!: (v: unknown) => void; const promise = new Promise<unknown>(r => { resolve = r; }); return {promise, resolve}; };
@@ -100,16 +101,14 @@ test('abort releases a browser subscriber while equivalent readers retain their 
 });
 
 test('HTTP slow browser reads prepare past two seconds, coalesce and cancel; CLI stays strict', {timeout:15_000}, async t => {
-  const f = consoleFixture(), s = await serveConsole({...f,host:'127.0.0.1',port:0}); t.after(() => s.close());
-  await s.ask({kind:'read',path:['arcs'],params:{}});
-  const original = Worker.prototype.postMessage; let browserCalls = 0;
+  // The arc's collector publishes its first observation 2.3 s late (its channel reaches the serve worker then): every read waits on it.
+  const f = consoleFixture(), original = Worker.prototype.postMessage; let browserCalls = 0;
   t.mock.method(Worker.prototype,'postMessage',function(this:Worker,m:any,...rest:any[]) {
-    if (m.kind === 'read' && ['graph','status'].includes(m.path[2])) {
-      if (m.path[2] === 'graph') browserCalls++;
-      setTimeout(() => original.call(this,m,...rest),2300); return;
-    }
+    if (m.kind === 'collector') { setTimeout(() => original.call(this,m,...rest),2300); return; }
+    if (m.kind === 'read' && m.path[2] === 'graph') browserCalls++;
     return original.call(this,m,...rest);
   });
+  const started = performance.now(), s = await serveConsole({...f,host:'127.0.0.1',port:0}); t.after(() => s.close());
   const base = `${s.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}`;
   const responses = await Promise.all([fetch(`${base}/graph`),fetch(`${base}/graph`),fetch(`${base}/graph`,{method:'HEAD'})]);
   for (const r of responses) {
@@ -118,12 +117,16 @@ test('HTTP slow browser reads prepare past two seconds, coalesce and cancel; CLI
   }
   assert.equal(await responses[2]!.text(),'');
   const a = await responses[0]!.json() as {pending:string;state:string}, b = await responses[1]!.json() as typeof a;
-  assert.equal(a.state,'preparing'); assert.equal(browserCalls,1);
+  assert.equal(a.state,'preparing');
+  // The reads reach the serve worker once it has loaded: three readers, one read.
+  for (let n = 0; browserCalls === 0 && n < 100; n++) await new Promise(r => setTimeout(r, 50));
+  assert.equal(browserCalls,1);
   assert.equal((await fetch(`${base}/shell?pending=${a.pending}`)).status,400);
   assert.equal((await fetch(`${base}/graph?minHighWater=999999&pending=${a.pending}`)).status,400);
   assert.equal((await fetch(`${base}/graph?pending=${a.pending}&cancel=1`)).status,200);
   assert.equal((await fetch(`${base}/graph?pending=${a.pending}`)).status,503);
-  const cli = await fetch(`${base}/status`); assert.equal(cli.status,503); assert.match(await cli.text(),/exceeded two seconds/);
+  // The CLI's read never prepares: it waits for the first observation, then gets its two seconds from there.
+  const cli = await fetch(`${base}/status`); assert.equal(cli.status,200); assert.ok(performance.now()-started >= 2300, 'answered after the first observation');
   const final = await fetch(`${base}/graph?pending=${b.pending}`); assert.equal(final.status,200);
   const envelope = await final.json() as {data:{units:unknown[]};checkedAt:string};
   assert.equal(envelope.data.units.length,3); assert.ok(Date.now()-Date.parse(envelope.checkedAt)<5000); assert.equal(browserCalls,1);
@@ -146,7 +149,7 @@ test('real browser transport retries the identical route/query and abort cancels
   assert.ok(urls.some(u => u.searchParams.get('cancel')==='1' && u.searchParams.get('pending')===token));
 });
 
-test('worker death ends preparation with an explicit unavailable response', async t => {
+test('serve worker death ends preparation with an explicit unavailable response', async t => {
   const f = consoleFixture(), original = Worker.prototype.postMessage; let held:Worker | undefined;
   const s = await serveConsole({...f,host:'127.0.0.1',port:0}); t.after(()=>s.close());
   await s.ask({kind:'read',path:['arcs'],params:{}});
@@ -159,6 +162,24 @@ test('worker death ends preparation with an explicit unavailable response', asyn
   assert.ok(held); await held.terminate();
   const final = await fetch(`${base}?pending=${v.pending}`); assert.equal(final.status,503);
   assert.match(await final.text(),/worker exited/);
+});
+
+test('collector death makes its arc\'s reads unavailable with the reason, while the console stays up', async t => {
+  const f = consoleFixture(), original = Worker.prototype.postMessage; let collector:Worker | undefined;
+  t.mock.method(Worker.prototype,'postMessage',function(this:Worker,m:any,...rest:any[]) {
+    if (m.kind==='check-now') collector=this;
+    return original.call(this,m,...rest);
+  });
+  const s = await serveConsole({...f,host:'127.0.0.1',port:0}); t.after(()=>s.close());
+  const base = `${s.url}/api/${CONSOLE_PROTOCOL}`;
+  assert.equal((await fetch(`${base}/arcs/${f.arc}/status`)).status,200);
+  assert.equal((await fetch(`${base}/arcs/${f.arc}/status`)).status,200,'a strict read of an observed arc asks its collector to check now');
+  assert.ok(collector); await collector.terminate();
+  let answer: Response;
+  for (;;) { answer = await consoleGet(`${base}/arcs/${f.arc}/graph`); if (answer.status !== 200) break; await new Promise(r=>setTimeout(r,50)); }
+  assert.equal(answer.status,503);
+  assert.match(await answer.text(),/collector for this arc exited/);
+  assert.equal((await fetch(`${base}/arcs`)).status,200,'the console stays up');
 });
 
 test('client refuses mismatched or malformed preparation instead of treating it as data', async t => {

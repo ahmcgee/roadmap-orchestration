@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import {graphView} from '../src/console/views.ts';
 const {graphData}=await import(new URL('../web-src/app/graph-data.ts',import.meta.url).href);
 const { graphLayout } = await import(new URL('../web-src/app/graph-layout.ts', import.meta.url).href) as {
@@ -11,7 +11,7 @@ import { investigationFixture } from './fixtures/console-investigations.ts';
 
 test('milestone bands include all units and gates, preserve gate waits, and produce deterministic non-overlapping blocks',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
- const observed=new ObservationCache(f.hostDir,'graph-layout','graph').read({runDir:f.runDir,arc:f.arc});
+ const observed=new Observations(f.hostDir,'graph-layout','graph').read({runDir:f.runDir,arc:f.arc});
  const e=observed;
  assertGraphGeometry(e);
  const a=graphLayout(graphData({...observed,data:graphView(observed)})),b=graphLayout(graphData({...observed,data:graphView(observed)}));
@@ -30,7 +30,7 @@ test('milestone bands include all units and gates, preserve gate waits, and prod
 
 test('equal ranks retain dependency columns and one layout across focus contexts',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
- const observed=new ObservationCache(f.hostDir,'graph-wrap','graph').read({runDir:f.runDir,arc:f.arc});
+ const observed=new Observations(f.hostDir,'graph-wrap','graph').read({runDir:f.runDir,arc:f.arc});
  const input=graphData({...observed,data:graphView(observed)}),a=graphLayout(input),unbound=a.bands.find(b=>b.id==='unbound')!;
  const columns=new Map<number,number>();for(const id of unbound.ids){const x=a.positions.get(id)!.x;columns.set(x,(columns.get(x)??0)+1);}
  assert.equal(columns.size,1,'unrelated equal-rank units do not invent wrapped dependency columns');assert.ok([...columns.values()].some(count=>count>10),'space remains available to a large rank');

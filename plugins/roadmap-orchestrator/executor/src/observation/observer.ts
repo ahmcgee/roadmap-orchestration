@@ -20,12 +20,15 @@ import { TranscriptReader } from '../tui/transcript.ts';
 import { type Display, type Entry, type Invocation, type ObserveRequest, type ObserveReply, pretty } from '../tui/types.ts';
 import { InvocationTable, type OpenInvocation } from './invocations.ts';
 import { type MemoWork, RecordMemo, withRecordMemo } from './memo.ts';
+import type { WorkRun } from '../status-work.ts';
 
 const FORGE_REFRESH_MS = 60_000;
 const entry = (id: string, label: string, state: string, value: unknown): Entry => ({ id, label, state, body: pretty(value), links: [], provenance: 'validated runtime snapshot' });
 
-/** What a capture reports reading, for progress lines: journal bytes, then invocation rows. */
-export type CapturePhase = 'journal' | 'invocations';
+/** What a capture is doing, for progress lines: reading journal bytes, deriving status, reading invocation rows, the estate. */
+export type CapturePhase = 'journal' | 'status' | 'invocations' | 'estate';
+/** What the last capture folded and read besides the memo's counts. */
+export type FoldWork = Readonly<{ eventsFolded: number; rowsRead: number; deriveMs: number }>;
 
 /** The exceptions an observation lists: a pure function of its status, its requests (in `needsUser` order) and its rows. */
 export function exceptionsOf(s: Status, requests: readonly NeedsUserRecord[], rows: readonly Invocation[]): Entry[] {
@@ -76,6 +79,11 @@ export class Observer {
   get work(): Readonly<MemoWork> { return this.#memo.work; }
   /** What the last capture (successful or not) spawned and read. */
   lastWork: Readonly<MemoWork> = { gitSpawns: 0, gitHits: 0, recordReads: 0, recordHits: 0 };
+  /** What the last capture (successful or not) folded from the journal, read of invocation rows, and spent deriving status. */
+  lastFold: FoldWork = { eventsFolded: 0, rowsRead: 0, deriveMs: 0 };
+  /** The write-once records read through the memo, each with its stamp when read: what an integrity sweep re-checks. */
+  stamped(): ReadonlyMap<string, string> { return this.#memo.stamped(); }
+  #lastRefresh: Readonly<{ alive: boolean; work: ReadonlyMap<string, WorkRun> }> = { alive: false, work: new Map() };
 
   /** The rows and whether the estate changed in the last successful capture, against the one before it. */
   changes(): Readonly<{ rows: readonly Invocation[]; estate: boolean }> { return this.#changes; }
@@ -96,6 +104,24 @@ export class Observer {
     this.#table?.invalidate(new Set(paths.filter((path) => path.startsWith(inv)).map((path) => path.slice(inv.length).split('/')[0]!)));
   }
 
+  /**
+   * Reads the open invocations' rows again without deriving status (their output streams moved; their records did not), with
+   * the liveness and work metrics of the last capture. Returns the rows that changed. The next capture's `changes()` leaves them out.
+   */
+  refreshRows(): readonly Invocation[] {
+    const table = this.#table;
+    if (table === null) return [];
+    const memo = this.#memo, before = { ...memo.work };
+    try {
+      return withRecordMemo(memo, () => {
+        const changed = table.refresh(this.#lastRefresh.alive, this.#lastRefresh.work, null, { models: this.#models, logs: this.#logs });
+        table.drainChanged();
+        this.lastFold = { eventsFolded: 0, rowsRead: table.lastReads, deriveMs: 0 };
+        return changed;
+      });
+    } finally { this.lastWork = { gitSpawns: memo.work.gitSpawns - before.gitSpawns, gitHits: memo.work.gitHits - before.gitHits, recordReads: memo.work.recordReads - before.recordReads, recordHits: memo.work.recordHits - before.recordHits }; }
+  }
+
   observe(request: ObserveRequest): ObserveReply {
     try { return this.capture(request); }
     catch (error) {
@@ -114,8 +140,10 @@ export class Observer {
     }
     const began = performance.now();
     const progress = this.onProgress;
+    const known = this.#journal!.cursor.generation, held = this.#journal!.events;
     const snapshot = this.#journal!.read(progress === null ? undefined : (done, of) => progress('journal', done, of));
     const timing = { clock: Date.now(), foldMs: Math.round(performance.now() - began) };
+    this.lastFold = { eventsFolded: snapshot.events.length - (this.#journal!.cursor.generation === known ? held : 0), rowsRead: 0, deriveMs: 0 };
     if (snapshot.view !== this.#view) {
       this.#table = new InvocationTable(run); this.#folded = 0; this.#relationsDue = true;
       this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view;
@@ -128,7 +156,10 @@ export class Observer {
 
   #capture(request: ObserveRequest, run: Run, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>): ObserveReply {
     const table = this.#table!;
+    this.onProgress?.('status', 0, 1);
+    const derive = performance.now();
     const captured = withForgeMemo(this.#forge, () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing));
+    const deriveMs = Math.round(performance.now() - derive);
     const s = captured.full;
     const events = snapshot.events;
     for (let i = this.#folded; i < events.length && !this.#relationsDue; i++) if (touchesRelations(events[i]!)) this.#relationsDue = true;
@@ -136,9 +167,13 @@ export class Observer {
     this.#folded = events.length;
     const relations = this.#relationsDue ? this.#relations.read(run.runDir, events) : null;
     const work = new Map([...s.host.work, ...s.units.flatMap((u) => u.work)].map((w) => [String(w.inv), w]));
-    table.refresh(s.run.owner.state === 'alive', work, relations, { models: this.#models, logs: this.#logs });
+    this.#lastRefresh = { alive: s.run.owner.state === 'alive', work };
+    const progress = this.onProgress;
+    table.refresh(this.#lastRefresh.alive, work, relations, { models: this.#models, logs: this.#logs }, progress === null ? undefined : (done, of) => progress('invocations', done, of));
+    this.lastFold = { ...this.lastFold, rowsRead: table.lastReads, deriveMs };
     // A refresh that failed part way leaves the relations due, so every row gets them on the next one.
     this.#relationsDue = false;
+    progress?.('estate', 0, 1);
     const invocations = table.sorted();
     const requests = s.needsUser.map((n) => recordOf(run.runDir, n.id));
     const startPath = join(run.runDir, 'start.json');

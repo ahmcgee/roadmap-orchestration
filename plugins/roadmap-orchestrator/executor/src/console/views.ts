@@ -1,6 +1,6 @@
 // Independent, allowlisted shell and graph projections. D1/D2/D4/D8/D9/D11.
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import type { Envelope } from '../observation/protocol.ts';
+import { captureKey, type Envelope } from '../observation/protocol.ts';
 import { unitSignal } from './signals.ts';
 import { identityIndex, stageFinished, stageIndex } from './indexes.ts';
 import { milestoneMembership, milestoneReason, milestoneSignal } from './milestones.ts';
@@ -62,7 +62,7 @@ export class ConsoleViews {
   shell(e: Envelope) { return this.#read(this.#shell, e, shellView); }
   graph(e: Envelope) { return this.#read(this.#graph, e, graphView); }
   #read<T>(cache: Map<string, T>, e: Envelope, build: (e: Envelope) => T): T {
-    const key = `${e.instance}:${e.arc}:${e.epoch}:${e.data.capture.source}`;
+    const key = captureKey(e);
     let value = cache.get(key);
     if (!value) value = build(e);
     cache.delete(key); cache.set(key, value);

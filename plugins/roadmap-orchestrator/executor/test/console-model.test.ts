@@ -9,7 +9,7 @@ import { graphData } from '../web-src/app/graph-data.ts';
 import { invocationSummaries } from '../src/console/details.ts';
 import { ConsoleEffort } from '../src/console/effort-query.ts';
 import { ConsoleResources } from '../src/console/resource-query.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { arcId } from '../src/core/ids.ts';
 import { parityArc, enrichedParityArc } from './fixtures/status-parity.ts';
 
@@ -30,7 +30,7 @@ test('waiting totals are allocated once, never summed from overlapping reasons; 
 
 test('typed views use explicit executor milestone gates and include nonblocking owner attention', () => {
   const f = parityArc();
-  const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const e = new Observations(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
   const graph = graphView(e), attention = attentionSummaries(e);
   assert.equal(graph.units.length + graph.milestones.length, 4);
   const gate = graph.milestones[0]!;
@@ -50,7 +50,7 @@ test('typed views use explicit executor milestone gates and include nonblocking 
 
 test('CPU uses recorded reservation and measured run/wall duration, never demand or synthetic peak', async () => {
   const f = await enrichedParityArc();
-  const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const e = new Observations(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
   const work = [...e.data.display.status.host.work,...e.data.display.status.units.flatMap(u=>u.work)].filter(w=>w.reservedCpu!==null||w.measured!==null);
   assert.equal(work.length, 2);
   assert.ok(work.every(r => r.measured!.runMs / r.measured!.wallMs === 80 / 120 && !('peak' in r)));
@@ -73,7 +73,7 @@ test('completed reservations become actual resource bookings; release closes the
   const { readJournal } = await import('../src/core/log.ts');
   const { completedWaiting } = await import('../src/status/waiting.ts');
   const f = parityArc();
-  const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const e = new Observations(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
   const { ctx, journal } = openPoolRun(newRun());
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   try {
@@ -101,7 +101,7 @@ test('completed reservations become actual resource bookings; release closes the
 
 
 test('stable graph, formatted activities and effort survive heartbeat-only checks while resource time advances', () => {
-  const f = parityArc(); const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const f = parityArc(); const e = new Observations(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
   const views = new ConsoleViews(), metadata = new ConsoleMetadata(), first = metadata.read(e, views, e.arc);
   const laterEnvelope = {...e, checkedAt:new Date(Date.parse(e.checkedAt)+2000).toISOString()};
   const later = metadata.read(laterEnvelope, views, e.arc);
@@ -116,7 +116,7 @@ test('stable graph, formatted activities and effort survive heartbeat-only check
 
 test('completed lane fixture is ready between stages despite unfinished-unit status active', async () => {
   const f = await enrichedParityArc();
-  const e = new ObservationCache(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const e = new Observations(f.hostDir, 'i', 'r').read({ runDir: f.runDir, arc: arcId(f.d.arc) });
   const unit = e.data.display.status.units.find(u => u.unit === 'u1')!;
   assert.equal(unit.status, 'active'); assert.equal(unit.stage, 'lanes'); assert.equal(unit.state, 'ready'); assert.equal(unit.running, null);
   assert.equal(graphView(e).units.find(u => u.id === 'u1')!.signal, 'pending');

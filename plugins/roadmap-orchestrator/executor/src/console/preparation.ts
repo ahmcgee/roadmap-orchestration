@@ -5,9 +5,7 @@ import { ConsoleError } from '../observation/protocol.ts';
 // A first read answers within a quarter second, so cold work yields promptly. A poll carrying
 // its pending token is held until the read completes, for at most retryAfterMs, so a read that
 // misses the first window arrives as soon as it is ready rather than after a fixed second.
-// A browser read that races a writer (a ref update while the arc itself cannot change) is tried again for racePatienceMs,
-// inside its lifetime, before it reports the race.
-export const PREPARATION = { deadlineMs: 250, retryAfterMs: 1000, lifetimeMs: 30_000, graceMs: 1000, maxReads: 32, maxSubscribers: 128, racePatienceMs: 20_000 } as const;
+export const PREPARATION = { deadlineMs: 250, retryAfterMs: 1000, lifetimeMs: 30_000, graceMs: 1000, maxReads: 32, maxSubscribers: 128 } as const;
 type Read = { id: string; key: string; expires: number; subscribers: Set<string>; task: Promise<void>; result?: {value: unknown} | {error: unknown}; run: () => Promise<unknown> };
 type Subscriber = { read: Read; exposed: boolean; delivered: boolean; expires: number };
 export type Prepared = {state: 'preparing'; pending: string; retryAfterMs: number} | {state: 'ready'; value: unknown};

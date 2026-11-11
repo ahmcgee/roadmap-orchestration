@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { consoleFixture } from './fixtures/console.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { ConsoleActivity } from '../src/console/activity-query.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
@@ -16,7 +16,7 @@ test('Activity calendar navigation uses actual IANA day boundaries, including sh
  assert.deepEqual([...activityParams(new URLSearchParams('q=Build&cursor=opaque&view=events'))],[['q','Build'],['window','arc'],['zone','UTC']]);
 });
 test('Activity pages remain frozen through notices and cached Back; refresh and schema refusal are explicit',async()=>{
- const f=consoleFixture(),e=new ObservationCache(f.hostDir,'activity-client','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=consoleFixture(),e=new Observations(f.hostDir,'activity-client','repo').read({runDir:f.runDir,arc:f.arc});
  const notice=new ConsoleMetadata().read(e,new ConsoleViews(),e.arc),activity=new ConsoleActivity(),page=activity.page(e,{});let reads=0;
  const store=new ViewStore(e.arc,CONSOLE_PROTOCOL,async()=>{reads++;return {...e,data:page};});store.notice(notice);
  const path='activity?window=arc';await store.load(path);const before=store.entry(path).value;

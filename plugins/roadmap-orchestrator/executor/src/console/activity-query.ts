@@ -3,7 +3,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { COLLECTION_RETENTION } from './collection-pages.ts';
-import { ConsoleError, type Envelope } from '../observation/protocol.ts';
+import { ConsoleError, captureKey, type Envelope } from '../observation/protocol.ts';
 import { ACTIVITY_KINDS, type ActivityFacets, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
 import { activityRequest, buildActivityIndex, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
 import { versioned } from './views.ts';
@@ -138,7 +138,7 @@ export class ConsoleActivity {
     this.#indexes.set(key, {index, bytes: size, touched: Date.now()}); this.#bytes += size; this.#sweep();
     return index;
   }
-  #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.instance, e.repoId, e.arc, e.epoch, e.data.capture.source]));}
+  #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.repoId, captureKey(e)]));}
   #admit(e: Envelope, token: string, query: Query, anchor: boolean): {id: string; g: Generation; parsed: Token} {
     this.#sweep();
     let parsed: Token;

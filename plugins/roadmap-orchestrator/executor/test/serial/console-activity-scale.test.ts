@@ -5,7 +5,7 @@ import { generateScaleArc, ownScaleArc } from '../helpers/scale-arc.ts';
 import { tmpDir } from '../helpers/repo.ts';
 import { arcId } from '../../src/core/ids.ts';
 import { absPath } from '../../src/core/values.ts';
-import { ObservationCache } from '../../src/observation/cache.ts';
+import { Observations } from '../helpers/observations.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { ConsoleActivity } from '../../src/console/activity-query.ts';
 import { activityPage } from '../../src/console/activity-page.ts';
@@ -21,7 +21,7 @@ import type { ActivityView } from '../../src/console/activity-protocol.ts';
 test('300-unit seven-day typed Activity preserves six backend parks/closures, exhaustive keysets and decoded HTTP/detail budgets', {timeout: 90_000}, async t => {
   const generated = performance.now(), m = await generateScaleArc(tmpDir('console-activity-scale')), generationMs = performance.now() - generated;
   const release = await ownScaleArc(m); t.after(release);
-  const captureStart = performance.now(), e = new ObservationCache(absPath(m.hostDir), 'activity-scale', 'repo').read({runDir: absPath(m.runDir), arc: arcId(m.arc)}), captureMs = performance.now() - captureStart;
+  const captureStart = performance.now(), e = new Observations(absPath(m.hostDir), 'activity-scale', 'repo').read({runDir: absPath(m.runDir), arc: arcId(m.arc)}), captureMs = performance.now() - captureStart;
   assert.equal(e.data.display.status.units.length, 300); assert.equal(e.data.display.invocations.length, 1088); assert.equal(e.data.events.length, 7523); assert.equal(e.data.plan!.milestones!.length, 10);
   const a = new ConsoleActivity(), start = performance.now(), index = a.index(e), indexMs = performance.now() - start;
   assert.equal(index.holds.length, 6); assert.ok(index.holds.every(h => h.recordedClass === 'usage-limit' && h.closure?.kind === 'resumed'));

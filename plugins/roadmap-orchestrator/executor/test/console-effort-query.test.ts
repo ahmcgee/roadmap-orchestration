@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { investigationFixture } from './fixtures/console-investigations.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { ConsoleEffort } from '../src/console/effort-query.ts';
 import { effortShape } from '../src/console/view-shapes.ts';
 import { statusBytes, CONSOLE_PROTOCOL, ConsoleError, type Envelope } from '../src/observation/protocol.ts';
@@ -13,7 +13,7 @@ import { absPath } from '../src/core/values.ts';
 import { gitCommonDir } from '../src/git/git.ts';
 import { serveConsole } from '../src/console/http.ts';
 import { consoleGet } from './helpers/console-http.ts';
-const capture=(f:Awaited<ReturnType<typeof investigationFixture>>,cache=new ObservationCache(f.hostDir,'effort','repo'))=>cache.read({runDir:f.runDir,arc:f.arc});
+const capture=(f:Awaited<ReturnType<typeof investigationFixture>>,cache=new Observations(f.hostDir,'effort','repo'))=>cache.read({runDir:f.runDir,arc:f.arc});
 function noMonolith(v:unknown){if(!v||typeof v!=='object')return;for(const [k,value] of Object.entries(v)){assert.ok(!['events','display','body','report','raw','console','plan','transcript','capture'].includes(k),k);noMonolith(value);}}
 const row=(h:ReturnType<ConsoleEffort['read']>,id:string)=>h.rows.find(r=>r.subject.id===id)!;
 test('Effort reconciles once-counted completion totals, all-unit lifetime rankings, current blockers and separate coverage without canonical changes',async t=>{
@@ -64,7 +64,7 @@ test('Effort HTTP validates DTO/schema, strict queries and unchanged observer ad
  assert.equal((await consoleGet(base+'?epoch=foreign')).status,409);assert.equal((await consoleGet(base+'?minHighWater=99999999')).status,503);
 });
 test('Effort keysets retain full-population null-last ranking and original values/order/asOf across completions, with strict identity and query binding',async t=>{
- const f=await investigationFixture(65);t.after(()=>f.close());const cache=new ObservationCache(f.hostDir,'effort','repo'),e=capture(f,cache),tabs=new ConsoleEffort(),params={window:'arc',sort:'work',limit:'25'};
+ const f=await investigationFixture(65);t.after(()=>f.close());const cache=new Observations(f.hostDir,'effort','repo'),e=capture(f,cache),tabs=new ConsoleEffort(),params={window:'arc',sort:'work',limit:'25'};
  const first=tabs.read(e,params),all=[...first.rows];let page=first;while(page.page.next){page=tabs.read(e,{...params,cursor:page.page.next});all.push(...page.rows);}
  assert.equal(all.length,65);assert.equal(new Set(all.map(r=>r.id)).size,65);assert.equal(all[0]!.subject.id,tabs.read(e,{...params,limit:'100'}).rows[0]!.subject.id);
  const values=all.map(r=>r.agentMs===null&&r.commandMs===null?null:(r.agentMs??0)+(r.commandMs??0));assert.ok(values.every((v,n)=>!n||v===null||values[n-1]!==null&&values[n-1]!>=v));

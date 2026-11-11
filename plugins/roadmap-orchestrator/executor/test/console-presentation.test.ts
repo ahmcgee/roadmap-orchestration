@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { unitView } from '../src/console/details.ts';
 import type { UnitView } from '../src/console/detail-protocol.ts';
 import { graphView, shellView, arcBounds } from '../src/console/views.ts';
@@ -12,7 +12,7 @@ import { activityPage } from '../src/console/activity-page.ts';
 import { reasonWords } from '../src/console/vocabulary.ts';
 const detail=(e:ReturnType<typeof read>,id:string)=>unitView(e,id) as UnitView;
 import { investigationFixture } from './fixtures/console-investigations.ts';
-const read=(f:Awaited<ReturnType<typeof investigationFixture>>)=>new ObservationCache(f.hostDir,'presentation-test','reader').read({runDir:f.runDir,arc:f.arc});
+const read=(f:Awaited<ReturnType<typeof investigationFixture>>)=>new Observations(f.hostDir,'presentation-test','reader').read({runDir:f.runDir,arc:f.arc});
 test('recorded executor states become plain journeys, stage-local attempts, verdicts, spend and wait reasons',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());const e=read(f),shell=shellView(e),graph=graphView(e);
  assert.equal(shell.lifecycle.state,'running');assert.equal(graph.units.length,14);

@@ -30,7 +30,7 @@ import { setupCorpusArc } from './fixtures/corpus-unit.ts';
 import { commitAll, git, makeRepo, tmpDir, writeFiles } from './helpers/repo.ts';
 import { planDirOf } from './fixtures/route-common.ts';
 import { status } from '../src/status.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { graphView } from '../src/console/views.ts';
 import { milestoneView, unitView } from '../src/console/details.ts';
 import { type ArcDescriptor, type ArcRun, contextFor, setupArc } from './fixtures/unit-common.ts';
@@ -279,7 +279,7 @@ describe('milestones.membership (dev.59 scope item 3, C2, C4)', () => {
     editPlan(r.d, (p) => void (units(p).find((u) => u['id'] === 'u3')!['cut'] = { reason: 'carried forward fresh past the attempt caps' }));
     addUnit(r.d, 'u4', { carries: { unit: 'u3', tip } });
     accept(r);
-    const read = () => new ObservationCache(absPath(r.ctx.hostDir), 'milestones', 'reader').read({ runDir: absPath(r.ctx.runDir), arc: arcId(r.d.arc) });
+    const read = () => new Observations(absPath(r.ctx.hostDir), 'milestones', 'reader').read({ runDir: absPath(r.ctx.runDir), arc: arcId(r.d.arc) });
     let e = read(), graph = graphView(e);
     assert.deepEqual(graph.milestones.map((g) => [g.id, g.memberIds, g.total, g.merged, g.withdrawn]), [['MS-1', ['u2', 'u3', 'u4'], 1, 0, 2]], 'the re-entry and the carrier are members; the superseded and the cut one are withdrawn');
     assert.deepEqual(graph.noMilestone, { ids: ['u1'], total: 1, merged: 0, withdrawn: 0 }, 'neither the re-entry nor the carrier is in No milestone');

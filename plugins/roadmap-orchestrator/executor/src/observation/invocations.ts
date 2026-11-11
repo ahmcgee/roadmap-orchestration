@@ -45,6 +45,8 @@ export class InvocationTable {
   #ordinal = new Map<string, number>();
   #changed = new Set<string>();
   #sorted: Invocation[] | null = [];
+  /** How many rows the last refresh read from their records. */
+  lastReads = 0;
   /** Folds `events[from..]`: new spawn intents become open rows; a settlement marks its row for one final read. */
   extend(events: readonly Event[], from: number): void {
     for (let i = from; i < events.length; i++) {
@@ -68,11 +70,15 @@ export class InvocationTable {
    * every row whose relations changed. A settled row is built once, with its work metrics merged then. A read of an open row
    * that races its runner (`ENOENT`) keeps the row it had and tries again at the next refresh. Returns the changed rows.
    */
-  refresh(alive: boolean, work: ReadonlyMap<string, WorkRun>, relations: RelationMap | null, readers: Readonly<{ models: ModelReader; logs: TranscriptReader }>): readonly Invocation[] {
+  refresh(alive: boolean, work: ReadonlyMap<string, WorkRun>, relations: RelationMap | null, readers: Readonly<{ models: ModelReader; logs: TranscriptReader }>, onProgress?: (done: number, of: number) => void): readonly Invocation[] {
     const changed: Invocation[] = [];
+    let due = 0;
+    for (const slot of this.#slots.values()) if (slot.due) due++;
+    this.lastReads = 0;
     for (const [id, slot] of this.#slots) {
       let dirty = false;
       if (slot.due) {
+        if (++this.lastReads % 500 === 0) onProgress?.(this.lastReads, due);
         // An open invocation's records are read past the memo: its runner is still writing them, and a rewrite must show.
         try { slot.base = slot.terminal === null ? withoutRecordMemo(() => readRow(slot, alive, readers)) : readRow(slot, alive, readers); }
         catch (error) {

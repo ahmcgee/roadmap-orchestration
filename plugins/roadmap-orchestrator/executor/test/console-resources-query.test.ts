@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { investigationFixture } from './fixtures/console-investigations.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { ConsoleResources } from '../src/console/resource-query.ts';
 import { resourcesShape, resourceDetailShape } from '../src/console/view-shapes.ts';
 import { canonicalJson } from '../src/core/json.ts';
@@ -14,7 +14,7 @@ import { serveConsole } from '../src/console/http.ts';
 import { consoleGet } from './helpers/console-http.ts';
 import { unitId, opKey, resourceUnit, arcId, jobId, findingId } from '../src/core/ids.ts';
 import type { ResourceCpu, ResourceWait, ResourceBooking, ResourceView } from '../src/console/resource-protocol.ts';
-const capture=(f:Awaited<ReturnType<typeof investigationFixture>>,cache=new ObservationCache(f.hostDir,'resource','repo'))=>cache.read({runDir:f.runDir,arc:f.arc});
+const capture=(f:Awaited<ReturnType<typeof investigationFixture>>,cache=new Observations(f.hostDir,'resource','repo'))=>cache.read({runDir:f.runDir,arc:f.arc});
 function noMonolith(v:unknown){if(!v||typeof v!=='object')return;for(const [k,value] of Object.entries(v)){assert.ok(!['events','display','body','report','raw','console','plan','transcript','capture'].includes(k),k);noMonolith(value);}}
 test('Resources sections preserve canonical holders, scheduler order, weighted CPU, exact wait contributions and separate unknown coverage',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());const e=capture(f),before=[statusBytes(e,false),statusBytes(e,true)],tabs=new ConsoleResources();
@@ -56,7 +56,7 @@ test('Schedule lanes keep pool instance identity, count crowded lanes in cluster
 });
 test('Resources immutable pages preserve original CPU evidence and wait/booking order through append, bind identity/query and explicitly evict',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());for(let n=0;n<62;n++)f.journal.fact({kind:'stage-admitted',unit:unitId('u7'),stage:'build',waited:{totalMs:n,byReasonMs:{'cpu-tokens':n}}});
- const cache=new ObservationCache(f.hostDir,'resource','repo'),e=capture(f,cache),tabs=new ConsoleResources(),params={section:'waiting',window:'arc',limit:'25',sort:'duration',direction:'desc'},first=tabs.read(e,params);assert.equal(first.rows.length,25);const all=[...first.rows];let page=first;while(page.page.next){page=tabs.read(e,{...params,cursor:page.page.next});all.push(...page.rows);}assert.equal(new Set(all.map(r=>r.id)).size,all.length);assert.equal(all.length,first.page.matching);
+ const cache=new Observations(f.hostDir,'resource','repo'),e=capture(f,cache),tabs=new ConsoleResources(),params={section:'waiting',window:'arc',limit:'25',sort:'duration',direction:'desc'},first=tabs.read(e,params);assert.equal(first.rows.length,25);const all=[...first.rows];let page=first;while(page.page.next){page=tabs.read(e,{...params,cursor:page.page.next});all.push(...page.rows);}assert.equal(new Set(all.map(r=>r.id)).size,all.length);assert.equal(all.length,first.page.matching);
  const reason=first.overview.reasons.find(r=>r.reason==='cpu-tokens')!,d=tabs.detail(e,reason.detailKey,{...params,limit:'25'});assert.equal(d.rows.length,25);let detail=d;const contributions=[...d.rows];while(detail.page.next){detail=tabs.detail(e,reason.detailKey,{...params,cursor:detail.page.next});contributions.push(...detail.rows);}assert.equal(contributions.length,reason.count);
  f.finishLive();const newer=capture(f,cache);const second=tabs.read(newer,{...params,cursor:first.page.next!});assert.deepEqual(second.page.asOf,first.page.asOf);assert.deepEqual(tabs.read(newer,{...params,cursor:second.page.previous!}).rows,first.rows);
  assert.deepEqual(tabs.detail(newer,reason.detailKey,{...params,cursor:d.page.next!}).page.asOf,d.page.asOf);

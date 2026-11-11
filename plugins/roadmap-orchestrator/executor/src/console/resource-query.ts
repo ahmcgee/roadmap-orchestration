@@ -1,5 +1,5 @@
 // Independent resource queries over one authoritative capture. No model/report/transcript reads.
-import { ConsoleError, type Envelope } from '../observation/protocol.ts';
+import { ConsoleError, captureKey, type Envelope } from '../observation/protocol.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { invocationDirName, invocationIdOf } from '../core/ids.ts';
 import { ADMISSION_HOLDS } from '../core/waiting.ts';
@@ -95,7 +95,7 @@ export class ConsoleResources {
     const arcHolds=f.section==='schedule'?backendHolds(e.data.events,e.epoch):[],holds=f.section==='schedule'?arcHolds.filter(h=>intersects(h.startedAt,h.endedAt??h.terminalAt,scope.from,scope.to,bounds.terminalAt??e.checkedAt)):null;
     const overview={backendHolds:holds?{rows:holds.slice(0,25),matching:holds.length}:null,resourceCount:resourceIds.filter(r=>r!=='@cpu').length,arc:f.section==='schedule'?arcOverview(bounds,matchingBookings.map(b=>b.startedAt),arcHolds):null,lanes:f.section==='schedule'?{rows:lanes.slice(0,24),matching:lanes.length}:null,reasons:f.section==='waiting'?reasonRows.slice(0,25):[],reasonCount:f.section==='waiting'?reasonRows.length:0,totalWaitingMs:f.section==='waiting'&&measurements.length?measurements.reduce((n,w)=>n+w.totalMs,0):null,unallocatedMs:f.section==='waiting'&&measurements.length?measurements.reduce((n,w)=>n+w.unallocatedMs,0):null};
     const rows:ResourceView['rows']=f.section==='schedule'?bookings:f.section==='cpu'?groups:f.section==='waiting'?measurements:nowRows;
-    const context={...versioned({section:f.section,filters:f,facets,bounds,now,counts,coverage,overview},f.section==='now'?{basis:'current' as const,from:null,to:null}:scope),viewVersion:sourceVersion??sha256Hex(canonicalJson([e.data.capture.source,'resources']))};
+    const context={...versioned({section:f.section,filters:f,facets,bounds,now,counts,coverage,overview},f.section==='now'?{basis:'current' as const,from:null,to:null}:scope),viewVersion:sourceVersion??sha256Hex(canonicalJson([captureKey(e),'resources']))};
     return {rows,context,allBookings,allCalls,groups,measurements,reasonRows,subject,resources};
   }
   content(e:Envelope,id:string,params:Record<string,string>) {

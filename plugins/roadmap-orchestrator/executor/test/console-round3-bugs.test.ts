@@ -7,7 +7,7 @@ import { SseWriter } from '../src/console/sse.ts';
 import { HistoryTail } from '../src/tui/history.ts';
 import { serveConsole } from '../src/console/http.ts';
 import { arcBounds } from '../src/console/views.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { absPath } from '../src/core/values.ts';
 import { arcId } from '../src/core/ids.ts';
 import { gitCommonDir } from '../src/git/git.ts';
@@ -36,7 +36,7 @@ test('B1 a finished hundreds-of-KB transcript yields small notices and a readabl
  assert.equal(page.data.state,'success');assert.ok(page.data.events.some(e=>e.text?.includes('Verified the change')));c.abort();
 });
 test('B3 completed run resource axis stays at its recorded end across later observations',()=>{
- const f=parityArc();const e=new ObservationCache(f.hostDir,'i','r').read({runDir:f.runDir,arc:arcId(f.d.arc)});
+ const f=parityArc();const e=new Observations(f.hostDir,'i','r').read({runDir:f.runDir,arc:arcId(f.d.arc)});
  const at=new Date(Date.parse(e.data.events[0]!.at)+120000).toISOString();
  const done={...e.data.events.at(-1)!,type:'fact',at,fact:{kind:'arc-completed'}} as unknown as typeof e.data.events[number];
  const bounds=arcBounds({...e,checkedAt:new Date(Date.parse(at)+7*3600000).toISOString(),data:{...e.data,events:[...e.data.events,done]}});

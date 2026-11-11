@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { statusBytes, ConsoleError, type Envelope } from '../src/observation/protocol.ts';
 import { ConsoleTemporal } from '../src/console/temporal-query.ts';
 import { ConsoleActivity } from '../src/console/activity-query.ts';
@@ -16,7 +16,7 @@ import { gitCommonDir } from '../src/git/git.ts';
 import { serveConsole } from '../src/console/http.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { consoleGet } from './helpers/console-http.ts';
-const capture=(f:Awaited<ReturnType<typeof investigationFixture>>)=>new ObservationCache(f.hostDir,'temporal','repo').read({runDir:f.runDir,arc:f.arc});
+const capture=(f:Awaited<ReturnType<typeof investigationFixture>>)=>new Observations(f.hostDir,'temporal','repo').read({runDir:f.runDir,arc:f.arc});
 function noMonolith(value:unknown){if(!value||typeof value!=='object')return;for(const [key,v] of Object.entries(value)){assert.ok(!['events','display','plan','body','report','raw','capture','transcript','console'].includes(key),key);noMonolith(v);}}
 
 test('Timeline independent tracks and exact intervals reconcile at their captured window; Holistic sections retain evidence',async t=>{

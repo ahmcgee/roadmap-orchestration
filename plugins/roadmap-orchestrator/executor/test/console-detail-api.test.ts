@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { investigationFixture } from './fixtures/console-investigations.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { unitView, milestoneView, invocationView, invocationSummaries } from '../src/console/details.ts';
 import { selectedUnitJourney } from '../src/console/unit-journey.ts';
 import { projectionIndex } from '../src/console/tab-projections.ts';
@@ -22,7 +22,7 @@ import { consoleGet } from './helpers/console-http.ts';
 function noWorkingSet(value:unknown){if(value&&typeof value==='object')for(const [key,child] of Object.entries(value)){assert.ok(!['events','body','plan','display','estate','raw','report'].includes(key),key);noWorkingSet(child);}}
 test('selected unit, milestone and invocation preserve detail meaning without canonical working sets',async t=>{
  const f=await investigationFixture(60);t.after(()=>f.close());
- const e=new ObservationCache(f.hostDir,'detail','repo').read({runDir:f.runDir,arc:f.arc}),before=statusBytes(e,false);
+ const e=new Observations(f.hostDir,'detail','repo').read({runDir:f.runDir,arc:f.arc}),before=statusBytes(e,false);
  for(const runtime of e.data.display.status.units){
   const original=selectedUnitJourney(e,runtime.unit,new Set((projectionIndex(e).stages.byUnit.get(runtime.unit)??[]).slice(0,25).map(s=>s.id)));
   const detail=unitView(e,original.id,{}) as any;assert.ok(unitShape(detail));noWorkingSet(detail);
@@ -36,7 +36,7 @@ test('selected unit, milestone and invocation preserve detail meaning without ca
  assert.equal(statusBytes(e,false),before);assert.throws(()=>unitView(e,'foreign',{}),/applied plan/);assert.throws(()=>invocationView(e,'999999-1'),/not recorded/);
 });
 test('selected detail paging binds the capture, entity and section; field continuation reconstructs exact text',async t=>{
- const f=await investigationFixture(60);t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'detail-pages','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=await investigationFixture(60);t.after(()=>f.close());const e=new Observations(f.hostDir,'detail-pages','repo').read({runDir:f.runDir,arc:f.arc});
  // A long recorded specification field and acceptance list exercise explicit continuation.
  const copy=structuredClone(e),entry=copy.data.display.estate.find(x=>x.kind==='specification'&&x.id==='u1')!,body=JSON.parse(entry.body),intent='# Recorded intent\n'+('Native retained instructions. '.repeat(1000));
  body.intent=intent;body.acceptance=Array.from({length:77},(_,i)=>({clause:`Recorded acceptance ${i}`}));entry.body=JSON.stringify(body);
@@ -47,8 +47,8 @@ test('selected detail paging binds the capture, entity and section; field contin
  assert.throws(()=>unitView(copy,'u2',{section:'acceptance',cursor}),/foreign/);
  assert.throws(()=>unitView(copy,'u1',{section:'waiting',cursor}),/foreign/);
  assert.throws(()=>unitView(copy,'u1',{section:'acceptance',cursor:cursor+'x'}),/invalid/);
- assert.throws(()=>unitView({...copy,data:{...copy.data,capture:{...copy.data.capture,source:'changed'}}},'u1',{section:'acceptance',cursor}),/changed/);
- const appended={...copy,highWater:copy.highWater+1,data:{...copy.data,capture:{...copy.data.capture,source:'unrelated-append'}}};
+ assert.throws(()=>unitView({...copy,data:{...copy.data,capture:{...copy.data.capture,materializations:copy.data.capture.materializations+1}}},'u1',{section:'acceptance',cursor}),/changed/);
+ const appended={...copy,highWater:copy.highWater+1,data:{...copy.data,capture:{...copy.data.capture,materializations:copy.data.capture.materializations+2}}};
  const anchored=unitView(appended,'u1',{section:'acceptance',cursor}) as any;assert.deepEqual(anchored.acceptance.rows,body.acceptance.slice(25,50).map((a:any)=>a.clause));assert.equal(anchored.acceptance.asOf.highWater,copy.highWater);
  assert.throws(()=>unitView({...copy,epoch:'replacement'},'u1',{section:'acceptance',cursor}),/foreign/);
  while(cursor){const next=unitView(copy,'u1',{section:'acceptance',cursor}) as any;all.push(...next.acceptance.rows);cursor=next.acceptance.next;}
@@ -67,7 +67,7 @@ test('selected HTTP endpoints retain admission, HEAD, security and route/query r
 });
 
 test('adversarial selected fields and nested lists obey hard byte ceilings and reconstruct exactly',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'detail-hard-bytes','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'detail-hard-bytes','repo').read({runDir:f.runDir,arc:f.arc});
  const original=unitView(e,'u7',{}) as any;
  const text='Recorded \"\n𝄞界'.repeat(1500);
  original.unit.title=text;original.acceptance.rows=Array.from({length:25},()=>text);original.acceptance.total=25;
@@ -96,7 +96,7 @@ test('adversarial selected fields and nested lists obey hard byte ceilings and r
  t.diagnostic(JSON.stringify({fieldReads:count,largestUnitFieldBytes:maximum,invocationBytes:Buffer.byteLength(JSON.stringify({...e,data:small})+'\n')}));
 });
 test('selected metadata records lineage, blockers, coverage and evidence availability; corruption never becomes absence',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'detail-metadata','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'detail-metadata','repo').read({runDir:f.runDir,arc:f.arc});
  const reentry=unitView(e,'u14',{}) as any;assert.deepEqual(reentry.unit.lineage,e.data.display.status.units.find(u=>u.unit==='u14')!.lineage);
  assert.equal((unitView(e,'u12',{}) as any).supersededBy,'u14');
  const blocked=unitView(e,'u11',{}) as any;assert.equal(blocked.currentBlockers.pressureBlocked,true);assert.equal(blocked.currentBlockers.resources.cpu,4);
@@ -109,7 +109,7 @@ test('selected metadata records lineage, blockers, coverage and evidence availab
  writeFileSync(result,'{}');assert.throws(()=>invocationView(e,f.finished.routeId));unlinkSync(result);symlinkSync('/etc/passwd',result);assert.throws(()=>invocationView(e,f.finished.routeId),/symlink|escapes/);
 });
 test('bounded collection generations expire explicitly and preserve frozen order through selected appends',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'detail-generations','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'detail-generations','repo').read({runDir:f.runDir,arc:f.arc});
  const entry=e.data.display.estate.find(x=>x.kind==='specification'&&x.id==='u1')!,spec=JSON.parse(entry.body);spec.acceptance=Array.from({length:80},(_,n)=>({clause:`recorded ${n}`}));entry.body=JSON.stringify(spec);
  const first=unitView(e,'u1',{}) as any,cursor=first.acceptance.next;
  spec.acceptance.unshift({clause:'new selected row'});entry.body=JSON.stringify(spec);
@@ -120,7 +120,7 @@ test('bounded collection generations expire explicitly and preserve frozen order
 });
 
 test('fields larger than the retention budget expand from verified sources with fingerprints and frozen order',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'detail-oversize','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'detail-oversize','repo').read({runDir:f.runDir,arc:f.arc});
  const entry=e.data.display.estate.find(x=>x.kind==='specification'&&x.id==='u1')!,spec=JSON.parse(entry.body),large='Recorded oversized clause. '.repeat(700000);
  spec.acceptance=Array.from({length:40},(_,n)=>({id:`A${n+1}`,clause:n===0?large:`Recorded clause ${n+1}`,failLoudIfUndelivered:true,state:'active'}));entry.body=JSON.stringify(spec);
  const first=unitView(e,'u1',{}) as any;assert.ok(unitShape(first));assert.ok(Buffer.byteLength(JSON.stringify({...e,data:first})+'\n')<=64*1024);
@@ -133,7 +133,7 @@ test('fields larger than the retention budget expand from verified sources with 
 });
 
 test('appended bounded pages rebase nested list and text continuations without overwriting earlier evidence',async t=>{
- const f=await investigationFixture();t.after(()=>f.close());const e=new ObservationCache(f.hostDir,'detail-merge','repo').read({runDir:f.runDir,arc:f.arc});
+ const f=await investigationFixture();t.after(()=>f.close());const e=new Observations(f.hostDir,'detail-merge','repo').read({runDir:f.runDir,arc:f.arc});
  const base=unitView(e,'u1',{}) as any,large='Exact Unicode 𝄞 evidence. '.repeat(400);
  const next=structuredClone(base);next.acceptance.rows=Array.from({length:100},(_,n)=>`${n} ${large}`);next.acceptance.total=101;
  const page=boundDetail(e,'unit:u1',next,64*1024) as any;

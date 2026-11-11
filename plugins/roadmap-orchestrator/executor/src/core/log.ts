@@ -132,6 +132,8 @@ export class ObserverJournal {
   #generation = 0;
   /** Cursor identity changes on replacement, truncation, anchor reset or failed verification. */
   get cursor() { return { generation: this.#generation, identity: this.#identity, offset: this.#offset, size: this.#size }; }
+  /** How many events the cursor holds. */
+  get events(): number { return this.#events.length; }
   #size = 0;
   #mtime = 0;
   #anchor = Buffer.alloc(0);

@@ -1,6 +1,6 @@
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import type { Event } from '../core/events.ts';
-import type { Envelope } from '../observation/protocol.ts';
+import { captureKey, type Envelope } from '../observation/protocol.ts';
 import { identityIndex, stageIndex } from './indexes.ts';
 import { CONSOLE_UI_SCHEMA, type ViewVersions, type Metadata } from './view-protocol.ts';
 import type { ConsoleViews } from './views.ts';
@@ -11,7 +11,7 @@ const hash = (value: unknown) => sha256Hex(canonicalJson(value));
 export class ConsoleMetadata {
   #entries = new Map<string, {versions: ViewVersions; identities: ReturnType<typeof identityIndex>; stages: ReturnType<typeof stageIndex>}>();
   read(e: Envelope, views: ConsoleViews, selected: string | null): Metadata {
-    const key = `${e.instance}:${e.arc}:${e.epoch}:${e.data.capture.source}`;
+    const key = captureKey(e);
     let entry = this.#entries.get(key);
     if (!entry) {
       const s = e.data.display.status;

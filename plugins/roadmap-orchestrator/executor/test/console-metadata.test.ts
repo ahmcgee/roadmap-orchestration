@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { consoleFixture } from './fixtures/console.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
 import { ConsoleViews } from '../src/console/views.ts';
-import { ObservationCache } from '../src/observation/cache.ts';
+import { Observations } from './helpers/observations.ts';
 import { CONSOLE_PROTOCOL, type Envelope } from '../src/observation/protocol.ts';
 import { serveConsole } from '../src/console/http.ts';
 import type { Metadata } from '../src/console/view-protocol.ts';
@@ -16,14 +16,15 @@ function firstNotice(reader: ReadableStreamDefaultReader<Uint8Array>) {
   return (async () => { let body = ''; for (;;) { const {value,done} = await reader.read(); if (done) throw new Error('stream ended before metadata'); body += new TextDecoder().decode(value); const frame = body.split('\n\n')[0]!; if (body.includes('\n\n')) return {body:frame, value:JSON.parse(frame.split('\n').find(l=>l.startsWith('data: '))!.slice(6)) as Metadata}; } })();
 }
 test('metadata hashes exclude verification clocks and invalidate independent semantic dependencies', () => {
-  const f = consoleFixture(), cache = new ObservationCache(f.hostDir,'metadata','reader'), views = new ConsoleViews(), metadata = new ConsoleMetadata();
+  const f = consoleFixture(), cache = new Observations(f.hostDir,'metadata','reader'), views = new ConsoleViews(), metadata = new ConsoleMetadata();
   const read = () => cache.read({runDir:f.runDir,arc:f.arc});
   const e = read(), a = metadata.read(e,views,f.arc);
   assert.equal(a.viewVersions.shell,views.shell(e).viewVersion); assert.equal(a.viewVersions.graph,views.graph(e).viewVersion);
   assert.equal('data' in a,false); assert.ok(Buffer.byteLength(JSON.stringify(a))<4096);
   const now = new Date().toISOString(); writeFileSync(join(f.runDir,'heartbeat.json'),JSON.stringify({v:2,generation:1,at:now}));
   const heartbeat = metadata.read(read(),views,f.arc); assert.deepEqual(heartbeat.viewVersions,a.viewVersions);
-  const changed = (patch: Partial<Envelope['data']>): Envelope => ({...e,data:{...e.data,...patch,capture:{...e.data.capture,source:e.data.capture.source+JSON.stringify(patch)}}});
+  let captures = e.data.capture.materializations;
+  const changed = (patch: Partial<Envelope['data']>): Envelope => ({...e,data:{...e.data,...patch,capture:{...e.data.capture,materializations:++captures}}});
   const request = e.data.requests[0]; assert.ok(request);
   const requests = metadata.read(changed({requests:[{...request,summary:request.summary+' updated'}]}),views,f.arc);
   assert.notEqual(requests.viewVersions.attention,a.viewVersions.attention);
