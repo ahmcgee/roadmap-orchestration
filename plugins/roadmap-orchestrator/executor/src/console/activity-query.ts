@@ -106,6 +106,10 @@ function bounded<T>(e: Envelope, data: T, ceiling: number): T {
   return data;
 }
 export class ConsoleActivity {
+  /** What an index is built from: by default its capture; the serve worker passes the Activity view version, so a capture
+   * that changed nothing Activity shows (a schedule rewrite, a moved ref) reuses the index. */
+  readonly #version: (e: Envelope) => string;
+  constructor(version: (e: Envelope) => string = captureKey) { this.#version = version; }
   #secret = randomBytes(32);
   #indexes = new Map<string, StoredIndex>();
   #queries = new Map<string, Generation>();
@@ -145,7 +149,7 @@ export class ConsoleActivity {
     this.#sweep();
     return index;
   }
-  #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.repoId, captureKey(e)]));}
+  #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.instance, e.repoId, e.arc, this.#version(e)]));}
   #admit(e: Envelope, token: string, query: Query, anchor: boolean): {id: string; g: Generation; parsed: Token} {
     this.#sweep();
     let parsed: Token;

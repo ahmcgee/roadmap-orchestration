@@ -171,7 +171,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
     const { port1, port2 } = new MessageChannel();
     const worker = new Worker(new URL('./collector.ts', import.meta.url), { workerData: { run, hostDir: args.hostDir, common: args.common, port: port1 }, transferList: [port1],
       resourceLimits: { maxOldGenerationSizeMb: limits.collector(run) } });
-    const c: Collector = { worker, run, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: 0 };
+    const c: Collector = { worker, run, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: Date.now() };
     collectors.set(arc, c);
     serve.postMessage({ kind: 'collector', arc, port: port2 } satisfies ToServe, [port2]);
     worker.on('message', (m: CollectorReport) => {
@@ -209,7 +209,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
       const now = Date.now();
       c.size = st.size;
       if (!c.observed) {
-        if (now - c.readingSaidAt >= LAG.readingMs && now - c.phaseAt >= LAG.readingMs) {
+        if (now - c.readingSaidAt >= LAG.readingMs) {
           c.readingSaidAt = now;
           log(`console is reading arc ${arc}: ${c.phase} ${c.of > 0 ? Math.round(100 * c.done / c.of) : 0}%`);
         }

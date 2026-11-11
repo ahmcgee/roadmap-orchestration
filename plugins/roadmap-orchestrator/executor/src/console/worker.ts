@@ -47,7 +47,8 @@ const subscribed = new Map<string, number>();
 let selected: ArcId | null = null;
 const views = new ConsoleViews();
 const metadata = new ConsoleMetadata();
-const activity = new ConsoleActivity();
+// The Activity index is a function of what the Activity view version hashes, and the milestones' members.
+const activity = new ConsoleActivity((e) => sha256Hex(canonicalJson([notice(e).viewVersions.activity, e.data.display.status.milestones.map((m) => [m.id, m.members])])));
 const temporal = new ConsoleTemporal();
 const effort = new ConsoleEffort(temporal.pages);
 const resources = new ConsoleResources(temporal.pages);
