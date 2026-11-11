@@ -26,6 +26,14 @@ test('snapshot sharing verifies exact bytes, keeps stale prefixes, and expires a
     assert.equal(check.events[0], live.events[0], 'equal verified bytes reuse the parsed event');
     assert.equal(verifySnapshot(repo, commit), check, 'the resolved immutable commit verifies once');
   });
+  // A live log holding exactly the snapshot's high-water: its last hash binds the blob's last line.
+  const exact = readJournal(runDir, ARC, 1);
+  assert.equal(exact.events.length, 1);
+  withSnapshotReads(exact, () => {
+    const check = verifySnapshot(repo, commit);
+    assert.ok(check.kind === 'verified');
+    assert.equal(check.events[0], exact.events[0], 'the hash chain stands for the bytes');
+  });
   // Another canonical, valid log of the same arc and high-water is not evidence for this snapshot's bytes.
   writeFileSync(join(runDir, 'events.jsonl'), serializeEvent({ ...live.events[0]!, at: '2026-01-01T00:00:00.000Z' as never }));
   const changed = readJournal(runDir, ARC);

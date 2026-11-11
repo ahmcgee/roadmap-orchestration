@@ -109,7 +109,7 @@ import { ignoredWrites,planIgnored } from '../git/ignored.ts';
 import { type ReuseKey,inputShaOf,treeOfCommit } from '../git/reusekey.ts';
 import { candidateLaneDir,jobEvidenceRoot,jobLaneDir,witnessDir } from '../git/snapshot.ts';
 import { type WorktreeCreateRequest,WorktreeRecoveryError,permissionResidue,removedSince,standing } from '../git/worktree.ts';
-import { type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
+import { type Observation,type ObservationStore,type WitnessedEntry,observationOf,observationStore,reuse,verdictOf } from '../holistic/observe.ts';
 import { type ArcLaneDef,type ObligationDef,type Obligations,type WitnessRecord,isExempt,laneRevOf } from '../holistic/types.ts';
 import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,envIdOf,hostIdentity,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
 import { PRESSURE_SATURATED } from '../host/pressure.ts';
@@ -1591,16 +1591,25 @@ export const witnessRecordPath = (runDir: AbsPath, fact: Parameters<typeof witne
 
 type WitnessedView = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>;
 
+/**
+ * The observation of one `witnessed` fact (src/holistic/observe.ts `observationOf`): null at once for a mutant run, without
+ * reading its file. A long-lived observer remembers the verified, parsed observation, never the file's text.
+ */
+export function readObservation(runDir: AbsPath, entry: WitnessedEntry): Observation | null {
+  if (entry.purpose !== 'witness') return null;
+  const path = witnessRecordPath(runDir, entry);
+  return writeOnce(`witness-observation/${entry.seq}`, path, () => observationOf(entry, existsSync(path) ? readFileSync(path, 'utf8') : null));
+}
+
 /** The observations of `witnessed` facts, the latest per key (src/holistic/observe.ts). */
 function storeOf(ctx: WitnessedView, witnessed: readonly WitnessedEntry[]): ObservationStore {
   return observationStore(witnessed.flatMap((w) => {
-    const path = witnessRecordPath(ctx.runDir, w);
-    const o = observationOf(w, writeOnce('witness-text', path, () => existsSync(path) ? readFileSync(path, 'utf8') : null));
+    const o = readObservation(ctx.runDir, w);
     return o === null ? [] : [o];
   }));
 }
 
-// A synchronous projection shares verified witness bytes with the completion reader. Never retained across calls.
+// A synchronous projection shares one observation store with the completion reader. Never retained across calls.
 let observationReads: Map<JournalView, ObservationStore> | null = null;
 export function withObservationReads<T>(read: () => T): T {
   if (observationReads !== null) return read();

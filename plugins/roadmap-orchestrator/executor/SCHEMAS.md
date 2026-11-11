@@ -316,8 +316,10 @@ diff's rule), resolved against the lane's `cwd`, is a test path anywhere in the 
 layers) and with or without `testPaths`; a word naming another file (an extension, no glob: a wrapper script) is none. So once
 the argv lists test files, the witness file must be listed (or under a listed directory or glob); with no test path in the
 argv, `testPaths` alone decides. dev.59 pass 7 (nu-119813, C-351): a spec witness item declares no files; its file is
-its `testId`'s first segment before ` > `, resolved against its lane's `cwd`, when that segment is a test file name (by the
-same rule; otherwise nothing is derived and the item is not checked). The same check refuses it as
+its `testId`'s first segment before ` > `, when that segment is a test file name (by the
+same rule; otherwise nothing is derived and the item is not checked). dev.64: the segment is read both from the repo root and
+from the lane's `cwd`, since the lane's reporter decides which it writes and the lanes stage matches the id exactly; the item
+is in its lane when either reading is. The same check refuses it as
 `spec-witness-not-in-lane{unit,item,lane,file,missing:'test-paths'|'argv'}` at a fresh start and at every revision (`REVISION`),
 and parks it uncharged at the lanes witness diagnosis (`plan-defect`). A revision adopts such a defect in force while the
 item and its lane are unchanged, and is refused for it when it adds or changes either; a restart adopts it. A witness the
@@ -1243,7 +1245,14 @@ record captures and publishes the change; moved output re-reads the open rows at
 step publishes a check. Only ObserverJournal.read verifies journal prefixes, retaining incomplete tails without repair;
 inode/truncation/anchor resets change epoch. A capture folds only appended events, reads open invocations' rows and newly
 settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
-memory (src/observation/memo.ts); a ref lookup is asked once per capture. A capture is published as of the sample taken
+memory (src/observation/memo.ts); a ref lookup is asked once per capture. What it remembers is bounded by bytes, not by
+the arc: git answers 64 MiB and records 128 MiB (a witness record as its parsed observation, never its text), least
+recently used first, neither keeping one entry over an eighth of its bound, and no record the capture under way used is
+dropped for another (a capture reading more than the bound keeps a stable set and reads only the rest again); parsed
+inputs only while captures ask for them, dropped when a record the memo had read is found rewritten; tree listings 200,000
+entries, read by the last-observation walk tree by tree in chunks that fit, and only for trees whose lane inputs are not
+yet known; and a snapshot ref only as its digest (commit, chain link, completed head), verified once per commit and kept
+while captures ask for it. A capture is published as of the sample taken
 before it read anything: every record it read is complete and at least that new, and whatever changed meanwhile is the
 next step's capture. A capture that races a writer (`ENOENT`) publishes nothing, keeps its cursor and rows, and is retried
 at the next step; five in a row are logged once. Any other failure is published, answers that arc's reads, and stands
@@ -1265,9 +1274,21 @@ past what was published, or nothing was checked for three seconds, for five seco
 published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; last capture <ms> ms (<events> events,
 <reads> record reads, <git> git)`, and when it catches up: `console caught up with arc <arc> after <t>s behind`; a cold
 read says how far it got every ten seconds (`console is reading arc <arc>: <phase> <percent>%`). Workers run with heap
-limits (a collector 256 MB plus three times its journal; the serve worker 128 MB plus two and a half times the maintained
-journals, and 64 MB for their growth; more maintained journals restart it); one that exits is logged with its reason and
-restarted after 5, 30, then 60 s, and its arc's reads answer unavailable with that reason meanwhile.
+limits that are runaway guards a healthy arc never reaches, not budgets: three times a measured need plus 512 MB (a
+collector needs 384 MB plus three times its journal; the serve worker 256 MB plus three times the maintained journals, and
+is sized 64 MB over for their growth; a maintained set past its limit restarts it). A collector, which
+nothing waits on, collects its captures' garbage itself once its used heap is 192 MB over what its last collection left
+(the console process runs with `--expose-gc`): left to V8 under a guard-sized limit it runs to three times what it holds.
+Each worker reports its heap (used,
+limit, external) with what it holds at its first observation, every ten minutes, and once each time its used heap passes
+80% of its limit; the HTTP thread logs one line per report (`console collector for arc <arc>: heap <used> of <limit> MB
+(external <n> MB); events …, rows …, open …; records … (<n> MB, <n> evicted, <n> not kept), git … (<n> MB), stamps …, parsed …; …;
+process RSS <n> MB`, the same shape for `console serve worker:`, ` NEAR ITS LIMIT` on the 80% report). One that exits is
+logged with its reason (out of memory: its limit, its last report or `no report yet`, and a collector's phase) and
+restarted after 5, 30, then 60 s, and its arc's reads answer unavailable with that reason meanwhile. A worker out of
+memory three times in a row (a collector before it publishes a capture, the serve worker before its first observation) is
+not restarted: the log says so, and every read of that arc (every read, for the serve worker) answers unavailable saying
+the console stopped after running out of memory at that limit, until the console is restarted.
 
 An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
 Protocol is the exact executor package version. HighWater is the verified event prefix; revision also changes

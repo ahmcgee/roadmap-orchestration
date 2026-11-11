@@ -17,7 +17,7 @@ import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE, readJournal } from './core/log.ts';
 import { type RevisionManifest } from './core/records.ts';
 import { Fold } from './core/state.ts';
-import { type AbsPath, absPath } from './core/values.ts';
+import { type AbsPath, type BranchName, absPath } from './core/values.ts';
 import { git, gitCommonDir, refTarget } from './git/git.ts';
 import { SNAPSHOT_MANIFEST, snapshotRef, verifySnapshot } from './git/snapshot.ts';
 import { PHASE0_INPUT, PLAN_INPUT, REVISION_INPUT, planInForce } from './input/inforce.ts';
@@ -30,6 +30,7 @@ import { durableRename } from './core/fsx.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { runDir } from './input/cli.ts';
 import { DEMO_REF } from './demo/records.ts';
+import { objectOnce } from './observation/memo.ts';
 
 /** A snapshot ref that exists but does not verify, or holds another arc: loud, never a row. */
 export class ArcRefError extends Error {
@@ -63,9 +64,12 @@ export function withArcRefReads<T>(read: () => T): T {
 
 /** The arc's verified ref, or null when it has none. */
 export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
-  const ref = snapshotRef(arc);
-  const commit = refTarget(repo, ref);
-  if (commit === null) return null;
+  const commit = refTarget(repo, snapshotRef(arc));
+  return commit === null ? null : arcRefAt(repo, arc, commit);
+}
+
+/** The arc's ref at `commit`, verified. */
+function arcRefAt(repo: AbsPath, arc: ArcId, commit: Sha): ArcRef {
   const key = commit;
   const cached = arcRefReads?.get(key);
   if (cached !== undefined) {
@@ -99,6 +103,25 @@ export function readArcRef(repo: AbsPath, arc: ArcId): ArcRef | null {
   const result = { arc, commit, highWater: check.manifest.highWater, events, view: fold, plan, manifest, input };
   arcRefReads?.set(key, result);
   return result;
+}
+
+/** An arc of the chain: its integration branch and its previous arc. */
+export type ChainLink = Readonly<{ arc: ArcId; branch: BranchName; previousArc: ArcId | null }>;
+
+/** What a long-lived reader keeps of an arc's verified ref: its commit, its chain link and its completed head. */
+export type ArcRefDigest = Readonly<{ arc: ArcId; commit: Sha; link: ChainLink; completed: CompletedHead | null }>;
+
+/**
+ * The digest of the arc's verified ref, or null when it has none. A snapshot commit is immutable, so an observer with a
+ * memo (src/observation/memo.ts) verifies it once and keeps only the digest, never the ref's events, fold or files.
+ */
+export function arcRefDigest(repo: AbsPath, arc: ArcId): ArcRefDigest | null {
+  const commit = refTarget(repo, snapshotRef(arc));
+  if (commit === null) return null;
+  return objectOnce(`arc-ref:${arc}:${commit}`, () => {
+    const ref = arcRefAt(repo, arc, commit);
+    return { arc, commit, link: { arc, branch: ref.plan.integrationBranch, previousArc: ref.plan.chain?.previousArc ?? null }, completed: completedHeadOf(ref) };
+  });
 }
 
 // Schema-cut scaffolding (dev.36): an arc a schema-1 executor (dev.32 or earlier) wrote is not adopted, so the cross-arc
@@ -163,15 +186,25 @@ export function questionsOf(ref: ArcRef): readonly PhaseQuestion[] {
  */
 export type ChainBack = Readonly<{ arcs: readonly ArcRef[]; missing: ArcId | null }>;
 export function chainBack(repo: AbsPath, arc: ArcId): ChainBack {
-  const out: ArcRef[] = [];
+  const { arcs, missing } = walkBack(arc, (at) => readArcRef(repo, at), (ref) => ref.plan.chain?.previousArc ?? null);
+  return { arcs, missing };
+}
+
+/** `chainBack` as digests (`arcRefDigest`): the one walk, keeping only what a long-lived reader keeps. */
+export function chainDigestsBack(repo: AbsPath, arc: ArcId): Readonly<{ arcs: readonly ArcRefDigest[]; missing: ArcId | null }> {
+  return walkBack(arc, (at) => arcRefDigest(repo, at), (d) => d.link.previousArc);
+}
+
+function walkBack<T>(arc: ArcId, read: (arc: ArcId) => T | null, previous: (t: T) => ArcId | null): Readonly<{ arcs: readonly T[]; missing: ArcId | null }> {
+  const out: T[] = [];
   const seen = new Set<ArcId>();
   for (let at: ArcId | null = arc; at !== null;) {
     if (seen.has(at)) throw new ArcRefError(arc, `its chain loops at ${at}`);
     seen.add(at);
-    const ref = readArcRef(repo, at);
+    const ref = read(at);
     if (ref === null) return { arcs: out.reverse(), missing: at };
     out.push(ref);
-    at = ref.plan.chain?.previousArc ?? null;
+    at = previous(ref);
   }
   return { arcs: out.reverse(), missing: null };
 }
@@ -298,10 +331,9 @@ export function unackedStarts(chain: readonly ArcId[], acks: readonly AckMarker[
 // them around its baseline rows; `nextStartOf` answers them for the start after the chain's head (`chain status`,
 // `status`, the brief), so the root agent never computes K itself (paid M4a run 12).
 
-/** The previous arc's row: its verified ref (null: none) holds a done completion. */
-export function previousIncomplete(previousArc: ArcId, ref: ArcRef | null): Extract<ChainProblem, { type: 'previous-incomplete' }> | null {
-  const c = ref === null ? null : completedHeadOf(ref);
-  return c === null || !c.done ? { type: 'previous-incomplete', arc: previousArc } : null;
+/** The previous arc's row: its verified ref holds a done completion (`completed`: its completed head, null for no ref or none). */
+export function previousIncomplete(previousArc: ArcId, completed: CompletedHead | null): Extract<ChainProblem, { type: 'previous-incomplete' }> | null {
+  return completed === null || !completed.done ? { type: 'previous-incomplete', arc: previousArc } : null;
 }
 
 /** K's rows for a start chained on the last arc of `chain` (oldest first): K set, and the unacked starts with this one within K. */
@@ -312,8 +344,8 @@ export function quotaOf(chain: readonly ArcId[], k: number | null, acks: readonl
   return unacked > k ? { allowed: false, reason: 'limit', k, unacked } : { allowed: true, reason: 'within-k', k, unacked };
 }
 
-/** The start after `head`, the last arc of `chain` (oldest first; null: it has no ref yet): its previous-arc and K rows. */
-export function nextStartOf(chain: readonly ArcId[], head: ArcRef | null, k: number | null, acks: readonly AckMarker[]): NextStart {
+/** The start after the last arc of `chain` (oldest first; `head`: its completed head, null for no ref or none): its previous-arc and K rows. */
+export function nextStartOf(chain: readonly ArcId[], head: CompletedHead | null, k: number | null, acks: readonly AckMarker[]): NextStart {
   const last = chain.at(-1);
   if (last === undefined) throw new Error('the next start of an empty chain');
   const previous = previousIncomplete(last, head);

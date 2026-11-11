@@ -11,7 +11,7 @@ import type { AbsPath } from '../core/values.ts';
 import type { Run } from '../cli/locate.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
 import type { CollectorMessage } from '../observation/collect.ts';
-import { CONSOLE_PROTOCOL, ConsoleError, captureKey, type Admission, type Envelope } from '../observation/protocol.ts';
+import { CONSOLE_PROTOCOL, ConsoleError, captureKey, type Admission, type ConsoleCode, type Envelope } from '../observation/protocol.ts';
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
 import { ConsoleHistories } from './history.ts';
@@ -32,7 +32,7 @@ import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneSh
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 import { ArcModel, type ParkKind } from './model.ts';
-import { MAINTAIN, type ConsoleRequest, type FromServe, type ToServe } from './messages.ts';
+import { MAINTAIN, type ConsoleRequest, type FromServe, type ServeSizes, type ToServe, heapNear, heapReport } from './messages.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
 const post = (m: FromServe) => parentPort!.postMessage(m);
@@ -60,6 +60,8 @@ type Asked = ConsoleRequest & { id: number; arrivedAt: number };
 /** `view`: admitted, waiting for the Activity index its envelope needs, which is built in steps (`buildIndex`). */
 type Parked = { m: Asked; arc: string; park: ParkKind | 'view' | null };
 let parked: Parked[] = [];
+/** Arcs whose collector main stopped for good (it ran out of memory again and again): every read of one answers this. */
+const stopped = new Map<string, Readonly<{ code: ConsoleCode; message: string }>>();
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption' as const, message: error instanceof Error ? error.message : String(error) });
 
 function notice(e: Envelope) { return metadata.read(e, views, selected); }
@@ -103,7 +105,7 @@ function arcOf(path: string[], params: Record<string, string>): string {
 const TAB_SECTIONS = new Set(['activity', 'timeline', 'effort', 'resources', 'attention', 'holistic']);
 const isTabList = (path: readonly string[], params: Record<string, string>): boolean =>
   TAB_SECTIONS.has(path[2] ?? '') && (path.length === 3 || path[2] === 'timeline' && path.length === 4 && (path[3] === 'intervals' || path[3] === 'holds'))
-  && !('cursor' in params) && !('anchor' in params);
+  && params['cursor'] === undefined && params['anchor'] === undefined;
 const tabViews = new Map<string, { capture: string; data: unknown }>();
 /** The tab list views requested lately, which `warm` builds for each new capture before anyone asks. */
 const requestedTabs = new Map<string, { arc: string; path: string[]; params: Record<string, string>; at: number }>();
@@ -337,6 +339,8 @@ function handle(m: Asked): void {
 function attempt(p: Parked): boolean {
   const { m, arc } = p, model = models.get(arc);
   const strict = m.kind === 'read' && m.patient !== true;
+  const down = stopped.get(arc);
+  if (down !== undefined) { fail(m, new ConsoleError(down.code, down.message)); return true; }
   try {
     const verdict = model === undefined ? { kind: 'park' as const, park: 'cold' as const } : model.admit(admissionOf(m.kind === 'read' ? m.params : m.kind === 'subscribe' ? m.params ?? {} : {}), m.arrivedAt, strict);
     if (verdict.kind === 'ready') {
@@ -405,7 +409,7 @@ function revisit(arc: string): void {
 let reportedSelection = '';
 function report(): void {
   const model = selected === null ? undefined : models.get(selected);
-  const ready = selected === null || model?.observed === true || model?.failed != null;
+  const ready = selected === null || model?.observed === true || model?.failed != null || stopped.has(selected);
   const key = JSON.stringify([selected, ready]);
   if (key !== reportedSelection) { reportedSelection = key; post({ kind: 'selected', selected, ready }); }
 }
@@ -440,6 +444,7 @@ function collector(arc: string, port: MessagePort): void {
   const run = runsOf.get(arc)!;
   ports.get(arc)?.close();
   ports.set(arc, port);
+  stopped.delete(arc);
   const model = new ArcModel(run, args.instance, args.repoId, () => revisit(arc));
   models.set(arc, model);
   port.on('message', (m: CollectorMessage) => {
@@ -474,15 +479,28 @@ function published(arc: string, model: ArcModel): void {
   }
 }
 
+/** What this worker holds, for its heap reports. */
+const sizes = (): ServeSizes => ({ arcs: [...models].map(([arc, model]) => ({ arc, ...model.sizes() })), tabViews: tabViews.size });
+/** Whether the used heap was past HEAP_NEAR of its limit at the last tick: a crossing is reported once. */
+let near = false;
 parentPort!.on('message', (m: ToServe) => {
   switch (m.kind) {
     case 'cancel': parked = parked.filter((p) => p.m.id !== m.id); return;
-    case 'tick': reconcile(); return;
+    case 'tick': {
+      reconcile();
+      const now = heapNear();
+      if (now && !near) post(heapReport(sizes(), true));
+      near = now;
+      return;
+    }
+    case 'report': post(heapReport(sizes(), false)); return;
     case 'collector': collector(m.arc, m.port); return;
     case 'collector-down': {
+      if (m.stopped) stopped.set(m.arc, m.error);
       const model = models.get(m.arc);
-      if (model === undefined) return;
-      model.failed = m.error; post({ kind: 'arc-error', arc: m.arc, error: m.error }); revisit(m.arc);
+      if (model !== undefined) model.failed = m.error;
+      if (model !== undefined || m.stopped) { post({ kind: 'arc-error', arc: m.arc, error: m.error }); revisit(m.arc); }
+      if (m.arc === selected) report();
       return;
     }
     default: handle(m);

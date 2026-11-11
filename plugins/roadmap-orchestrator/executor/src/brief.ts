@@ -24,8 +24,8 @@
 //   is status's alone: the brief reads refs only.
 // The payload holds no clock; forge state, census figures and timings are in it, so a change of any changes the id.
 import { answerLine,unappliedAnswers } from './answers.ts';
-import { type ArcRef,committedAcks } from './chain.ts';
-import { type ChainLink,chainHead,chainQuota,chainTo,linkOf,prsOf } from './commands/chain.ts';
+import { type ArcRef,type ChainLink,committedAcks,completedHeadOf } from './chain.ts';
+import { chainHead,chainQuota,chainTo,linkOf,prsOf } from './commands/chain.ts';
 import { type ArcId,type BriefId,type Sha,briefId,invocationDirName } from './core/ids.ts';
 import { canonicalJson,sha256Hex } from './core/json.ts';
 import { type CommandBody } from './core/records.ts';
@@ -158,7 +158,7 @@ export function computeBrief(repo: AbsPath): Brief {
     schema: BRIEF_SCHEMA,
     coverage: arcs.map((r): CoverageEntry => ({ arc: r.arc, snapshotCommit: r.commit, highWater: r.highWater })),
     items: [],
-    chain: { position: chain.length, ...chainQuota(repo, chain.map((r) => r.arc), { plan: head.plan, ref: head }, acks) },
+    chain: { position: chain.length, ...chainQuota(repo, chain.map((r) => r.arc), { plan: head.plan, completed: completedHeadOf(head) }, acks) },
     answers: unappliedAnswers(gitCommonDir(repo)),
     arcs: arcs.map((r) => briefArc(repo, r, from.get(r.arc) ?? 0, prs.get(r.arc)!, chain[chain.indexOf(r) - 1] ?? null)),
   };

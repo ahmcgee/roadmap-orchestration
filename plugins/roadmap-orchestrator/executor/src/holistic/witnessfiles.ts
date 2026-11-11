@@ -24,9 +24,12 @@
 // script (`pnpm test:x`) is out of sight here: the builder reports a witness its lane never selects as `specWrong`.
 //
 // dev.59 pass 7 (nu-119813, C-351): a spec witness item (`WitnessItemDef`) declares no files. Its file is derived from its
-// `testId` (`specWitnessFile`): the first segment before " > ", against the lane's `cwd`, and only where that segment is a
-// test file name (`isTestFileName`): a vitest or jsonl id leads with its file, a node-test id is a name path and derives
-// nothing, so the item goes unchecked rather than guessed at. The derived file then meets the same `laneMisses`.
+// `testId` (`specWitnessMiss`): the first segment before " > ", and only where that segment is a test file name
+// (`isTestFileName`): a vitest or jsonl id leads with its file, a node-test id is a name path and derives nothing, so the
+// item goes unchecked rather than guessed at. dev.64 (nu-134094, nu-134825): the lane's reporter decides whether that
+// segment is relative to the repo root or to the lane's `cwd` (a runner's own reporter writes the second, a repo-wide
+// witness reporter the first), and the lanes stage matches the id exactly against what the reporter wrote. So the segment is
+// read both ways, and the item is in its lane when either reading meets `laneMisses`.
 import { posix } from 'node:path';
 import { type LaneDef, cadenceAtOrBefore } from '../core/records.ts';
 import type { RepoPath, RepoPattern } from '../core/values.ts';
@@ -70,14 +73,20 @@ function argvWords(argv: readonly string[]): readonly string[] {
 }
 
 /**
- * The file a spec witness item's `testId` names (dev.59 pass 7): its first segment before " > ", resolved against the lane's
- * `cwd`, when that is a test file name inside the repo; null otherwise (nothing is derived, so nothing is checked).
+ * Why a lane would never run the file a spec witness item's `testId` names (dev.59 pass 7; dev.64): its first segment before
+ * " > " when that is a test file name, read against the repo root and against the lane's `cwd` (see the header). Null when
+ * the id names no test file (nothing is derived, so nothing is checked) or either reading is in the lane; otherwise a
+ * reading inside the lane's `testPaths` that its argv leaves out, or failing that the `cwd` reading, and why the lane misses it.
  */
-export function specWitnessFile(lane: Pick<ArcLaneDef, 'cwd'>, testId: string): RepoPath | null {
+export function specWitnessMiss(lane: ArcLaneDef, testId: string): Readonly<{ file: RepoPath; missing: Extract<LaneMiss, 'test-paths' | 'argv'> }> | null {
   const first = testId.split(' > ')[0]!.trim();
   if (first === '' || posix.isAbsolute(first) || !isTestFileName(first)) return null;
-  const resolved = posix.normalize(posix.join(lane.cwd, first));
-  return resolved === '..' || resolved.startsWith('../') ? null : repoPath(resolved);
+  const readings = [...new Set([first, posix.join(lane.cwd, first)].map((p) => posix.normalize(p)))].filter((p) => p !== '..' && !p.startsWith('../')).map((p) => repoPath(p));
+  if (readings.length === 0) return null;
+  const misses = readings.map((file) => ({ file, missing: laneMisses(lane, file) }));
+  if (misses.some((m) => m.missing === null)) return null;
+  const named = misses.find((m) => m.missing === 'argv') ?? misses.at(-1)!;
+  return { file: named.file, missing: named.missing! };
 }
 
 /**

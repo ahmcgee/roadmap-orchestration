@@ -142,7 +142,8 @@ export class TranscriptReader {
       const text = combined.toString('utf8').replace(/\n$/, '');
       const last = text.slice(text.lastIndexOf('\n') + 1);
       const normalized = last ? normalize(last, false) : [];
-      const latest = last ? normalized.slice(0, normalized[0]?.startsWith('final report:') ? 1 : 2).map((row) => row.trim()).join(' ').slice(0, 240) : valid ? previous.latest : '';
+      // Copied out: a slice keeps the string it was cut from alive, here up to the whole 64 KiB page, once per invocation row.
+      const latest = last ? Buffer.from(normalized.slice(0, normalized[0]?.startsWith('final report:') ? 1 : 2).map((row) => row.trim()).join(' ').slice(0, 240), 'utf8').toString('utf8') : valid ? previous.latest : '';
       this.#tails.set(path, { identity, size: start + n, mtime: st.mtimeMs, carry: Buffer.from(combined.subarray(combined.lastIndexOf(10) + 1)), latest, prefix });
       return latest;
     } finally { closeSync(fd); }

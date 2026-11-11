@@ -1,3 +1,4 @@
+import { getHeapStatistics } from 'node:v8';
 import type { MessagePort } from 'node:worker_threads';
 import type { Run } from '../cli/locate.ts';
 import type { ArcId } from '../core/ids.ts';
@@ -22,8 +23,10 @@ export type ToServe =
   | Readonly<{ kind: 'tick' }>
   /** The serve end of a new collector's channel. */
   | Readonly<{ kind: 'collector'; arc: ArcId; port: MessagePort }>
-  /** A collector exited: reads of its arc answer this until it is back. */
-  | Readonly<{ kind: 'collector-down'; arc: ArcId; error: ErrorBody }>;
+  /** A collector exited: reads of its arc answer this until it is back; `stopped`: it is not restarted, so every read answers this. */
+  | Readonly<{ kind: 'collector-down'; arc: ArcId; error: ErrorBody; stopped: boolean }>
+  /** Main asks for a heap report. */
+  | Readonly<{ kind: 'report' }>;
 
 /** The serve worker to main. */
 export type FromServe =
@@ -48,10 +51,28 @@ export type FromServe =
   /** A strict read waits on this arc: its collector should check now. */
   | Readonly<{ kind: 'check-now'; arc: ArcId }>
   /** The invocation directories whose history a stream follows: their collector watches them, so a change is checked at once. */
-  | Readonly<{ kind: 'follow'; arc: ArcId; dirs: readonly string[] }>;
+  | Readonly<{ kind: 'follow'; arc: ArcId; dirs: readonly string[] }>
+  | HeapReport<ServeSizes>;
 
 /** Main to a collector. */
-export type ToCollector = Readonly<{ kind: 'check-now' }> | Readonly<{ kind: 'follow'; dirs: readonly string[] }>;
+export type ToCollector = Readonly<{ kind: 'check-now' }> | Readonly<{ kind: 'follow'; dirs: readonly string[] }> | Readonly<{ kind: 'report' }>;
+
+/** What the serve worker holds: per maintained arc its parsed events and rows, and the cached tab views. */
+export type ServeSizes = Readonly<{ arcs: readonly Readonly<{ arc: string; events: number; rows: number }>[]; tabViews: number }>;
+/**
+ * A worker's heap, as v8 sees it inside the worker, with what it holds. Asked for by main, or sent unprompted (`near`) once
+ * each time the used heap crosses HEAP_NEAR of its limit. Product telemetry: main logs one line per report.
+ */
+export type HeapReport<S> = Readonly<{ kind: 'heap'; usedMb: number; limitMb: number; externalMb: number; near: boolean; sizes: S }>;
+export const HEAP_NEAR = 0.8;
+const MB = 1024 * 1024;
+/** This thread's heap report. */
+export function heapReport<S>(sizes: S, near: boolean): HeapReport<S> {
+  const h = getHeapStatistics();
+  return { kind: 'heap', usedMb: Math.round(h.used_heap_size / MB), limitMb: Math.round(h.heap_size_limit / MB), externalMb: Math.round(h.external_memory / MB), near, sizes };
+}
+/** Whether this thread's used heap is past HEAP_NEAR of its limit. */
+export function heapNear(): boolean { const h = getHeapStatistics(); return h.used_heap_size > HEAP_NEAR * h.heap_size_limit; }
 
 /** The maintained arcs: the selected one, then up to `extra` subscribed or read within `recentMs`. */
 export const MAINTAIN = { extra: 2, recentMs: 60_000, tickMs: 2_000 } as const;

@@ -82,7 +82,8 @@ export async function ensureConsole(repo: AbsPath, hostDir: AbsPath): Promise<Co
     const outPath = join(serviceDir(common), `${instance}.log`);
     const fd = openSync(outPath, 'a');
     const env: NodeJS.ProcessEnv = { ...process.env, ROADMAP_ROLE: 'console' }; delete env['ROADMAP_INV'];
-    const child = spawn(process.execPath, [fileURLToPath(new URL('../entry/console.ts', import.meta.url)), repo, common, hostDir, settings.host, String(settings.port), instance], { detached: true, stdio: ['ignore', fd, fd], env });
+    // --expose-gc: a collector collects its captures' garbage itself (src/console/collector.ts `tidy`).
+    const child = spawn(process.execPath, ['--expose-gc', fileURLToPath(new URL('../entry/console.ts', import.meta.url)), repo, common, hostDir, settings.host, String(settings.port), instance], { detached: true, stdio: ['ignore', fd, fd], env });
     closeSync(fd); child.unref();
     let died = false; let spawnError: Error | null = null;
     child.once('exit', () => { died = true; }); child.once('error', (e) => { spawnError = e; died = true; });

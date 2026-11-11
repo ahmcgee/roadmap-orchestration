@@ -104,6 +104,8 @@ export class ArcModel {
   /** Which capture the published data is: view caches key on this, not on `revision`, which also moves with the clock overlay. */
   get capture(): string { return `${this.#epoch}:${this.#materializations}`; }
   get observed(): boolean { return this.#base !== null; }
+  /** What this model holds, for the serve worker's heap reports: the journal's events parsed here and the invocation rows. */
+  sizes(): Readonly<{ events: number; rows: number }> { return { events: this.#parsed?.events.length ?? 0, rows: this.#rows.size }; }
 
   apply(m: CollectorMessage, now: number): Applied {
     switch (m.kind) {

@@ -1,4 +1,4 @@
-import { inputShaOf } from '../src/git/reusekey.ts';
+import { LISTING_ENTRIES,inputShaOf,listingEntriesKept } from '../src/git/reusekey.ts';
 import { execFileSync } from 'node:child_process';
 import { systemsMapInForce } from '../src/input/systems.ts';
 // `roadmap status`'s M3 keys (src/status.ts; DESIGN-1.0.md §2.4, plan "`status` (additive)"), in process over holistic
@@ -192,6 +192,49 @@ describe('status M3', () => {
         lastObserved: { treeSha: latches[id]!.tree, verdict: 'held', evidence: [latches[id]!.dir] },
       })));
       assert.ok(s.completion.unmet.includes('obligations-not-discharged'), JSON.stringify(s.completion.unmet));
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  it('status.history-bounded: over a first-parent history whose listings exceed the kept bound, each obligation\'s last observation is the newest earlier tree it was observed on, and the listings kept stay within the bound', T, async () => {
+    const lanes = ['l1', 'l2', 'l3'];
+    const { d } = holisticArc({
+      steps: [], units: [{ id: 'u1' }], lanes, mapping: [], trees: {},
+      // Explicit inputs: each tree's input sha is computed from its listing.
+      laneExtra: Object.fromEntries(lanes.map((l) => [l, { inputs: ['src/**'] }])),
+      obligations: [
+        { id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['t1'], lane: 'l1' },
+        { id: 'I-2', activation: 'future', deliveredBy: ['u1'], testIds: ['t2'], lane: 'l2' },
+        { id: 'I-3', activation: 'future', deliveredBy: ['u1'], testIds: ['t3'], lane: 'l3' },
+      ],
+    });
+    const r = contextFor(d);
+    try {
+      // A tree of FILES files, then commits that each change one of them: more listing entries than LISTING_ENTRIES in all.
+      const FILES = 4_000, commits = Math.ceil(LISTING_ENTRIES / FILES) + 10;
+      const stamp = (n: number) => `committer t <t@example.com> ${1_700_000_000 + n} +0000\n`;
+      const blob = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`;
+      let stream = `commit refs/heads/main\n${stamp(0)}${blob('bulk')}from ${git(d.repo, 'rev-parse', 'main')}\n`;
+      for (let f = 0; f < FILES; f++) stream += `M 100644 inline src/bulk/f${f}.txt\n${blob(`file ${f}`)}`;
+      for (let n = 1; n < commits; n++) stream += `commit refs/heads/main\n${stamp(n)}${blob(`change ${n}`)}M 100644 inline src/bulk/f${n % FILES}.txt\n${blob(`changed ${n}`)}`;
+      execFileSync('git', ['-C', d.repo, 'fast-import', '--quiet'], { input: stream, timeout: 60_000 });
+      git(d.repo, 'reset', '-q', '--hard');
+      const trees = git(d.repo, 'log', '--first-parent', '--format=%T', 'main').split('\n');
+      const l = lanesOf(r);
+      // I-1 observed only deep in the history (passing, then failing on a newer tree), I-2 a few trees back, I-3 never.
+      const deep = trees[trees.length - 2]!, newer = trees[trees.length - 5]!, recent = trees[3]!;
+      witness(r, l.get('l1')!, deep, { t1: 'pass' });
+      const dir1 = witness(r, l.get('l1')!, newer, { t1: 'fail' });
+      const dir2 = witness(r, l.get('l2')!, recent, { t2: 'pass' });
+      const s = statusOf(r);
+      assert.deepEqual(s.notYetTrue.map((o) => [o.obligation, o.verdict, o.lastObserved]), [
+        ['I-1', 'not-covered', { treeSha: newer, verdict: 'not-held', evidence: [dir1] }],
+        ['I-2', 'not-covered', { treeSha: recent, verdict: 'held', evidence: [dir2] }],
+        ['I-3', 'not-covered', null],
+      ]);
+      assert.ok(trees.length * FILES > LISTING_ENTRIES, 'the history\'s listings exceed the bound');
+      assert.ok(listingEntriesKept() <= LISTING_ENTRIES, `${listingEntriesKept()} listing entries kept`);
     } finally {
       r.journal.close();
     }

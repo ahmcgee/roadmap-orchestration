@@ -10,12 +10,12 @@ import type { Run } from '../cli/locate.ts';
 import type { ArcId } from '../core/ids.ts';
 import type { AbsPath } from '../core/values.ts';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
-import type { CaptureWork, CollectorPhase } from '../observation/collect.ts';
+import type { CaptureWork, CollectorPhase, CollectorSizes } from '../observation/collect.ts';
 import { CONSOLE_PROTOCOL, ConsoleError, type ConsoleCode } from '../observation/protocol.ts';
 import { consoleUrl, ConsoleBindError } from './settings.ts';
 import { SseWriter, errorNotice } from './sse.ts';
 import type { CollectorReport } from './collector.ts';
-import { MAINTAIN, type ConsoleRequest, type FromServe, type ToCollector, type ToServe } from './messages.ts';
+import { MAINTAIN, type ConsoleRequest, type FromServe, type HeapReport, type ServeSizes, type ToCollector, type ToServe } from './messages.ts';
 import { staticResponse } from './static.ts';
 import { retainedRuns } from './runs.ts';
 import { BrowserPreparation, PREPARATION } from './preparation.ts';
@@ -33,16 +33,38 @@ export const BUDGETS = {
 } as const;
 /** A worker that exits is started again after these delays, then the last one each time. */
 export const RESTART_MS = [5_000, 30_000, 60_000] as const;
+/**
+ * Heap need (MB), measured laws: a collector holds about 384 MB besides three times its journal (events, fold, invocation
+ * rows), since what it remembers of evidence and history is bounded by bytes (src/observation/memo.ts, src/git/reusekey.ts);
+ * the serve worker about 256 MB besides three times the journals it parses. The heap limit is a runaway guard a healthy arc
+ * never reaches, not a budget: three times the need plus 512 MB.
+ */
+export const NEED = { collector: (journalMb: number) => 384 + 3 * journalMb, serve: (sumJournalMb: number) => 256 + 3 * sumJournalMb } as const;
+export const heapLimitMb = (need: number): number => Math.round(3 * need + 512);
+/** Heap reports: asked at a worker's first observation, then every `reportMs`. A worker out of memory `stopAfter` times in a row is not restarted. */
+export const HEAP = { reportMs: 600_000, stopAfter: 3 } as const;
+type ErrorBody = Readonly<{ code: ConsoleCode; message: string }>;
+const rssMb = (): number => Math.round(process.memoryUsage.rss() / 1048576);
+const heapText = (r: HeapReport<unknown>): string => `heap ${r.usedMb} of ${r.limitMb} MB (external ${r.externalMb} MB)`;
+/** One collector heap report as a log line's body. */
+export function collectorReportText(r: HeapReport<CollectorSizes>): string {
+  const z = r.sizes, m = z.memo, mb = (bytes: number) => Math.round(bytes / 1048576);
+  return `${heapText(r)}; events ${z.events}, rows ${z.rows}, open ${z.open}; records ${m.records} (${mb(m.recordBytes)} MB, ${m.recordEvictions} evicted, ${m.recordOverflow} not kept), git ${m.gitAnswers} (${mb(m.gitBytes)} MB), stamps ${m.stamps}, parsed ${m.parsed}; estate ${z.estate}, swept ${z.swept}, listing entries ${z.listings}`;
+}
+/** One serve worker heap report as a log line's body. */
+export function serveReportText(r: HeapReport<ServeSizes>): string {
+  return `${heapText(r)}; ${[...r.sizes.arcs.map((a) => `arc ${a.arc}: events ${a.events}, rows ${a.rows}`), `tab views ${r.sizes.tabViews}`].join('; ')}`;
+}
 /** A read's reply: its response body as the serve worker serialized it. */
 type Reply = Readonly<{ json: string; checkedAt: string | null }>;
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout | null; timeoutMs: number; strict: boolean };
-/** One arc's collector as main runs it, and what it last said. */
-type Collector = { worker: Worker; run: Run; phase: CollectorPhase; phaseAt: number; done: number; of: number; captures: CaptureWork[]; folded: number;
+/** One arc's collector as main runs it, and what it last said. `reports`: its heap report timer, from its first observation. */
+type Collector = { worker: Worker; run: Run; limitMb: number; reports: NodeJS.Timeout | null; phase: CollectorPhase; phaseAt: number; done: number; of: number; captures: CaptureWork[]; folded: number;
   /** What the serve worker last published (seq, journal byte) and when it last said anything of the arc; the journal's size. */
   seq: number; offset: number; size: number; noticeAt: number; observed: boolean;
   behind: { since: number; said: boolean } | null; readingSaidAt: number };
-/** What the console did for one arc: each capture's work since its collector started (the last 200), the events folded in all, and where it stands. */
-export type ArcStats = Readonly<{ captures: readonly CaptureWork[]; folded: number; phase: CollectorPhase; seq: number; offset: number }>;
+/** What the console did for one arc: each capture's work since its collector started (the last 200), the events folded in all, where it stands, and its collector's last heap report. */
+export type ArcStats = Readonly<{ captures: readonly CaptureWork[]; folded: number; phase: CollectorPhase; seq: number; offset: number; heap: HeapReport<CollectorSizes> | null }>;
 
 export type ConsoleServerArgs = Readonly<{ repo: AbsPath; common: AbsPath; hostDir: AbsPath; host: string; port: number; instance?: string }>;
 export async function serveConsole(args: ConsoleServerArgs) {
@@ -123,26 +145,53 @@ export async function serveConsole(args: ConsoleServerArgs) {
   const rejectPending = (e: Error) => { for (const p of pending.values()) { if (p.timer) clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
   const failAll = (e: Error) => { failed = e; admit(); for (const w of discoveryWaiters.splice(0)) w(); rejectPending(e); };
   const journalMb = (run: Run): number => { try { return statSync(join(run.runDir, EVENTS_FILE)).size / 1048576; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw e; } };
-  /** Heap limits: a collector holds its arc's fold and table, the serve worker one parsed copy of each maintained journal. */
-  const limits = { collector: (run: Run) => Math.round(256 + 3 * journalMb(run)), serve: (runs: readonly Run[]) => Math.round(128 + 2.5 * runs.reduce((n, r) => n + journalMb(r), 0)) };
+  const limits = { collector: (run: Run) => heapLimitMb(NEED.collector(journalMb(run))), serve: (runs: readonly Run[]) => heapLimitMb(NEED.serve(runs.reduce((n, r) => n + journalMb(r), 0))) };
+  /** Each worker's last heap report ('serve', or the arc), kept across its restarts, and its out-of-memory exits in a row. */
+  const collectorReports = new Map<string, HeapReport<CollectorSizes>>();
+  let serveReport: HeapReport<ServeSizes> | null = null;
+  const ooms = new Map<string, number>();
+  /** Arcs whose collector ran out of memory HEAP.stopAfter times in a row: not restarted, every read answers this. */
+  const stoppedArcs = new Map<string, ErrorBody>();
   /** The arcs the serve worker asked to maintain, and how many times in a row each worker exited (its restart delay). */
   const wanted = new Map<string, Run>();
   /** Each arc's followed history directories, handed to its collector (again, when it restarts). */
   const follows = new Map<string, readonly string[]>();
   const exits = new Map<string, number>();
-  let serve!: Worker, serveLimitMb = 0, serveDown: Error | null = null;
+  let serve!: Worker, serveLimitMb = 0, serveDown: Error | null = null, serveReports: NodeJS.Timeout | null = null;
   const restartIn = (key: string) => { const n = exits.get(key) ?? 0; exits.set(key, n + 1); return RESTART_MS[Math.min(n, RESTART_MS.length - 1)]!; };
   function startServe(): void {
-    // Headroom for the journals' growth while it runs: only a larger set of arcs restarts it.
+    // Headroom for the journals' growth while it runs, so a small addition does not restart it.
     serveLimitMb = limits.serve([...wanted.values()]) + 64;
-    const worker = new Worker(new URL('./worker.ts', import.meta.url), { workerData: { common: args.common, hostDir: args.hostDir, instance, repoId }, resourceLimits: { maxOldGenerationSizeMb: serveLimitMb } });
+    const limitMb = serveLimitMb;
+    const worker = new Worker(new URL('./worker.ts', import.meta.url), { workerData: { common: args.common, hostDir: args.hostDir, instance, repoId }, resourceLimits: { maxOldGenerationSizeMb: limitMb } });
     serve = worker;
-    worker.on('message', (m: FromServe) => { if (serve !== worker) return; if (m.kind === 'ready') { serveDown = null; exits.delete('serve'); } onServe(m); });
-    let reason = '';
-    worker.on('error', (e) => { reason = e.message; });
+    if (serveReports !== null) clearInterval(serveReports);
+    serveReports = null;
+    const ask = () => worker.postMessage({ kind: 'report' } satisfies ToServe);
+    worker.on('message', (m: FromServe) => {
+      if (serve !== worker) return;
+      if (m.kind === 'heap') { serveReport = m; log(`console serve worker: ${serveReportText(m)}; process RSS ${rssMb()} MB${m.near ? ' NEAR ITS LIMIT' : ''}`); return; }
+      if (m.kind === 'ready') { serveDown = null; exits.delete('serve'); }
+      // Its first observation after a start: out-of-memory exits are no longer in a row, and its heap is reported from now on.
+      if (m.kind === 'checked' && serveReports === null) { ooms.delete('serve'); ask(); serveReports = setInterval(ask, HEAP.reportMs); serveReports.unref(); }
+      onServe(m);
+    });
+    let reason = '', oom = false;
+    worker.on('error', (e) => { reason = e.message; if ((e as NodeJS.ErrnoException).code === 'ERR_WORKER_OUT_OF_MEMORY') oom = true; });
     worker.on('exit', (code) => {
       if (closing || serve !== worker) return;
-      const why = `console serve worker exited ${code}${reason ? `: ${reason}` : ''}`, delay = restartIn('serve');
+      if (serveReports !== null) { clearInterval(serveReports); serveReports = null; }
+      const last = serveReport === null ? 'no report yet' : `last report: ${serveReportText(serveReport)}`;
+      const inRow = oom ? (ooms.get('serve') ?? 0) + 1 : 0;
+      if (oom) ooms.set('serve', inRow); else ooms.delete('serve');
+      if (inRow >= HEAP.stopAfter) {
+        log(`console serve worker stopped: out of memory ${inRow} times in a row at its ${limitMb} MB heap limit (${last}). It will not be restarted; restart the console to try again, and report these lines.`);
+        serveDown = new Error(`the console stopped serving after its serve worker ran out of memory ${inRow} times in a row at its ${limitMb} MB heap limit; see the console log`); selection = null;
+        if (!admitting) failAll(serveDown); else rejectPending(serveDown);
+        for (const arc of [...collectors.keys()]) stopCollector(arc);
+        return;
+      }
+      const why = oom ? `console serve worker ran out of memory at its ${limitMb} MB heap limit (${last})` : `console serve worker exited ${code}${reason ? `: ${reason}` : ''}`, delay = restartIn('serve');
       log(`${why}; restarting it in ${delay / 1000}s`);
       serveDown = new Error(why); selection = null;
       if (!admitting) failAll(serveDown); else rejectPending(serveDown);
@@ -168,39 +217,59 @@ export async function serveConsole(args: ConsoleServerArgs) {
   function startCollector(arc: ArcId, run: Run): void {
     // Main starts the selected arc's collector itself, beside the serve worker, so the two load in parallel.
     if (collectors.has(arc)) return;
+    const stopped = stoppedArcs.get(arc);
+    if (stopped !== undefined) { serve.postMessage({ kind: 'collector-down', arc, error: stopped, stopped: true } satisfies ToServe); return; }
     wanted.set(arc, run);
     if (limits.serve([...wanted.values()]) > serveLimitMb) {
       log(`console serve worker restarts: the maintained arcs need a ${limits.serve([...wanted.values()])} MB heap, over its ${serveLimitMb} MB`);
       restartServe(); return;
     }
     const { port1, port2 } = new MessageChannel();
+    const limitMb = limits.collector(run);
     const worker = new Worker(new URL('./collector.ts', import.meta.url), { workerData: { run, hostDir: args.hostDir, common: args.common, port: port1 }, transferList: [port1],
-      resourceLimits: { maxOldGenerationSizeMb: limits.collector(run) } });
-    const c: Collector = { worker, run, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: Date.now() };
+      resourceLimits: { maxOldGenerationSizeMb: limitMb } });
+    const c: Collector = { worker, run, limitMb, reports: null, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: Date.now() };
     collectors.set(arc, c);
     serve.postMessage({ kind: 'collector', arc, port: port2 } satisfies ToServe, [port2]);
     const dirs = follows.get(arc); if (dirs) worker.postMessage({ kind: 'follow', dirs } satisfies ToCollector);
     worker.on('message', (m: CollectorReport) => {
       if (m.kind === 'log') { log(m.message); return; }
       if (m.kind === 'progress') { if (m.phase !== c.phase) c.phaseAt = m.at; c.phase = m.phase; c.done = m.done; c.of = m.of; return; }
+      if (m.kind === 'heap') { collectorReports.set(arc, m); log(`console collector for arc ${arc}: ${collectorReportText(m)}; process RSS ${rssMb()} MB${m.near ? ' NEAR ITS LIMIT' : ''}`); return; }
       c.captures.push(m.work); if (c.captures.length > 200) c.captures.shift();
       c.folded += m.work.eventsFolded;
-      if (m.seq !== null) { c.seq = m.seq; exits.delete(arc); }
+      if (m.seq !== null) {
+        c.seq = m.seq; exits.delete(arc); ooms.delete(arc);
+        // Its first observation: its heap is reported now and every HEAP.reportMs.
+        if (c.reports === null) { const ask = () => worker.postMessage({ kind: 'report' } satisfies ToCollector); ask(); c.reports = setInterval(ask, HEAP.reportMs); c.reports.unref(); }
+      }
     });
-    let reason = '';
-    worker.on('error', (e) => { reason = e.message; });
+    let reason = '', oom = false;
+    worker.on('error', (e) => { reason = e.message; if ((e as NodeJS.ErrnoException).code === 'ERR_WORKER_OUT_OF_MEMORY') oom = true; });
     worker.on('exit', (code) => {
       if (collectors.get(arc) !== c || closing) return;
       collectors.delete(arc);
-      const why = `exit code ${code}${reason ? `: ${reason}` : ''}`, delay = restartIn(arc);
+      if (c.reports !== null) clearInterval(c.reports);
+      const report = collectorReports.get(arc), last = report === undefined ? 'no report yet' : `last report: ${collectorReportText(report)}`;
+      const inRow = oom ? (ooms.get(arc) ?? 0) + 1 : 0;
+      if (oom) ooms.set(arc, inRow); else ooms.delete(arc);
+      if (inRow >= HEAP.stopAfter) {
+        log(`console collector for arc ${arc} stopped: out of memory ${inRow} times in a row at its ${limitMb} MB heap limit (${last}). It will not be restarted; restart the console to try again, and report these lines.`);
+        const error: ErrorBody = { code: 'unavailable', message: `the console stopped collecting this arc after running out of memory ${inRow} times in a row at its ${limitMb} MB heap limit; see the console log` };
+        stoppedArcs.set(arc, error);
+        serve.postMessage({ kind: 'collector-down', arc, error, stopped: true } satisfies ToServe);
+        return;
+      }
+      const why = oom ? `out of memory at its ${limitMb} MB heap limit while in ${c.phase}; ${last}` : `exit code ${code}${reason ? `: ${reason}` : ''}`, delay = restartIn(arc);
       log(`console collector for arc ${arc} exited (${why}); restarting it in ${delay / 1000}s`);
-      serve.postMessage({ kind: 'collector-down', arc, error: { code: 'unavailable', message: `console collector for this arc exited (${why}); restarting in ${delay / 1000}s` } } satisfies ToServe);
+      const said = oom ? `ran out of memory at its ${limitMb} MB heap limit` : `exited (${why})`;
+      serve.postMessage({ kind: 'collector-down', arc, error: { code: 'unavailable', message: `console collector for this arc ${said}; restarting in ${delay / 1000}s` }, stopped: false } satisfies ToServe);
       setTimeout(() => { if (!closing && wanted.has(arc) && !collectors.has(arc)) startCollector(arc, wanted.get(arc)!); }, delay).unref();
     });
   }
   function stopCollector(arc: string): void {
     const c = collectors.get(arc); if (!c) return;
-    collectors.delete(arc); void c.worker.terminate();
+    collectors.delete(arc); if (c.reports !== null) clearInterval(c.reports); void c.worker.terminate();
   }
   /**
    * The lag monitor: once a second, each maintained arc's journal size against what the serve worker last published. An arc
@@ -374,6 +443,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
   });
   const shutdown = async () => {
     closing = true; clearInterval(ticker); clearInterval(lag); preparation.close();
+    if (serveReports !== null) clearInterval(serveReports);
+    for (const c of collectors.values()) if (c.reports !== null) clearInterval(c.reports);
     await Promise.all([serve.terminate(), ...[...collectors.values()].map((c) => c.worker.terminate())]);
     collectors.clear();
   };
@@ -388,7 +459,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
   /** What the console did for `arc`, or null when no collector runs for it. */
   const stats = (arc: string): ArcStats | null => {
     const c = collectors.get(arc);
-    return c ? { captures: [...c.captures], folded: c.folded, phase: c.phase, seq: c.seq, offset: c.offset } : null;
+    return c ? { captures: [...c.captures], folded: c.folded, phase: c.phase, seq: c.seq, offset: c.offset, heap: collectorReports.get(arc) ?? null } : null;
   };
   return { server, port, url, instance, repoId, ask, stats, async close() {
     for (const res of streams.keys()) res.end(); streams.clear();

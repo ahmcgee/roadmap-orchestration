@@ -1,7 +1,5 @@
-import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { observationOf, verdictOf } from '../holistic/observe.ts';
-import { witnessDir } from '../git/snapshot.ts';
+import { verdictOf } from '../holistic/observe.ts';
+import { readObservation } from '../pipeline/lanes.ts';
 import { keptInput, OBLIGATIONS_INPUT } from '../input/inforce.ts';
 import { parseObligations, laneRevOf, isMustHold } from '../holistic/types.ts';
 import { parseJobId, type ObligationId } from '../core/ids.ts';
@@ -12,20 +10,6 @@ import type { Invocation } from './types.ts';
 /** Relationships come from the revision recorded before a launch, never lane names or prose. */
 export class InvocationRelations {
   #cache = new Map<string, ReturnType<typeof parseObligations> | null>();
-  #witnesses = new Map<string, { stamp: string; bytes: string }>();
-  private witness(path: string): string | null {
-    try {
-      const st = statSync(path); const stamp = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
-      const cached = this.#witnesses.get(path);
-      if (cached?.stamp === stamp) return cached.bytes;
-      const bytes = readFileSync(path, 'utf8');
-      this.#witnesses.set(path, { stamp, bytes });
-      return bytes;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      this.#witnesses.delete(path); return null;
-    }
-  }
   read(runDir: AbsPath, events: readonly Event[]): Map<string, Pick<Invocation, 'relatedUnits' | 'context' | 'assessment' | 'milestone'>> {
     const result = new Map<string, Pick<Invocation, 'relatedUnits' | 'context' | 'assessment' | 'milestone'>>();
     let obligations: ReturnType<typeof parseObligations> | null = null;
@@ -91,8 +75,7 @@ export class InvocationRelations {
         const runs = series.get(JSON.stringify([job, fact.lane, fact.laneRev, source.at]))!;
         if (!certified.has(JSON.stringify([job, source.at]))) continue;
         const entry = { ...fact, seq: e.seq };
-        const bytes = this.witness(join(witnessDir(runDir, entry), 'witness.json'));
-        const observation = observationOf(entry, bytes);
+        const observation = readObservation(runDir, entry);
         if (!observation) continue;
         for (const run of runs) if (run.defs.every((o) => o.witness && verdictOf(observation.record, o.witness) === 'not-held')) {
           result.get(run.id)!.assessment = run.baseline ? 'baseline-red' : 'future-gap';

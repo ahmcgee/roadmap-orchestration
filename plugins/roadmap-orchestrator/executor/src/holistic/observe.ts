@@ -39,6 +39,17 @@ export const verdictOf: VerdictOf = (record, witness) => {
   return 'unwitnessed';
 };
 
+/** Test ids shared across parsed witness records. Only a sharing aid: cleared when it reaches its bound. */
+const TEST_IDS = new Map<string, string>();
+const TEST_IDS_BOUND = 200_000;
+function internedTestId(id: string): string {
+  const known = TEST_IDS.get(id);
+  if (known !== undefined) return known;
+  if (TEST_IDS.size >= TEST_IDS_BOUND) TEST_IDS.clear();
+  TEST_IDS.set(id, id);
+  return id;
+}
+
 /** A `witnessed` fact as the fold keeps it. */
 export type WitnessedEntry = HolisticFold['witnessed'][number];
 
@@ -53,7 +64,9 @@ export type Observation = Readonly<{ key: ObservationKey; reuse: ReuseKey; recor
 export function observationOf(entry: WitnessedEntry, bytes: string | null): Observation | null {
   if (entry.purpose !== 'witness') return null;
   if (bytes === null || sha256Hex(bytes) !== entry.recordsSha256) return null;
-  const record = witnessRecord(JSON.parse(bytes), 'witness');
+  const parsed = witnessRecord(JSON.parse(bytes), 'witness');
+  // Records of one lane name the same tests: each test id is held once, however many records name it.
+  const record: WitnessRecord = { ...parsed, records: parsed.records.map((r) => ({ ...r, testId: internedTestId(r.testId) })) };
   const key: ObservationKey = { treeSha: entry.treeSha, lane: entry.lane, laneRev: entry.laneRev, envId: entry.envId };
   if (observationKeyText(record) !== observationKeyText(key) || record.purpose !== entry.purpose || record.inv !== entry.inv) {
     throw new Error(`witness record of ${entry.inv} (seq ${entry.seq}) names ${observationKeyText(record)} ${record.purpose}, its fact ${observationKeyText(key)} ${entry.purpose}`);
