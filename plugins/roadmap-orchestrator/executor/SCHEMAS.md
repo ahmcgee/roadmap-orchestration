@@ -1274,7 +1274,10 @@ published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; l
 read says how far it got every ten seconds (`console is reading arc <arc>: <phase> <percent>%`). Workers run with heap
 limits that are runaway guards a healthy arc never reaches, not budgets: three times a measured need plus 512 MB (a
 collector needs 384 MB plus three times its journal; the serve worker 256 MB plus three times the maintained journals, and
-is sized 64 MB over for their growth; a maintained set past its limit restarts it). Each worker reports its heap (used,
+is sized 64 MB over for their growth; a maintained set past its limit restarts it). A collector, which
+nothing waits on, collects its captures' garbage itself once its used heap is 192 MB over what its last collection left
+(the console process runs with `--expose-gc`): left to V8 under a guard-sized limit it runs to three times what it holds.
+Each worker reports its heap (used,
 limit, external) with what it holds at its first observation, every ten minutes, and once each time its used heap passes
 80% of its limit; the HTTP thread logs one line per report (`console collector for arc <arc>: heap <used> of <limit> MB
 (external <n> MB); events …, rows …, open …; records … (<n> MB, <n> evicted, <n> not kept), git … (<n> MB), stamps …, parsed …; …;

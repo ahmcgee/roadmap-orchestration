@@ -2,6 +2,7 @@
 // over its own port. It answers no requests, so nothing can starve its loop; main sends it only control messages.
 import { existsSync, type FSWatcher, watch } from 'node:fs';
 import { join } from 'node:path';
+import { getHeapStatistics } from 'node:v8';
 import { type MessagePort, parentPort, workerData } from 'node:worker_threads';
 import type { Run } from '../cli/locate.ts';
 import type { AbsPath } from '../core/values.ts';
@@ -27,11 +28,28 @@ function schedule(delayMs: number): void {
   if (timer !== null) clearTimeout(timer);
   dueAt = Date.now() + delayMs; timer = setTimeout(loop, delayMs);
 }
+/**
+ * V8 sizes its next full collection from the live heap, not from need: under a guard-sized limit a collector's used heap
+ * runs to three times what it holds between collections (measured: 340 MB live, 1.1 GB used). Nothing waits on this thread,
+ * so when the console runs with `--expose-gc` (src/entry/console.ts is started so) the garbage of captures is collected once
+ * it passes TIDY_MB over what the last collection left.
+ */
+const TIDY_MB = 192;
+const collect = (globalThis as { gc?: () => void }).gc;
+let settledMb = Infinity;
+function tidy(): void {
+  if (collect === undefined) return;
+  const used = getHeapStatistics().used_heap_size / 1048576;
+  if (used < settledMb + TIDY_MB && settledMb !== Infinity) return;
+  collect();
+  settledMb = getHeapStatistics().used_heap_size / 1048576;
+}
 /** Whether the used heap was past HEAP_NEAR of its limit at the end of the last step: a crossing is reported once. */
 let near = false;
 function loop(): void {
   timer = null; dueAt = Infinity;
   schedule(collector.step(Date.now()));
+  tidy();
   const now = heapNear();
   if (now && !near) report(heapReport(collector.sizes(), true));
   near = now;
