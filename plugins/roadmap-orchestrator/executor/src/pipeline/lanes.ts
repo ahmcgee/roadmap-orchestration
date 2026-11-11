@@ -1595,7 +1595,7 @@ type WitnessedView = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir
 function storeOf(ctx: WitnessedView, witnessed: readonly WitnessedEntry[]): ObservationStore {
   return observationStore(witnessed.flatMap((w) => {
     const path = witnessRecordPath(ctx.runDir, w);
-    const o = observationOf(w, writeOnce(path, () => existsSync(path) ? readFileSync(path, 'utf8') : null));
+    const o = observationOf(w, writeOnce('witness-text', path, () => existsSync(path) ? readFileSync(path, 'utf8') : null));
     return o === null ? [] : [o];
   }));
 }

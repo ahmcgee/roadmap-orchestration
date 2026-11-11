@@ -46,6 +46,8 @@ export class RecordMemo {
   #git = new Map<string, Spawned>();
   #gitBytes = 0;
   #records = new Map<string, unknown>();
+  /** Each path's kept forms (their keys in `#records`). */
+  #forms = new Map<string, string[]>();
   /** Each write-once record read, with its stamp taken before the read: what the integrity sweep re-checks. */
   #stamps = new Map<string, string>();
   #parsed = new Map<string, unknown>();
@@ -82,14 +84,17 @@ export class RecordMemo {
    * A write-once record, kept from its second read on: a record read once (a settled invocation's launch record, read for its
    * row) is not held for nothing. Absence is never remembered: the record may land later.
    */
-  record<T>(path: string, read: () => T | null): T | null {
-    if (this.#records.has(path)) { this.work.recordHits++; return this.#records.get(path) as T; }
+  record<T>(form: string, path: string, read: () => T | null): T | null {
+    // Readers keep different forms of one file (its text, its parsed record): each is kept under its own key.
+    const key = `${form}\0${path}`;
+    if (this.#records.has(key)) { this.work.recordHits++; return this.#records.get(key) as T; }
     const seen = this.#stamps.get(path), stamp = seen ?? stampOf(path);
     const value = read();
     // A record found absent costs a stat, and is looked for again.
     if (value === null) return value;
     this.work.recordReads++;
-    if (seen !== undefined) this.#records.set(path, value); else this.#stamps.set(path, stamp);
+    if (seen !== undefined) { this.#records.set(key, value); this.#forms.set(path, [...(this.#forms.get(path) ?? []), key]); }
+    else this.#stamps.set(path, stamp);
     return value;
   }
   /** A write-once record read past the memo (runner.json, rewritten once while open): the sweep re-checks it from now on. */
@@ -106,7 +111,7 @@ export class RecordMemo {
   /** Forgets these records (found rewritten or removed) and every parsed value, which may rest on them. */
   forget(paths: readonly string[]): void {
     if (paths.length === 0) return;
-    for (const path of paths) { this.#records.delete(path); this.#stamps.delete(path); }
+    for (const path of paths) { for (const key of this.#forms.get(path) ?? []) this.#records.delete(key); this.#forms.delete(path); this.#stamps.delete(path); }
     this.#parsed.clear();
   }
 }
@@ -127,7 +132,7 @@ export function withoutRecordMemo<T>(read: () => T): T {
 /** The memo the current read runs under, or null for a one-shot reader. */
 export const recordMemo = (): RecordMemo | null => ambient;
 /** `read` of a write-once record at `path`, through the ambient memo when there is one. */
-export const writeOnce = <T>(path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(path, read);
+export const writeOnce = <T>(form: string, path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(form, path, read);
 /** `parse` of content-addressed bytes named by `key`, through the ambient memo when there is one. */
 export const parsedOnce = <T>(key: string, parse: () => T): T => ambient === null ? parse() : ambient.parsed(key, parse);
 

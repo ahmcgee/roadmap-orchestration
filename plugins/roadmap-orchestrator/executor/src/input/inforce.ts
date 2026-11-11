@@ -84,7 +84,7 @@ export function keepInput(runDir: AbsPath, bytes: Buffer, ext: string): Sha256He
 /** The kept bytes hashing to `sha`, or null when none were kept. */
 export function keptInput(runDir: AbsPath, sha: Sha256Hex, ext: string): Buffer | null {
   const path = inputPath(runDir, sha, ext);
-  return writeOnce(path, () => {
+  return writeOnce('kept-bytes', path, () => {
     if (!existsSync(path)) return null;
     const bytes = readFileSync(path);
     if (bytesSha256(bytes) !== sha) throw new Error(`${path} does not hash to its name`);

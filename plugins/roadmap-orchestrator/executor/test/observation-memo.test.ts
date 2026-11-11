@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { arcId, invocationDirName, invocationIdOf } from '../src/core/ids.ts';
 import { absPath } from '../src/core/values.ts';
-import { immutableGit } from '../src/observation/memo.ts';
+import { RecordMemo, immutableGit } from '../src/observation/memo.ts';
 import { Observer } from '../src/observation/observer.ts';
 import { enrichedParityArc } from './fixtures/status-parity.ts';
 
@@ -69,4 +69,20 @@ test('captures of an unchanged arc after the first spawn git only for ref lookup
   assert.equal(id(row(capture())), 4321);
   assert.ok(o.lastWork.recordReads >= 1);
   assert.ok(o.changes().rows.some((r) => id(r) === 4321), 'the row read again is a change');
+});
+
+test('two readers of one record keep their own forms of it', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'roadmap-memo-forms-')), path = join(dir, 'witness.json');
+  try {
+    writeFileSync(path, '{"a":1}');
+    const memo = new RecordMemo();
+    for (let n = 0; n < 3; n++) {
+      assert.equal(memo.record('text', path, () => readFileSync(path, 'utf8')), '{"a":1}');
+      assert.deepEqual(memo.record('parsed', path, () => JSON.parse(readFileSync(path, 'utf8'))), { a: 1 });
+    }
+    memo.forget([path]);
+    writeFileSync(path, '{"a":2}');
+    assert.equal(memo.record('text', path, () => readFileSync(path, 'utf8')), '{"a":2}');
+    assert.deepEqual(memo.record('parsed', path, () => JSON.parse(readFileSync(path, 'utf8'))), { a: 2 });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

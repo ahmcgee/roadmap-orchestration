@@ -73,7 +73,7 @@ function recordsOf(ctx: Reader, job: JobId, tree: Sha): ReadonlyMap<LaneId, Witn
     }
     if (!same) continue;
     const path = witnessRecordPath(ctx.runDir, w);
-    out.set(w.lane, writeOnce(path, () => witnessRecord(JSON.parse(readFileSync(path, 'utf8')), 'witness'))!);
+    out.set(w.lane, writeOnce('witness-record', path, () => witnessRecord(JSON.parse(readFileSync(path, 'utf8')), 'witness'))!);
   }
   return out;
 }

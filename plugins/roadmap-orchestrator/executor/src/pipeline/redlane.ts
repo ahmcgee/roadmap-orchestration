@@ -140,7 +140,7 @@ export function writeRedClass(dir: string, cls: RedClass, failure: Sha256Hex, un
 /** A run's persisted red class, or null when it has none (not red, unstamped, or a crash before the write). */
 export function readRedClass(dir: string): RedFile | null {
   const path = join(dir, RED_FILE);
-  return writeOnce(path, () => existsSync(path) ? redFile(readJson(path), path) : null);
+  return writeOnce('red-record', path, () => existsSync(path) ? redFile(readJson(path), path) : null);
 }
 
 /** A rerun's verdict and evidence. */

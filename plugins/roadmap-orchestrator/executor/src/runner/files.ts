@@ -41,7 +41,7 @@ export function runnerFiles(invDir: AbsPath, inv: InvocationId): RunnerFiles {
         return file;
       };
       // runner.json is rewritten once (child: null, then the child); the others are write-once.
-      if (name !== 'runner.json') return writeOnce(path, read);
+      if (name !== 'runner.json') return writeOnce('runner-record', path, read);
       const file = read();
       if (file !== null) trackOnce(path);
       return file;

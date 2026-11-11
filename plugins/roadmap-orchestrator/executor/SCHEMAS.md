@@ -1233,7 +1233,8 @@ repo's claimed arc, otherwise the latest retained) always, and up to two more th
 minute, least recently used out first; a released arc's collector is terminated and the arc returns with a new epoch. The
 browser shows only the selected arc (another arc's link reads "This console shows the current arc only"). A collector
 steps every second (100 ms after a filesystem notice or a strict read's request, never closer to a capture than 150 ms or
-half that capture's time). A step samples what changed: the journal's stamp; the run's start, rejection and schedule
+half that capture's time); it watches the run directory flat, the refs and answers trees, and the directory of each
+invocation whose history a stream follows. A step samples what changed: the journal's stamp; the run's start, rejection and schedule
 records, the host claim, owner and demo files, `HEAD`, `packed-refs`, `config`, the refs and answers trees, incoming
 commands, receipts and needs-user records with their membership, the kept inputs' names, and each open invocation's
 runner records (identity/size/mtime/ctime, never following symlinks); the heartbeat and watch lease as a volatile overlay;
