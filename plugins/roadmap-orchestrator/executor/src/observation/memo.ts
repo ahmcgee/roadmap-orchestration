@@ -49,17 +49,27 @@ export class RecordMemo {
   /** Each write-once record read, with its stamp taken before the read: what the integrity sweep re-checks. */
   #stamps = new Map<string, string>();
   #parsed = new Map<string, unknown>();
+  /** Answers of commands that can move, for the capture under way (`withRecordMemo` starts one). */
+  #capture = new Map<string, Spawned>();
+  /** A new capture: what moving commands answered in the last one is asked again. */
+  beginCapture(): void { this.#capture.clear(); }
   /**
    * The answer of an immutable git command (`key` names it), run once; `key` null: a command that is run every time. Only a
    * success is remembered, or an answer `settled` says is final: an object missing now can be fetched later.
    */
-  git<T extends Spawned>(key: string | null, run: () => T, settled: (answer: T) => boolean = (a) => a.code === 0): T {
+  git<T extends Spawned>(key: string | null, run: () => T, settled: (answer: T) => boolean = (a) => a.code === 0, moving: string | null = null): T {
     if (key !== null) {
       const hit = this.#git.get(key);
       if (hit !== undefined) { this.#git.delete(key); this.#git.set(key, hit); this.work.gitHits++; return hit as T; }
     }
+    // A command whose answer can move (a ref lookup) is answered once per capture: one capture reads one value of each ref.
+    if (moving !== null) {
+      const hit = this.#capture.get(moving);
+      if (hit !== undefined) { this.work.gitHits++; return hit as T; }
+    }
     this.work.gitSpawns++;
     const answer = run();
+    if (moving !== null) this.#capture.set(moving, answer);
     if (key === null || !settled(answer)) return answer;
     this.#git.set(key, answer); this.#gitBytes += answer.stdout.length;
     for (const [old, value] of this.#git) {
@@ -68,13 +78,18 @@ export class RecordMemo {
     }
     return answer;
   }
-  /** A write-once record, read once. Absence is never remembered: the record may land later. */
+  /**
+   * A write-once record, kept from its second read on: a record read once (a settled invocation's launch record, read for its
+   * row) is not held for nothing. Absence is never remembered: the record may land later.
+   */
   record<T>(path: string, read: () => T | null): T | null {
     if (this.#records.has(path)) { this.work.recordHits++; return this.#records.get(path) as T; }
-    const stamp = stampOf(path);
+    const seen = this.#stamps.get(path), stamp = seen ?? stampOf(path);
     const value = read();
     // A record found absent costs a stat, and is looked for again.
-    if (value !== null) { this.work.recordReads++; this.#records.set(path, value); this.#stamps.set(path, stamp); }
+    if (value === null) return value;
+    this.work.recordReads++;
+    if (seen !== undefined) this.#records.set(path, value); else this.#stamps.set(path, stamp);
     return value;
   }
   /** A write-once record read past the memo (runner.json, rewritten once while open): the sweep re-checks it from now on. */
@@ -100,7 +115,7 @@ let ambient: RecordMemo | null = null;
 /** Runs `read` with the memo call sites (git, runner records, evidence records, kept inputs) answered from `memo`. */
 export function withRecordMemo<T>(memo: RecordMemo, read: () => T): T {
   const previous = ambient;
-  ambient = memo;
+  ambient = memo; memo.beginCapture();
   try { return read(); } finally { ambient = previous; }
 }
 /** Runs `read` without the ambient memo: for records that can still change (an open invocation's, which its runner writes). */

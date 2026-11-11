@@ -1,4 +1,8 @@
 import { createServer, type ServerResponse } from 'node:http';
+import { statSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import { EVENTS_FILE } from '../core/log.ts';
 import type { AddressInfo } from 'node:net';
 import { MessageChannel, Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
@@ -13,8 +17,9 @@ import { SseWriter, errorNotice } from './sse.ts';
 import type { CollectorReport } from './collector.ts';
 import { MAINTAIN, type ConsoleRequest, type FromServe, type ToCollector, type ToServe } from './messages.ts';
 import { staticResponse } from './static.ts';
+import { retainedRuns } from './runs.ts';
 import { BrowserPreparation, PREPARATION } from './preparation.ts';
-import type { Metadata } from './view-protocol.ts';
+import { CONSOLE_UI_SCHEMA, type Metadata } from './view-protocol.ts';
 
 const statuses: Record<ConsoleCode, number> = { reset: 409, conflict: 409, unavailable: 503, corruption: 500, protocol: 409, 'not-found': 404, invalid: 400 };
 export const SECURITY_HEADERS = {
@@ -32,9 +37,12 @@ export const RESTART_MS = [5_000, 30_000, 60_000] as const;
 type Reply = Readonly<{ json: string; checkedAt: string | null }>;
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout | null; timeoutMs: number; strict: boolean };
 /** One arc's collector as main runs it, and what it last said. */
-type Collector = { worker: Worker; run: Run; phase: CollectorPhase; phaseAt: number; done: number; of: number; captures: CaptureWork[]; seq: number; offset: number };
-/** What the console did for one arc: each capture's work since its collector started (the last 200), and where it stands. */
-export type ArcStats = Readonly<{ captures: readonly CaptureWork[]; phase: CollectorPhase; seq: number; offset: number }>;
+type Collector = { worker: Worker; run: Run; phase: CollectorPhase; phaseAt: number; done: number; of: number; captures: CaptureWork[]; folded: number;
+  /** What the serve worker last published (seq, journal byte) and when it last said anything of the arc; the journal's size. */
+  seq: number; offset: number; size: number; noticeAt: number; observed: boolean;
+  behind: { since: number; said: boolean } | null; readingSaidAt: number };
+/** What the console did for one arc: each capture's work since its collector started (the last 200), the events folded in all, and where it stands. */
+export type ArcStats = Readonly<{ captures: readonly CaptureWork[]; folded: number; phase: CollectorPhase; seq: number; offset: number }>;
 
 export type ConsoleServerArgs = Readonly<{ repo: AbsPath; common: AbsPath; hostDir: AbsPath; host: string; port: number; instance?: string }>;
 export async function serveConsole(args: ConsoleServerArgs) {
@@ -81,10 +89,17 @@ export async function serveConsole(args: ConsoleServerArgs) {
       // the browser budget; its own two seconds start once the arc is observed.
       case 'cold': { const p = pending.get(m.id); if (p) start(p, m.id, BUDGETS.browserMs); return; }
       case 'admitted': { const p = pending.get(m.id); if (p) start(p, m.id); return; }
+      case 'selected': {
+        selection = m;
+        if (m.ready) for (const w of discoveryWaiters.splice(0)) w();
+        return;
+      }
       case 'maintain': startCollector(m.arc, m.run); return;
-      case 'release': stopCollector(m.arc); return;
+      case 'release': wanted.delete(m.arc); stopCollector(m.arc); return;
       case 'check-now': collectors.get(m.arc)?.worker.postMessage({ kind: 'check-now' } satisfies ToCollector); return;
       case 'checked': {
+        const c = collectors.get(m.arc);
+        if (c) { c.noticeAt = Date.now(); c.offset = m.offset; c.seq = m.highWater; c.observed = true; }
         latest.delete(m.arc); latest.set(m.arc, m);
         while (latest.size > 24) latest.delete(latest.keys().next().value!);
         const id = `${m.epoch}:${m.revision}`;
@@ -102,46 +117,143 @@ export async function serveConsole(args: ConsoleServerArgs) {
         return;
     }
   };
-  const failAll = (e: Error) => { failed = e; admit(); for (const p of pending.values()) { if (p.timer) clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
-  const serve = new Worker(new URL('./worker.ts', import.meta.url), { workerData: { common: args.common, hostDir: args.hostDir, instance, repoId } });
-  serve.on('message', onServe);
-  serve.on('error', failAll);
-  serve.on('exit', (code) => { if (!closing) { log(`console serve worker exited ${code}`); failAll(new Error(`console serve worker exited ${code}`)); } });
+  const rejectPending = (e: Error) => { for (const p of pending.values()) { if (p.timer) clearTimeout(p.timer); p.reject(new ConsoleError('unavailable', e.message)); } pending.clear(); };
+  const failAll = (e: Error) => { failed = e; admit(); for (const w of discoveryWaiters.splice(0)) w(); rejectPending(e); };
+  const journalMb = (run: Run): number => { try { return statSync(join(run.runDir, EVENTS_FILE)).size / 1048576; } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw e; } };
+  /** Heap limits: a collector holds its arc's fold and table, the serve worker one parsed copy of each maintained journal. */
+  const limits = { collector: (run: Run) => Math.round(256 + 3 * journalMb(run)), serve: (runs: readonly Run[]) => Math.round(128 + 2.5 * runs.reduce((n, r) => n + journalMb(r), 0)) };
+  /** The arcs the serve worker asked to maintain, and how many times in a row each worker exited (its restart delay). */
+  const wanted = new Map<string, Run>();
+  const exits = new Map<string, number>();
+  let serve!: Worker, serveLimitMb = 0, serveDown: Error | null = null;
+  const restartIn = (key: string) => { const n = exits.get(key) ?? 0; exits.set(key, n + 1); return RESTART_MS[Math.min(n, RESTART_MS.length - 1)]!; };
+  function startServe(): void {
+    // Headroom for the journals' growth while it runs: only a larger set of arcs restarts it.
+    serveLimitMb = limits.serve([...wanted.values()]) + 64;
+    const worker = new Worker(new URL('./worker.ts', import.meta.url), { workerData: { common: args.common, hostDir: args.hostDir, instance, repoId }, resourceLimits: { maxOldGenerationSizeMb: serveLimitMb } });
+    serve = worker;
+    worker.on('message', (m: FromServe) => { if (serve !== worker) return; if (m.kind === 'ready') { serveDown = null; exits.delete('serve'); } onServe(m); });
+    let reason = '';
+    worker.on('error', (e) => { reason = e.message; });
+    worker.on('exit', (code) => {
+      if (closing || serve !== worker) return;
+      const why = `console serve worker exited ${code}${reason ? `: ${reason}` : ''}`, delay = restartIn('serve');
+      log(`${why}; restarting it in ${delay / 1000}s`);
+      serveDown = new Error(why); selection = null;
+      if (!admitting) failAll(serveDown); else rejectPending(serveDown);
+      for (const arc of [...collectors.keys()]) stopCollector(arc);
+      setTimeout(() => { if (!closing && serve === worker) restartServe(); }, delay).unref();
+    });
+  }
+  /** A fresh serve worker, and fresh collectors joined to it: every arc returns with a new epoch. */
+  function restartServe(): void {
+    rejectPending(new Error('console serve worker restarted; retry'));
+    for (const arc of [...collectors.keys()]) stopCollector(arc);
+    const old = serve; wantSelected(); startServe(); void old.terminate();
+    for (const [arc, run] of wanted) startCollector(arc as ArcId, run);
+  }
+  /** The selected arc is always maintained: its collector loads beside the serve worker rather than after it. */
+  function wantSelected(): void {
+    const runs = retainedRuns(args.common, args.hostDir);
+    if (runs.selected !== null) wanted.set(runs.selected, runs.arcs.find((r) => r.arc === runs.selected)!);
+  }
+  wantSelected();
+  startServe();
 
   function startCollector(arc: ArcId, run: Run): void {
-    stopCollector(arc);
+    // Main starts the selected arc's collector itself, beside the serve worker, so the two load in parallel.
+    if (collectors.has(arc)) return;
+    wanted.set(arc, run);
+    if (limits.serve([...wanted.values()]) > serveLimitMb) {
+      log(`console serve worker restarts: the maintained arcs need a ${limits.serve([...wanted.values()])} MB heap, over its ${serveLimitMb} MB`);
+      restartServe(); return;
+    }
     const { port1, port2 } = new MessageChannel();
-    const worker = new Worker(new URL('./collector.ts', import.meta.url), { workerData: { run, hostDir: args.hostDir, common: args.common, port: port1 }, transferList: [port1] });
-    const c: Collector = { worker, run, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], seq: 0, offset: 0 };
+    const worker = new Worker(new URL('./collector.ts', import.meta.url), { workerData: { run, hostDir: args.hostDir, common: args.common, port: port1 }, transferList: [port1],
+      resourceLimits: { maxOldGenerationSizeMb: limits.collector(run) } });
+    const c: Collector = { worker, run, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: 0 };
     collectors.set(arc, c);
     serve.postMessage({ kind: 'collector', arc, port: port2 } satisfies ToServe, [port2]);
     worker.on('message', (m: CollectorReport) => {
       if (m.kind === 'log') { log(m.message); return; }
       if (m.kind === 'progress') { if (m.phase !== c.phase) c.phaseAt = m.at; c.phase = m.phase; c.done = m.done; c.of = m.of; return; }
       c.captures.push(m.work); if (c.captures.length > 200) c.captures.shift();
-      if (m.seq !== null) c.seq = m.seq;
-      if (m.offset !== null) c.offset = m.offset;
+      c.folded += m.work.eventsFolded;
+      if (m.seq !== null) { c.seq = m.seq; exits.delete(arc); }
     });
-    const down = (reason: string) => {
+    let reason = '';
+    worker.on('error', (e) => { reason = e.message; });
+    worker.on('exit', (code) => {
       if (collectors.get(arc) !== c || closing) return;
       collectors.delete(arc);
-      log(`console collector for arc ${arc} exited: ${reason}`);
-      serve.postMessage({ kind: 'collector-down', arc, error: { code: 'unavailable', message: `console collector for this arc exited: ${reason}` } } satisfies ToServe);
-    };
-    worker.on('error', (e) => down(e.message));
-    worker.on('exit', (code) => down(`exit code ${code}`));
+      const why = `exit code ${code}${reason ? `: ${reason}` : ''}`, delay = restartIn(arc);
+      log(`console collector for arc ${arc} exited (${why}); restarting it in ${delay / 1000}s`);
+      serve.postMessage({ kind: 'collector-down', arc, error: { code: 'unavailable', message: `console collector for this arc exited (${why}); restarting in ${delay / 1000}s` } } satisfies ToServe);
+      setTimeout(() => { if (!closing && wanted.has(arc) && !collectors.has(arc)) startCollector(arc, wanted.get(arc)!); }, delay).unref();
+    });
   }
   function stopCollector(arc: string): void {
     const c = collectors.get(arc); if (!c) return;
     collectors.delete(arc); void c.worker.terminate();
   }
+  /**
+   * The lag monitor: once a second, each maintained arc's journal size against what the serve worker last published. An arc
+   * is behind when its journal is past the published offset, or nothing was published or checked for three seconds; after five
+   * seconds behind the log says so once, with what its collector is doing, and once when it catches up. A cold read says how
+   * far it got every ten seconds.
+   */
+  const LAG = { checkMs: 1_000, silentMs: 3_000, behindMs: 5_000, readingMs: 10_000 } as const;
+  const lag = setInterval(() => {
+    for (const [arc, c] of collectors) void stat(join(c.run.runDir, EVENTS_FILE)).then((st) => {
+      if (collectors.get(arc) !== c) return;
+      const now = Date.now();
+      c.size = st.size;
+      if (!c.observed) {
+        if (now - c.readingSaidAt >= LAG.readingMs && now - c.phaseAt >= LAG.readingMs) {
+          c.readingSaidAt = now;
+          log(`console is reading arc ${arc}: ${c.phase} ${c.of > 0 ? Math.round(100 * c.done / c.of) : 0}%`);
+        }
+        return;
+      }
+      const behind = st.size > c.offset || now - c.noticeAt > LAG.silentMs;
+      if (!behind) {
+        if (c.behind?.said) log(`console caught up with arc ${arc} after ${Math.round((now - c.behind.since) / 1000)}s behind`);
+        c.behind = null; return;
+      }
+      c.behind ??= { since: now, said: false };
+      if (!c.behind.said && now - c.behind.since >= LAG.behindMs) {
+        c.behind.said = true;
+        const w = c.captures.at(-1);
+        log(`console is behind arc ${arc}: published through seq ${c.seq} (byte ${c.offset} of ${st.size}); collector in ${c.phase} for ${Math.round((now - c.phaseAt) / 1000)}s; last capture ${w ? `${w.captureMs} ms (${w.eventsFolded} events, ${w.recordReads} record reads, ${w.gitSpawns} git)` : 'none yet'}`);
+      }
+    }, (e: NodeJS.ErrnoException) => { if (e.code !== 'ENOENT') log(`console lag monitor for arc ${arc}: ${e.message}`); });
+  }, LAG.checkMs);
   const ticker = setInterval(() => serve.postMessage({ kind: 'tick' } satisfies ToServe), MAINTAIN.tickMs);
+  for (const [arc, run] of wanted) startCollector(arc as ArcId, run);
 
+  /**
+   * API discovery, answered here from the serve worker's reported selection (no read waits behind another): once the selected
+   * arc has its first observation (or its capture failed), as the console can serve it then. A cold start is bounded by the
+   * browser budget.
+   */
+  let selection: Readonly<{ selected: ArcId | null; ready: boolean }> | null = null;
+  const discoveryWaiters: (() => void)[] = [];
+  function discover(): Promise<Reply> {
+    const reply = (): Reply => ({ json: canonicalJson({ protocol: CONSOLE_PROTOCOL, uiSchema: CONSOLE_UI_SCHEMA, selected: selection!.selected }), checkedAt: null });
+    if (selection?.ready) return Promise.resolve(reply());
+    return new Promise<Reply>((resolve, reject) => {
+      const timer = setTimeout(() => { const i = discoveryWaiters.indexOf(done); if (i >= 0) discoveryWaiters.splice(i, 1); reject(new ConsoleError('unavailable', BUDGETS.strict)); }, BUDGETS.browserMs);
+      const done = () => { clearTimeout(timer); if (failed) reject(new ConsoleError('unavailable', failed.message)); else resolve(reply()); };
+      discoveryWaiters.push(done);
+    });
+  }
   /** Sends `message` to the serve worker. A read resolves to its serialized reply; a control request to its value. */
   function request(message: ConsoleRequest, timeoutMs: number): Promise<unknown> {
     // Requests made before then wait in order, so control messages keep theirs.
     if (!admitting) return ready.then(() => request(message, timeoutMs));
     if (failed) return Promise.reject(new ConsoleError('unavailable', failed.message));
+    if (serveDown) return Promise.reject(new ConsoleError('unavailable', serveDown.message));
+    if (message.kind === 'read' && message.path.length === 1 && message.path[0] === 'arcs') return discover();
     // Coalesce reads only. Subscription mutations must preserve add/remove/add order.
     const key = message.kind === 'read' ? `${timeoutMs}:${canonicalJson(message)}` : `control:${next + 1}`;
     const known = coalesced.get(key); if (known) return known;
@@ -247,7 +359,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
     }
   });
   const shutdown = async () => {
-    closing = true; clearInterval(ticker); preparation.close();
+    closing = true; clearInterval(ticker); clearInterval(lag); preparation.close();
     await Promise.all([serve.terminate(), ...[...collectors.values()].map((c) => c.worker.terminate())]);
     collectors.clear();
   };
@@ -262,7 +374,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
   /** What the console did for `arc`, or null when no collector runs for it. */
   const stats = (arc: string): ArcStats | null => {
     const c = collectors.get(arc);
-    return c ? { captures: [...c.captures], phase: c.phase, seq: c.seq, offset: c.offset } : null;
+    return c ? { captures: [...c.captures], folded: c.folded, phase: c.phase, seq: c.seq, offset: c.offset } : null;
   };
   return { server, port, url, instance, repoId, ask, stats, async close() {
     for (const res of streams.keys()) res.end(); streams.clear();

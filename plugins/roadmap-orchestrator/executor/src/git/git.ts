@@ -75,8 +75,12 @@ export function gitRun(repo: AbsPath, args: readonly string[], opts: GitOptions 
   // Under a long-lived observer (src/observation/memo.ts), a command naming only object ids is answered once. So is a path
   // that a commit it resolved does not have: that commit can never gain it.
   const fixed = opts.identity === undefined && opts.indexFile === undefined && immutableGit(args, opts.input);
-  return memo.git(fixed ? memoKey(repo, args, opts.input) : null, run, (r) => r.code === 0 || r.code === 128 && ABSENT_PATH.test(stderr));
+  // Any other read-only command (a ref lookup) is answered once per capture.
+  const moving = !fixed && opts.identity === undefined && opts.indexFile === undefined && READ_ONLY.has(args[0] ?? '') ? memoKey(repo, args, opts.input) : null;
+  return memo.git(fixed ? memoKey(repo, args, opts.input) : null, run, (r) => r.code === 0 || r.code === 128 && ABSENT_PATH.test(stderr), moving);
 }
+/** Commands that only read the repository: within one capture, the same one answers the same. */
+const READ_ONLY = new Set(['rev-parse', 'cat-file', 'ls-tree', 'diff-tree', 'log', 'merge-base', 'for-each-ref', 'show-ref', 'rev-list', 'diff']);
 const ABSENT_PATH = /^fatal: path '[^']*' (does not exist|exists on disk, but not) in '[0-9a-f]{40}'\n?$/;
 const memoKey = (repo: AbsPath, args: readonly string[], input: string | Uint8Array | undefined): string =>
   JSON.stringify([repo, args, input === undefined ? null : typeof input === 'string' ? input : Buffer.from(input).toString('latin1')]);

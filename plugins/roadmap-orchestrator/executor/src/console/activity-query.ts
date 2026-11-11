@@ -133,9 +133,16 @@ export class ConsoleActivity {
     this.#sweep();
     const key = this.#indexKey(e), old = this.#indexes.get(key);
     if (old) {old.touched = Date.now(); this.#indexes.delete(key); this.#indexes.set(key, old); return old.index;}
-    const index = buildActivityIndex(e), size = bytes(index);
-    if (size > ACTIVITY_RETENTION.bytes) throw new ConsoleError('unavailable', 'Activity index exceeds retained capacity');
-    this.#indexes.set(key, {index, bytes: size, touched: Date.now()}); this.#bytes += size; this.#sweep();
+    return this.store(e, buildActivityIndex(e));
+  }
+  /** Whether `e`'s index is built. */
+  has(e: Envelope): boolean { return this.#indexes.has(this.#indexKey(e)); }
+  /** Keeps an index built for `e` elsewhere (in steps, src/console/worker.ts). */
+  store(e: Envelope, index: ActivityIndex): ActivityIndex {
+    if (index.bytes > ACTIVITY_RETENTION.bytes) throw new ConsoleError('unavailable', 'Activity index exceeds retained capacity');
+    const key = this.#indexKey(e);
+    if (!this.#indexes.has(key)) { this.#indexes.set(key, {index, bytes: index.bytes, touched: Date.now()}); this.#bytes += index.bytes; }
+    this.#sweep();
     return index;
   }
   #indexKey(e: Envelope) {return sha256Hex(canonicalJson([e.repoId, captureKey(e)]));}

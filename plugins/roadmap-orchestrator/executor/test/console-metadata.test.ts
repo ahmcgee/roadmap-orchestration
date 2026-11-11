@@ -62,3 +62,22 @@ test('SSE registers an atomic metadata watermark with no snapshot/model read and
   assert.equal((await fetch(`${base}/events?epoch=old`,{method:'HEAD'})).status,409);
   c.abort();
 });
+
+test('view versions of a model extended across captures equal those built cold at the same position', async t => {
+  const { investigationFixture } = await import('./fixtures/console-investigations.ts');
+  const f = await investigationFixture(); t.after(() => f.close());
+  const arc = new Observations(f.hostDir, 'incremental', 'reader').arc(f);
+  const versions = (e: Envelope) => new ConsoleMetadata().read(e, new ConsoleViews(), f.arc).viewVersions;
+  const cold = (e: Envelope): Envelope => ({ ...e, data: { ...e.data } });
+  const first = arc.read();
+  assert.deepEqual(versions(first), versions(cold(first)));
+  // Appended events, a settled row and a terminal fact: each extends the model's tokens, as captures do on a live arc.
+  for (let n = 0; n < 3; n++) { const p = f.begin('u7', 'build'); f.journal.fact({ kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false }); }
+  const second = arc.read();
+  f.finishLive(); f.complete();
+  const third = arc.read();
+  assert.ok(second.highWater > first.highWater && third.highWater > second.highWater);
+  assert.equal(third.data.capture.materializations, 3, 'three captures extended one model');
+  for (const e of [second, third]) assert.deepEqual(versions(e), versions(cold(e)), `at ${e.highWater}`);
+  assert.notDeepEqual(versions(third), versions(first), 'the versions moved with what changed');
+});

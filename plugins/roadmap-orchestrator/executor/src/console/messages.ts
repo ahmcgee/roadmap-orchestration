@@ -41,6 +41,8 @@ export type FromServe =
   | Readonly<{ kind: 'history-error'; arc: ArcId; invocation: string; error: ErrorBody }>
   /** An arc's capture failed (not a race): its stream gets an error notice. */
   | Readonly<{ kind: 'arc-error'; arc: ArcId; error: ErrorBody }>
+  /** The selected arc and whether it is observed (or failed): API discovery waits for that. */
+  | Readonly<{ kind: 'selected'; selected: ArcId | null; ready: boolean }>
   | Readonly<{ kind: 'maintain'; arc: ArcId; run: Run }>
   | Readonly<{ kind: 'release'; arc: ArcId }>
   /** A strict read waits on this arc: its collector should check now. */

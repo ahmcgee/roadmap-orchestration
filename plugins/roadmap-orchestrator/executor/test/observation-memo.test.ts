@@ -28,7 +28,7 @@ test('only commands naming full object ids are memoized; a ref argument never is
   ] as [string[], string?][]) assert.equal(immutableGit(args, input), false, args.join(' '));
 });
 
-test('a second capture of an unchanged arc spawns git only for ref lookups and reads no write-once record; a rewritten one is read again after invalidate', async (t) => {
+test('captures of an unchanged arc after the first spawn git only for ref lookups; from the third on they read no write-once record; a rewritten one is read again after invalidate', async (t) => {
   const f = await enrichedParityArc();
   const shims = mkdtempSync(join(tmpdir(), 'roadmap-memo-git-'));
   t.after(() => rmSync(shims, { recursive: true, force: true }));
@@ -44,10 +44,12 @@ test('a second capture of an unchanged arc spawns git only for ref lookups and r
   const capture = () => { const r = o.capture({ locator: { type: 'host' }, pinned: run, hostDir: absPath(f.hostDir), token: 0 }); assert.equal(r.error, null); return r.display!; };
   const first = capture(), cold = o.lastWork;
   assert.ok(cold.recordReads > 0 && cold.gitSpawns > 0, 'the first capture reads the records and asks git');
+  // A record is kept from its second read on (one read once, a settled row's launch record, is not held for nothing).
+  capture();
   const before = spawns().length;
   const second = capture(), warm = o.lastWork;
   assert.deepEqual(second.invocations.map((i) => ({ ...i, quietMs: null })), first.invocations.map((i) => ({ ...i, quietMs: null })));
-  assert.equal(warm.recordReads, 0, 'no write-once record is read twice');
+  assert.equal(warm.recordReads, 0, 'no write-once record is read a third time');
   assert.ok(warm.recordHits > 0 && warm.gitHits > 0);
   const again = spawns().slice(before);
   assert.equal(again.length, warm.gitSpawns);

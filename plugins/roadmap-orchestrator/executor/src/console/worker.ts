@@ -11,7 +11,7 @@ import type { AbsPath } from '../core/values.ts';
 import type { Run } from '../cli/locate.ts';
 import { invocationDir } from '../pipeline/invoke.ts';
 import type { CollectorMessage } from '../observation/collect.ts';
-import { CONSOLE_PROTOCOL, ConsoleError, type Admission, type Envelope } from '../observation/protocol.ts';
+import { CONSOLE_PROTOCOL, ConsoleError, captureKey, type Admission, type Envelope } from '../observation/protocol.ts';
 import { project } from '../tui/projection.ts';
 import { logPage, readEvidence } from './evidence.ts';
 import { ConsoleHistories } from './history.ts';
@@ -25,6 +25,7 @@ import { ConsoleTemporal } from './temporal-query.ts';
 import { ConsoleActivity } from './activity-query.ts';
 import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
+import { activityIndexSteps } from './activity-index.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
 import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape, effortScopeShape, resourcesShape, resourceDetailShape, resourceReasonsShape } from './view-shapes.ts';
@@ -55,7 +56,8 @@ const histories = new ConsoleHistories();
 const historySubscriptions = new Map<string, { arc: string; invocation: string; state?: string }>();
 type Asked = ConsoleRequest & { id: number; arrivedAt: number };
 /** A read waiting for its arc: it uses no CPU while parked, and every applied message looks at it again. */
-type Parked = { m: Asked; arc: string; park: ParkKind | null };
+/** `view`: admitted, waiting for the Activity index its envelope needs, which is built in steps (`buildIndex`). */
+type Parked = { m: Asked; arc: string; park: ParkKind | 'view' | null };
 let parked: Parked[] = [];
 const err = (error: unknown) => ({ code: error instanceof ConsoleError ? error.code : 'corruption' as const, message: error instanceof Error ? error.message : String(error) });
 
@@ -96,7 +98,54 @@ function arcOf(path: string[], params: Record<string, string>): string {
   if (section === 'snapshot' || section === 'activity-legacy') throw new ConsoleError('not-found', 'unknown console route');
   return arc;
 }
+/** A tab's list view: built on its first request per capture, then served from this cache (and warmed, `warm`). */
+const TAB_SECTIONS = new Set(['activity', 'timeline', 'effort', 'resources', 'attention', 'holistic']);
+const isTabList = (path: readonly string[], params: Record<string, string>): boolean =>
+  TAB_SECTIONS.has(path[2] ?? '') && (path.length === 3 || path[2] === 'timeline' && path.length === 4 && (path[3] === 'intervals' || path[3] === 'holds'))
+  && !('cursor' in params) && !('anchor' in params);
+const tabViews = new Map<string, { capture: string; data: unknown }>();
+/** The tab list views requested lately, which `warm` builds for each new capture before anyone asks. */
+const requestedTabs = new Map<string, { arc: string; path: string[]; params: Record<string, string>; at: number }>();
+const WARM = { standMs: 500, keepMs: 5 * 60_000, views: 32 } as const;
 function route(path: string[], params: Record<string, string>, e: Envelope) {
+  if (!isTabList(path, params)) return build(path, params, e);
+  const key = `${path.join('/')}?${canonicalJson(params)}`, capture = captureKey(e), hit = tabViews.get(key);
+  requestedTabs.set(key, { arc: path[1]!, path, params, at: Date.now() });
+  if (hit?.capture === capture) { tabViews.delete(key); tabViews.set(key, hit); return { ...e, data: hit.data }; }
+  const value = build(path, params, e) as { data: unknown };
+  tabViews.delete(key); tabViews.set(key, { capture, data: value.data });
+  while (tabViews.size > WARM.views) tabViews.delete(tabViews.keys().next().value!);
+  return value;
+}
+let warmTimer: NodeJS.Timeout | null = null;
+/**
+ * Once a capture has stood for half a second with no read waiting, builds the tab views requested in the last five minutes
+ * for it, one per turn of the event loop, so a visit is served from prepared data. A read that arrives meanwhile is answered
+ * between two builds.
+ */
+function warm(): void {
+  if (warmTimer !== null) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    const now = Date.now();
+    for (const [key, r] of requestedTabs) if (now - r.at > WARM.keepMs) requestedTabs.delete(key);
+    const queue = [...requestedTabs.entries()];
+    const next = () => {
+      if (warmTimer !== null || queue.length === 0) return;
+      if (parked.length > 0) { warm(); return; }
+      const [key, r] = queue.shift()!, e = models.get(r.arc)?.envelope();
+      if (e && r.path[2] === 'activity' && models.get(r.arc)!.failed === null && !activity.has(e)) buildIndex(r.arc, e);
+      else if (e && models.get(r.arc)!.failed === null && tabViews.get(key)?.capture !== captureKey(e)) {
+        const at = r.at;
+        try { route(r.path, r.params, e); } catch { /* the read that asks for it reports what failed */ }
+        requestedTabs.set(key, { ...r, at });
+      }
+      setImmediate(next);
+    };
+    setImmediate(next);
+  }, WARM.standMs);
+}
+function build(path: string[], params: Record<string, string>, e: Envelope) {
   const [, , section, id, file] = path;
   if (path.length === 3 && (section === 'shell' || section === 'graph')) {
     return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : views.graph(e)}, section, e);
@@ -197,6 +246,19 @@ function integer(raw: string) {
   return n;
 }
 
+/**
+ * A reply's body. An envelope's data is serialized once per data object (a capture's views, a revision's status) and the
+ * envelope around it per reply: the clock fields change every check, the data does not.
+ */
+const bodies = new WeakMap<object, string>();
+const MARK = `console-data-${sha256Hex(String(Math.random())).slice(0, 16)}`;
+function serialize(value: { checkedAt?: string; data?: unknown }): string {
+  if (typeof value.checkedAt !== 'string' || value.data === null || typeof value.data !== 'object') return canonicalJson(value);
+  const data = value.data as object;
+  let body = bodies.get(data);
+  if (body === undefined) { body = canonicalJson(data); bodies.set(data, body); }
+  return canonicalJson({ ...value, data: MARK }).replace(JSON.stringify(MARK), () => body!);
+}
 /** The arc a request is about, or null for API discovery and the unsubscriptions, which need no observation. */
 function arcOfRequest(m: Asked): string | null {
   switch (m.kind) {
@@ -217,8 +279,8 @@ function arcOfRequest(m: Asked): string | null {
 function answerFrom(m: Asked, e: Envelope): void {
   switch (m.kind) {
     case 'read': {
-      const value = route(m.path, m.params, e) as { checkedAt?: string };
-      post({ kind: 'reply', id: m.id, json: canonicalJson(value), checkedAt: value.checkedAt ?? null });
+      const value = route(m.path, m.params, e) as { checkedAt?: string; data?: unknown };
+      post({ kind: 'reply', id: m.id, json: serialize(value), checkedAt: value.checkedAt ?? null });
       return;
     }
     case 'subscribe': {
@@ -247,12 +309,8 @@ function handle(m: Asked): void {
   let arc: string | null;
   try { arc = arcOfRequest(m); } catch (error) { fail(m, error); return; }
   if (arc === null) {
-    if (m.kind === 'read') {
-      // Discovery answers once the console can serve the arc it names: after the selected arc's first observation.
-      reconcile();
-      const p: Parked = { m, arc: selected ?? '', park: null };
-      if (!discover(p)) parked.push(p);
-    } else if (m.kind === 'unsubscribe') {
+    if (m.kind === 'read') throw new Error('API discovery is answered by main from the reported selection');
+    if (m.kind === 'unsubscribe') {
       const n = (subscribed.get(m.arc) ?? 1) - 1;
       if (n > 0) subscribed.set(m.arc, n); else subscribed.delete(m.arc);
       post({ kind: 'value', id: m.id, value: null });
@@ -271,24 +329,16 @@ function handle(m: Asked): void {
   if (!attempt(p)) parked.push(p);
 }
 /** Tries a request against its arc's model: answers it (true), or says why it still waits. */
-/** API discovery: the selected arc, once that arc has its first observation (or its capture failed). */
-function discover(p: Parked): boolean {
-  const model = models.get(p.arc);
-  if (p.arc !== '' && model?.observed !== true && model?.failed == null) {
-    if (p.park === null) post({ kind: 'cold', id: p.m.id });
-    p.park = 'cold';
-    return false;
-  }
-  post({ kind: 'reply', id: p.m.id, json: canonicalJson({ protocol: CONSOLE_PROTOCOL, uiSchema: CONSOLE_UI_SCHEMA, selected }), checkedAt: null });
-  return true;
-}
 function attempt(p: Parked): boolean {
-  if (p.m.kind === 'read' && p.m.path.length === 1) return discover(p);
   const { m, arc } = p, model = models.get(arc);
   const strict = m.kind === 'read' && m.patient !== true;
   try {
     const verdict = model === undefined ? { kind: 'park' as const, park: 'cold' as const } : model.admit(admissionOf(m.kind === 'read' ? m.params : m.kind === 'subscribe' ? m.params ?? {} : {}), m.arrivedAt, strict);
-    if (verdict.kind === 'ready') { answerFrom(m, verdict.envelope); return true; }
+    if (verdict.kind === 'ready') {
+      // An Activity read waits for its capture's index, built in steps between other reads rather than on their way.
+      if (m.kind === 'read' && m.path[2] === 'activity' && !activity.has(verdict.envelope)) { buildIndex(arc, verdict.envelope); p.park = 'view'; return false; }
+      answerFrom(m, verdict.envelope); return true;
+    }
     if (verdict.park !== p.park) {
       // A strict read's two seconds start once its arc has its first observation (the rule for the worker's first check).
       if (strict && verdict.park === 'cold') post({ kind: 'cold', id: m.id });
@@ -299,15 +349,55 @@ function attempt(p: Parked): boolean {
     return false;
   } catch (error) { fail(m, error, m.kind === 'read' ? m.path[2] : undefined); return true; }
 }
+/**
+ * The Activity index of one capture per arc, built a slice of at most twenty milliseconds per turn of the event loop, so a
+ * shell or status read waits at most a slice behind it. A read parked on an older capture's index is answered from that capture
+ * when its admission allows; the next build starts for the newest capture someone waits on.
+ */
+const indexJobs = new Map<string, Envelope>();
+const SLICE_MS = 20;
+const admits = (e: Envelope, a: Admission): boolean => (a.epoch === undefined || a.epoch === e.epoch) && (a.revision ?? 0) <= e.revision && (a.minHighWater ?? 0) <= e.highWater && a.fence === undefined;
+function buildIndex(arc: string, e: Envelope): void {
+  if (indexJobs.has(arc)) return;
+  indexJobs.set(arc, e);
+  const steps = activityIndexSteps(e);
+  const slice = () => {
+    const until = performance.now() + SLICE_MS;
+    let step;
+    try { do step = steps.next(); while (!step.done && performance.now() < until); if (step.done) activity.store(e, step.value); }
+    catch (error) {
+      indexJobs.delete(arc);
+      const failed = parked.filter((p) => p.arc === arc && p.park === 'view');
+      parked = parked.filter((p) => !failed.includes(p));
+      for (const p of failed) fail(p.m, error);
+      return;
+    }
+    if (!step.done) { setImmediate(slice); return; }
+    indexJobs.delete(arc);
+    const waiting = parked.filter((p) => p.arc === arc && p.park === 'view');
+    for (const p of waiting) if (p.m.kind === 'read' && admits(e, admissionOf(p.m.params))) { parked = parked.filter((q) => q !== p); try { answerFrom(p.m, e); } catch (error) { fail(p.m, error); } }
+    revisit(arc);
+  };
+  setImmediate(slice);
+}
 /** Looks at every request parked on `arc` again. */
 function revisit(arc: string): void {
   if (parked.some((p) => p.arc === arc)) parked = parked.filter((p) => p.arc !== arc || !attempt(p));
 }
 
 /** The arcs kept current: the selected arc always, then subscribed and recently read arcs, the most recent two. */
+/** Tells main the selected arc, and whether it is observed yet: main answers API discovery from this. */
+let reportedSelection = '';
+function report(): void {
+  const model = selected === null ? undefined : models.get(selected);
+  const ready = selected === null || model?.observed === true || model?.failed != null;
+  const key = JSON.stringify([selected, ready]);
+  if (key !== reportedSelection) { reportedSelection = key; post({ kind: 'selected', selected, ready }); }
+}
 function reconcile(): void {
   const runs = retainedRuns(args.common, args.hostDir);
   selected = runs.selected;
+  report();
   const now = Date.now();
   for (const arc of subscribed.keys()) used.set(arc, now);
   const want = new Set<string>(selected === null ? [] : [selected]);
@@ -328,8 +418,11 @@ function reconcile(): void {
   for (const [arc, at] of used) if (now - at > MAINTAIN.recentMs && !want.has(arc)) used.delete(arc);
 }
 function collector(arc: string, port: MessagePort): void {
-  const run = runsOf.get(arc);
-  if (run === undefined || !maintained.has(arc)) { port.close(); return; }
+  // Main starts the selected arc's collector before this worker has said which arcs it maintains.
+  if (!maintained.has(arc)) reconcile();
+  // A collector main runs for an arc this worker does not maintain (a restart of this worker): adopt it as just read.
+  if (!maintained.has(arc)) { maintained.add(arc); runsOf.set(arc, retainedRun(args.common, args.hostDir, arc)); used.set(arc, Date.now()); }
+  const run = runsOf.get(arc)!;
   ports.get(arc)?.close();
   ports.set(arc, port);
   const model = new ArcModel(run, args.instance, args.repoId, () => revisit(arc));
@@ -339,7 +432,9 @@ function collector(arc: string, port: MessagePort): void {
     const applied = model.apply(m, Date.now());
     if (m.kind === 'failed') post({ kind: 'arc-error', arc: arc as ArcId, error: m.error });
     if (applied !== 'none') published(arc, model);
+    if (arc === selected) report();
     revisit(arc);
+    if (applied === 'published' && (m.kind === 'observation' || m.kind === 'rows')) warm();
   });
 }
 /** Tells main what changed (the stream's revision and heartbeat notices) and follows subscribed histories. */

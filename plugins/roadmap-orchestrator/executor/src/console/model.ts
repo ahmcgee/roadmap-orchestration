@@ -16,6 +16,7 @@ import { type Admission, type ConsoleCode, type Envelope, type ObservationData, 
 import type { Status } from '../status.ts';
 import type { Entry, Invocation } from '../tui/types.ts';
 import type { Supervision } from '../watch-lease.ts';
+import { ViewTokens, registerTokens, unregisterTokens } from './tokens.ts';
 
 /** Why a read waits: no observation yet, its watermark is ahead, or (a strict read) nothing was verified since it arrived. */
 export type ParkKind = 'cold' | 'watermark' | 'strict';
@@ -91,6 +92,9 @@ export class ArcModel {
   #overlay: Readonly<{ at: number; heartbeatAt: IsoTime | null; supervision: Supervision }> | null = null;
   #envelope: Envelope | null = null;
   #exceptions: Entry[] = [];
+  /** The always-current views' inputs at the published position, and the data objects they stand for (src/console/tokens.ts). */
+  #tokens = new ViewTokens();
+  #registered: ObservationData[] = [];
   /** Called when a journal parse sliced across turns of the event loop finished a slice: nothing to publish, but reads may wait on it. */
   readonly #onSlice: () => void;
   constructor(run: Run, instance: string, repoId: string, onSlice: () => void = () => {}) { this.run = run; this.#instance = instance; this.#repoId = repoId; this.#onSlice = onSlice; }
@@ -115,8 +119,10 @@ export class ArcModel {
         parsed.target = Math.max(parsed.target, m.journal.offset);
         // The journal was replaced after this capture verified it: the next capture reads the new one.
         if (!parsed.parse(Infinity)) return 'none';
-        if (m.epoch !== this.#epoch) { this.#rows.clear(); this.#sorted = []; this.#epoch = m.epoch; }
+        if (m.epoch !== this.#epoch) { this.#rows.clear(); this.#sorted = []; this.#epoch = m.epoch; this.#tokens = new ViewTokens(); }
         this.#events = parsed.events.slice(0, parsed.events.length);
+        this.#retire();
+        this.#tokens.extend(this.#events); this.#tokens.rows(m.rows);
         this.#upsert(m.rows, parsed.order);
         this.#base = { run: m.run, clock: m.clock, foldMs: m.foldMs, seq: m.journal.seq, status: m.status, summary: m.summary, plan: m.plan,
           requests: m.requests, milestoneUnits: m.milestoneUnits, estate: m.estate ?? this.#base!.estate, work: m.work };
@@ -126,6 +132,8 @@ export class ArcModel {
       }
       case 'rows': {
         if (this.#base === null || m.epoch !== this.#epoch) return 'none';
+        this.#retire();
+        this.#tokens.rows(m.rows);
         this.#upsert(m.rows, this.#parsed!.order);
         this.#base = { ...this.#base, work: m.work };
         this.#publish(m.asOf);
@@ -207,7 +215,16 @@ export class ArcModel {
     this.#exceptions = exceptionsOf(this.#base!.status, this.#base!.requests, this.#sorted);
     this.#envelope = this.#build();
   }
+  /** The tokens are about to move past the published position: they no longer stand for the data published at it. */
+  #retire(): void { for (const data of this.#registered) unregisterTokens(data); this.#registered = []; }
   #build(): Envelope {
+    const e = this.#assemble();
+    // Only the latest data object is registered: an older one (an earlier overlay) gets tokens built from its own events.
+    this.#retire();
+    registerTokens(e.data, this.#tokens); this.#registered.push(e.data);
+    return e;
+  }
+  #assemble(): Envelope {
     const b = this.#base!, o = this.#overlay;
     const display = { run: b.run, at: new Date(b.clock).toISOString(), seq: b.seq, status: b.status, invocations: this.#sorted, estate: b.estate as Entry[],
       exceptions: this.#exceptions, milestoneUnits: b.milestoneUnits };
