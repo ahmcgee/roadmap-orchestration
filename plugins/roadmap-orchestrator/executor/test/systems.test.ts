@@ -10,7 +10,7 @@ import { type LaneId,type SystemName,sha } from '../src/core/ids.ts';
 import { type LaneDef,cadenceAtOrBefore,laneDef,laneDefOf,specM1 } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath,repoPath,repoPattern } from '../src/core/values.ts';
-import { inputShaOf,reuseKeyText,treeOfCommit,withTreeListings } from '../src/git/reusekey.ts';
+import { inputShaOf,reuseKeyText,treeOfCommit } from '../src/git/reusekey.ts';
 import { laneRevMatches,laneRevOf,parseObligations } from '../src/holistic/types.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { type SystemsMap,laneInput,laneSelected,laneTestFiles,pathClass,systemsMap,systemsMapInForce,unknownLaneSystems } from '../src/input/systems.ts';
@@ -37,8 +37,8 @@ it('input and listing caches keep immutable trees distinct across history, patte
   const input = { inputs: [repoPattern('src/input.txt')] };
   const other = { inputs: [repoPattern('other.txt')] };
   const expected = (tree: string, path: string) => sha(createHash('sha1').update(git(repo, 'ls-tree', '-r', '-z', '--full-tree', tree, '--', path)).digest('hex'));
-  // More trees than the retained listings: revisiting an evicted listing must still read the named tree.
-  const history = withTreeListings(() => Array.from({ length: 36 }, (_, n) => {
+  // Many trees: revisiting one must read that tree's listing, whichever are kept.
+  const history = Array.from({ length: 36 }, (_, n) => {
     writeFiles(repo, { 'src/input.txt': `input ${n}`, 'other.txt': `other ${n}` });
     const commit = sha(commitAll(repo, `tree ${n}`));
     const tree = sha(git(repo, 'rev-parse', 'HEAD^{tree}'));
@@ -46,7 +46,7 @@ it('input and listing caches keep immutable trees distinct across history, patte
     const key = expected(tree, 'src/input.txt');
     assert.equal(inputShaOf(repo, tree, input, MAP), key);
     return { commit, tree, key };
-  }));
+  });
   for (const { commit, tree, key } of history.toReversed()) {
     assert.equal(treeOfCommit(repo, commit), tree, 'moving HEAD never changes an old commit\'s tree');
     assert.equal(inputShaOf(repo, tree, input, null), key);

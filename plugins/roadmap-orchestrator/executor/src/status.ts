@@ -5,7 +5,7 @@ import { terminalReceipts } from './commands/queue.ts';
 import { withArcRefReads } from './chain.ts';
 import { withSnapshotReads } from './git/snapshot.ts';
 import { systemsMapInForce } from './input/systems.ts';
-import { prefetchTreeListings } from './git/reusekey.ts';
+import { listingChunks, prefetchTreeListings } from './git/reusekey.ts';
 import { type EnvId } from './core/ids.ts';
 import { laneRevOf } from './holistic/types.ts';
 import { withObservationReads } from './pipeline/lanes.ts';
@@ -138,7 +138,6 @@ import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
 import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
 import { git,revParse } from './git/git.ts';
-import { withTreeListings } from './git/reusekey.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { RevisionContext } from './holistic/admission.ts';
@@ -1115,9 +1114,7 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
     const env = environments.get(`${lane.id}/${rev}`);
     return env !== undefined && compatible.has(`${lane.id}/${rev}/${env}`);
   };
-  const evaluate = (tree: Sha) => {
-    const memo = byTree.get(tree) ?? new Map<ObligationDef, ObligationLeaf>(); byTree.set(tree, memo);
-    const observed = observationsByTree.get(tree) ?? new Map<ArcLaneDef, Observation | null>(); observationsByTree.set(tree, observed);
+  const leavesOn = (tree: Sha, memo: Map<ObligationDef, ObligationLeaf>, observed: Map<ArcLaneDef, Observation | null>) => {
     const onTree = (lane: ArcLaneDef): Observation | null => {
       if (observed.has(lane)) return observed.get(lane)!;
       const rev = revs.get(lane)!;
@@ -1155,7 +1152,15 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
     };
     return leaf;
   };
-  return Object.assign(evaluate, { canObserve });
+  /** The leaves on `tree`, remembered for this evaluator's life. */
+  const evaluate = (tree: Sha) => {
+    const memo = byTree.get(tree) ?? new Map<ObligationDef, ObligationLeaf>(); byTree.set(tree, memo);
+    const observed = observationsByTree.get(tree) ?? new Map<ArcLaneDef, Observation | null>(); observationsByTree.set(tree, observed);
+    return leavesOn(tree, memo, observed);
+  };
+  /** The leaves on `tree`, remembered only while the caller holds the returned function (a historical tree, asked once). */
+  const passing = (tree: Sha) => leavesOn(tree, new Map(), new Map());
+  return Object.assign(evaluate, { canObserve, passing });
 }
 
 export function obligationLeaves(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore, tree: Sha): (o: ObligationDef) => ObligationLeaf {
@@ -1183,27 +1188,36 @@ function truths(
   // The head's tree first, then each earlier tree of its first-parent history, newest first (a tree once).
   const trees = treesOf(repo, head);
   const evaluate = obligationEvaluator(repo, view, obligations, store);
-  const leaves = new Map<Sha, ReturnType<typeof obligationLeaves>>();
-  const leafOn = (tree: Sha, o: ObligationDef): ObligationLeaf => {
-    let at = leaves.get(tree);
-    if (at === undefined) leaves.set(tree, at = evaluate(tree));
-    return at(o);
-  };
+  const onHead = evaluate(trees[0]!);
   const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));
   const definitions = new Map(obligations.obligations.map((o) => [o.id, o]));
   const needsListings = systemsMapInForce(view.planApplied()) !== null || obligations.lanes.some((l) => l.inputs !== undefined);
-  let prefetched = false;
-  const lastObserved = (o: ObligationDef): LastObservation | null => {
-    if (!evaluate.canObserve(o)) return null;
-    if (!prefetched && needsListings) { prefetchTreeListings(repo, trees.slice(1)); prefetched = true; }
-    for (const tree of trees.slice(1)) {
-      const l = leafOn(tree, o);
-      if (l.verdict !== 'not-covered') return { treeSha: tree, verdict: l.verdict, evidence: evidenceOf(l) };
+  /**
+   * Each obligation's last observation before the head: the newest earlier tree where its verdict is not `not-covered`.
+   * Tree-major, newest first: each tree's listings are prefetched by chunk and each tree is let go once its pending
+   * obligations are asked, so a long history holds one chunk of listings and one tree's leaves at a time.
+   */
+  const lastObserved = (pending: readonly ObligationDef[]): ReadonlyMap<ObligationDef, LastObservation> => {
+    const found = new Map<ObligationDef, LastObservation>();
+    let left = pending.filter((o) => evaluate.canObserve(o));
+    const history = trees.slice(1);
+    for (const chunk of left.length === 0 ? [] : needsListings ? listingChunks(repo, trees[0]!, history) : [history]) {
+      if (needsListings) prefetchTreeListings(repo, chunk);
+      for (const tree of chunk) {
+        const at = evaluate.passing(tree);
+        left = left.filter((o) => {
+          const l = at(o);
+          if (l.verdict === 'not-covered') return true;
+          found.set(o, { treeSha: tree, verdict: l.verdict, evidence: evidenceOf(l) });
+          return false;
+        });
+        if (left.length === 0) return found;
+      }
     }
-    return null;
+    return found;
   };
   const leaf = (o: ObligationDef): Readonly<{ verdict: ObligationTruth['verdict']; evidence: readonly AbsPath[]; units: readonly UnitId[] }> => {
-    const l = leafOn(trees[0]!, o);
+    const l = onHead(o);
     return { verdict: l.verdict, evidence: evidenceOf(l), units: l.units };
   };
 
@@ -1229,9 +1243,11 @@ function truths(
     const reason = l.units.length > 0 ? OBLIGATION_REASONS.find((r) => reasons.has(r as never)) ?? 'code' : l.verdict === 'not-covered' ? 'witness' : 'spec';
     notYetTrue.push({ ...truth, blockingUnits: l.units, reason, lastObserved: null });
   }
-  return { nowTrue, notYetTrue, withHistory: () => ({ nowTrue, notYetTrue: notYetTrue.map((o) => ({
-    ...o, lastObserved: o.verdict === 'not-covered' ? lastObserved(definitions.get(o.obligation)!) : null,
-  })) }) };
+  return { nowTrue, notYetTrue, withHistory: () => {
+    const uncovered = notYetTrue.filter((o) => o.verdict === 'not-covered').map((o) => definitions.get(o.obligation)!);
+    const last = lastObserved(uncovered);
+    return { nowTrue, notYetTrue: notYetTrue.map((o) => ({ ...o, lastObserved: o.verdict === 'not-covered' ? last.get(definitions.get(o.obligation)!) ?? null : null })) };
+  } };
 }
 
 /** The longest chain of unsettled units along their effective `after` edges (ties: the first in plan order). */
@@ -1600,10 +1616,10 @@ function knownDefectViews(view: JournalView, plan: PlanM1, lines: readonly UnitC
 }
 
 export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Status {
-  return withTreeListings(() => withObservationReads(() => {
+  return withObservationReads(() => {
     const d = derive(runDir, arc, hostDir, snapshot);
     return withSnapshotReads(d.log, () => withArcRefReads(() => readStatus(runDir, arc, hostDir, d)));
-  }));
+  });
 }
 
 /** The common projection consumed by summary; execution detail is layered on only for full status. */
@@ -1647,13 +1663,13 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
 }
 
 export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot) {
-  return withTreeListings(() => withObservationReads(() => {
+  return withObservationReads(() => {
     const d = derive(runDir, arc, hostDir, snapshot);
     return withSnapshotReads(d.log, () => {
       const x = readCore(runDir, arc, hostDir, d);
       return { core: x.core, events: x.d.events, plan: x.plan, meter: x.meter };
     });
-  }));
+  });
 }
 
 function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Derived, captured?: ReturnType<typeof readCore>): Status {
@@ -1776,11 +1792,11 @@ function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: 
 /** One production capture: measured cursor fold, one clock and one shared core derivation.
  * Materialized values outlive the mutable ObserverJournal view; never retain that view. */
 export function captureStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>) {
-  return withTreeListings(() => withObservationReads(() => {
+  return withObservationReads(() => {
     const d = derive(runDir, arc, hostDir, snapshot, timing);
     return withSnapshotReads(d.log, () => withArcRefReads(() => {
       const x = readCore(runDir, arc, hostDir, d);
       return { full: readStatus(runDir, arc, hostDir, d, x), core: x.core, plan: x.plan, events: [...d.events], ...timing };
     }));
-  }));
+  });
 }
