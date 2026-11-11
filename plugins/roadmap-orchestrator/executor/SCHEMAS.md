@@ -1243,7 +1243,11 @@ record captures and publishes the change; moved output re-reads the open rows at
 step publishes a check. Only ObserverJournal.read verifies journal prefixes, retaining incomplete tails without repair;
 inode/truncation/anchor resets change epoch. A capture folds only appended events, reads open invocations' rows and newly
 settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
-memory (src/observation/memo.ts); a ref lookup is asked once per capture. A capture is published as of the sample taken
+memory (src/observation/memo.ts); a ref lookup is asked once per capture. What it remembers is bounded by bytes, not by
+the arc: git answers 64 MiB and records 128 MiB (a witness record as its parsed observation, never its text), least
+recently used first, neither keeping one entry over an eighth of its bound; parsed inputs only while captures ask for them;
+tree listings 200,000 entries, read by the last-observation walk tree by tree in chunks that fit; and a snapshot ref only
+as its digest (commit, chain link, completed head), verified once per commit. A capture is published as of the sample taken
 before it read anything: every record it read is complete and at least that new, and whatever changed meanwhile is the
 next step's capture. A capture that races a writer (`ENOENT`) publishes nothing, keeps its cursor and rows, and is retried
 at the next step; five in a row are logged once. Any other failure is published, answers that arc's reads, and stands
@@ -1265,9 +1269,18 @@ past what was published, or nothing was checked for three seconds, for five seco
 published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; last capture <ms> ms (<events> events,
 <reads> record reads, <git> git)`, and when it catches up: `console caught up with arc <arc> after <t>s behind`; a cold
 read says how far it got every ten seconds (`console is reading arc <arc>: <phase> <percent>%`). Workers run with heap
-limits (a collector 256 MB plus three times its journal; the serve worker 128 MB plus two and a half times the maintained
-journals, and 64 MB for their growth; more maintained journals restart it); one that exits is logged with its reason and
-restarted after 5, 30, then 60 s, and its arc's reads answer unavailable with that reason meanwhile.
+limits that are runaway guards a healthy arc never reaches, not budgets: three times a measured need plus 512 MB (a
+collector needs 384 MB plus three times its journal; the serve worker 256 MB plus three times the maintained journals, and
+is sized 64 MB over for their growth; a maintained set past its limit restarts it). Each worker reports its heap (used,
+limit, external) with what it holds at its first observation, every ten minutes, and once each time its used heap passes
+80% of its limit; the HTTP thread logs one line per report (`console collector for arc <arc>: heap <used> of <limit> MB
+(external <n> MB); events …, rows …, open …; records … (<n> MB, <n> evicted), git … (<n> MB), stamps …, parsed …; …;
+process RSS <n> MB`, the same shape for `console serve worker:`, ` NEAR ITS LIMIT` on the 80% report). One that exits is
+logged with its reason (out of memory: its limit, its last report or `no report yet`, and a collector's phase) and
+restarted after 5, 30, then 60 s, and its arc's reads answer unavailable with that reason meanwhile. A worker out of
+memory three times in a row (a collector before it publishes a capture, the serve worker before its first observation) is
+not restarted: the log says so, and every read of that arc (every read, for the serve worker) answers unavailable saying
+the console stopped after running out of memory at that limit, until the console is restarted.
 
 An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
 Protocol is the exact executor package version. HighWater is the verified event prefix; revision also changes
