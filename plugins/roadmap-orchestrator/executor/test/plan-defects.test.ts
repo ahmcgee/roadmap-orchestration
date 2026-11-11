@@ -11,7 +11,7 @@ import { describe,it } from 'node:test';
 import { obligationId,unitId } from '../src/core/ids.ts';
 import { repoPath,repoPattern } from '../src/core/values.ts';
 import { type ArcLaneDef,type PlanDefect,laneRevOf,parseObligations } from '../src/holistic/types.ts';
-import { laneMisses } from '../src/holistic/witnessfiles.ts';
+import { laneMisses,specWitnessMiss } from '../src/holistic/witnessfiles.ts';
 import { parsePlan,regenerateLaneId } from '../src/input/plan.ts';
 import { APPLY,RESTART,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
 import { type CorpusArc,PIN_FILE,W1_FILE,WITNESS_FILE,W_SCRIPTS_LISTED,check,corpusArc,editJsonFile,editPlan,filesOf,kinds,rowOf,w1Item,wScriptsArchitecture,withSpecWitness } from './helpers/corpusarc.ts';
@@ -87,6 +87,30 @@ describe('witness files against their lane', () => {
     assert.equal(laneMisses(lane(['/bin/bash', '-ec', "node --test test/other.test.ts 'test/unit/a.test.ts'"]), file), null);
     assert.equal(laneMisses(lane(['sh', '-c', 'cd unit && node --test other.test.ts'], 'test'), file), null);
     assert.equal(laneMisses(lane(['sh', '-c', 'npm test']), file), null);
+  });
+
+  // dev.64 (nu-134094, nu-134825): a lane in a package directory whose witness reporter writes repo-relative ids. dev.59
+  // read the id's file against the lane's cwd only, so the id the reporter writes was refused and the one that applied
+  // could never be seen green.
+  it('plan-defect.spec-witness-readings: a spec witness id names its file from the repo root or from the lane\'s cwd', () => {
+    const lane = (cwd: string, testPaths: readonly string[], argv: readonly string[] = ['npx', 'vitest', 'run']): ArcLaneDef => parseObligations({
+      schema: 'roadmap/obligations-m3', cutLine: 'x', obligations: [], mapping: { systems: [] },
+      lanes: [{ id: 'journey', argv, cwd, env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], reporter: 'jsonl', testPaths }],
+    }).lanes[0]!;
+    const web = lane('apps/web', ['apps/web/test/**']);
+    // Repo-relative, as a repo-wide reporter writes it.
+    assert.equal(specWitnessMiss(web, 'apps/web/test/focus.test.tsx > popover > keeps focus'), null);
+    // Relative to the lane's cwd, as the runner's own reporter writes it.
+    assert.equal(specWitnessMiss(web, 'test/focus.test.tsx > popover > keeps focus'), null);
+    // Neither reading is in the lane: refused.
+    assert.deepEqual(specWitnessMiss(web, 'apps/core/test/steps.test.ts > x'), { file: 'apps/web/apps/core/test/steps.test.ts', missing: 'test-paths' });
+    assert.deepEqual(specWitnessMiss(web, '../core/test/steps.test.ts > x'), { file: 'apps/core/test/steps.test.ts', missing: 'test-paths' });
+    // An explicit file list decides for both readings.
+    const listed = lane('apps/web', ['apps/web/test/**'], ['npx', 'vitest', 'run', 'test/other.test.tsx']);
+    assert.deepEqual(specWitnessMiss(listed, 'apps/web/test/focus.test.tsx > x'), { file: 'apps/web/test/focus.test.tsx', missing: 'argv' });
+    assert.equal(specWitnessMiss(listed, 'apps/web/test/other.test.tsx > x'), null);
+    // A name path derives nothing.
+    assert.equal(specWitnessMiss(web, 'popover > keeps focus'), null);
   });
 
   // dev.59 pass 6 (item 6, nu-119813, C-355): atlas2's w-scripts-architecture at C-351, verbatim but for the 17 file names:

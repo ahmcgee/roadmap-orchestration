@@ -299,7 +299,7 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  *                             (`missing: test-paths`), or not named by its argv where the argv names test paths (`argv`).
  *   spec-witness-not-in-lane  (dev.59 pass 7, nu-119813) the same for a unit's spec witness item, whose file is its
  *                             `testId`'s first segment (before " > ") against the lane's cwd, where that names a test file
- *                             (src/holistic/witnessfiles.ts `specWitnessFile`); `item` the witness item, `unit` its spec's.
+ *                             (src/holistic/witnessfiles.ts `specWitnessMiss`); `item` the witness item, `unit` its spec's.
  *   witness-file-unreachable  a witness file absent at the tip (Phase 0) or the salvage SHA (run time) that no unit able
  *                             to create it covers: at Phase 0 the obligation's deliverers and every unit they depend on
  *                             (`units`: the deliverers), at run time the unit checked.

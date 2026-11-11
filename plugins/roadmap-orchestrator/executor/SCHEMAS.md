@@ -316,8 +316,10 @@ diff's rule), resolved against the lane's `cwd`, is a test path anywhere in the 
 layers) and with or without `testPaths`; a word naming another file (an extension, no glob: a wrapper script) is none. So once
 the argv lists test files, the witness file must be listed (or under a listed directory or glob); with no test path in the
 argv, `testPaths` alone decides. dev.59 pass 7 (nu-119813, C-351): a spec witness item declares no files; its file is
-its `testId`'s first segment before ` > `, resolved against its lane's `cwd`, when that segment is a test file name (by the
-same rule; otherwise nothing is derived and the item is not checked). The same check refuses it as
+its `testId`'s first segment before ` > `, when that segment is a test file name (by the
+same rule; otherwise nothing is derived and the item is not checked). dev.64: the segment is read both from the repo root and
+from the lane's `cwd`, since the lane's reporter decides which it writes and the lanes stage matches the id exactly; the item
+is in its lane when either reading is. The same check refuses it as
 `spec-witness-not-in-lane{unit,item,lane,file,missing:'test-paths'|'argv'}` at a fresh start and at every revision (`REVISION`),
 and parks it uncharged at the lanes witness diagnosis (`plan-defect`). A revision adopts such a defect in force while the
 item and its lane are unchanged, and is refused for it when it adds or changes either; a restart adopts it. A witness the

@@ -42,7 +42,8 @@ import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
 //                    is judged on its own (2026-10-21; 1.0.0-dev.16): a declared one is checked, an undeclared one is read
 //                    as undeclared with a logged warning, whatever the others declare.
 //                  - spec witness items (dev.59 pass 7, nu-119813): each active item's file, its testId's first segment
-//                    where that is a test file name (src/holistic/witnessfiles.ts `specWitnessFile`), inside its lane
+//                    where that is a test file name, read against the repo root or the lane's cwd
+//                    (src/holistic/witnessfiles.ts `specWitnessMiss`), inside its lane
 //                    (`spec-witness-not-in-lane`). Checked where declarations are required, so a fresh start refuses it and a
 //                    revision refuses it when it adds or changes the item or its lane (`revisionDefects`); a restart adopts it.
 //                  - milestone references (every arc; 2026-10-21, 1.0.0-dev.16): a milestone whose reference dirs hold more
@@ -85,7 +86,7 @@ import { censusProblems,specCensusMismatches } from '../holistic/rederive.ts';
 import {
 type Obligations,type PlanDefect,type Vision,isExempt,parseObligations,parseVision,
 } from '../holistic/types.ts';
-import { laneMisses,specWitnessFile } from '../holistic/witnessfiles.ts';
+import { laneMisses,specWitnessMiss } from '../holistic/witnessfiles.ts';
 import { sameExecution } from '../input/laneexecution.ts';
 import { unknownLaneSystems } from '../input/systems.ts';
 
@@ -466,7 +467,7 @@ function witnessDefects(input: Phase0Input, obligations: Obligations, declared: 
 
 /**
  * Row 11 over the specs' witness items (dev.59 pass 7, nu-119813): each active item on an arc lane whose `testId` names a
- * test file (`specWitnessFile`) that the lane never runs (`laneMisses`). `basis`: the item and its lane as judged, which
+ * test file that the lane never runs (`specWitnessMiss`). `basis`: the item and its lane as judged, which
  * `revisionDefects` compares. Run where declarations are required (a fresh start, every revision), so a restart adopts the
  * specs in force.
  */
@@ -474,10 +475,9 @@ function specWitnessDefects(input: Phase0Input, obligations: Obligations): reado
   return parsedSpecs(input).flatMap((spec) => specWitnesses(spec).flatMap((w) => {
     const lane = obligations.lanes.find((l) => l.id === w.lane);
     if (w.state !== 'active' || lane === undefined || lane.witnessClass === 'external') return [];
-    const file = specWitnessFile(lane, w.testId);
-    const missing = file === null ? null : laneMisses(lane, file);
-    if (file === null || missing === null) return [];
-    return [{ defect: { type: 'spec-witness-not-in-lane', unit: spec.unit, item: w.id, lane: w.lane, file, missing }, basis: { item: w, lane } }];
+    const miss = specWitnessMiss(lane, w.testId);
+    if (miss === null) return [];
+    return [{ defect: { type: 'spec-witness-not-in-lane', unit: spec.unit, item: w.id, lane: w.lane, ...miss }, basis: { item: w, lane } }];
   }));
 }
 
