@@ -121,3 +121,13 @@ test('the maintained set is the selected arc plus the two most recent; a release
   const again = await status(others[0]!); assert.equal(again.code, 200);
   assert.notEqual(again.body.epoch, first.body.epoch, 'a released arc returns with a new epoch');
 });
+
+test('an arc with open invocations is captured once while nothing changes', async (t) => {
+  const { investigationFixture } = await import('./fixtures/console-investigations.ts');
+  const f = await investigationFixture(); t.after(() => f.close());
+  const arc = new Observations(f.hostDir, 'open-set', 'repo').arc(f);
+  const first = arc.read();
+  assert.ok(first.data.display.invocations.some((i) => i.endedAt === null), 'the fixture has open invocations');
+  for (let n = 0; n < 3; n++) arc.read();
+  assert.equal(arc.messages.filter((m) => m.kind === 'observation').length, 1, 'learning the open set after the cold capture is not a change');
+});

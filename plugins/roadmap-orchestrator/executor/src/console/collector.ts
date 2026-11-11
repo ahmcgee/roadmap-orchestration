@@ -1,6 +1,6 @@
 // A collector worker: gathers one arc (src/observation/collect.ts) and publishes each change straight to the serve worker
 // over its own port. It answers no requests, so nothing can starve its loop; main sends it only control messages.
-import { existsSync, watch } from 'node:fs';
+import { existsSync, type FSWatcher, watch } from 'node:fs';
 import { join } from 'node:path';
 import { type MessagePort, parentPort, workerData } from 'node:worker_threads';
 import type { Run } from '../cli/locate.ts';
@@ -38,5 +38,11 @@ function poke(): void {
 // heartbeat land there. The one-second step covers the rest.
 for (const dir of [join(common, 'refs'), join(common, 'roadmap')]) if (existsSync(dir)) watch(dir, { recursive: true }, poke).on('error', (e) => report({ kind: 'log', message: `console collector for arc ${run.arc}: watching ${dir} failed: ${e.message}` }));
 if (existsSync(run.runDir)) watch(run.runDir, poke).on('error', (e) => report({ kind: 'log', message: `console collector for arc ${run.arc}: watching its run directory failed: ${e.message}` }));
-parentPort!.on('message', (m: ToCollector) => { if (m.kind === 'check-now') poke(); });
+// A followed history's invocation directory, watched flat: its output streams there.
+const followed = new Map<string, FSWatcher>();
+function follow(dirs: readonly string[]): void {
+  for (const [dir, w] of followed) if (!dirs.includes(dir)) { w.close(); followed.delete(dir); }
+  for (const dir of dirs) if (!followed.has(dir) && existsSync(dir)) followed.set(dir, watch(dir, poke).on('error', (e) => report({ kind: 'log', message: `console collector for arc ${run.arc}: watching ${dir} failed: ${e.message}` })));
+}
+parentPort!.on('message', (m: ToCollector) => { if (m.kind === 'check-now') poke(); else follow(m.dirs); });
 schedule(0);

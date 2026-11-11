@@ -29,7 +29,14 @@ export function dirStamp(path: string): Readonly<{ stamp: string; members: reado
  * write-once records are trusted once read, and the integrity sweep re-checks them); `volatile` the heartbeat and the watch
  * lease, an overlay; `output` open invocations' output streams; `changed` the paths whose stamp differs from the previous sample.
  */
-export type Sample = Readonly<{ journal: string; stable: string; volatile: string; output: string; changed: readonly string[]; statCalls: number }>;
+export type Sample = Readonly<{ journal: string; stable: string; volatile: string; output: string; changed: readonly string[]; statCalls: number;
+  /** The open invocations' runner records, by path: compared path by path, since the open set itself moves only with the journal. */
+  open: ReadonlyMap<string, string> }>;
+/** Whether a record open in both samples changed (an invocation joining or leaving the open set is a journal change). */
+export function openMoved(before: Sample, now: Sample): boolean {
+  for (const [path, stamp] of now.open) { const was = before.open.get(path); if (was !== undefined && was !== stamp) return true; }
+  return false;
+}
 
 export class ChangeDetector {
   readonly runDir: AbsPath;
@@ -56,7 +63,11 @@ export class ChangeDetector {
     for (const dir of [join(r, 'commands', 'incoming'), join(r, 'commands', 'receipts'), join(r, 'needs-user'), join(this.common, 'roadmap', 'answers'), join(this.common, 'refs')]) tree(dir);
     // Kept inputs are content-addressed and write-once: their names are enough here; the sweep re-checks their bytes.
     statCalls++; rows.set(join(r, 'inputs'), dirStamp(join(r, 'inputs')).stamp);
-    for (const inv of open) for (const name of ['launch.json', 'runner.json', 'result.json', 'exit.json']) file(join(inv.dir, name));
+    const records = new Map<string, string>();
+    for (const inv of open) for (const name of ['launch.json', 'runner.json', 'result.json', 'exit.json']) {
+      statCalls++; const path = join(inv.dir, name), stamp = fileStamp(path);
+      records.set(path, stamp);
+    }
     const demo = readDemoRecord(this.hostDir)?.serving;
     // Status uses boot + pid/start identity, including zombie detection, for demo serving.
     const liveness = JSON.stringify([demo ? [demo.boot === readBootId(), ...demo.processes.map(detachedAlive)] : null, ownerState(r, this.hostDir)]);
@@ -67,10 +78,11 @@ export class ChangeDetector {
       rows.set(path, stamp); outputs.push(`${path}:${stamp}`);
     }
     const heartbeat = fileStamp(join(r, 'heartbeat.json')); statCalls++;
+    for (const [path, stamp] of records) rows.set(path, stamp);
     const changed: string[] = [];
     for (const [path, stamp] of rows) if (this.#previous.get(path) !== stamp) changed.push(path);
     for (const path of this.#previous.keys()) if (!rows.has(path)) changed.push(path);
     this.#previous = rows;
-    return { journal, stable, volatile: heartbeat + JSON.stringify(supervision(r)), output: sha256Hex(outputs.join('\n')), changed, statCalls };
+    return { journal, stable, volatile: heartbeat + JSON.stringify(supervision(r)), output: sha256Hex(outputs.join('\n')), changed, statCalls, open: records };
   }
 }

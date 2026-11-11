@@ -97,6 +97,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
       case 'maintain': startCollector(m.arc, m.run); return;
       case 'release': wanted.delete(m.arc); stopCollector(m.arc); return;
       case 'check-now': collectors.get(m.arc)?.worker.postMessage({ kind: 'check-now' } satisfies ToCollector); return;
+      case 'follow': follows.set(m.arc, m.dirs); collectors.get(m.arc)?.worker.postMessage({ kind: 'follow', dirs: m.dirs } satisfies ToCollector); return;
       case 'checked': {
         // The journal byte is the lag monitor's; streams carry the metadata notice alone.
         const { offset, ...notice } = m;
@@ -126,6 +127,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
   const limits = { collector: (run: Run) => Math.round(256 + 3 * journalMb(run)), serve: (runs: readonly Run[]) => Math.round(128 + 2.5 * runs.reduce((n, r) => n + journalMb(r), 0)) };
   /** The arcs the serve worker asked to maintain, and how many times in a row each worker exited (its restart delay). */
   const wanted = new Map<string, Run>();
+  /** Each arc's followed history directories, handed to its collector (again, when it restarts). */
+  const follows = new Map<string, readonly string[]>();
   const exits = new Map<string, number>();
   let serve!: Worker, serveLimitMb = 0, serveDown: Error | null = null;
   const restartIn = (key: string) => { const n = exits.get(key) ?? 0; exits.set(key, n + 1); return RESTART_MS[Math.min(n, RESTART_MS.length - 1)]!; };
@@ -176,6 +179,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
     const c: Collector = { worker, run, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: Date.now() };
     collectors.set(arc, c);
     serve.postMessage({ kind: 'collector', arc, port: port2 } satisfies ToServe, [port2]);
+    const dirs = follows.get(arc); if (dirs) worker.postMessage({ kind: 'follow', dirs } satisfies ToCollector);
     worker.on('message', (m: CollectorReport) => {
       if (m.kind === 'log') { log(m.message); return; }
       if (m.kind === 'progress') { if (m.phase !== c.phase) c.phaseAt = m.at; c.phase = m.phase; c.done = m.done; c.of = m.of; return; }

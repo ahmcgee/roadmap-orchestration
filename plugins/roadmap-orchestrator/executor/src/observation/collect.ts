@@ -16,7 +16,7 @@ import { type OwnerState, type Status, ownerState } from '../status.ts';
 import type { summarize } from '../status/summary.ts';
 import type { Entry, Invocation } from '../tui/types.ts';
 import { type Supervision, supervision } from '../watch-lease.ts';
-import { ChangeDetector, type Sample } from './changes.ts';
+import { ChangeDetector, openMoved, type Sample } from './changes.ts';
 import { checkContained, checkRunContainment } from './containment.ts';
 import { stampOf } from './memo.ts';
 import { type CapturePhase, Observer } from './observer.ts';
@@ -127,8 +127,9 @@ export class ArcCollector {
       }
       const sample = this.#changes.sample(this.#observer.open());
       const published = this.#published;
-      const moved = published === null || this.#rewritten.length > 0 || sample.journal !== published.journal || sample.stable !== published.stable;
-      const retry = this.#failedOn === null || this.#rewritten.length > 0 || sample.journal !== this.#failedOn.journal || sample.stable !== this.#failedOn.stable;
+      const differs = (before: Sample) => sample.journal !== before.journal || sample.stable !== before.stable || openMoved(before, sample);
+      const moved = published === null || this.#rewritten.length > 0 || differs(published);
+      const retry = this.#failedOn === null || this.#rewritten.length > 0 || differs(this.#failedOn);
       if (moved && retry) captured = this.#capture(sample, now);
       // Failed on this very sample: nothing moved since, so the failure stands as of now.
       else if (moved) this.#emit({ kind: 'failed', arc: this.run.arc, at: now, error: this.#failure! });

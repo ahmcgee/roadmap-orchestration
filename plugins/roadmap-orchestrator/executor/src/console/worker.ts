@@ -296,6 +296,7 @@ function answerFrom(m: Asked, e: Envelope): void {
     case 'history-subscribe': {
       histories.selected(e, m.invocation);
       historySubscriptions.set(`${m.arc}:${m.invocation}`, { arc: m.arc, invocation: m.invocation });
+      follow(m.arc);
       post({ kind: 'value', id: m.id, value: null });
       return;
     }
@@ -319,6 +320,7 @@ function handle(m: Asked): void {
       post({ kind: 'value', id: m.id, value: null });
     } else if (m.kind === 'history-unsubscribe') {
       historySubscriptions.delete(`${m.arc}:${m.invocation}`);
+      follow(m.arc);
       post({ kind: 'value', id: m.id, value: null });
     }
     return;
@@ -449,6 +451,13 @@ function collector(arc: string, port: MessagePort): void {
     revisit(arc);
     if (applied === 'published' && (m.kind === 'observation' || m.kind === 'rows')) warm();
   });
+}
+/** Tells main which invocation directories of `arc` subscribed histories follow, for its collector to watch. */
+function follow(arc: string): void {
+  const run = runsOf.get(arc) ?? models.get(arc)?.run;
+  if (run === undefined) return;
+  const dirs = [...historySubscriptions.values()].filter((h) => h.arc === arc).map((h) => join(run.runDir, 'inv', h.invocation));
+  post({ kind: 'follow', arc: arc as ArcId, dirs });
 }
 /** Tells main what changed (the stream's revision and heartbeat notices) and follows subscribed histories. */
 function published(arc: string, model: ArcModel): void {

@@ -46,10 +46,12 @@ export type FromServe =
   | Readonly<{ kind: 'maintain'; arc: ArcId; run: Run }>
   | Readonly<{ kind: 'release'; arc: ArcId }>
   /** A strict read waits on this arc: its collector should check now. */
-  | Readonly<{ kind: 'check-now'; arc: ArcId }>;
+  | Readonly<{ kind: 'check-now'; arc: ArcId }>
+  /** The invocation directories whose history a stream follows: their collector watches them, so a change is checked at once. */
+  | Readonly<{ kind: 'follow'; arc: ArcId; dirs: readonly string[] }>;
 
 /** Main to a collector. */
-export type ToCollector = Readonly<{ kind: 'check-now' }>;
+export type ToCollector = Readonly<{ kind: 'check-now' }> | Readonly<{ kind: 'follow'; dirs: readonly string[] }>;
 
 /** The maintained arcs: the selected one, then up to `extra` subscribed or read within `recentMs`. */
 export const MAINTAIN = { extra: 2, recentMs: 60_000, tickMs: 2_000 } as const;
