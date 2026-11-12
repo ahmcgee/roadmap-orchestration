@@ -30,7 +30,7 @@ export function Activity({arc}:{arc:string}) {
   const store=useContext(Views),cached=useFacets('activity',undefined),params=knownOnly(activityParams(current.query,displayZone()),cached),cursor=current.query.get('cursor');
   const query=params.toString(),path=`activity?${query}${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`;
   const state=useView(view==='events'?path:null),data=state.data as ActivityView|null,facets=useFacets('activity',data?.facets);
-  const [changes,setChanges]=useState(0),[noticeError,setNoticeError]=useState(''),[retry,setRetry]=useState(0),[localError,setLocalError]=useState('');
+  const [changes,setChanges]=useState(0),[expired,setExpired]=useState(false),[noticeError,setNoticeError]=useState(''),[retry,setRetry]=useState(0),[localError,setLocalError]=useState('');
   useEffect(()=>{store?.ui.set('query:activity',current.query.toString());},[store,current.query.toString()]);
   const metadataVersion=store?.metadata?.viewVersions.activity,request=useRef(0);
   const requestVersion=store?.metadata?.viewVersions.attention,generation=store?.generation??0;
@@ -40,17 +40,19 @@ export function Activity({arc}:{arc:string}) {
   },[requestVersion,generation,requestAnchor]);
   const requestsChanged=Boolean(requestVersion&&requestAnchor?.generation===generation&&requestAnchor.version!==requestVersion);
   useEffect(()=>{
-    setChanges(0);setNoticeError('');
+    setChanges(0);setExpired(false);setNoticeError('');
     if(view!=='events'||!data||!store||!metadataVersion)return;
     // The initial SSE notice only verifies this prefix; it is not a new event.
     if(store.metadata!.highWater<=data.page.asOf.highWater)return;
     const c=new AbortController(),ticket=++request.current;
-    void get(`/arcs/${encodeURIComponent(arc)}/activity/changes?${query}&anchor=${encodeURIComponent(data.page.anchor)}&epoch=${encodeURIComponent(store.metadata!.epoch)}&minHighWater=${store.metadata!.highWater}`,c.signal).then(raw=>{
+    void get(`/arcs/${encodeURIComponent(arc)}/activity/changes?${query}&anchor=${encodeURIComponent(data.page.anchor)}&epoch=${encodeURIComponent(store.metadata!.epoch)}`,c.signal).then(raw=>{
       if(c.signal.aborted||ticket!==request.current)return;
       if(!activityChangesShape(raw.data))throw Object.assign(new ApiError('Malformed Activity changes; reload required'),{code:'protocol'});
-      if(!store.admit(raw,false,true))throw Error('Activity changed during this read; retry');
+      store.admit(raw,false,true);
       setChanges(raw.data.newMatching);
-    }).catch(err=>{if(!c.signal.aborted){setNoticeError(err.message);if(err instanceof ApiError&&err.code==='protocol'){store.reload=true;store.emit();}}});
+      // An anchor the console no longer keeps (its index made way for a newer capture's) cannot count what is new; the newer
+      // events are there all the same, so the page offers them rather than an error.
+    }).catch(err=>{if(!c.signal.aborted){if(err instanceof ApiError&&err.code==='reset'){setExpired(true);return;}setNoticeError(err.message);if(err instanceof ApiError&&err.code==='protocol'){store.reload=true;store.emit();}}});
     return()=>c.abort();
   },[arc,view,path,data?.page.anchor,metadataVersion,store?.generation,retry]);
   function navigate(next:URLSearchParams, fresh=false){
@@ -106,7 +108,7 @@ export function Activity({arc}:{arc:string}) {
       {state.loading&&<p role="status">{data?'Updating Activity…':'Loading Activity…'}</p>}
       {data&&<>
         <div className="page-status"><p className="activity-anchor muted">{windowValue==='visit'?`Since your last visit in this browser: ${pluralise(data.page.matching,'event')}`:pluralise(data.page.matching,'event')}. Updated {formatInstant(data.page.asOf.observedAt,data.filters.zone,true)} {zoneLabel(data.filters.zone)}.</p>
-        <div className="activity-updates" aria-live="polite">{changes>0&&<p role="status">{pluralise(changes,'new matching event')} <Button onClick={latest}>Show latest</Button></p>}</div></div>
+        <div className="activity-updates" aria-live="polite">{(changes>0||expired)&&<p role="status">{changes>0?pluralise(changes,'new matching event'):'Updates available.'} <Button onClick={latest}>Show latest</Button></p>}</div></div>
         {!data.rows.length&&<p>{data.page.asOf.highWater===0?'No activity recorded yet.':'No activity matches this window and these filters.'} <Button onClick={()=>{const next=new URLSearchParams(current.query);next.delete('from');next.delete('to');next.delete('afterSeq');next.set('window','arc');navigate(next,true);}}>Whole arc</Button></p>}
         <Table className="activity-feed" aria-label="Activity events" onKeyDown={moveRowFocus}><thead><TableRow><TableHead className="col-time">Time ({zoneLabel(data.filters.zone)})</TableHead><TableHead className="col-unit">Unit</TableHead><TableHead className="col-stage">Stage</TableHead><TableHead className="col-agent">Agent</TableHead><TableHead className="col-result">Result</TableHead><TableHead className="number">Work</TableHead><TableHead className="number">Spend</TableHead></TableRow></thead>
         <tbody>{data.rows.map(row=>{const href=link(arc,'activity','events',row.id);return <TableRow key={row.id} onClick={ev=>activateRow(ev,href)}>
