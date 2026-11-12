@@ -82,7 +82,7 @@ export function Drawer({ title, close, children, headingLink, className = '', ex
   return <aside ref={panel} role="dialog" aria-modal="false" aria-labelledby="detail-title" className={`drawer ${full?'drawer-full ':''}${className}`} style={full?undefined:{ width }}>
     {!full&&<div className="drawer-resize" role="separator" aria-label="Resize details" aria-orientation="vertical" tabIndex={0} onPointerDown={resize} onKeyDown={e => { if (['ArrowLeft', 'ArrowRight'].includes(e.key)) { const next = Math.max(360, Math.min(960, width + (e.key === 'ArrowLeft' ? 40 : -40))); setWidth(next); try { localStorage.setItem('roadmap.drawer-width', String(next)); } catch {} } }}/>}
     <header className="drawer-head"><div>{headingLink}<h2 id="detail-title">{title}</h2></div><div className="drawer-actions">
-      {expand&&(full?<Button variant="ghost" className="drawer-back" onClick={back} title="Return to the side panel"><ChevronLeft size={16}/>Back to details</Button>:<Button variant="ghost" className="drawer-expand" onClick={openFull} title="Show this log at full page width"><Maximize2 size={16}/>Expand</Button>)}
+      {expand&&(full?<Button className="drawer-back" onClick={back} title="Return to the side panel"><ChevronLeft size={16}/>Back to details</Button>:<Button variant="ghost" className="drawer-expand" onClick={openFull} title="Show this log at full page width"><Maximize2 size={16}/>Expand</Button>)}
       <Button variant="ghost" size="icon" onClick={close} aria-label="Close details" title="Close details"><X size={18}/></Button></div></header>
     <div className="drawer-body">{children}</div>
   </aside>;
