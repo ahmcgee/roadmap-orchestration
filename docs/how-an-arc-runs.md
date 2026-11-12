@@ -55,6 +55,8 @@ root, uncharged.
 - Blocking unit findings hold the named units and their transitive dependents. Other blocking targets hold the arc.
 - The architect fixes the pack for a superseding review or acknowledges the item, including when it offers no options.
 - The supervisor restarts crashed executors. Runners keep workloads and terminal evidence durable across recovery.
+- A unit whose interrupted attempt cannot be read back at a start parks `executor-fault` with an item; the arc starts
+  without it.
 - Restarts retain the arc's recorded routing profile. A conflicting `start --profile` refuses; change profiles
   through a routing apply.
 
@@ -267,7 +269,7 @@ every answer.
 
 | Threshold | Effect |
 |---|---|
-| 8 builds or 20 judged build/lanes/gate attempts (counting interrupted and uncharged work) | Diagnosis begins. It supplies a note and moves remaining mixed-profile builds to Claude. |
+| 8 builds or 20 judged build/lanes/gate attempts (counting interrupted and uncharged work) | Diagnosis begins. It supplies a note and moves remaining mixed-profile builds to Claude. It runs once, as a pre-build attempt just before the first build that finds it due (a steer round included), and ends `diagnosed`: it decides nothing, and that build follows. |
 | 16 builds / 40 stages (fixed) | Raises an attempt-cap item for the architect. |
 | Certification reds | Three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that allowance. |
 | Gate revisions, candidate reds | Separate bounds. |
