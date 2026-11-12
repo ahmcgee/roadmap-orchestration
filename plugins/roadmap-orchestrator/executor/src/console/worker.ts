@@ -352,6 +352,8 @@ function attempt(p: Parked): boolean {
         if (earlier !== undefined && earlier.epoch === verdict.envelope.epoch && activity.has(earlier) && admits(earlier, admissionOf(m.params))) { answerFrom(m, earlier); return true; }
         p.park = 'view'; return false;
       }
+      // An index reused by a capture that changed nothing Activity shows is that capture's index too.
+      if (m.kind === 'read' && m.path[2] === 'activity') lastIndexed.set(arc, verdict.envelope);
       answerFrom(m, verdict.envelope); return true;
     }
     if (verdict.park !== p.park) {
@@ -395,6 +397,7 @@ function buildIndex(arc: string, e: Envelope): void {
     // A read is answered from the newest capture whose index is built; one this capture cannot answer either waits for the
     // next build (for the newest capture), which `revisit` starts.
     const current = models.get(arc)?.envelope() ?? null;
+    if (current !== null && current.epoch === e.epoch && activity.has(current)) lastIndexed.set(arc, current);
     const waiting = parked.filter((p) => p.arc === arc && p.park === 'view');
     for (const p of waiting) {
       if (p.m.kind !== 'read' || !admits(e, admissionOf(p.m.params))) continue;
