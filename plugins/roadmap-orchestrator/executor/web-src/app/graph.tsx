@@ -151,7 +151,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       {selector:'node[gate=1][state="active"],node[gate=1][state="held"]',style:{'background-opacity':1}},
       {selector:'node[gate=1][state="pending"]',style:{'background-opacity':1}},
       {selector:'node[aux=1]',style:{'display':'none','width':6,'height':6,'border-width':0,'background-color':color('--line'),'label':'','events':'no'}},
-      {selector:'edge',style:{'curve-style':'straight','line-opacity':0,'source-endpoint':'100% 0%','target-endpoint':'-100% 0%','line-color':color('--muted-ink'),'width':1,'opacity':.32,'target-arrow-shape':'none','target-arrow-color':color('--muted-ink'),'arrow-scale':.65,'target-distance-from-node':3,'z-index':0}},
+      {selector:'edge',style:{'curve-style':'straight','line-opacity':0,'source-endpoint':'100% 0%','target-endpoint':'-100% 0%','line-color':color('--ink-3'),'width':1,'opacity':.32,'target-arrow-shape':'none','target-arrow-color':color('--ink-3'),'arrow-scale':.65,'target-distance-from-node':3,'z-index':0}},
       {selector:'edge[kind="waits"]',style:{'display':'none','line-style':'dashed'}},
       {selector:'edge[kind="feeds"]',style:{'opacity':.14}},
       {selector:'.dim',style:{'opacity':.25}},
@@ -246,7 +246,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       const style=getComputedStyle(document.documentElement),token=(n:string)=>style.getPropertyValue(n).trim();
       const sheet=graph.style().selector('node').style({'color':token('--ink'),'background-color':token('--surface')});
       for(const state of states)sheet.selector(`node[state="${state}"]`).style({'border-color':token(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':token('--surface')});
-      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--surface'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--muted-ink'),'target-arrow-color':token('--muted-ink')}).selector('edge.chain,edge.trace,edge.exact').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node.dim').style({'color':token('--ink')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
+      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--surface'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--ink-3'),'target-arrow-color':token('--ink-3')}).selector('edge.chain,edge.trace,edge.exact').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node.dim').style({'color':token('--ink')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
     };
     window.addEventListener('roadmap-theme',theme);
     void document.fonts.ready.then(()=>{if(!graph.destroyed())graph.resize();});

@@ -107,7 +107,7 @@ test('Graph stations, keyboard selection, same-tab non-modal drawers, saved size
  await b.evaluate('()=>{document.querySelector(\".arc-bar>button:last-child\").click();return true;}');
  await until(async()=>await b.evaluate('()=>document.documentElement.dataset.theme===\"dark\"'),5000,'dark theme');
  assert.equal(await b.evaluate('()=>document.documentElement.dataset.theme'),'dark');
- assert.equal(await b.evaluate('()=>getComputedStyle(document.documentElement).getPropertyValue("--paper").trim().toLowerCase()'),'#12181e');
+ assert.equal(await b.evaluate('()=>getComputedStyle(document.documentElement).getPropertyValue("--paper").trim().toLowerCase()'),'#14161a');
  await b.evaluate(`()=>{location.hash='#/arcs/${f.arc}/activity/units/u3';return true;}`);
  await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u3"'),5000,'same-tab unit route');
  assert.equal(await b.evaluate('()=>document.querySelector(".tabs [aria-current]").textContent'),'Activity');
