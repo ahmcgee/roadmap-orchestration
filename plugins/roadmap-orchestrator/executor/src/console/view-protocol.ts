@@ -3,6 +3,9 @@
 export const CONSOLE_UI_SCHEMA = 1;
 export type ViewVersions = Record<'shell' | 'graph' | 'timeline' | 'activity' | 'holistic' | 'effort' | 'resources' | 'attention', string>;
 export type Metadata = Omit<ViewEnvelope<never>, 'data'> & {uiSchema: number; selected: string | null; viewVersions: ViewVersions};
+/** The event stream's once-a-second word on an arc that has published: how old the latest published observation is, in the
+ * server's clock (`now - checkedAt`, whole milliseconds), and whether the console is behind the arc's journal. No `id:`. */
+export type Pulse = {arc: string; asOfAgeMs: number; behind: boolean};
 export type Signal = 'passed' | 'active' | 'held' | 'pending' | 'failed' | 'withdrawn';
 export type DetailRef = {type: 'unit' | 'invocation' | 'request' | 'event' | 'resource'; id: string};
 export type Preview = {text: string; truncated: boolean; detail: DetailRef};

@@ -1345,7 +1345,7 @@ the envelope with `data` validated by `src/console/view-shapes.ts` (malformed da
 | `/arcs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
 | `/arcs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
 | `/arcs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
-| `/arcs/:arc/events?invocation=ID` | Revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
+| `/arcs/:arc/events?invocation=ID` | Revision/heartbeat/reset/pulse/error stream; optional history subscription sends small `history` invalidations and `history-error` |
 
 `/arcs/:arc/snapshot` is not found. Windowed views default to `window=24h` (Activity to the whole arc) and
 refuse `window` with `from`/`to`. Unknown query parameters, values outside closed choices and filter values
@@ -1360,6 +1360,11 @@ end equals the start.
 Typed views, `/arcs` with `Prefer: respond-async`, and unit/invocation details with that header use browser
 preparation: a read not ready within 250 ms answers 202 with `{state:'preparing',pending,retryAfterMs}` and
 `retry-after: 1`; polling with `pending=<token>` holds up to a second for the result; `cancel=1` cancels.
+A settled read is delivered as the serve worker admitted it, whatever its age: browser reads are never refused or
+re-run for age, so a 202 means only that the read is still running. Only the strict CLI read keeps a freshness
+condition. An Activity read is answered from the newest capture of the arc whose Activity index is built (same epoch,
+admitted by the read's watermark) while the current capture's index is built; only a read no built index can answer
+waits for the build.
 Reads live at most 30 s, with at most 32 preparing reads and 128 readers (beyond either: unavailable).
 `pending`/`cancel` on other routes are `invalid`. Status and API discovery keep the two-second admission.
 
@@ -1371,7 +1376,12 @@ unbounded history. Every SSE frame is at most 4 KiB: revision notices carry only
 arc/epoch/revision/checkedAt/highWater, and history notices carry invocation/identity/cursor/state/end/reset
 and changed count. Views, event pages and expanded content are fetched through ordinary GETs. A full
 socket waits for drain for up to two seconds; pending notices coalesce by event kind, and a persistently
-blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt;
+blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt. Once a
+second, after each lag check of an arc that has published, every stream of that arc gets
+`event: pulse` with `{arc, asOfAgeMs, behind}` and no `id:` (it never moves Last-Event-ID): `asOfAgeMs` is the
+server's `now - checkedAt` of the latest published observation, a whole non-negative number of milliseconds, and
+`behind` is the lag monitor's verdict (journal past the published offset, or nothing published or checked for three
+seconds). It is sent from the main thread, which runs no capture or view build, so it arrives while a capture is slow;
 after five seconds without verification the browser shows “Stale”, retaining timestamped
 content and freezing displayed timers. A browser on another package protocol requires reload.
 

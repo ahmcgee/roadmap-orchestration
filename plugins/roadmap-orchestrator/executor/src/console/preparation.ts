@@ -12,7 +12,9 @@ type Subscriber = { read: Read; exposed: boolean; delivered: boolean; expires: n
 export type Prepared = {state: 'preparing'; pending: string; retryAfterMs: number} | {state: 'ready'; value: unknown};
 
 /** One bounded delivery coordinator, not an observation cache. Equivalent readers share work,
- * but have separate cancellation leases. Only the worker can admit an observation.
+ * but have separate cancellation leases. Only the worker can admit an observation, and a settled read is delivered as the
+ * worker admitted it, whatever its age: the envelope carries its own `checkedAt`, and the browser says how old it is. A 202
+ * means the read is still running, so a poll carrying its token is held until it settles, for at most retryAfterMs.
  * Reads run at once and side by side: the serve worker answers from memory and parks a read it cannot answer yet without
  * holding up any other. A read every reader has left (a cancelled hover card or drawer) is aborted, and the serve worker
  * drops it, so nothing is computed for a reader who left. */
@@ -30,7 +32,6 @@ export class BrowserPreparation {
   }
   #sweep() { for (const [token, s] of this.#subscribers) if (Math.min(s.expires, s.read.expires) <= Date.now()) this.#remove(token); }
   #start(read: Read) {
-    delete read.result;
     const controller = read.controller = new AbortController();
     read.task = Promise.resolve().then(() => read.run(controller.signal)).then(value => { read.result = {value}; }, error => { read.result = {error}; })
       .then(() => { if (!read.subscribers.size) this.#reads.delete(read.id); });
@@ -67,13 +68,6 @@ export class BrowserPreparation {
     let timer: NodeJS.Timeout | undefined;
     try {
       if (signal.aborted) { abort(); throw new ConsoleError('unavailable', 'browser read cancelled'); }
-      // A prepared envelope is immutable. If delivery is stale, ask the worker to admit again;
-      // never replace checkedAt in the HTTP thread. Concurrent polls share this admission too.
-      const result = s.read.result;
-      if (result && 'value' in result) {
-        const at = (result.value as {checkedAt?: unknown} | null)?.checkedAt;
-        if (typeof at === 'string' && Date.now() - Date.parse(at) > 5000) this.#start(s.read);
-      }
       const hold = Math.min(polled ? PREPARATION.retryAfterMs : PREPARATION.deadlineMs, Math.max(0, s.read.expires - Date.now()));
       await Promise.race([s.read.task, new Promise<void>(resolve => {
         timer = setTimeout(resolve, hold); signal.addEventListener('abort', () => resolve(), {once: true});
@@ -81,13 +75,6 @@ export class BrowserPreparation {
       if (signal.aborted || !this.#subscribers.has(lease)) throw new ConsoleError('unavailable', 'browser read cancelled');
       if (Date.now() >= s.read.expires) { this.#remove(lease); throw new ConsoleError('unavailable', 'browser preparation exceeded thirty seconds; retry'); }
       if (!s.read.result) { s.exposed = true; return {state: 'preparing', pending: lease, retryAfterMs: PREPARATION.retryAfterMs}; }
-      if ('value' in s.read.result) {
-        const at = (s.read.result.value as {checkedAt?: unknown} | null)?.checkedAt;
-        if (typeof at === 'string' && Date.now() - Date.parse(at) > 5000) {
-          this.#start(s.read); s.exposed = true;
-          return {state: 'preparing', pending: lease, retryAfterMs: PREPARATION.retryAfterMs};
-        }
-      }
       s.expires = s.delivered ? s.expires : Math.min(s.read.expires, Date.now() + PREPARATION.graceMs);
       s.delivered = true;
       if (!s.exposed) this.#remove(lease);
