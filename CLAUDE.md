@@ -85,7 +85,9 @@ itself remains the default for subsequent releases.
   Claude Code picks up a plugin update only when the version changes; a stale marketplace entry hides it. A PR
   touching only repo docs (README, `docs/`, this file) bumps nothing.
 - Every PR that changes how an arc runs (a stage, decision, loop, role, command or what the owner or architect
-  does) updates the process documentation in the same PR: the README's "How an arc runs" section, the simplified
-  diagram `docs/flow.svg` and the detailed BPMN diagram `docs/flow-bpmn.svg`. Both diagrams keep a white
-  background, with no dark theme.
+  does) updates the process documentation in the same PR: the detailed reference `docs/how-an-arc-runs.md` and
+  the detailed BPMN diagram `docs/flow-bpmn.svg`, plus the README's "How an arc runs" summary and the simplified
+  diagram `docs/flow.svg` when the change is visible at that level. Rules, limits and exceptions go in the
+  reference as prose, never as notes inside a diagram; diagrams carry no version stamp. Console and TUI changes
+  update `docs/console.md`. Both diagrams keep a white background, with no dark theme.
 - No spend cap. A usage-limit error parks that backend arc-wide and waits for a manual `resume --backend`.
