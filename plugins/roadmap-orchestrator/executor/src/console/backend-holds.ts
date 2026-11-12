@@ -6,9 +6,9 @@ import { sha256Hex } from '../core/json.ts';
 import type { BackendHold, ActivityKind } from './activity-protocol.ts';
 
 export const activityKey = (epoch: string, seq: number, kind: ActivityKind) => `${sha256Hex(epoch).slice(0, 24)}-${seq}-${kind}`;
-export function backendHolds(events: readonly Event[], epoch: string): BackendHold[] {
+/** `terminal`: the fact that ends the arc's record (tokens.ts `arcTerminal`), which closes a hold still open at it. */
+export function backendHolds(events: readonly Event[], epoch: string, terminal: Extract<Event, {type: 'fact'}> | null): BackendHold[] {
   const rows: BackendHold[] = [], current = new Map<string, BackendHold>();
-  const terminal = events.findLast(ev => ev.type === 'fact' && (ev.fact.kind === 'arc-completed' || ev.fact.kind === 'stop-completed'));
   for (const ev of events) {
     if (ev.type !== 'fact') continue;
     const f = ev.fact;

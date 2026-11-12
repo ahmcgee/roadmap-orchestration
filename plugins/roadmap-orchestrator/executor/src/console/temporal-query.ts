@@ -8,6 +8,7 @@ import { CollectionPages, responseBound } from './collection-pages.ts';
 import { allowParams, choice, invalid, known, list, pageLimit, timeParams, resolveTime, intersects } from './query-params.ts';
 import { projectionIndex, timelineIntervals, holisticSummaries } from './tab-projections.ts';
 import { backendHolds, activityKey } from './backend-holds.ts';
+import { arcTerminal } from './tokens.ts';
 import { versioned, preview } from './views.ts';
 import { unitSignal } from './signals.ts';
 import type { Interval, TrackMark } from './view-protocol.ts';
@@ -86,7 +87,7 @@ export class ConsoleTemporal {
           && (!filters.q || `${r.subject.id} ${r.subject.title}`.toLowerCase().includes(filters.q));
       });
       const selected = matching.filter(r => intersects(r.startedAt, r.endedAt, scope.from, scope.to, bounds.to));
-      const arcHolds = backendHolds(e.data.events, e.epoch), holds = arcHolds.filter(h => intersects(h.startedAt, h.endedAt ?? h.terminalAt, scope.from, scope.to, bounds.to));
+      const arcHolds = backendHolds(e.data.events, e.epoch, arcTerminal(e.data)), holds = arcHolds.filter(h => intersects(h.startedAt, h.endedAt ?? h.terminalAt, scope.from, scope.to, bounds.to));
       const base = {...versioned({filters, bounds}, scope), ...(sourceVersion ? {viewVersion: sourceVersion} : {})};
       if (section === 'intervals') return {rows: selected.sort((a,b) => a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id)), context: base};
       if (section === 'holds') return {rows: holds, context: base};

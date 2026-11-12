@@ -43,6 +43,8 @@ export class ViewTokens {
         if (AUDITS.has(ev.fact.kind)) this.audits = ev.seq;
         if (ev.fact.kind === 'stage-admitted') this.waiting = ev.seq;
         if (ev.fact.kind === 'arc-completed' || ev.fact.kind === 'stop-completed') this.terminal = ev;
+        // A stop ends the record only until the arc is started again.
+        else if (ev.fact.kind === 'executor-started' && this.terminal?.fact.kind === 'stop-completed') this.terminal = null;
       }
       if ((ev.type === 'intent' || ev.type === 'done') && ev.kind === 'resource.transition') this.waiting = ev.seq;
     }
@@ -70,6 +72,30 @@ const registered = new WeakMap<ObservationData, ViewTokens>();
 export function registerTokens(data: ObservationData, tokens: ViewTokens): void { registered.set(data, tokens); }
 export function unregisterTokens(data: ObservationData): void { registered.delete(data); }
 /** The tokens of `data`: its model's, or built from its events and rows. */
+type FactEvent = Extract<Event, {type: 'fact'}>;
+/**
+ * The fact that ends the arc's record as the journal stands: its last `arc-completed` or `stop-completed`, unless that is a
+ * stop and an executor has started since (the arc was stopped and started again, so it is running or ownerless, not ended).
+ * `ViewTokens.terminal` keeps the same reading incrementally.
+ */
+export function terminalFact(events: readonly Event[]): FactEvent | null {
+  let restarted = false;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]!;
+    if (ev.type !== 'fact') continue;
+    if (ev.fact.kind === 'executor-started') restarted = true;
+    else if (ev.fact.kind === 'arc-completed') return ev;
+    else if (ev.fact.kind === 'stop-completed') return restarted ? null : ev;
+  }
+  return null;
+}
+/**
+ * The arc's terminal fact for the views (the header's lifecycle, the arc's bounds, relative Activity windows, open backend
+ * holds): the one reading of the journal's (`terminalFact`), kept incrementally with the capture's other tokens.
+ */
+export function arcTerminal(data: ObservationData): FactEvent | null {
+  return tokensFor(data).terminal;
+}
 export function tokensFor(data: ObservationData): ViewTokens {
   let tokens = registered.get(data);
   if (tokens === undefined) {
