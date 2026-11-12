@@ -24,6 +24,45 @@ function nodeTitle(title:string,fontPx=LABEL_PX){
   const limit=NODE_WIDTH-24,lines=[''];for(const word of title.split(/\s+/)){const last=lines.length-1,next=lines[last]?`${lines[last]} ${word}`:word;if(context.measureText(next).width>limit&&lines[last]){if(lines.length===3){while(context.measureText(lines[last]+'…').width>limit)lines[last]=lines[last]!.slice(0,-1);lines[last]+='…';break;}lines.push(word);}else lines[last]=next;}return lines.join('\n');
 }
 const states: Signal[] = ['passed','active','held','failed','pending','withdrawn'];
+/** `a` mixed over `b` at `t` (hex colours): a dimmed label keeps its colour family on the canvas, where opacity is taken by the tier fade. */
+const mixHex=(a:string,b:string,t:number)=>'#'+[1,3,5].map(i=>Math.round(parseInt(a.slice(i,i+2),16)*t+parseInt(b.slice(i,i+2),16)*(1-t)).toString(16).padStart(2,'0')).join('');
+/** On-screen border width: live work (running, on hold, failed) and gates carry 2px, resting cards 1px, a selection or search match 3px. At whole-arc zoom done and live work are solid blocks without a border. */
+function borderPx(node:NodeSingular){
+  const state=String(node.data('state')),live=state==='active'||state==='held'||state==='failed';
+  if(node.selected()||node.hasClass('match'))return 3;
+  if(node.hasClass('extreme')&&!node.data('gate'))return live||state==='passed'?0:1.5;
+  return node.data('gate')||live?2:1;
+}
+/** Every colour the Graph's canvas draws, read from the theme's tokens: built at start and again on a theme change. */
+function graphSheet(token:(name:string)=>string){
+  const tint=(state:string)=>token(`--tint-${state==='withdrawn'?'pending':state}`);
+  return [
+    {selector:'node',style:{'background-color':token('--surface'),'background-opacity':1,'border-width':1,'border-color':token('--rule-control'),'border-style':'solid','shape':'round-rectangle','corner-radius':4,'width':NODE_WIDTH,'height':NODE_HEIGHT,'label':'data(label)','font-family':'Mona Sans SemiCondensed','font-size':LABEL_PX,'line-height':1.15,'font-weight':600,'text-wrap':'wrap','text-max-width':NODE_WIDTH-24,'text-valign':'center','text-halign':'left-inside','text-justification':'left','text-margin-x':12,'text-margin-y':-10,'color':token('--ink')}},
+    ...(['active','held','failed'] as const).map(state=>({selector:`node[state="${state}"]`,style:{'border-color':token(`--sig-${state}`)}})),
+    {selector:'node[state="withdrawn"]',style:{'background-color':token('--paper'),'border-color':token('--rule-strong'),'border-style':'dashed','color':token('--ink-2')}},
+    {selector:'node[gate=1]',style:{'shape':'cut-rectangle','background-color':token('--surface'),'border-color':token('--line'),'font-size':12,'text-margin-y':-6,'text-max-width':136}},
+    // Compact tier (ids only): the whole card takes its state's tint; withdrawn stays empty and dashed.
+    ...states.filter(state=>state!=='withdrawn').map(state=>({selector:`node.overview[gate=0][state="${state}"]`,style:{'background-color':tint(state)}})),
+    // Whole-arc tier: done and live work are solid blocks; waiting is hollow; withdrawn is hollow and dashed.
+    {selector:'node.extreme[gate=0][state="passed"]',style:{'background-color':token('--fill-passed')}},
+    ...(['active','held','failed'] as const).map(state=>({selector:`node.extreme[gate=0][state="${state}"]`,style:{'background-color':token(`--sig-${state}`)}})),
+    {selector:'node.extreme[gate=0][state="pending"],node.extreme[gate=0][state="withdrawn"]',style:{'background-opacity':0,'border-color':token('--sig-pending')}},
+    {selector:'node.extreme[gate=0][state="pending"][finished=1]',style:{'border-color':token('--sig-passed')}},
+    {selector:'node.extreme',style:{'label':''}},
+    {selector:'node.overview',style:{'font-weight':500}},
+    {selector:'node[aux=1]',style:{'display':'none','width':6,'height':6,'border-width':0,'background-color':token('--line'),'label':'','events':'no'}},
+    {selector:'node.hovered',style:{'border-color':token('--ink-2')}},
+    {selector:'node:selected, node.match',style:{'border-color':token('--line')}},
+    {selector:'node.dim',style:{'border-opacity':.35}},
+    {selector:'node.filtered',style:{'color':mixHex(token('--ink'),token('--surface'),.55)}},
+    {selector:'edge',style:{'curve-style':'straight','line-opacity':0,'source-endpoint':'100% 0%','target-endpoint':'-100% 0%','line-color':token('--ink-3'),'width':1,'opacity':.32,'target-arrow-shape':'none','target-arrow-color':token('--ink-3'),'arrow-scale':.65,'target-distance-from-node':3,'z-index':0}},
+    {selector:'edge[kind="waits"]',style:{'display':'none','line-style':'dashed'}},
+    {selector:'edge[kind="feeds"]',style:{'opacity':.14}},
+    {selector:'edge.dim',style:{'opacity':.25}},
+    {selector:'edge.chain,edge.trace',style:{'opacity':1,'line-color':token('--line'),'target-arrow-color':token('--line'),'width':2}},
+    {selector:'edge.exact',style:{'display':'element','opacity':1,'line-color':token('--line'),'target-arrow-color':token('--line'),'width':2}},
+  ] as cytoscape.StylesheetJson;
+}
 /** A band's one name: its id, then its recorded name when the plan gives one (an unnamed milestone is not named twice). */
 const bandName=(b:{id:string;label:string})=>b.id.startsWith('milestone:')?b.id.slice(10)===b.label?b.label:`${b.id.slice(10)} ${b.label}`:'No milestone';
 type FocusMode = 'active' | 'all' | null;
@@ -66,7 +105,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const bottoms=[...region.current!.querySelectorAll('.graph-legend,.key-toggle,.graph-scale,.graph-minimap,.filter-popover')].map(el=>el.getBoundingClientRect()).filter(r=>r.width&&r.height&&r.top>toolbar.bottom);
     return {left:24,right:graph.width()-24,top:Math.max(0,toolbar.bottom-bounds.top),bottom:Math.min(graph.height(),...bottoms.map(r=>r.top-bounds.top))};
   }
-  const reframe=useRef(()=>{});
+  const reframe=useRef(()=>{}),borders=useRef(()=>{});
   reframe.current=()=>{if(focus==='active')frame(activeIds(),false);else if(focus==='all')frameAll(false);else if(station){const band=baseline.stations.find(b=>b.id===station);if(band)frame(band.frame,false);}};
   function frameBox(nodes:cytoscape.NodeCollection){
     // Border thickness changes with LOD; frame the fixed geometry so repeated
@@ -137,33 +176,13 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     performance.mark('roadmap-graph-start');
     const styles=getComputedStyle(document.documentElement),color=(token:string)=>styles.getPropertyValue(token).trim();
 
-    const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,gate=u.id.startsWith('milestone:');return {id:u.id,label:gate?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),title:m.units.find(v=>v.id===u.id)?.title||u.label,compact:gate?gateLabel(u.id):compactIdentifier(e,u.id),system:gate?null:compactSystem(e,u.id),state,gate:gate?1:0};};
+    const unitData=(u:typeof m.graph.units[number])=>{const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,gate=u.id.startsWith('milestone:');return {id:u.id,label:gate?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),title:m.units.find(v=>v.id===u.id)?.title||u.label,compact:gate?gateLabel(u.id):compactIdentifier(e,u.id),system:gate?null:compactSystem(e,u.id),state,gate:gate?1:0,finished:u.finished?1:0};};
     // Cytoscape owns nodes, selection and navigation. The SVG below draws
     // every dependency as a cubic with arrowheads that stay visible at All.
     const graph=cytoscape({container:canvas.current,pixelRatio:Math.min(devicePixelRatio,2),minZoom:.001,maxZoom:2.5,textureOnViewport:true,elements:[
       ...m.graph.units.map(u=>({data:unitData(u),position:{...baseline.positions.get(u.id)!}})),
       ...m.graph.edges.map(([source,target],i)=>({data:{id:`edge:${i}`,source,target,kind:source.startsWith('milestone:')?'waits':target.startsWith('milestone:')?'feeds':'dependency'}})),
-    ],layout:{name:'preset',fit:false},style:[
-      {selector:'node',style:{'background-color':color('--surface'),'border-width':2,'border-color':color('--sig-pending'),'shape':'round-rectangle','corner-radius':3,'width':NODE_WIDTH,'height':NODE_HEIGHT,'label':'data(label)','font-family':'Mona Sans SemiCondensed','font-size':LABEL_PX,'line-height':1.1,'font-weight':600,'text-wrap':'wrap','text-max-width':NODE_WIDTH-24,'text-valign':'center','text-halign':'left-inside','text-justification':'left','text-margin-x':12,'text-margin-y':-10,'color':color('--ink')}},
-      ...states.map(state=>({selector:`node[state="${state}"]`,style:{'border-color':color(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':color('--surface'),'background-opacity':1,'shape':'round-rectangle','border-style':state==='withdrawn'?'dashed':'solid'}})),
-      {selector:'node[gate=1]',style:{'shape':'cut-rectangle','width':NODE_WIDTH,'height':NODE_HEIGHT,'background-color':color('--surface'),'border-color':color('--line'),'background-opacity':1,'font-size':12,'text-margin-y':-6,'text-max-width':136}},
-      {selector:'node[gate=1][state="passed"]',style:{'background-opacity':1}},
-      {selector:'node[gate=1][state="active"],node[gate=1][state="held"]',style:{'background-opacity':1}},
-      {selector:'node[gate=1][state="pending"]',style:{'background-opacity':1}},
-      {selector:'node[aux=1]',style:{'display':'none','width':6,'height':6,'border-width':0,'background-color':color('--line'),'label':'','events':'no'}},
-      {selector:'edge',style:{'curve-style':'straight','line-opacity':0,'source-endpoint':'100% 0%','target-endpoint':'-100% 0%','line-color':color('--ink-3'),'width':1,'opacity':.32,'target-arrow-shape':'none','target-arrow-color':color('--ink-3'),'arrow-scale':.65,'target-distance-from-node':3,'z-index':0}},
-      {selector:'edge[kind="waits"]',style:{'display':'none','line-style':'dashed'}},
-      {selector:'edge[kind="feeds"]',style:{'opacity':.14}},
-      {selector:'.dim',style:{'opacity':.25}},
-      {selector:'node.dim',style:{'opacity':1,'border-opacity':.35,'color':color('--ink'),'text-opacity':1}},
-      {selector:'edge.chain,edge.trace',style:{'opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
-      {selector:'edge.exact',style:{'display':'element','opacity':1,'line-color':color('--line'),'target-arrow-color':color('--line'),'width':2}},
-      {selector:'node[gate=0].dim',style:{'background-opacity':1}},
-      {selector:'node:selected, node.match',style:{'border-color':color('--line'),'border-width':4,'background-opacity':1}},
-      {selector:'node.overview',style:{'font-weight':500}},
-      {selector:'node.extreme',style:{'label':''}},
-      {selector:'node[gate=0].overview[state="pending"]',style:{'border-width':4,'background-opacity':1}}
-    ] as cytoscape.StylesheetJson,autoungrabify:true,boxSelectionEnabled:false});
+    ],layout:{name:'preset',fit:false},style:graphSheet(color),autoungrabify:true,boxSelectionEnabled:false});
     const clampZoom=()=>{graph.minZoom(.6*fitZoom(graph.nodes('[gate]'),ALL_MARGIN));if(graph.zoom()<graph.minZoom())graph.zoom(graph.minZoom());};
     cy.current=graph;clampZoom();
     if(saved.current?.arc===e.arc){
@@ -225,7 +244,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
               const node=element as NodeSingular;
               node.toggleClass('overview',!full).toggleClass('extreme',nextTier==='status');
               const label=nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?(node.data('gate')||titleFont===LABEL_PX?node.data('label'):titleLabel(node,titleFont)):compactLabel(node);
-              node.style({'label':label,'font-size':full?titleFont:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':'left-inside','text-justification':'left','text-margin-x':full?12:reserve/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,Math.max(2,(full?1:3)/zoom))});
+              node.style({'label':label,'font-size':full?titleFont:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':'left-inside','text-justification':'left','text-margin-x':full?12:reserve/zoom,'text-margin-y':full?-10:0,'border-width':borderPx(node)/zoom});
             });
           });
           if(changed){
@@ -240,14 +259,11 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         }
       });
     };
+    borders.current=()=>{const zoom=graph.zoom();graph.batch(()=>graph.nodes('[gate]').forEach(node=>{node.style('border-width',borderPx(node as NodeSingular)/zoom);}));};
+    graph.on('select unselect','node',()=>borders.current());
     graph.on('pan zoom',()=>{if(!applying.current)moved.current=true;});
     graph.on('pan zoom',viewport);graph.on('data','node[gate]',()=>{labelZoom=-1;viewport();});viewport();
-    const theme=()=>{
-      const style=getComputedStyle(document.documentElement),token=(n:string)=>style.getPropertyValue(n).trim();
-      const sheet=graph.style().selector('node').style({'color':token('--ink'),'background-color':token('--surface')});
-      for(const state of states)sheet.selector(`node[state="${state}"]`).style({'border-color':token(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':token('--surface')});
-      sheet.selector('node[gate=1],node[aux=1]').style({'background-color':token('--surface'),'border-color':token('--line')}).selector('edge').style({'line-color':token('--ink-3'),'target-arrow-color':token('--ink-3')}).selector('edge.chain,edge.trace,edge.exact').style({'line-color':token('--line'),'target-arrow-color':token('--line')}).selector('node.dim').style({'color':token('--ink')}).selector('node:selected,node.match').style({'border-color':token('--line')}).update();
-    };
+    const theme=()=>{const style=getComputedStyle(document.documentElement);graph.style(graphSheet(n=>style.getPropertyValue(n).trim()));};
     window.addEventListener('roadmap-theme',theme);
     void document.fonts.ready.then(()=>{if(!graph.destroyed())graph.resize();});
     const root=region.current!;
@@ -283,11 +299,11 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
   // The drawer route is the selection: opening a unit by link, Back or lineage selects it, shows its lineage and keeps it beside the drawer.
   const fromRoute=useRef(false);
   useEffect(()=>{const keep=()=>requestAnimationFrame(()=>{const where=route(),id=where.tab==='graph'?where.unit:null,node=id?cy.current?.getElementById(id):null;if(!node?.length)return;if(!node.selected()){fromRoute.current=true;node.select();fromRoute.current=false;}keepVisible(node);});keep();window.addEventListener('hashchange',keep);return()=>window.removeEventListener('hashchange',keep);},[fontsReady,structure]);
-  useEffect(()=>{const graph=cy.current;if(!graph)return;graph.batch(()=>{for(const u of m.graph.units){const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;graph.getElementById(u.id).data({state,compact:u.id.startsWith('milestone:')?gateLabel(u.id):compactIdentifier(e,u.id),system:u.id.startsWith('milestone:')?null:compactSystem(e,u.id),label:u.id.startsWith('milestone:')?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),title:m.units.find(v=>v.id===u.id)?.title||u.label});}});},[e.revision,structure,fontsReady]);
+  useEffect(()=>{const graph=cy.current;if(!graph)return;graph.batch(()=>{for(const u of m.graph.units){const state=/withdrawn/.test(u.meta)?'withdrawn':u.status;graph.getElementById(u.id).data({state,finished:u.finished?1:0,compact:u.id.startsWith('milestone:')?gateLabel(u.id):compactIdentifier(e,u.id),system:u.id.startsWith('milestone:')?null:compactSystem(e,u.id),label:u.id.startsWith('milestone:')?gateLabel(u.id):nodeTitle(m.units.find(v=>v.id===u.id)?.title||u.label),title:m.units.find(v=>v.id===u.id)?.title||u.label});}});},[e.revision,structure,fontsReady]);
   useEffect(()=>{
     const graph=cy.current;if(!graph)return;
     graph.batch(()=>{
-      graph.elements().removeClass('dim chain match exact trace');
+      graph.elements().removeClass('dim chain match exact trace hovered filtered');
       if(selected&&!hover&&!edgeHover){
         const ids=new Set([selected]), edgeIds=new Set<string>();
         for(const edge of graph.edges('[kind="dependency"], [kind="feeds"]')) if(edge.source().id()===selected||edge.target().id()===selected){edgeIds.add(edge.id());ids.add(edge.source().id());ids.add(edge.target().id());}
@@ -299,7 +315,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         graph.elements().removeClass('dim chain exact');
         const ids=new Set([hover.id]),edges=new Set<string>();
         for(const edge of graph.edges('[kind="dependency"], [kind="feeds"]')) if(edge.source().id()===hover.id||edge.target().id()===hover.id){edges.add(edge.id());ids.add(edge.source().id());ids.add(edge.target().id());}
-        const traced=graph.edges().filter(edge=>edges.has(edge.id()));graph.elements().difference(traced.union(traced.connectedNodes())).addClass('dim');traced.addClass('trace');
+        const traced=graph.edges().filter(edge=>edges.has(edge.id()));graph.elements().difference(traced.union(traced.connectedNodes())).addClass('dim');traced.addClass('trace');graph.getElementById(hover.id).addClass('hovered');
         graph.edges('[kind=\"waits\"]').filter(edge=>edge.source().id()===hover.id||edge.target().id()===hover.id).addClass('exact');
       }
       if(edgeHover){
@@ -310,9 +326,10 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       if(focus==='active'&&!selected&&!hover&&!edgeHover)graph.nodes('[gate=0]').filter(n=>!active.ids.includes(n.id())).addClass('dim');
       if(highlight.length&&!edgeHover&&!hover)graph.nodes('[gate=0]').filter(n=>!highlight.includes(n.id())).addClass('dim');
       graph.edges().style('width',1/graph.zoom());graph.edges('.chain,.trace,.exact').style({'width':2/graph.zoom(),'arrow-scale':Math.max(.65,.6/Math.sqrt(graph.zoom()))});
-      if(filters.length)graph.nodes('[gate]').filter(n=>!filters.includes(n.data('state') as Signal)).addClass('dim');
+      if(filters.length)graph.nodes('[gate]').filter(n=>!filters.includes(n.data('state') as Signal)).addClass('dim filtered');
       if(query){const ids=new Set<string>(results.map(u=>u.id));graph.nodes().filter(n=>ids.has(n.id())).addClass('match');}
     });
+    borders.current();
   },[selected,hover,edgeHover,highlight,focus,filters,query,e.revision,structure,fontsReady]);
   useEffect(()=>{const key=(ev:KeyboardEvent)=>{if(ev.target instanceof HTMLElement&&(ev.target.matches('input,textarea,select')||ev.target.isContentEditable)||document.querySelector('[role="dialog"]')?.contains(ev.target as Node))return;if(ev.key==='/'){ev.preventDefault();setMobileSearch(true);requestAnimationFrame(()=>search.current?.focus());}if(ev.key==='f'){ev.preventDefault();focusAll();}if(ev.key==='Escape'){setStation(null);setHealth(null);}if(ev.key==='a'){ev.preventDefault();focusActive();}};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);});
   const selectedUnit=m.units.find(u=>u.id===selected),hovered=m.units.find(u=>u.id===hover?.id);
@@ -331,6 +348,8 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const pending=!e.milestones.find(g=>`milestone:${g.id}`===bus.source)?.passed;
     return {key,...bus,targets,pending,labelX:station===band.id?(layout.positions.get(band.id)?.x??band.x)*view.zoom+view.x-55:band.x*view.zoom+view.x+8,labelY:station===band.id?freeTop+4+row*16:band.y*view.zoom+view.y+24+row*16};
   });
+  // A selected milestone keeps the edges that touch its band (an end in one of its groups, or at its gate) and dims the rest, those passing through included.
+  const stationIds=station&&!(hover||selected||edgeHover)?new Set([station,...layout.bands.filter(b=>focusedGroups.includes(b.id)).flatMap(b=>b.ids)]):null;
   const currentMilestone=baseline.stations.find(b=>b.id.startsWith("milestone:")&&b.state!=="passed")?.id;
   return <div data-detail-tier={tier} ref={region} className={`graph-view ${focus==='all'?'graph-all':''}`}>
     <nav className="line-map" aria-label="Milestone stations">{baseline.stations.map(band=><button key={band.id} className={`station ${band.id==='unbound'?'station-unbound':''} ${band.id===currentMilestone?'station-current':''}`} aria-description={band.id===currentMilestone?'Next milestone to clear':undefined} aria-pressed={station===band.id} onMouseLeave={leaveHealth} onBlur={blurHealth} onMouseEnter={ev=>{healthMode.current='hover';keepHealth();setHover(null);document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open],.filter-popover[open]').forEach(d=>d.open=false);const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} onFocus={ev=>{healthMode.current=ev.currentTarget.matches(':focus-visible')?'focus':'hover';keepHealth();setHover(null);const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} onKeyDown={ev=>{if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();const stations=[...ev.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('.station')],index=stations.indexOf(ev.currentTarget),next=stations[(index+(ev.key==='ArrowRight'?1:-1)+stations.length)%stations.length]!;next.focus();focusStation(baseline.stations[stations.indexOf(next)]!.id);}}} onClick={ev=>{healthMode.current=ev.currentTarget.matches(':focus-visible')?'focus':'hover';focusStation(band.id);if(station===band.id)return;const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} title={`${e.milestones?.find(g=>`milestone:${g.id}`===band.id)?.name||band.label}: ${band.passed} of ${pluralise(band.total,'unit')} merged${band.withdrawn?`, ${band.withdrawn} withdrawn`:''}`}><span className="station-track"><span className="track-fill" style={{width:`${band.total?band.passed/band.total*100:0}%`}}/><span className="gate-glyph" data-state={band.state} aria-label={band.state}>{band.state==='passed'&&band.id!=='unbound'&&<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>}</span></span><span className="station-caption"><strong>{bandName(band)}</strong><span>{band.passed}/{band.total}</span>{band.withdrawn>0&&<small className="station-withdrawn">{glyph.withdrawn} {band.withdrawn} withdrawn</small>}{band.id===currentMilestone&&<small>Next to clear</small>}{(()=>{const g=e.milestones?.find(g=>`milestone:${g.id}`===band.id);const held=(g?.units??e.noMilestone.ids).filter(id=>m.graph.units.find(u=>u.id===id)?.status==='held').length;return held>0&&<small className="station-held">{glyph.held} {held} on hold</small>;})()}</span><span className="station-name">{band.label}</span></button>)}</nav>
@@ -366,7 +385,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
           const waits=curve.source.startsWith('milestone:'),feeds=curve.target.startsWith('milestone:');
           const traced=edgeHover?edgeHover.source===curve.source&&edgeHover.target===curve.target:[curve.source,curve.target].includes(hover?.id??selected??'');
           if(waits&&!traced)return null;
-          const dim=!!(hover||selected||edgeHover)&&!traced;
+          const dim=!!(hover||selected||edgeHover)&&!traced||!!stationIds&&!stationIds.has(curve.source)&&!stationIds.has(curve.target);
           // Coordinates and marker dimensions are in screen pixels. Arrowheads
           // remain visible at All, without inflating the curves at full zoom.
           const path=curve.path.replace(/(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/g,(_,x,y)=>`${Number(x)*view.zoom+view.x} ${Number(y)*view.zoom+view.y}`);
@@ -382,7 +401,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         const compact=tier!=='full',tiny=compact&&view.zoom<.25,w=node.width()*view.zoom,h=node.height()*view.zoom,x=p.x*view.zoom+view.x-w/2,y=p.y*view.zoom+view.y-h/2;
         if(x+w<0||x>(canvas.current?.clientWidth??innerWidth)||y+h<0||y>(canvas.current?.clientHeight??innerHeight))return null;
         const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,mark=u.finished?'finished':state;
-        return <span key={u.id} data-state={mark} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'} ${tiny?'node-signal-tiny':''}`} style={compact?{left:x+(tiny?1:4),top:y+h/2-(tiny?4:6)}:{left:x+1,top:y+h-Math.max(16,22*view.zoom),width:w-2,height:Math.max(16,22*view.zoom),fontSize:Math.max(10,12*view.zoom)}}><SignalMark state={mark}/>{!compact&&<span>{u.id.startsWith('milestone:')?'Gate':u.id} {u.word}</span>}</span>;
+        return <span key={u.id} data-state={mark} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'} ${tiny?'node-signal-tiny':''}`} style={compact?{left:x+(tiny?1:4),top:y+h/2-(tiny?4:6)}:{left:x+1,top:y+h-Math.max(16,22*view.zoom),width:w-2,height:Math.max(16,22*view.zoom),fontSize:Math.max(10,12*view.zoom)}}><SignalMark state={mark}/>{!compact&&<span><b>{u.id.startsWith('milestone:')?'Gate':u.id}</b> {u.word}</span>}</span>;
       })}</div>
       <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${b.kind==='outside'?'band-outside':''} ${focusedGroups.includes(b.id)?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}/>)}</div>
       <div className="band-headings">{layout.bands.map(b=>{
@@ -417,7 +436,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       {selected&&!health&&!(phone&&hovered&&hover?.id===selected)&&<div className="graph-selection"><div><strong>{selected.startsWith('milestone:')?selected.slice(10):<><span className="unit-id">{selected}</span> {selectedUnit?.title}</>}</strong><small>{selectedUnit&&<>{stateWords(selectedUnit.state)} {stageStatusWords(selectedUnit.stage,selectedUnit.stageFinished)}</>}</small><details className="exact-relations" open={exactWaits.length<=6}><summary>{selected.startsWith('milestone:')?'Linked units':'Waits for milestone'} ({exactWaits.length})</summary><div>{exactWaits.map(id=><button key={id} onClick={()=>focusNode(id)}>{id.startsWith('milestone:')?<><SignalMark state={e.milestones.find(g=>`milestone:${g.id}`===id)?.passed?'passed':'pending'}/>{id.slice(10)} {e.milestones.find(g=>`milestone:${g.id}`===id)?.passed?'Passed':'Pending'}</>:id}</button>)}{!exactWaits.length&&<small>None</small>}</div></details></div><Button onClick={()=>open(selected)} aria-label={`Open ${selected} details`}>Details</Button></div>}
       {hover&&hovered&&<div className="graph-hover" role="group" aria-label="Unit title card" onMouseEnter={()=>{if(hoverTimer.current)clearTimeout(hoverTimer.current);}} onMouseLeave={hideHover} onBlur={ev=>{if(!ev.currentTarget.contains(ev.relatedTarget))setHover(null);}} style={{left:Math.max(8,Math.min(hover.x+24,(canvas.current?.clientWidth??400)-260)),top:Math.max(64,hover.y+180<(canvas.current?.clientHeight??500)?hover.y+20:hover.y-180)}}><strong>{hovered.title}</strong><span>{stateWords(hovered.state)} {stageStatusWords(hovered.stage,hovered.stageFinished)}</span>{unmet.has(hovered.id)&&<span>Waits for milestone: {unmet.get(hovered.id)!.map(g=>g.slice(10)).join(', ')}</span>}<span>{card.data?.unit?.id===hovered.id?`${card.data.unit.startedAt&&!card.data.unit.endedAt&&!card.data.unit.arcEndedAt?'Running ':''}${elapsed(card.data.unit.startedAt&&!card.data.unit.endedAt&&!card.data.unit.arcEndedAt?Math.max(0,now-Date.parse(card.data.unit.startedAt)):card.data.unit.elapsedMs)}, ${pluralise(card.data.unit.attempts,'run')}`:card.error||'Reading recorded work…'}</span><Button onClick={()=>{open(hovered.id);setHover(null);touchCard.current=null;}}>Details</Button></div>}
       <button className="key-toggle" aria-expanded={keyOpen} onClick={()=>setKeyOpen(!keyOpen)}>Legend</button><div className={`graph-legend ${keyOpen?'key-open':''}`} aria-label="Graph legend">{states.map(state=><span key={state}><SignalMark state={state}/>{unitSignalWords[state]}</span>)}<span><SignalMark state="finished"/>{unitSignalWords.finished}</span><span className="edge-key">Solid: depends on</span><span className="edge-key dashed">Dashed: waits for milestone</span><span className="graph-keys">a Active, f All</span></div>
-      <svg className="graph-minimap" viewBox={`0 0 ${layout.width||100} ${layout.height||100}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Graph overview. Click to pan." onClick={ev=>{const graph=cy.current;if(!graph)return;const bounds=ev.currentTarget.getBoundingClientRect(),scale=Math.min(bounds.width/layout.width,bounds.height/layout.height),x=(ev.clientX-bounds.left-(bounds.width-layout.width*scale)/2)/scale,y=(ev.clientY-bounds.top-(bounds.height-layout.height*scale)/2)/scale;graph.pan({x:graph.width()/2-x*graph.zoom(),y:graph.height()/2-y*graph.zoom()});}}>{layout.bands.map(b=><rect key={b.id} x={b.x} y={b.y} width={b.width} height={b.height} fill="var(--surface)" stroke="var(--rule)" strokeWidth={8}/>)}{m.graph.units.map(n=>{const p=layout.positions.get(n.id);return p&&<rect key={n.id} x={p.x-60} y={p.y-18} width={120} height={36} fill={`var(--sig-${n.status})`}/>;})}<rect x={-view.x/view.zoom} y={-view.y/view.zoom} width={(canvas.current?.clientWidth??0)/view.zoom} height={(canvas.current?.clientHeight??0)/view.zoom} fill="var(--line)" fillOpacity={.08} stroke="var(--line)" strokeWidth={12}/></svg>
+      <svg className="graph-minimap" viewBox={`0 0 ${layout.width||100} ${layout.height||100}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Graph overview. Click to pan." onClick={ev=>{const graph=cy.current;if(!graph)return;const bounds=ev.currentTarget.getBoundingClientRect(),scale=Math.min(bounds.width/layout.width,bounds.height/layout.height),x=(ev.clientX-bounds.left-(bounds.width-layout.width*scale)/2)/scale,y=(ev.clientY-bounds.top-(bounds.height-layout.height*scale)/2)/scale;graph.pan({x:graph.width()/2-x*graph.zoom(),y:graph.height()/2-y*graph.zoom()});}}>{layout.bands.map(b=><rect key={b.id} x={b.x} y={b.y} width={b.width} height={b.height} fill="none" stroke="var(--rule)" strokeWidth={1} vectorEffect="non-scaling-stroke"/>)}{m.graph.units.map(n=>{const p=layout.positions.get(n.id);return p&&<rect key={n.id} x={p.x-60} y={p.y-18} width={120} height={36} fill={n.status==='passed'?'var(--fill-passed)':n.status==='active'||n.status==='held'||n.status==='failed'?`var(--sig-${n.status})`:'var(--track)'}/>;})}<rect x={-view.x/view.zoom} y={-view.y/view.zoom} width={(canvas.current?.clientWidth??0)/view.zoom} height={(canvas.current?.clientHeight??0)/view.zoom} fill="var(--line)" fillOpacity={.08} stroke="var(--line)" strokeWidth={1.5} vectorEffect="non-scaling-stroke"/></svg>
       {focus==='active'&&!active.seeds.length&&fallback&&<span className="graph-caption">No active units; showing {fallback.id.startsWith('milestone:')?fallback.id.slice(10):'all units'}</span>}
       <span className="graph-scale">{Math.round(view.zoom*100)}% <span>{m.units.length} units</span></span>
     </div>

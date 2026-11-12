@@ -392,3 +392,40 @@ test('untouched Active follows live active-set changes, manual viewport stays pu
  await b.call('browser_press_key',{key:'a'});await new Promise(r=>setTimeout(r,350));assert.equal(await b.evaluate(`()=>document.querySelector('.graph-caption').textContent`),'No active units; showing MS-3');
  const fallback=await view();await b.evaluate(`()=>{document.querySelectorAll('.station')[2].click();return true;}`);await new Promise(r=>setTimeout(r,350));assert.deepEqual(await view(),fallback,'idle Active uses exactly the first uncleared station band and gate');
 });
+
+test('selection is traced in ink: a unit traces its own edges; a milestone keeps the edges that touch its band and dims the rest', {timeout:180_000},async t=>{
+ const {generateScaleArc,ownScaleArc}=await import('../helpers/scale-arc.ts');
+ // The 300-unit arc: long dependencies cross whole milestones, so a band has edges that only pass through it.
+ const fixture=await generateScaleArc(tmpDir('graph-trace')),release=await ownScaleArc(fixture),b=new ConsoleBrowser(tmpDir('graph-trace-browser'));
+ const server=await serveConsole({repo:absPath(fixture.repo),common:gitCommonDir(absPath(fixture.repo)),hostDir:absPath(fixture.hostDir),host:'127.0.0.1',port:0});
+ t.after(async()=>{await b.close();await server.close();release();});await b.initialize();await b.call('browser_resize',{width:1440,height:900});await b.call('browser_navigate',{url:server.url});
+ await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),30_000,'scale graph canvas');
+ await b.evaluate(`()=>{document.querySelector('[aria-label="All focus"]').click();return true;}`);await new Promise(r=>setTimeout(r,500));
+ // Opacity eases over 120 ms; read the settled values.
+ const edges=`[...document.querySelectorAll('.graph-edge:not([data-kind="waits"])')].map(p=>{const s=getComputedStyle(p);return {source:p.dataset.source,target:p.dataset.target,kind:p.dataset.kind,dim:p.classList.contains('edge-dim'),traced:p.classList.contains('edge-traced'),opacity:parseFloat(s.opacity),stroke:s.stroke,width:s.strokeWidth};})`;
+ type Edge={source:string;target:string;kind:string;dim:boolean;traced:boolean;opacity:number;stroke:string;width:string};
+ const resting=await b.evaluate<Edge[]>(`()=>${edges}`);
+ assert.ok(resting.length>0&&resting.every(e=>!e.dim&&!e.traced&&e.opacity===(e.kind==='feeds'?.5:.85)),'with nothing selected every edge is at its resting weight');
+
+ await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u226').select();return true;}`);await new Promise(r=>setTimeout(r,400));
+ const unit=await b.evaluate<{edges:Edge[];line:string;border:number}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,probe=document.createElement('i');probe.style.color='var(--line)';document.body.append(probe);const line=getComputedStyle(probe).color;probe.remove();return {edges:${edges},line,border:parseFloat(cy.getElementById('u226').style('border-width'))*cy.zoom()};}`);
+ const own=unit.edges.filter(e=>e.source==='u226'||e.target==='u226'),rest=unit.edges.filter(e=>e.source!=='u226'&&e.target!=='u226');
+ assert.ok(own.length>0&&rest.length>0);
+ assert.ok(own.every(e=>e.traced&&!e.dim&&e.opacity===1&&e.stroke===unit.line&&e.width==='1.75px'),'the selected unit\'s edges are ink at 1.75px');
+ assert.ok(rest.every(e=>e.dim&&!e.traced&&e.opacity===.16),'every other edge dims to .16');
+ assert.ok(Math.abs(unit.border-3)<.01,'the selected unit has a 3px ink border');
+
+ await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.nodes().unselect();cy.emit('tap');return true;}`);await new Promise(r=>setTimeout(r,200));
+ await b.evaluate(`()=>{document.querySelectorAll('.station')[2].click();return true;}`);await new Promise(r=>setTimeout(r,600));
+ const band=await b.evaluate<{members:string[];bands:{x1:number;x2:number}[];centres:Record<string,number>;edges:Edge[]}>(`()=>{
+   const cy=document.querySelector('.dag-canvas')._cyreg.cy,bands=[...document.querySelectorAll('.band-focused')].map(el=>({x1:parseFloat(el.style.left),y1:parseFloat(el.style.top),x2:parseFloat(el.style.left)+parseFloat(el.style.width),y2:parseFloat(el.style.top)+parseFloat(el.style.height)}));
+   const inside=n=>{const p=n.renderedPosition();return bands.some(b=>p.x>b.x1&&p.x<b.x2&&p.y>b.y1&&p.y<b.y2);};
+   return {members:cy.nodes('[gate]').filter(n=>n.id()==='milestone:MS-3'||inside(n)).map(n=>n.id()),bands,centres:Object.fromEntries(cy.nodes('[gate]').map(n=>[n.id(),n.renderedPosition('x')])),edges:${edges}};
+ }`);
+ assert.ok(band.bands.length>0&&band.members.includes('milestone:MS-3')&&band.members.length>2,'the milestone band is washed and holds its units');
+ const members=new Set(band.members),touching=band.edges.filter(e=>members.has(e.source)||members.has(e.target)),away=band.edges.filter(e=>!members.has(e.source)&&!members.has(e.target));
+ const passing=away.filter(e=>band.bands.some(b=>Math.min(band.centres[e.source]!,band.centres[e.target]!)<b.x1&&Math.max(band.centres[e.source]!,band.centres[e.target]!)>b.x2));
+ assert.ok(touching.length>0&&away.length>0&&passing.length>0,'the fixture has touching, unrelated and pass-through edges');
+ assert.ok(touching.every(e=>!e.dim&&e.opacity===(e.kind==='feeds'?.5:.85)),'edges with an end in the band or at its gate keep their weight');
+ assert.ok(away.every(e=>e.dim&&e.opacity===.16),'edges that do not touch the band dim, those passing through it included');
+});
