@@ -19,7 +19,7 @@ async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed
   const nodes=all.filter(n=>{const box=n.boundingBox({includeLabels:false});return box.x2>extent.x1&&box.x1<extent.x2&&box.y2>extent.y1&&box.y1<extent.y2;});
   const bad=nodes.filter(n=>{
     const label=n.style('label'),px=parseFloat(n.style('font-size'))*cy.zoom(),w=n.renderedWidth(),h=n.renderedHeight();
-    const context=document.createElement('canvas').getContext('2d');context.font=n.style('font-weight')+' '+px+'px "Barlow Semi Condensed"';
+    const context=document.createElement('canvas').getContext('2d');context.font=n.style('font-weight')+' '+px+'px "Mona Sans SemiCondensed"';
     const textWidth=Math.max(...label.split('\\n').map(line=>context.measureText(line).width));
     if(n.hasClass('extreme'))return label!=='';
     return !label.trim()||px<(n.hasClass('overview')?10:11)-.001||textWidth>w+.5||label.split('\\n').length*px*1.1>h+.5;

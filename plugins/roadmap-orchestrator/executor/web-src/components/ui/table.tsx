@@ -1,4 +1,4 @@
-// shadcn/ui table (MIT), new-york density adapted to Barlow.
+// shadcn/ui table (MIT), new-york density adapted to Mona Sans.
 import * as React from 'react';
 import { cn } from '../../lib/utils.ts';
 export function Table({ className, ...props }: React.ComponentProps<'table'>) { return <div className="table-wrap"><table className={cn('w-full caption-bottom text-sm', className)} {...props}/></div>; }

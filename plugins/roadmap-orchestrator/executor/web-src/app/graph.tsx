@@ -18,9 +18,9 @@ function textWidth(text:string,font:string){const key=`${font}|${text}`;let widt
 /** The wait label's line: how many units of a band wait for (or depend on) a milestone. */
 const waitText=(bus:{targets:unknown[];pending:boolean;source:string})=>`${pluralise(bus.targets.length,'unit')} here ${bus.targets.length===1?bus.pending?'waits for':'depends on':bus.pending?'wait for':'depend on'} ${bus.source.slice(10)}`;
 /** Width of `text` per 1px of font size. Measured at a large size: browsers round glyph advances at tiny sizes, so 1px metrics can be 0 or badly off. */
-function emWidth(text:string){return textWidth(text,'600 100px "Barlow Semi Condensed"')/100;}
+function emWidth(text:string){return textWidth(text,'600 100px "Mona Sans SemiCondensed"')/100;}
 function nodeTitle(title:string,fontPx=LABEL_PX){
-  const context=measure();context.font=`600 ${fontPx}px "Barlow Semi Condensed"`;
+  const context=measure();context.font=`600 ${fontPx}px "Mona Sans SemiCondensed"`;
   const limit=NODE_WIDTH-24,lines=[''];for(const word of title.split(/\s+/)){const last=lines.length-1,next=lines[last]?`${lines[last]} ${word}`:word;if(context.measureText(next).width>limit&&lines[last]){if(lines.length===3){while(context.measureText(lines[last]+'…').width>limit)lines[last]=lines[last]!.slice(0,-1);lines[last]+='…';break;}lines.push(word);}else lines[last]=next;}return lines.join('\n');
 }
 const states: Signal[] = ['passed','active','held','failed','pending','withdrawn'];
@@ -36,7 +36,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
   const [resultIndex,setResultIndex]=useState(0);
   const [selected,setSelected]=useState<string|null>(null), [query,setQuery]=useState(''), [searching,setSearching]=useState(false), [filters,setFilters]=useState<Signal[]>([]), [station,setStation]=useState<string|null>(null);
   const [fontsReady,setFontsReady]=useState(false);
-  useEffect(()=>{let disposed=false;void Promise.all([document.fonts.load('500 11px "Barlow Semi Condensed"'),document.fonts.load('600 16px "Barlow Semi Condensed"')]).then(()=>{if(!disposed)setFontsReady(true);});return()=>{disposed=true;};},[]);
+  useEffect(()=>{let disposed=false;void Promise.all([document.fonts.load('500 11px "Mona Sans SemiCondensed"'),document.fonts.load('600 16px "Mona Sans SemiCondensed"')]).then(()=>{if(!disposed)setFontsReady(true);});return()=>{disposed=true;};},[]);
   const [focus,setFocus]=useState<FocusMode>('active'), [keyOpen,setKeyOpen]=useState(false), [mobileSearch,setMobileSearch]=useState(false);
   const [health,setHealth]=useState<{id:string;x:number;y:number}|null>(null),[highlight,setHighlight]=useState<string[]>([]),[edgeHover,setEdgeHover]=useState<{source:string;target:string}|null>(null);
   useEffect(()=>{const change=(ev:Event)=>setEdgeHover((ev as CustomEvent).detail);window.addEventListener('roadmap-edge',change);return()=>window.removeEventListener('roadmap-edge',change);},[]);
@@ -144,7 +144,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       ...m.graph.units.map(u=>({data:unitData(u),position:{...baseline.positions.get(u.id)!}})),
       ...m.graph.edges.map(([source,target],i)=>({data:{id:`edge:${i}`,source,target,kind:source.startsWith('milestone:')?'waits':target.startsWith('milestone:')?'feeds':'dependency'}})),
     ],layout:{name:'preset',fit:false},style:[
-      {selector:'node',style:{'background-color':color('--surface'),'border-width':2,'border-color':color('--sig-pending'),'shape':'round-rectangle','corner-radius':3,'width':NODE_WIDTH,'height':NODE_HEIGHT,'label':'data(label)','font-family':'Barlow Semi Condensed','font-size':LABEL_PX,'line-height':1.1,'font-weight':600,'text-wrap':'wrap','text-max-width':NODE_WIDTH-24,'text-valign':'center','text-halign':'left-inside','text-justification':'left','text-margin-x':12,'text-margin-y':-10,'color':color('--ink')}},
+      {selector:'node',style:{'background-color':color('--surface'),'border-width':2,'border-color':color('--sig-pending'),'shape':'round-rectangle','corner-radius':3,'width':NODE_WIDTH,'height':NODE_HEIGHT,'label':'data(label)','font-family':'Mona Sans SemiCondensed','font-size':LABEL_PX,'line-height':1.1,'font-weight':600,'text-wrap':'wrap','text-max-width':NODE_WIDTH-24,'text-valign':'center','text-halign':'left-inside','text-justification':'left','text-margin-x':12,'text-margin-y':-10,'color':color('--ink')}},
       ...states.map(state=>({selector:`node[state="${state}"]`,style:{'border-color':color(`--sig-${state==='withdrawn'?'pending':state}`),'background-color':color('--surface'),'background-opacity':1,'shape':'round-rectangle','border-style':state==='withdrawn'?'dashed':'solid'}})),
       {selector:'node[gate=1]',style:{'shape':'cut-rectangle','width':NODE_WIDTH,'height':NODE_HEIGHT,'background-color':color('--surface'),'border-color':color('--line'),'background-opacity':1,'font-size':12,'text-margin-y':-6,'text-max-width':136}},
       {selector:'node[gate=1][state="passed"]',style:{'background-opacity':1}},
@@ -392,7 +392,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         // Headings avoid the cards and every label drawn over the canvas: the wait labels where this render places them
         // (measured, never read back from the previous render), and the fixed minimap, legend and scale.
         const bounds=canvas.current?.getBoundingClientRect(),overlays=bounds?[...region.current?.querySelectorAll('.graph-minimap,.graph-legend,.key-toggle,.graph-scale')??[]].map(el=>el.getBoundingClientRect()).filter(r=>r.width&&r.height).map(r=>({x1:r.left-bounds.left,x2:r.right-bounds.left,y1:r.top-bounds.top,y2:r.bottom-bounds.top})):[];
-        const waits=waitLabels.filter(bus=>!(view.zoom*LABEL_PX<MIN_LABEL_PX&&station!==bus.band)).map(bus=>({x1:bus.labelX,x2:bus.labelX+textWidth(waitText(bus),'400 11px Barlow')+8,y1:bus.labelY,y2:bus.labelY+16}));
+        const waits=waitLabels.filter(bus=>!(view.zoom*LABEL_PX<MIN_LABEL_PX&&station!==bus.band)).map(bus=>({x1:bus.labelX,x2:bus.labelX+textWidth(waitText(bus),'500 11px "Mona Sans SemiCondensed"')+8,y1:bus.labelY,y2:bus.labelY+16}));
         const boxes=[...cy.current?.nodes('[gate]').map(node=>node.renderedBoundingBox({includeLabels:false}))??[],...overlays,...waits];
         const candidates=[Math.max(72,b.y*view.zoom+view.y-24),72,...boxes.map(box=>box.y2+2)].filter(y=>y>=72&&y+20<=Math.min(bottom,(canvas.current?.clientHeight??innerHeight)-48));
         let heading:{left:number;top:number;width:number}|undefined;
