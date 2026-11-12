@@ -58,7 +58,7 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .agent-detail .history-event-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
 .agent-detail .history-event-head time, .agent-detail .history-event-meta { font-size:12px; color:var(--muted-ink); }
 .agent-detail .history-thinking { color:var(--ink); border-left-style:dotted; }
-.agent-detail .history-event pre, .agent-detail .history-verdict pre, .agent-detail .history-brief pre { white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; font-size:12px; line-height:1.65; padding:10px 12px; background:var(--paper); border-radius:4px; }
+.agent-detail .history-event pre, .agent-detail .history-verdict pre, .agent-detail .history-brief pre { white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; font-size:12px; line-height:1.5; padding:6px 10px; background:var(--paper); border-radius:4px; }
 .agent-detail .history-event summary, .agent-detail .history-document summary { cursor:pointer; padding:6px 0; }
 .agent-detail .history-markdown { line-height:1.65; }
 .agent-detail .history-markdown p { margin:6px 0 12px; white-space:pre-wrap; }
@@ -70,8 +70,9 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .agent-detail .history-fields dt { color:var(--muted-ink); font-size:12px; font-weight:600; }
 .agent-detail .history-fields dd { margin:2px 0 0; }
 .agent-detail .history-fields ul { padding-left:20px; }
-.agent-detail .history-verdict { border:1px solid var(--rule); border-radius:8px; padding:20px 24px; margin:16px 0; background:var(--surface); }
-.agent-detail .history-verdict-head { position:sticky; top:0; z-index:1; padding:8px 0; background:var(--surface); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+/* The agent report is one section of the history: a ruled heading, not a floating card or a sticky bar over the log. */
+.agent-detail .history-verdict { border-top:1px solid var(--rule); padding:12px 0 4px; margin:16px 0 8px; }
+.agent-detail .history-verdict-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:4px; }
 .agent-detail .history-verdict-head h3 { margin:0; }
 .agent-detail .history-status { border:1px solid currentColor; border-radius:20px; padding:3px 10px; font-size:12px; color:var(--ink); }
 .agent-detail .history-status[data-status="approve"], .agent-detail .history-status[data-status="pass"] { color:var(--sig-passed); background:color-mix(in srgb,var(--sig-passed) 10%,var(--surface)); }
@@ -100,8 +101,6 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 .agent-detail .history-markdown li { margin:2px 0; }
 .agent-detail .history-fields { margin:3px 0 6px; }
 .agent-detail .history-fields > div { margin:4px 0 6px; }
-.agent-detail .history-verdict { padding:12px 14px; margin:8px 0; }
-.agent-detail .history-verdict-head { padding:4px 0; gap:10px; }
 .agent-detail .history-verdict-section { margin-top:10px; }
 .agent-detail .history-verdict-section h4 { margin-bottom:4px; }
 .agent-detail .history-file-meta { display:flex; align-items:center; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
@@ -192,7 +191,7 @@ main{min-height:0;min-width:0;flex:1;}.graph-main{overflow:hidden;}.graph-view{d
 
 .unit-facts{display:grid;grid-template-columns:1fr 1fr;gap:6px 20px;margin:0 0 12px;}.unit-facts>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}.unit-facts dt{font-size:12px;color:var(--muted-ink);}.unit-facts dd{font-size:14px;color:var(--ink);font-variant-numeric:tabular-nums;margin:0;}.unit-gates dd a{display:block;}.journey-pipeline{display:grid;gap:4px;}.journey-block{display:flex;align-items:center;gap:12px;min-height:32px;width:100%;padding:4px 8px;border-width:0 0 1px 3px;border-radius:0;}.journey-block>span:first-child{flex:1;}.journey-block>span{display:inline-flex;align-items:center;gap:6px;}.journey-block small{font-size:12px;white-space:nowrap;}.journey-block:hover,.journey-block:focus-visible{background:var(--paper);}.journey-details{margin-top:8px;}.housekeeping-toggle{margin-bottom:6px;}@media(pointer:coarse){.journey-block{min-height:40px;}}
 
-.invocation-summary p{margin:0;font-size:13px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}.invocation-summary dl{display:flex;gap:24px;margin:4px 0 0;}.invocation-summary dl>div{display:flex;gap:8px;align-items:baseline;}.invocation-summary dt{font-size:12px;color:var(--muted-ink);}.invocation-summary dd{margin:0;font-variant-numeric:tabular-nums;}.history-heading{font-size:14px;font-weight:600;}.changed-files{font-size:13px;border-block:1px solid var(--rule);padding:4px 0;max-height:180px;overflow:auto;}.changed-files summary{cursor:pointer;}.changed-files small{font-size:12px;}.changed-files button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;padding:6px 8px;border-bottom:1px solid var(--rule);}.changed-files button:hover{background:var(--paper);}.changed-files button code{overflow-wrap:anywhere;}.changed-files button span{white-space:nowrap;}.history-group{border-left:2px solid var(--rule);margin-bottom:4px;}.history-group>summary{padding:6px 10px;cursor:pointer;font-size:13px;overflow-wrap:anywhere;}.history-group>summary small{display:block;font-size:12px;}.history-group .history-event{margin-left:8px;}
+.invocation-summary-text{font-size:13px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}.agent-detail .invocation-summary-text .history-markdown{line-height:20px;}.agent-detail .invocation-summary-text .history-markdown>*{margin:0;}.invocation-summary dl{display:flex;gap:24px;margin:4px 0 0;}.invocation-summary dl>div{display:flex;gap:8px;align-items:baseline;}.invocation-summary dt{font-size:12px;color:var(--muted-ink);}.invocation-summary dd{margin:0;font-variant-numeric:tabular-nums;}.history-heading{font-size:14px;font-weight:600;}.changed-files{font-size:13px;border-block:1px solid var(--rule);padding:4px 0;max-height:180px;overflow:auto;}.changed-files summary{cursor:pointer;}.changed-files small{font-size:12px;}.changed-files button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;padding:6px 8px;border-bottom:1px solid var(--rule);}.changed-files button:hover{background:var(--paper);}.changed-files button code{overflow-wrap:anywhere;}.changed-files button span{white-space:nowrap;}.history-group{border-left:2px solid var(--rule);margin-bottom:4px;}.history-group>summary{padding:6px 10px;cursor:pointer;font-size:13px;overflow-wrap:anywhere;}.history-group>summary small{display:block;font-size:12px;}.history-group .history-event{margin-left:8px;}
 
 .history-boundary{display:flex;gap:4px 12px;flex-wrap:wrap;font-size:12px;color:var(--muted-ink);}.history-boundary small{font-size:12px;}.agent-detail .history-above{box-shadow:inset 0 8px 8px -8px var(--muted-ink);}.agent-detail .history-controls{flex-wrap:wrap;gap:4px 8px;}.history-boundary{flex-basis:100%;}.agent-detail .history-scroll{scroll-padding-top:8px;}
 
@@ -511,7 +510,49 @@ tr.timeline-runs p{margin:8px 12px;}
 .drawer-full{left:0;max-width:none;border-left:0;border-radius:0;box-shadow:none;}
 .drawer-full>.drawer-head,.drawer-full>.drawer-body{padding-inline:32px;}
 /* Prose keeps a readable measure; commands, tool output, code and diffs take the full width. */
-.drawer-full .history-markdown>:is(p,ul,ol,h3,h4,h5,h6,blockquote),.drawer-full .invocation-summary>p,.drawer-full .history-empty,.drawer-full .log-summary{max-width:80ch;}
+.drawer-full .history-markdown>:is(p,ul,ol,h3,h4,h5,h6,blockquote),.drawer-full .invocation-summary-text,.drawer-full .history-empty,.drawer-full .log-summary{max-width:80ch;}
 @media(max-width:640px){.drawer-expand{display:none;}.drawer-full>.drawer-head,.drawer-full>.drawer-body{padding-inline:16px;}}
 /* Narrow: every tab stays reachable without sideways scrolling; tabs wrap to a second row when even tight ones don't fit. */
 @media(max-width:640px){.tabs{height:auto;flex-basis:auto;min-height:40px;flex-wrap:wrap;overflow-x:visible;}.tabs>a{min-height:40px;}}
+/* Report fields: a short value sits beside its label; each command the agent ran is one entry (name and exit, then the command). */
+.agent-detail .history-fields>.history-field-inline{display:flex;align-items:baseline;gap:8px;margin:2px 0;}
+.agent-detail .history-field-inline>dd{min-width:0;}
+.agent-detail .history-field-inline .history-markdown>*{margin:0;}
+.agent-detail ul:has(>li>.history-run){list-style:none;padding-left:0;margin:4px 0 8px;}
+.agent-detail li:has(>.history-run){margin:0;}
+.agent-detail .history-run{padding:4px 0 6px;}
+.agent-detail .history-run-head{display:flex;align-items:baseline;gap:12px;}
+.agent-detail .history-run-head>span:first-child{flex:1;min-width:0;}
+.history-run-exit{font:12px/16px 'JetBrains Mono',monospace;color:var(--muted-ink);white-space:nowrap;}
+.history-run-exit[data-ok=false]{color:var(--sig-failed);}
+.agent-detail .history-run>pre.history-command{margin:2px 0 0;}
+/* Full-page log: one compact heading line, one status line, then the log fills the rest of the window. */
+.drawer-full>.drawer-head{align-items:center;padding-block:8px;}
+.drawer-full>.drawer-head>div:first-child{display:flex;align-items:baseline;flex-wrap:wrap;gap:0 16px;}
+.drawer-full .invocation-breadcrumb{display:flex;align-items:baseline;gap:4px 12px;flex-wrap:wrap;}
+.drawer-full .invocation-breadcrumb .invocation-unit-link{-webkit-line-clamp:1;max-width:min(60ch,100%);}
+.drawer-full>.drawer-head h2{font-size:16px;line-height:24px;}
+.drawer-full.agent-detail>.drawer-body{gap:0;padding-block:0;}
+.log-bar{display:flex;align-items:center;flex-wrap:wrap;gap:4px 20px;padding:6px 0;border-bottom:1px solid var(--rule);}
+.log-bar>.invocation-status{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0;}
+.log-bar>.invocation-status>div{display:flex;gap:6px;align-items:baseline;}
+.log-bar dt{font-size:12px;color:var(--muted-ink);}.log-bar dd{margin:0;}
+.agent-detail .log-bar>.log-overview-toggle{border:1px solid var(--rule);padding:2px 8px;font-size:13px;line-height:18px;color:var(--muted-ink);}
+.agent-detail .log-bar>.log-overview-toggle[aria-expanded=true]{color:var(--ink);}
+.agent-detail .log-bar>.history-controls{margin-left:auto;}
+.drawer-full.overview-closed>.drawer-body>:is(.invocation-facts,.invocation-summary,.history-navigation,.session-details){display:none;}
+.drawer-full>.drawer-body>.invocation-verdict,.drawer-full .invocation-summary>.invocation-status{display:none;}
+.drawer-full:not(.overview-closed)>.drawer-body>:is(.invocation-facts,.invocation-summary,.history-navigation,.session-details){margin-top:8px;}
+.drawer-full .invocation-summary-text{display:block;}
+.drawer-full.agent-detail .invocation-summary-text .history-markdown>*{margin:0 0 6px;}
+/* The full view keeps the heading to one line: a long systems list is cut here and kept whole in the drawer and its tooltip. */
+.drawer-full .invocation-identity{max-width:min(48ch,100%);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.drawer-full.agent-detail .history-scroll{border-block:0;padding:4px 0 24px;}
+/* Check logs: status, position, search and the text-only note share one line above the output. */
+.check-output-head{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;margin:4px 0 8px;}
+.check-output-status{font-weight:500;}
+.check-output .log-summary{margin:0 0 8px;font-size:13px;}
+.check-output>pre.record{margin-top:0;}
+.drawer-full.command-detail>.drawer-body{padding-top:8px;}
+.drawer-full.command-detail .log-sources{margin:8px 0;}
+.drawer-body>section.check-output{border-bottom:0;padding-block:0;}
