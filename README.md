@@ -293,3 +293,18 @@ From `plugins/roadmap-orchestrator/executor/`: `npm run typecheck` → `npm test
 CLIs) → the role evals in `evals/roles/` that the batch's changes trigger → the paid fixtures (`evals/m1/`, and
 `evals/m5/`, the UI end to end, when milestones, walks, design units or the demo changed), once per merged batch.
 See `CLAUDE.md`.
+
+## Licence
+
+Copyright (C) 2026 Aaron McGee
+
+roadmap-orchestrator is free software: you can redistribute it and/or modify it under the terms of the GNU Lesser
+General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
+even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [`COPYING.LESSER`](COPYING.LESSER)
+(the GNU Lesser General Public License) and [`COPYING`](COPYING) (the GNU General Public License it supplements); both
+are also shipped inside the plugin at `plugins/roadmap-orchestrator/`.
+
+Third-party material keeps its own licence: the web console's bundled libraries and fonts are listed in
+`plugins/roadmap-orchestrator/executor/web/THIRD-PARTY-NOTICES.txt`, and files that carry their own licence notice
+(for example under `executor/web-src/components/ui/` and the eval fixtures) remain under it.
