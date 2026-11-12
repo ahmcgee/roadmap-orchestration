@@ -1,6 +1,7 @@
 // A console on an arc of a real long arc's shape, under the load a real browser puts on it. dev.60 and dev.61 passed their
 // tests with one polite reader on an arc whose cost drivers were small; this one scales the drivers (invocation records, an
 // evidence tree, git spawn cost), runs several concurrent readers, and asserts the work each capture does, not only outcomes.
+// The second test is the capture after a plan apply on an arc with a long first-parent history (dev.74).
 import assert from 'node:assert/strict';
 import { execFileSync, fork } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -8,12 +9,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gitCommonDir } from '../../src/git/git.ts';
+import { arcId, commandId, planRev } from '../../src/core/ids.ts';
+import { openJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
+import { commitRevisionNow, keptPayload } from '../../src/input/inforce.ts';
+import { Observer } from '../../src/observation/observer.ts';
 import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import type { ArcStats } from '../../src/console/http.ts';
 import { ArcWriter, padEvidence } from '../helpers/arc-writer.ts';
 import { generateScaleArc, ownScaleArc } from '../helpers/scale-arc.ts';
-import { tmpDir } from '../helpers/repo.ts';
+import { git, tmpDir } from '../helpers/repo.ts';
+import { enrichedParityArc } from '../fixtures/status-parity.ts';
 
 const COLD_MS = 20_000, SWEEP_BOUND_MS = 120_000, RSS_BUDGET_MB = 900;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -181,4 +187,62 @@ test('a busy arc of real shape: cold start once, every read answered from memory
   assert.equal(refused.status, 500, `within ${Math.round((Date.now() - sweepFrom) / 1000)} s`);
   t.diagnostic(JSON.stringify({ coldMs: Math.round(coldMs), invocations: m.invocations, events: end.seq, p99: Math.round(p99), rssMb: Math.round(rssMb), captures: work.length, stormCaptures: during,
     sweepMs: Date.now() - sweepFrom, maxLagMs: Math.max(...lags), work: work.at(-1) }));
+});
+
+// An apply carries a new systems map object; when its content is unchanged, the next capture's history walk for the not yet true
+// obligations' last observation finds every lane input known: it asks git for no history tree and hashes none (dev.73 recomputed
+// every lane input over the whole first-parent history). A change of the map's content still walks the history once.
+test('a capture after an apply that leaves the systems map unchanged does not walk the history again', { timeout: 10 * 60_000 }, async () => {
+  const COMMITS = 300, FILES = 3_000;
+  const f = await enrichedParityArc();
+  const runDir = absPath(f.runDir), repo = absPath(f.d.repo), arc = arcId(f.d.arc);
+  // COMMITS commits over FILES files, each changing one: every tree's lane input differs, so a walk reads them all.
+  const stamp = (n: number) => `committer Synthetic <synthetic@example.invalid> ${1_700_000_000 + n} +0000\n`;
+  const data = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`;
+  let stream = `commit refs/heads/main\n${stamp(0)}${data('bulk')}from ${git(repo, 'rev-parse', 'main')}\n`;
+  for (let i = 0; i < FILES; i++) stream += `M 100644 inline src/bulk/part-${i}.js\n${data(`export const part${i} = ${i};`)}`;
+  for (let n = 1; n < COMMITS; n++) stream += `commit refs/heads/main\n${stamp(n)}${data(`change ${n}`)}M 100644 inline src/bulk/part-${n % FILES}.js\n${data(`export const part${n % FILES} = -${n};`)}`;
+  execFileSync('git', ['-C', repo, 'fast-import', '--quiet'], { input: stream, timeout: 120_000 });
+  git(repo, 'reset', '-q', '--hard');
+
+  const o = new Observer(), run = { runDir, arc, at: '' };
+  const capture = () => {
+    const r = o.capture({ locator: { type: 'host' }, pinned: run, hostDir: absPath(f.hostDir), token: 0 });
+    assert.equal(r.error, null);
+    return { last: r.display!.status.notYetTrue.map((n) => [n.obligation, n.lastObserved?.treeSha ?? null]), work: o.lastWork, deriveMs: o.lastFold.deriveMs };
+  };
+  const cold = capture();
+  assert.ok(cold.last.some(([, tree]) => tree !== null), `the walk found last observations: ${JSON.stringify(cold.last)}`);
+  capture();
+  const warm = capture();
+  const apply = (systemsMap?: unknown) => {
+    const j = openJournal(runDir, arc);
+    try {
+      const applied = j.view.planApplied()!, kept = keptPayload(runDir, applied.payloadSha256);
+      commitRevisionNow(j, runDir, { ...kept, ...(systemsMap === undefined ? {} : { systemsMap: systemsMap as never }), source: { type: 'command', command: commandId(`cmd-${String(900 + Number(applied.rev)).padStart(16, '0')}`) },
+        base: applied.rev, rev: planRev(Number(applied.rev) + 1), changes: [], dispositions: [], divergences: [] }, { type: 'arc' });
+      return kept.systemsMap;
+    } finally { j.close(); }
+  };
+  const asks = (w: typeof warm.work) => w.gitSpawns + w.gitHits;
+
+  const map = apply();
+  assert.ok(map !== null && map !== undefined, 'the arc has a systems map');
+  const after = capture();
+  assert.deepEqual(after.last, warm.last, 'the same last observations');
+  // Within the per-capture bounds of the test above (the arc runs nothing: `running` is 0).
+  assert.ok(after.work.gitSpawns <= 20, `gitSpawns ${after.work.gitSpawns}`);
+  assert.ok(after.work.recordReads <= 20, `recordReads ${after.work.recordReads}`);
+  // Git asked (spawned or answered from the memo) about as often as an unchanged capture plus the new revision's own reads; a walk
+  // asks for every chunk of the history's trees again.
+  assert.ok(asks(after.work) <= asks(warm.work) + 10, `git asked ${asks(after.work)} times, against ${asks(warm.work)} for an unchanged capture`);
+  assert.ok(after.deriveMs * 4 <= cold.deriveMs, `the capture after the apply derived in ${after.deriveMs} ms, against ${cold.deriveMs} ms for the walk`);
+
+  // The map's content changed: every lane's input changed, and the walk runs again, once.
+  const changed = { ...map, docs: [...map.docs, 'notes/**'] };
+  apply(changed);
+  const moved = capture(), settled = capture();
+  assert.ok(asks(moved.work) > asks(warm.work) + 10, `a changed map walks the history: git asked ${asks(moved.work)} times`);
+  assert.deepEqual(moved.last, warm.last, 'a docs glob no lane reads leaves every last observation');
+  assert.ok(asks(settled.work) <= asks(warm.work) + 10, `then it is known: git asked ${asks(settled.work)} times`);
 });

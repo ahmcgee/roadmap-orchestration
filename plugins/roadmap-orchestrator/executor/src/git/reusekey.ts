@@ -12,6 +12,7 @@
 // A spec or suite lane's key also binds argv[0]'s resolved program and its content (the lane spawn's `identity`): a tool
 // upgraded under the same path is another environment. An arc lane's witness record names its reporter's output instead.
 import { createHash } from 'node:crypto';
+import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { type EnvId, type LaneId, type LaneRev, type Sha, sha } from '../core/ids.ts';
 import type { LaneDef } from '../core/records.ts';
 import type { AbsPath, RepoPath } from '../core/values.ts';
@@ -103,8 +104,37 @@ export function prefetchTreeListings(repo: AbsPath, trees: readonly Sha[]): void
   for (const tree of missing) keepListing(tree, flatten(tree, ''));
 }
 
-const INPUTS = new WeakMap<object, Map<string, Sha>>();
-const NO_MAP = {};
+/**
+ * Lane input hashes, `inputAt` key to sha, per scope. A lane with explicit patterns has one scope whatever the map. A lane read
+ * through the systems map is scoped by the map's content (`mapScope`), not by the map object: every `plan-applied` fact carries
+ * its own object, and an apply that leaves the map's content as it was keeps every hash. The two most recently used map scopes
+ * are kept; a third content evicts the least recent (one content is in force; the second covers an arc moving between two).
+ */
+const EXPLICIT_INPUTS = new Map<string, Sha>();
+const MAP_INPUTS = new Map<string, Map<string, Sha>>();
+const MAP_SCOPES = 2;
+/** Each map object's content key (sha256 of its canonical JSON), hashed once per object. */
+const MAP_KEYS = new WeakMap<SystemsMap, string>();
+
+function mapScope(map: SystemsMap): string {
+  let key = MAP_KEYS.get(map);
+  if (key === undefined) { key = sha256Hex(canonicalJson(map)); MAP_KEYS.set(map, key); }
+  return key;
+}
+
+/** The memo of `lane`'s inputs under `map`, made the most recently used map scope. */
+function inputsMemo(lane: Pick<LaneDef, 'inputs'>, map: SystemsMap | null): Map<string, Sha> {
+  if (lane.inputs !== undefined) return EXPLICIT_INPUTS;
+  const scope = mapScope(map!);
+  const memo = MAP_INPUTS.get(scope) ?? new Map<string, Sha>();
+  MAP_INPUTS.delete(scope); MAP_INPUTS.set(scope, memo);
+  for (const old of MAP_INPUTS.keys()) {
+    if (MAP_INPUTS.size <= MAP_SCOPES) break;
+    MAP_INPUTS.delete(old);
+  }
+  return memo;
+}
+
 const COMMIT_TREES = new Map<Sha, Sha>();
 
 /** A commit's tree is immutable, including when the branch that named the commit advances. */
@@ -119,21 +149,19 @@ export function treeOfCommit(repo: AbsPath, commit: Sha): Sha {
 /**
  * The input of `lane` on `tree` (an immutable object id). Explicit patterns override systems and the map, so their
  * hashes share one memo across plan revisions and callers (including external witnesses). Only implicit inputs
- * depend on the map's identity and lane systems. The listing above is the one source for both kinds of input.
+ * depend on the map's content and lane systems. The listing above is the one source for both kinds of input.
  */
 const inputAt = (tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>): string => `${tree}/${JSON.stringify(lane.inputs === undefined ? lane.systems ?? null : lane.inputs)}`;
 
 /** Whether `inputShaOf` answers for `lane` on `tree` without the tree's listing: a history walk prefetches only the others. */
 export function inputKnown(tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>, map: SystemsMap | null): boolean {
   if (map === null && lane.inputs === undefined) return true;
-  return INPUTS.get(lane.inputs === undefined ? map! : NO_MAP)?.has(inputAt(tree, lane)) === true;
+  return (lane.inputs === undefined ? MAP_INPUTS.get(mapScope(map!)) : EXPLICIT_INPUTS)?.has(inputAt(tree, lane)) === true;
 }
 
 export function inputShaOf(repo: AbsPath, tree: Sha, lane: Pick<LaneDef, 'systems' | 'inputs'>, map: SystemsMap | null): Sha {
   if (map === null && lane.inputs === undefined) return tree;
-  const scope = lane.inputs === undefined ? map! : NO_MAP;
-  const memo = INPUTS.get(scope) ?? new Map<string, Sha>();
-  INPUTS.set(scope, memo);
+  const memo = inputsMemo(lane, map);
   const at = inputAt(tree, lane);
   const known = memo.get(at);
   if (known !== undefined) return known;
