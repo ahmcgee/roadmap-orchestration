@@ -5,6 +5,9 @@ export const TITLE_MIN_ZOOM = .5;
 /** Compact identifiers sit right of the status glyph; these reserve the glyph's width (left inset, glyph, gap) in screen pixels. */
 export const TINY_ZOOM = .25, TINY_GLYPH_RESERVE = 10, GLYPH_RESERVE = 18;
 export const MIN_ID_PX = 10;
+/** A compact id too long for its card keeps at least this many characters around its ellipsis (fewer stop telling ids
+ * apart), or the Graph moves to the label-less whole-arc tier. */
+export const MIN_ID_CHARS = 6;
 // The space belongs to the relationships: never compress these floors to fit.
 export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };

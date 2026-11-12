@@ -2,7 +2,7 @@ import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } fro
 import cytoscape, { type Core, type NodeSingular } from 'cytoscape';
 import { Minus, Plus, Search } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { activeFocus, compactIdentifier, compactSystem, GLYPH_RESERVE, graphCurves, graphLayout, LABEL_PX, MIN_ID_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH, TINY_GLYPH_RESERVE, TINY_ZOOM, TITLE_MIN_ZOOM } from './graph-layout.ts';
+import { activeFocus, compactIdentifier, compactSystem, GLYPH_RESERVE, graphCurves, graphLayout, LABEL_PX, MIN_ID_CHARS, MIN_ID_PX, MIN_LABEL_PX, NODE_HEIGHT, NODE_WIDTH, TINY_GLYPH_RESERVE, TINY_ZOOM, TITLE_MIN_ZOOM } from './graph-layout.ts';
 import { Clock, elapsed, glyph, money, pluralise, route, sentence, SignalMark } from './shared.tsx';
 import type { Signal } from './types.ts';
 import { signalWords, stageStatusWords, stateWords, stageWords } from '../../src/console/vocabulary.ts';
@@ -19,6 +19,19 @@ function textWidth(text:string,font:string){const key=`${font}|${text}`;let widt
 const waitText=(bus:{targets:unknown[];pending:boolean;source:string})=>`${pluralise(bus.targets.length,'unit')} here ${bus.targets.length===1?bus.pending?'waits for':'depends on':bus.pending?'wait for':'depend on'} ${bus.source.slice(10)}`;
 /** Width of `text` per 1px of font size in the compact tier's label face (SemiCondensed 500, as `node.overview` draws it). Measured at a large size: browsers round glyph advances at tiny sizes, so 1px metrics can be 0 or badly off. */
 function emWidth(text:string){return textWidth(text,'500 100px "Mona Sans SemiCondensed"')/100;}
+/** `text` in at most `budget` em: whole when it fits, else its start and its end around an ellipsis, the start keeping
+ * half (rounded up). Ids share long stems (a common prefix, a family of related units) and differ at the end too (a
+ * re-entry's `-r2`), so both ends stay. null when fewer than `least` characters would remain: too little to tell apart. */
+function fitText(text:string,budget:number,least:number):string|null{
+  const whole=emWidth(text);if(whole<=budget)return text;
+  const chars=[...text];
+  // Start near the proportional estimate and step down; every candidate is measured exactly (and cached).
+  for(let kept=Math.min(chars.length-1,Math.ceil(chars.length*budget/whole)+1);kept>=least;kept--){
+    const head=Math.ceil(kept/2),candidate=`${chars.slice(0,head).join('')}…${chars.slice(chars.length-(kept-head)).join('')}`;
+    if(emWidth(candidate)<=budget)return candidate;
+  }
+  return null;
+}
 function nodeTitle(title:string,fontPx=LABEL_PX){
   const context=measure();context.font=`600 ${fontPx}px "Mona Sans SemiCondensed"`;
   const limit=NODE_WIDTH-24,lines=[''];for(const word of title.split(/\s+/)){const last=lines.length-1,next=lines[last]?`${lines[last]} ${word}`:word;if(context.measureText(next).width>limit&&lines[last]){if(lines.length===3){while(context.measureText(lines[last]+'…').width>limit)lines[last]=lines[last]!.slice(0,-1);lines[last]+='…';break;}lines.push(word);}else lines[last]=next;}return lines.join('\n');
@@ -229,15 +242,23 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
           const room=boxWidth-reserve-1.5;
           const shortId=(node:NodeSingular)=>node.data('gate')?node.id().slice(10).replace(/^MS-/,'M'):String(node.data('compact'));
           const fullId=(node:NodeSingular)=>node.data('gate')?node.id().slice(10):String(node.data('compact'));
-          const widths=nodes.map(node=>emWidth(shortId(node as NodeSingular)));
-          const minimalPx=Math.min(13,...widths.map(w=>room/Math.max(.01,w)),(NODE_HEIGHT*zoom-2)/1.1);
-          const nextTier=full?'full':minimalPx>=MIN_ID_PX?'minimal':'status',changed=detailTier!==nextTier,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+          // Ids scale down together to fit the widest, down to the legibility floor and never below it. Past the floor an id
+          // that does not fit is truncated, not dropped: one long id no longer takes every card's text away.
+          const heightPx=(NODE_HEIGHT*zoom-2)/1.1;
+          const minimalPx=Math.max(MIN_ID_PX,Math.min(13,heightPx,room/Math.max(.01,...nodes.map(node=>emWidth(shortId(node as NodeSingular))))));
+          const budget=room/minimalPx;
+          const compactLabel=(node:NodeSingular)=>{
+            const id=fullId(node),short=shortId(node),system=node.data('system') as string|null;
+            const base=emWidth(id)<=budget?id:fitText(short,budget,Math.min([...short].length,MIN_ID_CHARS));
+            if(base===null)return null;
+            return system&&emWidth(`${base} ${system}`)<=budget?`${base} ${system}`:base;
+          };
+          // The label-less whole-arc tier begins only where some card could not keep a legible, distinguishable id.
+          const compact=new Map<string,string>();
+          if(!full&&heightPx>=MIN_ID_PX)for(const node of nodes){const label=compactLabel(node as NodeSingular);if(label===null)break;compact.set(node.id(),label);}
+          const nextTier=full?'full':compact.size===nodes.length?'minimal':'status',changed=detailTier!==nextTier,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
           if(changed){clearTimeout(fadeTimer);nodes.stop();}
           const titleFont=full?Math.max(LABEL_PX,Math.ceil(MIN_LABEL_PX/zoom*2)/2):LABEL_PX;
-          const compactLabel=(node:NodeSingular)=>{
-            const id=fullId(node),base=emWidth(id)*minimalPx<=room?id:shortId(node),system=node.data('system') as string|null;
-            return system&&emWidth(`${base} ${system}`)*minimalPx<=room?`${base} ${system}`:base;
-          };
           const fade=changed&&detailTier!==''&&!reduced;
           detailTier=nextTier;
           setTier(nextTier);
@@ -245,7 +266,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
             nodes.forEach(element=>{
               const node=element as NodeSingular;
               node.toggleClass('overview',!full).toggleClass('extreme',nextTier==='status');
-              const label=nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?(node.data('gate')||titleFont===LABEL_PX?node.data('label'):titleLabel(node,titleFont)):compactLabel(node);
+              const label=nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?(node.data('gate')||titleFont===LABEL_PX?node.data('label'):titleLabel(node,titleFont)):compact.get(node.id())!;
               node.style({'label':label,'font-size':full?titleFont:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':'left-inside','text-justification':'left','text-margin-x':full?12:reserve/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,borderPx(node)/zoom)});
             });
           });
