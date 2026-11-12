@@ -69,3 +69,32 @@ test('T9 and T10: behind, every tab loads from the last observation under one ca
   await until(async () => (await page()).pill === 'Reconnecting', 10_000, 'Reconnecting');
   await until(async () => /^Reconnecting\. Showing the arc as of /.test((await page()).line ?? ''), 10_000, 'the reconnecting line');
 });
+
+test('T11: while events arrive every second, Timeline and Resources hold still: rows never blank, the list is fetched once, and updates are offered', { timeout: 180_000 }, async (t) => {
+  const f = await investigationFixture(); t.after(() => f.close());
+  const s = await serveConsole({ repo: absPath(f.d.repo), common: gitCommonDir(absPath(f.d.repo)), hostDir: f.hostDir, host: '127.0.0.1', port: 0 });
+  t.after(() => s.close());
+  const b = new ConsoleBrowser(tmpDir('console-lag-browser-still')); t.after(() => b.close()); await b.initialize();
+  await b.call('browser_resize', { width: 1440, height: 900 });
+  await b.call('browser_navigate', { url: `${s.url}/#/arcs/${f.arc}/graph` });
+  await b.evaluate('()=>{performance.setResourceTimingBufferSize(100000);return true;}');
+  await until(async () => await b.evaluate<string>(`()=>document.querySelector('.connection')?.textContent??''`) === 'Connected', 20_000, 'connected');
+  for (const tab of ['timeline', 'resources']) {
+    await b.evaluate(`()=>{window.__entered=performance.now();location.hash='#/arcs/${f.arc}/${tab}';return true;}`);
+    await until(async () => b.evaluate<boolean>(`()=>document.querySelectorAll('#content tbody tr').length>0`), 10_000, `${tab} rows`);
+    // From the first render on, the body never has zero rows (as $D/scripts/walk-current.ts watches it).
+    await b.evaluate(`()=>{window.__still={blanks:0,from:performance.now()};new MutationObserver(()=>{if(document.querySelectorAll('#content tbody tr').length===0)window.__still.blanks++;}).observe(document.getElementById('content'),{childList:true,subtree:true});return true;}`);
+    for (let n = 0; n < 15; n++) {
+      const p = f.begin('u9', 'build');
+      f.journal.fact({ kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false });
+      f.journal.fact({ kind: 'stage-admitted', unit: unitId('u9'), stage: 'build', waited: { totalMs: 10, byReasonMs: { 'cpu-tokens': 10 } } });
+      await new Promise((r) => setTimeout(r, 1_000));
+    }
+    await until(async () => /Updates available\./.test(await b.evaluate<string>(`()=>document.getElementById('content').innerText`)), 10_000, `${tab}: updates are offered`);
+    const seen = await b.evaluate<{ blanks: number; reads: string[] }>(`()=>({blanks:window.__still.blanks,reads:performance.getEntriesByType('resource').filter(e=>e.startTime>=window.__entered&&new URL(e.name).pathname.endsWith('/${tab}')&&!new URL(e.name).searchParams.has('pending')).map(e=>new URL(e.name).search)})`);
+    assert.equal(seen.blanks, 0, `${tab}: the body never blanked`);
+    // Resources also reads what holds resources now (section=now) when its list is behind; the list itself is read once.
+    const list = seen.reads.filter((q) => !q.includes('section=now'));
+    assert.equal(list.length, 1, `${tab}: the list was read ${list.length} times while events arrived: ${list.join(' ')}`);
+  }
+});

@@ -57,7 +57,7 @@ export class ViewStore {
     if(!metadataShape(raw))throw error('Malformed metadata or UI schema mismatch');
     this.contactAt=Date.now();
     if(polled||!this.pulsed)this.asOfAt=Date.parse(raw.checkedAt);
-    if(reset){for(const key of this.ui.keys())if(key.startsWith('detail:')||key.startsWith('scroll:')||key.startsWith('disclosures:')||key.startsWith('holistic-field:'))this.ui.delete(key);this.generation++;for(const e of this.entries.values()){e.controller?.abort();clearTimeout(e.retry);}this.entries.clear();this.identity=null;this.metadata=null;}
+    if(reset){for(const key of this.ui.keys())if(key.startsWith('detail:')||key.startsWith('scroll:')||key.startsWith('disclosures:')||key.startsWith('holistic-field:')||key.startsWith('window:'))this.ui.delete(key);this.generation++;for(const e of this.entries.values()){e.controller?.abort();clearTimeout(e.retry);}this.entries.clear();this.identity=null;this.metadata=null;}
     if(!this.admit(raw,reset))return;
     this.metadata=raw;this.error='';this.emit();
   }

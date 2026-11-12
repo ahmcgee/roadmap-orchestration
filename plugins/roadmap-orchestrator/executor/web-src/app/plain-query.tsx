@@ -2,34 +2,56 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { displayZone, formatInstant, loadError, pluralise, route, zonedInstant, zonedLocal, zoneLabel } from './shared.tsx';
+import type { ViewStore } from './view-store.ts';
 import type { ShellView } from '../../src/console/view-protocol.ts';
 import { Views, useView } from './view-state.ts';
 import type { View, Page } from '../../src/console/view-protocol.ts';
-/** The window a quiet arc must not open empty: 24 hours ending at the last recorded event. Null until the shell has loaded. */
-export function useLatestWindow():{from:string;to:string}|{window:string}|null {
-  const store=useContext(Views);const shell=store?.entries.get('shell')?.value?.data as ShellView|undefined;
+type LatestWindow={from:string;to:string}|{window:string};
+/** 24 hours ending at the last recorded event, so a quiet arc never opens empty. Null until the shell has loaded. */
+function latestWindow(store:ViewStore):LatestWindow|null {
+  const shell=store.entries.get('shell')?.value?.data as ShellView|undefined;
   if(!shell)return null;
   const last=shell.availableRange.to;if(!last)return {window:'24h'};
   const lastAt=Date.parse(last),from=Math.max(shell.availableRange.from?Date.parse(shell.availableRange.from):-Infinity,lastAt-86400_000);
   return {from:new Date(from).toISOString(),to:new Date(lastAt+1).toISOString()};
 }
+/** The default window of a time-scoped tab, pinned for this visit (`window:<tab>` in the store's UI state), so the view holds
+ * still as events arrive and offers "Show updates" instead; a fresh load (Show updates, Retry) takes the latest again. */
+export function useLatestWindow():LatestWindow|null {
+  const store=useContext(Views),key=`window:${route().tab}`;
+  useEffect(()=>()=>{store?.ui.delete(key);},[store,key]);
+  if(!store)return null;
+  const pinned=store.ui.get(key) as LatestWindow|undefined;if(pinned)return pinned;
+  const latest=latestWindow(store);if(latest)store.ui.set(key,latest);
+  return latest;
+}
+
 export function usePlainQuery<T>(arc:string, endpoint:string, fields:readonly string[], defaults:Record<string,string>|null={}) {
   const current=route(),store=useContext(Views),cached=store?.ui.get(`facets:${current.tab}`) as Record<string,readonly string[]>|undefined;
   let params=new URLSearchParams();
   for(const key of fields)for(const value of current.query.getAll(key))params.append(key,value);
   if(defaults)for(const [key,value] of Object.entries(defaults))if(!params.has(key))params.set(key,value);
   params=knownOnly(params,cached??null);
-  const path=defaults?`${endpoint}?${params}`:'',state=useView(defaults?path:null),facets=useFacets(current.tab,(state.data as {facets?:Record<string,readonly string[]>}|null)?.facets);
+  const path=defaults?`${endpoint}?${params}`:'',state=useView(defaults?path:null);
+  // While a new query loads, the tab keeps showing what it last showed (with "Updating…"), never an empty body.
+  const last=useRef<{tab:string;generation:number;data:unknown}|null>(null),generation=store?.generation??0;
+  if(state.data)last.current={tab:current.tab,generation,data:state.data};
+  const data=state.data??(last.current?.tab===current.tab&&last.current.generation===generation?last.current.data:null);
+  const facets=useFacets(current.tab,(data as {facets?:Record<string,readonly string[]>}|null)?.facets);
   useEffect(()=>{store?.ui.set(`query:${current.tab}`,current.query.toString());},[store,current.tab,current.query.toString()]);
   function navigate(changes:Record<string,string|null>,fresh=false) {
     const next=new URLSearchParams(current.query);
     for(const [key,value] of Object.entries(changes))if(value===null)next.delete(key);else next.set(key,value);
     if(!('cursor' in changes)&&Object.keys(changes).some(key=>!['track','holds','holdCursor','intervalCursor','reasons','reasonCursor'].includes(key)))next.delete('cursor');
     const hash=`#/arcs/${encodeURIComponent(arc)}/${current.tab}${next.size?`?${next}`:''}`;
-    if(fresh&&defaults){const query=new URLSearchParams();for(const key of fields)for(const value of next.getAll(key))query.append(key,value);for(const [key,value] of Object.entries(defaults))if(!query.has(key))query.set(key,value);void store?.load(`${endpoint}?${query}`,true);}
+    if(fresh&&defaults){
+      // A fresh load of the pinned default window takes the latest window again.
+      let base=defaults;const key=`window:${current.tab}`,pinned=store?.ui.get(key) as Record<string,string>|undefined;
+      if(store&&pinned&&Object.entries(pinned).every(([k,v])=>defaults[k]===v)){store.ui.delete(key);const latest=latestWindow(store);if(latest){store.ui.set(key,latest);base=Object.fromEntries(Object.entries(defaults).filter(([k])=>!(k in pinned)));Object.assign(base,latest);}}
+      const query=new URLSearchParams();for(const key of fields)for(const value of next.getAll(key))query.append(key,value);for(const [key,value] of Object.entries(base))if(!query.has(key))query.set(key,value);void store?.load(`${endpoint}?${query}`,true);}
     location.hash=hash;
   }
-  return {...state,data:state.data as T|null,path,params,navigate,facets};
+  return {...state,data:data as T|null,path,params,navigate,facets};
 }
 /** `count` names what the rows are when they are not all one noun. */
 export function PlainPageStatus({data,error,failures=0,loading,reload,version,noun,count}:{data:(View&Page<unknown>)|null;error:string;failures?:number;loading:boolean;retry:()=>void;reload:()=>void;version:'timeline'|'holistic'|'attention'|'effort'|'resources';noun:string;count?:string|undefined}) {
