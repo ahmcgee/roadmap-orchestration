@@ -8,24 +8,63 @@ export const MIN_ID_PX = 10;
 // The space belongs to the relationships: never compress these floors to fit.
 export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };
-export type Band = { id: string; label: string; ids: string[]; passed: number; total: number; withdrawn: number; state: string; x: number; y: number; width: number; height: number };
+/** A drawn group of units. A milestone band holds exactly its members and its gate; an outside group holds units of no
+ * milestone, placed where they sit in the flow (just before the band whose work needs them, or after the last band). */
+export type Band = { id: string; kind: 'milestone' | 'outside'; label: string; ids: string[]; x: number; y: number; width: number; height: number };
+/** A line-map station: one per milestone, then No milestone. Counts are membership (console/milestones.ts), never placement.
+ * `frame` is what selecting it shows: a milestone's members, its gate and the outside units placed just before it. */
+export type Station = { id: string; label: string; passed: number; total: number; withdrawn: number; state: string; frame: string[]; groups: string[] };
 export function graphLayout(e: GraphData) {
   const started = performance.now(), m = e;
   const gates = e.milestones ?? [];
-  const assigned = new Map<string, number>();
-  gates.forEach((gate, i) => { for (const id of gate.units) if (!assigned.has(id)) assigned.set(id, i); });
-  for (const u of m.units) if (!assigned.has(u.id)) assigned.set(u.id, gates.length);
-  for (const edge of e.dependencies) if (edge.type === 'milestone') {
-    const index = gates.findIndex(g => g.id === edge.milestone);
-    assigned.set(edge.unit, Math.max(assigned.get(edge.unit) ?? 0, index + 1));
+  // Membership decides a member's band. Dependencies never move a member out of it.
+  const memberOf = new Map<string, number>();
+  gates.forEach((gate, i) => { for (const id of gate.units) if (!memberOf.has(id)) memberOf.set(id, i); });
+  const parentsOf = new Map<string, string[]>(), childrenOf = new Map<string, string[]>(), waitsOn = new Map<string, number[]>();
+  for (const edge of e.dependencies) {
+    if (edge.type === 'after') { parentsOf.set(edge.unit, [...parentsOf.get(edge.unit) ?? [], edge.effective]); childrenOf.set(edge.effective, [...childrenOf.get(edge.effective) ?? [], edge.unit]); }
+    else waitsOn.set(edge.unit, [...waitsOn.get(edge.unit) ?? [], gates.findIndex(g => g.id === edge.milestone)]);
   }
-  for (let pass = 0; pass < gates.length + 1; pass++) for (const edge of e.dependencies) if (edge.type === 'after') assigned.set(edge.unit, Math.max(assigned.get(edge.unit) ?? 0, assigned.get(edge.effective) ?? 0));
-  const bands: Band[] = gates.map(g => {
-    // Counts are membership (console/milestones.ts), never this band's placement: dependencies can draw a member further right.
-    return { id: `milestone:${g.id}`, label: g.name ?? g.id, ids: [], passed: g.merged, total: g.total, withdrawn: g.withdrawn, state: g.signal, x: 0, y: 0, width: 0, height: 0 };
+  // Dependencies before dependants; input order breaks ties, so the layout stays deterministic.
+  const flow: string[] = [], pending = new Map(m.units.map(u => [u.id, (parentsOf.get(u.id) ?? []).length]));
+  const ready = m.units.filter(u => pending.get(u.id) === 0).map(u => u.id);
+  for (let i = 0; i < ready.length; i++) {
+    const id = ready[i]!; flow.push(id);
+    for (const child of childrenOf.get(id) ?? []) { const left = pending.get(child)! - 1; pending.set(child, left); if (left === 0) ready.push(child); }
+  }
+  if (flow.length !== m.units.length) throw new Error(`graph dependencies form a cycle through ${m.units.filter(u => pending.get(u.id)! > 0).map(u => u.id).join(', ')}`);
+  // A unit of no milestone takes slot k: the outside group just before band k (gates.length: after the last band).
+  // It comes after the latest milestone it waits on, directly or through what it depends on, and as late as the
+  // earliest band that needs it allows, so it sits beside the work it feeds. Waiting wins over feeding: a member that
+  // needs a unit placed after its own band keeps its band, and that edge is drawn running backwards.
+  const earliest = new Map<string, number>(), slot = new Map<string, number>();
+  for (const id of flow) if (!memberOf.has(id)) {
+    let after = -Infinity;
+    for (const gate of waitsOn.get(id) ?? []) after = Math.max(after, gate + 1);
+    for (const parent of parentsOf.get(id) ?? []) after = Math.max(after, memberOf.has(parent) ? memberOf.get(parent)! + 1 : earliest.get(parent)!);
+    earliest.set(id, after);
+  }
+  for (const id of [...flow].reverse()) if (!memberOf.has(id)) {
+    let needed = Infinity;
+    for (const child of childrenOf.get(id) ?? []) needed = Math.min(needed, memberOf.get(child) ?? slot.get(child)!);
+    const after = earliest.get(id)!;
+    // Unconnected to any milestone: the trailing No milestone group.
+    slot.set(id, needed < Infinity ? Math.max(after, needed) : after > -Infinity ? after : gates.length);
+  }
+  const outside = (k: number) => m.units.filter(u => slot.get(u.id) === k).map(u => u.id);
+  const group = (id: string, kind: Band['kind'], label: string, ids: string[]): Band => ({ id, kind, label, ids, x: 0, y: 0, width: 0, height: 0 });
+  const bands: Band[] = [], stations: Station[] = [];
+  gates.forEach((g, i) => {
+    const lead = outside(i), members = g.units.filter(id => memberOf.get(id) === i), id = `milestone:${g.id}`;
+    if (lead.length) bands.push(group(`lead:${g.id}`, 'outside', 'No milestone', lead));
+    bands.push(group(id, 'milestone', g.name ?? g.id, members));
+    stations.push({ id, label: g.name ?? g.id, passed: g.merged, total: g.total, withdrawn: g.withdrawn, state: g.signal, frame: [...lead, ...members, id], groups: [...lead.length ? [`lead:${g.id}`] : [], id] });
   });
-  if ([...assigned.values()].some(i => i >= gates.length)) bands.push({ id: 'unbound', label: 'No milestone', ids: [], passed: e.noMilestone.merged, total: e.noMilestone.total, withdrawn: e.noMilestone.withdrawn, state: 'pending', x: 0, y: 0, width: 0, height: 0 });
-  for (const [id, index] of assigned) bands[Math.min(index, bands.length - 1)]?.ids.push(id);
+  const trailing = outside(gates.length);
+  if (trailing.length) bands.push(group('unbound', 'outside', 'No milestone', trailing));
+  const unplaced = m.units.filter(u => !memberOf.has(u.id)).map(u => u.id);
+  if (unplaced.length) stations.push({ id: 'unbound', label: 'No milestone', passed: e.noMilestone.merged, total: e.noMilestone.total, withdrawn: e.noMilestone.withdrawn, state: 'pending', frame: unplaced, groups: bands.filter(b => b.kind === 'outside').map(b => b.id) });
+  const assigned = new Set(bands.flatMap(b => b.ids));
   const positions = new Map<string, Point>();
   const unitEdges = m.graph.edges.filter(([a,b]) => assigned.has(a) && (assigned.has(b) || b.startsWith('milestone:')));
   const incoming = new Map<string, string[]>();
@@ -47,7 +86,7 @@ export function graphLayout(e: GraphData) {
       const members = band.ids.filter(id => ranks.get(id) === rank);
       if (members.length) { for (const id of members) columnOf.set(id, columns.length); columns.push(members); }
     }
-    if (band.id !== 'unbound') { columnOf.set(band.id, columns.length); columns.push([band.id]); }
+    if (band.kind === 'milestone') { columnOf.set(band.id, columns.length); columns.push([band.id]); }
   }
   // Include intermediate vertices while ordering, so a distant dependency has
   // a voice in every column it crosses. These are layout constraints, never
@@ -101,13 +140,13 @@ export function graphLayout(e: GraphData) {
     }
   }
   for (const band of bands) {
-    const points=[...band.ids,...(band.id==='unbound'?[]:[band.id])].map(id=>positions.get(id)!);
+    const points=[...band.ids,...(band.kind==='milestone'?[band.id]:[])].map(id=>positions.get(id)!);
     band.x=Math.min(...points.map(p=>p.x-NODE_WIDTH/2))-36;
     band.y=Math.min(...points.map(p=>p.y-NODE_HEIGHT/2))-48;
     band.width=Math.max(...points.map(p=>p.x+NODE_WIDTH/2))-band.x+36;
     band.height=Math.max(...points.map(p=>p.y+NODE_HEIGHT/2))-band.y+48;
   }
-  return { compact: false, bands, positions, width: Math.max(0,x-COLUMN_GAP+36), height: Math.max(0,...bands.map(b=>b.y+b.height)), elapsed: performance.now()-started };
+  return { compact: false, bands, stations, positions, width: Math.max(0,x-COLUMN_GAP+36), height: Math.max(0,...bands.map(b=>b.y+b.height)), elapsed: performance.now()-started };
 }
 
 /** Dagster's horizontal diagonal. No global lanes, trunks or off-region turns. */
@@ -123,19 +162,23 @@ export type EdgeCurve = { source:string; target:string; points: Point[]; path:st
 export function graphCurves(e: GraphData, positions: Map<string,Point>): EdgeCurve[] {
   const clearances=new Map<number,number[]>();
   const boxes=e.graph.units.map(u=>{const p=positions.get(u.id)!;const w=NODE_WIDTH;return {id:u.id,left:p.x-w/2-16,right:p.x+w/2+16,top:p.y-NODE_HEIGHT/2-16,bottom:p.y+NODE_HEIGHT/2+16};});
+  // A dependency whose dependant sits to its left (a member needing work placed after its own band) runs backwards:
+  // it is routed exactly as a forward one in the mirrored plane, so it leaves the source's left side, enters the
+  // target's right side, and bows around cards between them the same way.
+  const mirrored=boxes.map(box=>({...box,left:-box.right,right:-box.left}));
   const curves:EdgeCurve[]=[];
   // Quiet waits must not displace the visible unit relationships.
   const edges=[...e.graph.edges.entries()].sort((a,b)=>Number(a[1][0].startsWith('milestone:'))-Number(b[1][0].startsWith('milestone:')));
   for(const [edgeIndex,[source,target]] of edges){
-    const p=positions.get(source)!,q=positions.get(target)!;
-    const a={x:p.x+NODE_WIDTH/2+3,y:p.y},b={x:q.x-NODE_WIDTH/2-5,y:q.y};
+    const p=positions.get(source)!,q=positions.get(target)!,dir=q.x<p.x?-1:1,plane=dir===1?boxes:mirrored;
+    const a={x:dir*p.x+NODE_WIDTH/2+3,y:p.y},b={x:dir*q.x-NODE_WIDTH/2-5,y:q.y};
     const yAt=(x:number, start=a, end=b)=>{
       let low=0,high=1;
       for(let i=0;i<16;i++){const t=(low+high)/2,u=1-t,px=u*u*u*start.x+3*u*u*t*(start.x+end.x)/2+3*u*t*t*(start.x+end.x)/2+t*t*t*end.x;if(px<x)low=t;else high=t;}
       const t=(low+high)/2;return start.y+(end.y-start.y)*(3*t*t-2*t*t*t);
     };
-    const ranks=new Map<number,typeof boxes>();
-    for(const box of boxes)if(box.id!==source&&box.id!==target&&box.left>a.x&&box.right<b.x)ranks.set(box.left,[...ranks.get(box.left)??[],box]);
+    const ranks=new Map<number,typeof plane>();
+    for(const box of plane)if(box.id!==source&&box.id!==target&&box.left>a.x&&box.right<b.x)ranks.set(box.left,[...ranks.get(box.left)??[],box]);
     const points=[a,b], cleared=new Set<number>();
     const sorted=[...ranks].sort(([a],[b])=>a-b);
     // Adding a local bow can intersect a neighbouring rank that the original
@@ -178,9 +221,11 @@ export function graphCurves(e: GraphData, positions: Map<string,Point>): EdgeCur
       if(!changed)break;
     }
     // At clear spans this is exactly one horizontal diagonal. A local bow is
-    // tangent-continuous at its two clearance points; all x coordinates advance.
-    const path=points.length===2?horizontalDiagonal(a,b):points.slice(1).reduce((path,p,i)=>path+' '+horizontalDiagonal(points[i]!,p).replace(/^M [^C]+/,' '),`M ${a.x} ${a.y}`);
-    curves[edgeIndex]={source,target,points,path};
+    // tangent-continuous at its two clearance points; all x coordinates advance
+    // (toward the target: a backward edge's advance leftwards).
+    const real=points.map(p=>({x:dir*p.x,y:p.y}));
+    const path=real.length===2?horizontalDiagonal(real[0]!,real[1]!):real.slice(1).reduce((path,p,i)=>path+' '+horizontalDiagonal(real[i]!,p).replace(/^M [^C]+/,' '),`M ${real[0]!.x} ${real[0]!.y}`);
+    curves[edgeIndex]={source,target,points:real,path};
   }
   return curves;
 }

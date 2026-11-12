@@ -25,7 +25,7 @@ function nodeTitle(title:string,fontPx=LABEL_PX){
 }
 const states: Signal[] = ['passed','active','held','failed','pending','withdrawn'];
 /** A band's one name: its id, then its recorded name when the plan gives one (an unnamed milestone is not named twice). */
-const bandName=(b:{id:string;label:string})=>b.id==='unbound'?'No milestone':b.id.slice(10)===b.label?b.label:`${b.id.slice(10)} ${b.label}`;
+const bandName=(b:{id:string;label:string})=>b.id.startsWith('milestone:')?b.id.slice(10)===b.label?b.label:`${b.id.slice(10)} ${b.label}`:'No milestone';
 type FocusMode = 'active' | 'all' | null;
 const ALL_MARGIN = 32;
 export function Graph({ e, open }: { e: GraphData; open: (id: string) => void }) {
@@ -58,8 +58,8 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const map=new Map<string,string[]>();for(const [a,b] of m.graph.edges)if(a.startsWith('milestone:'))map.set(b,[...map.get(b)??[],a]);return map;
   },[structure]);
   const unmet=new Map<string,string[]>([...waits].map(([id,gates])=>[id,gates.filter(g=>!e.milestones.find(v=>`milestone:${v.id}`===g)?.passed)] as [string,string[]]).filter(([,gates])=>gates.length>0));
-  const gateLabel=(id:string)=>{const b=baseline.bands.find(b=>b.id===id);return b?`${id.slice(10)}\n${b.passed}/${b.total}  ${signalWords[b.state as Signal]}`:id;};
-  const fallback=baseline.bands.find(b=>b.id.startsWith('milestone:')&&b.state!=='passed')??baseline.bands[0];
+  const gateLabel=(id:string)=>{const b=baseline.stations.find(b=>b.id===id);return b?`${id.slice(10)}\n${b.passed}/${b.total}  ${signalWords[b.state as Signal]}`:id;};
+  const fallback=baseline.stations.find(b=>b.id.startsWith('milestone:')&&b.state!=='passed')??baseline.stations[0];
   function unobscured(){
     const graph=cy.current!, bounds=canvas.current!.getBoundingClientRect();
     const toolbar=region.current!.querySelector('.graph-toolbar')!.getBoundingClientRect();
@@ -67,7 +67,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     return {left:24,right:graph.width()-24,top:Math.max(0,toolbar.bottom-bounds.top),bottom:Math.min(graph.height(),...bottoms.map(r=>r.top-bounds.top))};
   }
   const reframe=useRef(()=>{});
-  reframe.current=()=>{if(focus==='active')frame(activeIds(),false);else if(focus==='all')frameAll(false);else if(station){const band=baseline.bands.find(b=>b.id===station);if(band)frame([...band.ids,station],false);}};
+  reframe.current=()=>{if(focus==='active')frame(activeIds(),false);else if(focus==='all')frameAll(false);else if(station){const band=baseline.stations.find(b=>b.id===station);if(band)frame(band.frame,false);}};
   function frameBox(nodes:cytoscape.NodeCollection){
     // Border thickness changes with LOD; frame the fixed geometry so repeated
     // focus actions yield exactly the same viewport at every starting zoom.
@@ -100,7 +100,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const zoom=Math.max(graph.minZoom(),fitZoom(nodes,ALL_MARGIN));
     viewport(zoom,{x:(r.left+r.right)/2-(box.x1+box.x2)/2*zoom,y:(r.top+r.bottom)/2-(box.y1+box.y2)/2*zoom},animate);
   }
-  function activeIds(){return active.seeds.length?active.seeds:fallback?[...fallback.ids,...(fallback.id==='unbound'?[]:[fallback.id])]:m.graph.units.map(u=>u.id);}
+  function activeIds(){return active.seeds.length?active.seeds:fallback?fallback.frame:m.graph.units.map(u=>u.id);}
   function focusActive(animate=true){
     setHighlight([]);setHealth(null);setFocus('active');setStation(null);setHover(null);touchCard.current=null;moved.current=false;
     frame(activeIds(),animate);
@@ -111,9 +111,10 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
   }
   function focusStation(id:string){
     if(station===id){setStation(null);setHealth(null);return;}
-    const band=baseline.bands.find(b=>b.id===id);if(!band)return;
+    const band=baseline.stations.find(b=>b.id===id);if(!band)return;
     setHighlight([]);setHealth(null);setFocus(null);setStation(id);setHover(null);touchCard.current=null;moved.current=false;
-    frame([...band.ids,...(id==='unbound'?[]:[id])]);
+    // The whole milestone in one view: its members, its gate and the units of no milestone placed with it, however far out that zooms.
+    frame(band.frame);
   }
   useEffect(()=>{const focus=(ev:Event)=>focusStation((ev as CustomEvent<string>).detail);window.addEventListener('roadmap-focus-milestone',focus);return()=>window.removeEventListener('roadmap-focus-milestone',focus);});
   function keepVisible(node:NodeSingular){
@@ -323,16 +324,16 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
     const band=layout.bands.find(b=>b.ids.includes(target));if(!band)continue;
     const key=`${source}:${band.id}`,bus=waitGroups.get(key)??{source,band:band.id,targets:[]};bus.targets.push(target);waitGroups.set(key,bus);
   }
-  const waitRows=new Map<string,number>(),freeTop=cy.current?unobscured().top:0;
+  const waitRows=new Map<string,number>(),freeTop=cy.current?unobscured().top:0,focusedGroups=baseline.stations.find(s=>s.id===station)?.groups??[];
   const waitLabels=[...waitGroups].map(([key,bus])=>{
     const band=layout.bands.find(b=>b.id===bus.band)!,row=waitRows.get(bus.band)??0;waitRows.set(bus.band,row+1);
     const targets=bus.targets.map(id=>({id}));
     const pending=!e.milestones.find(g=>`milestone:${g.id}`===bus.source)?.passed;
     return {key,...bus,targets,pending,labelX:station===band.id?(layout.positions.get(band.id)?.x??band.x)*view.zoom+view.x-55:band.x*view.zoom+view.x+8,labelY:station===band.id?freeTop+4+row*16:band.y*view.zoom+view.y+24+row*16};
   });
-  const currentMilestone=baseline.bands.find(b=>b.id.startsWith("milestone:")&&b.state!=="passed")?.id;
+  const currentMilestone=baseline.stations.find(b=>b.id.startsWith("milestone:")&&b.state!=="passed")?.id;
   return <div data-detail-tier={tier} ref={region} className={`graph-view ${focus==='all'?'graph-all':''}`}>
-    <nav className="line-map" aria-label="Milestone stations">{baseline.bands.map(band=><button key={band.id} className={`station ${band.id==='unbound'?'station-unbound':''} ${band.id===currentMilestone?'station-current':''}`} aria-description={band.id===currentMilestone?'Next milestone to clear':undefined} aria-pressed={station===band.id} onMouseLeave={leaveHealth} onBlur={blurHealth} onMouseEnter={ev=>{healthMode.current='hover';keepHealth();setHover(null);document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open],.filter-popover[open]').forEach(d=>d.open=false);const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} onFocus={ev=>{healthMode.current=ev.currentTarget.matches(':focus-visible')?'focus':'hover';keepHealth();setHover(null);const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} onKeyDown={ev=>{if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();const stations=[...ev.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('.station')],index=stations.indexOf(ev.currentTarget),next=stations[(index+(ev.key==='ArrowRight'?1:-1)+stations.length)%stations.length]!;next.focus();focusStation(baseline.bands[stations.indexOf(next)]!.id);}}} onClick={ev=>{healthMode.current=ev.currentTarget.matches(':focus-visible')?'focus':'hover';focusStation(band.id);if(station===band.id)return;const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} title={`${e.milestones?.find(g=>`milestone:${g.id}`===band.id)?.name||band.label}: ${band.passed} of ${pluralise(band.total,'unit')} merged${band.withdrawn?`, ${band.withdrawn} withdrawn`:''}`}><span className="station-track"><span className="track-fill" style={{width:`${band.total?band.passed/band.total*100:0}%`}}/><span className="gate-glyph" aria-label={band.state}>{glyph[band.state as Signal]}</span></span><span className="station-caption"><strong>{bandName(band)}</strong><span>{band.passed}/{band.total}</span>{band.withdrawn>0&&<small className="station-withdrawn">{glyph.withdrawn} {band.withdrawn} withdrawn</small>}{band.id===currentMilestone&&<small>Next to clear</small>}{(()=>{const g=e.milestones?.find(g=>`milestone:${g.id}`===band.id);const held=(g?.units??e.noMilestone.ids).filter(id=>m.graph.units.find(u=>u.id===id)?.status==='held').length;return held>0&&<small className="station-held">{glyph.held} {held} on hold</small>;})()}</span><span className="station-name">{band.label}</span></button>)}</nav>
+    <nav className="line-map" aria-label="Milestone stations">{baseline.stations.map(band=><button key={band.id} className={`station ${band.id==='unbound'?'station-unbound':''} ${band.id===currentMilestone?'station-current':''}`} aria-description={band.id===currentMilestone?'Next milestone to clear':undefined} aria-pressed={station===band.id} onMouseLeave={leaveHealth} onBlur={blurHealth} onMouseEnter={ev=>{healthMode.current='hover';keepHealth();setHover(null);document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open],.filter-popover[open]').forEach(d=>d.open=false);const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} onFocus={ev=>{healthMode.current=ev.currentTarget.matches(':focus-visible')?'focus':'hover';keepHealth();setHover(null);const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} onKeyDown={ev=>{if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();const stations=[...ev.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('.station')],index=stations.indexOf(ev.currentTarget),next=stations[(index+(ev.key==='ArrowRight'?1:-1)+stations.length)%stations.length]!;next.focus();focusStation(baseline.stations[stations.indexOf(next)]!.id);}}} onClick={ev=>{healthMode.current=ev.currentTarget.matches(':focus-visible')?'focus':'hover';focusStation(band.id);if(station===band.id)return;const r=ev.currentTarget.getBoundingClientRect();setHealth({id:band.id,x:r.left,y:r.bottom});}} title={`${e.milestones?.find(g=>`milestone:${g.id}`===band.id)?.name||band.label}: ${band.passed} of ${pluralise(band.total,'unit')} merged${band.withdrawn?`, ${band.withdrawn} withdrawn`:''}`}><span className="station-track"><span className="track-fill" style={{width:`${band.total?band.passed/band.total*100:0}%`}}/><span className="gate-glyph" aria-label={band.state}>{glyph[band.state as Signal]}</span></span><span className="station-caption"><strong>{bandName(band)}</strong><span>{band.passed}/{band.total}</span>{band.withdrawn>0&&<small className="station-withdrawn">{glyph.withdrawn} {band.withdrawn} withdrawn</small>}{band.id===currentMilestone&&<small>Next to clear</small>}{(()=>{const g=e.milestones?.find(g=>`milestone:${g.id}`===band.id);const held=(g?.units??e.noMilestone.ids).filter(id=>m.graph.units.find(u=>u.id===id)?.status==='held').length;return held>0&&<small className="station-held">{glyph.held} {held} on hold</small>;})()}</span><span className="station-name">{band.label}</span></button>)}</nav>
     {health&&(()=>{
       const gate=e.milestones?.find(g=>`milestone:${g.id}`===health.id),ids=gate?.units??e.noMilestone.ids,name=gate?`${gate.id}${gate.name?` ${gate.name}`:''}`:'No milestone';
       const groups=(['passed','active','held','pending','failed','withdrawn'] as Signal[]).map(state=>({state,ids:ids.filter(id=>{const u=m.graph.units.find(u=>u.id===id);return u&&(/withdrawn/.test(u.meta)?'withdrawn':u.status)===state;})}));
@@ -349,7 +350,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         const visible=graph.nodes('[gate=0]').filter(n=>{const p=n.renderedPosition();return p.x>0&&p.x<graph.width()&&p.y>60&&p.y<graph.height()-40;});
         const center={x:graph.width()/2,y:graph.height()/2};
         if(!selected){
-          const preferred=focus==='active'?visible.filter(n=>active.seeds.includes(n.id())):station!==null?visible.filter(n=>baseline.bands.find(b=>b.id===station)?.ids.includes(n.id())===true):visible;
+          const preferred=focus==='active'?visible.filter(n=>active.seeds.includes(n.id())):station!==null?visible.filter(n=>baseline.stations.find(b=>b.id===station)?.frame.includes(n.id())===true):visible;
           const initial=(preferred.length?preferred:visible).sort((a,b)=>{const p=(a as NodeSingular).renderedPosition(),q=(b as NodeSingular).renderedPosition();return Math.hypot(p.x-center.x,p.y-center.y)-Math.hypot(q.x-center.x,q.y-center.y);})[0];initial?.select();return;
         }
         const current=graph.getElementById(selected),p=current.renderedPosition();
@@ -373,7 +374,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         })}
       </svg>
       <div className="wait-bus-labels">{waitLabels.map(bus=><details key={bus.key} className="wait-bus-label" onMouseEnter={ev=>{setHover(null);setHealth(null);document.querySelectorAll<HTMLDetailsElement>('.wait-bus-label[open]').forEach(d=>{if(d!==ev.currentTarget)d.open=false;});ev.currentTarget.open=true;}} onMouseLeave={ev=>{if(!ev.currentTarget.contains(document.activeElement))ev.currentTarget.open=false;}} onFocus={ev=>{setHover(null);setHealth(null);ev.currentTarget.open=true;}} onBlur={ev=>{if(!ev.currentTarget.contains(ev.relatedTarget))ev.currentTarget.open=false;}} onKeyDown={ev=>{if(ev.key==='Escape'){ev.currentTarget.open=false;ev.currentTarget.querySelector('summary')?.focus();ev.stopPropagation();}}} style={{left:bus.labelX,top:bus.labelY,display:view.zoom*LABEL_PX<MIN_LABEL_PX&&station!==bus.band?'none':undefined}}>
-        <summary onClick={ev=>{ev.preventDefault();ev.currentTarget.parentElement!.setAttribute('open','');}} aria-label={`${bus.source.slice(10)}: ${pluralise(bus.targets.length,`${bus.pending?'waiting':'linked'} unit`)} in ${bus.band==='unbound'?'No milestone':bus.band.replace('milestone:','')}`} title={`${bus.source.slice(10)} ${bus.pending?'Pending':'Passed'}`}>{waitText(bus)}</summary>
+        <summary onClick={ev=>{ev.preventDefault();ev.currentTarget.parentElement!.setAttribute('open','');}} aria-label={`${bus.source.slice(10)}: ${pluralise(bus.targets.length,`${bus.pending?'waiting':'linked'} unit`)} in ${bus.band.startsWith('milestone:')?bus.band.slice(10):'No milestone'}`} title={`${bus.source.slice(10)} ${bus.pending?'Pending':'Passed'}`}>{waitText(bus)}</summary>
         <div className="wait-bus-targets" style={{left:Math.min(0,(canvas.current?.clientWidth??innerWidth)-24-bus.labelX-220)}}><strong>{glyph[bus.pending?'pending':'passed']} {bus.source.slice(10)} {bus.pending?'Pending':'Passed'}</strong>{bus.targets.map(p=><button key={p.id} onClick={()=>focusNode(p.id)}>{p.id}</button>)}</div>
       </details>)}</div>
       <div className="node-signals" aria-hidden="true">{m.graph.units.map(u=>{
@@ -383,7 +384,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         const state=/withdrawn/.test(u.meta)?'withdrawn':u.status,mark=u.finished?'finished':state;
         return <span key={u.id} data-state={mark} className={`node-signal ${tier==='status'?'node-signal-status ':''}${compact?'node-signal-compact':'node-status-row'} ${tiny?'node-signal-tiny':''}`} style={compact?{left:x+(tiny?1:4),top:y+h/2-(tiny?4:6)}:{left:x+1,top:y+h-Math.max(16,22*view.zoom),width:w-2,height:Math.max(16,22*view.zoom),fontSize:Math.max(10,12*view.zoom)}}><SignalMark state={mark}/>{!compact&&<span>{u.id.startsWith('milestone:')?'Gate':u.id} {u.word}</span>}</span>;
       })}</div>
-      <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${station===b.id?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}/>)}</div>
+      <div className="band-captions" aria-hidden="true">{layout.bands.map(b=><div key={b.id} className={`band-caption ${b.kind==='outside'?'band-outside':''} ${focusedGroups.includes(b.id)?'band-focused':''}`} style={{left:b.x*view.zoom+view.x,top:b.y*view.zoom+view.y,width:b.width*view.zoom,height:b.height*view.zoom}}/>)}</div>
       <div className="band-headings">{layout.bands.map(b=>{
         const left=b.x*view.zoom+view.x,right=left+b.width*view.zoom,bottom=(b.y+b.height)*view.zoom+view.y;
         if(right<0||left>(canvas.current?.clientWidth??innerWidth)||bottom<76)return null;
@@ -402,7 +403,9 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
           gaps.push({left:cursor,width:maxX-cursor});
           const gap=gaps.sort((a,b)=>b.width-a.width)[0];if(gap&&gap.width>=56){heading={...gap,top};break;}
         }
-        return heading&&<div key={b.id} title={bandName(b)} style={heading}><strong>{bandName(b)}</strong><span>{b.passed}/{b.total}</span></div>;
+        // A group of units in no milestone carries no count: the No milestone station counts them all, wherever they sit.
+        const counted=baseline.stations.find(s=>s.id===b.id);
+        return heading&&<div key={b.id} title={counted?bandName(b):'Units in no milestone, placed where they sit in the flow'} style={heading}><strong>{bandName(b)}</strong>{counted&&<span>{counted.passed}/{counted.total}</span>}</div>;
       })}</div>
       <div className={`graph-toolbar ${mobileSearch?'search-expanded':''}`} role="toolbar" aria-label="Graph controls">
         <div className="graph-search"><Button className="search-toggle" size="icon" variant="ghost" aria-label="Find a unit" onClick={()=>{setMobileSearch(!mobileSearch);requestAnimationFrame(()=>search.current?.focus());}}><Search size={16}/></Button><input ref={search} aria-label="Search units" value={query} onFocus={()=>setSearching(true)} onChange={ev=>{setQuery(ev.target.value);setResultIndex(0);setSearching(true);}} placeholder="Find a unit  /" onKeyDown={ev=>{if(ev.key==='ArrowDown'||ev.key==='ArrowUp'){ev.preventDefault();setResultIndex((resultIndex+(ev.key==='ArrowDown'?1:-1)+results.length)%Math.max(1,results.length));}if(ev.key==='Enter'&&results[resultIndex]){ev.preventDefault();chooseResult(results[resultIndex].id);}if(ev.key==='Escape'){setQuery('');setMobileSearch(false);canvas.current?.focus();}}}/>{query&&searching&&<div className="search-results">{results.length?results.map((u,i)=><button key={u.id} aria-selected={i===resultIndex} onFocus={()=>setResultIndex(i)} onClick={()=>chooseResult(u.id)}>{u.title}<small>{u.id}</small></button>):<p>No matching units</p>}</div>}</div>
@@ -415,7 +418,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
       {hover&&hovered&&<div className="graph-hover" role="group" aria-label="Unit title card" onMouseEnter={()=>{if(hoverTimer.current)clearTimeout(hoverTimer.current);}} onMouseLeave={hideHover} onBlur={ev=>{if(!ev.currentTarget.contains(ev.relatedTarget))setHover(null);}} style={{left:Math.max(8,Math.min(hover.x+24,(canvas.current?.clientWidth??400)-260)),top:Math.max(64,hover.y+180<(canvas.current?.clientHeight??500)?hover.y+20:hover.y-180)}}><strong>{hovered.title}</strong><span>{stateWords(hovered.state)} {stageStatusWords(hovered.stage,hovered.stageFinished)}</span>{unmet.has(hovered.id)&&<span>Waits for milestone: {unmet.get(hovered.id)!.map(g=>g.slice(10)).join(', ')}</span>}<span>{card.data?.unit?.id===hovered.id?`${card.data.unit.startedAt&&!card.data.unit.endedAt&&!card.data.unit.arcEndedAt?'Running ':''}${elapsed(card.data.unit.startedAt&&!card.data.unit.endedAt&&!card.data.unit.arcEndedAt?Math.max(0,now-Date.parse(card.data.unit.startedAt)):card.data.unit.elapsedMs)}, ${pluralise(card.data.unit.attempts,'run')}`:card.error||'Reading recorded work…'}</span><Button onClick={()=>{open(hovered.id);setHover(null);touchCard.current=null;}}>Details</Button></div>}
       <button className="key-toggle" aria-expanded={keyOpen} onClick={()=>setKeyOpen(!keyOpen)}>Legend</button><div className={`graph-legend ${keyOpen?'key-open':''}`} aria-label="Graph legend">{states.map(state=><span key={state}><SignalMark state={state}/>{unitSignalWords[state]}</span>)}<span><SignalMark state="finished"/>{unitSignalWords.finished}</span><span className="edge-key">Solid: depends on</span><span className="edge-key dashed">Dashed: waits for milestone</span><span className="graph-keys">a Active, f All</span></div>
       <svg className="graph-minimap" viewBox={`0 0 ${layout.width||100} ${layout.height||100}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Graph overview. Click to pan." onClick={ev=>{const graph=cy.current;if(!graph)return;const bounds=ev.currentTarget.getBoundingClientRect(),scale=Math.min(bounds.width/layout.width,bounds.height/layout.height),x=(ev.clientX-bounds.left-(bounds.width-layout.width*scale)/2)/scale,y=(ev.clientY-bounds.top-(bounds.height-layout.height*scale)/2)/scale;graph.pan({x:graph.width()/2-x*graph.zoom(),y:graph.height()/2-y*graph.zoom()});}}>{layout.bands.map(b=><rect key={b.id} x={b.x} y={b.y} width={b.width} height={b.height} fill="var(--surface)" stroke="var(--rule)" strokeWidth={8}/>)}{m.graph.units.map(n=>{const p=layout.positions.get(n.id);return p&&<rect key={n.id} x={p.x-60} y={p.y-18} width={120} height={36} fill={`var(--sig-${n.status})`}/>;})}<rect x={-view.x/view.zoom} y={-view.y/view.zoom} width={(canvas.current?.clientWidth??0)/view.zoom} height={(canvas.current?.clientHeight??0)/view.zoom} fill="var(--line)" fillOpacity={.08} stroke="var(--line)" strokeWidth={12}/></svg>
-      {focus==='active'&&!active.seeds.length&&fallback&&<span className="graph-caption">No active units; showing {fallback.id==='unbound'?'all units':fallback.id.replace('milestone:','')}</span>}
+      {focus==='active'&&!active.seeds.length&&fallback&&<span className="graph-caption">No active units; showing {fallback.id.startsWith('milestone:')?fallback.id.slice(10):'all units'}</span>}
       <span className="graph-scale">{Math.round(view.zoom*100)}% <span>{m.units.length} units</span></span>
     </div>
   </div>;
