@@ -432,3 +432,51 @@ test('selection is traced in ink: a unit traces its own edges; a milestone keeps
  assert.ok(touching.every(e=>!e.dim&&e.opacity===(e.kind==='feeds'?.5:.85)),'edges with an end in the band or at its gate keep their weight');
  assert.ok(away.every(e=>e.dim&&e.opacity===.16),'edges that do not touch the band dim, those passing through it included');
 });
+
+// Long ids (20 to 39 characters sharing a `u-` prefix and family stems, some re-entries ending `-r2`) in place of the
+// design arc's `u12`: the test rewrites the Graph view's ids in the browser, so the app draws them as served.
+const LONG_IDS = `async(page)=>{await page.addInitScript(()=>{if(!location.search.includes('longids'))return;
+ const stems=['ledger-reconcile','inventory-sync','invoice-export','search-index-rebuild','notification-digest','warehouse-transfer'];
+ const tails=['window','backfill','retry-budget','shard-merge','audit-trail','webhook-mirror','cutover','schema-widen','dry-run'];
+ const long=n=>'u-'+stems[n%6]+'-'+tails[Math.floor(n/6)]+(n%5===0?'-r2':'');
+ const walk=v=>typeof v==='string'?(/^u\\d+$/.test(v)?long(Number(v.slice(1))):v):Array.isArray(v)?v.map(walk):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,walk(x)])):v;
+ const original=window.fetch;window.fetch=async(...args)=>{const r=await original(...args);if(!/\\/arcs\\/[^/]+\\/graph(\\?|$)/.test(String(args[0]?.url??args[0]))||r.status!==200)return r;
+  return new Response(JSON.stringify(walk(await r.json())),{status:r.status,headers:r.headers});};});}`;
+/** Every card's text across the middle zoom range: an id, whole or truncated around an ellipsis keeping both its ends, at or above the floor and inside the card. */
+const MIDDLE_TEXT = (level:number) => `async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.zoom(${level});await new Promise(r=>setTimeout(r,300));
+ const context=document.createElement('canvas').getContext('2d');
+ const bad=cy.nodes('[gate]').filter(n=>{const label=n.style('label'),px=parseFloat(n.style('font-size'))*cy.zoom();context.font='500 '+px+'px "Mona Sans SemiCondensed"';
+  if(!n.hasClass('overview')||n.hasClass('extreme')||!label.trim()||parseFloat(n.style('text-opacity'))!==1||px<10-.001||context.measureText(label).width>n.renderedWidth()+.5)return true;
+  if(n.data('gate'))return false;
+  const base=label.split(' ')[0],id=n.id();if(base===id)return false;
+  const [head,tail]=base.split('…');return tail===undefined||!id.startsWith(head)||!id.endsWith(tail)||head.length+tail.length<6;
+ }).map(n=>({id:n.id(),label:n.style('label'),px:parseFloat(n.style('font-size'))*cy.zoom()}));
+ return {tier:document.querySelector('.graph-view').dataset.detailTier,bad,truncated:cy.nodes('[gate=0]').filter(n=>n.style('label').includes('…')).length,longest:Math.max(...cy.nodes('[gate=0]').map(n=>n.id().length))};}`;
+
+test('between titled cards and whole-arc blocks every card keeps a legible id, truncated rather than dropped when long', {timeout:120_000},async t=>{
+ const {generateScaleArc,ownScaleArc}=await import('../helpers/scale-arc.ts');
+ const fixture=await generateScaleArc(tmpDir('graph-long-ids'),{preset:'design'}),release=await ownScaleArc(fixture),b=new ConsoleBrowser(tmpDir('graph-long-ids-browser'));
+ const server=await serveConsole({repo:absPath(fixture.repo),common:gitCommonDir(absPath(fixture.repo)),hostDir:absPath(fixture.hostDir),host:'127.0.0.1',port:0});
+ t.after(async()=>{await b.close();await server.close();release();});await b.initialize();await b.call('browser_resize',{width:1440,height:900});
+ await b.call('browser_run_code_unsafe',{code:LONG_IDS});
+ for(const long of [false,true]){
+  await b.call('browser_navigate',{url:`${server.url}/${long?'?longids':''}#/arcs/${fixture.arc}/graph`});
+  await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas")?._cyreg?.cy&&document.querySelectorAll(".station").length===5'),15_000,'design graph');
+  for(const level of [.49,.45,.4,.35,.3]){
+   const r=await b.evaluate<{tier:string;bad:unknown[];truncated:number;longest:number}>(MIDDLE_TEXT(level));
+   assert.equal(r.longest>=35,long,'the ids are the long ones when rewritten');
+   assert.equal(r.tier,'minimal',`${long?'long':'short'} ids at ${level}: the compact id tier`);
+   assert.deepEqual(r.bad,[],`${long?'long':'short'} ids at ${level}: every card shows its id or a truncation keeping both ends, at 10px or more, inside the card`);
+   if(long&&level<=.4)assert.ok(r.truncated>0,'long ids truncate rather than shrink below the floor');
+   if(!long)assert.equal(r.truncated,0,'short ids are never truncated');
+  }
+  assert.equal(await b.evaluate(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.zoom(.075);await new Promise(r=>setTimeout(r,300));return document.querySelector('.graph-view').dataset.detailTier==='status'&&cy.nodes('[gate]').every(n=>n.style('label')==='');}`),true,'whole-arc zoom keeps its label-less blocks');
+  // Selecting a milestone frames its band: the frame lands in a tier with text.
+  for(let i=0;i<5;i++){
+   const r=await b.evaluate<{tier:string;empty:string[];zoom:number}>(`async()=>{const station=document.querySelectorAll('.station')[${i}];station.click();await new Promise(r=>setTimeout(r,600));const cy=document.querySelector('.dag-canvas')._cyreg.cy,ex=cy.extent();
+    const nodes=cy.nodes('[gate]').filter(n=>{const bb=n.boundingBox({includeLabels:false});return bb.x2>ex.x1&&bb.x1<ex.x2&&bb.y2>ex.y1&&bb.y1<ex.y2;});
+    const r={tier:document.querySelector('.graph-view').dataset.detailTier,zoom:cy.zoom(),empty:nodes.filter(n=>!n.style('label').trim()||parseFloat(n.style('text-opacity'))!==1).map(n=>n.id())};station.click();await new Promise(r=>setTimeout(r,300));return r;}`);
+   assert.notEqual(r.tier,'status',`station ${i} frames at ${r.zoom}: a tier with text`);assert.deepEqual(r.empty,[],`station ${i}: every framed card has text`);
+  }
+ }
+});
