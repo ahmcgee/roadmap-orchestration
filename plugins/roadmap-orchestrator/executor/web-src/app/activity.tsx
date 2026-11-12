@@ -44,8 +44,10 @@ export function Activity({arc}:{arc:string}) {
     if(view!=='events'||!data||!store||!metadataVersion)return;
     // The initial SSE notice only verifies this prefix; it is not a new event.
     if(store.metadata!.highWater<=data.page.asOf.highWater)return;
+    // The count is of the position the notice names (one this console published): answered from an older capture's index it
+    // would miss the new events, and nothing would ask again.
     const c=new AbortController(),ticket=++request.current;
-    void get(`/arcs/${encodeURIComponent(arc)}/activity/changes?${query}&anchor=${encodeURIComponent(data.page.anchor)}&epoch=${encodeURIComponent(store.metadata!.epoch)}`,c.signal).then(raw=>{
+    void get(`/arcs/${encodeURIComponent(arc)}/activity/changes?${query}&anchor=${encodeURIComponent(data.page.anchor)}&epoch=${encodeURIComponent(store.metadata!.epoch)}&minHighWater=${store.metadata!.highWater}`,c.signal).then(raw=>{
       if(c.signal.aborted||ticket!==request.current)return;
       if(!activityChangesShape(raw.data))throw Object.assign(new ApiError('Malformed Activity changes; reload required'),{code:'protocol'});
       store.admit(raw,false,true);
