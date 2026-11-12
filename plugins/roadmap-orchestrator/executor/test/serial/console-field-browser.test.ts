@@ -32,13 +32,14 @@ test('a stopped field arc reads honestly in the console', { timeout: 300_000 }, 
     await until(async () => b.evaluate<boolean>('()=>document.querySelectorAll(".station").length>0||!!document.querySelector(".tab-content section")'), 20_000, `${route} loaded`);
   };
   const drawer = async (id: string, expect: RegExp) => { await go(`graph/units/${encodeURIComponent(id)}`); await until(async () => expect.test(await text('.drawer')), 15_000, `${id} drawer`); return text('.drawer'); };
-  const stations = () => b.evaluate<string[]>('()=>[...document.querySelectorAll(".station")].map(s=>s.innerText.replace(/\\n/g," | "))');
+  // dev.67: the gate is a drawn mark, not a text glyph; its state is named by its label.
+  const stations = () => b.evaluate<string[]>('()=>[...document.querySelectorAll(".station")].map(s=>s.querySelector(".gate-glyph").getAttribute("aria-label")+" | "+s.innerText.replace(/\\n/g," | "))');
 
   await t.test('C1: No milestone counts its own units once and reads no unit called "unbound"', async () => {
     await go('graph');
     // dev.59 recorded membership: re-entries count for their parent's milestone; here are only the units an apply added
     // outside every milestone, and a re-entry of one of them.
-    assert.equal((await stations()).at(-1), '○ | No milestone | 2/2 | – 1 withdrawn');
+    assert.equal((await stations()).at(-1), 'pending | No milestone | 2/2 | – 1 withdrawn');
     await b.evaluate('()=>{document.querySelector(".station-unbound").click();return true;}');
     await until(async () => /No milestone/.test(await text('.station-health')), 5000, 'No milestone popover');
     assert.match(await text('.station-health'), /^No milestone\n+Units that belong to no milestone in the plan\.[\s\S]*Show 2 passed units[\s\S]*Show 1 withdrawn unit$/);
@@ -51,8 +52,8 @@ test('a stopped field arc reads honestly in the console', { timeout: 300_000 }, 
   await t.test('C2: withdrawn members are counted apart, and the drawer names what holds the milestone', async () => {
     const lines = await stations();
     // dev.59 recorded membership: fractions count live members; MS-4 holds its merged re-entries.
-    assert.equal(lines[2], '○ | MS-3 Concurrency and retries | 9/9 | – 1 withdrawn | Next to clear');
-    assert.equal(lines[3], '○ | MS-4 Observability | 2/10 | – 3 withdrawn | Ⅱ 2 on hold');
+    assert.equal(lines[2], 'pending | MS-3 Concurrency and retries | 9/9 | – 1 withdrawn | Next to clear');
+    assert.equal(lines[3], 'pending | MS-4 Observability | 2/10 | – 3 withdrawn | Ⅱ 2 on hold');
     const ms3 = await drawer('milestone:MS-3', /Outstanding units/);
     assert.match(ms3, /9 of 9 units merged\n.*1 withdrawn/);
     assert.match(ms3, /Not passed\. Its walkthrough has not run, and the arc is stopped\./);
