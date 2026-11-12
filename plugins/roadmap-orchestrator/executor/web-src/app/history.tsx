@@ -1,6 +1,6 @@
 import { InvocationFacts } from './invocation-facts.tsx';
 import { mergeHistoryPages } from './history-pages.ts';
-import { HistoryMarkdown } from './markdown.tsx';
+import { HistoryInline, HistoryMarkdown } from './markdown.tsx';
 // Recorded agent-history rendering, ported intact from the original console.
 import * as R from 'react';
 import { useState, useEffect, useRef } from 'react';
@@ -43,9 +43,21 @@ function HistoryValue({ value, name = "" }: any) {
   if (Array.isArray(value)) return name === "argv" ? h("pre", null, h("code", null, value.join(" "))) : h("ul", null, value.filter((v: any) => !historyEmpty(v)).map((v: any, i: any) => h("li", { key: i }, h(HistoryValue, { value: v, name: name === "evidence" ? "evidence" : "" }))));
   if (typeof value === "object") {
     if (typeof value.path === "string" && typeof value.line === "number") return h("code", { className: "history-evidence" }, `${value.path}:${value.line}`);
+    // A command the agent ran reads as one entry: its name and exit on one line, the command beneath, any other fields after.
+    const command = Array.isArray(value.argv) ? value.argv.join(" ") : typeof value.command === "string" ? value.command : null;
+    if (command !== null) {
+      const label = ["name", "description", "title"].find(key => typeof value[key] === "string" && value[key]), exitKey = ["exit", "exitCode"].find(key => typeof value[key] === "number");
+      const rest = Object.fromEntries(Object.entries(value).filter(([key]) => !["argv", "command", label, exitKey].includes(key)));
+      return h("div", { className: "history-run" },
+        (label || exitKey) && h("div", { className: "history-run-head" }, label && h("span", null, h(HistoryInline, { text: value[label] })), exitKey && h("span", { className: "history-run-exit", "data-ok": value[exitKey] === 0 }, `Exit ${value[exitKey]}`)),
+        h("pre", { className: "history-command" }, h("code", null, command)),
+        h(HistoryValue, { value: rest }));
+    }
     const order = ["title", "claim", "text", "what", "summary", "description", "name", "severity", "path", "evidence", "command", "argv", "exit", "output"];
     const fields = Object.entries(value).filter(([, v]: any) => !historyEmpty(v)).sort(([a]: any, [b]: any) => (order.includes(a) ? order.indexOf(a) : order.length) - (order.includes(b) ? order.indexOf(b) : order.length));
-    return h("dl", { className: "history-fields" }, fields.map(([key, v]: any) => h("div", { key }, h("dt", null, historyLabel(key)), h("dd", null, h(HistoryValue, { value: v, name: key })))));
+    // A short single-line value sits beside its label; longer prose, lists and code stack beneath it.
+    const short = (key: string, v: unknown) => typeof v === "number" || typeof v === "boolean" || typeof v === "string" && v.length <= 60 && !v.includes("\n") && !["command", "output", "old_string", "new_string", "content", "code", "function"].includes(key);
+    return h("dl", { className: "history-fields" }, fields.map(([key, v]: any) => h("div", { key, className: short(key, v) ? "history-field-inline" : void 0 }, h("dt", null, historyLabel(key)), h("dd", null, h(HistoryValue, { value: v, name: key })))));
   }
   if (["decision", "outcome", "severity"].includes(name)) return h("span", { className: "history-status", "data-status": String(value) }, historyLabel(value));
   if (["path", "file", "contractRef", "evidence"].includes(name)) return h("code", { className: "history-evidence" }, String(value));
@@ -389,16 +401,22 @@ function AgentDetail({ arc, id, activity, close, stale, detail, full = false }: 
   }, [base, completed]);
   const verdictEvent = [...history?.events || []].reverse().find((event: any) => event.report || event.tool === "StructuredOutput" && event.status !== "failed");
   const thinking = useRef(new Map<string, boolean>());
+  // The full view gives the log the page: status sits on one line above it and the rest is one click away.
+  const [overview, setOverview] = useState(false);
+  const facts = h("dl",{className:"invocation-status"},h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,activity.spend.costUsd===null?'Unrecorded':money(activity.spend.costUsd))));
+  const verdictLine = () => result?.report != null ? h(VerdictStatus,{value:result.report}) : h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,summary:true});
+  const controls = h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more,disabled:loadingEarlier }, loadingEarlier?"Loading earlier history":history.hasMore!==true?"Check earlier history":history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,loadingEarlier?"Loading earlier history":history.hasMore===false?"Start of session":history.hasMore===true?"Earlier events available":"Earlier history not checked")));
   return h(ThinkingState.Provider,{value:thinking.current},h(FileHistoryProvider,{identity:history?.identity,events:history?.events||[]},h(
     Dialog,
-    { title: `${activity.label}, attempt ${activity.attempt}`, close, className: "agent-detail", expand: { arc, id, full, onExpand: () => { reading.current = { following: follow.current, anchor: follow.current ? null : readingAnchor() }; } }, headingLink: activity.subject.type==='unit'?h(BackToUnit, {arc, unit:activity.unit,title:activity.subject.title,systems:activity.systems}):h('p',null,`${activity.subject.type==='job'?'Job':'Arc'} ${activity.subject.id}`) },
+    { title: `${activity.label}, attempt ${activity.attempt}`, close, className: `agent-detail${overview?"":" overview-closed"}`, expand: { arc, id, full, onExpand: () => { reading.current = { following: follow.current, anchor: follow.current ? null : readingAnchor() }; } }, headingLink: activity.subject.type==='unit'?h(BackToUnit, {arc, unit:activity.unit,title:activity.subject.title,systems:activity.systems}):h('p',null,`${activity.subject.type==='job'?'Job':'Arc'} ${activity.subject.id}`) },
+    full && h("div",{className:"log-bar"},facts,verdictLine(),h("button",{className:"log-overview-toggle","aria-expanded":overview,onClick:()=>setOverview(!overview)},overview?"Hide summary and details":"Summary and details"),controls),
     h(InvocationFacts,{arc,id,detail}),
-    h("div",{className:"invocation-summary"},h("p",null,live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')),h("dl",null,h("div",null,h("dt",null,"Status"),h("dd",null,live?"Running":completed?"Finished":history?.state||"Connecting")),h("div",null,h("dt",null,"Elapsed"),h("dd",null,elapsed(activity.elapsedMs??(activity.status==='active'?now-Date.parse(activity.startedAt):null)))),h("div",null,h("dt",null,"Recorded spend"),h("dd",null,activity.spend.costUsd===null?'Unrecorded':money(activity.spend.costUsd))))),
-    result?.report != null ? h(VerdictStatus,{value:result.report}) : h(TranscriptVerdict,{event:verdictEvent,base,identity:history?.identity,summary:true}),
+    h("div",{className:"invocation-summary"},h("div",{className:"invocation-summary-text"},h(HistoryMarkdown,{text:live?(()=>{const event=[...history?.events||[]].reverse().find((event:any)=>event.type==='tool'&&event.tool!=='StructuredOutput'),data=historyJson(event?.input);return data?.description||event?.title||event?.tool||'Agent is working';})():result?.report?.summary||result?.report?.verdict?.summary||result?.report?.reasons?.[0]||recordedDecision(result?.report?.decision||historyJson(verdictEvent?.input||verdictEvent?.text)?.decision||activity.outcome||history?.state||'Connecting')})),facts),
+    verdictLine(),
     error && h("p", { role: "alert" }, error),
     h("div",{className:"history-navigation"},h("div", {className:"history-heading"},"History"),h(ChangedFiles,{onJump:(id:string)=>{follow.current=false;setFollowing(false);const target=[...scroll.current.querySelectorAll('[data-event-id]')].find((node:any)=>node.dataset['eventId']===id) as HTMLElement|undefined;if(target){let parent=target.parentElement;while(parent&&parent!==scroll.current){if(parent instanceof HTMLDetailsElement)parent.open=true;parent=parent.parentElement;}scroll.current.scrollTop+=target.getBoundingClientRect().top-scroll.current.getBoundingClientRect().top;placedScroll.current=scroll.current.scrollTop;setAbove(scroll.current.scrollTop>8);}}}),
     ),
-    h("div", { className: "history-controls" }, history?.before != null && h("button", { onClick: more,disabled:loadingEarlier }, loadingEarlier?"Loading earlier history":history.hasMore!==true?"Check earlier history":history.pageSize?`Load ${history.pageSize} earlier events`:"Load earlier events"), live && h("button", { onClick: latest }, following ? "Following live" : `Follow live tail${history?.unseen ? ` (${pluralise(history.unseen, "update")})` : ""}`), completed && h("button", { onClick: latest }, "Latest"), history && h("span", {className:"history-boundary"}, `${earlier?"Earlier history  ":""}${pluralise(history.events.length,"event")} loaded`, h("small",null,loadingEarlier?"Loading earlier history":history.hasMore===false?"Start of session":history.hasMore===true?"Earlier events available":"Earlier history not checked"))),
+    !full && controls,
     h(
       "details",
       { className: "session-details" },
