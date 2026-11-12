@@ -62,8 +62,9 @@ test('T3: with captures over five seconds every browser read answers at once wit
   assert.ok(behind.length >= 4, `${behind.length} pulses`);
   for (let i = 1; i < behind.length; i++) assert.ok(behind[i]!.at - behind[i - 1]!.at <= 2_000, `pulses ${behind[i]!.at - behind[i - 1]!.at} ms apart`);
   assert.ok(behind.every((p) => p.behind && p.arc === f.arc), 'behind, said by the server');
-  // Between two publishes the age grows with the clock.
-  const growing = behind.slice(1).map((p, i) => [behind[i]!, p] as const).filter(([a, b]) => b.asOfAgeMs > a.asOfAgeMs);
+  // Between two publishes (no notice arrived between two pulses) the age grows with the clock.
+  const noticed = seen.filter((x) => x.event === 'revision' || x.event === 'heartbeat').map((x) => x.at);
+  const growing = behind.slice(1).map((p, i) => [behind[i]!, p] as const).filter(([a, b]) => !noticed.some((at) => at >= a.at && at <= b.at));
   assert.ok(growing.length >= 3, `${growing.length} pulse pairs with the same observation`);
   for (const [a, b] of growing) assert.ok(Math.abs((b.asOfAgeMs - a.asOfAgeMs) - (b.at - a.at)) <= 400, `age grew ${b.asOfAgeMs - a.asOfAgeMs} ms in ${b.at - a.at} ms`);
 
