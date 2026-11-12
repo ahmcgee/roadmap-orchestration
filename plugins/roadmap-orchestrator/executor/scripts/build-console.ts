@@ -33,12 +33,10 @@ async function notice(path: string) {
 }
 for (const pkg of ['react', 'react-dom', 'radix-ui', 'cmdk', 'cytoscape', 'lucide-react', 'class-variance-authority', 'clsx', 'tailwind-merge']) await notice(join(root, 'node_modules', pkg));
 for (const input of Object.entries(Object.values(result.metafile.outputs).find(output => output.entryPoint)?.inputs ?? {}).filter(([path, info]) => path.includes('node_modules/') && info.bytesInOutput > 0).map(([path]) => path).sort()) await notice(dirname(resolve(root, input)));
-const fonts: [string, number[]][] = [['barlow', [400, 500, 600]], ['barlow-semi-condensed', [500, 600]], ['jetbrains-mono', [400, 500]]];
+// Fonts are vendored from the foundry release (web-src/fonts/README.md records the source and hashes), not from npm.
 await mkdir(join(out, 'fonts'), { recursive: true });
-for (const [family, weights] of fonts) {
-  await notice(join(root, 'node_modules/@fontsource', family));
-  for (const weight of weights) { const name = `${family}-latin-${weight}-normal.woff2`; await copyFile(join(root, 'node_modules/@fontsource', family, 'files', name), join(out, 'fonts', name)); }
-}
+for (const name of (await readdir(join(root, 'web-src/fonts'))).filter(name => name.endsWith('.woff2')).sort()) await copyFile(join(root, 'web-src/fonts', name), join(out, 'fonts', name));
+packages.set('Mona Sans', { name: 'Mona Sans', version: '2.0.27', license: 'OFL-1.1', text: (await readFile(join(root, 'web-src/licenses/mona-sans.txt'), 'utf8')).replaceAll('\r\n', '\n').trim() });
 await notice(join(root, 'node_modules/tailwindcss'));
 await notice(join(root, 'node_modules/tw-animate-css'));
 const legalPath = join(out, 'app.js.LEGAL.txt');
