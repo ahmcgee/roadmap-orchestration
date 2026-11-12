@@ -85,6 +85,7 @@ import { type ResolvedRouting,arcScopeOf,provenanceStack,resolveRouting } from '
 import { type ProfileName,profileName } from './routing/types.ts';
 import { type Arbiter,createArbiter } from './schedule/arbiter.ts';
 import { rankOf } from './schedule/ready.ts';
+import { faultUnit } from './schedule/fault.ts';
 import { type SchedulerEnd,holisticContexts,raiseResult,schedule } from './schedule/scheduler.ts';
 
 /** Run dir: the latest start's refusal, for `status` (removed by the next start that passes). */
@@ -247,7 +248,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     pushes.recover(x.stage.plan().integrationBranch);
     // M3 (B3): the findings' moves the recovered log calls for (ownership, a killed mutant's dismissal).
     syncRepairs(x.stage);
-    await consumeRecovered(x);
+    await consumeRecovered(x.stage);
     // An unfinished drain resumes only recovery/chains, with no new backend smoke job.
     if (journal.view.control().stop === null) {
       const smoked = await smokeCheck(checks, args.env);
@@ -278,12 +279,23 @@ function refuse(args: ExecutorArgs, rejections: readonly StartupRejection[]): Re
  * with a recovery hold (`holdAbandoned`, arc feedback 2026-10-15). Done before the scheduler, so a unit that a pause
  * holds does not wait for its next step to learn it was interrupted: one resume releases it (lead ruling, 14c), and
  * no dead attempt keeps it from being cut, re-entered or respecified meanwhile.
+ *
+ * dev.70: one unit's recorded attempt that cannot be read (`consume` throws) parks that unit `executor-fault`, as a throw
+ * in its task would (src/schedule/fault.ts `faultUnit`), and the arc starts; one that holds shared state still crashes.
  */
-async function consumeRecovered(x: Exec): Promise<void> {
-  for (const unit of x.stage.plan().units) {
-    const s = await consume(x.stage, unit);
-    if (s === null) holdAbandoned(x.stage, unit);
-    else if (s.kind !== 'continue') raiseResult(x.stage, unit.id, s);
+export async function consumeRecovered(stage: StageContext): Promise<void> {
+  for (const unit of stage.plan().units) {
+    let s: Awaited<ReturnType<typeof consume>>;
+    try {
+      s = await consume(stage, unit);
+    } catch (error) {
+      const parked = await faultUnit(stage, unit, error);
+      if (parked === null) throw error;
+      raiseResult(stage, unit.id, parked);
+      continue;
+    }
+    if (s === null) holdAbandoned(stage, unit);
+    else if (s.kind !== 'continue') raiseResult(stage, unit.id, s);
   }
 }
 

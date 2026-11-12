@@ -469,7 +469,9 @@ export const STAGE_OUTCOME_KINDS = {
   // pre-build; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
   reproduce: ['checkout-residue', 'reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
-  'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault'],
+  // dev.70: `diagnosed` closes the pre-build attempt a build opens for its M4 diagnosis (src/pipeline/stages.ts `build`): an
+  // annotation, so it decides nothing and holds nothing (the unit's decision, interruption and entry stay as they were).
+  'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault', 'diagnosed'],
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
   build: ['checkout-residue', 'spec-wrong',
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
@@ -666,6 +668,12 @@ export type StageOutcomeFact = { [S in OutcomeStage]: Readonly<{
   cause?: HoldCause;
   detail?: StageOutcomeDetail;
 }> }[OutcomeStage];
+
+/**
+ * dev.70: the outcome of the pre-build attempt a build runs its M4 diagnosis under. Class `hold`, as nothing is decided, but
+ * no hold: the fold leaves the unit's status, decision, interruption and entry as they were.
+ */
+export const isDiagnosed = (f: Pick<StageOutcomeFact, 'stage' | 'outcome'>): boolean => f.stage === 'pre-build' && f.outcome === 'diagnosed';
 
 /** dev.44 compatibility: keep old canonical bytes intact; only the folded reading gets the missing diagnosis. */
 let legacyCandidateRedWarned = false;
@@ -2412,8 +2420,10 @@ export const fact: Read<Fact> = tagged('kind', {
     if (out.class === 'retry' && !(RETRY_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `retry only at ${RETRY_STAGES.join(', ')}`, out.class);
     if (out.class === 'route-up' && !(JUDGMENT_STAGES as readonly string[]).includes(s)) throw new SchemaError(`${f.path}.class`, `route-up only at ${JUDGMENT_STAGES.join(', ')}`, out.class);
     // An interruption or a pre-build split holds the unit, uncharged, until resumed or cut by its split revision.
-    const holds = out.outcome === 'interrupted';
-    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome or a split', out.class);
+    // dev.70: so does a build's diagnosis attempt (`diagnosed`): it decides nothing, and the fold holds nothing for it.
+    const holds = out.outcome === 'interrupted' || isDiagnosed(out);
+    if (holds !== (out.class === 'hold')) throw new SchemaError(`${f.path}.class`, 'hold exactly for an interrupted outcome, a split or a diagnosis', out.class);
+    if (cause !== undefined && isDiagnosed(out)) throw new SchemaError(`${f.path}.cause`, 'absent on a diagnosis', cause);
     if (out.class === 'hold' && out.chargeable) throw new SchemaError(`${f.path}.chargeable`, 'false for a hold', out.chargeable);
     return { ...out, ...(unchargedLanesReds === undefined ? {} : { unchargedLanesReds }), ...(park === undefined ? {} : { park }), ...(cause === undefined ? {} : { cause }), ...(detail === undefined ? {} : { detail }) } as StageOutcomeFact;
   }),

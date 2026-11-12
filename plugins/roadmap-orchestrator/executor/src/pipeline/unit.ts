@@ -111,9 +111,9 @@ witnessCheckoutFixRound,witnessFixRound,
 
 import {
 type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
-preBuild,quiesce,readDecisions,record,recordedCall,salvage,salvageRejections,teardown
+preBuild,quiesce,readDecisions,record,recordedCall,releaseJudgment,salvage,salvageRejections,teardown
 } from './stages.ts';
-import { markers } from './surface.ts';
+import { markers,runReview } from './surface.ts';
 import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
 
@@ -467,10 +467,11 @@ function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): D
     : { ...round, directives: [...(round.directives ?? []), ...added] };
 }
 
-/** `of`, or the continue of its attempt an interruption held since (a hold is only ever recorded from a call's result). */
+/** `of`, or the continue of the build attempt an interruption held since (a hold is only ever recorded from a call's result). */
 function continued(ctx: StageContext, unit: PlanUnit, of: DecidedRound): RoundInput {
   const held = ctx.journal.view.unit(unit.id).interrupted;
-  if (held === null) return of;
+  // dev.70: a pause that cut the build's diagnosis short (its pre-build attempt, stages.ts `build`) interrupted no build.
+  if (held === null || held.stage === 'pre-build') return of;
   const called = recordedCall(ctx, stageParent(held));
   if (held.stage !== 'build' || called === null || called.kind !== 'result') throw new Error(`unit ${unit.id}: ${held.stage} attempt ${held.attempt} was interrupted before a build, or without a call result`);
   return { kind: 'continue', of, interrupted: called.inv };
@@ -587,6 +588,14 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<OutcomeS
  * unrecorded is never treated as not started), and so is a build lost with tree effects (its work is
  * salvaged, the plan's recovery table). Any other lost call, or none, returns null: the stage runs again as
  * a new, uncharged attempt.
+ *
+ * dev.70: an open pre-build attempt of a unit whose next stage is a build is that build's M4 diagnosis (stages.ts `build`
+ * opens it inside the build's step, under a decided round or a steer entry alike). Its call is read as the live build
+ * reads it (`runReview`, which records the review once) and the attempt closes `diagnosed`, deciding nothing: the entry or
+ * decision that led to the build still does. An arc cut short on 1.0.0-dev.69 or earlier is adopted the same way; there the
+ * live build recorded `approve`, which the fold refuses under a steer entry (the field crash of 2026-11-12).
+ * Any other open attempt at a stage that is not the unit's next is a state no stage produces: it throws, and the caller
+ * parks the unit (`executor-fault`).
  */
 async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact | null): Promise<StageDone<Target['stage']> | null> {
   const open = ctx.journal.view.unit(unit.id).open;
@@ -601,6 +610,11 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
   if (decided !== null && decided.kind !== 'stage') throw new Error(`unit ${unit.id}: ${open.stage} attempt ${open.attempt} is open after ${f?.stage} ${f?.outcome} ended the unit`);
   const initial: Target = open.stage === 'build' ? {stage: 'build', round: 'fresh'} : {stage: 'pre-build'};
   const target: Target = entry !== null ? entryTarget(entry) : decided === null ? initial : decided.target;
+  if (open.stage === 'pre-build' && target.stage === 'build') {
+    await runReview(ctx, unit, parent, 'diagnosis');
+    await releaseJudgment(ctx, parent);
+    return record(ctx, at(parent, 'pre-build'), 'diagnosed');
+  }
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
   switch (target.stage) {
     case 'pre-build':
@@ -626,7 +640,9 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
  */
 export async function consume(ctx: StageContext, unit: PlanUnit): Promise<Step | null> {
   const recorded = await consumeRecorded(ctx, unit, ctx.journal.view.unit(unit.id).decided);
-  return recorded === null ? null : after(ctx, unit, recorded);
+  if (recorded === null) return null;
+  // A diagnosis decides nothing: the unit goes on to the build that opened it.
+  return recorded.outcome.stage === 'pre-build' && recorded.outcome.kind === 'diagnosed' ? { kind: 'continue' } : after(ctx, unit, recorded);
 }
 
 /**

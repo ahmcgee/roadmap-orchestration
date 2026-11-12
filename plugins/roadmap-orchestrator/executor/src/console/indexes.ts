@@ -1,6 +1,6 @@
 // Server-only indexes over one verified capture. D1 identity; D3 parent/stage-local attempt/round.
 // No report, transcript, filesystem read or second execution-state fold belongs here.
-import type { Event, Parent } from '../core/events.ts';
+import { type Event, type Parent, isDiagnosed } from '../core/events.ts';
 import { parseInvocationId, invocationIdOf } from '../core/ids.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import type { Invocation } from '../tui/types.ts';
@@ -81,7 +81,8 @@ export class StageIndex {
         row.endedAt = ev.at; row.outcome = outcomeWords(f.outcome);
         row.housekeeping = housekeepingStages.has(f.stage) && f.class === 'advance';
         if (f.class === 'park') row.notes.push(`Parked: ${row.outcome}`);
-        if (f.class === 'hold') row.notes.push(`On hold: ${row.outcome}`);
+        // A build's diagnosis attempt (`diagnosed`) holds nothing: the build goes on.
+        if (f.class === 'hold' && !isDiagnosed(f)) row.notes.push(`On hold: ${row.outcome}`);
         this.touched = ev.seq;
       }
     }

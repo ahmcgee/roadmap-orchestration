@@ -1,6 +1,6 @@
 import { workloadCpu } from './cpu.ts';
 import { parseResourceUnit } from './ids.ts';
-import { candidateRedDefault } from './events.ts';
+import { candidateRedDefault,isDiagnosed } from './events.ts';
 // The fold: the one derivation of run state from the event log. Everything the executor knows about ops,
 // units, spend and needs-user comes from folding events.jsonl in order. `state.json` exists only in
 // the snapshot tree, derived from that snapshot's log prefix, and is never read back for a decision.
@@ -1139,14 +1139,17 @@ export class Fold implements JournalView {
           fail(`recovery hold of ${f.unit} ${key}, which is not its crash-abandoned open attempt (${open === null ? 'none is open' : `${open.stage}#${open.attempt} at seq ${open.seq}`})`);
         }
         const u = this.#unit(f.unit, f.stage);
+        const statusBefore = u.state.status;
         u.outcomes.add(key);
         this.#outcomeSeqs.set(`${f.unit}/${key}`, at.seq);
         if (f.stage === 'lanes' && f.class !== 'hold') this.#completedLanes.set(f.unit, f);
         if (f.stage === 'lanes' && f.outcome === 'green') this.#greenLanes.set(f.unit, f.attempt);
         // M3: an entry's stage records its outcome (a hold keeps the entry, whose stage then runs again); a steer pass
         // ends where it parks, stops or retires the unit, or where its gate advances it.
+        // dev.70: an executor fault parks the unit at the stage it was in, which under a steer entry may be the pre-build
+        // attempt of its build's diagnosis; the entry ends with the park, as at the entry's own stage.
         const entry = u.state.entry;
-        if (entry !== null && f.class !== 'hold' && f.stage !== ENTRY_STAGE[entry.kind]) fail(`stage-outcome for ${f.unit} ${key} while its ${entry.kind} entry is at ${ENTRY_STAGE[entry.kind]}`);
+        if (entry !== null && f.class !== 'hold' && f.outcome !== 'executor-fault' && f.stage !== ENTRY_STAGE[entry.kind]) fail(`stage-outcome for ${f.unit} ${key} while its ${entry.kind} entry is at ${ENTRY_STAGE[entry.kind]}`);
         if (f.class !== 'hold') {
           const ends = f.class === 'park' || f.class === 'stop' || f.class === 'retire' || (f.stage === 'gate' && f.class === 'advance');
           // dev.59: a rerun short of a verdict (a retry, a retryable or env park, its own rerun-red park) stays in progress.
@@ -1159,6 +1162,9 @@ export class Fold implements JournalView {
         // covers it; otherwise the unit stays active and its stage runs again once admitted.
         if (f.cause?.type === 'recovery') {
           if (!this.#pausedAll && !this.#pausedUnits.has(f.unit)) this.#setUnitState(u, { ...u.state, status: 'active' });
+        } else if (isDiagnosed(f)) {
+          // dev.70: a build's diagnosis attempt is an annotation: the unit is as it was, mid-build.
+          this.#setUnitState(u, { ...u.state, status: statusBefore });
         } else if (f.class === 'hold') this.#setUnitState(u, { ...u.state, interrupted: f });
         else {
           u.beforeDecided = { decided: u.state.decided, interrupted: u.state.interrupted };

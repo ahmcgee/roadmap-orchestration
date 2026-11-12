@@ -89,6 +89,8 @@ const ROWS: readonly Row[] = [
   // The bound counts redirects since the latest reopen (the architect's spec edit), not over the unit.
   // A high-risk unit judges on its high seat and escalates to the escalation seat like any other (item 9).
   ['pre-build', 'interrupted', {}, 'hold', 'hold', {}],
+  // dev.70: a build's M4 diagnosis attempt closes without a decision; the fold holds nothing for it (events.ts `isDiagnosed`)
+  ['pre-build', 'diagnosed', {}, 'hold', 'hold', {}],
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park (a dev.11 record only,
   // scaffolding: no longer recorded since 2026-10-16).
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.

@@ -246,6 +246,17 @@ Arc limits additionally allow walkRounds (default 3) and verification `{laneMinu
 16/40 at a boundary for a hard cap. Attempt counts include build/lanes/gate, interrupted and uncharged work, with lineage.
 `review:never` disables review/diagnosis calls and their M4 fallback marker, but not the hard cap. Steering leaves cap counts intact.
 
+The M4 diagnosis runs inside the step of the first build that finds it due (a decided round, or a steer round), under a
+pre-build attempt of its own. That attempt closes with pre-build outcome `diagnosed` (1.0.0-dev.70), class `hold` with no
+cause: it decides nothing, so the unit's decision, interruption, entry and status stay as they were and the build that
+opened it runs next. A pause during it closes it `interrupted` and the build runs after the resume. A crash that leaves it
+open is recorded at startup: a recorded call is read once (`review-completed`) and the attempt closes `diagnosed`; a lost
+call closes it with the recovery hold. Journals written up to dev.69 closed it `approve`, which the fold refused under a
+steer entry; those `approve` facts keep their reading, and an attempt such a crash left open is adopted as above.
+`executor-fault` is the one deciding outcome the fold admits at a stage other than a unit's entry stage (a fault during
+that diagnosis): the entry ends with the park. At startup a unit whose recorded attempt cannot be read parks
+`executor-fault` and the arc starts; a fault that holds shared state still crashes.
+
 KnownDefects `{id,match,fixUnit}` match lane or output substring; held units wait uncharged until the fix lineage merges.
 Derived entries `{sources,outputs,regenerate?:ToolCommand}` only add deterministic regeneration at lanes; no exclusions.
 
