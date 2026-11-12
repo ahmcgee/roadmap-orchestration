@@ -285,7 +285,7 @@ function HistoryEvents({events,live,...props}:any){
   const groups=historyToolRuns(events,live);
   return groups.map(group=>group.events.length===1?h(AgentEvent,{key:group.key,event:group.events[0],...props}):h("details",{key:group.events.at(-1).id,className:"history-group",onToggle:props.onLayout},h("summary",null,`${group.events.length} tool calls: ${group.label}`,h("small",{className:"muted"},[group.events[0].at,group.events.at(-1).at].filter(Boolean).map(at=>new Date(at).toLocaleTimeString()).join(' – '))),group.events.map(event=>h(AgentEvent,{key:event.id,event,...props}))));
 }
-function AgentDetail({ arc, id, activity, close, stale, detail, full = false }: any) {
+function AgentDetail({ arc, id, activity, close, detail, full = false }: any) {
   const now=R.useContext(Clock);
   const base = `/arcs/${arc}/invocations/${id}`;
   const [history, setHistory] = useState<any>(null), [error, setError] = useState<any>(""), [brief, setBrief] = useState<any>(null), [result, setResult] = useState<any>(null);
@@ -388,7 +388,8 @@ function AgentDetail({ arc, id, activity, close, stale, detail, full = false }: 
     setHistory(r.data);
   }).catch((err: any) => setError(err.message));
   const completed = history?.endedAt != null || ["success", "pass", "fail", "fault", "lost"].includes(history?.state);
-  const live = history?.state === "running" && !completed && !stale;
+  // While the console is behind, the lag line says how old the tail is; the invocation is still running.
+  const live = history?.state === "running" && !completed;
   const model = history?.session?.model || [...history?.events || []].reverse().find((event: any) => event.model)?.model || activity.model;
   const usage = [...history?.events || []].reverse().find((event: any) => event.tokens != null)?.tokens;
   useEffect(() => {

@@ -104,7 +104,7 @@ export function Activity({arc}:{arc:string}) {
       </FilterBar>
       {localError&&<p role="alert">{localError}</p>}
       {state.error&&unknownFilter(state.error)?<div role="alert"><p>This link filters by a value that isn't recorded in this arc.</p><Button onClick={()=>{const next=new URLSearchParams(current.query);for(const [key] of activityFacetFields)next.delete(key);navigate(next,true);}}>Clear those filters</Button></div>
-      :(state.error||noticeError)&&<div role="alert"><p>{loadError(state.error||noticeError)}</p><Button onClick={()=>state.error?navigate(new URLSearchParams(current.query),true):setRetry(retry+1)}>Retry</Button></div>}
+      :(state.error&&(!data||state.failures>=3)||noticeError)&&<div role="alert"><p>{state.error&&data?"Couldn't refresh this view. Trying again.":loadError(state.error||noticeError)}</p><Button onClick={()=>state.error?navigate(new URLSearchParams(current.query),true):setRetry(retry+1)}>Retry</Button></div>}
       {state.loading&&<p role="status">{data?'Updating Activity…':'Loading Activity…'}</p>}
       {data&&<>
         <div className="page-status"><p className="activity-anchor muted">{windowValue==='visit'?`Since your last visit in this browser: ${pluralise(data.page.matching,'event')}`:pluralise(data.page.matching,'event')}. Updated {formatInstant(data.page.asOf.observedAt,data.filters.zone,true)} {zoneLabel(data.filters.zone)}.</p>

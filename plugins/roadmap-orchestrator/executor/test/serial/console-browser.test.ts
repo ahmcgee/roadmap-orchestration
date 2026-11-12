@@ -200,13 +200,13 @@ describe('console browser', { concurrency: false }, () => {
   test('stale content, reconnect, screenshot evidence', { timeout: 20_000 }, async () => {
     const port = (server.server.address() as AddressInfo).port;
     await server.close();
-    await until(async () => /Stale/.test(await text()), 15_000, 'unverified connection becomes stale');
+    await until(async () => /Reconnecting/.test(await text()), 15_000, 'a lost connection is reconnecting');
     const stale = await browser.evaluate<string>('() => document.querySelector("main").textContent');
-    assert.match(await text(), /Last updated/);
+    assert.match(await text(), /Reconnecting\. Showing the arc as of \d+s ago\./);
     await new Promise((r) => setTimeout(r, 1_100));
     assert.equal(await browser.evaluate<string>('() => document.querySelector("main").textContent'), stale, 'stale content and counters remain frozen');
     server = await serveConsole({ ...args, port });
-    await until(async () => /Connected/.test(await text()) && !/Stale/.test(await text()), 20_000, 'SSE reconnect and fresh journal epoch');
+    await until(async () => /Connected/.test(await text()) && !/Reconnecting/.test(await text()), 20_000, 'SSE reconnect and fresh journal epoch');
     await brandAudit('reconnected');
     for (const name of ['overview.png', 'unit-detail.png', 'agent-history-live.png', 'agent-history-finished.png']) assert.deepEqual(readFileSync(join(SHOTS, name)).subarray(0, 8), MAGIC);
   });

@@ -2,7 +2,8 @@ import { saveVisit } from './activity-query.ts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, displayZone, elapsed, formatInstant, get, link, loadError, money, relativeTime, route, tabs, Time } from './shared.tsx';
+import { ageWords, Clock, displayZone, elapsed, formatInstant, get, link, loadError, money, route, tabs, Time } from './shared.tsx';
+import { lagState } from './view-store.ts';
 import { useObservation } from './observation.ts';
 import { Graph } from './graph.tsx';
 import { UnitDetail } from './unit-detail.tsx';
@@ -43,24 +44,29 @@ export function App() {
 function Console({zone,setZone,where,selected,listed,retryList,listError,now,theme,setTheme,store}:{where:ReturnType<typeof route>;selected:string|null;listed:boolean;retryList:()=>void;listError:string;now:number;theme:Theme;setTheme:(t:Theme)=>void;store:ReturnType<typeof useObservation>;zone:string;setZone:(z:string)=>void}) {
   const shell=useView('shell'),graph=useView(where.tab==='graph'?'graph':null);
   const p=shell.data as ShellView|null;
-  const error=store?.error||shell.error||graph.error||'',checkedAt=store?.checkedAt??null,connected=store?.connected??false,reload=store?.reload??false;
+  // A view's failed refresh alerts only when it has nothing to show or has failed three times in a row; until then it retries quietly.
+  const failing=(v:{data:unknown;error:string;failures:number})=>v.error&&(!v.data||v.failures>=3)?v.error:'';
+  const error=store?.error||failing(shell)||failing(graph)||'',refreshing=!store?.error&&Boolean(failing(shell)&&shell.data||failing(graph)&&graph.data);
+  const checkedAt=store?.checkedAt??null,reload=store?.reload??false;
   const graphEnvelope=store?.entries.get('graph')?.value;
   const graphInput=useMemo(()=>graphEnvelope?graphData(graphEnvelope):null,[graphEnvelope]);
   const scrolls=useRef(new Map<string,number>());
   useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);};},[where.tab,Boolean(graphInput)]);
-  // `old`: nothing verified for five seconds. An error also freezes counters, but its banner explains it; only age is reported as age.
-  const old=!checkedAt||now-Date.parse(checkedAt)>5000,stale=old||Boolean(error||listError);
-  const clock=stale?Date.parse(checkedAt||new Date(now).toISOString()):now;
+  // One connection state at a time, and no contact yet is never presented as data behind. While behind or not connected, every
+  // elapsed time is measured to the instant the data is as of, and the lag line says how old that is.
+  const unreachable=!selected&&Boolean(listError);
+  const {connection,lag}=store?lagState(store,now,unreachable||Boolean(error)):{connection:unreachable?'offline' as const:'connecting' as const,lag:{shown:false,ageMs:0}};
+  const asOf=store?.asOfAt??null,frozen=asOf!==null&&(lag.shown||connection!=='connected');
+  const clock=frozen?asOf:now;
   const arc=selected,tab=where.tab,open=(id:string)=>{if(arc)location.hash=link(arc,tab,'units',id).slice(1);},close=()=>{if(arc)location.replace(link(arc,tab));};
   const counts:Partial<Record<Signal,number>>={};
   const signal=(state:string):Signal=>state==='cut'||state==='superseded'?'withdrawn':state==='merged'?'passed':['running','preparing'].includes(state)?'active':['blocked','held','parked','awaiting-admission'].includes(state)?'held':state==='refused'?'failed':'pending';
   for(const [state,n] of Object.entries(p?.progress.countsByState??{})){const key=signal(state);counts[key]=(counts[key]??0)+n;}
   const total=p?.progress.total,day=p?.lifecycle.startedAt?Math.max(1,Math.floor(((p.lifecycle.endedAt?Date.parse(p.lifecycle.endedAt):clock)-Date.parse(p.lifecycle.startedAt))/86400_000)+1):null;
-  // One connection state at a time, and no verified contact yet is never presented as stale data.
-  const unreachable=!arc&&Boolean(listError);
-  const live=!checkedAt?unreachable||error?'Offline':'Connecting':stale?'Stale':connected?'Connected':store?.opened?'Reconnecting':'Connecting';
+  const live={connecting:'Connecting',connected:'Connected',reconnecting:'Reconnecting',offline:'Offline'}[connection];
+  const lagLine=asOf!==null&&store?.identity!=null&&(connection==='connected'?lag.shown:connection!=='connecting');
   if(where.arc&&selected&&where.arc!==selected)return <main className="empty"><p>This console shows the current arc only</p><a href={link(selected,'graph')}>Open {selected}</a></main>;
-  return <Clock.Provider value={clock}><div className="shell" data-stale={stale}>
+  return <Clock.Provider value={clock}><div className="shell">
     <a className="skip" href="#content" onClick={ev=>{ev.preventDefault();document.getElementById('content')?.focus();}}>Skip to content</a>
     <header className="arc-bar">
       <ArcIdentity arc={arc} shell={p} zone={zone}/>
@@ -72,7 +78,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
       <Button variant="ghost" size="icon" aria-label={`Theme: ${theme}. Switch theme`} title={`Theme: ${theme}`} onClick={()=>setTheme(theme==='system'?'light':theme==='light'?'dark':'system')}>{theme==='system'?<Monitor size={16}/>:theme==='light'?<Sun size={16}/>:<Moon size={16}/>}</Button>
     </header>
     <nav className="tabs" aria-label="Roadmap views">{tabs.map(key=><a key={key} href={arc?link(arc,key)+(tab!==key&&store?.ui.get(`query:${key}`)?`?${store.ui.get(`query:${key}`)}`:''):'#/'} aria-current={key===tab?'page':undefined}>{key[0]!.toUpperCase()+key.slice(1)}{key==='attention'&&!!p?.attention.total&&<span className="tab-badge">{p.attention.total}</span>}</a>)}</nav>
-    {(reload||error||listError||where.invalid)&&<div className="notice" role="alert">{where.invalid?'Unknown console route. Open the current arc.':reload?'Reload required: executor version changed':loadError(error||listError)}{reload?<Button onClick={()=>location.reload()}>Reload console</Button>:error&&<Button onClick={()=>{shell.retry();if(tab==='graph')graph.retry();}}>Retry</Button>}</div>}
+    {(reload||error||listError||where.invalid)&&<div className="notice" role="alert">{where.invalid?'Unknown console route. Open the current arc.':reload?'Reload required: executor version changed':refreshing&&!listError?"Couldn't refresh this view. Trying again.":loadError(error||listError)}{reload?<Button onClick={()=>location.reload()}>Reload console</Button>:error&&<Button onClick={()=>{shell.retry();if(tab==='graph')graph.retry();}}>Retry</Button>}</div>}
     {p?.lifecycle.endedAt&&<div className="outcome">{stateWords(p.lifecycle.state)}. {counts.passed??0} units merged; {counts.withdrawn??0} withdrawn. Recorded spend {money(p.spend.costUsd)}. Elapsed {elapsed(p.lifecycle.startedAt?Date.parse(p.lifecycle.endedAt!)-Date.parse(p.lifecycle.startedAt):null)}.</div>}
     <main id="content" tabIndex={-1} className={tab==='graph'?'graph-main':'tab-content'}>
       {graphInput&&<div hidden={tab!=='graph'} style={{height:'100%'}}><Graph key={arc} e={graphInput} open={open}/></div>}
@@ -83,11 +89,11 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
       {arc&&tab==='resources'&&<Resources arc={arc}/>}
       {(tab==='graph'?!graphInput:!arc)&&(unreachable?<div className="empty" role="alert"><h1>Can't reach the console server.</h1><Button onClick={retryList}>Retry</Button></div>:<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error?loadError(error):'Connecting…':listed?'No current arc in this repository.':'Connecting…'}</p></div>)}
     </main>
-    {old&&checkedAt&&<div className="stale-notice"><time dateTime={checkedAt} title={formatInstant(checkedAt,zone)}>Last updated {relativeTime(checkedAt,now)}</time>. Live counters paused.</div>}
+    {lagLine&&<div className={connection==='connected'?'lag-line':'lag-line lag-line-lost'} role="status" aria-live="polite">{connection==='connected'?'Catching up':'Reconnecting'}. Showing the arc as of <time dateTime={new Date(asOf).toISOString()} title={formatInstant(new Date(asOf).toISOString(),zone)}>{ageWords(lag.ageMs)} ago</time>.</div>}
     {arc&&where.resource&&<ResourceDetailDrawer key={where.resource} arc={arc} id={where.resource} close={close}/>}
     {arc&&where.scope&&<EffortScopeDetail key={where.scope} arc={arc} id={where.scope} close={close}/>}
     {arc&&where.request&&<RequestDetail key={where.request} arc={arc} id={where.request} close={close}/>}
     {arc&&where.event&&<EventDetail key={where.event} arc={arc} id={where.event} close={close}/>}
-    {arc&&where.unit&&<UnitDetail arc={arc} id={where.unit} close={close} stale={stale}/>}{arc&&where.inv&&<InvocationDetail key={where.inv} arc={arc} id={where.inv} full={where.full} close={close} stale={stale}/>}
+    {arc&&where.unit&&<UnitDetail arc={arc} id={where.unit} close={close}/>}{arc&&where.inv&&<InvocationDetail key={where.inv} arc={arc} id={where.inv} full={where.full} close={close}/>}
   </div></Clock.Provider>;
 }

@@ -7,12 +7,12 @@ import { InvocationFacts } from './invocation-facts.tsx';
 import { useSelectedDetail } from './view-state.ts';
 import type { InvocationSummary } from '../../src/console/detail-protocol.ts';
 type Page = { text: string; after: number; next: number; size: number; identity: string };
-export function InvocationDetail(props: { arc:string; id:string; full:boolean; close:()=>void; stale:boolean }) {
+export function InvocationDetail(props: { arc:string; id:string; full:boolean; close:()=>void }) {
   const selected=useSelectedDetail(props.arc,`invocations/${encodeURIComponent(props.id)}`),activity=selected.data?.invocation as InvocationSummary|undefined;
   if(!activity)return <Drawer title="Invocation details" close={props.close}><p role={selected.error?'alert':'status'}>{selected.error||'Reading invocation…'}</p></Drawer>;
   return activity.kind==='agentic'?<AgentDetail {...props} activity={activity} detail={selected.data}/>:<CommandDetail {...props} activity={activity} detail={selected.data}/>;
 }
-function CommandDetail({ arc, id, full, close,activity,detail }: { arc:string; id:string; full:boolean; close:()=>void; stale:boolean;activity:InvocationSummary;detail:import('../../src/console/detail-protocol.ts').InvocationView }) {
+function CommandDetail({ arc, id, full, close,activity,detail }: { arc:string; id:string; full:boolean; close:()=>void;activity:InvocationSummary;detail:import('../../src/console/detail-protocol.ts').InvocationView }) {
   const [source, setSource] = useState('stdout'), [page, setPage] = useState<Page | null>(null), [error, setError] = useState(''), [result, setResult] = useState<string[] | null>(null);
   const [query,setQuery]=useState('');
   const base = `/arcs/${arc}/invocations/${id}`, text = page ? plainText(page.text) : '';

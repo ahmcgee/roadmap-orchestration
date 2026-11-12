@@ -1381,9 +1381,18 @@ second, after each lag check of an arc that has published, every stream of that 
 `event: pulse` with `{arc, asOfAgeMs, behind}` and no `id:` (it never moves Last-Event-ID): `asOfAgeMs` is the
 server's `now - checkedAt` of the latest published observation, a whole non-negative number of milliseconds, and
 `behind` is the lag monitor's verdict (journal past the published offset, or nothing published or checked for three
-seconds). It is sent from the main thread, which runs no capture or view build, so it arrives while a capture is slow;
-after five seconds without verification the browser shows “Stale”, retaining timestamped
-content and freezing displayed timers. A browser on another package protocol requires reload.
+seconds). It is sent from the main thread, which runs no capture or view build, so it arrives while a capture is slow.
+The browser measures how old its data is from the pulse (received time minus `asOfAgeMs`, its own clock only; before
+a connection's first pulse, the notice's checkedAt). The pill is the connection only: Connecting, Connected,
+Reconnecting (amber; the stream closed, or silent for five seconds), Offline. Behind is not an error: past five seconds
+old (cleared under two) a neutral line bottom-left reads “Catching up. Showing the arc as of 8s ago.”; while
+reconnecting with data shown it reads “Reconnecting. Showing the arc as of 40s ago.” in amber. Meanwhile every elapsed
+time and “N ago” is measured to that as-of instant. The browser polls `/metadata` only when the stream is silent for
+five seconds and reopens a stream silent for ten. Each view read carries the epoch and the high-water mark of what that
+view already shows (none before it shows anything), so a read never waits for a capture: a view may be a capture behind
+the notices, is shown, and loads again when its version differs. A failed refresh keeps the view's data and retries
+after 1, 2, 4, 8, then every 15 s while the view is open; it alerts only when the view has nothing to show or after
+three failures in a row. A browser on another package protocol requires reload.
 
 Static paths come only from an explicit content-hashed manifest. HTML revalidates; immutable assets include
 prebuilt React, shadcn/ui components, Tailwind styles, Cytoscape/dagre and Latin Barlow/JetBrains fonts.

@@ -9,7 +9,7 @@ import { useSelectedDetail, Views } from './view-state.ts';
 import type { UnitView, MilestoneView, DetailPage } from '../../src/console/detail-protocol.ts';
 import { costWords, holdClassWords, plainWords, stageStatusWords, stageWords, stateWords, signalWords, timedWords, waitCountWords } from '../../src/console/vocabulary.ts';
 function More({page,load}:{page:DetailPage<unknown>;load:()=>void}){return page.next?<Button onClick={load}>Show more ({page.rows.length} of {page.total})</Button>:null;}
-export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void;stale?:boolean}) {
+export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void}) {
   const cache=useContext(Views);
   const now=useContext(Clock),[trail,setTrail]=useState<string[]>([]),[housekeeping,setHousekeeping]=useState(false);
   const path=id.startsWith('milestone:')?`milestones/${encodeURIComponent(id.slice(10))}`:`units/${encodeURIComponent(id)}`;
