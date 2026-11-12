@@ -1281,9 +1281,11 @@ accumulators extended with the appended events and changed rows); tab views buil
 are rebuilt for each new capture the last five minutes asked for once it has stood half a second; the Activity index
 builds in 20 ms slices between other reads. API discovery is answered by the HTTP thread from the serve worker's reported
 selection, once the selected arc is observed. The HTTP thread logs, once each, when an arc falls behind (its journal is
-past what was published, or nothing was checked for three seconds, for five seconds): `console is behind arc <arc>:
-published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; last capture <ms> ms (<events> events,
-<reads> record reads, <git> git)`, and when it catches up: `console caught up with arc <arc> after <t>s behind`; a cold
+past what was published, or nothing was checked for three seconds, for five seconds): `console is behind arc <arc> by
+<d>s: published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; last capture <ms> ms (<events> events,
+<reads> record reads, <git> git)`, and when it catches up: `console caught up with arc <arc> after <t>s behind (<d>s at
+most)`. `<t>` is how long the episode lasted; `<d>` is its depth, how long the oldest unpublished event had waited: the
+age of the first of the last 120 once-a-second checks of the journal's size to find it past what was published; a cold
 read says how far it got every ten seconds (`console is reading arc <arc>: <phase> <percent>%`). Workers run with heap
 limits that are runaway guards a healthy arc never reaches, not budgets: three times a measured need plus 512 MB (a
 collector needs 384 MB plus three times its journal; the serve worker 256 MB plus three times the maintained journals, and

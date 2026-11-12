@@ -62,7 +62,10 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; time
 type Collector = { worker: Worker; run: Run; limitMb: number; reports: NodeJS.Timeout | null; phase: CollectorPhase; phaseAt: number; done: number; of: number; captures: CaptureWork[]; folded: number;
   /** What the serve worker last published (seq, journal byte) and when it last said anything of the arc; the journal's size. */
   seq: number; offset: number; size: number; noticeAt: number; observed: boolean;
-  behind: { since: number; said: boolean } | null; readingSaidAt: number };
+  /** The journal's size at each of the last LAG.samples checks, oldest first: how deep a lag is (`depthMs`). */
+  sizes: { at: number; size: number }[];
+  /** An episode behind: since when, whether the log said so, the deepest it got. */
+  behind: { since: number; said: boolean; deepestMs: number } | null; readingSaidAt: number };
 /** What the console did for one arc: each capture's work since its collector started (the last 200), the events folded in all, where it stands, and its collector's last heap report. */
 export type ArcStats = Readonly<{ captures: readonly CaptureWork[]; folded: number; phase: CollectorPhase; seq: number; offset: number; heap: HeapReport<CollectorSizes> | null }>;
 
@@ -228,7 +231,7 @@ export async function serveConsole(args: ConsoleServerArgs) {
     const limitMb = limits.collector(run);
     const worker = new Worker(new URL('./collector.ts', import.meta.url), { workerData: { run, hostDir: args.hostDir, common: args.common, port: port1 }, transferList: [port1],
       resourceLimits: { maxOldGenerationSizeMb: limitMb } });
-    const c: Collector = { worker, run, limitMb, reports: null, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, behind: null, readingSaidAt: Date.now() };
+    const c: Collector = { worker, run, limitMb, reports: null, phase: 'load', phaseAt: Date.now(), done: 0, of: 0, captures: [], folded: 0, seq: 0, offset: 0, size: 0, noticeAt: Date.now(), observed: false, sizes: [], behind: null, readingSaidAt: Date.now() };
     collectors.set(arc, c);
     serve.postMessage({ kind: 'collector', arc, port: port2 } satisfies ToServe, [port2]);
     const dirs = follows.get(arc); if (dirs) worker.postMessage({ kind: 'follow', dirs } satisfies ToCollector);
@@ -277,14 +280,21 @@ export async function serveConsole(args: ConsoleServerArgs) {
    * seconds behind the log says so once, with what its collector is doing, and once when it catches up. A cold read says how
    * far it got every ten seconds. After each check of an arc that has published, every stream of that arc gets a `pulse`: the
    * latest observation's age in this clock and whether the arc is behind, so the page says how far behind it is from the
-   * server's word. This thread runs no capture or view build, so a pulse arrives even while a capture is slow.
+   * server's word. This thread runs no capture or view build, so a pulse arrives even while a capture is slow. The lines say
+   * how deep the lag is, not only how long the episode lasts: the age of the first of the last 120 checks to find the journal
+   * past what is published now, which is how long the oldest unpublished event has waited, to within a check.
    */
-  const LAG = { checkMs: 1_000, silentMs: 3_000, behindMs: 5_000, readingMs: 10_000 } as const;
+  const LAG = { checkMs: 1_000, silentMs: 3_000, behindMs: 5_000, readingMs: 10_000, samples: 120 } as const;
+  const depthMs = (c: Collector, now: number): number => {
+    const first = c.sizes.find((s) => s.size > c.offset);
+    return first === undefined ? 0 : now - first.at;
+  };
   const lag = setInterval(() => {
     for (const [arc, c] of collectors) void stat(join(c.run.runDir, EVENTS_FILE)).then((st) => {
       if (collectors.get(arc) !== c) return;
       const now = Date.now();
       c.size = st.size;
+      c.sizes.push({ at: now, size: st.size }); if (c.sizes.length > LAG.samples) c.sizes.shift();
       if (!c.observed) {
         if (now - c.readingSaidAt >= LAG.readingMs) {
           c.readingSaidAt = now;
@@ -296,14 +306,16 @@ export async function serveConsole(args: ConsoleServerArgs) {
       const pulse: Pulse = { arc, asOfAgeMs: Math.max(0, Math.round(now - Date.parse(latest.get(arc)!.checkedAt))), behind };
       for (const [res, s] of streams) if (s.arc === arc) send(res, 'pulse', pulse);
       if (!behind) {
-        if (c.behind?.said) log(`console caught up with arc ${arc} after ${Math.round((now - c.behind.since) / 1000)}s behind`);
+        if (c.behind?.said) log(`console caught up with arc ${arc} after ${Math.round((now - c.behind.since) / 1000)}s behind (${Math.round(c.behind.deepestMs / 1000)}s at most)`);
         c.behind = null; return;
       }
-      c.behind ??= { since: now, said: false };
+      const depth = depthMs(c, now);
+      c.behind ??= { since: now, said: false, deepestMs: 0 };
+      c.behind.deepestMs = Math.max(c.behind.deepestMs, depth);
       if (!c.behind.said && now - c.behind.since >= LAG.behindMs) {
         c.behind.said = true;
         const w = c.captures.at(-1);
-        log(`console is behind arc ${arc}: published through seq ${c.seq} (byte ${c.offset} of ${st.size}); collector in ${c.phase} for ${Math.round((now - c.phaseAt) / 1000)}s; last capture ${w ? `${w.captureMs} ms (${w.eventsFolded} events, ${w.recordReads} record reads, ${w.gitSpawns} git)` : 'none yet'}`);
+        log(`console is behind arc ${arc} by ${Math.round(depth / 1000)}s: published through seq ${c.seq} (byte ${c.offset} of ${st.size}); collector in ${c.phase} for ${Math.round((now - c.phaseAt) / 1000)}s; last capture ${w ? `${w.captureMs} ms (${w.eventsFolded} events, ${w.recordReads} record reads, ${w.gitSpawns} git)` : 'none yet'}`);
       }
     }, (e: NodeJS.ErrnoException) => { if (e.code !== 'ENOENT') log(`console lag monitor for arc ${arc}: ${e.message}`); });
   }, LAG.checkMs);
