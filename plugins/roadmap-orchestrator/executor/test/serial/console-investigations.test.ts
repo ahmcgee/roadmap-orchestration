@@ -27,7 +27,7 @@ test('round 3: colleague investigations through real Chromium and recorded execu
  await investigation(1,'running, fresh, then disconnected while retaining data',async()=>{
   assert.match(await text(),/Running/);assert.match(await text(),/day \d+/);assert.match(await b.evaluate<string>('() => document.querySelector(\".connection\").title'),/Last verified/);assert.doesNotMatch(await text(),/\d{4}-\d\d-\d\dT\d\d:/);
   assert.match(await b.evaluate<string>('() => document.querySelector(".connection").title'),/2026/);assert.match(server.url,/http:\/\/127.0.0.1:/);
-  const port=(server.server.address() as AddressInfo).port;await server.close();await wait(/Stale/);assert.match(await text(),/Last updated/);
+  const port=(server.server.address() as AddressInfo).port;await server.close();await wait(/Reconnecting/);assert.match(await text(),/Reconnecting\. Showing the arc as of \d+s ago\./);
   const frozen=await b.evaluate<string>('() => document.querySelector("main").textContent');await new Promise(r=>setTimeout(r,1100));assert.equal(await b.evaluate<string>('() => document.querySelector("main").textContent'),frozen);
   server=await serveConsole({...args,port});await wait(/Connected/);f.stopOwner();await wait(/Stopped/);await f.restoreOwner();await wait(/Running/);
  },0);

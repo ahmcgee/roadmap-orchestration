@@ -8,6 +8,7 @@ import { ConsoleActivity, ACTIVITY_RETENTION } from '../src/console/activity-que
 import { activityDetail } from '../src/console/activity-detail.ts';
 import { buildActivityIndex } from '../src/console/activity-index.ts';
 import { backendHolds } from '../src/console/backend-holds.ts';
+import { terminalFact } from '../src/console/tokens.ts';
 import { activityShape, activityChangesShape, activityDetailShape, contentShape } from '../src/console/view-shapes.ts';
 import { investigationFixture } from './fixtures/console-investigations.ts';
 import { fact, type Event } from '../src/core/events.ts';
@@ -133,7 +134,7 @@ test('D8 backend epochs preserve usage-limit dominance, exact covered probes, co
   // Use an actual schema-valid terminal fact from the completed fixture.
   f.finishLive(); f.complete(); const terminal = capture(f).data.events.findLast(ev => ev.type === 'fact' && ev.fact.kind === 'arc-completed')!;
   events.push({...terminal, seq: events.at(-1)!.seq + 1});
-  const holds = backendHolds(events, e.epoch); assert.equal(holds.length, 6);
+  const holds = backendHolds(events, e.epoch, terminalFact(events)); assert.equal(holds.length, 6);
   assert.equal(holds[0]!.closure!.kind, 'park-updated'); assert.equal(holds[0]!.endedAt, holds[2]!.startedAt);
   assert.equal(holds[2]!.closure!.seq, cleared); assert.equal(holds[2]!.closure!.kind, 'probe');
   assert.equal(holds[4]!.recordedClass, 'capacity'); assert.equal(holds[4]!.effectiveClass, 'usage-limit'); assert.equal(holds[4]!.closure!.seq, resumed);
@@ -146,7 +147,7 @@ test('D8 backend epochs preserve usage-limit dominance, exact covered probes, co
   assert.equal(detail.backendHold.startSeq, dominated, 'a new park detail opens its own epoch, not the prior continued hold');
   assert.equal(detail.backendHold.effectiveClass, 'usage-limit');
   const laterPark = {...events.findLast(ev => ev.type === 'fact' && ev.fact.kind === 'backend-park')!, seq: events.at(-1)!.seq + 1};
-  assert.equal(backendHolds([...events, laterPark], e.epoch).at(-1)!.terminalAt, null, 'a preceding completion cannot clip a subsequent park');
+  assert.equal(backendHolds([...events, laterPark], e.epoch, terminalFact([...events, laterPark])).at(-1)!.terminalAt, null, 'a preceding completion cannot clip a subsequent park');
 });
 
 test('selected event evidence keeps exact review findings, request digest/containment and bounded long-field reconstruction', async t => {

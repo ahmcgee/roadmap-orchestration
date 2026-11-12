@@ -180,9 +180,9 @@ test('a stopped field arc reads honestly in the console', { timeout: 300_000 }, 
     assert.equal(labels.at(-1), 'Connected');
     assert.ok(!labels.slice(0, labels.indexOf('Connected')).includes('Reconnecting'), labels.join(' → '));
     await s.close(); open = false;
-    await until(async () => /Last updated/.test(await text('.stale-notice')), 15_000, 'stale notice');
+    await until(async () => /Reconnecting/.test(await text('.lag-line')), 15_000, 'reconnecting line');
     await new Promise(r => setTimeout(r, 3000));
-    assert.match(await text('.stale-notice'), /^Last updated \d+s ago\. Live counters paused\.$/);
+    assert.match(await text('.lag-line'), /^Reconnecting\. Showing the arc as of \d+s ago\.$/);
     s = await serveConsole({ repo, common, hostDir: absPath(m.hostDir), host: '127.0.0.1', port: 0 }); open = true;
   });
 });

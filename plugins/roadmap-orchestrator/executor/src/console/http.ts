@@ -19,7 +19,7 @@ import { MAINTAIN, type ConsoleRequest, type FromServe, type HeapReport, type Se
 import { staticResponse } from './static.ts';
 import { retainedRuns } from './runs.ts';
 import { BrowserPreparation, PREPARATION } from './preparation.ts';
-import { CONSOLE_UI_SCHEMA, type Metadata } from './view-protocol.ts';
+import { CONSOLE_UI_SCHEMA, type Metadata, type Pulse } from './view-protocol.ts';
 
 const statuses: Record<ConsoleCode, number> = { reset: 409, conflict: 409, unavailable: 503, corruption: 500, protocol: 409, 'not-found': 404, invalid: 400 };
 export const SECURITY_HEADERS = {
@@ -275,7 +275,9 @@ export async function serveConsole(args: ConsoleServerArgs) {
    * The lag monitor: once a second, each maintained arc's journal size against what the serve worker last published. An arc
    * is behind when its journal is past the published offset, or nothing was published or checked for three seconds; after five
    * seconds behind the log says so once, with what its collector is doing, and once when it catches up. A cold read says how
-   * far it got every ten seconds.
+   * far it got every ten seconds. After each check of an arc that has published, every stream of that arc gets a `pulse`: the
+   * latest observation's age in this clock and whether the arc is behind, so the page says how far behind it is from the
+   * server's word. This thread runs no capture or view build, so a pulse arrives even while a capture is slow.
    */
   const LAG = { checkMs: 1_000, silentMs: 3_000, behindMs: 5_000, readingMs: 10_000 } as const;
   const lag = setInterval(() => {
@@ -291,6 +293,8 @@ export async function serveConsole(args: ConsoleServerArgs) {
         return;
       }
       const behind = st.size > c.offset || now - c.noticeAt > LAG.silentMs;
+      const pulse: Pulse = { arc, asOfAgeMs: Math.max(0, Math.round(now - Date.parse(latest.get(arc)!.checkedAt))), behind };
+      for (const [res, s] of streams) if (s.arc === arc) send(res, 'pulse', pulse);
       if (!behind) {
         if (c.behind?.said) log(`console caught up with arc ${arc} after ${Math.round((now - c.behind.since) / 1000)}s behind`);
         c.behind = null; return;

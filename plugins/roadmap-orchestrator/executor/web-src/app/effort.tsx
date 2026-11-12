@@ -3,7 +3,6 @@ import { useContext, useRef, type ReactNode } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
 import { Clock, displayZone, elapsed, formatInstant, link, money, pluralise, route, SignalMark, zoneLabel } from './shared.tsx';
-import { Views } from './view-state.ts';
 import { usePlainQuery, PlainPageStatus, PlainPaging, activateRow, CustomRange, FacetSelect, FilterBar, ignoredFilters, useLatestWindow, WindowSelect } from './plain-query.tsx';
 import { EffortChart, figure, series, waitingHelp, type EffortMetric } from './effort-chart.tsx';
 import type { EffortView, EffortTotals, EffortUnit } from '../../src/console/effort-protocol.ts';
@@ -55,9 +54,7 @@ function rowLabel(u:EffortUnit,group:EffortView['filters']['group']) {
 export function Effort({arc}:{arc:string}) {
   const current=route(),zone=current.query.get('zone')??displayZone(),explicit=current.query.has('window')||current.query.has('from')||current.query.has('to'),latest=useLatestWindow();
   const state=usePlainQuery<EffortView>(arc,'effort',fields,explicit?{zone}:latest?{...latest,zone}:null);
-  const store=useContext(Views),previous=useRef<{generation:number;data:EffortView}|null>(null);
-  if(state.data)previous.current={generation:store?.generation??0,data:state.data};
-  const h=state.data??(previous.current?.generation===(store?.generation??0)?previous.current.data:null);
+  const h=state.data;
   const clock=useContext(Clock),table=useRef<HTMLTableElement>(null),end=h?.bounds.terminalAt?Date.parse(h.bounds.terminalAt):clock;
   let safeZone=zone;try{new Intl.DateTimeFormat('en',{timeZone:safeZone});}catch{safeZone='UTC';}
   const short=(at:string)=>formatInstant(at,safeZone,true);

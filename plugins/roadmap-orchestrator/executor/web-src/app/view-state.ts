@@ -8,7 +8,7 @@ export function useView(path:string|null) {
   const e=path?store?.entry(path):null;
   useEffect(()=>{if(store&&path)void store.load(path);},[store,path,version,store?.generation]);
   useEffect(()=>{if(!store||!path)return;store.active.set(path,(store.active.get(path)??0)+1);return()=>{const n=(store.active.get(path)??1)-1;if(n)store.active.set(path,n);else{store.active.delete(path);store.abort(path);}};},[store,path]);
-  return {data:e?.value?.data??null,envelope:e?.value??null,error:e?.error??'',loading:e?.loading??false,retry:()=>{if(store&&path)void store.load(path,true);}};
+  return {data:e?.value?.data??null,envelope:e?.value??null,error:e?.error??'',failures:e?.failures??0,loading:e?.loading??false,retry:()=>{if(store&&path)void store.load(path,true);}};
 }
 export function useSelectedDetail(_arc:string,path:string|null){return useView(path);}
 export function useRouteState<T>(key:string,initial:T):[T,(next:T)=>void] {

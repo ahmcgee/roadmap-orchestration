@@ -10,6 +10,8 @@ import { effortRows, resourceNow, waitingMeasurements, holisticSummaries } from 
 import { ConsoleActivity } from '../src/console/activity-query.ts';
 import { activityPage } from '../src/console/activity-page.ts';
 import { reasonWords } from '../src/console/vocabulary.ts';
+import { terminalFact } from '../src/console/tokens.ts';
+import { commandId } from '../src/core/ids.ts';
 const detail=(e:ReturnType<typeof read>,id:string)=>unitView(e,id) as UnitView;
 import { investigationFixture } from './fixtures/console-investigations.ts';
 const read=(f:Awaited<ReturnType<typeof investigationFixture>>)=>new Observations(f.hostDir,'presentation-test','reader').read({runDir:f.runDir,arc:f.arc});
@@ -46,6 +48,24 @@ test('retained reports in the presentation obey the recorded digest and evidence
 test('completed header and schedule keep the recorded run end after hours of observer checks',async t=>{
  const f=await investigationFixture();t.after(()=>f.close());f.finishLive();f.complete();const e=read(f),later={...e,checkedAt:new Date(Date.parse(e.checkedAt)+7*3600_000).toISOString()},shell=shellView(e),bounds=arcBounds(e);
  assert.equal(shell.lifecycle.state,'complete');assert.ok(shell.lifecycle.endedAt);assert.equal(arcBounds(later).to,bounds.to);assert.equal(Date.parse(shellView(later).lifecycle.endedAt!)-Date.parse(shellView(later).lifecycle.startedAt!),Date.parse(shell.lifecycle.endedAt!)-Date.parse(shell.lifecycle.startedAt!));
+});
+// dev.73 (field, 2026-11-12): an arc stopped and started again read "Stopped" for good, and its relative Activity windows
+// ended at the stop, because the last stop-completed stayed the arc's end whatever followed it.
+test('a stop ends the arc\'s record only until an executor starts again: header, bounds and relative Activity windows follow',async t=>{
+ const f=await investigationFixture();t.after(()=>f.close());const live=read(f);
+ assert.equal(shellView(live).lifecycle.state,'running');assert.equal(arcBounds(live).to,null);assert.equal(terminalFact(live.data.events),null);
+ const stop=commandId('cmd-0000000000000950');f.journal.fact({kind:'stop-requested',command:stop,mode:'immediate',deadline:null});f.journal.fact({kind:'stop-completed',command:stop});
+ const stopped=read(f),ended=terminalFact(stopped.data.events)!;
+ assert.equal(ended.fact.kind,'stop-completed');assert.equal(shellView(stopped).lifecycle.state,'no-owner');assert.equal(shellView(stopped).lifecycle.endedAt,ended.at);assert.equal(arcBounds(stopped).to,ended.at);
+ assert.equal(new ConsoleActivity().page(stopped,{window:'24h'}).filters.to,ended.at);
+ f.journal.fact({kind:'executor-started',pressure:'unavailable',generation:2});
+ const p=f.begin('u7','build');f.journal.fact({kind:'stage-outcome',unit:p.unit,stage:'build',attempt:p.attempt,outcome:'success',class:'advance',chargeable:false});
+ const again=read(f),shell=shellView(again);
+ assert.equal(terminalFact(again.data.events),null);
+ assert.equal(shell.lifecycle.state,again.data.display.status.run.state);assert.notEqual(shell.lifecycle.state,'complete');assert.equal(shell.lifecycle.endedAt,null);assert.equal(arcBounds(again).to,null);
+ const page=new ConsoleActivity().page(again,{window:'24h',stage:'build'});
+ assert.equal(page.filters.to,again.checkedAt,'the window ends now, not at the earlier stop');
+ assert.ok(Date.parse(page.filters.to!)>Date.parse(ended.at)||page.filters.to===again.checkedAt);
 });
 test('activity GET pages a long journal without overlap, in reverse recorded order',async t=>{
  const {serveConsole}=await import('../src/console/http.ts');const {gitCommonDir}=await import('../src/git/git.ts');const {absPath}=await import('../src/core/values.ts');const {CONSOLE_PROTOCOL}=await import('../src/observation/protocol.ts');

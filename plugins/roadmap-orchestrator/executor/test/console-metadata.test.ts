@@ -10,7 +10,7 @@ import { metadataShape } from '../src/console/view-shapes.ts';
 import { Observations } from './helpers/observations.ts';
 import { CONSOLE_PROTOCOL, type Envelope } from '../src/observation/protocol.ts';
 import { serveConsole } from '../src/console/http.ts';
-import type { Metadata } from '../src/console/view-protocol.ts';
+import { CONSOLE_UI_SCHEMA, type Metadata } from '../src/console/view-protocol.ts';
 import { preparedRead } from '../web-src/app/prepared-read.ts';
 
 function firstNotice(reader: ReadableStreamDefaultReader<Uint8Array>) {
@@ -50,7 +50,7 @@ test('SSE registers an atomic metadata watermark with no snapshot/model read and
   assert.match(body,/event: revision/); assert.ok(Buffer.byteLength(body)<4096);
   assert.ok(metadataShape(value), 'a stream notice is exactly the metadata the browser validates');
   assert.equal(value.protocol,CONSOLE_PROTOCOL); assert.equal(value.instance,s.instance); assert.equal(value.repoId,s.repoId);
-  assert.equal(value.arc,f.arc); assert.equal(value.selected,f.arc); assert.equal(value.uiSchema,1); assert.ok(value.highWater>0);
+  assert.equal(value.arc,f.arc); assert.equal(value.selected,f.arc); assert.equal(value.uiSchema,CONSOLE_UI_SCHEMA); assert.ok(value.highWater>0);
   assert.equal('data' in value,false); assert.equal('events' in value,false);
   assert.deepEqual(Object.keys(value.viewVersions).sort(),['activity','attention','effort','graph','holistic','resources','shell','timeline']);
   assert.equal(messages.some(m => m.kind==='read' && m.path[2]==='snapshot'),false);
@@ -82,4 +82,21 @@ test('view versions of a model extended across captures equal those built cold a
   assert.equal(third.data.capture.materializations, 3, 'three captures extended one model');
   for (const e of [second, third]) assert.deepEqual(versions(e), versions(cold(e)), `at ${e.highWater}`);
   assert.notDeepEqual(versions(third), versions(first), 'the versions moved with what changed');
+});
+
+test('T12: an appended event moves the notice\'s lastEventAt and leaves the shell\'s version alone', async t => {
+  const { investigationFixture } = await import('./fixtures/console-investigations.ts');
+  const { unitId } = await import('../src/core/ids.ts');
+  const f = await investigationFixture(); t.after(() => f.close());
+  const arc = new Observations(f.hostDir, 'last-event', 'reader').arc(f), metadata = new ConsoleMetadata(), views = new ConsoleViews();
+  const first = arc.read(), before = metadata.read(first, views, f.arc);
+  assert.equal(before.lastEventAt, first.data.events.at(-1)!.at);
+  await new Promise((r) => setTimeout(r, 5));
+  f.journal.fact({ kind: 'stage-admitted', unit: unitId('u7'), stage: 'build', waited: { totalMs: 1, byReasonMs: { 'cpu-tokens': 1 } } });
+  const second = arc.read(), after = metadata.read(second, views, f.arc);
+  assert.ok(second.highWater > first.highWater);
+  assert.ok(metadataShape(after));
+  assert.equal(after.lastEventAt, second.data.events.at(-1)!.at); assert.notEqual(after.lastEventAt, before.lastEventAt);
+  assert.equal(after.viewVersions.shell, before.viewVersions.shell, 'the shell does not change with every event');
+  assert.equal(views.shell(second).availableRange.to, null, 'a running arc has no recorded end');
 });

@@ -41,6 +41,6 @@ export class ConsoleMetadata {
       while (this.#entries.size > 8) this.#entries.delete(this.#entries.keys().next().value!);
     }
     const {data: _data, ...metadata} = e;
-    return {...metadata, uiSchema: CONSOLE_UI_SCHEMA, selected, viewVersions: entry.versions};
+    return {...metadata, uiSchema: CONSOLE_UI_SCHEMA, selected, lastEventAt: tokensFor(e.data).lastAt, viewVersions: entry.versions};
   }
 }

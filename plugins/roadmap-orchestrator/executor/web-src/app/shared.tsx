@@ -62,6 +62,8 @@ export function zoneLabel(zone: string) { return new Intl.DateTimeFormat('en-GB'
 /** A transport failure is never a statement about the arc: name it as such. */
 export function loadError(message: string) { return /^(Failed to fetch|NetworkError|Load failed)/.test(message) ? "Couldn't load this view." : message; }
 export function relativeTime(at: string, now: number) { const n = Math.max(0, Math.floor((now - Date.parse(at)) / 1000)); return n < 2 ? 'just now' : n < 60 ? `${n}s ago` : n < 3600 ? `${Math.floor(n / 60)}m ago` : n < 86400 ? `${Math.floor(n / 3600)}h ${Math.floor(n % 3600 / 60)}m ago` : `${Math.floor(n / 86400)}d ${Math.floor(n % 86400 / 3600)}h ago`; }
+/** An age in whole seconds for the lag line: `8s`, from a minute `1m 20s`. Never "just now": the line names an instant. */
+export function ageWords(ms: number) { const n = Math.max(0, Math.floor(ms / 1000)); return n < 60 ? `${n}s` : `${Math.floor(n / 60)}m ${n % 60}s`; }
 export function Time({ at, prefix = '' }: { at: string | null; prefix?: string }) { const now = useContext(Clock); return at ? <time dateTime={at} title={formatInstant(at, displayZone())}>{prefix}{relativeTime(at, now)}</time> : <span>Time unrecorded</span>; }
 export const glyph: Record<Signal, string> = { passed: '✓', active: '◐', held: 'Ⅱ', failed: '×', pending: '○', withdrawn: '–' };
 /** A status mark. `finished` is a waiting unit whose last stage finished: a ring with a check, distinct from both. */

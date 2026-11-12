@@ -1326,7 +1326,7 @@ the envelope with `data` validated by `src/console/view-shapes.ts` (malformed da
 |---|---|
 | `/arcs` | Console protocol, UI schema and the selected arc |
 | `/arcs/:arc/status?summary=0\|1` | Envelope containing the unchanged canonical CLI status object, or its summary |
-| `/arcs/:arc/shell`, `/graph`, `/metadata` | Arc shell (header, available range), the unit/milestone graph, and `viewVersions`; only `epoch`, `revision`, `minHighWater` accepted |
+| `/arcs/:arc/shell`, `/graph`, `/metadata` | Arc shell (header; `availableRange` is the arc's recorded start and end, null while it runs), the unit/milestone graph, and the metadata notice (`viewVersions`, and `lastEventAt`, the last event's time); only `epoch`, `revision`, `minHighWater` accepted |
 | `/arcs/:arc/activity` | Activity page: `window=arc\|24h\|7d` or `from`/`to` (RFC3339), `zone`, keyset `afterSeq`/`beforeSeq`/`cursor`, `order=asc\|desc`, `limit`, `housekeeping`, `q`, filters unit, milestone, stage, kind, role, backend, model, outcome; `facets` |
 | `/arcs/:arc/activity/changes` | Count of newer matching entries since an anchor |
 | `/arcs/:arc/activity/:id` | One activity entry's detail; `section=content` pages its full text |
@@ -1345,7 +1345,7 @@ the envelope with `data` validated by `src/console/view-shapes.ts` (malformed da
 | `/arcs/:arc/invocations/:id/history?before=BYTE:BLOCK&identity=…` | Latest 50 structured events, or preceding page; retained transcript identity and complete-line byte cursor |
 | `/arcs/:arc/invocations/:id/history-field?ref=BYTE:BLOCK&field=text\|input\|output\|title&after=N&identity=…` | At most 4,096 characters from one decoded field; explicit next cursor and total length |
 | `/arcs/:arc/invocations/:id/prompt?after=N` | Retained, hash-verified seat input through the canonical LogReader, at most 4 KiB of source bytes |
-| `/arcs/:arc/events?invocation=ID` | Revision/heartbeat/reset/error stream; optional history subscription sends small `history` invalidations and `history-error` |
+| `/arcs/:arc/events?invocation=ID` | Revision/heartbeat/reset/pulse/error stream; optional history subscription sends small `history` invalidations and `history-error` |
 
 `/arcs/:arc/snapshot` is not found. Windowed views default to `window=24h` (Activity to the whole arc) and
 refuse `window` with `from`/`to`. Unknown query parameters, values outside closed choices and filter values
@@ -1360,6 +1360,11 @@ end equals the start.
 Typed views, `/arcs` with `Prefer: respond-async`, and unit/invocation details with that header use browser
 preparation: a read not ready within 250 ms answers 202 with `{state:'preparing',pending,retryAfterMs}` and
 `retry-after: 1`; polling with `pending=<token>` holds up to a second for the result; `cancel=1` cancels.
+A settled read is delivered as the serve worker admitted it, whatever its age: browser reads are never refused or
+re-run for age, so a 202 means only that the read is still running. Only the strict CLI read keeps a freshness
+condition. An Activity read is answered from the newest capture of the arc whose Activity index is built (same epoch,
+admitted by the read's watermark) while the current capture's index is built; only a read no built index can answer
+waits for the build.
 Reads live at most 30 s, with at most 32 preparing reads and 128 readers (beyond either: unavailable).
 `pending`/`cancel` on other routes are `invalid`. Status and API discovery keep the two-second admission.
 
@@ -1368,12 +1373,27 @@ and `#`, while routes deliberately reject encoded separators. Keys resolve only 
 invocations of the named arc. Log requests can echo `identity` to detect replacement; after beyond the
 current end returns reset. SSE reconnects with Last-Event-ID; missed revisions reset rather than replaying
 unbounded history. Every SSE frame is at most 4 KiB: revision notices carry only
-arc/epoch/revision/checkedAt/highWater, and history notices carry invocation/identity/cursor/state/end/reset
+arc/epoch/revision/checkedAt/highWater, the view versions and `lastEventAt` (the last event's time, which moves with
+every event and so is in no view's version; the header's "Last activity" and the default 24-hour windows read it), and history notices carry invocation/identity/cursor/state/end/reset
 and changed count. Views, event pages and expanded content are fetched through ordinary GETs. A full
 socket waits for drain for up to two seconds; pending notices coalesce by event kind, and a persistently
-blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt;
-after five seconds without verification the browser shows “Stale”, retaining timestamped
-content and freezing displayed timers. A browser on another package protocol requires reload.
+blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt. Once a
+second, after each lag check of an arc that has published, every stream of that arc gets
+`event: pulse` with `{arc, asOfAgeMs, behind}` and no `id:` (it never moves Last-Event-ID): `asOfAgeMs` is the
+server's `now - checkedAt` of the latest published observation, a whole non-negative number of milliseconds, and
+`behind` is the lag monitor's verdict (journal past the published offset, or nothing published or checked for three
+seconds). It is sent from the main thread, which runs no capture or view build, so it arrives while a capture is slow.
+The browser measures how old its data is from the pulse (received time minus `asOfAgeMs`, its own clock only; before
+a connection's first pulse, the notice's checkedAt). The pill is the connection only: Connecting, Connected,
+Reconnecting (amber; the stream closed, or silent for five seconds), Offline. Behind is not an error: past five seconds
+old (cleared under two) a neutral line bottom-left reads “Catching up. Showing the arc as of 8s ago.”; while
+reconnecting with data shown it reads “Reconnecting. Showing the arc as of 40s ago.” in amber. Meanwhile every elapsed
+time and “N ago” is measured to that as-of instant. The browser polls `/metadata` only when the stream is silent for
+five seconds and reopens a stream silent for ten. Each view read carries the epoch and the high-water mark of what that
+view already shows (none before it shows anything), so a read never waits for a capture: a view may be a capture behind
+the notices, is shown, and loads again when its version differs. A failed refresh keeps the view's data and retries
+after 1, 2, 4, 8, then every 15 s while the view is open; it alerts only when the view has nothing to show or after
+three failures in a row. A browser on another package protocol requires reload.
 
 Static paths come only from an explicit content-hashed manifest. HTML revalidates; immutable assets include
 prebuilt React, shadcn/ui components, Tailwind styles, Cytoscape/dagre and Latin Barlow/JetBrains fonts.

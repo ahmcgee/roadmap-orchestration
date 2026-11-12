@@ -344,8 +344,16 @@ function attempt(p: Parked): boolean {
   try {
     const verdict = model === undefined ? { kind: 'park' as const, park: 'cold' as const } : model.admit(admissionOf(m.kind === 'read' ? m.params : m.kind === 'subscribe' ? m.params ?? {} : {}), m.arrivedAt, strict);
     if (verdict.kind === 'ready') {
-      // An Activity read waits for its capture's index, built in steps between other reads rather than on their way.
-      if (m.kind === 'read' && m.path[2] === 'activity' && !activity.has(verdict.envelope)) { buildIndex(arc, verdict.envelope); p.park = 'view'; return false; }
+      // An Activity read is answered from the newest capture whose index is built, while the index of the current one is built
+      // in steps between other reads; only a read no built index can answer waits for it.
+      if (m.kind === 'read' && m.path[2] === 'activity' && !activity.has(verdict.envelope)) {
+        buildIndex(arc, verdict.envelope);
+        const earlier = lastIndexed.get(arc);
+        if (earlier !== undefined && earlier.epoch === verdict.envelope.epoch && activity.has(earlier) && admits(earlier, admissionOf(m.params))) { answerFrom(m, earlier); return true; }
+        p.park = 'view'; return false;
+      }
+      // An index reused by a capture that changed nothing Activity shows is that capture's index too.
+      if (m.kind === 'read' && m.path[2] === 'activity') lastIndexed.set(arc, verdict.envelope);
       answerFrom(m, verdict.envelope); return true;
     }
     if (verdict.park !== p.park) {
@@ -360,11 +368,13 @@ function attempt(p: Parked): boolean {
 }
 /**
  * The Activity index of one capture per arc, built a slice of at most twenty milliseconds per turn of the event loop, so a
- * shell or status read waits at most a slice behind it. A read parked on an older capture's index is answered from that capture
- * when its admission allows; the next build starts for the newest capture someone waits on.
+ * shell or status read waits at most a slice behind it. `lastIndexed`: the capture of each arc whose index was built last, which
+ * answers a read while the current capture's index is built. A read parked on a build is answered from that capture when its
+ * admission allows; the next build starts for the newest capture someone waits on.
  */
 const indexJobs = new Map<string, Envelope>();
-const SLICE_MS = 20, STALE_VIEW_MS = 5_000;
+const lastIndexed = new Map<string, Envelope>();
+const SLICE_MS = 20;
 const admits = (e: Envelope, a: Admission): boolean => (a.epoch === undefined || a.epoch === e.epoch) && (a.revision ?? 0) <= e.revision && (a.minHighWater ?? 0) <= e.highWater && a.fence === undefined;
 function buildIndex(arc: string, e: Envelope): void {
   if (indexJobs.has(arc)) return;
@@ -383,15 +393,14 @@ function buildIndex(arc: string, e: Envelope): void {
     }
     if (!step.done) { setImmediate(slice); return; }
     indexJobs.delete(arc);
-    // A browser refuses a view older than the notices it has seen, so a read is answered from the newest capture whose index
-    // is built: this one while the arc has not moved past it, or once the read has waited five seconds; otherwise the next
-    // build (for the newest capture) is started by `revisit`.
+    lastIndexed.set(arc, e);
+    // A read is answered from the newest capture whose index is built; one this capture cannot answer either waits for the
+    // next build (for the newest capture), which `revisit` starts.
     const current = models.get(arc)?.envelope() ?? null;
+    if (current !== null && current.epoch === e.epoch && activity.has(current)) lastIndexed.set(arc, current);
     const waiting = parked.filter((p) => p.arc === arc && p.park === 'view');
     for (const p of waiting) {
       if (p.m.kind !== 'read' || !admits(e, admissionOf(p.m.params))) continue;
-      const moved = current !== null && current.highWater > e.highWater && !activity.has(current);
-      if (moved && Date.now() - p.m.arrivedAt < STALE_VIEW_MS) continue;
       parked = parked.filter((q) => q !== p);
       try { answerFrom(p.m, current !== null && activity.has(current) ? current : e); } catch (error) { fail(p.m, error); }
     }
@@ -424,7 +433,7 @@ function reconcile(): void {
     .sort((a, b) => b[1] - a[1]).slice(0, MAINTAIN.extra);
   for (const [arc] of recent) want.add(arc);
   for (const arc of maintained) if (!want.has(arc)) {
-    maintained.delete(arc); models.delete(arc); ports.get(arc)?.close(); ports.delete(arc);
+    maintained.delete(arc); models.delete(arc); lastIndexed.delete(arc); ports.get(arc)?.close(); ports.delete(arc);
     post({ kind: 'release', arc: arc as ArcId });
     for (const p of parked) if (p.arc === arc) fail(p.m, new ConsoleError('unavailable', 'arc is no longer kept current; retry'));
     parked = parked.filter((p) => p.arc !== arc);

@@ -9,6 +9,7 @@ import { ConsoleError, type Envelope } from '../observation/protocol.ts';
 import { projectionIndex, timelineIntervals } from './tab-projections.ts';
 import { readEvidence } from './evidence.ts';
 import { preview } from './views.ts';
+import { arcTerminal } from './tokens.ts';
 import { activityKey, backendHolds } from './backend-holds.ts';
 import { backendWords, holdClassWords, outcomeWords, plainWords, runOutcomeWords, stageWords } from './vocabulary.ts';
 import type { ActivityRow, ActivityKind, Actor, BackendHold } from './activity-protocol.ts';
@@ -57,7 +58,7 @@ export function* activityIndexSteps(e: Envelope): Generator<undefined, ActivityI
       rows.push(route); byStep.set(key, rows);
     }
   }
-  const entries: ActivityEntry[] = [], holds = backendHolds(e.data.events, e.epoch);
+  const entries: ActivityEntry[] = [], holds = backendHolds(e.data.events, e.epoch, arcTerminal(e.data));
   const holdStarts = new Map<number, BackendHold>(), holdClosures = new Map<number, BackendHold>();
   for (const h of holds) {
     if (!holdStarts.has(h.startSeq)) holdStarts.set(h.startSeq, h);

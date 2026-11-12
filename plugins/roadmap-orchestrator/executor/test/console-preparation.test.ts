@@ -55,20 +55,59 @@ test('a read every reader left never reaches the worker, reads do not wait on ea
   assert.deepEqual(await p.read('first', run('first', 'done'), signal(), first.pending, true), {state: 'ready', value: {state: 'cancelled'}}, 'a second cancel of the same lease');
 });
 
-test('preparation re-admits stale envelopes without relabelling clocks, expires and does not cache ordinary reads', async t => {
+test('preparation delivers an envelope as the worker admitted it, never relabels its clock, expires and does not cache ordinary reads', async t => {
+  // dev.71: an envelope older than five seconds was re-admitted, which re-ran the read and answered from the same observation
+  // again; the old age is what the page now reports, not a reason to refuse delivery.
   const p = new BrowserPreparation(); t.after(() => p.close());
   const gate = deferred(); let calls = 0;
-  const fresh = {checkedAt:new Date().toISOString(),data:{admitted:'new'}};
-  const run = () => { calls++; return calls === 1 ? gate.promise : Promise.resolve(fresh); };
-  const a = await p.read('stale',run,signal()); assert.equal(a.state,'preparing'); if (a.state !== 'preparing') return;
-  const stale = {checkedAt:new Date(Date.now()-6000).toISOString(),data:{admitted:'old'}};
-  gate.resolve(stale); await Promise.resolve(); await Promise.resolve();
-  assert.deepEqual(await p.read('stale',run,signal(),a.pending),{state:'ready',value:fresh}); assert.equal(calls,2);
-  assert.notEqual(stale.checkedAt,fresh.checkedAt);
+  const run = () => { calls++; return gate.promise; };
+  const a = await p.read('old',run,signal()); assert.equal(a.state,'preparing'); if (a.state !== 'preparing') return;
+  const old = {checkedAt:new Date(Date.now()-6000).toISOString(),data:{admitted:'old'}};
+  gate.resolve(old); await Promise.resolve(); await Promise.resolve();
+  const delivered = await p.read('old',run,signal(),a.pending);
+  assert.deepEqual(delivered,{state:'ready',value:old}); assert.equal(calls,1);
+  if (delivered.state === 'ready') assert.equal((delivered.value as typeof old).checkedAt,old.checkedAt,'the clock is the worker\'s');
   let reads = 0;
   for (let i=0;i<3;i++) assert.deepEqual(await p.read('ordinary',async () => ++reads,signal()),{state:'ready',value:i+1});
   const now = Date.now(); t.mock.method(Date,'now',() => now + PREPARATION.graceMs + 1);
-  await assert.rejects(p.read('stale',run,signal(),a.pending), /expired or cancelled/);
+  await assert.rejects(p.read('old',run,signal(),a.pending), /expired or cancelled/);
+});
+
+test('T1: a read whose result is a minute old is delivered ready on the first call, its checkedAt unchanged, run once', async t => {
+  const p = new BrowserPreparation(); t.after(() => p.close());
+  const checkedAt = new Date(Date.now()-60_000).toISOString(); let calls = 0;
+  const result = await p.read('minute',async () => { calls++; return {checkedAt,data:{n:1}}; },signal());
+  assert.equal(result.state,'ready'); if (result.state !== 'ready') return;
+  assert.equal((result.value as {checkedAt:string}).checkedAt,checkedAt); assert.equal(calls,1);
+});
+
+test('T2: a poll is held until its read settles, for at most retryAfterMs; a client re-polling at once gets at most four answers in three seconds', {timeout:20_000}, async t => {
+  const p = new BrowserPreparation(); t.after(() => p.close());
+  // As web-src/app/prepared-read.ts: poll again at once with the token while the answer is "preparing".
+  const client = async (key: string, run: () => Promise<unknown>) => {
+    let answers = 0, token: string | undefined; const held: number[] = []; const until = performance.now() + 3000;
+    while (performance.now() < until) {
+      const began = performance.now(), r = await p.read(key,run,signal(),token); answers++;
+      if (token !== undefined) held.push(performance.now() - began);
+      if (r.state === 'ready') break;
+      token = r.pending;
+    }
+    if (token !== undefined) await p.read(key,run,signal(),token,true);
+    return {answers,held};
+  };
+  const old = {checkedAt:new Date(Date.now()-60_000).toISOString(),data:{}};
+  const settled = await client('settled',async () => old);
+  assert.ok(settled.answers <= 4,`${settled.answers} answers for a read whose result is old`);
+  const running = deferred();
+  const unsettled = await client('running',() => running.promise);
+  assert.ok(unsettled.answers <= 4,`${unsettled.answers} answers for a read still running`);
+  assert.ok(unsettled.held.length >= 2 && unsettled.held.every(ms => ms >= PREPARATION.retryAfterMs - 20),`polls held ${unsettled.held.map(Math.round)} ms`);
+  // A read that settles while its poll is held is answered then, not at the end of the hold.
+  const soon = deferred(), first = await p.read('soon',() => soon.promise,signal()); assert.equal(first.state,'preparing'); if (first.state !== 'preparing') return;
+  setTimeout(() => soon.resolve(old), 200);
+  const began = performance.now(), ready = await p.read('soon',() => soon.promise,signal(),first.pending);
+  assert.equal(ready.state,'ready'); assert.ok(performance.now() - began < PREPARATION.retryAfterMs - 200,'answered when the read settled');
+  running.resolve(null);
 });
 
 test('pending work and leases are bounded through abandonment, expiry and worker errors', async t => {

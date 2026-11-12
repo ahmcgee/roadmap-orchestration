@@ -7,6 +7,7 @@ import { ConsoleError, captureKey, type Envelope } from '../observation/protocol
 import { ACTIVITY_KINDS, type ActivityFacets, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
 import { activityRequest, buildActivityIndex, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
 import { versioned } from './views.ts';
+import { arcTerminal } from './tokens.ts';
 
 // Reserve eight MiB for other typed collections: combined summary/index retention stays at 32 MiB.
 export const ACTIVITY_RETENTION = {bytes: 32 * 1024 * 1024 - COLLECTION_RETENTION.bytes, indexes: 8, queries: 32, idleMs: 15 * 60 * 1000} as const;
@@ -176,7 +177,7 @@ export class ConsoleActivity {
     } else {
       const index = this.index(e); checkFilters(index, query);
       // Resolve a relative range once. Continuations retain these exact bounds.
-      const terminal = e.data.events.findLast(ev => ev.type === 'fact' && ['arc-completed', 'stop-completed'].includes(ev.fact.kind));
+      const terminal = arcTerminal(e.data);
       if (query.window === '24h' || query.window === '7d') {
         const end = Date.parse(terminal?.at ?? e.checkedAt), start = end - (query.window === '24h' ? 1 : 7) * 86400_000;
         query.filters.from = new Date(start).toISOString(); query.filters.to = new Date(end).toISOString();
@@ -214,7 +215,7 @@ export class ConsoleActivity {
     const query = queryOf(params), {g} = this.#admit(e, params['anchor'], query, true), index = this.index(e);
     const filters={...g.query.filters};
     if(g.query.window==='24h'||g.query.window==='7d'){
-      const terminal=e.data.events.findLast(ev=>ev.type==='fact'&&['arc-completed','stop-completed'].includes(ev.fact.kind));
+      const terminal=arcTerminal(e.data);
       const end=Date.parse(terminal?.at??e.checkedAt);
       filters.from=new Date(end-(g.query.window==='24h'?1:7)*86400_000).toISOString();filters.to=new Date(end).toISOString();
     }

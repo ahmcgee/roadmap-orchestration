@@ -3,7 +3,7 @@ import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { captureKey, type Envelope } from '../observation/protocol.ts';
 import { unitSignal } from './signals.ts';
 import { identityIndex, stageFinished } from './indexes.ts';
-import { tokensFor } from './tokens.ts';
+import { arcTerminal, tokensFor } from './tokens.ts';
 import { milestoneMembership, milestoneReason, milestoneSignal } from './milestones.ts';
 import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
@@ -12,13 +12,13 @@ export function preview(text: string, detail: DetailRef, limit = 240): Preview {
 }
 export function arcBounds(e: Envelope) {
   const t = tokensFor(e.data);
-  return {from: t.firstAt, to: t.terminal?.at ?? null};
+  return {from: t.firstAt, to: arcTerminal(e.data)?.at ?? null};
 }
 export function versioned<T extends object>(data: T, scope: Scope): T & View {
   return {...data, uiSchema: CONSOLE_UI_SCHEMA, scope, viewVersion: sha256Hex(canonicalJson({data, scope}))};
 }
 export function shellView(e: Envelope): ShellView {
-  const s = e.data.display.status, bounds = arcBounds(e), terminal = tokensFor(e.data).terminal;
+  const s = e.data.display.status, bounds = arcBounds(e), terminal = arcTerminal(e.data);
   const countsByState: Record<string, number> = {};
   for (const u of s.units) countsByState[u.state] = (countsByState[u.state] ?? 0) + 1;
   const blocking = e.data.requests.filter(r => r.blocking).length;
@@ -28,7 +28,7 @@ export function shellView(e: Envelope): ShellView {
     progress: {total: s.units.length, countsByState, merged: countsByState['merged'] ?? 0, withdrawn: (countsByState['cut'] ?? 0) + (countsByState['superseded'] ?? 0)},
     spend: {costUsd: e.data.summary.spend.costUsd, estimatedCalls: e.data.summary.spend.estimatedCalls, unavailableCalls: e.data.summary.spend.unavailableCalls},
     attention: {total: e.data.requests.length, blocking, informational: e.data.requests.length - blocking},
-    availableRange: {from: bounds.from, to: bounds.to ?? e.data.events.at(-1)?.at ?? null},
+    availableRange: {from: bounds.from, to: bounds.to},
   }, {basis: 'current', ...bounds});
 }
 export function graphView(e: Envelope): GraphView {
