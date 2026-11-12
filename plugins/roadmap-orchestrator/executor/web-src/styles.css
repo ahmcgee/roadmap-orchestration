@@ -112,7 +112,9 @@ th,td{padding:8px 12px;border-bottom:1px solid var(--rule);vertical-align:top;}t
 
 @font-face{font-family:'Mona Sans';font-style:normal;font-weight:200 900;font-display:swap;src:url('./fonts/mona-sans-vf-opsz-wght.woff2') format('woff2');font-feature-settings:"ss05" 1,"ss03" 1;}
 @font-face{font-family:'Mona Sans';font-style:italic;font-weight:400;font-display:swap;src:url('./fonts/mona-sans-italic-400.woff2') format('woff2');font-feature-settings:"ss05" 1,"ss03" 1;}
-@font-face{font-family:'Mona Sans SemiCondensed';font-style:normal;font-weight:500;font-display:swap;src:url('./fonts/mona-sans-semicondensed-500.woff2') format('woff2');font-feature-settings:"ss05" 1,"ss03" 1;}
+/* SemiCondensed 500 draws the compact tier's canvas ids. It carries no feature descriptor: with one, Chromium's first canvas
+   draw at a new tier stalls a frame (~50ms), which breaks the tier fade. DOM text gets the sets from the global rule. */
+@font-face{font-family:'Mona Sans SemiCondensed';font-style:normal;font-weight:500;font-display:swap;src:url('./fonts/mona-sans-semicondensed-500.woff2') format('woff2');}
 @font-face{font-family:'Mona Sans SemiCondensed';font-style:normal;font-weight:600;font-display:swap;src:url('./fonts/mona-sans-semicondensed-600.woff2') format('woff2');font-feature-settings:"ss05" 1,"ss03" 1;}
 @font-face{font-family:'Mona Sans Mono';font-style:normal;font-weight:200 900;font-display:swap;src:url('./fonts/mona-sans-mono-vf-wght.woff2') format('woff2');font-feature-settings:"ss05" 1;}
 

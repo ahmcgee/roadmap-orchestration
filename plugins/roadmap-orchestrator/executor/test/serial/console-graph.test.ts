@@ -408,12 +408,15 @@ test('selection is traced in ink: a unit traces its own edges; a milestone keeps
  assert.ok(resting.length>0&&resting.every(e=>!e.dim&&!e.traced&&e.opacity===(e.kind==='feeds'?.5:.85)),'with nothing selected every edge is at its resting weight');
 
  await b.evaluate(`()=>{document.querySelector('.dag-canvas')._cyreg.cy.getElementById('u226').select();return true;}`);await new Promise(r=>setTimeout(r,400));
- const unit=await b.evaluate<{edges:Edge[];line:string;border:number}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,probe=document.createElement('i');probe.style.color='var(--line)';document.body.append(probe);const line=getComputedStyle(probe).color;probe.remove();return {edges:${edges},line,border:parseFloat(cy.getElementById('u226').style('border-width'))*cy.zoom()};}`);
+ const unit=await b.evaluate<{edges:Edge[];line:string}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,probe=document.createElement('i');probe.style.color='var(--line)';document.body.append(probe);const line=getComputedStyle(probe).color;probe.remove();return {edges:${edges},line};}`);
  const own=unit.edges.filter(e=>e.source==='u226'||e.target==='u226'),rest=unit.edges.filter(e=>e.source!=='u226'&&e.target!=='u226');
  assert.ok(own.length>0&&rest.length>0);
  assert.ok(own.every(e=>e.traced&&!e.dim&&e.opacity===1&&e.stroke===unit.line&&e.width==='1.75px'),'the selected unit\'s edges are ink at 1.75px');
  assert.ok(rest.every(e=>e.dim&&!e.traced&&e.opacity===.16),'every other edge dims to .16');
- assert.ok(Math.abs(unit.border-3)<.01,'the selected unit has a 3px ink border');
+ // Read the border where the 16 model-pixel cap does not apply (the whole-arc zoom is far below 3/16).
+ await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.zoom({level:.5,renderedPosition:cy.getElementById('u226').renderedPosition()});return true;}`);await new Promise(r=>setTimeout(r,200));
+ const border=await b.evaluate<number>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return parseFloat(cy.getElementById('u226').style('border-width'))*cy.zoom();}`);
+ assert.ok(Math.abs(border-3)<.01,`the selected unit has a 3px ink border: ${border}`);
 
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;cy.nodes().unselect();cy.emit('tap');return true;}`);await new Promise(r=>setTimeout(r,200));
  await b.evaluate(`()=>{document.querySelectorAll('.station')[2].click();return true;}`);await new Promise(r=>setTimeout(r,600));

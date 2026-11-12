@@ -17,8 +17,8 @@ const measure=()=>measuring??=document.createElement('canvas').getContext('2d')!
 function textWidth(text:string,font:string){const key=`${font}|${text}`;let width=widths.get(key);if(width===undefined){const context=measure();context.font=font;width=context.measureText(text).width;widths.set(key,width);}return width;}
 /** The wait label's line: how many units of a band wait for (or depend on) a milestone. */
 const waitText=(bus:{targets:unknown[];pending:boolean;source:string})=>`${pluralise(bus.targets.length,'unit')} here ${bus.targets.length===1?bus.pending?'waits for':'depends on':bus.pending?'wait for':'depend on'} ${bus.source.slice(10)}`;
-/** Width of `text` per 1px of font size. Measured at a large size: browsers round glyph advances at tiny sizes, so 1px metrics can be 0 or badly off. */
-function emWidth(text:string){return textWidth(text,'600 100px "Mona Sans SemiCondensed"')/100;}
+/** Width of `text` per 1px of font size in the compact tier's label face (SemiCondensed 500, as `node.overview` draws it). Measured at a large size: browsers round glyph advances at tiny sizes, so 1px metrics can be 0 or badly off. */
+function emWidth(text:string){return textWidth(text,'500 100px "Mona Sans SemiCondensed"')/100;}
 function nodeTitle(title:string,fontPx=LABEL_PX){
   const context=measure();context.font=`600 ${fontPx}px "Mona Sans SemiCondensed"`;
   const limit=NODE_WIDTH-24,lines=[''];for(const word of title.split(/\s+/)){const last=lines.length-1,next=lines[last]?`${lines[last]} ${word}`:word;if(context.measureText(next).width>limit&&lines[last]){if(lines.length===3){while(context.measureText(lines[last]+'…').width>limit)lines[last]=lines[last]!.slice(0,-1);lines[last]+='…';break;}lines.push(word);}else lines[last]=next;}return lines.join('\n');
@@ -28,6 +28,7 @@ const states: Signal[] = ['passed','active','held','failed','pending','withdrawn
 const mixHex=(a:string,b:string,t:number)=>'#'+[1,3,5].map(i=>Math.round(parseInt(a.slice(i,i+2),16)*t+parseInt(b.slice(i,i+2),16)*(1-t)).toString(16).padStart(2,'0')).join('');
 /** On-screen border width: live work (running, on hold, failed) and gates carry 2px, resting cards 1px, a selection or search match 3px. At whole-arc zoom done and live work are solid blocks without a border. */
 function borderPx(node:NodeSingular){
+  // Callers cap the model width at 16, as before, so a far zoom never grows a border into its neighbours.
   const state=String(node.data('state')),live=state==='active'||state==='held'||state==='failed';
   if(node.selected()||node.hasClass('match'))return 3;
   if(node.hasClass('extreme')&&!node.data('gate'))return live||state==='passed'?0:1.5;
@@ -158,8 +159,9 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
   useEffect(()=>{const focus=(ev:Event)=>focusStation((ev as CustomEvent<string>).detail);window.addEventListener('roadmap-focus-milestone',focus);return()=>window.removeEventListener('roadmap-focus-milestone',focus);});
   function keepVisible(node:NodeSingular){
     const graph=cy.current!,r=unobscured(),box=node.renderedBoundingBox({includeLabels:false,includeOverlays:false});
-    const drawer=document.querySelector('.drawer')?.getBoundingClientRect(),bounds=canvas.current!.getBoundingClientRect();
-    if(drawer)r.right=Math.min(r.right,drawer.left-bounds.left-24);
+    // The drawer's layout edge, not its painted one: it slides in 16px, and a mid-slide reading would pan the graph by that much.
+    const drawer=document.querySelector<HTMLElement>('.drawer'),bounds=canvas.current!.getBoundingClientRect();
+    if(drawer)r.right=Math.min(r.right,drawer.offsetLeft-bounds.left-24);
     if(r.right<=r.left||r.bottom<=r.top)return;
     const dx=box.x1<r.left?r.left-box.x1:box.x2>r.right?r.right-box.x2:0,dy=box.y1<r.top?r.top-box.y1:box.y2>r.bottom?r.bottom-box.y2:0;
     if(dx||dy){moved.current=true;viewport(graph.zoom(),{x:graph.pan().x+dx,y:graph.pan().y+dy});}
@@ -244,7 +246,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
               const node=element as NodeSingular;
               node.toggleClass('overview',!full).toggleClass('extreme',nextTier==='status');
               const label=nextTier==='status'?(fade?node.style('label'):changed?'':node.style('label')):full?(node.data('gate')||titleFont===LABEL_PX?node.data('label'):titleLabel(node,titleFont)):compactLabel(node);
-              node.style({'label':label,'font-size':full?titleFont:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':'left-inside','text-justification':'left','text-margin-x':full?12:reserve/zoom,'text-margin-y':full?-10:0,'border-width':borderPx(node)/zoom});
+              node.style({'label':label,'font-size':full?titleFont:Math.max(1,minimalPx)/zoom,'text-max-width':node.width()-8,'text-wrap':full?'wrap':'none','text-halign':'left-inside','text-justification':'left','text-margin-x':full?12:reserve/zoom,'text-margin-y':full?-10:0,'border-width':Math.min(16,borderPx(node)/zoom)});
             });
           });
           if(changed){
@@ -259,7 +261,7 @@ export function Graph({ e, open }: { e: GraphData; open: (id: string) => void })
         }
       });
     };
-    borders.current=()=>{const zoom=graph.zoom();graph.batch(()=>graph.nodes('[gate]').forEach(node=>{node.style('border-width',borderPx(node as NodeSingular)/zoom);}));};
+    borders.current=()=>{const zoom=graph.zoom();graph.batch(()=>graph.nodes('[gate]').forEach(node=>{node.style('border-width',Math.min(16,borderPx(node as NodeSingular)/zoom));}));};
     graph.on('select unselect','node',()=>borders.current());
     graph.on('pan zoom',()=>{if(!applying.current)moved.current=true;});
     graph.on('pan zoom',viewport);graph.on('data','node[gate]',()=>{labelZoom=-1;viewport();});viewport();
