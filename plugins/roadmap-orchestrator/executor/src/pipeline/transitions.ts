@@ -166,7 +166,8 @@ export const TABLE: Table = {
     'cleanup-failed': park('residue', 'retryable'),
     'executor-fault': fault,
   },
-  'pre-build': { 'checkout-residue': checkoutResidue, approve: go(build('fresh')), interrupted: hold, 'executor-fault': fault },
+  // dev.70: `diagnosed` (a build's M4 diagnosis attempt) decides nothing: the build that opened it goes on (events.ts `isDiagnosed`).
+  'pre-build': { 'checkout-residue': checkoutResidue, approve: go(build('fresh')), interrupted: hold, 'executor-fault': fault, diagnosed: hold },
   build: {
     'checkout-residue': checkoutResidue,
     'spec-wrong': park('spec-wrong', 'design'),

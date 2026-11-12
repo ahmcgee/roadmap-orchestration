@@ -681,7 +681,10 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     const loaded = loadUnitSpec(ctx, unit);
     pinDispatch(ctx, unit, {rev: loaded.spec.rev, sha256: loaded.sha256});
   }
-  // A diagnosis is an annotation, delivered as build memory and a Claude fallback.
+  // A diagnosis is an annotation, delivered as build memory and a Claude fallback. It runs under a pre-build attempt of its
+  // own, inside this build's step, and closes `diagnosed` (dev.70): it decides nothing, so the round this build was given
+  // (a decided round, or a steer entry's) stays the unit's next stage whatever interrupts it. A crash that leaves
+  // the attempt open is recorded by the unit driver the same way (unit.ts `consumeRecorded`).
   if (diagnosisDue(ctx.journal.view, unit.id) && !diagnosed(ctx.journal.view, unit.id) && unit.review !== 'never') {
     const reviewParent = at(start(ctx, unit.id, 'pre-build'), 'pre-build');
     const entered = await enterJudgment(ctx, reviewParent);
@@ -690,7 +693,7 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     await releaseJudgment(ctx, reviewParent);
     const cancelled = cancelledNow(ctx);
     if (cancelled !== null) { record(ctx, reviewParent, 'interrupted'); return cancelled; }
-    record(ctx, reviewParent, 'approve');
+    record(ctx, reviewParent, 'diagnosed');
   }
   const parent = at(start(ctx, unit.id, 'build'), 'build');
   const entered = await enter(ctx, stageHolder(parent), buildEntry(ctx, unit));
