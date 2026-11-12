@@ -28,7 +28,7 @@ export function shellView(e: Envelope): ShellView {
     progress: {total: s.units.length, countsByState, merged: countsByState['merged'] ?? 0, withdrawn: (countsByState['cut'] ?? 0) + (countsByState['superseded'] ?? 0)},
     spend: {costUsd: e.data.summary.spend.costUsd, estimatedCalls: e.data.summary.spend.estimatedCalls, unavailableCalls: e.data.summary.spend.unavailableCalls},
     attention: {total: e.data.requests.length, blocking, informational: e.data.requests.length - blocking},
-    availableRange: {from: bounds.from, to: bounds.to ?? e.data.events.at(-1)?.at ?? null},
+    availableRange: {from: bounds.from, to: bounds.to},
   }, {basis: 'current', ...bounds});
 }
 export function graphView(e: Envelope): GraphView {

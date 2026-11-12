@@ -1,8 +1,10 @@
 // UI-only DTOs, intentionally separate from canonical ObservationData/status. Browser imports types only.
 // D1–D11 refer to the source-field register in phase2-plan.md. No executor record/schema changes.
-export const CONSOLE_UI_SCHEMA = 1;
+export const CONSOLE_UI_SCHEMA = 2;
 export type ViewVersions = Record<'shell' | 'graph' | 'timeline' | 'activity' | 'holistic' | 'effort' | 'resources' | 'attention', string>;
-export type Metadata = Omit<ViewEnvelope<never>, 'data'> & {uiSchema: number; selected: string | null; viewVersions: ViewVersions};
+/** `lastEventAt`: the time of the journal's last event at this position (null for an empty journal). It moves with every event,
+ * so it rides on the notice rather than in any view's version. */
+export type Metadata = Omit<ViewEnvelope<never>, 'data'> & {uiSchema: number; selected: string | null; lastEventAt: string | null; viewVersions: ViewVersions};
 /** The event stream's once-a-second word on an arc that has published: how old the latest published observation is, in the
  * server's clock (`now - checkedAt`, whole milliseconds), and whether the console is behind the arc's journal. No `id:`. */
 export type Pulse = {arc: string; asOfAgeMs: number; behind: boolean};
@@ -18,6 +20,7 @@ export type ShellView = View & {
   progress: {total: number; countsByState: Record<string, number>; merged: number; withdrawn: number};
   spend: {costUsd: number; estimatedCalls: number; unavailableCalls: number};
   attention: {total: number; blocking: number; informational: number};
+  /** The arc's recorded start and end (null while it runs); the last event's time is the notice's `lastEventAt`. */
   availableRange: {from: string | null; to: string | null};
 };
 export type GraphEdge =

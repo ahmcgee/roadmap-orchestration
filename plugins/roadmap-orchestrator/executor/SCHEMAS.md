@@ -1326,7 +1326,7 @@ the envelope with `data` validated by `src/console/view-shapes.ts` (malformed da
 |---|---|
 | `/arcs` | Console protocol, UI schema and the selected arc |
 | `/arcs/:arc/status?summary=0\|1` | Envelope containing the unchanged canonical CLI status object, or its summary |
-| `/arcs/:arc/shell`, `/graph`, `/metadata` | Arc shell (header, available range), the unit/milestone graph, and `viewVersions`; only `epoch`, `revision`, `minHighWater` accepted |
+| `/arcs/:arc/shell`, `/graph`, `/metadata` | Arc shell (header; `availableRange` is the arc's recorded start and end, null while it runs), the unit/milestone graph, and the metadata notice (`viewVersions`, and `lastEventAt`, the last event's time); only `epoch`, `revision`, `minHighWater` accepted |
 | `/arcs/:arc/activity` | Activity page: `window=arc\|24h\|7d` or `from`/`to` (RFC3339), `zone`, keyset `afterSeq`/`beforeSeq`/`cursor`, `order=asc\|desc`, `limit`, `housekeeping`, `q`, filters unit, milestone, stage, kind, role, backend, model, outcome; `facets` |
 | `/arcs/:arc/activity/changes` | Count of newer matching entries since an anchor |
 | `/arcs/:arc/activity/:id` | One activity entry's detail; `section=content` pages its full text |
@@ -1373,7 +1373,8 @@ and `#`, while routes deliberately reject encoded separators. Keys resolve only 
 invocations of the named arc. Log requests can echo `identity` to detect replacement; after beyond the
 current end returns reset. SSE reconnects with Last-Event-ID; missed revisions reset rather than replaying
 unbounded history. Every SSE frame is at most 4 KiB: revision notices carry only
-arc/epoch/revision/checkedAt/highWater, and history notices carry invocation/identity/cursor/state/end/reset
+arc/epoch/revision/checkedAt/highWater, the view versions and `lastEventAt` (the last event's time, which moves with
+every event and so is in no view's version; the header's "Last activity" and the default 24-hour windows read it), and history notices carry invocation/identity/cursor/state/end/reset
 and changed count. Views, event pages and expanded content are fetched through ordinary GETs. A full
 socket waits for drain for up to two seconds; pending notices coalesce by event kind, and a persistently
 blocked connection closes. Reconnection revalidates the current prefix. Heartbeats carry checkedAt. Once a

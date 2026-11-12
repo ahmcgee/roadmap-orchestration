@@ -26,8 +26,8 @@ export class ViewTokens {
   #folded = 0;
   /** Seq of the last event, and of the last event per category the views depend on (0: none yet). */
   seq = 0; parks = 0; waiting = 0; money = 0; audits = 0;
-  /** The first event's time, and the arc's terminal fact. */
-  firstAt: string | null = null;
+  /** The first and the last event's time, and the arc's terminal fact. */
+  firstAt: string | null = null; lastAt: string | null = null;
   terminal: Extract<Event, {type: 'fact'}> | null = null;
   #rows = new Map<string, {meta: Buffer; resources: Buffer}>();
   readonly #meta = Buffer.alloc(32);
@@ -36,7 +36,7 @@ export class ViewTokens {
   extend(events: readonly Event[]): void {
     for (let i = this.#folded; i < events.length; i++) {
       const ev = events[i]!;
-      this.seq = ev.seq; this.firstAt ??= ev.at;
+      this.seq = ev.seq; this.firstAt ??= ev.at; this.lastAt = ev.at;
       if (ev.type === 'fact') {
         if (PARKS.has(ev.fact.kind)) this.parks = ev.seq;
         if (MONEY.has(ev.fact.kind)) this.money = ev.seq;

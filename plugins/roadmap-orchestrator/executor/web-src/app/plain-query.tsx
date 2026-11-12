@@ -7,11 +7,11 @@ import type { ShellView } from '../../src/console/view-protocol.ts';
 import { Views, useView } from './view-state.ts';
 import type { View, Page } from '../../src/console/view-protocol.ts';
 type LatestWindow={from:string;to:string}|{window:string};
-/** 24 hours ending at the last recorded event, so a quiet arc never opens empty. Null until the shell has loaded. */
+/** 24 hours ending at the last recorded event (the notice's), so a quiet arc never opens empty. Null until the shell has loaded. */
 function latestWindow(store:ViewStore):LatestWindow|null {
   const shell=store.entries.get('shell')?.value?.data as ShellView|undefined;
-  if(!shell)return null;
-  const last=shell.availableRange.to;if(!last)return {window:'24h'};
+  if(!shell||!store.metadata)return null;
+  const last=store.metadata.lastEventAt;if(!last)return {window:'24h'};
   const lastAt=Date.parse(last),from=Math.max(shell.availableRange.from?Date.parse(shell.availableRange.from):-Infinity,lastAt-86400_000);
   return {from:new Date(from).toISOString(),to:new Date(lastAt+1).toISOString()};
 }
