@@ -6,7 +6,7 @@ import { retainedReport } from './reports.ts';
 import { preview } from './views.ts';
 import type { ConsoleActivity } from './activity-query.ts';
 export function activityPage(e:Envelope,activity:ConsoleActivity,params:Record<string,string>){
-  const data=activity.page(e,params),entries=new Map(activity.index(e).entries.map(entry=>[entry.row.id,entry]));
+  const page=activity.pageEntries(e,params),data=page.view,entries=new Map(page.entries.map(entry=>[entry.row.id,entry]));
   const invocations=new Map(e.data.display.invocations.map(i=>[invocationDirName(invocationIdOf(i.id)),i]));
   const rows=data.rows.map(row=>{
     if(row.kind!=='stage-outcome'||row.stage!=='gate'||row.outcome!=='revise')return row;

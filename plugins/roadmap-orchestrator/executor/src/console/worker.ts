@@ -25,7 +25,6 @@ import { ConsoleTemporal } from './temporal-query.ts';
 import { ConsoleActivity } from './activity-query.ts';
 import { activityPage } from './activity-page.ts';
 import { activityDetail } from './activity-detail.ts';
-import { activityIndexSteps } from './activity-index.ts';
 import { CONSOLE_UI_SCHEMA } from './view-protocol.ts';
 import { validateViewEnvelope } from './view-validation.ts';
 import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, holisticFieldShape, effortShape, effortScopeShape, resourcesShape, resourceDetailShape, resourceReasonsShape } from './view-shapes.ts';
@@ -358,8 +357,9 @@ function attempt(p: Parked): boolean {
   } catch (error) { fail(m, error, m.kind === 'read' ? m.path[2] : undefined); return true; }
 }
 /**
- * The Activity index of one capture per arc, built a slice of at most twenty milliseconds per turn of the event loop, so a
- * shell or status read waits at most a slice behind it. `lastIndexed`: the capture of each arc whose index was built last, which
+ * The Activity index of each arc, extended to a capture (built from nothing only for a new epoch or after eviction) a slice
+ * of at most twenty milliseconds per turn of the event loop, so a shell or status read waits at most a slice behind it; the
+ * extended index becomes visible only when it is complete. `lastIndexed`: the capture of each arc whose index was built last, which
  * answers a read while the current capture's index is built. A read parked on a build is answered from that capture when its
  * admission allows; the next build starts for the newest capture someone waits on.
  */
@@ -370,11 +370,11 @@ const admits = (e: Envelope, a: Admission): boolean => (a.epoch === undefined ||
 function buildIndex(arc: string, e: Envelope): void {
   if (indexJobs.has(arc)) return;
   indexJobs.set(arc, e);
-  const steps = activityIndexSteps(e);
+  const steps = activity.steps(e);
   const slice = () => {
     const until = performance.now() + SLICE_MS;
     let step;
-    try { do step = steps.next(); while (!step.done && performance.now() < until); if (step.done) activity.store(e, step.value); }
+    try { do step = steps.next(); while (!step.done && performance.now() < until); }
     catch (error) {
       indexJobs.delete(arc);
       const failed = parked.filter((p) => p.arc === arc && p.park === 'view');
@@ -485,7 +485,7 @@ const TIDY_MB = 128;
 const tidy = heapTidy(TIDY_MB);
 const tidyIdle = (): void => { if (parked.length === 0) tidy(); };
 /** What this worker holds, for its heap reports. */
-const sizes = (): ServeSizes => ({ arcs: [...models].map(([arc, model]) => ({ arc, ...model.sizes() })), tabViews: tabViews.size });
+const sizes = (): ServeSizes => ({ arcs: [...models].map(([arc, model]) => ({ arc, ...model.sizes() })), tabViews: tabViews.size, activity: activity.sizes() });
 /** Whether the used heap was past HEAP_NEAR of its limit at the last tick: a crossing is reported once. */
 let near = false;
 parentPort!.on('message', (m: ToServe) => {

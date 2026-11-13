@@ -1282,8 +1282,13 @@ read is answered from memory: shell, graph, status and summary are kept per capt
 computed once when a capture or rows refresh is published and kept with it (`data.capture.viewVersions`; their inputs are
 accumulators extended with the appended events and changed rows); tab views build on their first request per capture and
 are rebuilt for each new capture the last five minutes asked for once it has stood half a second; a unit's, a milestone's
-and an Activity event's detail build once per published data object, in the same 32-view cache; the Activity index
-builds in 20 ms slices between other reads. A check is not an observation: it moves `checkedAt` and the heartbeat,
+and an Activity event's detail build once per published data object, in the same 32-view cache. The Activity index is
+kept per arc and journal epoch and extended to each capture (the appended events, and the entries whose inputs changed:
+invocation rows, stage steps, finding claims, request digests, unit titles, backend holds and the terminal fact, root
+decisions), in 20 ms slices between other reads; a new epoch, a journal that does not grow the folded one, or eviction builds
+it from nothing, by the same fold. An Activity anchor and its cursors are frozen at their position: pages read from them stay
+as they were, and `activity/changes` counts on the newest index for as long as the epoch lasts and the retention bound
+(24 MiB for indexes and anchors together, 32 anchors, 15 minutes idle) keeps the anchor; only a gone anchor answers `reset`. A check is not an observation: it moves `checkedAt` and the heartbeat,
 supervision and clock that the status route alone applies (live elapsed and token-wait times advanced from the capture's
 clock to the check's), and no revision, so revision notices follow captures and rows refreshes only. API discovery is answered by the HTTP thread from the serve worker's reported
 selection, once the selected arc is observed. The HTTP thread logs, once each, when an arc falls behind (its journal is
