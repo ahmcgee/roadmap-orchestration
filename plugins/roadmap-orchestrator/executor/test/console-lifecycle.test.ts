@@ -82,7 +82,14 @@ test('SSE invalidates side-file changes, verifies heartbeats, reconnects with ex
   };
   const first = await event(); assert.match(first, /event: revision/); assert.match(first, /checkedAt/);
   const id = /^id: (.+)$/m.exec(first)![1]!;
+  // dev.75: a heartbeat is a check, not an observation: the stream verifies it with a heartbeat under the same id.
   writeFileSync(join(f.runDir, 'heartbeat.json'), JSON.stringify({ v: 2, generation: 1, at: new Date().toISOString() }));
+  let beat = '';
+  await until(async () => { beat = await event(); return /event: heartbeat/.test(beat); }, 5000, 'heartbeat');
+  assert.ok(beat.startsWith(`id: ${id}\n`), beat); assert.match(beat, /checkedAt/);
+  // A side file the capture reads (a command receipt) changed: a new revision.
+  const receipt = join(f.runDir, 'commands', 'receipts', 'cmd-0000000000000001.rejected.json');
+  writeFileSync(receipt, JSON.stringify({ ...JSON.parse(readFileSync(receipt, 'utf8')), reason: 'Changed side file' }));
   let changed = '';
   await until(async () => { changed = await event(); return /event: revision/.test(changed) && !changed.startsWith(`id: ${id}\n`); }, 5000, 'side-file revision');
   assert.match(changed, /highWater/);

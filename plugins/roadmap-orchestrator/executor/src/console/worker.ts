@@ -32,7 +32,8 @@ import { contentShape, unitShape, unitSummaryShape, invocationShape, milestoneSh
 import { unitView, milestoneView, invocationView, detailParams } from './details.ts';
 import { retainedRun, retainedRuns } from './runs.ts';
 import { ArcModel, type ParkKind } from './model.ts';
-import { MAINTAIN, type ConsoleRequest, type FromServe, type ServeSizes, type ToServe, heapNear, heapReport } from './messages.ts';
+import { CaptureViews, isTabList, viewKey } from './view-cache.ts';
+import { MAINTAIN, type ConsoleRequest, type FromServe, type ServeSizes, type ToServe, heapNear, heapReport, heapTidy } from './messages.ts';
 
 const args = workerData as { common: AbsPath; hostDir: AbsPath; instance: string; repoId: string };
 const post = (m: FromServe) => parentPort!.postMessage(m);
@@ -101,26 +102,15 @@ function arcOf(path: string[], params: Record<string, string>): string {
   if (section === 'snapshot' || section === 'activity-legacy') throw new ConsoleError('not-found', 'unknown console route');
   return arc;
 }
-/** A tab's list view: built on its first request per capture, then served from this cache (and warmed, `warm`). */
-const TAB_SECTIONS = new Set(['activity', 'timeline', 'effort', 'resources', 'attention', 'holistic']);
-const isTabList = (path: readonly string[], params: Record<string, string>): boolean =>
-  TAB_SECTIONS.has(path[2] ?? '') && (path.length === 3 || path[2] === 'timeline' && path.length === 4 && (path[3] === 'intervals' || path[3] === 'holds'))
-  && params['cursor'] === undefined && params['anchor'] === undefined;
-const tabViews = new Map<string, { capture: string; data: unknown }>();
+/** Tab list views and details, kept per capture (src/console/view-cache.ts); tab lists are warmed (`warm`). */
+const WARM = { standMs: 500, keepMs: 5 * 60_000, views: 32 } as const;
+const tabViews = new CaptureViews(WARM.views);
 /** The tab list views requested lately, which `warm` builds for each new capture before anyone asks. */
 const requestedTabs = new Map<string, { arc: string; path: string[]; params: Record<string, string>; at: number }>();
-const WARM = { standMs: 500, keepMs: 5 * 60_000, views: 32 } as const;
 function route(path: string[], params: Record<string, string>, e: Envelope) {
-  if (!isTabList(path, params)) return build(path, params, e);
-  // Admission-only parameters (the watermark and revision a notice carried) do not change the view.
-  const { minHighWater: _minHighWater, revision: _revision, ...query } = params;
-  const key = `${path.join('/')}?${canonicalJson(query)}`, capture = captureKey(e), hit = tabViews.get(key);
-  requestedTabs.set(key, { arc: path[1]!, path, params, at: Date.now() });
-  if (hit?.capture === capture) { tabViews.delete(key); tabViews.set(key, hit); return { ...e, data: hit.data }; }
-  const value = build(path, params, e) as { data: unknown };
-  tabViews.delete(key); tabViews.set(key, { capture, data: value.data });
-  while (tabViews.size > WARM.views) tabViews.delete(tabViews.keys().next().value!);
-  return value;
+  if (!CaptureViews.cached(path, params)) return build(path, params, e);
+  if (isTabList(path, params)) requestedTabs.set(viewKey(path, params), { arc: path[1]!, path, params, at: Date.now() });
+  return tabViews.read(path, params, e, () => build(path, params, e) as { data: unknown });
 }
 let warmTimer: NodeJS.Timeout | null = null;
 /**
@@ -140,7 +130,7 @@ function warm(): void {
       if (parked.length > 0) { warm(); return; }
       const [key, r] = queue.shift()!, e = models.get(r.arc)?.envelope();
       if (e && r.path[2] === 'activity' && models.get(r.arc)!.failed === null && !activity.has(e)) buildIndex(r.arc, e);
-      else if (e && models.get(r.arc)!.failed === null && tabViews.get(key)?.capture !== captureKey(e)) {
+      else if (e && models.get(r.arc)!.failed === null && !tabViews.has(r.path, r.params, e)) {
         const at = r.at;
         try { route(r.path, r.params, e); } catch { /* the read that asks for it reports what failed */ }
         requestedTabs.set(key, { ...r, at });
@@ -216,7 +206,8 @@ function build(path: string[], params: Record<string, string>, e: Envelope) {
   }
   if (path.length === 3 && section === 'status') {
     if (params['summary'] !== undefined && params['summary'] !== '0' && params['summary'] !== '1') throw new ConsoleError('invalid', 'summary is 0 or 1');
-    return { ...e, data: params['summary'] === '1' ? e.data.summary : e.data.display.status };
+    // The one reader of the last check's clock: live elapsed times, heartbeat and supervision as of it (ArcModel.status).
+    return { ...e, data: models.get(e.arc)!.status(e, params['summary'] === '1') };
   }
   if (path.length === 4 && id && (section === 'units' || section === 'milestones' || section === 'invocations')) {
     detailParams(params, ['content',...(section === 'units' ? ['summary','depends','usedBy','journey','invocations','acceptance','waiting','checks','requests','intent'] : section === 'milestones' ? ['members','intent'] : ['related'])]);
@@ -454,7 +445,7 @@ function collector(arc: string, port: MessagePort): void {
   ports.get(arc)?.close();
   ports.set(arc, port);
   stopped.delete(arc);
-  const model = new ArcModel(run, args.instance, args.repoId, () => revisit(arc));
+  const model = new ArcModel(run, args.instance, args.repoId, (e) => metadata.versions(e, views), () => revisit(arc));
   models.set(arc, model);
   port.on('message', (m: CollectorMessage) => {
     if (models.get(arc) !== model) return;
@@ -464,6 +455,7 @@ function collector(arc: string, port: MessagePort): void {
     if (arc === selected) report();
     revisit(arc);
     if (applied === 'published' && (m.kind === 'observation' || m.kind === 'rows')) warm();
+    tidyIdle();
   });
 }
 /** Tells main which invocation directories of `arc` subscribed histories follow, for its collector to watch. */
@@ -488,6 +480,10 @@ function published(arc: string, model: ArcModel): void {
   }
 }
 
+/** The serve worker's garbage, collected after answering once it is TIDY_MB over what the last collection left and no read is parked. */
+const TIDY_MB = 128;
+const tidy = heapTidy(TIDY_MB);
+const tidyIdle = (): void => { if (parked.length === 0) tidy(); };
 /** What this worker holds, for its heap reports. */
 const sizes = (): ServeSizes => ({ arcs: [...models].map(([arc, model]) => ({ arc, ...model.sizes() })), tabViews: tabViews.size });
 /** Whether the used heap was past HEAP_NEAR of its limit at the last tick: a crossing is reported once. */
@@ -512,7 +508,7 @@ parentPort!.on('message', (m: ToServe) => {
       if (m.arc === selected) report();
       return;
     }
-    default: handle(m);
+    default: handle(m); tidyIdle();
   }
 });
 reconcile();

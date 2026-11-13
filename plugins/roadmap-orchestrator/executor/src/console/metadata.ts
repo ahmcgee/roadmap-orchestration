@@ -6,11 +6,18 @@ import { CONSOLE_UI_SCHEMA, type ViewVersions, type Metadata } from './view-prot
 import type { ConsoleViews } from './views.ts';
 
 const hash = (value: unknown) => sha256Hex(canonicalJson(value));
-/** Semantic dependencies are hashed once per capture, never by building all tabs on a heartbeat, from tokens kept as the
- * journal and rows change (src/console/tokens.ts). Only the versions are retained (eight captures). */
+/** Semantic dependencies are hashed once per published data object, never by building all tabs on a heartbeat, from tokens
+ * kept as the journal and rows change (src/console/tokens.ts). A serve model computes them when it publishes (`versions`) and
+ * keeps them in the capture; a notice reads them from there. Data no model published has them computed here, the versions
+ * alone retained (eight captures). */
 export class ConsoleMetadata {
   #entries = new Map<string, {versions: ViewVersions}>();
   read(e: Envelope, views: ConsoleViews, selected: string | null): Metadata {
+    const {data, ...metadata} = e;
+    return {...metadata, uiSchema: CONSOLE_UI_SCHEMA, selected, lastEventAt: data.events.at(-1)?.at ?? null, viewVersions: data.capture.viewVersions ?? this.versions(e, views)};
+  }
+  /** The view versions of `e`'s data, hashed from its tokens. */
+  versions(e: Envelope, views: ConsoleViews): ViewVersions {
     // A rows-only refresh keeps the capture; a changed row it read again still changes the versions.
     const key = `${captureKey(e)}:${tokensFor(e.data).invocations().digest}`;
     let entry = this.#entries.get(key);
@@ -40,7 +47,6 @@ export class ConsoleMetadata {
       this.#entries.set(key, entry);
       while (this.#entries.size > 8) this.#entries.delete(this.#entries.keys().next().value!);
     }
-    const {data: _data, ...metadata} = e;
-    return {...metadata, uiSchema: CONSOLE_UI_SCHEMA, selected, lastEventAt: tokensFor(e.data).lastAt, viewVersions: entry.versions};
+    return entry.versions;
   }
 }

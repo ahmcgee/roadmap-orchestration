@@ -1,6 +1,7 @@
-// One maintained arc as the serve worker holds it: the latest observation its collector published, with the clock overlay,
-// and the journal's events parsed here from the verified prefix the collector names (parsed events are never copied between
-// threads). Reads are answered from this; nothing here reads a record, stats the run or derives status.
+// One maintained arc as the serve worker holds it: the latest observation its collector published, the last check's clock
+// (applied by the status route alone, `status`), and the journal's events parsed here from the verified prefix the collector
+// names (parsed events are never copied between threads). Reads are answered from this; nothing here reads a record, stats the
+// run or derives status. A new data object is made only by a capture or a rows refresh: a check moves the envelope's clock.
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Run } from '../cli/locate.ts';
@@ -18,12 +19,16 @@ import type { Status } from '../status.ts';
 import type { Entry, Invocation } from '../tui/types.ts';
 import type { Supervision } from '../watch-lease.ts';
 import { ViewTokens, registerTokens, unregisterTokens } from './tokens.ts';
+import type { ViewVersions } from './view-protocol.ts';
 
 /** Why a read waits: no observation yet, its watermark is ahead, or (a strict read) nothing was verified since it arrived. */
 export type ParkKind = 'cold' | 'watermark' | 'strict';
 export type Verdict = Readonly<{ kind: 'ready'; envelope: Envelope }> | Readonly<{ kind: 'park'; park: ParkKind }>;
-/** What an applied message changed: the published envelope (a notice to main), or nothing anyone reads. */
+/** What an applied message changed: the published envelope (a notice to main), its verification clock alone, or nothing anyone reads. */
 export type Applied = 'published' | 'checked' | 'none';
+/** The view versions of a draft envelope, computed once when the model publishes it (the serve worker's ConsoleMetadata). */
+export type VersionsOf = (e: Envelope) => ViewVersions;
+type Overlay = Readonly<{ at: number; heartbeatAt: IsoTime | null; supervision: Supervision }>;
 type Base = Readonly<{ run: Run; clock: number; foldMs: number; seq: number; status: Status; summary: Summary; plan: PlanM1 | null;
   requests: readonly NeedsUserRecord[]; milestoneUnits: Record<string, readonly string[]>; estate: readonly Entry[]; work: CaptureWork }>;
 
@@ -90,7 +95,10 @@ export class ArcModel {
   #events: readonly Event[] = [];
   #parsed: ParsedJournal | null = null;
   #pumping = false;
-  #overlay: Readonly<{ at: number; heartbeatAt: IsoTime | null; supervision: Supervision }> | null = null;
+  /** The last check since the capture: its clock, heartbeat and supervision, which the status route applies (`status`). */
+  #overlay: Overlay | null = null;
+  /** The status route's last answer of each form, for the data and check it was made from. */
+  #statuses = new Map<boolean, Readonly<{ data: ObservationData; overlay: Overlay | null; value: unknown }>>();
   #envelope: Envelope | null = null;
   #exceptions: Entry[] = [];
   /** The always-current views' inputs at the published position, and the data objects they stand for (src/console/tokens.ts). */
@@ -98,10 +106,13 @@ export class ArcModel {
   #registered: ObservationData[] = [];
   /** Called when a journal parse sliced across turns of the event loop finished a slice: nothing to publish, but reads may wait on it. */
   readonly #onSlice: () => void;
-  constructor(run: Run, instance: string, repoId: string, onSlice: () => void = () => {}) { this.run = run; this.#instance = instance; this.#repoId = repoId; this.#onSlice = onSlice; }
+  readonly #versionsOf: VersionsOf;
+  constructor(run: Run, instance: string, repoId: string, versionsOf: VersionsOf, onSlice: () => void = () => {}) {
+    this.run = run; this.#instance = instance; this.#repoId = repoId; this.#versionsOf = versionsOf; this.#onSlice = onSlice;
+  }
   get epoch(): string { return this.#epoch; }
   get revision(): number { return this.#revision; }
-  /** Which capture the published data is: view caches key on this, not on `revision`, which also moves with the clock overlay. */
+  /** Which capture the published data is: view caches key on this, not on `revision`, which also moves with a rows refresh. */
   get capture(): string { return `${this.#epoch}:${this.#materializations}`; }
   get observed(): boolean { return this.#base !== null; }
   /** What this model holds, for the serve worker's heap reports: the journal's events parsed here and the invocation rows. */
@@ -143,21 +154,14 @@ export class ArcModel {
         this.#publish(m.asOf, false);
         return 'published';
       }
+      // A check is not an observation: it moves the verification clock and what the status route applies (`status`), and no
+      // revision. A heartbeat changes no immutable evidence or plan; the page computes elapsed times from start times itself.
       case 'checked': {
         this.checkedAt = Math.max(this.checkedAt, m.at);
         if (this.#base === null) return 'none';
-        const s = this.#base.status;
-        const moving = s.units.some((u) => u.running !== null || u.waitingFor?.tokenWaitMs != null) || this.#sorted.some((i) => i.endedAt === null);
-        const volatile = this.#overlay ?? { heartbeatAt: s.run.heartbeatAt, supervision: s.supervision };
-        if (!moving && volatile.heartbeatAt === m.heartbeatAt && JSON.stringify(volatile.supervision) === JSON.stringify(m.supervision)) {
-          this.#envelope = { ...this.#envelope!, checkedAt: new Date(this.checkedAt).toISOString() };
-          return 'checked';
-        }
-        // A heartbeat changes no immutable evidence or plan. Live elapsed times advance from the capture's clock.
         this.#overlay = { at: m.at, heartbeatAt: m.heartbeatAt, supervision: m.supervision };
-        this.#revision++; this.#observedAt = m.at;
-        this.#envelope = this.#build();
-        return 'published';
+        this.#envelope = { ...this.#envelope!, checkedAt: new Date(this.checkedAt).toISOString() };
+        return 'checked';
       }
     }
   }
@@ -189,6 +193,30 @@ export class ArcModel {
   }
   /** The published envelope; null before the first observation. */
   envelope(): Envelope | null { return this.#envelope; }
+  /**
+   * What the status route returns for `e` (the canonical status, or its summary): the capture's, with the last check since it
+   * applied: live elapsed and token-wait times advanced from the capture's clock to the check's, its heartbeat and supervision.
+   * An envelope this model no longer holds is answered as captured.
+   */
+  status(e: Envelope, summary: boolean): unknown {
+    const b = this.#base, o = this.#overlay;
+    const captured = summary ? e.data.summary : e.data.display.status;
+    if (b === null || o === null || e.data !== this.#envelope?.data) return captured;
+    const kept = this.#statuses.get(summary);
+    if (kept?.data === e.data && kept.overlay === o) return kept.value;
+    let value: unknown;
+    if (summary) value = { ...b.summary, supervision: o.supervision };
+    else {
+      const delta = o.at - b.clock, s = b.status;
+      const units = s.units.map((u) => ({ ...u,
+        running: u.running === null ? null : { ...u.running, elapsed: u.running.elapsed === null ? null : u.running.elapsed + delta },
+        waitingFor: u.waitingFor === null ? null : { ...u.waitingFor, ...(typeof u.waitingFor.tokenWaitMs === 'number' ? { tokenWaitMs: u.waitingFor.tokenWaitMs + delta } : {}) },
+      }));
+      value = { ...s, units, run: { ...s.run, heartbeatAt: o.heartbeatAt }, supervision: o.supervision };
+    }
+    this.#statuses.set(summary, { data: e.data, overlay: o, value });
+    return value;
+  }
   /** The last capture's work counts. */
   work(): CaptureWork | null { return this.#base?.work ?? null; }
 
@@ -222,29 +250,26 @@ export class ArcModel {
   }
   /** The tokens are about to move past the published position: they no longer stand for the data published at it. */
   #retire(): void { for (const data of this.#registered) unregisterTokens(data); this.#registered = []; }
+  /**
+   * The envelope to publish, with its view versions computed once, here (S-b): from a draft whose data the tokens stand for, so
+   * nothing is hashed from nothing. Only the latest data object is registered: an older one gets tokens built from its own events.
+   */
   #build(): Envelope {
-    const e = this.#assemble();
-    // Only the latest data object is registered: an older one (an earlier overlay) gets tokens built from its own events.
     this.#retire();
+    const draft = this.#assemble();
+    registerTokens(draft.data, this.#tokens);
+    const viewVersions = this.#versionsOf(draft);
+    unregisterTokens(draft.data);
+    const e: Envelope = { ...draft, data: { ...draft.data, capture: { ...draft.data.capture, viewVersions } } };
     registerTokens(e.data, this.#tokens); this.#registered.push(e.data);
     return e;
   }
   #assemble(): Envelope {
-    const b = this.#base!, o = this.#overlay;
+    const b = this.#base!;
     const display = { run: b.run, at: new Date(b.clock).toISOString(), seq: b.seq, status: b.status, invocations: this.#sorted, estate: b.estate as Entry[],
       exceptions: this.#exceptions, milestoneUnits: b.milestoneUnits };
-    let data: ObservationData = { requests: b.requests, display, summary: b.summary, events: this.#events, plan: b.plan,
+    const data: ObservationData = { requests: b.requests, display, summary: b.summary, events: this.#events, plan: b.plan,
       capture: { clock: b.clock, foldMs: b.foldMs, materializations: this.#materializations, work: b.work } };
-    if (o !== null) {
-      const delta = o.at - b.clock, s = b.status;
-      const units = s.units.map((u) => ({ ...u,
-        running: u.running === null ? null : { ...u.running, elapsed: u.running.elapsed === null ? null : u.running.elapsed + delta },
-        waitingFor: u.waitingFor === null ? null : { ...u.waitingFor, ...(typeof u.waitingFor.tokenWaitMs === 'number' ? { tokenWaitMs: u.waitingFor.tokenWaitMs + delta } : {}) },
-      }));
-      data = { ...data, display: { ...display, at: new Date(o.at).toISOString(), status: { ...s, units, run: { ...s.run, heartbeatAt: o.heartbeatAt }, supervision: o.supervision },
-        invocations: this.#sorted.map((i) => i.endedAt !== null || i.quietMs === null ? i : { ...i, quietMs: i.quietMs + delta }) },
-        summary: { ...b.summary, supervision: o.supervision } };
-    }
     return { protocol: CONSOLE_PROTOCOL, instance: this.#instance, repoId: this.#repoId, arc: this.run.arc, epoch: this.#epoch,
       highWater: b.seq, revision: this.#revision, observedAt: new Date(this.#observedAt).toISOString(), checkedAt: new Date(this.checkedAt).toISOString(), data };
   }

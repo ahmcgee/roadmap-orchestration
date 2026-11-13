@@ -62,7 +62,8 @@ test('paged and expanded detail, tab sorting and reading position survive append
  await nav('graph/units/u1');await ready('u1');
  assert.equal(await b.evaluate(`()=>[...document.querySelectorAll('.drawer button')].some(e=>e.textContent==='Show more (25 of 60)')`),true,'u1 pages were evicted from the eight-entity return cache');
  // Exercise the server's real bounded generation eviction and its UI recovery.
- for(let n=0;n<70;n++){const response=await consoleGet(`${base}/units/u2`);assert.equal(response.status,200);await response.arrayBuffer();}
+ // dev.75: a detail is built once per published data object, so repeating one read builds nothing; distinct details do.
+ for(let n=0;n<70;n++){const response=await consoleGet(`${base}/units/u${2+n%9}${n<9?'':`?section=${['journey','invocations','acceptance','depends','usedBy','waiting','checks'][Math.floor(n/9)-1]}`}`);assert.equal(response.status,200);await response.arrayBuffer();}
  await b.evaluate(`()=>{[...document.querySelectorAll('.drawer button')].find(e=>e.textContent==='Show more (25 of 60)').click();return true;}`);
  await until(async()=>b.evaluate(`()=>!!document.querySelector('.drawer [role="alert"]')?.textContent.includes('expired')`),5000,'evicted page gives explicit reset');
  await b.evaluate(`()=>{[...document.querySelectorAll('.drawer button')].find(e=>e.textContent==='Reload detail').click();return true;}`);

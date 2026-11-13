@@ -6,6 +6,7 @@ import type { summarize } from '../status/summary.ts';
 import type { Event } from '../core/events.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import type { CaptureWork } from './collect.ts';
+import type { ViewVersions } from '../console/view-protocol.ts';
 
 export const CONSOLE_PROTOCOL = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
 export type ConsoleCode = 'reset' | 'conflict' | 'unavailable' | 'corruption' | 'protocol' | 'not-found' | 'invalid';
@@ -16,10 +17,14 @@ export class ConsoleError extends Error {
 export type ObservationData = Readonly<{
   requests: readonly import('../core/records.ts').NeedsUserRecord[];
   display: Display; summary: ReturnType<typeof summarize>; events: readonly Event[]; plan: PlanM1 | null;
-  /** `materializations` counts the captures published in this console, so it names one: view caches key on it (`captureKey`). */
-  capture: Readonly<{ clock: number; foldMs: number; materializations: number; work: CaptureWork }>;
+  /**
+   * `materializations` counts the captures published in this console, so it names one: view caches key on it (`captureKey`).
+   * `viewVersions`: what the notice of this data says, computed once when a serve model published it (src/console/model.ts);
+   * absent on data no model published (a test's), whose versions are computed from it when asked (src/console/metadata.ts).
+   */
+  capture: Readonly<{ clock: number; foldMs: number; materializations: number; work: CaptureWork; viewVersions?: ViewVersions }>;
 }>;
-/** Which capture an envelope's data is, within its console: what derived views are cached by. A clock overlay keeps it. */
+/** Which capture an envelope's data is, within its console: what derived views are cached by. A check or a rows refresh keeps it. */
 export const captureKey = (e: Envelope): string => `${e.instance}:${e.arc}:${e.epoch}:${e.data.capture.materializations}`;
 export type Envelope<T = ObservationData> = Readonly<{
   protocol: string; instance: string; repoId: string; arc: ArcId; epoch: string;

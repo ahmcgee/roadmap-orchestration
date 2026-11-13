@@ -192,8 +192,9 @@ test('a heartbeat written during a capture is the next step\'s overlay, never a 
   const first = arc.read();
   const e = arc.read();
   assert.equal(captures, 1, 'a heartbeat-only change does not recapture immutable evidence');
-  assert.equal(e.data.display.status.run.heartbeatAt, '2026-06-01T00:00:00.000Z');
-  assert.ok(e.revision > first.revision); assert.equal(e.highWater, first.highWater);
+  // dev.75: the heartbeat is the check's, which the status route applies; a check makes no revision.
+  assert.equal((arc.model.status(e, false) as typeof e.data.display.status).run.heartbeatAt, '2026-06-01T00:00:00.000Z');
+  assert.equal(e.revision, first.revision); assert.equal(e.highWater, first.highWater);
   assert.equal(e.data.capture.materializations, first.data.capture.materializations);
   assert.equal(arc.read().data, e.data);
 });
