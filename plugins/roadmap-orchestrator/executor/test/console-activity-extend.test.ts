@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Observations } from './helpers/observations.ts';
 import { ConsoleActivity, ACTIVITY_RETENTION } from '../src/console/activity-query.ts';
+/** dev.75 kept at most eight indexes, and an anchor went with its index. */
+const OLD_INDEX_BOUND = 8;
 import { buildActivityIndex, type ActivityIndex } from '../src/console/activity-index.ts';
 import { displayOrder } from '../src/observation/invocations.ts';
 import { invocationId, commandId, findingId, jobId, needsUserId, obligationId, sha256, visionClauseId, unitId } from '../src/core/ids.ts';
@@ -169,14 +171,14 @@ test('T14: an anchor issued at capture 1 counts new matching events and pages it
   const frozen = exhaust(a, e1, query), started = exhaust(a, e1, runs);
   const live = started.rows.find((r) => r.coverage.unmeasured === 1 && r.subject.id === 'u3')!, asked: number[] = [];
   assert.ok(live, 'the live run is open at the anchor');
-  for (let capture = 2; capture <= ACTIVITY_RETENTION.indexes + 4; capture++) {
+  for (let capture = 2; capture <= OLD_INDEX_BOUND + 4; capture++) {
     if (capture === 2) f.finishLive();
     const p = f.begin('u9', 'build');
     f.journal.fact({kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false} as Fact);
     // Asked at captures 2 and 3, then not until more captures than the old bound kept indexes for (8) have passed; the
     // newest page is indexed at each capture meanwhile, as the serve worker warms a tab's list.
     const e = read();
-    if (capture > 3 && capture < ACTIVITY_RETENTION.indexes + 4) { a.page(e, query); continue; }
+    if (capture > 3 && capture < OLD_INDEX_BOUND + 4) { a.page(e, query); continue; }
     const changes = a.changes(e, {...query, anchor: frozen.first.page.anchor});
     assert.equal(changes.newMatching, new ConsoleActivity().page(e, query).page.matching - frozen.first.page.matching, `capture ${capture}: new matching events`);
     assert.equal(changes.latestHighWater, e.highWater);
@@ -193,7 +195,7 @@ test('T14: an anchor issued at capture 1 counts new matching events and pages it
     }
     asked.push(capture);
   }
-  assert.deepEqual(asked, [2, 3, ACTIVITY_RETENTION.indexes + 4]);
+  assert.deepEqual(asked, [2, 3, OLD_INDEX_BOUND + 4]);
 });
 
 test('T14: through the console, activity/changes on a moving arc answers 200 with the count at every notice after the anchor', {timeout: 120_000}, async (t) => {
@@ -207,7 +209,7 @@ test('T14: through the console, activity/changes on a moving arc answers 200 wit
   await until(() => notices().length > 0, 30_000, 'first notice');
   const first = await consoleGet(`${base}/activity`); assert.equal(first.status, 200);
   const page = (await first.json() as {data: ActivityView}).data, statuses: number[] = [];
-  for (let capture = 2; capture <= ACTIVITY_RETENTION.indexes + 4; capture++) {
+  for (let capture = 2; capture <= OLD_INDEX_BOUND + 4; capture++) {
     const before = notices().at(-1)!;
     const p = f.begin('u9', 'build');
     f.journal.fact({kind: 'stage-outcome', unit: p.unit, stage: 'build', attempt: p.attempt, outcome: 'success', class: 'advance', chargeable: false} as Fact);
@@ -215,7 +217,7 @@ test('T14: through the console, activity/changes on a moving arc answers 200 wit
     // The capture stands long enough for the serve worker to index it for the Activity tab (its warm-up after 500 ms).
     await new Promise((r) => setTimeout(r, 800));
     // Asked at captures 2 and 3, then not until more captures than the old bound kept indexes for (8) have passed.
-    if (capture > 3 && capture < ACTIVITY_RETENTION.indexes + 4) continue;
+    if (capture > 3 && capture < OLD_INDEX_BOUND + 4) continue;
     const latest = notices().at(-1)!;
     const r = await consoleGet(`${base}/activity/changes?anchor=${encodeURIComponent(page.page.anchor)}&epoch=${latest.epoch}&minHighWater=${latest.highWater}`);
     statuses.push(r.status);

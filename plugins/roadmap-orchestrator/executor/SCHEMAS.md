@@ -1285,10 +1285,12 @@ are rebuilt for each new capture the last five minutes asked for once it has sto
 and an Activity event's detail build once per published data object, in the same 32-view cache. The Activity index is
 kept per arc and journal epoch and extended to each capture (the appended events, and the entries whose inputs changed:
 invocation rows, stage steps, finding claims, request digests, unit titles, backend holds and the terminal fact, root
-decisions), in 20 ms slices between other reads; a new epoch, a journal that does not grow the folded one, or eviction builds
-it from nothing, by the same fold. An Activity anchor and its cursors are frozen at their position: pages read from them stay
-as they were, and `activity/changes` counts on the newest index for as long as the epoch lasts and the retention bound
-(24 MiB for indexes and anchors together, 32 anchors, 15 minutes idle) keeps the anchor; only a gone anchor answers `reset`. A check is not an observation: it moves `checkedAt` and the heartbeat,
+decisions), in 20 ms slices between other reads; a new epoch or a journal that does not grow the folded one builds it from
+nothing, by the same fold. The index is not a cache: it is kept, whatever its size, for as long as the serve worker maintains
+its arc, and is bounded by the serve worker's heap guard, which scales with the journals it parses. An Activity anchor and its
+cursors are frozen at their position: pages read from them stay as they were, and `activity/changes` counts on the newest index
+for as long as the epoch lasts and the anchors' bounds (24 MiB, 32 anchors, 15 minutes idle; the least recently used goes
+first) keep the anchor. A gone anchor answers `reset`: its tab offers "Updates available." with "Show latest". A check is not an observation: it moves `checkedAt` and the heartbeat,
 supervision and clock that the status route alone applies (live elapsed and token-wait times advanced from the capture's
 clock to the check's), and no revision, so revision notices follow captures and rows refreshes only. API discovery is answered by the HTTP thread from the serve worker's reported
 selection, once the selected arc is observed. The HTTP thread logs, once each, when an arc falls behind (its journal is

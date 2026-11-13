@@ -24,6 +24,10 @@
 // - decision-request records: write-once files, published between the raise's intent and its done; read when the entry
 //   is made and again at the done (`raise:`). A record pruned after that keeps the entry as made (an anchored source event
 //   is not erased), and the page and detail report the pruning.
+//
+// Retained size (measured at full size, 133,914 events, 21,424 entries): the index about 0.83 KB an entry, its fold (stage
+// steps, rows' intervals, what each source read) about 0.8 KB more, so about 1.6 KB an entry, 0.4 times the journal's bytes.
+// The index is kept whatever its size (src/console/activity-query.ts); the serve worker's heap guard bounds it.
 import { createHash } from 'node:crypto';
 import type { Event } from '../core/events.ts';
 import { invocationDirName, invocationIdOf, invocationId, parseInvocationId, needsUserId } from '../core/ids.ts';
@@ -44,7 +48,13 @@ import type { ActivityRow, ActivityKind, ActivityFacets, Actor, BackendHold } fr
 import type { Subject, Money, Interval } from './view-protocol.ts';
 
 export type RequestRef = {id: string; sha256: string};
-export type ActivityEntry = {row: ActivityRow; actors: Actor[]; invocations: string[]; request: RequestRef | null; search: string};
+export type ActivityEntry = {row: ActivityRow; actors: Actor[]; invocations: string[]; request: RequestRef | null};
+/** What an entry's summary search reads (lower case): made when a query searches, not kept with the entry. */
+export const searchText = (entry: ActivityEntry): string => {
+  const row = entry.row;
+  return [row.summary.text, row.subject.id, row.subject.title, row.stage, row.stage ? stageWords(row.stage) : null, row.outcome, entry.request?.id,
+    ...entry.actors.flatMap(a => [a.role, a.backend, a.model])].filter(v => v != null).join(' ').toLowerCase();
+};
 /** The index at one position. Immutable: the next position is another value, sharing the entries that did not change. */
 export type ActivityIndex = Readonly<{
   version: string; bytes: number; entries: readonly ActivityEntry[]; holds: readonly BackendHold[];
@@ -77,29 +87,33 @@ export function firstAfter(entries: readonly ActivityEntry[], seq: number): numb
   while (lo < hi) { const mid = (lo + hi) >> 1; if (entries[mid]!.row.seq <= seq) lo = mid + 1; else hi = mid; }
   return lo;
 }
-/** An entry's retained size and digest: an index's size and identity are their sums, kept as entries come and go. */
-type Meta = Readonly<{digest: Buffer; bytes: number}>;
-const META = new WeakMap<ActivityEntry, Meta>();
-/** The retained size of an entry (its serialization). */
-export const entryBytes = (entry: ActivityEntry): number => META.get(entry)!.bytes;
-function meta(entry: ActivityEntry): Meta {
+/**
+ * An entry's digest and retained size: an index's identity and size are their sums, kept as entries come and go. One string
+ * per entry, the digest's 32 bytes as latin1 then the size in decimal: the serialization itself is not kept.
+ */
+const META = new WeakMap<ActivityEntry, string>();
+function meta(entry: ActivityEntry): string {
   let m = META.get(entry);
   if (m === undefined) {
     // Actors and entries are built in a fixed key order, so their JSON is already canonical for identity and hashing.
     const json = JSON.stringify(entry);
-    m = {digest: createHash('sha256').update(json).digest(), bytes: Buffer.byteLength(json)};
+    m = createHash('sha256').update(json).digest('binary') + Buffer.byteLength(json);
     META.set(entry, m);
   }
   return m;
 }
-const xor = (into: Buffer, d: Buffer): void => { for (let i = 0; i < 32; i++) into[i]! ^= d[i]!; };
+/** The retained size of an entry (its serialization). */
+export const entryBytes = (entry: ActivityEntry): number => Number(meta(entry).slice(32));
+const xor = (into: Buffer, m: string): void => { for (let i = 0; i < 32; i++) into[i]! ^= m.charCodeAt(i); };
+/** An entry's empty lists, shared. */
+const NONE: never[] = [];
 /** How many events (or sources) are folded between two yields of a build or an extension. */
 const SLICE = 2_000;
 type FactEvent = Extract<Event, {type: 'fact'}>;
 type FindingOpened = Extract<FactEvent['fact'], {kind: 'finding-opened'}>;
 type Fields = Partial<Omit<ActivityRow, 'result'>> & {result?: string};
 /** What the index keeps of one invocation row: its interval and the groups the entries find it by. */
-type Row = Readonly<{row: Invocation; route: string; titleUnit: string | null; interval: Interval; agent: boolean; groups: readonly string[]; key: string}>;
+type Row = Readonly<{row: Invocation; route: string; titleUnit: string | null; interval: Interval; agent: boolean; groups: readonly string[]}>;
 /** The facet fields counted over entries: a value is offered while an entry carries it. */
 type Counted = 'stage' | 'role' | 'model' | 'outcome';
 const COUNTED: readonly Counted[] = ['stage', 'role', 'model', 'outcome'];
@@ -140,7 +154,9 @@ export class ActivityIndexer {
   readonly #rows = new Map<string, Row>();
   readonly #routes = new Map<string, Row>();
   /** Invocation ids by group (`op:`, `job:`, `step:<unit>:<stage>:<attempt>`). */
-  readonly #groups = new Map<string, Set<string>>();
+  readonly #groups = new Map<string, string[]>();
+  /** Each unit's subject as entries show it, shared by them until its title changes. */
+  readonly #subjects = new Map<string, Subject>();
   #rowsSeen: readonly Invocation[] | null = null;
   #identities: ReadonlyMap<string, UnitIdentity> = new Map();
   /** The sources (event positions) that read each named input: a change of the input makes them again. */
@@ -216,7 +232,7 @@ export class ActivityIndexer {
     if (identities !== this.#identities) {
       const title = (m: ReadonlyMap<string, UnitIdentity>, unit: string) => m.get(unit)?.title.slice(0, 96);
       for (const unit of new Set([...this.#identities.keys(), ...identities.keys()])) {
-        if (title(this.#identities, unit) !== title(identities, unit)) { titled.add(unit); changed.add(`title:${unit}`); }
+        if (title(this.#identities, unit) !== title(identities, unit)) { titled.add(unit); changed.add(`title:${unit}`); this.#subjects.delete(unit); }
       }
       this.#identities = identities;
     }
@@ -277,7 +293,7 @@ export class ActivityIndexer {
         if (was === undefined) { inserted.push(entry); return entry; }
         byId.delete(entry.row.id);
         // Made again unchanged: the entry readers already hold stays.
-        if (meta(was).digest.equals(meta(entry).digest)) return was;
+        if (meta(was) === meta(entry)) return was;
         replaced.set(was, entry); return entry;
       });
       for (const was of byId.values()) removed.add(was);
@@ -291,7 +307,7 @@ export class ActivityIndexer {
     if (this.#decisions.entries !== decisions.entries) this.#decisions = {...this.#decisions, entries: swap(decisions.entries, this.#decisions.entries)};
     inserted.sort(compareEntries);
     const count = (entry: ActivityEntry, by: 1 | -1) => {
-      const m = meta(entry); xor(this.#xor, m.digest); this.#entryBytes += by * m.bytes;
+      const m = meta(entry); xor(this.#xor, m); this.#entryBytes += by * Number(m.slice(32));
       for (const field of COUNTED) for (const value of facetValues(entry, field)) {
         const counts = this.#counts[field], next = (counts.get(value) ?? 0) + by;
         if (next === 0) counts.delete(value); else counts.set(value, next);
@@ -339,23 +355,26 @@ export class ActivityIndexer {
     const parent = this.#stages.parents.get(op), step = parent?.type === 'stage' ? this.#stages.steps.get(`${parent.unit}:${parent.attempt}`) : undefined;
     const interval = intervalOf(i, parent, step, this.#terminals.get(String(op)), this.#charges.get(i.id), subjectOf(this.#identities, this.arc, parent, i.unit));
     const groups = [`op:${op}`, ...(parent?.type === 'job' ? [`job:${parent.job}`] : parent?.type === 'stage' ? [`step:${parent.unit}:${parent.stage}:${parent.attempt}`] : [])];
-    const agent = i.execution === 'agent', key = JSON.stringify([interval, agent, groups]);
-    const old = this.#rows.get(i.id);
-    const row: Row = {row: recorded, route, titleUnit: parent?.type === 'stage' ? parent.unit : parent?.type === 'job' ? null : i.unit ?? null, interval, agent, groups, key};
+    const agent = i.execution === 'agent', old = this.#rows.get(i.id);
+    const row: Row = {row: recorded, route, titleUnit: parent?.type === 'stage' ? parent.unit : parent?.type === 'job' ? null : i.unit ?? null, interval, agent, groups};
     this.#rows.set(i.id, row); this.#routes.set(route, row);
-    if (old?.key === key) return;
+    if (old !== undefined && old.agent === agent && old.groups.join('\n') === groups.join('\n') && JSON.stringify(old.interval) === JSON.stringify(interval)) return;
     changed.add(`route:${route}`);
-    for (const g of old?.groups ?? []) if (!groups.includes(g)) { this.#groups.get(g)!.delete(i.id); changed.add(`group:${g}`); }
+    for (const g of old?.groups ?? []) if (!groups.includes(g)) { this.#leave(g, i.id); changed.add(`group:${g}`); }
     for (const g of groups) {
-      let members = this.#groups.get(g);
-      if (members === undefined) this.#groups.set(g, members = new Set());
-      members.add(i.id); changed.add(`group:${g}`);
+      const members = this.#groups.get(g);
+      if (members === undefined) this.#groups.set(g, [i.id]); else if (!members.includes(i.id)) members.push(i.id);
+      changed.add(`group:${g}`);
     }
+  }
+  #leave(group: string, id: string): void {
+    const members = this.#groups.get(group)!, at = members.indexOf(id);
+    if (at >= 0) members.splice(at, 1);
   }
   #drop(id: string, changed: Set<string>): void {
     const old = this.#rows.get(id)!;
     this.#rows.delete(id); this.#routes.delete(old.route); changed.add(`route:${old.route}`);
-    for (const g of old.groups) { this.#groups.get(g)!.delete(id); changed.add(`group:${g}`); }
+    for (const g of old.groups) { this.#leave(g, id); changed.add(`group:${g}`); }
   }
   /** `value`, noting that source `src` read the input `name`. */
   #read<T>(name: string, src: number, value: T): T {
@@ -366,7 +385,10 @@ export class ActivityIndexer {
     return value;
   }
   #unit(id: string, src: number): Subject {
-    return {type: 'unit', id, title: this.#read(`title:${id}`, src, this.#identities.get(id))?.title.slice(0, 96) ?? id};
+    const identity = this.#read(`title:${id}`, src, this.#identities.get(id));
+    let subject = this.#subjects.get(id);
+    if (subject === undefined) this.#subjects.set(id, subject = {type: 'unit', id, title: identity?.title.slice(0, 96) ?? id});
+    return subject;
   }
   /** A group's routes in display order. */
   #group(name: string, src: number): string[] {
@@ -437,9 +459,7 @@ export class ActivityIndexer {
       outcome: null, summary: preview(text, detail), workMs: measured.length ? measured.reduce((n, r) => n + r.interval.wallMs!, 0) : null,
       spend: aggregateMoney(joined.filter(r => r.agent).map(r => r.interval)), coverage: {measured: measured.length, unmeasured: joined.length - measured.length},
       detail, housekeeping: false, ...fields, result: fields.result === undefined ? null : preview(fields.result, detail)};
-    const search = [row.summary.text, row.subject.id, row.subject.title, row.stage, row.stage ? stageWords(row.stage) : null, row.outcome, request?.id,
-      ...[...actors.values()].flatMap(a => [a.role, a.backend, a.model])].filter(v => v != null).join(' ').toLowerCase();
-    return {row, actors: [...actors.values()], invocations: [...refs], request, search};
+    return {row, actors: actors.size ? [...actors.values()] : NONE, invocations: refs.length ? [...refs] : NONE, request};
   }
 }
 /** The index of `e` built from nothing: the same fold, from the journal's start. */

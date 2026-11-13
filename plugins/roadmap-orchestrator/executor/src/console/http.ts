@@ -36,8 +36,9 @@ export const RESTART_MS = [5_000, 30_000, 60_000] as const;
 /**
  * Heap need (MB), measured laws: a collector holds about 384 MB besides three times its journal (events, fold, invocation
  * rows), since what it remembers of evidence and history is bounded by bytes (src/observation/memo.ts, src/git/reusekey.ts);
- * the serve worker about 256 MB besides three times the journals it parses. The heap limit is a runaway guard a healthy arc
- * never reaches, not a budget: three times the need plus 512 MB.
+ * the serve worker about 256 MB besides three times the journals it parses (its parsed events are about 1.5 times a journal,
+ * and the Activity index it keeps for each arc, about 1.6 KB an entry with its fold, about 0.4 times: src/console/activity-index.ts).
+ * The heap limit is a runaway guard a healthy arc never reaches, not a budget: three times the need plus 512 MB.
  */
 export const NEED = { collector: (journalMb: number) => 384 + 3 * journalMb, serve: (sumJournalMb: number) => 256 + 3 * sumJournalMb } as const;
 export const heapLimitMb = (need: number): number => Math.round(3 * need + 512);
@@ -53,7 +54,9 @@ export function collectorReportText(r: HeapReport<CollectorSizes>): string {
 }
 /** One serve worker heap report as a log line's body. */
 export function serveReportText(r: HeapReport<ServeSizes>): string {
-  return `${heapText(r)}; ${[...r.sizes.arcs.map((a) => `arc ${a.arc}: events ${a.events}, rows ${a.rows}`), `tab views ${r.sizes.tabViews}`].join('; ')}`;
+  const a = r.sizes.activity, mb = (bytes: number) => Math.round(bytes / 1048576);
+  return `${heapText(r)}; ${[...r.sizes.arcs.map((a) => `arc ${a.arc}: events ${a.events}, rows ${a.rows}`),
+    `activity indexes ${a.indexes}, entries ${a.entries} (${mb(a.bytes)} MB), anchors ${a.queries} (${mb(a.queryBytes)} MB)`, `tab views ${r.sizes.tabViews}`].join('; ')}`;
 }
 /** A read's reply: its response body as the serve worker serialized it. */
 type Reply = Readonly<{ json: string; checkedAt: string | null }>;

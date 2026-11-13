@@ -1,29 +1,31 @@
 // Immutable, bounded query generations. Only typed summaries and lookup references
 // are retained: never observations, event bodies, transcripts or report objects.
 //
-// Memory law. One index per arc and journal epoch (at most `indexes`), extended in place of being built again
-// (src/console/activity-index.ts); it retains its entries' serialized size plus the holds, units and milestones (`bytes`).
-// A query generation (an anchor and its cursors) is frozen at its position: it holds references to its matching entries
-// (eight bytes each), its days and its query; an entry the index has since replaced or dropped is kept alive by the
-// generations that hold it, and counted in theirs. Indexes and generations together stay within `bytes`; past it, or past
-// `queries`, `indexes` or `idleMs`, the least recently used goes first. A generation does not depend on an index:
-// it lives, and answers its cursors and change counts, for as long as its epoch does and the bounds keep it.
+// Memory law. The index is not a cache: it is the one copy of what Activity serves for an arc the serve worker maintains,
+// one per arc, of its current epoch (a new epoch's index replaces it), dropped when the worker stops maintaining the arc
+// (`release`). It is never refused or evicted for its size: it grows with the arc by its own law (src/console/activity-index.ts,
+// a fixed cost per entry), and is bounded by the serve worker's heap guard, which scales with the journals it parses
+// (src/console/http.ts `NEED`). The caches are the query generations (an anchor and its cursors), frozen at their position:
+// each holds references to its matching entries (eight bytes each), its days and its query, and an entry the index has since
+// replaced or dropped is kept alive by the generations that hold it and counted in theirs. Generations stay within `bytes`,
+// `queries` and `idleMs`; past a bound the least recently used goes, and its tab's count of new events answers `reset`
+// ("Updates available." with "Show latest"), its cursors `reset` (reload the view). A generation does not depend on an index.
 import { createHmac, randomBytes } from 'node:crypto';
 import { canonicalJson, sha256Hex } from '../core/json.ts';
 import { COLLECTION_RETENTION } from './collection-pages.ts';
 import { ConsoleError, captureKey, type Envelope } from '../observation/protocol.ts';
 import { ACTIVITY_KINDS, type ActivityFacets, type ActivityFilters, type ActivityView, type ActivityChanges } from './activity-protocol.ts';
-import { ActivityIndexer, activityRequest, compareEntries, entryBytes, firstAfter, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
+import { ActivityIndexer, activityRequest, compareEntries, entryBytes, firstAfter, searchText, type ActivityEntry, type ActivityIndex } from './activity-index.ts';
 import { versioned } from './views.ts';
 import { arcTerminal } from './tokens.ts';
 
-// Reserve eight MiB for other typed collections: combined summary/index retention stays at 32 MiB.
-export const ACTIVITY_RETENTION = {bytes: 32 * 1024 * 1024 - COLLECTION_RETENTION.bytes, indexes: 8, queries: 32, idleMs: 15 * 60 * 1000} as const;
+// The query generations' bounds. Eight MiB are reserved for other typed collections' summaries: together they stay at 32 MiB.
+export const ACTIVITY_RETENTION = {bytes: 32 * 1024 * 1024 - COLLECTION_RETENTION.bytes, queries: 32, idleMs: 15 * 60 * 1000} as const;
 const admission = ['epoch', 'revision', 'minHighWater'];
 const common = ['from', 'to', 'window', 'zone', 'afterSeq', 'beforeSeq', 'unit', 'milestone', 'stage', 'kind', 'role', 'backend', 'model', 'outcome', 'q', 'housekeeping', 'order', 'limit'];
 type Query = {filters: ActivityFilters; limit: number; window: 'arc' | '24h' | '7d' | null; hash: string};
-/** An arc's index, the Activity version it stands for (`key`), and when it was last used. */
-type Kept = {indexer: ActivityIndexer; key: string; touched: number};
+/** An arc's index and the Activity version it stands for (`key`). */
+type Kept = {indexer: ActivityIndexer; key: string};
 type Generation = {
   /** The arc (instance, repository, arc) and epoch it was issued in. */
   arcKey: string; epoch: string;
@@ -35,6 +37,7 @@ type Generation = {
 type Token = {generation: string; indexVersion: string; anchorHighWater: number; filterHash: string;
   instance: string; repoId: string; arc: string; epoch: string; limit: number; order: 'asc' | 'desc';
   lastKey: [number, string] | null; direction: 'next' | 'previous' | null};
+export type ActivitySizes = Readonly<{indexes: number; entries: number; bytes: number; queries: number; queryBytes: number; built: number; extended: number}>;
 const invalid = (message: string): never => {throw new ConsoleError('invalid', message);};
 const reset = (): never => {throw new ConsoleError('reset', 'Activity page expired or changed; reload this view');};
 function integer(value: string): number {
@@ -99,7 +102,7 @@ function matches(entry: ActivityEntry, filters: ActivityFilters, index: Pick<Act
   }
   if ((f.role.length || f.backend.length || f.model.length) && !entry.actors.some(a =>
     (!f.role.length || a.role !== null && f.role.includes(a.role)) && (!f.backend.length || a.backend !== null && f.backend.includes(a.backend)) && (!f.model.length || a.model !== null && f.model.includes(a.model)))) return false;
-  return !f.q || entry.search.includes(f.q.toLowerCase());
+  return !f.q || searchText(entry).includes(f.q.toLowerCase());
 }
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 function bounded<T>(e: Envelope, data: T, ceiling: number): T {
@@ -119,7 +122,7 @@ export class ConsoleActivity {
   readonly #version: (e: Envelope) => string;
   constructor(version: (e: Envelope) => string = captureKey) { this.#version = version; }
   #secret = randomBytes(32);
-  /** One index per arc, of the epoch it was last extended in. */
+  /** One index per arc, of the epoch it was last extended in: kept until `release`, whatever its size. */
   #indexes = new Map<string, Kept>();
   #queries = new Map<string, Generation>();
   /** Indexes built from nothing, and extended, since this worker started (its heap reports). */
@@ -133,23 +136,22 @@ export class ConsoleActivity {
     return `${raw}.${this.#sign(raw)}`;
   }
   #arcKey(e: Pick<Envelope, 'instance' | 'repoId' | 'arc'>) {return canonicalJson([e.instance, e.repoId, e.arc]);}
-  #bytes(): number {
+  /** What the generations retain. */
+  #queryBytes(): number {
     let n = 0;
-    for (const k of this.#indexes.values()) n += k.indexer.index.bytes;
     for (const g of this.#queries.values()) n += g.bytes;
     return n;
   }
+  /** Drops the generations past their bounds, least recently used first. Indexes are not swept. */
   #sweep() {
     const now = Date.now();
     for (const [id, g] of this.#queries) if (now - g.touched > ACTIVITY_RETENTION.idleMs) this.#queries.delete(id);
-    for (const [key, k] of this.#indexes) if (now - k.touched > ACTIVITY_RETENTION.idleMs) this.#indexes.delete(key);
-    while (this.#queries.size > ACTIVITY_RETENTION.queries) this.#queries.delete(this.#queries.keys().next().value!);
-    while (this.#indexes.size > ACTIVITY_RETENTION.indexes) this.#indexes.delete(this.#indexes.keys().next().value!);
-    // Past the byte bound the least recently used of the two goes first.
-    while (this.#bytes() > ACTIVITY_RETENTION.bytes) {
-      const [query, g] = this.#queries.entries().next().value ?? [null, null], [index, k] = this.#indexes.entries().next().value ?? [null, null];
-      if (query !== null && (index === null || g!.touched <= k!.touched)) this.#queries.delete(query); else this.#indexes.delete(index!);
-    }
+    while (this.#queries.size > ACTIVITY_RETENTION.queries || this.#queries.size > 0 && this.#queryBytes() > ACTIVITY_RETENTION.bytes) this.#queries.delete(this.#queries.keys().next().value!);
+  }
+  /** The serve worker no longer maintains `arc`: its index and generations go. */
+  release(arc: string): void {
+    for (const [key, k] of this.#indexes) if (k.indexer.arc === arc) this.#indexes.delete(key);
+    for (const [id, g] of this.#queries) if (g.arc === arc) this.#queries.delete(id);
   }
   index(e: Envelope): ActivityIndex {
     const steps = this.steps(e);
@@ -167,14 +169,10 @@ export class ConsoleActivity {
   *steps(e: Envelope): Generator<undefined, ActivityIndex, undefined> {
     this.#sweep();
     const arcKey = this.#arcKey(e), key = this.#version(e), kept = this.#indexes.get(arcKey);
-    if (kept !== undefined && kept.indexer.epoch === e.epoch && kept.key === key) {
-      kept.touched = Date.now(); this.#indexes.delete(arcKey); this.#indexes.set(arcKey, kept);
-      return kept.indexer.index;
-    }
+    if (kept !== undefined && kept.indexer.epoch === e.epoch && kept.key === key) return kept.indexer.index;
     const extending = kept !== undefined && kept.indexer.extends(e), indexer = extending ? kept.indexer : new ActivityIndexer(e.epoch, e.arc);
     if (extending) this.#extended++; else this.#built++;
     const {index, dropped} = yield* indexer.extend(e);
-    if (index.bytes > ACTIVITY_RETENTION.bytes) { this.#indexes.delete(arcKey); throw new ConsoleError('unavailable', 'Activity index exceeds retained capacity'); }
     // A generation keeps alive what it holds of what the index no longer does.
     if (dropped.length) for (const g of this.#queries.values()) {
       if (g.arcKey !== arcKey || g.epoch !== e.epoch) continue;
@@ -182,15 +180,15 @@ export class ConsoleActivity {
     }
     // An index of a new epoch: the earlier epoch's anchors can no longer count anything.
     for (const [id, g] of this.#queries) if (g.arcKey === arcKey && g.epoch !== e.epoch) this.#queries.delete(id);
-    this.#indexes.delete(arcKey); this.#indexes.set(arcKey, {indexer, key, touched: Date.now()});
+    this.#indexes.set(arcKey, {indexer, key});
     this.#sweep();
     return index;
   }
-  /** What this holds, for the serve worker's heap reports. */
-  sizes(): Readonly<{indexes: number; entries: number; queries: number; bytes: number; built: number; extended: number}> {
-    let entries = 0;
-    for (const k of this.#indexes.values()) entries += k.indexer.index.entries.length;
-    return {indexes: this.#indexes.size, entries, queries: this.#queries.size, bytes: this.#bytes(), built: this.#built, extended: this.#extended};
+  /** What this holds, for the serve worker's heap reports: the indexes (entries, retained bytes) and the generations. */
+  sizes(): ActivitySizes {
+    let entries = 0, bytes = 0;
+    for (const k of this.#indexes.values()) { entries += k.indexer.index.entries.length; bytes += k.indexer.index.bytes; }
+    return {indexes: this.#indexes.size, entries, bytes, queries: this.#queries.size, queryBytes: this.#queryBytes(), built: this.#built, extended: this.#extended};
   }
   #admit(e: Envelope, token: string, query: Query, anchor: boolean): {id: string; g: Generation; parsed: Token} {
     this.#sweep();

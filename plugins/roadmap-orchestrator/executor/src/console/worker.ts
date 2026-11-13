@@ -424,7 +424,7 @@ function reconcile(): void {
     .sort((a, b) => b[1] - a[1]).slice(0, MAINTAIN.extra);
   for (const [arc] of recent) want.add(arc);
   for (const arc of maintained) if (!want.has(arc)) {
-    maintained.delete(arc); models.delete(arc); lastIndexed.delete(arc); ports.get(arc)?.close(); ports.delete(arc);
+    maintained.delete(arc); models.delete(arc); lastIndexed.delete(arc); activity.release(arc); ports.get(arc)?.close(); ports.delete(arc);
     post({ kind: 'release', arc: arc as ArcId });
     for (const p of parked) if (p.arc === arc) fail(p.m, new ConsoleError('unavailable', 'arc is no longer kept current; retry'));
     parked = parked.filter((p) => p.arc !== arc);
