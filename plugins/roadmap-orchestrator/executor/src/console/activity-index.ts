@@ -387,7 +387,7 @@ export class ActivityIndexer {
         {subject: !request ? {type: 'request', id: ref.id, title: 'Decision request'} : request.subject.type === 'unit' ? unit(request.subject.unit)
           : request.subject.type === 'arc' ? this.#arcSubject : {type: request.subject.type, id: null, title: request.subject.type === 'host' ? 'Host' : 'Findings'}, outcome: 'raised', ...(request ? {result: request.summary} : {})}, [], ref);
     } else if (ev.type === 'intent' && ev.kind === 'proc.spawn') {
-      const i = this.#read(`route:${invocationDirName(invocationId(ev.op, ev.ordinal))}`, src, this.#routes.get(invocationDirName(invocationId(ev.op, ev.ordinal))))?.interval;
+      const route = invocationDirName(invocationId(ev.op, ev.ordinal)), i = this.#read(`route:${route}`, src, this.#routes.get(route))?.interval;
       if (i) add('invocation-started', `${stageWords(i.stage)} run started`, {subject: i.subject, stage: i.stage, attempt: i.attempt, round: i.round, outcome: 'started', workMs: null, spend: null}, [i.id]);
     } else if (ev.type === 'done' && ev.kind === 'proc.spawn') {
       const refs = this.#group(`op:${ev.op}`, src), i = refs.length === 1 ? this.#routes.get(refs[0]!)!.interval : null;
