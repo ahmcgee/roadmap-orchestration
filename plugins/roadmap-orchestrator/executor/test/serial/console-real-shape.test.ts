@@ -169,6 +169,9 @@ test('a busy arc of real shape: cold start once, every read answered from memory
   assert.ok(slow.length > 0 && Math.max(...slowAges) >= 1_500 && Math.max(...slowAges) > 2 * median(normalAges), `what the reads are as of ages while captures are slow: up to ${Math.round(Math.max(...slowAges))} ms, against a median of ${Math.round(median(normalAges))} ms`);
   assert.equal((log.match(new RegExp(`console is behind arc ${m.arc}`, 'g')) ?? []).length, 1, log);
   assert.equal((log.match(new RegExp(`console caught up with arc ${m.arc}`, 'g')) ?? []).length, 1, log);
+  // Each line says how deep the lag was, not only how long the episode lasted (dev.74).
+  assert.match(log, new RegExp(`console is behind arc ${m.arc} by \\d+s: published through seq`), log);
+  assert.match(log, new RegExp(`console caught up with arc ${m.arc} after \\d+s behind \\(\\d+s at most\\)`), log);
 
   // 1 (end). One fold, never restarted, one epoch.
   const end = await stats();
