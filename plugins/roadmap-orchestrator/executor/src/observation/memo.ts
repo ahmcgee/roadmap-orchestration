@@ -1,13 +1,14 @@
 // What a long-lived observer remembers across captures: the answers of git commands that name only object ids, the
 // write-once records of a run directory, and parsed content-addressed inputs. A one-shot reader (`roadmap status`, the CLI's
-// local fallback) runs without one and reads everything, as before.
+// local fallback) and the executor run without one and read every record and git answer, as before.
 //
 // Memory is bounded by bytes, not by how much evidence or history an arc has: git answers by GIT_BYTES and records by
 // RECORD_BYTES, each least recently used first, and neither keeps one entry heavier than an eighth of its bound (it would
 // flush every other entry and then itself). A record the capture under way has used is never dropped for another, so a
 // capture that reads more than RECORD_BYTES keeps a stable set and reads only the rest again. Parsed values, and values fixed
 // by a git object id (an arc ref's digest), are kept only while captures ask for them (`settle`). The stamps of records read
-// are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read.
+// are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read. Without a memo,
+// parsed content-addressed inputs are still parsed once per slot (`parsedOnce`): the executor asks for them every tick.
 import { lstatSync } from 'node:fs';
 
 /** A git command's answer, as the memo keeps it. */
@@ -200,8 +201,25 @@ export function withoutRecordMemo<T>(read: () => T): T {
 export const recordMemo = (): RecordMemo | null => ambient;
 /** `read` of a write-once record at `path`, through the ambient memo when there is one. */
 export const writeOnce = <T>(form: string, path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(form, path, read);
-/** `parse` of content-addressed bytes named by `key`, through the ambient memo when there is one. */
-export const parsedOnce = <T>(key: string, parse: () => T): T => ambient === null ? parse() : ambient.parsed(key, parse);
+/** Outside an ambient memo, the latest parse of each slot (see `parsedOnce`), for the life of the process. */
+const latestParsed = new Map<string, Readonly<{ key: string; value: unknown }>>();
+/**
+ * `parse` of content-addressed bytes named by `key` (`<slot>:<hash>`: its last part the bytes' hash, what precedes it the
+ * slot, e.g. `plan`, `spec:<unit>`), through the ambient memo when there is one. Without one (the executor, a one-shot
+ * reader) the latest parse of each slot is kept: the bytes named by a hash never change, so asking again for the same key
+ * parses nothing, and a new revision's key replaces its slot's predecessor.
+ */
+export const parsedOnce = <T>(key: string, parse: () => T): T => {
+  if (ambient !== null) return ambient.parsed(key, parse);
+  const at = key.lastIndexOf(':');
+  if (at <= 0) throw new Error(`parsedOnce: key ${key} names no slot`);
+  const slot = key.slice(0, at);
+  const hit = latestParsed.get(slot);
+  if (hit?.key === key) return hit.value as T;
+  const value = parse();
+  latestParsed.set(slot, { key, value });
+  return value;
+};
 /** `read` of a value fixed by the git object id in `key`, through the ambient memo when there is one. */
 export const objectOnce = <T>(key: string, read: () => T): T => ambient === null ? read() : ambient.object(key, read);
 

@@ -13,6 +13,7 @@ import { protectedPathsInForce } from '../input/protected.ts';
 // salvage checkout. The root owns plan changes through CAS apply; builders receive notes and proof evidence.
 import { systemNotes } from './systemnotes.ts';
 import { memoryMessage,salvageSummary } from './memory.ts';
+import { parsedOnce } from '../observation/memo.ts';
 import { existsSync,readFileSync } from 'node:fs';
 import { basename,dirname,isAbsolute,join,normalize,relative } from 'node:path';
 import { walkMcpConfig } from '../backends/mcp.ts';
@@ -243,7 +244,7 @@ export const at = <S extends OutcomeStage>(p: StageParent, stage: S): StageParen
 export function loadUnitSpec(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath }>, unit: PlanUnit): LoadedSpec {
   const path = absPath(join(ctx.planDir, unit.spec));
   const sha256 = specShaInForce(ctx.journal.view, unit.id);
-  return { path, spec: parseUnitSpec(specBytesOf(ctx.runDir, sha256), path, unit.id), sha256 };
+  return { path, spec: parsedOnce(`spec:${unit.id}:${sha256}`, () => parseUnitSpec(specBytesOf(ctx.runDir, sha256), path, unit.id)), sha256 };
 }
 
 /** The kept file of the unit's spec in force: what a snapshot publishes and a park's evidence cites. */
@@ -290,8 +291,9 @@ function kept(ctx: Readonly<{ runDir: AbsPath }>, sha: Sha256Hex, ext: string): 
  */
 export function holisticInForce(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath }>): Readonly<{ vision: Vision | null; obligations: Obligations | null }> {
   const payload = payloadInForce(ctx);
+  // Parsed once per revision (`parsedOnce`): the scheduler asks for them for every unit on every tick.
   const read = <T>(sha: Sha256Hex | null, ext: string, parse: (v: unknown) => T): T | null =>
-    (sha === null ? null : parse(JSON.parse(kept(ctx, sha, ext).toString('utf8'))));
+    (sha === null ? null : parsedOnce(`${ext}:${sha}`, () => parse(JSON.parse(kept(ctx, sha, ext).toString('utf8')))));
   return {
     vision: read(payload.manifest.vision, VISION_INPUT, parseVision),
     obligations: read(payload.manifest.obligations, OBLIGATIONS_INPUT, parseObligations),

@@ -5,10 +5,14 @@
 // (a product repo's post-checkout hook must not run inside `worktree add`), and the C locale. A commit
 // identity is never read from config: callers that create commits pass the intent's recorded author and
 // committer, so the same inputs always give the same object id.
+//
+// Every call runs synchronously on the executor's one thread; its return is a point of progress for the heartbeat
+// (src/host/heartbeat.ts `beat`), so a long run of git calls does not starve it, while one call that never returns does.
 import { spawnSync } from 'node:child_process';
 import type { CommitInputs, Signature } from '../core/events.ts';
 import { type Sha, sha } from '../core/ids.ts';
 import { type AbsPath, type RefName, type RepoPath, absPath, refName, repoPath } from '../core/values.ts';
+import { beat } from '../host/heartbeat.ts';
 import { immutableGit, recordMemo } from '../observation/memo.ts';
 
 export class GitError extends Error {
@@ -64,6 +68,7 @@ export function gitRun(repo: AbsPath, args: readonly string[], opts: GitOptions 
   const run = (): GitResult => {
     const full = ['-C', repo, ...FIXED_CONFIG, ...args];
     const r = spawnSync('git', full, { env: environment(opts), input: opts.input, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+    beat();
     if (r.error !== undefined) throw r.error;
     const ok = opts.okCodes ?? [0];
     if (r.status === null || !ok.includes(r.status)) throw new GitError(args, r.status, r.stderr);
@@ -165,6 +170,7 @@ function catFileObjects(repo: AbsPath, blobs: readonly Sha[], type: 'blob' | 'tr
   const input = `${wanted.join('\n')}\n`;
   const run = (): Readonly<{ code: number; stdout: Buffer }> => {
     const r = spawnSync('git', ['-C', repo, ...FIXED_CONFIG, ...args], { env: environment({}), input, maxBuffer: BATCH_MAX_BUFFER });
+    beat();
     if (r.error !== undefined) throw r.error;
     if (r.status !== 0) throw new GitError(args, r.status, r.stderr.toString('utf8'));
     return { code: 0, stdout: r.stdout };

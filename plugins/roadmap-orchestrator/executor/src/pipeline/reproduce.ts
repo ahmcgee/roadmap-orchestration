@@ -31,7 +31,7 @@ import { type FindingId,type LaneId,type OpId,type ResourceInstance,type Resourc
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { mutantOf } from '../core/projections.ts';
-import { type NeedsUserContent,type SpecM1,STDERR_FILE,STDOUT_FILE,specRepairs } from '../core/records.ts';
+import { type NeedsUserContent,STDERR_FILE,STDOUT_FILE,specRepairs } from '../core/records.ts';
 import type { FindingState,UnitState } from '../core/state.ts';
 import { type AbsPath,absPath,repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
@@ -43,7 +43,6 @@ import { verdictOf } from '../holistic/observe.ts';
 import { type SpecLinks,specLinksOf } from '../holistic/staleset.ts';
 import { type ArcLaneDef,type MutantRef,type ObservationVerdict,type WitnessRecord,type WitnessRef,laneRevOf,witnessRecord } from '../holistic/types.ts';
 import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
-import { specShaInForce } from '../input/inforce.ts';
 import { type PlanM1,type PlanUnit,environmentsOf } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { evidenceSnapshotOp,mutantApplyOp,worktreeRemoveOp } from '../recover/ops.ts';
@@ -458,28 +457,12 @@ function progressOf(u: UnitState, publishedSeq: number | undefined): RepairProgr
   return d.kind === 'stage' && approved.includes(d.target.stage) ? { kind: 'approved' } : { kind: 'working' };
 }
 
-// A kept spec is immutable. Cache its parsed value by content hash within this journal, while
-// computing progress from the current view on every call. Applies, patches and reopens change the hash.
-const repairSpecs = new WeakMap<JournalView, Readonly<{ runDir: AbsPath; specs: Map<UnitId, Readonly<{ hash: Sha256Hex; spec: SpecM1 }>> }>>();
-
 /** The units of the plan whose specs repair something, in plan order, with their progress (read-only: `status` reads it too). */
 export function repairUnits(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; planDir: AbsPath; plan: () => PlanM1 }>): readonly RepairUnit[] {
   const view = ctx.journal.view;
   const published = new Map(view.publications().map((p) => [p.unit, p.seq] as const));
-  let cached = repairSpecs.get(view);
-  if (cached === undefined || cached.runDir !== ctx.runDir) {
-    cached = { runDir: ctx.runDir, specs: new Map() };
-    repairSpecs.set(view, cached);
-  }
-  const specs = cached.specs;
   return ctx.plan().units.flatMap((unit) => {
-    const hash = specShaInForce(view, unit.id);
-    let known = specs.get(unit.id);
-    if (known?.hash !== hash) {
-      known = { hash, spec: loadUnitSpec(ctx, unit).spec };
-      specs.set(unit.id, known);
-    }
-    const repairs = specRepairs(known.spec);
+    const repairs = specRepairs(loadUnitSpec(ctx, unit).spec);
     return repairs.length === 0 ? [] : [{ unit: unit.id, repairs, progress: progressOf(view.unit(unit.id), published.get(unit.id)) }];
   });
 }

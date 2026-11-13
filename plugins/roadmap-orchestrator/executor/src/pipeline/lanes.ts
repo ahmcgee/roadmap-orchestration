@@ -136,7 +136,7 @@ import { CPU_COST } from '../schedule/types.ts';
 import { flakeOf,observeFlake } from './deflake.ts';
 import { type StageContext,type StageParent,candidateVerificationWorktree,evidenceRoot,matchesVerificationPath,runOp,verificationWorktree } from './dispatch.ts';
 import { invocationDir,invoke } from './invoke.ts';
-import { writeOnce } from '../observation/memo.ts';
+import { recordMemo,writeOnce } from '../observation/memo.ts';
 import {
 type FailureSignature,type LaneCancel,type LaneHost,type RedClass,type RedEvidence,type RepeatOf,classifyRed,failureSignature,hostWasBusy,
 laneAbortReason,laneCancelOf,readRedClass,redLane,writeRedClass,
@@ -1617,12 +1617,30 @@ export function withObservationReads<T>(read: () => T): T {
   try { return read(); } finally { observationReads = null; }
 }
 
+/**
+ * Without a long-lived observer's memo (the executor, whose scheduler asks on every idle tick), the latest store of each
+ * view and the count of `witnessed` facts it was read from. The fold appends those facts in log order and each names a
+ * write-once record checked against its hash, so the store read from the first n facts, extended by the observations of
+ * the rest (the latest per key either way), is the store read from all of them.
+ */
+const retainedStores = new WeakMap<JournalView, Readonly<{ runDir: AbsPath; count: number; store: ObservationStore }>>();
+
 /** Every certifying observation the log's `witnessed` facts name, the latest per key (src/holistic/observe.ts). */
 export function observations(ctx: WitnessedView): ObservationStore {
   const view = ctx.journal.view;
   const known = observationReads?.get(view);
   if (known !== undefined) return known;
-  const store = storeOf(ctx, view.holistic().witnessed);
+  const witnessed = view.holistic().witnessed;
+  let store: ObservationStore;
+  if (recordMemo() !== null) store = storeOf(ctx, witnessed);
+  else {
+    const last = retainedStores.get(view);
+    if (last !== undefined && last.count > witnessed.length) throw new Error(`the log's witnessed facts went from ${last.count} to ${witnessed.length}`);
+    if (last === undefined || last.runDir !== ctx.runDir) store = storeOf(ctx, witnessed);
+    else if (last.count === witnessed.length) store = last.store;
+    else store = observationStore([...last.store.values(), ...storeOf(ctx, witnessed.slice(last.count)).values()]);
+    retainedStores.set(view, { runDir: ctx.runDir, count: witnessed.length, store });
+  }
   observationReads?.set(view, store);
   return store;
 }

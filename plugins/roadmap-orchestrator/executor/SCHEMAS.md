@@ -561,7 +561,9 @@ outcome from known/unavailable usage; CommandResult uses pass/fail/stall/timeout
 only under its own invocation binding.
 
 Host owner/lock records bind nonce/generation/pid/start/boot, with handshake before effects. Readiness/supervisor state,
-heartbeat (10 seconds; stale 5 minutes), intentional executor exit and external exit evidence are typed in records.ts.
+heartbeat (10 seconds; stale 5 minutes; written by a timer and, at most every 10 seconds, at each git call's return and
+each scheduler iteration, so a long synchronous stretch that keeps completing work does not go stale:
+src/host/heartbeat.ts), intentional executor exit and external exit evidence are typed in records.ts.
 Recovery takes an exclusive recovery lock before owner takeover. Ambiguous identity refuses. Residue records are keyed
 by arc/invocation/resource-instance and exactly one unit/job owner; disposition is cleaned/isolated/transferred with
 provenance. CPU tokens do not get residues. Resource release requires actual teardown/quiescence, not just a done flag.

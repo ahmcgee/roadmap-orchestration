@@ -136,7 +136,8 @@ import { type AbsPath,type IsoTime,absPath,branchRef,isoTimeOf } from './core/va
 import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
-import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
+import { REJECTION_FILE,START_FILE } from './executor.ts';
+import { HEARTBEAT_FILE } from './host/heartbeat.ts';
 import { git,revParse } from './git/git.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';

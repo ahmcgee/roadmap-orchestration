@@ -54,13 +54,14 @@ import { type ArcId,type NeedsUserId,type UnitId,hostNeedsUserId } from './core/
 import { canonicalJson } from './core/json.ts';
 import type { OpenJournal } from './core/log.ts';
 import {
-type ExecutorExitReason,type Heartbeat,type HostLockClaim,type NeedsUserContent,type NeedsUserRecord,
+type ExecutorExitReason,type HostLockClaim,type NeedsUserContent,type NeedsUserRecord,
 type RunStart
 } from './core/records.ts';
 import { type Read,arrayOf,literal,object } from './core/validate.ts';
 import { type AbsPath,absPath,isoTimeOf,nonce } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { startIntegrationPushes } from './forge/integration-push.ts';
+import { startHeartbeat } from './host/heartbeat.ts';
 import { hostPath,openHostDir } from './host/hostdir.ts';
 import { isAlive,selfIdentity } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
@@ -92,11 +93,8 @@ import { type SchedulerEnd,holisticContexts,raiseResult,schedule } from './sched
 export const REJECTION_FILE = 'status.rejection.json';
 /** Run dir: what the latest passed start runs (repo, plan, resolved profile), for `status`. */
 export const START_FILE = 'start.json';
-/** Run dir: the executor's heartbeat; the supervisor reads it (readiness, staleness). */
-export const HEARTBEAT_FILE = 'heartbeat.json';
 /** Host dir: why the executor of a generation ended, when it ended on purpose. */
 export const EXIT_REASON_FILE = 'exit.reason.json';
-export const HEARTBEAT_MS = 10_000;
 /** How long an executor waits for its supervisor's handshake before refusing. */
 export const HANDSHAKE_TIMEOUT_MS = 30_000;
 
@@ -155,11 +153,6 @@ export function refusedOf(rejections: readonly StartupRejection[]): RefusedReaso
 function writeExitReason(hostDir: AbsPath, claim: HostLockClaim, reason: ExitReason['kind']): void {
   const file: ExecutorExitReason = { v: SCHEMA_VERSION, generation: claim.generation, reason };
   atomicJson(hostPath(hostDir, EXIT_REASON_FILE), file);
-}
-
-function writeHeartbeat(runDir: AbsPath, generation: number): void {
-  const file: Heartbeat = { v: SCHEMA_VERSION, generation, at: isoTimeOf(new Date()) };
-  atomicJson(join(runDir, HEARTBEAT_FILE), file);
 }
 
 export function writeRejection(runDir: AbsPath, rejections: readonly StartupRejection[]): void {
@@ -226,13 +219,13 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
 
   const { context, journal } = checks;
   let pushes: ReturnType<typeof startIntegrationPushes> | null = null;
-  const heartbeat = setInterval(() => writeHeartbeat(context.runDir, claim.generation), HEARTBEAT_MS);
+  let stopHeartbeat: (() => void) | null = null;
   try {
     const rejection = join(context.runDir, REJECTION_FILE);
     if (existsSync(rejection)) durableUnlink(rejection);
     const start: RunStart = { v: SCHEMA_VERSION, generation: claim.generation, at: isoTimeOf(new Date()), repo: context.repo, planFile: context.planFile, profile: context.profile };
     atomicJson(join(context.runDir, START_FILE), start);
-    writeHeartbeat(context.runDir, claim.generation);
+    stopHeartbeat = startHeartbeat(context.runDir, claim.generation);
     journal.fact({ kind: 'executor-started', generation: claim.generation, host: readHostFingerprint(), pressure: pressureAvailability() });
 
     const x = contexts(args, context, journal);
@@ -259,7 +252,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     writeExitReason(args.hostDir, claim, reason.kind);
     return reason;
   } finally {
-    clearInterval(heartbeat);
+    stopHeartbeat?.();
     try { await pushes?.close(); } finally { journal.close(); }
   }
 }
