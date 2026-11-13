@@ -1,7 +1,8 @@
 import { systemName } from '../src/core/ids.ts';
 // dev.17 lane topology: the batch points (src/pipeline/batchlanes.ts `runBatchPoint`), where a holistic plan's `batch` suite
 // lanes run, over real arcs (real git, real processes, the fake claude answering walk and lens calls by job). Named tests:
-// batch.walk-red (code's walkthrough P1 naming the lane, in the walk's findings, the node held), batch.walk-green,
+// batch.walk-red (code's walkthrough P1 naming the lane, in the walk's findings, the node held), batch.walk-red-abandoned
+// (the walkthrough call failing after a red lane: abandoned, no findings named, the retry asks again), batch.walk-green,
 // batch.walk-skips-green-input (round 2 on an unchanged input runs no batch lane), batch.audit-red (a witness P1 over no
 // obligation), batch.closeout-nothing-to-change (red refuses, green passes; the lane runs each time).
 import assert from 'node:assert/strict';
@@ -115,6 +116,26 @@ describe('the milestone batch point (dev.17)', () => {
       assert.deepEqual(factsOf(r, 'walk-ended').map((e) => [e.job, e.findings]), [['walk-1', [f!.id]]]);
       assert.deepEqual(factsOf(r, 'milestone-passed'), [], 'the batch P1 holds the node');
       assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'walk-1').length, 1, 'the walkthrough still ran');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('batch.walk-red-abandoned: a walk whose batch lane is red and whose walkthrough call fails ends abandoned, naming no findings; the round\'s next walk asks again', T, async () => {
+    const d = walkArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), { as: 'claude', unit: 'walk-1', expect: {}, acts: [{ type: 'exit', code: 1 }] }, walkStep('walk-2', walkAnswer())],
+      suite: [SUITE_LANE, batchLane(RED())],
+    });
+    const r = contextFor(d);
+    try {
+      await merge(r, 'u1');
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-1', outcome: 'abandoned', passed: false });
+      const [f] = factsOf(r, 'finding-opened');
+      assert.deepEqual([f!.lane, f!.source], ['batch', { type: 'job', job: 'walk-1' }]);
+      assert.deepEqual(factsOf(r, 'walk-ended').map((e) => [e.job, e.outcome, e.findings]), [['walk-1', 'abandoned', []]]);
+      assert.deepEqual(await walk(r), { kind: 'ended', job: 'walk-2', outcome: 'reported', passed: false });
+      assert.equal(readCalls(d.scenarioPath).filter((c) => c.unit === 'walk-2').length, 1, 'the retry asked the walkthrough afresh');
+      assert.deepEqual(factsOf(r, 'milestone-passed'), [], 'the batch P1 still holds the node');
     } finally {
       r.journal.close();
     }
