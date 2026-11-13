@@ -1,18 +1,19 @@
-import { type WaitingTotals, waitingTotals } from './status/waiting.ts';
-import { canonicalJson, sha256Hex } from './core/json.ts';
-import { parsedOnce } from './observation/memo.ts';
+import type { WaitingTotals } from './status/waiting.ts';
+import { DecisionSourcesFold, StageTimingsFold, StatusPasses } from './status/passes.ts';
+import { canonicalJson } from './core/json.ts';
+import { cell, parsedOnce, sampledReceipts } from './observation/memo.ts';
 import { terminalReceipts } from './commands/queue.ts';
 import { withArcRefReads } from './chain.ts';
 import { withSnapshotReads } from './git/snapshot.ts';
 import { systemsMapInForce } from './input/systems.ts';
-import { inputKnown, listingChunks, prefetchTreeListings } from './git/reusekey.ts';
+import { inputKnown, listingChunks, prefetchTreeListings, systemsMapKey } from './git/reusekey.ts';
 import { type EnvId } from './core/ids.ts';
 import { laneRevOf } from './holistic/types.ts';
 import { withObservationReads } from './pipeline/lanes.ts';
 import { stopAborts } from './pipeline/stop.ts';
 import { externalAttestations } from './holistic/external.ts';
 import { claudeBuilderRouting } from './routing/eligibility.ts';
-import { type Certification,type WorkRun,certificationReader,workRuns } from './status-work.ts';
+import { type Certification,type WorkRun,certificationReader,workRunsOf } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
@@ -136,13 +137,14 @@ import { type AbsPath,type IsoTime,absPath,branchRef,isoTimeOf } from './core/va
 import type { CorpusPin } from './corpus/types.ts';
 import type { BankReason,DebtItem,DebtLedger } from './debt/types.ts';
 import { type DemoStatus,demoStatus } from './demo/promote.ts';
-import { HEARTBEAT_FILE,REJECTION_FILE,START_FILE } from './executor.ts';
+import { REJECTION_FILE,START_FILE } from './executor.ts';
+import { HEARTBEAT_FILE } from './host/heartbeat.ts';
 import { git,revParse } from './git/git.ts';
 import { witnessDir } from './git/snapshot.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { RevisionContext } from './holistic/admission.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
-import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
+import { type FindingMetric,type RepairUnit,isActive } from './holistic/findings.ts';
 import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
 import { type PackReviewStatus,packItemOf,packReviewHold,packReviewStatus } from './holistic/packreview.ts';
 import { type ArcLaneDef,type CensusEntry,type CensusState,type ClauseState,type Compensation,type DivergenceKind,type FindingLens,type FindingSeverity,type FindingStateName,type LensKind,type ObligationDef,type Obligations,type ObservationVerdict,type Vision,type VisionClauseKind,type VisionCoverage,type VisionQuestion,isExempt,isMustHold,observationKeyText } from './holistic/types.ts';
@@ -152,7 +154,7 @@ import { readClaim } from './host/lock.ts';
 import { readOwner } from './host/owner.ts';
 import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
 import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
-import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,meterOf,ownShare } from './meter.ts';
+import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,ownShare } from './meter.ts';
 import { type Supervision,supervision } from './watch-lease.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,type OpenBlockingDigest,supersededItems } from './needsuser.ts';
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
@@ -604,7 +606,9 @@ function seatOf(view: JournalView, unit: UnitId): UnitStatusLine['seat'] {
 }
 
 function commandsOf(runDir: AbsPath, arc: ArcId, view: JournalView) {
-  const receipts = terminalReceipts(runDir);
+  // Cell `receipts`: the run's receipts and incoming commands as the collector's sample stamped them (every file's stamp and
+  // each directory's names) are all `terminalReceipts` reads.
+  const receipts = cell('receipts', sampledReceipts(runDir), () => terminalReceipts(runDir));
   const pending = pendingCommandIds(runDir, receipts).map((id) => {
     const queued = view.applyQueued(id);
     return { id, type: readCommand(runDir, id, arc).file.body.type, ...(queued === null ? {} : { queuedFor: queued.waitsFor }) };
@@ -627,10 +631,10 @@ function keptPlan(runDir: AbsPath, f: PlanAppliedFact): PlanM1 {
  * registered, aliased to its revision's current table (`ResolvedRouting.earlierBuiltinRevs`, scaffolding): its spend joins and is
  * attributed to today's bindings. An alias never displaces a rev HEAD resolves.
  */
-function routingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
-  // The tables are a function of the plan revisions' kept plans and recorded provenance alone.
-  const applied = events.flatMap((e) => e.type === 'fact' && e.fact.kind === 'plan-applied' ? [[e.fact.planSha256, e.fact.routingProvenance]] : []);
-  return parsedOnce(`routing:${sha256Hex(canonicalJson(applied))}`, () => readRoutingTables(runDir, events));
+function routingTables(runDir: AbsPath, view: JournalView, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
+  // Cell `routing`: the tables are a function of the log's `plan-applied` facts alone (their recorded provenance, and the kept
+  // plans their hashes name, verified when read). Facts are only appended, so the last one's seq names them all.
+  return cell('routing', String(view.lastSeqOf(['plan-applied'])), () => readRoutingTables(runDir, events));
 }
 function readRoutingTables(runDir: AbsPath, events: readonly Event[]): ReadonlyMap<RoutingRev, ResolvedRouting> {
   const out = new Map<RoutingRev, ResolvedRouting>();
@@ -720,24 +724,6 @@ function parkOf(view: JournalView, u: UnitState): UnitPark | null {
   return { class: 'retryable', targets: park.targets, outstanding, nextProbeAt, escalateAt: isoTimeOf(escalateAt(u.park)) };
 }
 
-/** When each stage attempt journaled its first op, by `<unit>/<stage>#<attempt>`. */
-function attemptStarts(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
-  const out = new Map<string, IsoTime>();
-  for (const e of events) {
-    if (e.type !== 'intent' || e.parent.type !== 'stage') continue;
-    const key = `${e.parent.unit}/${e.parent.stage}#${e.parent.attempt}`;
-    if (!out.has(key)) out.set(key, e.at);
-  }
-  return out;
-}
-
-/** When each intent was appended, by `<op>#<ordinal>`. */
-function intentTimes(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
-  const out = new Map<string, IsoTime>();
-  for (const e of events) if (e.type === 'intent') out.set(`${e.op}#${e.ordinal}`, e.at);
-  return out;
-}
-
 /** dev.59: the session name of a Claude build spawn's launch, read once its launch.json exists (null before, or for Codex). */
 function buildSessionOf(runDir: AbsPath, inv: InvocationId): BuildSessionName | null {
   const terminal = runnerFiles(invocationDir(runDir, inv), inv).read('launch.json')?.terminal;
@@ -777,6 +763,8 @@ type Inputs = Readonly<{
   routing: ((unit: UnitId) => RoutingTable) | null;
   /** What admission and the next stage read from each unit's spec in force (M3 B3). */
   spec: SpecFactsOf;
+  /** The derivation's clock (ms): what every elapsed time and bound is as of. */
+  now: number;
 }>;
 
 const NO_WAIT: Omit<WaitingFor, 'deps' | 'milestones' | 'edges' | 'admission'> = { resources: null, envBlocked: false, drainFor: [] };
@@ -804,8 +792,9 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   if (next?.kind === 'admission' && routing !== null) {
     const a = admitter(routing, x.spec)({
       view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
-      // Status has no tick history: a host-pressure hold reads as waiting until its 30-min bound (src/host/pressure.ts).
-      pressure: { ticks: [], nowMs: Date.now() },
+      // Status has no tick history: a host-pressure hold reads as waiting until its 30-min bound (src/host/pressure.ts), as of
+      // the derivation's clock.
+      pressure: { ticks: [], nowMs: x.now },
     });
     if (a.kind === 'wait') {
       const state = a.constraints.some((c) => c.type === 'paused') ? 'held' : 'awaiting-admission';
@@ -935,6 +924,8 @@ type Derived = Readonly<{
   log: LogSnapshot;
   events: readonly Event[];
   view: JournalView;
+  /** Every pass over the log's events, extended to `events` (src/status/passes.ts). */
+  passes: StatusPasses;
   /** How long folding the log took (`host.log.foldMs`). */
   foldMs: number;
   clock: number;
@@ -972,13 +963,19 @@ function routingInForce(inForce: InForce): Readonly<{ profile: ProfileName; of: 
   };
 }
 
-/** The log folded, the plan in force, and every unit's line with the run's state: what `status` and `watch` share. */
-function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, timing?: Readonly<{ clock: number; foldMs: number }>): Derived {
+/**
+ * The log folded, the plan in force, and every unit's line with the run's state: what `status` and `watch` share. `passes`:
+ * the passes over this journal's events kept by a long-lived observer, extended here; without them they are folded from
+ * nothing.
+ */
+function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, timing?: Readonly<{ clock: number; foldMs: number }>, kept?: StatusPasses): Derived {
   const began = performance.now();
   const log = snapshot ?? readJournal(runDir, arc);
   if (log.view.arc !== arc) throw new Error(`status: journal snapshot belongs to ${log.view.arc}, not ${arc}`);
   const foldMs = timing?.foldMs ?? Math.round(performance.now() - began);
   const { view, events } = log;
+  const passes = kept ?? new StatusPasses();
+  passes.extend(events);
   const record = readIf(join(runDir, START_FILE), runStart);
   const inForce = planInForce(runDir, view);
   const plan = inForce?.plan ?? null;
@@ -1004,20 +1001,20 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
       };
     }
     : specFacts({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)), plan: () => plan! });
-  const inputs: Inputs | null = plan === null ? null : {
-    runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec,
-  };
-  const times = { starts: attemptStarts(events), intents: intentTimes(events) };
   const now = timing?.clock ?? Date.now();
+  const inputs: Inputs | null = plan === null ? null : {
+    runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec, now,
+  };
+  const times = { starts: passes.attemptStarts, intents: passes.intentTimes };
   const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, times, now));
   return {
-    log, events, view, foldMs, clock: now, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
+    log, events, view, passes, foldMs, clock: now, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
   };
 }
 
 /** The run's state and each unit's, compactly, and the log's high-water they were derived at (`seq`): what `watch` streams. */
-export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; openBlocking: OpenBlockingDigest; seq: number }> {
-  const d = derive(runDir, arc, hostDir, snapshot);
+export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, passes?: StatusPasses): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; openBlocking: OpenBlockingDigest; seq: number }> {
+  const d = derive(runDir, arc, hostDir, snapshot, undefined, passes);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
   return { run: d.state, units, superseded: [...supersededItems(d.view)].sort(), openBlocking: openBlockingDigest(runDir, d.view), seq: d.view.highWater() };
@@ -1093,6 +1090,25 @@ export type ObligationLeaf = Readonly<{ verdict: ObligationTruth['verdict']; wit
  * split parent's is its non-exempt children's (held when every one holds). `store` is the run dir's (`observations`) or
  * a snapshot ref's (the brief): one rule.
  */
+/**
+ * The units each obligation waits on (a split parent: its non-exempt children's, in id order). They depend on no tree: on the
+ * findings, the latches and the units' states only.
+ */
+function obligationUnits(view: JournalView, obligations: Obligations): (o: ObligationDef) => readonly UnitId[] {
+  const defs = new Map(obligations.obligations.map((o) => [o.id, o]));
+  const memo = new Map<ObligationDef, readonly UnitId[]>();
+  const unitsOf = (o: ObligationDef): readonly UnitId[] => {
+    let units = memo.get(o);
+    if (units === undefined) {
+      units = o.state.type !== 'split' ? obligationBlockingUnits(view, o)
+        : [...new Set(o.state.children.map((c) => defs.get(c)).filter((c): c is ObligationDef => c !== undefined && !isExempt(c)).flatMap(unitsOf))].sort();
+      memo.set(o, units);
+    }
+    return units;
+  };
+  return unitsOf;
+}
+
 function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obligations, store: ObservationStore) {
   const fold = view.holistic();
   const witnessed = new Map(fold.witnessed.map((w) => [w.seq, w]));
@@ -1107,12 +1123,7 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
   const byTree = new Map<Sha, Map<ObligationDef, ObligationLeaf>>();
   const observationsByTree = new Map<Sha, Map<ArcLaneDef, Observation | null>>();
   // An obligation's blocking units do not depend on the tree: computed once, however many trees a history walk asks.
-  const blocking = new Map<ObligationDef, readonly UnitId[]>();
-  const blockingUnits = (o: ObligationDef): readonly UnitId[] => {
-    let units = blocking.get(o);
-    if (units === undefined) { units = obligationBlockingUnits(view, o); blocking.set(o, units); }
-    return units;
-  };
+  const unitsOf = obligationUnits(view, obligations);
   const readable = (lane: ArcLaneDef): boolean => {
     const rev = revs.get(lane)!, env = environments.get(`${lane.id}/${rev}`);
     return env !== undefined && compatible.has(`${lane.id}/${rev}/${env}`);
@@ -1143,12 +1154,12 @@ function obligationEvaluator(repo: AbsPath, view: JournalView, obligations: Obli
         const verdicts = new Set(kids.map((k) => k.verdict));
         const verdict: ObligationLeaf['verdict'] = kids.every((k) => k.verdict === 'held') ? 'held'
           : (['not-held', 'partial', 'unwitnessed', 'not-covered'] as const).find((v) => verdicts.has(v))!;
-        return { verdict, witnessed: kids.flatMap((k) => k.witnessed), units: [...new Set(kids.flatMap((k) => k.units))].sort() };
+        return { verdict, witnessed: kids.flatMap((k) => k.witnessed), units: unitsOf(o) };
       }
       if (o.witness === null) throw new Error(`obligation ${o.id} has no witness and is not a split parent`);
       const lane = lanes.get(o.witness.lane);
       if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-      const units = blockingUnits(o);
+      const units = unitsOf(o);
       if (lane.witnessClass === 'external') {
         const result = external(tree, lane, o);
         return { verdict: result === null ? 'not-covered' : result.result === 'pass' ? 'held' : 'not-held', witnessed: [], units };
@@ -1192,42 +1203,61 @@ function treesOf(repo: AbsPath, head: Sha): readonly Sha[] {
   return trees;
 }
 
+/** The facts an obligation's verdict on a tree reads: the observations, root attestations, latches and the obligations in force. */
+const TRUTH_FACTS = ['witnessed', 'external-witness', 'obligation-latched', 'plan-applied'] as const;
+type HeadLeaf = Readonly<{ verdict: ObligationTruth['verdict']; evidence: readonly AbsPath[] }>;
+
 /** Each non-exempt obligation on the integration head's tree: now true, or not yet with what it waits on. */
 function truths(
   runDir: AbsPath, view: JournalView, lines: readonly UnitCore[], obligations: Obligations, repo: AbsPath, head: Sha,
 ) {
   const latched = new Set(view.holistic().latched.map((l) => l.obligation));
   const byUnit = new Map(lines.map((l) => [l.unit, l]));
-  const store = observations({ journal: { view }, runDir });
+  const unitsOf = obligationUnits(view, obligations);
+  const map = systemsMapInForce(view.planApplied());
   // The head's tree first, then each earlier tree of its first-parent history, newest first (a tree once).
   const trees = treesOf(repo, head);
-  const evaluate = obligationEvaluator(repo, view, obligations, store);
-  const onHead = evaluate(trees[0]!);
+  // Read and built only when a cell below computes.
+  let evaluator: ReturnType<typeof obligationEvaluator> | null = null;
+  const evaluate = (): ReturnType<typeof obligationEvaluator> => evaluator ??= obligationEvaluator(repo, view, obligations, observations({ journal: { view }, runDir }));
   const evidenceOf = (l: ObligationLeaf): readonly AbsPath[] => l.witnessed.map((w) => witnessDir(runDir, w));
   const definitions = new Map(obligations.obligations.map((o) => [o.id, o]));
-  const map = systemsMapInForce(view.planApplied());
   const needsListings = map !== null || obligations.lanes.some((l) => l.inputs !== undefined);
+  /**
+   * Cells `truths` and `history`: a verdict on a tree reads the tree (the head's, and its first-parent history: fixed by the
+   * head commit), the obligations in force and the systems map (the last `plan-applied`), the observations (the `witnessed`
+   * facts, each naming a write-once record checked against its hash), the root attestations (`external-witness`) and the
+   * latches. What an obligation waits on (its units and their reasons) reads the units' states: derived on every capture.
+   */
+  const key = `${head}:${view.lastSeqOf(TRUTH_FACTS)}:${systemsMapKey(map)}`;
+  const onHead = cell('truths', key, (): ReadonlyMap<ObligationId, HeadLeaf> => {
+    const at = evaluate()(trees[0]!);
+    return new Map(obligations.obligations.filter((o) => !isExempt(o)).map((o) => {
+      const l = at(o);
+      return [o.id, { verdict: l.verdict, evidence: evidenceOf(l) }];
+    }));
+  });
   /**
    * Each obligation's last observation before the head: the newest earlier tree where its verdict is not `not-covered`.
    * Tree-major, newest first: each tree's listings are prefetched by chunk and each tree is let go once its pending
    * obligations are asked, so a long history holds one chunk of listings and one tree's leaves at a time.
    */
-  const lastObserved = (pending: readonly ObligationDef[]): ReadonlyMap<ObligationDef, LastObservation> => {
-    const found = new Map<ObligationDef, LastObservation>();
-    let left = pending.filter((o) => evaluate.canObserve(o));
+  const lastObserved = (pending: readonly ObligationDef[]): ReadonlyMap<ObligationId, LastObservation> => {
+    const found = new Map<ObligationId, LastObservation>();
+    let left = pending.filter((o) => evaluate().canObserve(o));
     const history = trees.slice(1);
     for (const chunk of left.length === 0 ? [] : needsListings ? listingChunks(repo, trees[0]!, history) : [history]) {
       // A tree whose inputs are already known for every lane still asked needs no listing: later captures prefetch nothing.
       if (needsListings) {
-        const asked = [...new Set(left.flatMap((o) => evaluate.lanesRead(o)))];
+        const asked = [...new Set(left.flatMap((o) => evaluate().lanesRead(o)))];
         prefetchTreeListings(repo, chunk.filter((tree) => asked.some((lane) => !inputKnown(tree, lane, map))));
       }
       for (const tree of chunk) {
-        const at = evaluate.passing(tree);
+        const at = evaluate().passing(tree);
         left = left.filter((o) => {
           const l = at(o);
           if (l.verdict === 'not-covered') return true;
-          found.set(o, { treeSha: tree, verdict: l.verdict, evidence: evidenceOf(l) });
+          found.set(o.id, { treeSha: tree, verdict: l.verdict, evidence: evidenceOf(l) });
           return false;
         });
         if (left.length === 0) return found;
@@ -1235,16 +1265,13 @@ function truths(
     }
     return found;
   };
-  const leaf = (o: ObligationDef): Readonly<{ verdict: ObligationTruth['verdict']; evidence: readonly AbsPath[]; units: readonly UnitId[] }> => {
-    const l = onHead(o);
-    return { verdict: l.verdict, evidence: evidenceOf(l), units: l.units };
-  };
 
   const nowTrue: ObligationTruth[] = [];
   const notYetTrue: ObligationPending[] = [];
   for (const o of [...obligations.obligations].sort((a, b) => compareIds(a.id, b.id))) {
     if (isExempt(o)) continue;
-    const l = leaf(o);
+    const l = onHead.get(o.id);
+    if (l === undefined) throw new Error(`obligation ${o.id} has no verdict on the head under key ${key}`);
     const truth: ObligationTruth = {
       obligation: o.id, statement: o.statement, activation: isMustHold(o, latched) ? 'must-hold' : 'future', verdict: l.verdict,
       evidence: l.evidence,
@@ -1253,19 +1280,20 @@ function truths(
       nowTrue.push(truth);
       continue;
     }
-    const reasons = new Set(l.units.map((u) => {
+    const units = unitsOf(o);
+    const reasons = new Set(units.map((u) => {
       const line = byUnit.get(u);
       if (line === undefined) throw new Error(`obligation ${o.id} waits on unit ${u}, which the plan in force does not have`);
       return unitReason(line);
     }));
     // Nothing to wait on: a witness run on the head when its lane has not run there, else a spec (a repair to plan).
-    const reason = l.units.length > 0 ? OBLIGATION_REASONS.find((r) => reasons.has(r as never)) ?? 'code' : l.verdict === 'not-covered' ? 'witness' : 'spec';
-    notYetTrue.push({ ...truth, blockingUnits: l.units, reason, lastObserved: null });
+    const reason = units.length > 0 ? OBLIGATION_REASONS.find((r) => reasons.has(r as never)) ?? 'code' : l.verdict === 'not-covered' ? 'witness' : 'spec';
+    notYetTrue.push({ ...truth, blockingUnits: units, reason, lastObserved: null });
   }
   return { nowTrue, notYetTrue, withHistory: () => {
-    const uncovered = notYetTrue.filter((o) => o.verdict === 'not-covered').map((o) => definitions.get(o.obligation)!);
-    const last = lastObserved(uncovered);
-    return { nowTrue, notYetTrue: notYetTrue.map((o) => ({ ...o, lastObserved: o.verdict === 'not-covered' ? last.get(definitions.get(o.obligation)!) ?? null : null })) };
+    // Which obligations the head does not cover is the `truths` cell's value: a function of its key.
+    const last = cell('history', key, () => lastObserved(notYetTrue.filter((o) => o.verdict === 'not-covered').map((o) => definitions.get(o.obligation)!)));
+    return { nowTrue, notYetTrue: notYetTrue.map((o) => ({ ...o, lastObserved: o.verdict === 'not-covered' ? last.get(o.obligation) ?? null : null })) };
   } };
 }
 
@@ -1395,8 +1423,15 @@ function runDirDecisions(runDir: AbsPath, arc: ArcId): DecisionReader {
  * patches; the executor's spec patches; steers; lanes reruns (dev.59); and divergences. The brief uses its coverage vector's high-water.
  */
 export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
+  const fold = new DecisionSourcesFold();
+  for (const e of events) fold.step(e);
+  return decisionsOf(view, fold.sources, since, read);
+}
+
+/** `decisionsAfter` over the events a decision is read from (`DecisionSourcesFold`), at `view`'s position. */
+function decisionsOf(view: JournalView, sources: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
-  for (const e of events) {
+  for (const e of sources) {
     if (e.type === 'done' && e.kind === 'spec.patch' && e.seq > since) {
       const intent = view.latestIntent(e.op);
       if (intent.kind !== 'spec.patch') throw new Error(`${e.op} is done as spec.patch but its intent is ${intent.kind}`);
@@ -1558,20 +1593,9 @@ export const heldPct = (c: CensusCounts): number | null => (c.obligationRules ==
  * outcomes after `after` count: `status` reads all (0), the brief the delta since its coverage.
  */
 export function stageTimings(events: readonly Event[], after = 0): readonly StageTiming[] {
-  const starts = attemptStarts(events);
-  const by = new Map<OutcomeStage, number[]>();
-  for (const e of events) {
-    if (e.type !== 'fact' || (e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) || e.seq <= after) continue;
-    const f = e.fact;
-    const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
-    if (start === undefined) continue;
-    const durations = by.get(f.stage) ?? [];
-    durations.push(Math.max(0, Date.parse(e.at) - Date.parse(start))); by.set(f.stage, durations);
-  }
-  return OUTCOME_STAGES.flatMap((stage) => {
-    const ms = [...(by.get(stage) ?? [])].sort((a, b) => a - b);
-    return ms.length === 0 ? [] : [{ stage, count: ms.length, p50Ms: ms[Math.floor((ms.length - 1) / 2)]!, maxMs: ms.at(-1)! }];
-  });
+  const fold = new StageTimingsFold(after);
+  for (const e of events) fold.step(e);
+  return fold.timings;
 }
 
 function packReviewOf(ctx: RevisionContext): PackReviewView {
@@ -1649,9 +1673,9 @@ export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser
 }>;
 
 function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
-  const { view, events, start, inForce } = d;
+  const { view, start, inForce } = d;
   const now = d.clock;
-  const meter = meterOf(events);
+  const meter = d.passes.meter;
   const needsUser = openItems(runDir, view);
   const commands = commandsOf(runDir, arc, view);
 
@@ -1670,7 +1694,7 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   });
 
   const core: StatusCore = {
-    arc, supervision: supervision(runDir), waiting: waitingTotals(events),
+    arc, supervision: supervision(runDir), waiting: d.passes.waiting,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
     units: d.units, needsUser, spend: { byRole: meter.byRole, bySmoke: meter.bySmoke },
     plan: inForce === null ? null : { rev: inForce.rev, planSha256: inForce.manifest.planSha256 },
@@ -1687,7 +1711,7 @@ export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapsh
     const d = derive(runDir, arc, hostDir, snapshot);
     return withSnapshotReads(d.log, () => {
       const x = readCore(runDir, arc, hostDir, d);
-      return { core: x.core, events: x.d.events, plan: x.plan, meter: x.meter };
+      return { core: x.core, events: x.d.events, plan: x.plan, passes: d.passes };
     });
   });
 }
@@ -1699,7 +1723,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
   const t = x.t.withHistory();
   const fold = view.holistic();
   const holistic = on !== null;
-  const tables = routingTables(runDir, events);
+  const tables = routingTables(runDir, view, events);
   const resolvable = { bySeat: meter.bySeat.filter((t) => tables.has(t.routingRev)), delegatedBySeat: meter.delegatedBySeat };
   const each = <V>(of: (r: ResolvedRouting) => V): ReadonlyMap<RoutingRev, V> => new Map([...tables].map(([rev, r]) => [rev, of(r)]));
   const unresolvedRevs = [...new Set(meter.bySeat.filter((t) => !tables.has(t.routingRev)).map((t) => t.routingRev))].sort();
@@ -1711,8 +1735,8 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => plan,
     hostEnv: process.env, routingBase: routingBaseOf(inForce.fact.routingProvenance),
   }).audit;
-  const work = workContext === null ? [] : workRuns(workContext, events);
-  const certify = workContext === null ? null : certificationReader(workContext, events, work);
+  const work = workContext === null ? [] : workRunsOf(workContext, d.passes.reservations);
+  const certify = workContext === null ? null : certificationReader(workContext, d.passes.certification, work);
   const byUnit = new Map<UnitId, WorkRun[]>(); const hostWork: WorkRun[] = [];
   for (const r of work) {
     if (r.parent.type !== 'stage') { hostWork.push(r); continue; }
@@ -1758,10 +1782,10 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     deferred: exemptBy(obligations, 'deferred'),
     vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold),
     divergences: divergencesOf(view),
-    decisionsSince: decisionsAfter(view, events, 0, runDirDecisions(runDir, arc)),
+    decisionsSince: decisionsOf(view, d.passes.decisionSources, 0, runDirDecisions(runDir, arc)),
     findings: {
       active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
-      metrics: findingMetrics(events, fold.findings),
+      metrics: d.passes.findingTimes.metrics(fold.findings),
       ...releaseCounts(view),
     },
     audit,
@@ -1772,7 +1796,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     census: corpus === null || obligations === null ? null : censusOf(obligations, t),
     debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
-    timings: stageTimings(events),
+    timings: d.passes.stageTimings,
     answers: unappliedAnswers(commonDirOfRun(runDir), d.log).map((a) => ({ ...a, line: answerLine(a) })),
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     demo: core.demo,
@@ -1809,14 +1833,17 @@ function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: 
   return { ...h, audit: { ...h.audit, routing }, revision: { ...h.revision, routing } };
 }
 
-/** One production capture: measured cursor fold, one clock and one shared core derivation.
- * Materialized values outlive the mutable ObserverJournal view; never retain that view. */
-export function captureStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>) {
+/**
+ * One production capture: measured cursor fold, one clock and one shared core derivation. `passes`: the observer's passes
+ * over this journal, extended to the snapshot (without: folded from nothing, the full derivation).
+ * Materialized values outlive the mutable ObserverJournal view; never retain that view.
+ */
+export function captureStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>, passes?: StatusPasses) {
   return withObservationReads(() => {
-    const d = derive(runDir, arc, hostDir, snapshot, timing);
+    const d = derive(runDir, arc, hostDir, snapshot, timing, passes);
     return withSnapshotReads(d.log, () => withArcRefReads(() => {
       const x = readCore(runDir, arc, hostDir, d);
-      return { full: readStatus(runDir, arc, hostDir, d, x), core: x.core, plan: x.plan, events: [...d.events], ...timing };
+      return { full: readStatus(runDir, arc, hostDir, d, x), core: x.core, plan: x.plan, events: [...d.events], passes: d.passes, ...timing };
     }));
   });
 }

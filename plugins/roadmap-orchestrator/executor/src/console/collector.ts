@@ -21,7 +21,7 @@ const collector = new ArcCollector(run, hostDir, common, (m) => {
   port.postMessage(m);
   if (m.kind === 'observation') report({ kind: 'captured', arc: m.arc, at: m.asOf, seq: m.journal.seq, offset: m.journal.offset, work: m.work });
   if (m.kind === 'rows') report({ kind: 'captured', arc: m.arc, at: m.asOf, seq: null, offset: null, work: m.work });
-});
+}, { shadow: 'idle' });
 let timer: NodeJS.Timeout | null = null, dueAt = Infinity;
 function schedule(delayMs: number): void {
   if (timer !== null) clearTimeout(timer);

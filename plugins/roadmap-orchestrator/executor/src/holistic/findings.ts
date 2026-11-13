@@ -366,25 +366,35 @@ export type FindingMetric = Readonly<{
   timeToResolveMs: number | null;
 }>;
 
+/** When each finding opened and last closed, folded one event at a time (a pass of src/status/passes.ts). */
+export class FindingTimesFold {
+  readonly #opened = new Map<FindingId, number>();
+  readonly #closed = new Map<FindingId, number>();
+  step(e: Event): void {
+    if (e.type !== 'fact') return;
+    const f = e.fact;
+    if (f.kind === 'finding-opened') this.#opened.set(f.id, Date.parse(e.at));
+    if (f.kind === 'finding-dismissed' || (f.kind === 'finding-transition' && (f.to.state === 'resolved' || f.to.state === 'ruled'))) this.#closed.set(f.id, Date.parse(e.at));
+  }
+  /** Each of `findings` with its times (the fold's findings at the same position). */
+  metrics(findings: readonly FindingState[]): readonly FindingMetric[] {
+    return findings.map((f) => {
+      const from = this.#opened.get(f.id);
+      const to = this.#closed.get(f.id);
+      if (from === undefined) throw new Error(`finding ${f.id} has no finding-opened event`);
+      return {
+        id: f.id, lens: f.lens, severity: f.severity, gateHadPassed: f.gateHadPassed,
+        disposition: f.last?.state === 'ruled' ? f.last.disposition : null,
+        merged: f.state === 'resolved',
+        timeToResolveMs: isActive(f) || to === undefined ? null : to - from,
+      };
+    });
+  }
+}
+
 /** Per finding, over the log's events (their times) and the fold's states. */
 export function findingMetrics(events: readonly Event[], findings: readonly FindingState[]): readonly FindingMetric[] {
-  const opened = new Map<FindingId, number>();
-  const closed = new Map<FindingId, number>();
-  for (const e of events) {
-    if (e.type !== 'fact') continue;
-    const f = e.fact;
-    if (f.kind === 'finding-opened') opened.set(f.id, Date.parse(e.at));
-    if (f.kind === 'finding-dismissed' || (f.kind === 'finding-transition' && (f.to.state === 'resolved' || f.to.state === 'ruled'))) closed.set(f.id, Date.parse(e.at));
-  }
-  return findings.map((f) => {
-    const from = opened.get(f.id);
-    const to = closed.get(f.id);
-    if (from === undefined) throw new Error(`finding ${f.id} has no finding-opened event`);
-    return {
-      id: f.id, lens: f.lens, severity: f.severity, gateHadPassed: f.gateHadPassed,
-      disposition: f.last?.state === 'ruled' ? f.last.disposition : null,
-      merged: f.state === 'resolved',
-      timeToResolveMs: isActive(f) || to === undefined ? null : to - from,
-    };
-  });
+  const fold = new FindingTimesFold();
+  for (const e of events) fold.step(e);
+  return fold.metrics(findings);
 }

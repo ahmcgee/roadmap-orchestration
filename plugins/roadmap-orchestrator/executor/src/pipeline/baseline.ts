@@ -35,7 +35,7 @@ import type { AcquireFirst } from '../schedule/arbiter.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { type JourneyContext, type JourneyEnd, arcJourneyLane, jobSeriesCheckout, removeJobCheckouts, runJourneySeries, witnessRecordPath } from './lanes.ts';
 import { holisticInForce } from './stages.ts';
-import { writeOnce } from '../observation/memo.ts';
+import { parsedOnce,writeOnce } from '../observation/memo.ts';
 
 export type BaselineContext = JourneyContext & Readonly<{ acquireFirst: AcquireFirst }>;
 
@@ -73,7 +73,10 @@ function recordsOf(ctx: Reader, job: JobId, tree: Sha): ReadonlyMap<LaneId, Witn
     }
     if (!same) continue;
     const path = witnessRecordPath(ctx.runDir, w);
-    out.set(w.lane, writeOnce('witness-record', path, () => witnessRecord(JSON.parse(readFileSync(path, 'utf8')), 'witness'))!);
+    // The record a fact names is written once, before the fact, which carries its hash: parsed once (the scheduler asks on
+    // every tick, twice through `baselineDue`).
+    out.set(w.lane, parsedOnce(`witness-record:${job}:${w.lane}:${w.recordsSha256}`,
+      () => writeOnce('witness-record', path, () => witnessRecord(JSON.parse(readFileSync(path, 'utf8')), 'witness'))!));
   }
   return out;
 }

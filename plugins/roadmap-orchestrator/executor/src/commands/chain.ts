@@ -82,8 +82,10 @@ const forgeFailure = (error: unknown): string | null =>
  */
 export class ForgeMemo {
   readonly ttlMs: number;
-  #entries = new Map<string, { at: number; prs: ReadonlyMap<ArcId, BriefPr> }>();
-  constructor(ttlMs: number) { this.ttlMs = ttlMs; }
+  #entries: Map<string, { at: number; prs: ReadonlyMap<ArcId, BriefPr> }>;
+  constructor(ttlMs: number, entries = new Map<string, { at: number; prs: ReadonlyMap<ArcId, BriefPr> }>()) { this.ttlMs = ttlMs; this.#entries = entries; }
+  /** The pull requests as last read, never refreshed: a shadow derivation reads the forge as the capture it checks read it. */
+  held(): ForgeMemo { return new ForgeMemo(Infinity, this.#entries); }
   read(key: string, read: () => ReadonlyMap<ArcId, BriefPr>): ReadonlyMap<ArcId, BriefPr> {
     const hit = this.#entries.get(key);
     if (hit !== undefined && Date.now() - hit.at < this.ttlMs) return hit.prs;

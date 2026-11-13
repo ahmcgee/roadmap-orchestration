@@ -322,11 +322,13 @@ export function keepPayload(runDir: AbsPath, payload: RevisionPayload): Sha256He
   return keepInput(runDir, bytes, REVISION_INPUT);
 }
 
-/** The kept payload hashing to `sha`; a missing one is a bug (it is kept before anything names it). */
+/** The kept payload hashing to `sha`; a missing one is a bug (it is kept before anything names it). Parsed once (`parsedOnce`). */
 export function keptPayload(runDir: AbsPath, sha: Sha256Hex): RevisionPayload {
-  const bytes = keptInput(runDir, sha, REVISION_INPUT);
-  if (bytes === null) throw new Error(`revision payload ${sha} is named in the log but ${inputPath(runDir, sha, REVISION_INPUT)} does not exist`);
-  return parseRevisionPayload(JSON.parse(bytes.toString('utf8')));
+  return parsedOnce(`payload:${sha}`, () => {
+    const bytes = keptInput(runDir, sha, REVISION_INPUT);
+    if (bytes === null) throw new Error(`revision payload ${sha} is named in the log but ${inputPath(runDir, sha, REVISION_INPUT)} does not exist`);
+    return parseRevisionPayload(JSON.parse(bytes.toString('utf8')));
+  });
 }
 
 /** The kept payload of plan rev `rev`, by its applied `revision.commit` (a revision this release wrote always has one). */
@@ -462,9 +464,11 @@ export function planInForce(runDir: AbsPath, view: JournalView): InForce | null 
 
 /** The plan revision `fact` put in force, parsed from its kept bytes (dev.59: also an earlier one, `planAppliedAt`). */
 export function planOf(runDir: AbsPath, fact: PlanAppliedFact): PlanM1 {
-  const bytes = keptInput(runDir, fact.planSha256, PLAN_INPUT);
-  if (bytes === null) throw new Error(`plan rev ${fact.rev} is ${fact.planSha256}, but ${inputPath(runDir, fact.planSha256, PLAN_INPUT)} does not exist`);
-  return parsedOnce(`plan:${fact.planSha256}`, () => parsePlan(JSON.parse(bytes.toString('utf8'))));
+  return parsedOnce(`plan:${fact.planSha256}`, () => {
+    const bytes = keptInput(runDir, fact.planSha256, PLAN_INPUT);
+    if (bytes === null) throw new Error(`plan rev ${fact.rev} is ${fact.planSha256}, but ${inputPath(runDir, fact.planSha256, PLAN_INPUT)} does not exist`);
+    return parsePlan(JSON.parse(bytes.toString('utf8')));
+  });
 }
 
 /** The plan in force, which every executor context has once its start recorded one. */

@@ -44,6 +44,9 @@ and explicit expansion keep long transcripts bounded. Deterministic activities k
   test-case counts.
 - The page retains timestamped content and reports "Disconnected/stale" after five seconds without a verified
   observation.
+- The console keeps what it derived from inputs that have not changed, and checks it now and then, when idle,
+  against a derivation from nothing. A difference fails that arc's views with `console derivation diverged at
+  <path>` and logs it; the arc keeps running, and `roadmap console stop` then `start` derives it afresh.
 
 ### Lifecycle
 

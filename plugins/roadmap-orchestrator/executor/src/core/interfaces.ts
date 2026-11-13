@@ -4,7 +4,7 @@
 // Interfaces only; no behaviour here.
 import type { Backend,UnitRole } from '../routing/types.ts';
 import type {
-AbortCode,CiFact,DoneRecord,Fact,StageOutcomeFact,
+AbortCode,CiFact,DoneRecord,Fact,FactKind,StageOutcomeFact,
 FlakyFact,
 GitOpKind,IntentOf,IntentRecord,JudgmentInputs,JudgmentStage,OpExpect,OpKind,OpOutcome,OpPost,Parent,
 PlanAppliedFact,PropagationFact,RecoveredBy,WalkFact,
@@ -39,6 +39,11 @@ export interface JournalView {
   readonly arc: ArcId;
   /** Seq of the last durable line; 0 for an empty log. */
   highWater(): number;
+  /**
+   * The seq of the last event of any of `kinds`, 0 when the log has none: a fact by its kind, an op's intents, dones and
+   * aborts by the op's kind. What a value derived from those events alone can be keyed on (src/observation/memo.ts `cell`).
+   */
+  lastSeqOf(kinds: readonly FactKind[] | readonly OpKind[]): number;
   /** The chain hash of the last line (the next line's `prev`); null for an empty log. */
   lastHash(): import('./ids.ts').Sha256Hex | null;
   ciFacts(): readonly CiFact[];

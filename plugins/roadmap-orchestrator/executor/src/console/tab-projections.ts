@@ -1,12 +1,13 @@
 // Server-only row/aggregate foundations. Query modules page these collections into typed wire views.
 // Each builder selects recorded fields explicitly and performs no evidence reads or report enrichment.
 import { invocationDirName, invocationIdOf, parseInvocationId } from '../core/ids.ts';
-import type { Parent } from '../core/events.ts';
+import type { Event, Fact, Parent } from '../core/events.ts';
 import { sha256Hex } from '../core/json.ts';
 import type { Envelope } from '../observation/protocol.ts';
 import { activityState } from '../tui/outcome.ts';
 import { completedWaiting } from '../status/waiting.ts';
-import { identityIndex, stageIndex, invocationIndex } from './indexes.ts';
+import { identityIndex, stageIndex, invocationIndex, type StageStep, type UnitIdentity } from './indexes.ts';
+import type { Invocation } from '../tui/types.ts';
 import { preview } from './views.ts';
 import { cpuStageGroups, resourceQueue } from './resources.ts';
 import { waitingBreakdown } from './waiting.ts';
@@ -18,47 +19,57 @@ import type { CpuStageGroup, EffortRow, HolisticRow, Interval, Money, RequestSum
 const noMoney = (): Money => ({costUsd: null, recorded: 0, estimated: 0, unavailable: 0});
 const sumMoney = (a: Money, b: Money): Money => ({costUsd: a.costUsd === null && b.costUsd === null ? null : (a.costUsd ?? 0) + (b.costUsd ?? 0), recorded: a.recorded + b.recorded, estimated: a.estimated + b.estimated, unavailable: a.unavailable + b.unavailable});
 const subjectKey = (s: Subject) => `${s.type}:${s.id}`;
+type ChargeFact = Extract<Fact, {kind: 'meter' | 'usage-unavailable'}>;
+/** D4: what one meter (or usage-unavailable) fact charges its invocation. */
+export function chargeOf(f: ChargeFact): Money {
+  const usage = f.kind === 'meter' ? f.usage : f.streamed, known = usage?.costUsd != null;
+  return {costUsd: usage?.costUsd ?? null, recorded: known ? 1 : 0,
+    estimated: usage?.costEstimated ? 1 : 0, unavailable: f.kind === 'usage-unavailable' || f.incomplete !== undefined || !known ? 1 : 0};
+}
 /** D4: the enclosing meter is the charge; delegated/session annotations are never added again. */
 function chargeIndex(e: Envelope) {
   const byInvocation = new Map<string, Money>(), bySubject = new Map<string, Money>();
   for (const ev of e.data.events) {
     if (ev.type !== 'fact' || (ev.fact.kind !== 'meter' && ev.fact.kind !== 'usage-unavailable')) continue;
-    const f = ev.fact, usage = f.kind === 'meter' ? f.usage : f.streamed;
-    const known = usage?.costUsd != null;
-    const money: Money = {costUsd: usage?.costUsd ?? null, recorded: known ? 1 : 0,
-      estimated: usage?.costEstimated ? 1 : 0, unavailable: f.kind === 'usage-unavailable' || f.incomplete !== undefined || !known ? 1 : 0};
+    const f = ev.fact, money = chargeOf(f);
     byInvocation.set(f.inv, money);
     const key = f.subject.type === 'seat' ? `unit:${f.subject.unit}` : f.subject.type === 'job' ? `job:${f.subject.job}` : `arc:${e.arc}`;
     bySubject.set(key, sumMoney(bySubject.get(key) ?? noMoney(), money));
   }
   return {byInvocation, bySubject};
 }
+/** The subject a parent names: its unit (by its title), its job, else `fallback`'s unit when that is a unit, else the arc. */
+export function subjectOf(identities: ReadonlyMap<string, UnitIdentity>, arc: string, parent: Parent | undefined, fallback?: string): Subject {
+  if (parent?.type === 'stage') return {type: 'unit', id: parent.unit, title: identities.get(parent.unit)?.title.slice(0, 96) ?? parent.unit};
+  if (parent?.type === 'job') return {type: 'job', id: parent.job, title: parent.job};
+  if (fallback && identities.has(fallback)) return {type: 'unit', id: fallback, title: identities.get(fallback)!.title.slice(0, 96)};
+  return {type: 'arc', id: arc, title: 'Arc'};
+}
 export function projectionIndex(e: Envelope) {
   const identities = identityIndex(e), stages = stageIndex(e.data.events);
   const invocations = invocationIndex(e.data.display.invocations, stages), charges = chargeIndex(e);
-  const subject = (parent: Parent | undefined, fallback?: string): Subject => {
-    if (parent?.type === 'stage') return {type: 'unit', id: parent.unit, title: identities.get(parent.unit)?.title.slice(0, 96) ?? parent.unit};
-    if (parent?.type === 'job') return {type: 'job', id: parent.job, title: parent.job};
-    if (fallback && identities.has(fallback)) return {type: 'unit', id: fallback, title: identities.get(fallback)!.title.slice(0, 96)};
-    return {type: 'arc', id: e.arc, title: 'Arc'};
-  };
+  const subject = (parent: Parent | undefined, fallback?: string): Subject => subjectOf(identities, e.arc, parent, fallback);
   return {identities, stages, invocations, charges, subject};
 }
 type Index = ReturnType<typeof projectionIndex>;
-
-/** D3 intervals use timestamps; measured wall time never changes an interval's end. */
+export type SpawnOutcome = Extract<Event, {type: 'done'; kind: 'proc.spawn'}>['outcome'];
+/**
+ * D3: one invocation's interval, from its display row (`displayInvocation`), its parent and stage step, its spawn's terminal
+ * outcome and its charge. Intervals use timestamps; measured wall time never changes an interval's end.
+ */
+export function intervalOf(i: Invocation, parent: Parent | undefined, step: StageStep | undefined, terminal: SpawnOutcome | undefined, charge: Money | undefined, subject: Subject): Interval {
+  let outcome = activityState(i);
+  if (outcome === 'result' && terminal?.kind === 'result') outcome = terminal.summary.type === 'command' ? terminal.summary.verdict : terminal.summary.outcome;
+  const spend = charge ?? {...noMoney(), unavailable: i.execution === 'agent' ? 1 : 0};
+  const id = invocationDirName(invocationIdOf(i.id));
+  return {id, invocation: id, subject, stage: parent?.type === 'stage' ? parent.stage : i.role,
+    attempt: step?.attempt ?? i.attempt, round: step?.round ?? null, actor: {role: i.role, backend: i.backend ?? null, model: i.model ?? null},
+    outcome, startedAt: i.startedAt, endedAt: i.endedAt, wallMs: i.work?.measured?.wallMs ?? null, spend};
+}
 export function timelineIntervals(e: Envelope, index: Index = projectionIndex(e)): Interval[] {
   const terminals = new Map(e.data.events.flatMap(ev => ev.type === 'done' && ev.kind === 'proc.spawn' ? [[String(ev.op), ev.outcome] as const] : []));
-  return index.invocations.rows.map(({invocation: i, parent, step}) => {
-    let outcome = activityState(i);
-    const terminal = terminals.get(parseInvocationId(invocationIdOf(i.id)).op);
-    if (outcome === 'result' && terminal?.kind === 'result') outcome = terminal.summary.type === 'command' ? terminal.summary.verdict : terminal.summary.outcome;
-    const spend = index.charges.byInvocation.get(i.id) ?? {...noMoney(), unavailable: i.execution === 'agent' ? 1 : 0};
-    const id = invocationDirName(invocationIdOf(i.id));
-    return {id, invocation: id, subject: index.subject(parent, i.unit), stage: parent?.type === 'stage' ? parent.stage : i.role,
-      attempt: step?.attempt ?? i.attempt, round: step?.round ?? null, actor: {role: i.role, backend: i.backend ?? null, model: i.model ?? null},
-      outcome, startedAt: i.startedAt, endedAt: i.endedAt, wallMs: i.work?.measured?.wallMs ?? null, spend};
-  });
+  return index.invocations.rows.map(({invocation: i, parent, step}) =>
+    intervalOf(i, parent, step, terminals.get(parseInvocationId(invocationIdOf(i.id)).op), index.charges.byInvocation.get(i.id), index.subject(parent, i.unit)));
 }
 /** D9: input is the observer's canonical open list, including file-only requests. */
 export function attentionSummaries(e: Envelope): RequestSummary[] {

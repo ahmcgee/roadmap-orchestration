@@ -10,36 +10,53 @@ import { raiseNeedsUser } from '../needsuser.ts';
 export type WasteFinding = Readonly<{ key: string; detector: 'grinding' | 'red-on-unit-green-on-base' | 'low-unique-catch' | 'repeated-expensive-suite'; unit: UnitId | null; summary: string }>;
 export type LaneRun = Readonly<{ lane: LaneId; unit: UnitId | null; series: string; at: string; set: 'spec' | 'suite'; minutes: number; verdict: string }>;
 
-/** Only completed real executions count; reuse facts stay intact but incur no second run or cost. */
-export function laneRuns(events: readonly Event[]): readonly LaneRun[] {
-  const starts = new Map<string, Readonly<{ intent: IntentOf<'proc.spawn'>; at: string }>>();
-  const runs: LaneRun[] = [];
-  for (const e of events) {
-    if (e.type === 'intent' && e.kind === 'proc.spawn') starts.set(e.op, { intent: e, at: e.at });
-    if (e.type !== 'done' || e.kind !== 'proc.spawn' || e.outcome.kind !== 'result' || e.outcome.summary.type !== 'command') continue;
-    const start = starts.get(e.op);
+/**
+ * The completed lane and journey runs, folded one event at a time (a pass of src/status/passes.ts). Only completed real
+ * executions count; reuse facts stay intact but incur no second run or cost.
+ */
+export class LaneRunFold {
+  readonly #starts = new Map<string, Readonly<{ intent: IntentOf<'proc.spawn'>; at: string }>>();
+  readonly #runs: LaneRun[] = [];
+  step(e: Event): void {
+    if (e.type === 'intent' && e.kind === 'proc.spawn') this.#starts.set(e.op, { intent: e, at: e.at });
+    if (e.type !== 'done' || e.kind !== 'proc.spawn' || e.outcome.kind !== 'result' || e.outcome.summary.type !== 'command') return;
+    const start = this.#starts.get(e.op);
     if (start === undefined) throw new Error(`done spawn without intent: ${e.op}`);
     const { subject: s } = start.intent.expect;
-    if (s.purpose !== 'lane' && s.purpose !== 'journey') continue;
+    if (s.purpose !== 'lane' && s.purpose !== 'journey') return;
     const parent = start.intent.parent;
-    runs.push({ lane: s.lane, unit: s.purpose === 'lane' ? s.unit : s.owner.type === 'unit' ? s.owner.unit : null,
+    this.#runs.push({ lane: s.lane, unit: s.purpose === 'lane' ? s.unit : s.owner.type === 'unit' ? s.owner.unit : null,
       series: canonicalJson(parent), at: s.at, set: s.purpose === 'lane' ? s.set : 'suite', minutes: Math.max(0, Date.parse(e.at) - Date.parse(start.at)) / 60000, verdict: e.outcome.summary.verdict });
   }
-  return runs;
+  /** The runs so far, in log order. */
+  get runs(): readonly LaneRun[] { return [...this.#runs]; }
+}
+
+export function laneRuns(events: readonly Event[]): readonly LaneRun[] {
+  const fold = new LaneRunFold();
+  for (const e of events) fold.step(e);
+  return fold.runs;
+}
+
+/** Each unit's builds and judged stages, folded one event at a time (a pass of src/status/passes.ts). */
+export class GrindingFold {
+  readonly #units = new Map<UnitId, Readonly<{ builds: number; judged: number }>>();
+  step(e: Event): void {
+    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) return;
+    const f = e.fact;
+    const n = this.#units.get(f.unit) ?? { builds: 0, judged: 0 };
+    this.#units.set(f.unit, { builds: n.builds + (f.stage === 'build' ? 1 : 0), judged: n.judged + (['plan-check', 'build', 'lanes', 'gate'].includes(f.stage) ? 1 : 0) });
+  }
+  get findings(): readonly WasteFinding[] {
+    return [...this.#units].flatMap(([unit, n]) => n.builds >= 8 || n.judged >= 20
+      ? [{ key: `grinding:${unit}`, detector: 'grinding' as const, unit, summary: `${unit}: ${n.builds} builds, ${n.judged} judged stages; inspect the repeated work.` }] : []);
+  }
 }
 
 export function grinding(events: readonly Event[]): readonly WasteFinding[] {
-  const units = new Map<UnitId, { builds: number; judged: number }>();
-  for (const e of events) {
-    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) continue;
-    const f = e.fact;
-    const n = units.get(f.unit) ?? { builds: 0, judged: 0 };
-    if (f.stage === 'build') n.builds++;
-    if (['plan-check', 'build', 'lanes', 'gate'].includes(f.stage)) n.judged++;
-    units.set(f.unit, n);
-  }
-  return [...units].flatMap(([unit, n]) => n.builds >= 8 || n.judged >= 20
-    ? [{ key: `grinding:${unit}`, detector: 'grinding' as const, unit, summary: `${unit}: ${n.builds} builds, ${n.judged} judged stages; inspect the repeated work.` }] : []);
+  const fold = new GrindingFold();
+  for (const e of events) fold.step(e);
+  return fold.findings;
 }
 
 export function redOnUnitGreenOnBase(runs: readonly LaneRun[]): readonly WasteFinding[] {
@@ -86,7 +103,12 @@ export function repeatedExpensiveSuites(runs: readonly LaneRun[], expensive: Rea
 }
 
 export function wasteFindings(events: readonly Event[], runs = laneRuns(events)): readonly WasteFinding[] {
-  return [...grinding(events), ...redOnUnitGreenOnBase(runs), ...lowUniqueCatch(runs), ...repeatedExpensiveSuites(runs, new Set())];
+  return wasteOf(grinding(events), runs);
+}
+
+/** Every detector's findings: grinding's (`GrindingFold`), then those over the lane runs. */
+export function wasteOf(grinds: readonly WasteFinding[], runs: readonly LaneRun[]): readonly WasteFinding[] {
+  return [...grinds, ...redOnUnitGreenOnBase(runs), ...lowUniqueCatch(runs), ...repeatedExpensiveSuites(runs, new Set())];
 }
 
 const scanned = new WeakMap<Journal, number>();

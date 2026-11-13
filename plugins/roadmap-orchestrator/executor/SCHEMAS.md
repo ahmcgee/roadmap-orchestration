@@ -561,7 +561,9 @@ outcome from known/unavailable usage; CommandResult uses pass/fail/stall/timeout
 only under its own invocation binding.
 
 Host owner/lock records bind nonce/generation/pid/start/boot, with handshake before effects. Readiness/supervisor state,
-heartbeat (10 seconds; stale 5 minutes), intentional executor exit and external exit evidence are typed in records.ts.
+heartbeat (10 seconds; stale 5 minutes; written by a timer and, at most every 10 seconds, at each git call's return and
+each scheduler iteration, so a long synchronous stretch that keeps completing work does not go stale:
+src/host/heartbeat.ts), intentional executor exit and external exit evidence are typed in records.ts.
 Recovery takes an exclusive recovery lock before owner takeover. Ambiguous identity refuses. Residue records are keyed
 by arc/invocation/resource-instance and exactly one unit/job owner; disposition is cleaned/isolated/transferred with
 provenance. CPU tokens do not get residues. Resource release requires actual teardown/quiescence, not just a done flag.
@@ -1254,9 +1256,29 @@ runner records (identity/size/mtime/ctime, never following symlinks); the heartb
 open invocations' output streams. Nothing it stats grows with settled invocations or evidence. A moved journal or stable
 record captures and publishes the change; moved output re-reads the open rows at most every five seconds; otherwise the
 step publishes a check. Only ObserverJournal.read verifies journal prefixes, retaining incomplete tails without repair;
-inode/truncation/anchor resets change epoch. A capture folds only appended events, reads open invocations' rows and newly
-settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
-memory (src/observation/memo.ts); a ref lookup is asked once per capture. What it remembers is bounded by bytes, not by
+inode/truncation/anchor resets change epoch. A capture folds only appended events, also into the passes status makes over
+every event (src/status/passes.ts: intent times, attempt starts and stage timings, the meter, waiting totals, finding
+times, work runs' reservations, lanes attempts, lane runs and grinding, the summary's counts and lists, decision sources),
+reducers the observer keeps per journal generation; `roadmap status` and the shadow derivation fold the same reducers from
+nothing, and a work run's exit record and a decision's command body are read when status is derived. It reads open
+invocations' rows and newly settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
+memory (src/observation/memo.ts); a ref lookup is asked once per capture, and a lookup of a full ref name in the arc's
+repository once per sample of its refs. Derivation cells keep five derived values with the key each was derived under
+and derive them again only when a capture's key differs: `refs` (those ref lookups; key: the sample's stamps of the refs
+tree, `packed-refs`, `HEAD` and `config`; none for a reftable repository), `receipts` (the terminal receipts; key: the
+sample's stamps of the receipts and incoming trees), `routing` (the routing tables of every plan revision; key: the seq of
+the last `plan-applied`), `truths` and `history` (each obligation's verdict and evidence on the integration head, and its
+last observation before it; key: the head commit, the seq of the last `witnessed`, `external-witness`,
+`obligation-latched` or `plan-applied`, and the systems map's content hash). Journal facts are keyed by
+`JournalView.lastSeqOf(kinds)`, the seq of the last event of those kinds. What an obligation waits on (its units, their
+reasons) reads unit states and is derived on every capture. A shadow derivation checks the cells and the passes: status
+and summary derived again at the same journal position and clock with every cell computing and the passes folded from
+nothing, compared with what was published. The
+console runs it once the collector has been idle 60 s, at most once every 10 minutes and once per published capture; the
+test harness before every capture is published (`ArcCollector` option `shadow`). It counts only when a sample taken after
+it equals the published one. A difference is a `failed` with code `corruption`, `console derivation diverged at <path>`
+(the first differing path), logged; it stands, and the arc's collector publishes nothing more until the console restarts.
+What it remembers is bounded by bytes, not by
 the arc: git answers 64 MiB and records 128 MiB (a witness record as its parsed observation, never its text), least
 recently used first, neither keeping one entry over an eighth of its bound, and no record the capture under way used is
 dropped for another (a capture reading more than the bound keeps a stable set and reads only the rest again); parsed
@@ -1280,8 +1302,15 @@ read is answered from memory: shell, graph, status and summary are kept per capt
 computed once when a capture or rows refresh is published and kept with it (`data.capture.viewVersions`; their inputs are
 accumulators extended with the appended events and changed rows); tab views build on their first request per capture and
 are rebuilt for each new capture the last five minutes asked for once it has stood half a second; a unit's, a milestone's
-and an Activity event's detail build once per published data object, in the same 32-view cache; the Activity index
-builds in 20 ms slices between other reads. A check is not an observation: it moves `checkedAt` and the heartbeat,
+and an Activity event's detail build once per published data object, in the same 32-view cache. The Activity index is
+kept per arc and journal epoch and extended to each capture (the appended events, and the entries whose inputs changed:
+invocation rows, stage steps, finding claims, request digests, unit titles, backend holds and the terminal fact, root
+decisions), in 20 ms slices between other reads; a new epoch or a journal that does not grow the folded one builds it from
+nothing, by the same fold. The index is not a cache: it is kept, whatever its size, for as long as the serve worker maintains
+its arc, and is bounded by the serve worker's heap guard, which scales with the journals it parses. An Activity anchor and its
+cursors are frozen at their position: pages read from them stay as they were, and `activity/changes` counts on the newest index
+for as long as the epoch lasts and the anchors' bounds (24 MiB, 32 anchors, 15 minutes idle; the least recently used goes
+first) keep the anchor. A gone anchor answers `reset`: its tab offers "Updates available." with "Show latest". A check is not an observation: it moves `checkedAt` and the heartbeat,
 supervision and clock that the status route alone applies (live elapsed and token-wait times advanced from the capture's
 clock to the check's), and no revision, so revision notices follow captures and rows refreshes only. API discovery is answered by the HTTP thread from the serve worker's reported
 selection, once the selected arc is observed. The HTTP thread logs, once each, when an arc falls behind (its journal is

@@ -1,14 +1,23 @@
 // What a long-lived observer remembers across captures: the answers of git commands that name only object ids, the
 // write-once records of a run directory, and parsed content-addressed inputs. A one-shot reader (`roadmap status`, the CLI's
-// local fallback) runs without one and reads everything, as before.
+// local fallback) and the executor run without one and read every record and git answer, as before.
 //
 // Memory is bounded by bytes, not by how much evidence or history an arc has: git answers by GIT_BYTES and records by
 // RECORD_BYTES, each least recently used first, and neither keeps one entry heavier than an eighth of its bound (it would
 // flush every other entry and then itself). A record the capture under way has used is never dropped for another, so a
 // capture that reads more than RECORD_BYTES keeps a stable set and reads only the rest again. Parsed values, and values fixed
 // by a git object id (an arc ref's digest), are kept only while captures ask for them (`settle`). The stamps of records read
-// are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read.
+// are not bounded by bytes: they are what the integrity sweep re-checks, one short string per record read. Without a memo,
+// parsed content-addressed inputs are still parsed once per slot (`parsedOnce`): the executor asks for them every tick.
+//
+// Derivation cells (`cell`): a value a capture derives, kept with the key it was derived under and derived again only when a
+// capture asks under another key. A key names everything the value is derived from: journal facts by the seq of the last
+// one of their kinds (`JournalView.lastSeqOf`), git objects by id, and files by the stamps the collector's change sample
+// took before the capture (`Sampled`). Each cell holds one value. The collector's shadow derivation (src/observation/collect.ts)
+// runs with cells off and fails the arc loudly when what the cells gave differs from it. Without an ambient memo (`roadmap
+// status`, the executor) or without the key's part of the sample (the TUI's observer has none), a cell computes every time.
 import { lstatSync } from 'node:fs';
+import { join } from 'node:path';
 
 /** A git command's answer, as the memo keeps it. */
 export type Spawned = Readonly<{ code: number; stdout: string | Buffer }>;
@@ -25,6 +34,18 @@ const COMMANDS = new Set(['diff-tree', 'ls-tree', 'cat-file', 'log', 'merge-base
 /** Options that make a command read refs, reflogs or the repository's layout, so its answer can change. */
 const MUTABLE_OPTION = /^(--(all|branches|tags|remotes|glob|exclude|fork-point|reflog|walk-reflogs|bisect|decorate|source|git-dir|git-common-dir|absolute-git-dir|show-|is-|local-env|resolve-git-dir|symbolic|abbrev-ref|default)|-g$)/;
 const OBJECT_TYPES = new Set(['blob', 'tree', 'commit', 'tag']);
+
+/** The derivation cells, each wrapping one derivation of a capture (see the header; their keys are at their call sites). */
+export const CELL_NAMES = ['refs', 'receipts', 'routing', 'truths', 'history'] as const;
+export type CellName = (typeof CELL_NAMES)[number];
+/** How many times each cell computed (a hit computes nothing). */
+export type CellWork = Readonly<Record<CellName, number>>;
+/**
+ * What the collector's change sample stamped before a capture, as cell keys: `refs` the repository's refs (its `refs` tree,
+ * `packed-refs`, `HEAD` and `config` under `common`; null for a repository whose refs are in a reftable, which those files do
+ * not hold), `receipts` the run's `commands/receipts` and `commands/incoming` trees.
+ */
+export type Sampled = Readonly<{ runDir: string; common: string; refs: string | null; receipts: string }>;
 
 /**
  * Whether a git command's answer is fixed by its arguments: one of the read commands above, with no option that reads refs,
@@ -74,25 +95,54 @@ export class RecordMemo {
   #asked = new Set<string>();
   /** Answers of commands that can move, for the capture under way (`withRecordMemo` starts one). */
   #capture = new Map<string, Spawned>();
+  /** Each cell's value and the key it was computed under. */
+  #cells = new Map<CellName, Readonly<{ key: string; value: unknown }>>();
+  /** False while a shadow derivation runs (`withoutCells`): every cell computes, and nothing is kept. */
+  #cellsOn = true;
+  /** The sample the capture under way was taken at, or null (an observer without a collector). */
+  #sampled: Sampled | null = null;
+  readonly cellWork: Record<CellName, number> = { refs: 0, receipts: 0, routing: 0, truths: 0, history: 0 };
   /** A new capture: what moving commands answered in the last one is asked again. */
-  beginCapture(): void { this.#capture.clear(); this.#generation++; }
+  beginCapture(sampled: Sampled | null = null): void { this.#capture.clear(); this.#generation++; this.#sampled = sampled; }
+  /** The sample the capture under way was taken at, or null. */
+  get sampled(): Sampled | null { return this.#sampled; }
+  /** The value computed for `name` under `key`; computed again only when `key` differs from the last one (see the header). */
+  cell<T>(name: CellName, key: string, compute: () => T): T {
+    if (this.#cellsOn) {
+      const hit = this.#cells.get(name);
+      if (hit?.key === key) return hit.value as T;
+    }
+    this.cellWork[name]++;
+    const value = compute();
+    if (this.#cellsOn) this.#cells.set(name, { key, value });
+    return value;
+  }
+  /** Runs `read` with every cell computing and none kept: the collector's shadow derivation. */
+  withoutCells<T>(read: () => T): T {
+    if (!this.#cellsOn) throw new Error('memo: a shadow derivation inside another');
+    this.#cellsOn = false;
+    try { return read(); } finally { this.#cellsOn = true; }
+  }
   /**
    * The answer of an immutable git command (`key` names it), run once; `key` null: a command that is run every time. Only a
    * success is remembered, or an answer `settled` says is final: an object missing now can be fetched later.
    */
-  git<T extends Spawned>(key: string | null, run: () => T, settled: (answer: T) => boolean = (a) => a.code === 0, moving: string | null = null): T {
+  git<T extends Spawned>(key: string | null, run: () => T, settled: (answer: T) => boolean = (a) => a.code === 0, moving: string | null = null, ref = false): T {
     if (key !== null) {
       const hit = this.#git.get(key);
       if (hit !== undefined) { this.#git.delete(key); this.#git.set(key, hit); this.work.gitHits++; return hit as T; }
     }
-    // A command whose answer can move (a ref lookup) is answered once per capture: one capture reads one value of each ref.
+    // A command whose answer can move is answered once per capture: one capture reads one value of each ref. A lookup of a
+    // ref name in the sampled repository (`ref`) is answered once per refs sample: the `refs` cell.
+    const refs = ref ? this.#sampled?.refs ?? null : null;
+    const answers = moving !== null && refs !== null && this.#cellsOn ? this.cell('refs', refs, () => new Map<string, Spawned>()) : this.#capture;
     if (moving !== null) {
-      const hit = this.#capture.get(moving);
+      const hit = answers.get(moving);
       if (hit !== undefined) { this.work.gitHits++; return hit as T; }
     }
     this.work.gitSpawns++;
     const answer = run();
-    if (moving !== null) this.#capture.set(moving, answer);
+    if (moving !== null) answers.set(moving, answer);
     if (key === null || !settled(answer) || answer.stdout.length > GIT_BYTES / 8) return answer;
     this.#git.set(key, answer); this.#gitBytes += answer.stdout.length;
     for (const [old, value] of this.#git) {
@@ -184,10 +234,13 @@ export class RecordMemo {
 }
 
 let ambient: RecordMemo | null = null;
-/** Runs `read` with the memo call sites (git, runner records, evidence records, kept inputs) answered from `memo`. */
-export function withRecordMemo<T>(memo: RecordMemo, read: () => T): T {
+/**
+ * Runs `read` with the memo call sites (git, runner records, evidence records, kept inputs, cells) answered from `memo`, as a
+ * capture taken at `sampled` (null: no sample, so the cells keyed on it compute).
+ */
+export function withRecordMemo<T>(memo: RecordMemo, read: () => T, sampled: Sampled | null = null): T {
   const previous = ambient;
-  ambient = memo; memo.beginCapture();
+  ambient = memo; memo.beginCapture(sampled);
   try { return read(); } finally { ambient = previous; }
 }
 /** Runs `read` without the ambient memo: for records that can still change (an open invocation's, which its runner writes). */
@@ -200,8 +253,37 @@ export function withoutRecordMemo<T>(read: () => T): T {
 export const recordMemo = (): RecordMemo | null => ambient;
 /** `read` of a write-once record at `path`, through the ambient memo when there is one. */
 export const writeOnce = <T>(form: string, path: string, read: () => T | null): T | null => ambient === null ? read() : ambient.record(form, path, read);
-/** `parse` of content-addressed bytes named by `key`, through the ambient memo when there is one. */
-export const parsedOnce = <T>(key: string, parse: () => T): T => ambient === null ? parse() : ambient.parsed(key, parse);
+/** Outside an ambient memo, the latest parse of each slot (see `parsedOnce`), for the life of the process. */
+const latestParsed = new Map<string, Readonly<{ key: string; value: unknown }>>();
+/**
+ * `parse` of content-addressed bytes named by `key` (`<slot>:<hash>`: its last part the bytes' hash, what precedes it the
+ * slot, e.g. `plan`, `spec:<unit>`), through the ambient memo when there is one. Without one (the executor, a one-shot
+ * reader) the latest parse of each slot is kept: the bytes named by a hash never change, so asking again for the same key
+ * parses nothing, and a new revision's key replaces its slot's predecessor.
+ */
+export const parsedOnce = <T>(key: string, parse: () => T): T => {
+  if (ambient !== null) return ambient.parsed(key, parse);
+  const at = key.lastIndexOf(':');
+  if (at <= 0) throw new Error(`parsedOnce: key ${key} names no slot`);
+  const slot = key.slice(0, at);
+  const hit = latestParsed.get(slot);
+  if (hit?.key === key) return hit.value as T;
+  const value = parse();
+  latestParsed.set(slot, { key, value });
+  return value;
+};
+/** `compute` through the ambient memo's cell `name` under `key`; computed every time without a memo or a key (see the header). */
+export const cell = <T>(name: CellName, key: string | null, compute: () => T): T => ambient === null || key === null ? compute() : ambient.cell(name, key, compute);
+/** The ambient memo's sample of `runDir`'s command receipts, as a `receipts` cell key; null without one. */
+export const sampledReceipts = (runDir: string): string | null => {
+  const sampled = ambient?.sampled ?? null;
+  return sampled !== null && sampled.runDir === runDir ? sampled.receipts : null;
+};
+/** Whether `repo`'s refs are the sampled repository's (its git dir is the sampled common dir): its ref lookups are the `refs` cell's. */
+export const sampledRefs = (repo: string): boolean => {
+  const sampled = ambient?.sampled ?? null;
+  return sampled !== null && sampled.refs !== null && join(repo, '.git') === sampled.common;
+};
 /** `read` of a value fixed by the git object id in `key`, through the ambient memo when there is one. */
 export const objectOnce = <T>(key: string, read: () => T): T => ambient === null ? read() : ambient.object(key, read);
 

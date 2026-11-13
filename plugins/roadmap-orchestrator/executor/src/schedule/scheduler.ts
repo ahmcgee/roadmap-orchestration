@@ -152,6 +152,7 @@ import { isActive,raiseFindingItems } from '../holistic/findings.ts';
 import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
 import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
+import { beat } from '../host/heartbeat.ts';
 import { PressureTicks,readHostCpuAt,HOST_SCHEDSTAT,readHostMemory } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
 import type { RoutingBase } from '../input/inforce.ts';
@@ -164,7 +165,7 @@ import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/d
 import { type StageContext,runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
 import { invocationDir,killWorkload } from '../pipeline/invoke.ts';
-import { arcLaneKeyReader,laneEnvId,observations } from '../pipeline/lanes.ts';
+import { arcLaneKeyReader,laneEnvId,observations,withObservationReads } from '../pipeline/lanes.ts';
 import { type DocsContext,closeOutFiles,endDetail,publishCloseOut } from '../pipeline/publish.ts';
 import { repairUnits,specFacts } from '../pipeline/reproduce.ts';
 import { at,executorIdentity,holisticInForce,record,start } from '../pipeline/stages.ts';
@@ -512,36 +513,42 @@ export function closeOutState(h: HolisticContexts, head: Sha): 'done' | 'nothing
  * arc without it has no close-out, its in-tree documents being none of the executor's renderings).
  */
 export function completionBlockers(h: HolisticContexts, input: Readonly<{ blocking: number; pending: number }>): readonly CompletionBlocker[] {
+  return [...failingClauses(h, input)];
+}
+
+/**
+ * The clauses of `completionBlockers` that fail now, in COMPLETION_BLOCKERS order, each evaluated only when the one
+ * before it has been taken: `status` takes them all; the scheduler stops at the first outside CLOSE_OUT_BLOCKERS (the
+ * last three of the order), which already decides that nothing ends or closes out (`ended`). Every clause only reads.
+ */
+function* failingClauses(h: HolisticContexts, input: Readonly<{ blocking: number; pending: number }>): Generator<CompletionBlocker, void, undefined> {
   const ctx = h.audit;
   const view = ctx.journal.view;
   const fold = view.holistic();
   const plan = ctx.plan();
-  const out = new Set<CompletionBlocker>();
-  const head = integrationHeadNow(ctx);
-  if (input.blocking > 0) out.add('blocking-items');
-  if (input.pending > 0) out.add('pending-commands');
-  if (view.residues().length > 0) out.add('residues');
   const holistic = plan.holistic;
   if (!fold.on || holistic === undefined) {
-    if (!plan.units.every((u) => unitSettled(view, u.id))) out.add('units-open');
-    return COMPLETION_BLOCKERS.filter((b) => out.has(b));
-  }
-  if (plan.units.some((u) => !TERMINAL.includes(view.unit(u.id).status))) out.add('units-open');
-  if (baselineOwed(ctx) !== null) out.add('baseline-owed');
-  if (auditPending(ctx)) out.add('audit-pending');
+    if (!plan.units.every((u) => unitSettled(view, u.id))) yield 'units-open';
+  } else if (plan.units.some((u) => !TERMINAL.includes(view.unit(u.id).status))) yield 'units-open';
+  if (input.blocking > 0) yield 'blocking-items';
+  if (input.pending > 0) yield 'pending-commands';
+  if (view.residues().length > 0) yield 'residues';
+  if (!fold.on || holistic === undefined) return;
+  if (baselineOwed(ctx) !== null) yield 'baseline-owed';
+  if (auditPending(ctx)) yield 'audit-pending';
   const c = cadence(ctx, ctx.clock);
   if (c === null) throw new Error('a holistic arc without a cadence');
-  if (coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) out.add('coverage-outstanding');
-  if (c.owed.length > 0) out.add('audit-owed');
+  if (coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) yield 'coverage-outstanding';
+  if (c.owed.length > 0) yield 'audit-owed';
   // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
-  if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) out.add('walk-pending');
+  if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) yield 'walk-pending';
   const g = Math.max(0, ...fold.audits.map((a) => a.started.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
-  if (g > 0 && !quiescentGenerations(view, vision).has(g)) out.add('generation-not-quiescent');
-  if (closeOutState(h, head) === 'due') out.add('close-out');
-  if (obligationsOn(ctx, head, h.laneEnv) !== 'discharged') out.add('obligations-not-discharged');
-  return COMPLETION_BLOCKERS.filter((b) => out.has(b));
+  if (g > 0 && !quiescentGenerations(view, vision).has(g)) yield 'generation-not-quiescent';
+  const head = integrationHeadNow(ctx);
+  if (closeOutState(h, head) === 'due') yield 'close-out';
+  if (obligationsOn(ctx, head, h.laneEnv) !== 'discharged') yield 'obligations-not-discharged';
 }
 
 /**
@@ -1252,23 +1259,31 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
    * obligations' witnesses on the head are left), then `arc-completed` and the terminal snapshot, for every arc.
    */
   const ended = async (blocking: readonly BlockingItem[]): Promise<SchedulerEnd | null> => {
-    const blockers = completionBlockers(h, { blocking: blocking.length, pending: 0 });
-    // Run 10 (E, F): nothing but the close-out left, the close-out settlement first (unanswered requests declined, open
-    // P2/P3 findings with no obligation banked); what it wrote is read again next time round.
-    const settling = view().holistic().on && blockers.every((b) => (CLOSE_OUT_BLOCKERS as readonly string[]).includes(b));
-    if (settling && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held' && settleCloseOut(h.revision)) return null;
-    if (blockers.length === 0) {
-      if (view().holistic().completion?.active !== true) {
-        promoteFinal(x.stage, integrationHeadNow(x.stage));
-        writeDesired(x.stage);
+    // One observation store for this call's reads of the obligations on the head: only a `witnessed` fact changes it, and
+    // nothing here writes one.
+    const next = withObservationReads((): 'none' | 'complete' | 'close-out' => {
+      const blockers: CompletionBlocker[] = [];
+      // A failing clause outside the close-out's leaves nothing to settle, end or close out: the rest are not evaluated.
+      for (const b of failingClauses(h, { blocking: blocking.length, pending: 0 })) {
+        if (!(CLOSE_OUT_BLOCKERS as readonly string[]).includes(b)) return 'none';
+        blockers.push(b);
       }
-      completeArc(x.stage);
-      if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
-      return { kind: 'complete', units: summary() };
+      const notHeld = (): boolean => obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) === 'not-held';
+      // Run 10 (E, F): nothing but the close-out left, the close-out settlement first (unanswered requests declined, open
+      // P2/P3 findings with no obligation banked); what it wrote is read again next time round.
+      if (view().holistic().on && !notHeld() && settleCloseOut(h.revision)) return 'none';
+      if (blockers.length === 0) return 'complete';
+      return blockers.every((b) => b === 'close-out' || b === 'obligations-not-discharged') && !notHeld() ? 'close-out' : 'none';
+    });
+    if (next === 'close-out') startCloseOut();
+    if (next !== 'complete') return null;
+    if (view().holistic().completion?.active !== true) {
+      promoteFinal(x.stage, integrationHeadNow(x.stage));
+      writeDesired(x.stage);
     }
-    const closing = blockers.every((b) => b === 'close-out' || b === 'obligations-not-discharged');
-    if (closing && obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) !== 'not-held') startCloseOut();
-    return null;
+    completeArc(x.stage);
+    if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
+    return { kind: 'complete', units: summary() };
   };
 
   // -------------------------------------------------------------------------------------------------
@@ -1332,6 +1347,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
 
   for (;;) {
     if (failures.length > 0) throw failures[0];
+    // A point of progress (src/host/heartbeat.ts): an iteration begun, whether or not the last one yielded to the timer.
+    beat();
     pressure.record(readHostCpuAt(HOST_SCHEDSTAT, Date.now()));
     pressure.recordMemory(readHostMemory());
     const arc = view().arc;

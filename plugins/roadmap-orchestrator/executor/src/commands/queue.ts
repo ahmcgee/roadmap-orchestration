@@ -165,14 +165,29 @@ export function writeReceipt(runDir: AbsPath, r: Receipt): Sha256Hex {
 export const receiptSha256 = (runDir: AbsPath, id: CommandId, state: ReceiptState): Sha256Hex =>
   sha256(sha256Hex(canonicalRecordBytes(readFileSync(receiptPath(runDir, id, state)))));
 
+/**
+ * The commands of each run dir this process has seen terminal. A terminal receipt is published once and never removed
+ * while the run dir exists, so a command found terminal is not read again: the scheduler polls every POLL_MS, three times
+ * a tick, and an arc's terminal receipts grow without bound (an apply's carries its whole revision).
+ */
+const seenTerminal = new Map<AbsPath, Set<CommandId>>();
+
 /** The ids of the incoming commands without a terminal receipt, in id order; read-only (`roadmap gc` reads it too). */
 export function pendingCommandIds(runDir: AbsPath, terminals?: ReadonlyMap<CommandId, Receipt>): readonly CommandId[] {
   const dir = incomingDir(runDir);
   if (!existsSync(dir)) return [];
+  let seen = seenTerminal.get(runDir);
+  if (seen === undefined) seenTerminal.set(runDir, seen = new Set());
+  const known = seen;
   return readdirSync(dir).flatMap((name) => {
     const m = INCOMING_NAME.exec(name);
     return m === null ? [] : [commandId(m[1])];
-  }).sort().filter((id) => !terminals?.has(id) && terminalReceipt(runDir, id) === null);
+  }).sort().filter((id) => {
+    if (terminals?.has(id) || known.has(id)) return false;
+    if (terminalReceipt(runDir, id) === null) return true;
+    known.add(id);
+    return false;
+  });
 }
 
 /**

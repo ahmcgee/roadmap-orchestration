@@ -56,7 +56,8 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { type ArcId,needsUserId,needsUserIdForOp } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
-import { EVENTS_FILE,ObserverJournal,readJournal } from './core/log.ts';
+import { EVENTS_FILE,type LogSnapshot,ObserverJournal,readJournal } from './core/log.ts';
+import { StatusPasses } from './status/passes.ts';
 import type { AbsPath } from './core/values.ts';
 import { answerNames,commonDirOfRun,unappliedAnswers } from './answers.ts';
 import { claimWatch,EXIT_WATCH_BUSY,pollWatch,releaseWatch } from './watch-lease.ts';
@@ -237,6 +238,7 @@ export async function watch(
   let key: string | null = null;
   let units: string | null = null;
   let view: ReturnType<typeof unitStates> | null = null;
+  let passes: Readonly<{ view: LogSnapshot['view'] | null; passes: StatusPasses }> = { view: null, passes: new StatusPasses() };
   const dir = join(runDir, NEEDS_USER_DIR);
   const common = commonDirOfRun(runDir);
   let answerKey: string | null = null;
@@ -247,7 +249,10 @@ export async function watch(
     const next = viewKey(runDir, names, state);
     if (next !== key || view === null) {
       key = next;
-      view = unitStates(runDir, arc, hostDir, journal.read());
+      const snapshot = journal.read();
+      // The passes over the journal's events are extended poll by poll, and folded again from nothing for a new journal.
+      if (snapshot.view !== passes.view) passes = { view: snapshot.view, passes: new StatusPasses() };
+      view = unitStates(runDir, arc, hostDir, snapshot, passes.passes);
     }
     beforePoll(view);
     const seq = view.seq;

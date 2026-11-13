@@ -42,10 +42,8 @@ export class ViewTokens {
         if (MONEY.has(ev.fact.kind)) this.money = ev.seq;
         if (AUDITS.has(ev.fact.kind)) this.audits = ev.seq;
         if (ev.fact.kind === 'stage-admitted') this.waiting = ev.seq;
-        if (ev.fact.kind === 'arc-completed' || ev.fact.kind === 'stop-completed') this.terminal = ev;
-        // A stop ends the record only until the arc is started again.
-        else if (ev.fact.kind === 'executor-started' && this.terminal?.fact.kind === 'stop-completed') this.terminal = null;
       }
+      this.terminal = nextTerminal(this.terminal, ev);
       if ((ev.type === 'intent' || ev.type === 'done') && ev.kind === 'resource.transition') this.waiting = ev.seq;
     }
     this.stages.extend(events, this.#folded);
@@ -76,7 +74,7 @@ type FactEvent = Extract<Event, {type: 'fact'}>;
 /**
  * The fact that ends the arc's record as the journal stands: its last `arc-completed` or `stop-completed`, unless that is a
  * stop and an executor has started since (the arc was stopped and started again, so it is running or ownerless, not ended).
- * `ViewTokens.terminal` keeps the same reading incrementally.
+ * `nextTerminal` keeps the same reading incrementally.
  */
 export function terminalFact(events: readonly Event[]): FactEvent | null {
   let restarted = false;
@@ -88,6 +86,13 @@ export function terminalFact(events: readonly Event[]): FactEvent | null {
     else if (ev.fact.kind === 'stop-completed') return restarted ? null : ev;
   }
   return null;
+}
+/** `terminal` (the record's terminal fact so far, `terminalFact`) after `ev`: the one incremental reading, ViewTokens' and the Activity index's. */
+export function nextTerminal(terminal: FactEvent | null, ev: Event): FactEvent | null {
+  if (ev.type !== 'fact') return terminal;
+  if (ev.fact.kind === 'arc-completed' || ev.fact.kind === 'stop-completed') return ev;
+  // A stop ends the record only until the arc is started again.
+  return ev.fact.kind === 'executor-started' && terminal?.fact.kind === 'stop-completed' ? null : terminal;
 }
 /**
  * The arc's terminal fact for the views (the header's lifecycle, the arc's bounds, relative Activity windows, open backend

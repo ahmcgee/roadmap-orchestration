@@ -57,8 +57,13 @@ export type FromServe =
 /** Main to a collector. */
 export type ToCollector = Readonly<{ kind: 'check-now' }> | Readonly<{ kind: 'follow'; dirs: readonly string[] }> | Readonly<{ kind: 'report' }>;
 
-/** What the serve worker holds: per maintained arc its parsed events and rows, and the views it keeps per capture (tab lists and details). */
-export type ServeSizes = Readonly<{ arcs: readonly Readonly<{ arc: string; events: number; rows: number }>[]; tabViews: number }>;
+import type { ActivitySizes } from './activity-query.ts';
+/**
+ * What the serve worker holds: per maintained arc its parsed events and rows, the views it keeps per capture (tab lists and
+ * details), and its Activity indexes and query generations (with how many indexes it built from nothing and extended).
+ */
+export type ServeSizes = Readonly<{ arcs: readonly Readonly<{ arc: string; events: number; rows: number }>[]; tabViews: number;
+  activity: ActivitySizes }>;
 /**
  * A worker's heap, as v8 sees it inside the worker, with what it holds. Asked for by main, or sent unprompted (`near`) once
  * each time the used heap crosses HEAP_NEAR of its limit. Product telemetry: main logs one line per report.

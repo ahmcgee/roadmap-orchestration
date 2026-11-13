@@ -1,6 +1,7 @@
 // dev.71 stage 1: a console whose captures are slower than five seconds still answers every browser read at once from the last
 // published observation, says how old it is through a once-a-second pulse, and keeps the strict CLI read's contract.
-// The capture is made slow by a git on PATH that waits while a flag file exists (the collector spawns git on every capture).
+// The capture is made slow by a git on PATH that waits while a flag file exists, and a ref moved with each append: the
+// collector asks the refs through git whenever they moved (dev.78: once per sample of the refs).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { serveConsole } from '../src/console/http.ts';
@@ -30,7 +31,7 @@ test('T3: with captures over five seconds every browser read answers at once wit
   const pulses = () => seen.filter((x) => x.event === 'pulse').map((x) => ({ ...(x.data as Pulse), at: x.at }));
   // The arc keeps writing, so every step of the collector is a capture.
   let appending = true;
-  const appends = (async () => { while (appending) { f.journal.fact({ kind: 'stage-admitted', unit: unitId('u7'), stage: 'build', waited: { totalMs: 1, byReasonMs: { 'cpu-tokens': 1 } } }); await new Promise((r) => setTimeout(r, 700)); } })();
+  const appends = (async () => { while (appending) { f.journal.fact({ kind: 'stage-admitted', unit: unitId('u7'), stage: 'build', waited: { totalMs: 1, byReasonMs: { 'cpu-tokens': 1 } } }); git.moveRef(f.d.repo); await new Promise((r) => setTimeout(r, 700)); } })();
   t.after(() => { appending = false; return appends; });
   git.slow(true);
   await until(() => pulses().some((p) => p.asOfAgeMs > 5_000), 30_000, 'a pulse more than five seconds behind');

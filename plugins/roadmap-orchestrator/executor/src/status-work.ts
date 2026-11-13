@@ -1,7 +1,7 @@
 // Read-only execution detail shared by JSON status and the observer worker.
 import type { CpuBasis } from './core/cpu.ts';
 import type { Event,Parent } from './core/events.ts';
-import { invocationId,parseResourceUnit,type InvocationId,type LaneId,type ResourceUnit } from './core/ids.ts';
+import { invocationId,parseResourceUnit,type InvocationId,type LaneId,type OpId,type ResourceUnit,type UnitId } from './core/ids.ts';
 import { canonicalJson } from './core/json.ts';
 import { exitCpuOf,reservationCpuBasisOf,reservationTokenWaitOf } from './core/projections.ts';
 import type { CommandVerdict,ExitCause,LaunchCpu } from './core/records.ts';
@@ -27,49 +27,72 @@ export type Certification = Readonly<{
     flaky: boolean; inv: InvocationId | null; holds: readonly ResourceUnit[] }> [];
 }>;
 
-/** Match each launch to the reservation actually held at its journal position, never today's cost estimate. */
-export function workRuns(ctx: Pick<StageContext, 'journal' | 'runDir'>, events: readonly Event[]): readonly WorkRun[] {
-  const held = new Map<string, { resources: readonly ResourceUnit[]; basis: CpuBasis | null; wait: number | null }>();
-  const rows: WorkRun[] = [];
-  const readExit = (inv: InvocationId) => runnerFiles(invocationDir(ctx.runDir, inv), inv).read('exit.json');
-  const exits = new Map<InvocationId, ReturnType<typeof readExit>>();
-  for (const e of events) {
-    if (e.type !== 'intent') continue;
+type Reservation = Readonly<{ resources: readonly ResourceUnit[]; basis: CpuBasis | null; wait: number | null }>;
+/** A spawn a work run is read for, with the CPU reservation its parent held at its journal position (null: none). */
+type ReservedSpawn = Readonly<{ op: OpId; ordinal: number; parent: Parent; build: boolean; lane: LaneId | null; reservation: Reservation | null }>;
+
+/**
+ * Each build and lane-like spawn matched to the reservation actually held at its journal position, never today's cost
+ * estimate: folded one event at a time (a pass of src/status/passes.ts). The runs' exit records are read by `workRunsOf`.
+ */
+export class ReservationFold {
+  readonly #held = new Map<string, Reservation>();
+  readonly #spawns: ReservedSpawn[] = [];
+  step(e: Event): void {
+    if (e.type !== 'intent') return;
     if (e.kind === 'resource.transition') {
       const x = e.expect;
-      if (!x.resources.some((r) => parseResourceUnit(r).type === 'cpu')) continue;
+      if (!x.resources.some((r) => parseResourceUnit(r).type === 'cpu')) return;
       const key = canonicalJson(e.parent);
       if (x.edge.type === 'reserve') {
-        held.set(key, { resources: x.resources, basis: reservationCpuBasisOf(x), wait: reservationTokenWaitOf(x) });
-      } else if (x.edge.type === 'release') held.delete(key);
-      continue;
+        this.#held.set(key, { resources: x.resources, basis: reservationCpuBasisOf(x), wait: reservationTokenWaitOf(x) });
+      } else if (x.edge.type === 'release') this.#held.delete(key);
+      return;
     }
-    if (e.kind !== 'proc.spawn') continue;
+    if (e.kind !== 'proc.spawn') return;
     const s = e.expect.subject;
     const build = s.purpose === 'backend' && s.role === 'build';
-    if (!build && !['lane', 'journey', 'proof', 'mutant'].includes(s.purpose)) continue;
-    const inv = invocationId(e.op, e.ordinal);
-    const key = canonicalJson(e.parent);
-    let exit = exits.get(inv);
-    if (exit === undefined) { exit = readExit(inv); exits.set(inv, exit); }
-    const reservation = held.get(key);
-    rows.push({ inv, cause: exit?.cause ?? null, parent: e.parent, kind: build ? 'build' : 'lane', lane: 'lane' in s ? s.lane : null,
+    if (!build && !['lane', 'journey', 'proof', 'mutant'].includes(s.purpose)) return;
+    this.#spawns.push({ op: e.op, ordinal: e.ordinal, parent: e.parent, build, lane: 'lane' in s ? s.lane : null, reservation: this.#held.get(canonicalJson(e.parent)) ?? null });
+  }
+  get spawns(): readonly ReservedSpawn[] { return [...this.#spawns]; }
+}
+
+/** The work runs of the spawns `fold` matched, each with its exit record as the runner wrote it (absent: still running). */
+export function workRunsOf(ctx: Pick<StageContext, 'runDir'>, fold: ReservationFold): readonly WorkRun[] {
+  const readExit = (inv: InvocationId) => runnerFiles(invocationDir(ctx.runDir, inv), inv).read('exit.json');
+  return fold.spawns.map(({ op, ordinal, parent, build, lane, reservation }) => {
+    const inv = invocationId(op, ordinal), exit = readExit(inv);
+    return { inv, cause: exit?.cause ?? null, parent, kind: build ? 'build' : 'lane', lane,
       reservedCpu: reservation ? reservation.resources.filter((r) => parseResourceUnit(r).type === 'cpu').length : null,
       cpuBasis: reservation?.basis ?? null, measured: exit === null ? null : exitCpuOf(exit),
-      tokenWaitMs: reservation?.wait ?? null, resources: reservation?.resources ?? [] });
+      tokenWaitMs: reservation?.wait ?? null, resources: reservation?.resources ?? [] };
+  });
+}
+
+/** Match each launch to the reservation actually held at its journal position, never today's cost estimate. */
+export function workRuns(ctx: Pick<StageContext, 'journal' | 'runDir'>, events: readonly Event[]): readonly WorkRun[] {
+  const fold = new ReservationFold();
+  for (const e of events) fold.step(e);
+  return workRunsOf(ctx, fold);
+}
+
+/** Each unit's completed `lanes` attempts (holds left out), in log order: folded one event at a time (src/status/passes.ts). */
+export class LanesAttemptsFold {
+  readonly #attempts = new Map<UnitId, readonly number[]>();
+  step(e: Event): void {
+    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || !('unit' in e.fact) || e.fact.stage !== 'lanes' || e.fact.class === 'hold') return;
+    const f = e.fact;
+    this.#attempts.set(f.unit, [...(this.#attempts.get(f.unit) ?? []), f.attempt]);
   }
-  return rows;
+  get attempts(): ReadonlyMap<UnitId, readonly number[]> { return new Map(this.#attempts); }
 }
 
 /** The current certification series in the executor's own order. Historical evidence stays on its invocation. */
-export function certificationReader(ctx: StageContext, events: readonly Event[], runs: readonly WorkRun[]) {
+export function certificationReader(ctx: StageContext, lanes: LanesAttemptsFold, runs: readonly WorkRun[]) {
   const suiteLanes = fastSuiteLaneReader(ctx);
   const runsByInv = new Map(runs.map((r) => [r.inv, r] as const));
-  const attempts = new Map<string, number[]>();
-  for (const e of events) {
-    if (e.type !== 'fact' || e.fact.kind !== 'stage-outcome' || !('unit' in e.fact) || e.fact.stage !== 'lanes' || e.fact.class === 'hold') continue;
-    const f = e.fact; const prior = attempts.get(f.unit) ?? []; prior.push(f.attempt); attempts.set(f.unit, prior);
-  }
+  const attempts = lanes.attempts;
   return (unit: PlanUnit, queuedAttempt?: number): Certification => {
     const view = ctx.journal.view;
     const state = view.unit(unit.id);
@@ -109,5 +132,7 @@ export function certificationReader(ctx: StageContext, events: readonly Event[],
 }
 
 export function certification(ctx: StageContext, unit: PlanUnit, events: readonly Event[], runs: readonly WorkRun[], queuedAttempt?: number): Certification {
-  return certificationReader(ctx, events, runs)(unit, queuedAttempt);
+  const lanes = new LanesAttemptsFold();
+  for (const e of events) lanes.step(e);
+  return certificationReader(ctx, lanes, runs)(unit, queuedAttempt);
 }

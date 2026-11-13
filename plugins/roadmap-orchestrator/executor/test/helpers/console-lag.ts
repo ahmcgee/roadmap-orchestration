@@ -22,10 +22,16 @@ export function frames(body: ReadableStream<Uint8Array>, into: Frame[]): void {
   })();
 }
 /** A git that waits up to `perSpawnS` seconds, in tenths, while `flag` exists, then runs the real git. */
-export function slowGit(): { dir: string; flag: string; slow(on: boolean): void; close(): void } {
+export function slowGit(): { dir: string; flag: string; slow(on: boolean): void; moveRef(repo: string): void; close(): void } {
   const dir = mkdtempSync(join(tmpdir(), 'roadmap-lag-git-')), flag = join(dir, 'slow');
   const real = execFileSync('sh', ['-c', 'command -v git']).toString().trim();
   writeFileSync(join(dir, 'git'), `#!/bin/sh\nn=0\nwhile [ -e '${flag}' ] && [ $n -lt 16 ]; do sleep 0.1; n=$((n+1)); done\nexec '${real}' "$@"\n`);
   chmodSync(join(dir, 'git'), 0o755);
-  return { dir, flag, slow(on) { if (on) writeFileSync(flag, ''); else rmSync(flag, { force: true }); }, close() { rmSync(dir, { recursive: true, force: true }); } };
+  let refs = 0;
+  return {
+    dir, flag, slow(on) { if (on) writeFileSync(flag, ''); else rmSync(flag, { force: true }); },
+    // dev.78: a capture asks the refs again (through this git) only once they moved: a new ref, by the real git, at once.
+    moveRef(repo) { execFileSync(real, ['-C', repo, 'update-ref', `refs/heads/console-lag-${++refs}`, 'HEAD']); },
+    close() { rmSync(dir, { recursive: true, force: true }); },
+  };
 }

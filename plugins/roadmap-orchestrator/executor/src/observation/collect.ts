@@ -1,6 +1,13 @@
 // Gathering for one arc, as plain synchronous logic: the console's collector worker (src/console/collector.ts) runs its loop,
 // and tests drive `step` directly. A step samples what changed (src/observation/changes.ts), captures when the journal or a
 // stable record moved, and publishes the change as a message: what is published is complete and says what it is as of.
+//
+// The shadow derivation checks the derivation cells (src/observation/memo.ts `cell`): status and summary derived again from
+// the same journal position with every cell computing, compared with what was published. `shadow: 'always'` checks every
+// capture before it is published (tests); `'idle'` checks the published one once the collector has been idle for
+// COLLECT.shadowIdleMs, at most once every COLLECT.shadowEveryMs. A check counts only when a sample taken after it equals the
+// published one; a difference is a `failed` with code `corruption` naming the first differing path, and it stands: this
+// collector publishes nothing more.
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,12 +28,17 @@ import { checkContained, checkRunContainment } from './containment.ts';
 import { stampOf } from './memo.ts';
 import { listingEntriesKept } from '../git/reusekey.ts';
 import type { MemoSizes } from './memo.ts';
-import { type CapturePhase, Observer } from './observer.ts';
+import { type CapturePhase, type ShadowResult, Observer } from './observer.ts';
+import type { CellWork } from './memo.ts';
 import { ConsoleError, type ConsoleCode } from './protocol.ts';
 
 export type CollectorPhase = 'load' | CapturePhase | 'idle';
 /** What one capture did: product telemetry, in the console's behind line and `server.stats(arc)`. */
-export type CaptureWork = Readonly<{ eventsFolded: number; rowsRead: number; statCalls: number; recordReads: number; gitSpawns: number; deriveMs: number; captureMs: number }>;
+export type CaptureWork = Readonly<{ eventsFolded: number; rowsRead: number; statCalls: number; recordReads: number; gitSpawns: number; deriveMs: number; captureMs: number;
+  /** The derivation cells the capture computed (none for a rows refresh). */
+  cells: CellWork }>;
+/** When the shadow derivation checks the derivation cells (see the header). */
+export type ShadowMode = 'always' | 'idle';
 /** What a collector holds: its journal's events, invocation rows (open ones), the memo, estate entries, records the sweep re-checks, tree listing entries. */
 export type CollectorSizes = Readonly<{ events: number; rows: number; open: number; memo: MemoSizes; estate: number; swept: number; listings: number }>;
 export type JournalPosition = Readonly<{ identity: string; offset: number; size: number; seq: number }>;
@@ -48,8 +60,13 @@ export type CollectorMessage =
   | Readonly<{ kind: 'failed'; arc: ArcId; at: number; error: Readonly<{ code: ConsoleCode; message: string }> }>
   | Readonly<{ kind: 'log'; message: string }>;
 
-/** How long the loop sleeps: a second, 100 ms after a poke, never closer to a capture than its floor (150 ms, or half its time when it was not the cold one). */
-export const COLLECT = { idleMs: 1_000, pokeMs: 100, floorMs: 150, rowsMs: 5_000, sweepMs: 20, racesBeforeLog: 5 } as const;
+/**
+ * How long the loop sleeps: a second, 100 ms after a poke, never closer to a capture than its floor (150 ms, or half its time
+ * when it was not the cold one). An idle shadow derivation waits shadowIdleMs after the published capture, and
+ * shadowEveryMs after the previous one.
+ */
+export const COLLECT = { idleMs: 1_000, pokeMs: 100, floorMs: 150, rowsMs: 5_000, sweepMs: 20, racesBeforeLog: 5, shadowIdleMs: 60_000, shadowEveryMs: 600_000 } as const;
+const NO_CELLS: CellWork = { refs: 0, receipts: 0, routing: 0, truths: 0, history: 0 };
 
 /** The integrity sweep: write-once records re-stamped against their read-time stamp, and the run walked for escaping symlinks. */
 class Sweep {
@@ -113,8 +130,16 @@ export class ArcCollector {
   #escapes = new Set<string>();
   /** Journal events folded by captures that did not publish (a race, a failure): the next published capture counts them. */
   #folded = 0;
-  constructor(run: Run, hostDir: AbsPath, common: AbsPath, emit: (m: CollectorMessage) => void) {
-    this.run = run; this.#hostDir = hostDir; this.#emit = emit;
+  readonly #shadow: ShadowMode;
+  /** When the published capture was taken, and when the last shadow derivation ran (Date.now()). */
+  #publishedAt = 0;
+  #shadowAt = -Infinity;
+  /** The published sample the last idle shadow derivation checked: one check per published capture. */
+  #shadowed: Sample | null = null;
+  /** What a shadow derivation found diverging: every later step answers it (see the header). */
+  #diverged: Readonly<{ code: ConsoleCode; message: string }> | null = null;
+  constructor(run: Run, hostDir: AbsPath, common: AbsPath, emit: (m: CollectorMessage) => void, options: Readonly<{ shadow: ShadowMode }>) {
+    this.run = run; this.#hostDir = hostDir; this.#emit = emit; this.#shadow = options.shadow;
     this.#changes = new ChangeDetector(run.runDir, common, hostDir);
     this.#sweep = new Sweep(run.runDir);
   }
@@ -126,6 +151,10 @@ export class ArcCollector {
   step(now: number): number {
     this.#poked = false;
     let captured = false;
+    if (this.#diverged !== null) {
+      this.#emit({ kind: 'failed', arc: this.run.arc, at: now, error: this.#diverged });
+      return COLLECT.idleMs;
+    }
     try {
       // The integrity sweep first, so what it finds is captured in this step.
       if (this.#published !== null) {
@@ -142,6 +171,7 @@ export class ArcCollector {
       // Failed on this very sample: nothing moved since, so the failure stands as of now.
       else if (moved) this.#emit({ kind: 'failed', arc: this.run.arc, at: now, error: this.#failure! });
       else if (sample.output !== published!.output && now - this.#rowsAt >= COLLECT.rowsMs) this.#rows(sample, now);
+      else if (this.#idleShadowDue(published!, now)) this.#idleShadow(published!, now);
       else this.#checked(now);
     } catch (error) {
       // A file that moved while a sample or the overlay read it is a race: the next step looks again.
@@ -174,7 +204,7 @@ export class ArcCollector {
         const root = realpathSync(this.run.runDir);
         for (const path of this.#escapes) checkContained(root, path, []);
       }
-      reply = o.capture({ locator: { type: 'host' }, pinned: this.run, hostDir: this.#hostDir, token: 0 });
+      reply = o.capture(this.#request(), sample.sampled);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       // The journal events this attempt folded stay folded: the next published capture's work counts them.
@@ -190,15 +220,17 @@ export class ArcCollector {
     } finally { o.onProgress = null; }
     const captureMs = Math.round(performance.now() - began);
     this.#races = 0; this.#failedOn = null; this.#escapes.clear();
+    const cells = o.lastCells;
+    if (this.#shadow === 'always' && this.#judge(this.#check(sample), now)) return false;
     this.#assignEpoch();
     const display = reply.display!, captured = o.captured!, changes = o.changes(), cursor = o.cursor!;
     this.#emit({ kind: 'observation', arc: this.run.arc, epoch: this.#epoch, asOf: now, clock: captured.clock, foldMs: captured.foldMs,
       journal: { identity: cursor.identity, offset: cursor.offset, size: cursor.size, seq: display.seq }, run: this.run,
       status: display.status, summary: captured.summary, plan: captured.plan, requests: captured.requests, milestoneUnits: display.milestoneUnits,
       estate: cold || changes.estate ? display.estate : null, rows: cold ? display.invocations : changes.rows,
-      work: { ...o.lastFold, eventsFolded: o.lastFold.eventsFolded + this.#folded, statCalls: sample.statCalls, recordReads: o.lastWork.recordReads, gitSpawns: o.lastWork.gitSpawns, captureMs } });
+      work: { ...o.lastFold, eventsFolded: o.lastFold.eventsFolded + this.#folded, statCalls: sample.statCalls, recordReads: o.lastWork.recordReads, gitSpawns: o.lastWork.gitSpawns, captureMs, cells } });
     this.#folded = 0;
-    this.#published = sample; this.#rowsAt = now;
+    this.#published = sample; this.#rowsAt = now; this.#publishedAt = now;
     // The cold capture read the whole arc: its time says nothing of the next one's, which folds what was appended since.
     this.#floorUntil = Date.now() + Math.max(COLLECT.floorMs, cold ? 0 : captureMs / 2);
     return true;
@@ -210,7 +242,30 @@ export class ArcCollector {
     if (rows.length === 0) { this.#checked(now); return; }
     const o = this.#observer;
     this.#emit({ kind: 'rows', arc: this.run.arc, epoch: this.#epoch, asOf: now, rows,
-      work: { ...o.lastFold, statCalls: sample.statCalls, recordReads: o.lastWork.recordReads, gitSpawns: o.lastWork.gitSpawns, captureMs: Math.round(performance.now() - began) } });
+      work: { ...o.lastFold, statCalls: sample.statCalls, recordReads: o.lastWork.recordReads, gitSpawns: o.lastWork.gitSpawns, captureMs: Math.round(performance.now() - began), cells: NO_CELLS } });
+  }
+  #request() { return { locator: { type: 'host' as const }, pinned: this.run, hostDir: this.#hostDir, token: 0 }; }
+  /** The shadow derivation of the last capture, which was taken at `sample`; `moved` when a sample taken after it differs. */
+  #check(sample: Sample): ShadowResult {
+    const result = this.#observer.shadow(this.#request());
+    const after = this.#changes.peek(this.#observer.open());
+    const same = after.journal === sample.journal && after.stable === sample.stable && after.volatile === sample.volatile && !openMoved(sample, after);
+    return same ? result : { kind: 'moved' };
+  }
+  /** Records a divergence (true: it stands from now on, and is published as a failure). */
+  #judge(result: ShadowResult, now: number): boolean {
+    if (result.kind !== 'diverged') return false;
+    this.#diverged = { code: 'corruption', message: `console derivation diverged at \`${result.path}\`` };
+    this.#emit({ kind: 'failed', arc: this.run.arc, at: now, error: this.#diverged });
+    this.#emit({ kind: 'log', message: `console collector for arc ${this.run.arc}: ${this.#diverged.message}; the derivation cells disagree with a derivation from nothing, and this arc's console publishes nothing more until it restarts` });
+    return true;
+  }
+  #idleShadowDue(published: Sample, now: number): boolean {
+    return this.#shadow === 'idle' && this.#shadowed !== published && now - this.#publishedAt >= COLLECT.shadowIdleMs && now - this.#shadowAt >= COLLECT.shadowEveryMs;
+  }
+  #idleShadow(published: Sample, now: number): void {
+    this.#shadowAt = now; this.#shadowed = published;
+    if (!this.#judge(this.#check(published), now)) this.#checked(now);
   }
   #checked(now: number): void {
     const path = join(this.run.runDir, 'heartbeat.json');

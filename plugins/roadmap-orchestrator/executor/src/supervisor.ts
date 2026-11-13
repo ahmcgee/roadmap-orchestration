@@ -63,10 +63,11 @@ import { type AbsPath,type IsoTime,absPath,isoTimeOf } from './core/values.ts';
 import { SCHEMA_VERSION } from './core/version.ts';
 import { startDemoKeeper } from './demo/keeper.ts';
 import {
-EXIT_REASON_FILE,HEARTBEAT_FILE,type RefusedReason,executorArgv,exitLine,raiseClaimRefusal,refusedOf,refusedReason,writeFileNeedsUser,
+EXIT_REASON_FILE,type RefusedReason,executorArgv,exitLine,raiseClaimRefusal,refusedOf,refusedReason,writeFileNeedsUser,
 writeRejection,
 } from './executor.ts';
 import { compactResidues } from './host/compact.ts';
+import { HEARTBEAT_FILE } from './host/heartbeat.ts';
 import { hostPath,openHostDir } from './host/hostdir.ts';
 import { prepareLegacyHost } from './host/legacy.ts';
 import { selfIdentity } from './host/liveness.ts';
