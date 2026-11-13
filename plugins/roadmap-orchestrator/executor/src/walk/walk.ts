@@ -290,8 +290,9 @@ function end(
     }
   }
   crashPoint('walk.before-ended');
-  // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts).
-  const all = canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
+  // dev.17: the walk's findings include its batch point's (src/pipeline/batchlanes.ts). An abandoned walk is no round and
+  // names none (`walk-ended`'s schema): its batch point's findings stay open under the milestone and hold the node.
+  const all = outcome === 'abandoned' ? [] : canonicalIds([...new Set([...findings, ...batchFindingsOf(ctx, w.job)])]);
   jobStageOutcome(ctx.journal, w.job, 'experience-verdict', m.id, outcome === 'reported' ? (activeWalkP1s(ctx.journal.view, m.id).length === 0 ? 'pass' : 'revise') : outcome, all);
   ctx.journal.fact({ kind: 'walk-ended', job: w.job, outcome, findings: all, proposals, dropped: last ? proposals : [], ...(interrupted ? { interrupted: true } : {}) });
   crashPoint('walk.after-ended');
