@@ -12,7 +12,7 @@ type Mode='auto'|'refresh'|'force';
 export type Connection='connecting'|'connected'|'reconnecting'|'offline';
 export type Lag=Readonly<{shown:boolean;ageMs:number}>;
 const RETRY_MS=[1000,2000,4000,8000,15_000];
-/** An automatic load of a view that was just loaded waits until max(PACE_MS, twice its last load's time) after that load ended;
+/** An automatic load of a view that was just loaded (whatever it answered) waits until max(PACE_MS, twice its last load's time) after that load ended;
  * versions arriving meanwhile make one trailing load. So a burst of notices costs a view two loads, and a server twice as slow
  * is asked half as often. */
 const PACE_MS=1000;
@@ -84,7 +84,8 @@ export class ViewStore {
     const entry=this.entry(path),version=this.keyVersion(path);
     if(entry.task){if(entry.controller?.signal.aborted){await entry.task;return this.#load(path,mode);}return entry.task;}
     if(mode==='auto'&&entry.value&&(this.frozen(path)||entry.version===version))return;
-    if(mode!=='force'&&entry.value&&entry.endedAt!==undefined){
+    // Paced whether the last load succeeded or not: a view the server keeps refusing (an expired anchor) is asked no faster.
+    if(mode!=='force'&&entry.endedAt!==undefined){
       const at=entry.endedAt+Math.max(PACE_MS,2*entry.tookMs!);
       if(Date.now()<at){
         if(entry.trailing===undefined){const generation=this.generation;entry.trailing=setTimeout(()=>{delete entry.trailing;if(generation===this.generation&&this.active.has(path))void this.#load(path,mode);},at-Date.now());}
