@@ -23,16 +23,19 @@ export function Drawer({ title, close, children, headingLink, className = '', ex
     drawerScroll.current=panel.current?.querySelector<HTMLElement>('.drawer-body')?.scrollTop??null;
     expanded.current=true;location.hash=fullLogLink(expand.arc,expand.id);
   }
-  const disclosures=useRef({route:'',seen:new WeakSet<HTMLDetailsElement>()});
+  const disclosures=useRef({route:'',seen:new WeakSet<Element>()});
   useLayoutEffect(()=>{const body=panel.current?.querySelector<HTMLElement>('.drawer-body');if(!body||!cache)return;body.scrollTop=Number(cache.ui.get(`scroll:${routeKey}`)??0);const remember=()=>{cache.ui.delete(`scroll:${routeKey}`);cache.ui.set(`scroll:${routeKey}`,body.scrollTop);const keys=[...cache.ui.keys()].filter(k=>k.startsWith('scroll:'));for(const key of keys.slice(0,-24))cache.ui.delete(key);};body.addEventListener('scroll',remember);return()=>body.removeEventListener('scroll',remember);},[cache,routeKey]);
   useLayoutEffect(()=>{
     const body=panel.current?.querySelector<HTMLElement>('.drawer-body');if(!body||!cache)return;
     const key=`disclosures:${routeKey}`,saved=cache.ui.get(key) as Record<string,boolean>|undefined;
-    if(disclosures.current.route!==routeKey)disclosures.current={route:routeKey,seen:new WeakSet<HTMLDetailsElement>()};
+    if(disclosures.current.route!==routeKey)disclosures.current={route:routeKey,seen:new WeakSet<Element>()};
     // Restore newly mounted disclosures once. Reapplying on every clock/history
     // render can race the native toggle event and reopen a section after Escape.
     for(const el of body.querySelectorAll('details')){if(disclosures.current.seen.has(el))continue;disclosures.current.seen.add(el);const name=el.querySelector('summary')?.textContent??'';if(saved&&name in saved)el.open=saved[name]!;}
-    if(body.querySelector('.unit-meta,.invocation-facts'))body.scrollTop=Number(cache.ui.get(`scroll:${routeKey}`)??0);
+    // The reading position too is restored once, when the detail's content mounts: restored on every render, a clock tick
+    // landing between a scroll and its (asynchronous) scroll event put the position back to what was remembered before it.
+    const content=body.querySelector('.unit-meta,.invocation-facts');
+    if(content&&!disclosures.current.seen.has(content)){disclosures.current.seen.add(content);body.scrollTop=Number(cache.ui.get(`scroll:${routeKey}`)??0);}
     const remember=(ev:Event)=>{const el=ev.target;if(!(el instanceof HTMLDetailsElement))return;cache.ui.set(key,{...(cache.ui.get(key) as object??{}),[el.querySelector('summary')?.textContent??'']:el.open});cache.trimUi();};
     body.addEventListener('toggle',remember,true);return()=>body.removeEventListener('toggle',remember,true);
   },[children,cache,routeKey]);
