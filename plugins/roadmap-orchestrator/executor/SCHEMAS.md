@@ -1276,10 +1276,14 @@ result shows pruned) within one pass, about 47 s on an arc of 40,000 records. Th
 nobody opens; routes that open a record (result, log, history, content) verify it on that read.
 
 The serve worker holds each maintained arc's latest observation and parses the verified journal prefix itself. Every API
-read is answered from memory: shell, graph, metadata versions, status and summary are kept per capture (their inputs are
+read is answered from memory: shell, graph, status and summary are kept per capture, and the metadata's view versions are
+computed once when a capture or rows refresh is published and kept with it (`data.capture.viewVersions`; their inputs are
 accumulators extended with the appended events and changed rows); tab views build on their first request per capture and
-are rebuilt for each new capture the last five minutes asked for once it has stood half a second; the Activity index
-builds in 20 ms slices between other reads. API discovery is answered by the HTTP thread from the serve worker's reported
+are rebuilt for each new capture the last five minutes asked for once it has stood half a second; a unit's, a milestone's
+and an Activity event's detail build once per published data object, in the same 32-view cache; the Activity index
+builds in 20 ms slices between other reads. A check is not an observation: it moves `checkedAt` and the heartbeat,
+supervision and clock that the status route alone applies (live elapsed and token-wait times advanced from the capture's
+clock to the check's), and no revision, so revision notices follow captures and rows refreshes only. API discovery is answered by the HTTP thread from the serve worker's reported
 selection, once the selected arc is observed. The HTTP thread logs, once each, when an arc falls behind (its journal is
 past what was published, or nothing was checked for three seconds, for five seconds): `console is behind arc <arc> by
 <d>s: published through seq <n> (byte <b> of <size>); collector in <phase> for <t>s; last capture <ms> ms (<events> events,
@@ -1292,6 +1296,7 @@ collector needs 384 MB plus three times its journal; the serve worker 256 MB plu
 is sized 64 MB over for their growth; a maintained set past its limit restarts it). A collector, which
 nothing waits on, collects its captures' garbage itself once its used heap is 192 MB over what its last collection left
 (the console process runs with `--expose-gc`): left to V8 under a guard-sized limit it runs to three times what it holds.
+The serve worker does the same after answering, at 128 MB over, when no read is parked.
 Each worker reports its heap (used,
 limit, external) with what it holds at its first observation, every ten minutes, and once each time its used heap passes
 80% of its limit; the HTTP thread logs one line per report (`console collector for arc <arc>: heap <used> of <limit> MB
@@ -1305,7 +1310,7 @@ the console stopped after running out of memory at that limit, until the console
 
 An atomic envelope is `{protocol,instance,repoId,arc,epoch,highWater,revision,observedAt,checkedAt,data}`.
 Protocol is the exact executor package version. HighWater is the verified event prefix; revision also changes
-with side files/liveness and the clock overlay. This is a verified journal prefix plus sampled external state, not a
+with side files/liveness and with a rows refresh, never with a check alone. This is a verified journal prefix plus sampled external state, not a
 filesystem transaction; `checkedAt` moves only when a step found nothing newer than the published observation, or
 published one. Requests accept `minHighWater`, `epoch`, `revision`; CLI adds `fenceIdentity` (device:inode) and
 `fenceSize` captured cheaply from the journal. A browser read is answered from the published observation; one whose
@@ -1393,7 +1398,10 @@ reconnecting with data shown it reads “Reconnecting. Showing the arc as of 40s
 time and “N ago” is measured to that as-of instant. The browser polls `/metadata` only when the stream is silent for
 five seconds and reopens a stream silent for ten. Each view read carries the epoch and the high-water mark of what that
 view already shows (none before it shows anything), so a read never waits for a capture: a view may be a capture behind
-the notices, is shown, and loads again when its version differs. A failed refresh keeps the view's data and retries
+the notices, is shown, and loads again when its version differs. A view loaded automatically (its version moved; the
+Resources "now" strip and Activity's new-events count alike) is loaded again no sooner than max(1 s, twice its last load's
+time) after that load ended, with one trailing load for the versions that arrive meanwhile; a person's reload is not paced.
+A failed refresh keeps the view's data and retries
 after 1, 2, 4, 8, then every 15 s while the view is open; it alerts only when the view has nothing to show or after
 three failures in a row. A browser on another package protocol requires reload.
 

@@ -3,7 +3,9 @@
 import { commonDirOfRun } from '../../src/answers.ts';
 import type { ArcId } from '../../src/core/ids.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { ConsoleMetadata } from '../../src/console/metadata.ts';
 import { ArcModel } from '../../src/console/model.ts';
+import { ConsoleViews } from '../../src/console/views.ts';
 import { ArcCollector, type CollectorMessage } from '../../src/observation/collect.ts';
 import { type Admission, ConsoleError, type Envelope } from '../../src/observation/protocol.ts';
 
@@ -15,7 +17,9 @@ export class ObservedArc {
   readonly messages: CollectorMessage[] = [];
   constructor(hostDir: AbsPath | string, instance: string, repoId: string, run: RunLike) {
     const r = { runDir: absPath(run.runDir), arc: run.arc as ArcId, at: '' };
-    this.model = new ArcModel(r, instance, repoId);
+    // The view versions computed when the model publishes, as the serve worker's metadata and views compute them.
+    const metadata = new ConsoleMetadata(), views = new ConsoleViews();
+    this.model = new ArcModel(r, instance, repoId, (e) => metadata.versions(e, views));
     this.collector = new ArcCollector(r, absPath(hostDir), absPath(commonDirOfRun(r.runDir)), (m) => { this.messages.push(m); this.model.apply(m, Date.now()); });
   }
   /** One collector step, then the published envelope as a browser read with `admission` is answered (a park is unavailable). */

@@ -147,3 +147,27 @@ test('appended bounded pages rebase nested list and text continuations without o
  while(text.continuations.length){const used=text.continuations[0];text=applyContent(text,contentDetail(e,'unit:u1',used.next,64*1024),used);}
  assert.equal(text.intent.text,'Earlier intent\n'+large);
 });
+// dev.75 (S-e): a unit's, a milestone's or an Activity event's detail is built once per published data object, in the serve
+// worker's per-capture view cache: a drawer re-read on every notice, or a check, builds nothing again; a new capture does.
+test('two unit detail reads of one capture build once; a check builds nothing, a new capture builds again',async t=>{
+ const {CaptureViews}=await import('../src/console/view-cache.ts');
+ const f=await investigationFixture(60);t.after(()=>f.close());
+ const observed=new Observations(f.hostDir,'detail-cache','repo').arc({runDir:f.runDir,arc:f.arc});const e=observed.read();
+ const unit=e.data.display.status.units[0]!.unit,milestone=e.data.plan!.milestones![0]!.id,path=['arcs',e.arc,'units',unit];
+ assert.equal(CaptureViews.cached(path,{}),true);assert.equal(CaptureViews.cached(['arcs',e.arc,'milestones',milestone],{}),true);
+ assert.equal(CaptureViews.cached(['arcs',e.arc,'activity','1'],{}),true,'an Activity event detail');
+ assert.equal(CaptureViews.cached(['arcs',e.arc,'activity','changes'],{anchor:'x'}),false);
+ const cache=new CaptureViews(32);let builds=0;
+ const read=(at:typeof e,params:Record<string,string>={})=>cache.read(path,params,at,()=>{builds++;return {...at,data:unitView(at,unit,params)};});
+ const first=read(e);read(e,{minHighWater:String(e.highWater)});
+ assert.equal(builds,1,'the second read of the capture is answered from the first build');
+ assert.deepEqual(read(e).data,first.data);
+ // A check moves the verification clock only: the same data, nothing built.
+ const checked=observed.read();assert.equal(checked.data,e.data);read(checked);assert.equal(builds,1);
+ // Another section is another view.
+ read(e,{section:'journey'});assert.equal(builds,2);
+ // A new capture (an event appended) builds again.
+ const {openJournal}=await import('../src/core/log.ts');const {arcId,unitId}=await import('../src/core/ids.ts');
+ const j=openJournal(absPath(f.runDir),arcId(f.arc));try{j.fact({kind:'stage-admitted',unit:unitId(unit),stage:'build',waited:{totalMs:0,byReasonMs:{}}});}finally{j.close();}
+ const next=observed.read();assert.ok(next.data.capture.materializations>e.data.capture.materializations);read(next);assert.equal(builds,3);
+});

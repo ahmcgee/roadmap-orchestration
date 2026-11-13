@@ -42,7 +42,7 @@ export type CollectorMessage =
       milestoneUnits: Record<string, readonly string[]>; estate: readonly Entry[] | null; rows: readonly Invocation[]; work: CaptureWork }>
   /** Open invocations' rows read again because their output moved; the journal position and status stand. */
   | Readonly<{ kind: 'rows'; arc: ArcId; epoch: string; asOf: number; rows: readonly Invocation[]; work: CaptureWork }>
-  /** Nothing newer than the published observation as of `at`: the volatile overlay as it is now. */
+  /** Nothing newer than the published observation as of `at`: the heartbeat and supervision as they are now (the status route applies them). */
   | Readonly<{ kind: 'checked'; arc: ArcId; at: number; heartbeatAt: IsoTime | null; supervision: Supervision; owner: OwnerState }>
   /** A capture failed for a reason other than a race: reads of the arc answer this until a capture succeeds. */
   | Readonly<{ kind: 'failed'; arc: ArcId; at: number; error: Readonly<{ code: ConsoleCode; message: string }> }>

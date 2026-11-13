@@ -37,8 +37,10 @@ test('unchanged dependencies reuse expensive captures, heartbeat invalidates onl
   writeFileSync(join(run.runDir, 'heartbeat.json'), JSON.stringify({ v: 2, generation: 1, at: '2026-06-01T00:00:00.000Z' }));
   const next = cache.read(run);
   assert.equal(next.highWater, first.highWater);
-  assert.ok(next.revision > first.revision);
-  assert.equal(next.data.display.status.run.heartbeatAt, '2026-06-01T00:00:00.000Z');
+  // dev.75: a check is not an observation. The heartbeat reaches the status route, which applies the last check (T3).
+  assert.equal(next.revision, first.revision);
+  assert.equal(next.data, first.data);
+  assert.equal((cache.arc(run).model.status(next, false) as typeof next.data.display.status).run.heartbeatAt, '2026-06-01T00:00:00.000Z');
   assert.equal(next.data.capture.materializations, first.data.capture.materializations);
   const file = join(run.runDir, 'commands', 'receipts', 'cmd-0000000000000001.rejected.json');
   const receipt = JSON.parse(readFileSync(file, 'utf8')); receipt.reason = 'Changed side file';

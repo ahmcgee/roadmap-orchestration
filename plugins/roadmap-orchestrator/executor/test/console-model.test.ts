@@ -121,3 +121,68 @@ test('completed lane fixture is ready between stages despite unfinished-unit sta
   assert.equal(unit.status, 'active'); assert.equal(unit.stage, 'lanes'); assert.equal(unit.state, 'ready'); assert.equal(unit.running, null);
   assert.equal(graphView(e).units.find(u => u.id === 'u1')!.signal, 'pending');
 });
+
+// dev.75 (S-a): a check is not an observation. With a unit running, checks move the verification clock and no revision; the
+// status route applies the last check's clock, heartbeat and supervision, to the same bytes the overlay gave before.
+test('checks while a unit runs leave the revision and data; the status route advances elapsed times by the checks\' clock', async () => {
+  const { canonicalJson } = await import('../src/core/json.ts');
+  const { ArcModel } = await import('../src/console/model.ts');
+  const f = parityArc(), observed = new Observations(f.hostDir, 'i', 'r').arc({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  observed.read();
+  const observation = observed.messages.find((m) => m.kind === 'observation')!;
+  if (observation.kind !== 'observation') throw new Error('no observation');
+  const running = { stage: 'build' as const, attempt: 1, elapsed: 5_000, deadline: null, resources: [], lane: null, session: null };
+  const status = { ...observation.status, units: observation.status.units.map((u, i) => i === 0 ? { ...u, state: 'running' as const, running } : u) };
+  const views = new ConsoleViews(), metadata = new ConsoleMetadata();
+  const model = new ArcModel(observation.run, 'i', 'r', (e) => metadata.versions(e, views));
+  for (const m of observed.messages.filter((m) => m.kind === 'journal')) model.apply(m, Date.now());
+  assert.equal(model.apply({ ...observation, status }, Date.now()), 'published');
+  const published = model.envelope()!;
+  const supervision = { state: 'live' as const, pid: 4242, lastPollAt: '2026-06-01T00:00:00.000Z', executorVersion: 'test' };
+  let at = observation.clock;
+  for (let n = 1; n <= 10; n++) {
+    at += 1_000;
+    assert.equal(model.apply({ kind: 'checked', arc: observation.arc, at, heartbeatAt: '2026-06-01T00:00:05.000Z' as never, supervision, owner: status.run.owner.state as never }, at), 'checked');
+  }
+  const e = model.envelope()!;
+  assert.equal(e.revision, published.revision, 'no revision for a check');
+  assert.equal(e.data, published.data, 'the same data object');
+  assert.equal(e.checkedAt, new Date(at).toISOString(), 'the verification clock moved');
+  // What the overlay produced before dev.75, for the same inputs: elapsed and token waits advanced from the capture's clock.
+  const delta = at - observation.clock;
+  const expected = { ...status, units: status.units.map((u) => ({ ...u,
+    running: u.running === null ? null : { ...u.running, elapsed: u.running.elapsed === null ? null : u.running.elapsed + delta },
+    waitingFor: u.waitingFor === null ? null : { ...u.waitingFor, ...(typeof u.waitingFor.tokenWaitMs === 'number' ? { tokenWaitMs: u.waitingFor.tokenWaitMs + delta } : {}) } })),
+    run: { ...status.run, heartbeatAt: '2026-06-01T00:00:05.000Z' }, supervision };
+  const read = model.status(e, false) as typeof status;
+  assert.equal(read.units[0]!.running!.elapsed, 5_000 + 10_000);
+  assert.equal(canonicalJson(read), canonicalJson(expected));
+  assert.equal(canonicalJson(model.status(e, true)), canonicalJson({ ...observation.summary, supervision }));
+  assert.equal(model.status(e, false), read, 'answered once per check');
+  // The next capture is as of its own clock: nothing applied until a check after it.
+  model.apply({ ...observation, status, clock: at + 500, asOf: at + 500 }, at + 500);
+  assert.equal(model.status(model.envelope()!, false), status);
+});
+
+// dev.75 (S-b): view versions are computed once, when the model publishes, and kept with the capture: a notice for an envelope
+// published captures ago hashes no row.
+test('metadata reads a published envelope\'s versions from its capture, without hashing rows', async (t) => {
+  const { ViewTokens } = await import('../src/console/tokens.ts');
+  const f = parityArc(), observed = new Observations(f.hostDir, 'i', 'r').arc({ runDir: f.runDir, arc: arcId(f.d.arc) });
+  const old = observed.read();
+  assert.ok(old.data.capture.viewVersions, 'the model kept the versions');
+  // Two captures later (a receipt changed each time: a new capture), the old envelope's tokens are no longer registered.
+  for (const n of [1, 2]) {
+    const { readdirSync, readFileSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const dir = join(f.runDir, 'commands', 'receipts'), file = join(dir, readdirSync(dir).find((n) => n.endsWith('.json'))!);
+    const receipt = JSON.parse(readFileSync(file, 'utf8')); receipt.reason = `changed ${n}`; writeFileSync(file, JSON.stringify(receipt));
+    assert.ok(observed.read().data.capture.materializations > old.data.capture.materializations);
+  }
+  const rows = t.mock.method(ViewTokens.prototype, 'rows'), extend = t.mock.method(ViewTokens.prototype, 'extend');
+  const notice = new ConsoleMetadata().read(old, new ConsoleViews(), old.arc);
+  assert.equal(rows.mock.callCount(), 0, 'no row hashed');
+  assert.equal(extend.mock.callCount(), 0, 'no event folded');
+  assert.deepEqual(notice.viewVersions, old.data.capture.viewVersions);
+  assert.equal(notice.lastEventAt, old.data.events.at(-1)!.at);
+});

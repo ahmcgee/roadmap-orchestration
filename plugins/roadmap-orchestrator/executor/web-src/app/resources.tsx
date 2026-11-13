@@ -36,7 +36,7 @@ export function Resources({arc}:{arc:string}) {
   const state=usePlainQuery<ResourceView>(arc,'resources',resourceFields,explicit?{section,zone}:latest?{section,...latest,zone}:null),data=state.data,table=useRef<HTMLTableElement>(null),clock=useContext(Clock);
   const nowPath='resources?section=now&limit=25',changed=!!data&&!!store?.metadata&&data.viewVersion!==store.metadata.viewVersions.resources;
   const freshNow=useView(changed?nowPath:null),nowData=freshNow.data as ResourceView|null;
-  useEffect(()=>{if(changed&&store?.metadata&&nowData?.viewVersion!==store.metadata.viewVersions.resources)void store.load(nowPath,true);},[changed,store?.metadata?.viewVersions.resources,nowData?.viewVersion]);
+  useEffect(()=>{if(changed&&store?.metadata&&nowData?.viewVersion!==store.metadata.viewVersions.resources)void store.refresh(nowPath);},[changed,store?.metadata?.viewVersions.resources,nowData?.viewVersion]);
   const reasonParams=new URLSearchParams(state.params);reasonParams.delete('cursor');if(current.query.has('reasonCursor'))reasonParams.set('cursor',current.query.get('reasonCursor')!);
   const browseReasons=current.query.get('reasons')==='1',reasonState=useView(browseReasons&&section==='waiting'?`resources/reasons?${reasonParams}`:null),reasonData=reasonState.data as ResourceReasonsView|null;
   const lifecycle=(store?.entries.get('shell')?.value?.data as ShellView|undefined)?.lifecycle,terminalAt=lifecycle?.endedAt??data?.bounds.terminalAt;

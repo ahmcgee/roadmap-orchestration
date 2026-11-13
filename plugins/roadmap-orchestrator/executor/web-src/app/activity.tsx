@@ -1,11 +1,10 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { Button } from '../components/ui/button.tsx';
 import { Table, TableHead, TableRow } from '../components/ui/table.tsx';
-import { ApiError, displayZone, elapsed, formatDay, formatInstant, get, link, loadError, money, pluralise, route, Time, zoneLabel } from './shared.tsx';
+import { displayZone, elapsed, formatDay, formatInstant, link, loadError, money, pluralise, route, Time, zoneLabel } from './shared.tsx';
 import { activateRow, CustomRange, FacetSelect, FilterBar, ignoredFilters, knownOnly, moveRowFocus, useFacets, unknownFilter } from './plain-query.tsx';
 import { Views, useView } from './view-state.ts';
-import { activityChangesShape } from '../../src/console/view-shapes.ts';
-import { ACTIVITY_KINDS, type ActivityRow, type ActivityView } from '../../src/console/activity-protocol.ts';
+import { ACTIVITY_KINDS, type ActivityChanges, type ActivityRow, type ActivityView } from '../../src/console/activity-protocol.ts';
 import { activityFields, activityParams, dayRange, previousVisit, shiftDay } from './activity-query.ts';
 import { activityKindWords, agentParts, backendWords, outcomeWords, roleWords, stageWords } from '../../src/console/vocabulary.ts';
 import { Holistic } from './holistic.tsx';
@@ -30,37 +29,25 @@ export function Activity({arc}:{arc:string}) {
   const store=useContext(Views),cached=useFacets('activity',undefined),params=knownOnly(activityParams(current.query,displayZone()),cached),cursor=current.query.get('cursor');
   const query=params.toString(),path=`activity?${query}${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`;
   const state=useView(view==='events'?path:null),data=state.data as ActivityView|null,facets=useFacets('activity',data?.facets);
-  const [changes,setChanges]=useState(0),[expired,setExpired]=useState(false),[noticeError,setNoticeError]=useState(''),[retry,setRetry]=useState(0),[localError,setLocalError]=useState('');
+  const [localError,setLocalError]=useState('');
   useEffect(()=>{store?.ui.set('query:activity',current.query.toString());},[store,current.query.toString()]);
-  const metadataVersion=store?.metadata?.viewVersions.activity,request=useRef(0);
   const requestVersion=store?.metadata?.viewVersions.attention,generation=store?.generation??0;
   const [requestAnchor,setRequestAnchor]=useState<{generation:number;version:string}|null>(null);
   useEffect(()=>{
     if(requestVersion&&(!requestAnchor||requestAnchor.generation!==generation))setRequestAnchor({generation,version:requestVersion});
   },[requestVersion,generation,requestAnchor]);
   const requestsChanged=Boolean(requestVersion&&requestAnchor?.generation===generation&&requestAnchor.version!==requestVersion);
-  useEffect(()=>{
-    setChanges(0);setExpired(false);setNoticeError('');
-    if(view!=='events'||!data||!store||!metadataVersion)return;
-    // The initial SSE notice only verifies this prefix; it is not a new event.
-    if(store.metadata!.highWater<=data.page.asOf.highWater)return;
-    // The count is of the position the notice names (one this console published): answered from an older capture's index it
-    // would miss the new events, and nothing would ask again.
-    const c=new AbortController(),ticket=++request.current;
-    void get(`/arcs/${encodeURIComponent(arc)}/activity/changes?${query}&anchor=${encodeURIComponent(data.page.anchor)}&epoch=${encodeURIComponent(store.metadata!.epoch)}&minHighWater=${store.metadata!.highWater}`,c.signal).then(raw=>{
-      if(c.signal.aborted||ticket!==request.current)return;
-      if(!activityChangesShape(raw.data))throw Object.assign(new ApiError('Malformed Activity changes; reload required'),{code:'protocol'});
-      store.admit(raw,false,true);
-      setChanges(raw.data.newMatching);
-      // An anchor the console no longer keeps (its index made way for a newer capture's) cannot count what is new; the newer
-      // events are there all the same, so the page offers them rather than an error.
-    }).catch(err=>{if(!c.signal.aborted){if(err instanceof ApiError&&err.code==='reset'){setExpired(true);return;}setNoticeError(err.message);if(err instanceof ApiError&&err.code==='protocol'){store.reload=true;store.emit();}}});
-    return()=>c.abort();
-  },[arc,view,path,data?.page.anchor,metadataVersion,store?.generation,retry]);
+  // The new matching events past this page's anchor, asked like any view (paced, ViewStore.load) once a notice is past the page:
+  // the initial notice only verifies this prefix. An anchor the console no longer keeps (its index made way for a newer
+  // capture's, `reset`) cannot count what is new; the newer events are there all the same, so the page offers them rather than
+  // an error.
+  const changesPath=view==='events'&&data&&store?.metadata&&store.metadata.highWater>data.page.asOf.highWater?`activity/changes?${query}&anchor=${encodeURIComponent(data.page.anchor)}`:null;
+  const counted=useView(changesPath),expired=counted.error!==''&&counted.code==='reset',noticeError=expired?'':counted.error;
+  const changes=changesPath===null?0:(counted.data as ActivityChanges|null)?.newMatching??0;
   function navigate(next:URLSearchParams, fresh=false){
     if(fresh){next.delete('cursor');const p=activityParams(next).toString();store?.abort(`activity?${p}`);if(store)void store.load(`activity?${p}`,true);}
     const target=`#/arcs/${encodeURIComponent(arc)}/activity${next.size?`?${next}`:''}`;
-    if(location.hash===target){state.retry();setChanges(0);setNoticeError('');}else location.hash=target;
+    if(location.hash===target)state.retry();else location.hash=target;
   }
   function latest(){const next=new URLSearchParams(current.query);next.set('order','desc');navigate(next,true);}
   function change(key:string,value:string){
@@ -106,7 +93,7 @@ export function Activity({arc}:{arc:string}) {
       </FilterBar>
       {localError&&<p role="alert">{localError}</p>}
       {state.error&&unknownFilter(state.error)?<div role="alert"><p>This link filters by a value that isn't recorded in this arc.</p><Button onClick={()=>{const next=new URLSearchParams(current.query);for(const [key] of activityFacetFields)next.delete(key);navigate(next,true);}}>Clear those filters</Button></div>
-      :(state.error&&(!data||state.failures>=3)||noticeError)&&<div role="alert"><p>{state.error&&data?"Couldn't refresh this view. Trying again.":loadError(state.error||noticeError)}</p><Button onClick={()=>state.error?navigate(new URLSearchParams(current.query),true):setRetry(retry+1)}>Retry</Button></div>}
+      :(state.error&&(!data||state.failures>=3)||noticeError)&&<div role="alert"><p>{state.error&&data?"Couldn't refresh this view. Trying again.":loadError(state.error||noticeError)}</p><Button onClick={()=>state.error?navigate(new URLSearchParams(current.query),true):counted.retry()}>Retry</Button></div>}
       {state.loading&&<p role="status">{data?'Updating Activity…':'Loading Activity…'}</p>}
       {data&&<>
         <div className="page-status"><p className="activity-anchor muted">{windowValue==='visit'?`Since your last visit in this browser: ${pluralise(data.page.matching,'event')}`:pluralise(data.page.matching,'event')}. Updated {formatInstant(data.page.asOf.observedAt,data.filters.zone,true)} {zoneLabel(data.filters.zone)}.</p>

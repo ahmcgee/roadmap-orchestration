@@ -84,3 +84,18 @@ test(`the serve worker out of memory ${HEAP.stopAfter} times in a row is not res
     assert.match(await answer.text(), new RegExp(`stopped serving after its serve worker ran out of memory ${HEAP.stopAfter} times in a row at its \\d+ MB heap limit; see the console log`), path);
   }
 });
+
+// dev.75 (S-f): the serve worker collects its own garbage as a collector does: one policy (`heapTidy`), 128 MB over what its
+// last collection left for the serve worker (192 MB for a collector), and only when `gc` is exposed (--expose-gc).
+test('a worker\'s tidy collects once its used heap is its margin over what the last collection left', async () => {
+  const { heapTidy } = await import('../src/console/messages.ts');
+  let used = 300, collections = 0;
+  const tidy = heapTidy(128, () => { collections++; used = 200; }, () => used);
+  assert.equal(tidy(), true, 'the first call collects: nothing is settled yet');
+  assert.equal(collections, 1);
+  used = 327; assert.equal(tidy(), false, 'under the margin');
+  used = 328; assert.equal(tidy(), true, 'at the margin over the 200 MB left');
+  assert.equal(collections, 2);
+  const unexposed = heapTidy(128, undefined, () => 10_000);
+  assert.equal(unexposed(), false, 'without --expose-gc nothing is collected');
+});

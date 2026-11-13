@@ -25,7 +25,9 @@ test('metadata hashes exclude verification clocks and invalidate independent sem
   const now = new Date().toISOString(); writeFileSync(join(f.runDir,'heartbeat.json'),JSON.stringify({v:2,generation:1,at:now}));
   const heartbeat = metadata.read(read(),views,f.arc); assert.deepEqual(heartbeat.viewVersions,a.viewVersions);
   let captures = e.data.capture.materializations;
-  const changed = (patch: Partial<Envelope['data']>): Envelope => ({...e,data:{...e.data,...patch,capture:{...e.data.capture,materializations:++captures}}});
+  // A changed copy no model published: its versions are computed from it, not read from the capture (dev.75).
+  const {viewVersions: _published, ...capture} = e.data.capture;
+  const changed = (patch: Partial<Envelope['data']>): Envelope => ({...e,data:{...e.data,...patch,capture:{...capture,materializations:++captures}}});
   const request = e.data.requests[0]; assert.ok(request);
   const requests = metadata.read(changed({requests:[{...request,summary:request.summary+' updated'}]}),views,f.arc);
   assert.notEqual(requests.viewVersions.attention,a.viewVersions.attention);
@@ -70,7 +72,8 @@ test('view versions of a model extended across captures equal those built cold a
   const f = await investigationFixture(); t.after(() => f.close());
   const arc = new Observations(f.hostDir, 'incremental', 'reader').arc(f);
   const versions = (e: Envelope) => new ConsoleMetadata().read(e, new ConsoleViews(), f.arc).viewVersions;
-  const cold = (e: Envelope): Envelope => ({ ...e, data: { ...e.data } });
+  // The same data as no model published it (dev.75: without the versions the model kept): its versions are built from nothing.
+  const cold = (e: Envelope): Envelope => { const { viewVersions: _kept, ...capture } = e.data.capture; return { ...e, data: { ...e.data, capture } }; };
   const first = arc.read();
   assert.deepEqual(versions(first), versions(cold(first)));
   // Appended events, a settled row and a terminal fact: each extends the model's tokens, as captures do on a live arc.

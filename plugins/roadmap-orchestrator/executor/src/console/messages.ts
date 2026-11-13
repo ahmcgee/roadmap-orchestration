@@ -57,7 +57,7 @@ export type FromServe =
 /** Main to a collector. */
 export type ToCollector = Readonly<{ kind: 'check-now' }> | Readonly<{ kind: 'follow'; dirs: readonly string[] }> | Readonly<{ kind: 'report' }>;
 
-/** What the serve worker holds: per maintained arc its parsed events and rows, and the cached tab views. */
+/** What the serve worker holds: per maintained arc its parsed events and rows, and the views it keeps per capture (tab lists and details). */
 export type ServeSizes = Readonly<{ arcs: readonly Readonly<{ arc: string; events: number; rows: number }>[]; tabViews: number }>;
 /**
  * A worker's heap, as v8 sees it inside the worker, with what it holds. Asked for by main, or sent unprompted (`near`) once
@@ -73,6 +73,25 @@ export function heapReport<S>(sizes: S, near: boolean): HeapReport<S> {
 }
 /** Whether this thread's used heap is past HEAP_NEAR of its limit. */
 export function heapNear(): boolean { const h = getHeapStatistics(); return h.used_heap_size > HEAP_NEAR * h.heap_size_limit; }
+
+/**
+ * A worker's own garbage collection. V8 sizes its next full collection from the live heap, not from need: under a guard-sized
+ * limit a worker's used heap runs to three times what it holds between collections (measured: a collector 340 MB live, 1.1 GB
+ * used). When the console runs with `--expose-gc` (src/entry/console.ts is started so), the returned function collects once
+ * the used heap is `overMb` over what the last collection left, and says whether it did; without `gc` it never does. The
+ * collector tidies after every step (nothing waits on it); the serve worker after answering, when no read is parked.
+ */
+export function heapTidy(overMb: number, collect: (() => void) | undefined = (globalThis as { gc?: () => void }).gc,
+  usedMb: () => number = () => getHeapStatistics().used_heap_size / MB): () => boolean {
+  let settledMb = Infinity;
+  return () => {
+    if (collect === undefined) return false;
+    if (settledMb !== Infinity && usedMb() < settledMb + overMb) return false;
+    collect();
+    settledMb = usedMb();
+    return true;
+  };
+}
 
 /** The maintained arcs: the selected one, then up to `extra` subscribed or read within `recentMs`. */
 export const MAINTAIN = { extra: 2, recentMs: 60_000, tickMs: 2_000 } as const;

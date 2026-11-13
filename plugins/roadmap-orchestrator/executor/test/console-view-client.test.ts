@@ -43,7 +43,9 @@ test('a semantic change during a pending read coalesces into one follow-up for t
  const store=new ViewStore(e.arc,CONSOLE_PROTOCOL,async()=>{count++;return count===1?new Promise(r=>finish=r):{...e,revision:e.revision+1,data:next};});
  store.active.set('graph',1);store.notice(notice);const task=store.load('graph');
  store.notice({...notice,revision:notice.revision+1,viewVersions:{...notice.viewVersions,graph:next.viewVersion}});
- const duplicate=store.load('graph');finish({...e,data:old});await Promise.all([task,duplicate]);if(store.entry('graph').task)await store.entry('graph').task;
+ const duplicate=store.load('graph');finish({...e,data:old});await Promise.all([task,duplicate]);
+ // dev.75: the follow-up is paced, a second after the load ended (T5's rule), and still one.
+ await new Promise(r=>setTimeout(r,1_100));if(store.entry('graph').task)await store.entry('graph').task;
  assert.equal(count,2);assert.equal(store.entry('graph').value.data.viewVersion,next.viewVersion);
 });
 
@@ -85,6 +87,8 @@ test('T6: a view response a capture behind a notice admitted while it was in fli
  finish({...e,data:old});await task;
  assert.equal(store.entry('graph').error,'');assert.equal(store.entry('graph').value.highWater,e.highWater,'the earlier capture is shown');
  assert.equal(store.identity.highWater,e.highWater+5,'the view never moves the identity back');
+ // dev.75: the follow-up is paced, a second after the load ended (T5's rule).
+ await new Promise(r=>setTimeout(r,1_100));
  assert.equal(count,2,'one follow-up load, as the version differs from the notice\'s');
  more({...e,highWater:e.highWater+5,revision:e.revision+1,data:next});await store.entry('graph').task;
  assert.equal(store.entry('graph').value.data.viewVersion,next.viewVersion);assert.equal(count,2);
@@ -120,4 +124,29 @@ test('T8: a failed refresh keeps the view and retries after 1 s, then 2 s; succe
  fail=true;await store.load('shell',true);assert.equal(calls,6);assert.notEqual(store.entry('shell').retry,undefined);
  store.active.delete('shell');store.abort('shell');
  t.mock.timers.tick(60_000);await settle();assert.equal(calls,6,'leaving the view cancels its retry');
+});
+// dev.75 (S-d): automatic reloads are paced by the page. A burst of notices for a mounted view makes one load at once and one
+// trailing load; a slow server is asked again no sooner than twice its last load's time after that load ended.
+test('a burst of version changes loads a mounted view once at once and once trailing; a slow load spaces the next',async()=>{
+ const {e,notice}=fixture();const starts:number[]=[],ends:number[]=[];let delay=0;
+ const store=new ViewStore(e.arc,CONSOLE_PROTOCOL,async()=>{starts.push(Date.now());await new Promise(r=>setTimeout(r,delay));ends.push(Date.now());return {...e,data:graphView(e)};});
+ store.notice(notice);store.active.set('graph',1);await store.load('graph');assert.equal(starts.length,1);
+ const version=(n:number)=>({...notice,viewVersions:{...notice.viewVersions,graph:String(n).padStart(64,'0')}});
+ const settle=async(ms:number)=>new Promise(r=>setTimeout(r,ms));
+ // Five version changes within 200 ms, each asked for as a mounted view asks (useView: load on every version).
+ for(let n=1;n<=5;n++){store.notice(version(n));void store.load('graph');await settle(40);}
+ assert.equal(starts.length,1,'paced: the view was loaded under a second ago');
+ await settle(1_200);
+ assert.equal(starts.length,2,'one trailing load');
+ assert.equal(store.entry('graph').version,graphView(e).viewVersion);
+ await settle(1_200);assert.equal(starts.length,2,'and no more');
+ // A load that takes two seconds: the next automatic one starts no sooner than four seconds after it ended.
+ delay=2_000;store.notice(version(6));await settle(1_100);void store.load('graph');await store.entry('graph').task;
+ const slowEnd=ends.at(-1)!;store.notice(version(7));void store.load('graph');
+ await settle(3_000);assert.equal(starts.length,3,'not yet');
+ delay=0;await settle(1_500);assert.equal(starts.length,4);
+ assert.ok(starts[3]!-slowEnd>=4_000,`${starts[3]!-slowEnd} ms after the slow load ended`);
+ // A person's reload is never paced.
+ void store.load('graph',true);await settle(10);assert.equal(starts.length,5);
+ store.dispose();
 });
