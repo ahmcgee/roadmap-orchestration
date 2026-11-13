@@ -28,3 +28,31 @@ test('status and summary scale below 15x CPU for 10x journal input, with fixed a
     assert.ok(Math.min(...b) < 60_000, `${mode} ${name}: catastrophic CPU regression`);
   });
 });
+
+// dev.79 (T12): a capture after an append folds only the appended events in every pass status makes over the journal.
+test('a capture after a 12-event append on a 60,000-event journal folds 12 events in every pass', { timeout: 360_000 }, async () => {
+  const { readJournal } = await import('../../src/core/log.ts');
+  const { captureStatus } = await import('../../src/status.ts');
+  const { StatusPasses } = await import('../../src/status/passes.ts');
+  const { Fold } = await import('../../src/core/state.ts');
+  const { prevHash, serializeEvent } = await import('../../src/core/events.ts');
+  const f = await statusCostArc(60_000, 8, 8);
+  const events = readJournal(f.runDir, f.arc).events;
+  assert.ok(events.length >= 60_000);
+  const view = new Fold(f.arc);
+  for (const e of events.slice(0, -12)) view.apply(e, prevHash(Buffer.from(serializeEvent(e), 'utf8')));
+  const timing = { clock: Date.now(), foldMs: 0 };
+  // One pass from nothing over the whole journal, timed: what extending by 12 must beat by far.
+  const full = Math.min(...Array.from({ length: 3 }, () => { const t = performance.now(); StatusPasses.of(events); return performance.now() - t; }));
+  const kept = new StatusPasses();
+  captureStatus(f.runDir, f.arc, f.hostDir, { view, events: events.slice(0, -12) }, timing, kept);
+  assert.equal(kept.folded, events.length - 12);
+  for (const e of events.slice(-12)) view.apply(e, prevHash(Buffer.from(serializeEvent(e), 'utf8')));
+  const began = performance.now();
+  kept.extend(events);
+  const step = performance.now() - began;
+  assert.equal(kept.folded, events.length, 'the 12 appended events are folded');
+  captureStatus(f.runDir, f.arc, f.hostDir, { view, events }, timing, kept);
+  assert.equal(kept.folded, events.length, 'and the capture folds nothing again');
+  assert.ok(step < full / 20, `extending by 12 took ${step.toFixed(2)} ms against ${full.toFixed(1)} ms for every event`);
+});

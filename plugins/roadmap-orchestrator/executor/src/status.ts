@@ -1,4 +1,5 @@
-import { type WaitingTotals, waitingTotals } from './status/waiting.ts';
+import type { WaitingTotals } from './status/waiting.ts';
+import { DecisionSourcesFold, StageTimingsFold, StatusPasses } from './status/passes.ts';
 import { canonicalJson } from './core/json.ts';
 import { cell, parsedOnce, sampledReceipts } from './observation/memo.ts';
 import { terminalReceipts } from './commands/queue.ts';
@@ -12,7 +13,7 @@ import { withObservationReads } from './pipeline/lanes.ts';
 import { stopAborts } from './pipeline/stop.ts';
 import { externalAttestations } from './holistic/external.ts';
 import { claudeBuilderRouting } from './routing/eligibility.ts';
-import { type Certification,type WorkRun,certificationReader,workRuns } from './status-work.ts';
+import { type Certification,type WorkRun,certificationReader,workRunsOf } from './status-work.ts';
 // `roadmap status`: DESIGN-1.0.md §2.4, as one agent-facing JSON object (M2's view plus M3's holistic keys).
 //
 // Read only, from anywhere, while an executor runs or when none does: the log is folded without the host
@@ -143,7 +144,7 @@ import { witnessDir } from './git/snapshot.ts';
 import { obligationBlockingUnits,unmergedOf } from './holistic/blocking.ts';
 import type { RevisionContext } from './holistic/admission.ts';
 import { coverageBase,coverageOf } from './holistic/coverage.ts';
-import { type FindingMetric,type RepairUnit,findingMetrics,isActive } from './holistic/findings.ts';
+import { type FindingMetric,type RepairUnit,isActive } from './holistic/findings.ts';
 import { type Observation,type ObservationStore,type WitnessedEntry,verdictOf } from './holistic/observe.ts';
 import { type PackReviewStatus,packItemOf,packReviewHold,packReviewStatus } from './holistic/packreview.ts';
 import { type ArcLaneDef,type CensusEntry,type CensusState,type ClauseState,type Compensation,type DivergenceKind,type FindingLens,type FindingSeverity,type FindingStateName,type LensKind,type ObligationDef,type Obligations,type ObservationVerdict,type Vision,type VisionClauseKind,type VisionCoverage,type VisionQuestion,isExempt,isMustHold,observationKeyText } from './holistic/types.ts';
@@ -153,7 +154,7 @@ import { readClaim } from './host/lock.ts';
 import { readOwner } from './host/owner.ts';
 import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
 import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
-import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,meterOf,ownShare } from './meter.ts';
+import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,ownShare } from './meter.ts';
 import { type Supervision,supervision } from './watch-lease.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,type OpenBlockingDigest,supersededItems } from './needsuser.ts';
 import { escalateAt,probeTargets,trippedTargets } from './park/schedule.ts';
@@ -723,24 +724,6 @@ function parkOf(view: JournalView, u: UnitState): UnitPark | null {
   return { class: 'retryable', targets: park.targets, outstanding, nextProbeAt, escalateAt: isoTimeOf(escalateAt(u.park)) };
 }
 
-/** When each stage attempt journaled its first op, by `<unit>/<stage>#<attempt>`. */
-function attemptStarts(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
-  const out = new Map<string, IsoTime>();
-  for (const e of events) {
-    if (e.type !== 'intent' || e.parent.type !== 'stage') continue;
-    const key = `${e.parent.unit}/${e.parent.stage}#${e.parent.attempt}`;
-    if (!out.has(key)) out.set(key, e.at);
-  }
-  return out;
-}
-
-/** When each intent was appended, by `<op>#<ordinal>`. */
-function intentTimes(events: readonly Event[]): ReadonlyMap<string, IsoTime> {
-  const out = new Map<string, IsoTime>();
-  for (const e of events) if (e.type === 'intent') out.set(`${e.op}#${e.ordinal}`, e.at);
-  return out;
-}
-
 /** dev.59: the session name of a Claude build spawn's launch, read once its launch.json exists (null before, or for Codex). */
 function buildSessionOf(runDir: AbsPath, inv: InvocationId): BuildSessionName | null {
   const terminal = runnerFiles(invocationDir(runDir, inv), inv).read('launch.json')?.terminal;
@@ -941,6 +924,8 @@ type Derived = Readonly<{
   log: LogSnapshot;
   events: readonly Event[];
   view: JournalView;
+  /** Every pass over the log's events, extended to `events` (src/status/passes.ts). */
+  passes: StatusPasses;
   /** How long folding the log took (`host.log.foldMs`). */
   foldMs: number;
   clock: number;
@@ -978,13 +963,19 @@ function routingInForce(inForce: InForce): Readonly<{ profile: ProfileName; of: 
   };
 }
 
-/** The log folded, the plan in force, and every unit's line with the run's state: what `status` and `watch` share. */
-function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, timing?: Readonly<{ clock: number; foldMs: number }>): Derived {
+/**
+ * The log folded, the plan in force, and every unit's line with the run's state: what `status` and `watch` share. `passes`:
+ * the passes over this journal's events kept by a long-lived observer, extended here; without them they are folded from
+ * nothing.
+ */
+function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, timing?: Readonly<{ clock: number; foldMs: number }>, kept?: StatusPasses): Derived {
   const began = performance.now();
   const log = snapshot ?? readJournal(runDir, arc);
   if (log.view.arc !== arc) throw new Error(`status: journal snapshot belongs to ${log.view.arc}, not ${arc}`);
   const foldMs = timing?.foldMs ?? Math.round(performance.now() - began);
   const { view, events } = log;
+  const passes = kept ?? new StatusPasses();
+  passes.extend(events);
   const record = readIf(join(runDir, START_FILE), runStart);
   const inForce = planInForce(runDir, view);
   const plan = inForce?.plan ?? null;
@@ -1014,16 +1005,16 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
   const inputs: Inputs | null = plan === null ? null : {
     runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec, now,
   };
-  const times = { starts: attemptStarts(events), intents: intentTimes(events) };
+  const times = { starts: passes.attemptStarts, intents: passes.intentTimes };
   const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, times, now));
   return {
-    log, events, view, foldMs, clock: now, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
+    log, events, view, passes, foldMs, clock: now, plan, start, inForce, resolved, owner, rejection, blocking, sched, units, state: runStateOf(view, units, owner, blocking, rejection),
   };
 }
 
 /** The run's state and each unit's, compactly, and the log's high-water they were derived at (`seq`): what `watch` streams. */
-export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; openBlocking: OpenBlockingDigest; seq: number }> {
-  const d = derive(runDir, arc, hostDir, snapshot);
+export function unitStates(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot, passes?: StatusPasses): Readonly<{ run: ArcState; units: Readonly<Record<string, string>>; superseded: readonly NeedsUserId[]; openBlocking: OpenBlockingDigest; seq: number }> {
+  const d = derive(runDir, arc, hostDir, snapshot, undefined, passes);
   const units: Record<string, string> = {};
   for (const l of d.units) units[l.unit] = compactState(l);
   return { run: d.state, units, superseded: [...supersededItems(d.view)].sort(), openBlocking: openBlockingDigest(runDir, d.view), seq: d.view.highWater() };
@@ -1432,8 +1423,15 @@ function runDirDecisions(runDir: AbsPath, arc: ArcId): DecisionReader {
  * patches; the executor's spec patches; steers; lanes reruns (dev.59); and divergences. The brief uses its coverage vector's high-water.
  */
 export function decisionsAfter(view: JournalView, events: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
+  const fold = new DecisionSourcesFold();
+  for (const e of events) fold.step(e);
+  return decisionsOf(view, fold.sources, since, read);
+}
+
+/** `decisionsAfter` over the events a decision is read from (`DecisionSourcesFold`), at `view`'s position. */
+function decisionsOf(view: JournalView, sources: readonly Event[], since: number, read: DecisionReader): readonly Decision[] {
   const out: Decision[] = [];
-  for (const e of events) {
+  for (const e of sources) {
     if (e.type === 'done' && e.kind === 'spec.patch' && e.seq > since) {
       const intent = view.latestIntent(e.op);
       if (intent.kind !== 'spec.patch') throw new Error(`${e.op} is done as spec.patch but its intent is ${intent.kind}`);
@@ -1595,20 +1593,9 @@ export const heldPct = (c: CensusCounts): number | null => (c.obligationRules ==
  * outcomes after `after` count: `status` reads all (0), the brief the delta since its coverage.
  */
 export function stageTimings(events: readonly Event[], after = 0): readonly StageTiming[] {
-  const starts = attemptStarts(events);
-  const by = new Map<OutcomeStage, number[]>();
-  for (const e of events) {
-    if (e.type !== 'fact' || (e.fact.kind !== 'stage-outcome' || !('unit' in e.fact)) || e.seq <= after) continue;
-    const f = e.fact;
-    const start = starts.get(`${f.unit}/${f.stage}#${f.attempt}`);
-    if (start === undefined) continue;
-    const durations = by.get(f.stage) ?? [];
-    durations.push(Math.max(0, Date.parse(e.at) - Date.parse(start))); by.set(f.stage, durations);
-  }
-  return OUTCOME_STAGES.flatMap((stage) => {
-    const ms = [...(by.get(stage) ?? [])].sort((a, b) => a - b);
-    return ms.length === 0 ? [] : [{ stage, count: ms.length, p50Ms: ms[Math.floor((ms.length - 1) / 2)]!, maxMs: ms.at(-1)! }];
-  });
+  const fold = new StageTimingsFold(after);
+  for (const e of events) fold.step(e);
+  return fold.timings;
 }
 
 function packReviewOf(ctx: RevisionContext): PackReviewView {
@@ -1686,9 +1673,9 @@ export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser
 }>;
 
 function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
-  const { view, events, start, inForce } = d;
+  const { view, start, inForce } = d;
   const now = d.clock;
-  const meter = meterOf(events);
+  const meter = d.passes.meter;
   const needsUser = openItems(runDir, view);
   const commands = commandsOf(runDir, arc, view);
 
@@ -1707,7 +1694,7 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   });
 
   const core: StatusCore = {
-    arc, supervision: supervision(runDir), waiting: waitingTotals(events),
+    arc, supervision: supervision(runDir), waiting: d.passes.waiting,
     run: { state: d.state, owner: d.owner, heartbeatAt: readIf(join(runDir, HEARTBEAT_FILE), heartbeat)?.at ?? null, stop: view.control().stop === null ? null : view.control().stopOptions },
     units: d.units, needsUser, spend: { byRole: meter.byRole, bySmoke: meter.bySmoke },
     plan: inForce === null ? null : { rev: inForce.rev, planSha256: inForce.manifest.planSha256 },
@@ -1724,7 +1711,7 @@ export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapsh
     const d = derive(runDir, arc, hostDir, snapshot);
     return withSnapshotReads(d.log, () => {
       const x = readCore(runDir, arc, hostDir, d);
-      return { core: x.core, events: x.d.events, plan: x.plan, meter: x.meter };
+      return { core: x.core, events: x.d.events, plan: x.plan, passes: d.passes };
     });
   });
 }
@@ -1748,8 +1735,8 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => plan,
     hostEnv: process.env, routingBase: routingBaseOf(inForce.fact.routingProvenance),
   }).audit;
-  const work = workContext === null ? [] : workRuns(workContext, events);
-  const certify = workContext === null ? null : certificationReader(workContext, events, work);
+  const work = workContext === null ? [] : workRunsOf(workContext, d.passes.reservations);
+  const certify = workContext === null ? null : certificationReader(workContext, d.passes.certification, work);
   const byUnit = new Map<UnitId, WorkRun[]>(); const hostWork: WorkRun[] = [];
   for (const r of work) {
     if (r.parent.type !== 'stage') { hostWork.push(r); continue; }
@@ -1795,10 +1782,10 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     deferred: exemptBy(obligations, 'deferred'),
     vision: on === null || revision === null ? null : visionOf(revision, advancesOf(on.plan), fold),
     divergences: divergencesOf(view),
-    decisionsSince: decisionsAfter(view, events, 0, runDirDecisions(runDir, arc)),
+    decisionsSince: decisionsOf(view, d.passes.decisionSources, 0, runDirDecisions(runDir, arc)),
     findings: {
       active: fold.findings.filter(isActive).map((f) => ({ id: f.id, lens: f.lens, severity: f.severity, state: f.state, owner: f.owner, obligation: f.obligation, claim: f.claim })),
-      metrics: findingMetrics(events, fold.findings),
+      metrics: d.passes.findingTimes.metrics(fold.findings),
       ...releaseCounts(view),
     },
     audit,
@@ -1809,7 +1796,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     census: corpus === null || obligations === null ? null : censusOf(obligations, t),
     debt: corpus === null || reader === null ? null : debtOf(view, arcDebtLedger(reader)!),
     chain: corpus === null || on === null ? null : chainOf(on.repo, on.plan),
-    timings: stageTimings(events),
+    timings: d.passes.stageTimings,
     answers: unappliedAnswers(commonDirOfRun(runDir), d.log).map((a) => ({ ...a, line: answerLine(a) })),
     knownDefects: plan === null ? [] : knownDefectViews(view, plan, d.units),
     demo: core.demo,
@@ -1846,14 +1833,17 @@ function holisticReader(runDir: AbsPath, hostDir: AbsPath, d: Derived, inForce: 
   return { ...h, audit: { ...h.audit, routing }, revision: { ...h.revision, routing } };
 }
 
-/** One production capture: measured cursor fold, one clock and one shared core derivation.
- * Materialized values outlive the mutable ObserverJournal view; never retain that view. */
-export function captureStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>) {
+/**
+ * One production capture: measured cursor fold, one clock and one shared core derivation. `passes`: the observer's passes
+ * over this journal, extended to the snapshot (without: folded from nothing, the full derivation).
+ * Materialized values outlive the mutable ObserverJournal view; never retain that view.
+ */
+export function captureStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>, passes?: StatusPasses) {
   return withObservationReads(() => {
-    const d = derive(runDir, arc, hostDir, snapshot, timing);
+    const d = derive(runDir, arc, hostDir, snapshot, timing, passes);
     return withSnapshotReads(d.log, () => withArcRefReads(() => {
       const x = readCore(runDir, arc, hostDir, d);
-      return { full: readStatus(runDir, arc, hostDir, d, x), core: x.core, plan: x.plan, events: [...d.events], ...timing };
+      return { full: readStatus(runDir, arc, hostDir, d, x), core: x.core, plan: x.plan, events: [...d.events], passes: d.passes, ...timing };
     }));
   });
 }

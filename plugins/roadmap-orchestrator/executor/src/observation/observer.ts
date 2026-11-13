@@ -11,6 +11,7 @@ import { captureStatus } from '../status.ts';
 import type { Status } from '../status.ts';
 import { ForgeMemo, withForgeMemo } from '../commands/chain.ts';
 import { summarize } from '../status/summary.ts';
+import { StatusPasses } from '../status/passes.ts';
 import { recordOf } from '../needsuser.ts';
 import { estate } from '../tui/estate.ts';
 import { activityState } from '../tui/outcome.ts';
@@ -85,6 +86,8 @@ export class Observer {
   #estate: { key: string; entries: Entry[] } | null = null;
   #view: LogSnapshot['view'] | null = null;
   #table: InvocationTable | null = null;
+  /** The passes status makes over every event, extended with each capture's appended events (src/status/passes.ts). */
+  #passes = new StatusPasses();
   /** How many of the journal's events the table and the relations have seen. */
   #folded = 0;
   #relationsDue = true;
@@ -175,7 +178,7 @@ export class Observer {
     const timing = { clock: Date.now(), foldMs: Math.round(performance.now() - began) };
     this.lastFold = { eventsFolded: snapshot.events.length - (this.#journal!.cursor.generation === known ? held : 0), rowsRead: 0, deriveMs: 0 };
     if (snapshot.view !== this.#view) {
-      this.#table = new InvocationTable(run); this.#folded = 0; this.#relationsDue = true;
+      this.#table = new InvocationTable(run); this.#passes = new StatusPasses(); this.#folded = 0; this.#relationsDue = true;
       this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view;
       this.#memo = new RecordMemo();
     }
@@ -194,7 +197,8 @@ export class Observer {
 
   /**
    * The shadow derivation (src/observation/collect.ts): the last successful capture's status and summary derived again from
-   * the same journal position and clock with every derivation cell computing, compared with what that capture derived.
+   * the same journal position and clock with every derivation cell computing and the passes over the events folded from
+   * nothing (src/status/passes.ts), compared with what that capture derived.
    * The memo's write-once records, git objects and parsed inputs are shared: they are not cells. Forge answers are read as
    * that capture read them. `diverged` names the first path that differs.
    */
@@ -206,7 +210,7 @@ export class Observer {
     const again = withRecordMemo(memo, () => memo.withoutCells(() => {
       const timing = { clock: captured.clock, foldMs: captured.foldMs };
       const derived = withForgeMemo(this.#forge.held(), () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing));
-      return { status: derived.full, summary: summarize(derived.core, derived.events, derived.plan) };
+      return { status: derived.full, summary: summarize(derived.core, derived.events, derived.plan, derived.passes) };
     }));
     const was = { status: captured.full, summary: captured.summary };
     if (canonicalJson(again) === canonicalJson(was)) return { kind: 'agrees' };
@@ -217,7 +221,7 @@ export class Observer {
     const table = this.#table!;
     this.onProgress?.('status', 0, 1);
     const derive = performance.now();
-    const captured = withForgeMemo(this.#forge, () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing));
+    const captured = withForgeMemo(this.#forge, () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing, this.#passes));
     const deriveMs = Math.round(performance.now() - derive);
     const s = captured.full;
     const events = snapshot.events;
@@ -249,7 +253,7 @@ export class Observer {
     }
     const display: Display = { run, at: new Date().toISOString(), seq: snapshot.view.highWater(), status: s, invocations: invocations as Invocation[],
       estate: this.#estate.entries, exceptions: exceptionsOf(s, requests, invocations), milestoneUnits };
-    this.captured = { ...captured, summary: summarize(captured.core, captured.events, captured.plan), requests };
+    this.captured = { ...captured, summary: summarize(captured.core, captured.events, captured.plan, captured.passes), requests };
     const changed = table.drainChanged();
     this.#changes = { rows: [...changed].map((id) => table.row(id)!), estate: this.#estateChanged };
     this.#estateChanged = false;

@@ -97,40 +97,58 @@ function add(t: UsageTotals, f: UsageFact): UsageTotals {
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const sorted = <T>(m: ReadonlyMap<string, T>): T[] => [...m].sort(([a], [b]) => compare(a, b)).map(([, t]) => t);
 
-/** Folds the usage facts of a log, in order. The journal's fold already refuses a second fact per invocation. */
-export function meterOf(events: Iterable<Event>): Meter {
-  const roles = new Map<string, Mutable<RoleTotal>>();
-  const seats = new Map<string, Mutable<SeatTotal>>();
-  const units = new Map<string, Mutable<UnitTotal>>();
-  const smokes = new Map<string, Mutable<SmokeTotal>>();
-  const jobs = new Map<string, Mutable<JobTotal>>();
-  const delegated = new Map<string, DelegatedTotal>();
-  for (const e of events) {
-    if (e.type !== 'fact' || (e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable')) continue;
+/**
+ * The usage facts of a log folded one event at a time (a pass of src/status/passes.ts): what it holds after n events is a
+ * function of those n alone. The journal's fold already refuses a second fact per invocation.
+ */
+export class MeterFold {
+  readonly #roles = new Map<string, Mutable<RoleTotal>>();
+  readonly #seats = new Map<string, Mutable<SeatTotal>>();
+  readonly #units = new Map<string, Mutable<UnitTotal>>();
+  readonly #smokes = new Map<string, Mutable<SmokeTotal>>();
+  readonly #jobs = new Map<string, Mutable<JobTotal>>();
+  readonly #delegated = new Map<string, DelegatedTotal>();
+  /** The totals as of the last event folded, made when asked after a usage fact. */
+  #meter: Meter | null = null;
+  step(e: Event): void {
+    if (e.type !== 'fact' || (e.fact.kind !== 'meter' && e.fact.kind !== 'usage-unavailable')) return;
+    this.#meter = null;
     const f = e.fact;
     const s = f.subject;
     if (s.type === 'smoke') {
       const k = `${s.backend} ${f.routingRev}`;
-      smokes.set(k, { backend: s.backend, routingRev: f.routingRev, ...add(smokes.get(k) ?? ZERO, f) });
-      continue;
+      this.#smokes.set(k, { backend: s.backend, routingRev: f.routingRev, ...add(this.#smokes.get(k) ?? ZERO, f) });
+      return;
     }
     const rk = `${s.role} ${f.routingRev}`;
-    roles.set(rk, { role: s.role, routingRev: f.routingRev, ...add(roles.get(rk) ?? ZERO, f) });
+    this.#roles.set(rk, { role: s.role, routingRev: f.routingRev, ...add(this.#roles.get(rk) ?? ZERO, f) });
     const sk = `${s.role} ${s.tier} ${f.routingRev}`;
-    seats.set(sk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, ...add(seats.get(sk) ?? ZERO, f) });
+    this.#seats.set(sk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, ...add(this.#seats.get(sk) ?? ZERO, f) });
     for (const c of f.kind === 'meter' ? f.delegated ?? [] : []) {
       const dk = `${sk} ${MODEL_CLASSES.indexOf(c.class)}`;
-      delegated.set(dk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, class: c.class, ...plusClass(delegated.get(dk) ?? NO_CLASS_SPEND, c) });
+      this.#delegated.set(dk, { ...seatRef(s.role, s.tier), routingRev: f.routingRev, class: c.class, ...plusClass(this.#delegated.get(dk) ?? NO_CLASS_SPEND, c) });
     }
     if (s.type === 'job') {
       const jk = `${s.job} ${rk}`;
-      jobs.set(jk, { job: s.job, role: s.role, routingRev: f.routingRev, ...add(jobs.get(jk) ?? ZERO, f) });
-      continue;
+      this.#jobs.set(jk, { job: s.job, role: s.role, routingRev: f.routingRev, ...add(this.#jobs.get(jk) ?? ZERO, f) });
+      return;
     }
     const uk = `${s.unit} ${rk}`;
-    units.set(uk, { unit: s.unit, role: s.role, routingRev: f.routingRev, ...add(units.get(uk) ?? ZERO, f) });
+    this.#units.set(uk, { unit: s.unit, role: s.role, routingRev: f.routingRev, ...add(this.#units.get(uk) ?? ZERO, f) });
   }
-  return { byRole: sorted(roles), bySeat: sorted(seats), byUnit: sorted(units), byJob: sorted(jobs), bySmoke: sorted(smokes), delegatedBySeat: sorted(delegated) };
+  get meter(): Meter {
+    return this.#meter ??= {
+      byRole: sorted(this.#roles), bySeat: sorted(this.#seats), byUnit: sorted(this.#units), byJob: sorted(this.#jobs), bySmoke: sorted(this.#smokes),
+      delegatedBySeat: sorted(this.#delegated),
+    };
+  }
+}
+
+/** Folds the usage facts of a log, in order (`MeterFold` from nothing). */
+export function meterOf(events: Iterable<Event>): Meter {
+  const fold = new MeterFold();
+  for (const e of events) fold.step(e);
+  return fold.meter;
 }
 
 const NO_CLASS_SPEND: ClassTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };

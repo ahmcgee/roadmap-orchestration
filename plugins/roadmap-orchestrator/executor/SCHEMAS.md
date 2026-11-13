@@ -1256,8 +1256,12 @@ runner records (identity/size/mtime/ctime, never following symlinks); the heartb
 open invocations' output streams. Nothing it stats grows with settled invocations or evidence. A moved journal or stable
 record captures and publishes the change; moved output re-reads the open rows at most every five seconds; otherwise the
 step publishes a check. Only ObserverJournal.read verifies journal prefixes, retaining incomplete tails without repair;
-inode/truncation/anchor resets change epoch. A capture folds only appended events, reads open invocations' rows and newly
-settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
+inode/truncation/anchor resets change epoch. A capture folds only appended events, also into the passes status makes over
+every event (src/status/passes.ts: intent times, attempt starts and stage timings, the meter, waiting totals, finding
+times, work runs' reservations, lanes attempts, lane runs and grinding, the summary's counts and lists, decision sources),
+reducers the observer keeps per journal generation; `roadmap status` and the shadow derivation fold the same reducers from
+nothing, and a work run's exit record and a decision's command body are read when status is derived. It reads open
+invocations' rows and newly settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
 memory (src/observation/memo.ts); a ref lookup is asked once per capture, and a lookup of a full ref name in the arc's
 repository once per sample of its refs. Derivation cells keep five derived values with the key each was derived under
 and derive them again only when a capture's key differs: `refs` (those ref lookups; key: the sample's stamps of the refs
@@ -1267,8 +1271,9 @@ the last `plan-applied`), `truths` and `history` (each obligation's verdict and 
 last observation before it; key: the head commit, the seq of the last `witnessed`, `external-witness`,
 `obligation-latched` or `plan-applied`, and the systems map's content hash). Journal facts are keyed by
 `JournalView.lastSeqOf(kinds)`, the seq of the last event of those kinds. What an obligation waits on (its units, their
-reasons) reads unit states and is derived on every capture. A shadow derivation checks the cells: status and summary
-derived again at the same journal position and clock with every cell computing, compared with what was published. The
+reasons) reads unit states and is derived on every capture. A shadow derivation checks the cells and the passes: status
+and summary derived again at the same journal position and clock with every cell computing and the passes folded from
+nothing, compared with what was published. The
 console runs it once the collector has been idle 60 s, at most once every 10 minutes and once per published capture; the
 test harness before every capture is published (`ArcCollector` option `shadow`). It counts only when a sample taken after
 it equals the published one. A difference is a `failed` with code `corruption`, `console derivation diverged at <path>`
