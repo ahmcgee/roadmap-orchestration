@@ -19,7 +19,8 @@ import { ModelReader } from '../tui/models.ts';
 import { TranscriptReader } from '../tui/transcript.ts';
 import { type Display, type Entry, type Invocation, type ObserveRequest, type ObserveReply, pretty } from '../tui/types.ts';
 import { InvocationTable, type OpenInvocation } from './invocations.ts';
-import { type MemoSizes, type MemoWork, RecordMemo, withRecordMemo } from './memo.ts';
+import { type CellName, type CellWork, CELL_NAMES, type MemoSizes, type MemoWork, RecordMemo, type Sampled, withRecordMemo } from './memo.ts';
+import { canonicalJson } from '../core/json.ts';
 import type { WorkRun } from '../status-work.ts';
 
 const FORGE_REFRESH_MS = 60_000;
@@ -29,6 +30,24 @@ const entry = (id: string, label: string, state: string, value: unknown): Entry 
 export type CapturePhase = 'journal' | 'status' | 'invocations' | 'estate';
 /** What the last capture folded and read besides the memo's counts. */
 export type FoldWork = Readonly<{ eventsFolded: number; rowsRead: number; deriveMs: number }>;
+/** What a shadow derivation found: the published status and summary as derived again from nothing, or why it could not tell. */
+export type ShadowResult = Readonly<{ kind: 'agrees' }> | Readonly<{ kind: 'diverged'; path: string }> | Readonly<{ kind: 'moved' }>;
+
+/** The first path at which two JSON values differ (`status.units.3.state`), or null when they are equal. */
+export function firstDifference(a: unknown, b: unknown, path = ''): string | null {
+  const at = (k: string | number): string => (path === '' ? String(k) : `${path}.${k}`);
+  if (a === b) return null;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return path;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) { const d = firstDifference(a[i], b[i], at(i)); if (d !== null) return d; }
+    return null;
+  }
+  const x = a as Record<string, unknown>, y = b as Record<string, unknown>;
+  for (const k of [...new Set([...Object.keys(x), ...Object.keys(y)])].sort()) {
+    const d = firstDifference(x[k], y[k], at(k)); if (d !== null) return d;
+  }
+  return null;
+}
 
 /** The exceptions an observation lists: a pure function of its status, its requests (in `needsUser` order) and its rows. */
 export function exceptionsOf(s: Status, requests: readonly NeedsUserRecord[], rows: readonly Invocation[]): Entry[] {
@@ -81,6 +100,10 @@ export class Observer {
   lastWork: Readonly<MemoWork> = { gitSpawns: 0, gitHits: 0, recordReads: 0, recordHits: 0 };
   /** What the last capture (successful or not) folded from the journal, read of invocation rows, and spent deriving status. */
   lastFold: FoldWork = { eventsFolded: 0, rowsRead: 0, deriveMs: 0 };
+  /** Which derivation cells the last capture computed (src/observation/memo.ts `cell`), each once at most. */
+  lastCells: CellWork = { refs: 0, receipts: 0, routing: 0, truths: 0, history: 0 };
+  /** The journal as of the last capture: what a shadow derivation reads again. */
+  #snapshot: LogSnapshot | null = null;
   /** What this observer holds, for the console's heap reports. */
   sizes(): Readonly<{ events: number; rows: number; open: number; memo: MemoSizes; estate: number }> {
     return { events: this.#journal?.events ?? 0, rows: this.#table?.size ?? 0, open: this.open().length, memo: this.#memo.sizes(), estate: this.#estate?.entries.length ?? 0 };
@@ -134,8 +157,11 @@ export class Observer {
     }
   }
 
-  /** Throw read failures intact so bounded console admission can retry transient filesystem races. */
-  capture(request: ObserveRequest): ObserveReply {
+  /**
+   * Throw read failures intact so bounded console admission can retry transient filesystem races. `sampled`: what the
+   * collector's change sample stamped before this capture, which the derivation cells keyed on files are keyed by.
+   */
+  capture(request: ObserveRequest, sampled: Sampled | null = null): ObserveReply {
     const run = request.pinned ?? (request.locator.type === 'host' && readClaim(request.hostDir) === null && this.#run !== null ? this.#run : locate(request.locator, request.hostDir));
     if (run.runDir !== this.#run?.runDir) {
       this.#run = run;
@@ -153,13 +179,38 @@ export class Observer {
       this.#logs = new TranscriptReader(); this.#models = new ModelReader(); this.#relations = new InvocationRelations(); this.#estate = null; this.#view = snapshot.view;
       this.#memo = new RecordMemo();
     }
-    const memo = this.#memo, before = { ...memo.work };
+    const memo = this.#memo, before = { ...memo.work }, cells = { ...memo.cellWork };
+    this.#snapshot = snapshot;
     try {
-      const reply = withRecordMemo(memo, () => this.#capture(request, run, snapshot, timing));
+      const reply = withRecordMemo(memo, () => this.#capture(request, run, snapshot, timing), sampled);
       // Parsed inputs this capture did not ask for (a superseded plan, a snapshot commit the arc ref moved past) are let go.
       memo.settle();
       return reply;
-    } finally { this.lastWork = { gitSpawns: memo.work.gitSpawns - before.gitSpawns, gitHits: memo.work.gitHits - before.gitHits, recordReads: memo.work.recordReads - before.recordReads, recordHits: memo.work.recordHits - before.recordHits }; }
+    } finally {
+      this.lastWork = { gitSpawns: memo.work.gitSpawns - before.gitSpawns, gitHits: memo.work.gitHits - before.gitHits, recordReads: memo.work.recordReads - before.recordReads, recordHits: memo.work.recordHits - before.recordHits };
+      this.lastCells = Object.fromEntries(CELL_NAMES.map((n: CellName) => [n, memo.cellWork[n] - cells[n]])) as CellWork;
+    }
+  }
+
+  /**
+   * The shadow derivation (src/observation/collect.ts): the last successful capture's status and summary derived again from
+   * the same journal position and clock with every derivation cell computing, compared with what that capture derived.
+   * The memo's write-once records, git objects and parsed inputs are shared: they are not cells. Forge answers are read as
+   * that capture read them. `diverged` names the first path that differs.
+   */
+  shadow(request: ObserveRequest): ShadowResult {
+    const captured = this.captured, snapshot = this.#snapshot, run = this.#run;
+    if (captured === null || snapshot === null || run === null) throw new Error('observer: a shadow derivation before any capture');
+    if (snapshot.events.length !== captured.events.length) return { kind: 'moved' };
+    const memo = this.#memo;
+    const again = withRecordMemo(memo, () => memo.withoutCells(() => {
+      const timing = { clock: captured.clock, foldMs: captured.foldMs };
+      const derived = withForgeMemo(this.#forge.held(), () => captureStatus(run.runDir, run.arc, request.hostDir, snapshot, timing));
+      return { status: derived.full, summary: summarize(derived.core, derived.events, derived.plan) };
+    }));
+    const was = { status: captured.full, summary: captured.summary };
+    if (canonicalJson(again) === canonicalJson(was)) return { kind: 'agrees' };
+    return { kind: 'diverged', path: firstDifference(JSON.parse(canonicalJson(was)), JSON.parse(canonicalJson(again))) ?? '(canonical bytes)' };
   }
 
   #capture(request: ObserveRequest, run: Run, snapshot: LogSnapshot, timing: Readonly<{ clock: number; foldMs: number }>): ObserveReply {

@@ -122,6 +122,9 @@ function mapScope(map: SystemsMap): string {
   return key;
 }
 
+/** The content key of the systems map in force (`none` without one): what lane inputs read through it are keyed on. */
+export const systemsMapKey = (map: SystemsMap | null): string => (map === null ? 'none' : mapScope(map));
+
 /** The memo of `lane`'s inputs under `map`, made the most recently used map scope. */
 function inputsMemo(lane: Pick<LaneDef, 'inputs'>, map: SystemsMap | null): Map<string, Sha> {
   if (lane.inputs !== undefined) return EXPLICIT_INPUTS;

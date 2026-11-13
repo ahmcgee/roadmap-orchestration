@@ -12,7 +12,7 @@ import { type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/
 import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
 type AbortRecord,type AuditInputs,type BackendParkClass,
-type CiFact,type DoneRecord,type Event,type Fact,
+type CiFact,type DoneRecord,type Event,type Fact,type FactKind,
 type Holder,
 type HolisticFact,
 type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
@@ -638,6 +638,8 @@ export class Fold implements JournalView {
   readonly arc: ArcId;
   #lastSeq = 0;
   #lastHash: Sha256Hex | null = null;
+  /** The seq of each fact kind's and op kind's last event (`lastSeqOf`); fact kinds have no dot, op kinds do. */
+  readonly #lastSeqOfKind = new Map<string, number>();
   #snapshotHighWater = 0;
   readonly #ops = new Map<OpId, OpEntry>();
   readonly #opsByKind = new OpIndex<OpKind>();
@@ -805,6 +807,7 @@ export class Fold implements JournalView {
         break;
     }
     if (isWork(event)) this.#lastWorkSeq = event.seq;
+    this.#lastSeqOfKind.set(event.type === 'fact' ? event.fact.kind : event.type === 'abort' ? this.#ops.get(event.op)!.latest.kind : event.kind, event.seq);
     this.#lastSeq = event.seq;
     this.#lastHash = lineHash;
     // Preserve the original unit-table order when a bulk event changes several units.
@@ -1976,6 +1979,12 @@ export class Fold implements JournalView {
 
   highWater(): number {
     return this.#lastSeq;
+  }
+
+  lastSeqOf(kinds: readonly FactKind[] | readonly OpKind[]): number {
+    let seq = 0;
+    for (const kind of kinds) seq = Math.max(seq, this.#lastSeqOfKind.get(kind) ?? 0);
+    return seq;
   }
 
   openIntents(): readonly IntentRecord[] {

@@ -26,7 +26,7 @@ test('T9 and T10: behind, every tab loads from the last observation under one ca
   const s = await serveConsole({ repo: absPath(f.d.repo), common: gitCommonDir(absPath(f.d.repo)), hostDir: f.hostDir, host: '127.0.0.1', port: 0 });
   let open = true; t.after(async () => { if (open) await s.close(); });
   let appending = true;
-  const appends = (async () => { while (appending) { f.journal.fact({ kind: 'stage-admitted', unit: unitId('u7'), stage: 'build', waited: { totalMs: 1, byReasonMs: { 'cpu-tokens': 1 } } }); await new Promise((r) => setTimeout(r, 700)); } })();
+  const appends = (async () => { while (appending) { f.journal.fact({ kind: 'stage-admitted', unit: unitId('u7'), stage: 'build', waited: { totalMs: 1, byReasonMs: { 'cpu-tokens': 1 } } }); git.moveRef(f.d.repo); await new Promise((r) => setTimeout(r, 700)); } })();
   t.after(() => { appending = false; return appends; });
   const b = new ConsoleBrowser(tmpDir('console-lag-browser')); t.after(() => b.close()); await b.initialize();
   await b.call('browser_resize', { width: 1440, height: 900 });

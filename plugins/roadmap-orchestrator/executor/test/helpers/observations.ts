@@ -20,7 +20,8 @@ export class ObservedArc {
     // The view versions computed when the model publishes, as the serve worker's metadata and views compute them.
     const metadata = new ConsoleMetadata(), views = new ConsoleViews();
     this.model = new ArcModel(r, instance, repoId, (e) => metadata.versions(e, views));
-    this.collector = new ArcCollector(r, absPath(hostDir), absPath(commonDirOfRun(r.runDir)), (m) => { this.messages.push(m); this.model.apply(m, Date.now()); });
+    // Every capture is checked against a derivation from nothing before it is published (src/observation/collect.ts).
+    this.collector = new ArcCollector(r, absPath(hostDir), absPath(commonDirOfRun(r.runDir)), (m) => { this.messages.push(m); this.model.apply(m, Date.now()); }, { shadow: 'always' });
   }
   /** One collector step, then the published envelope as a browser read with `admission` is answered (a park is unavailable). */
   read(admission: Admission = {}): Envelope {

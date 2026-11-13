@@ -1258,7 +1258,22 @@ record captures and publishes the change; moved output re-reads the open rows at
 step publishes a check. Only ObserverJournal.read verifies journal prefixes, retaining incomplete tails without repair;
 inode/truncation/anchor resets change epoch. A capture folds only appended events, reads open invocations' rows and newly
 settled ones, and answers immutable git commands (full object ids only), write-once records and parsed kept inputs from
-memory (src/observation/memo.ts); a ref lookup is asked once per capture. What it remembers is bounded by bytes, not by
+memory (src/observation/memo.ts); a ref lookup is asked once per capture, and a lookup of a full ref name in the arc's
+repository once per sample of its refs. Derivation cells keep five derived values with the key each was derived under
+and derive them again only when a capture's key differs: `refs` (those ref lookups; key: the sample's stamps of the refs
+tree, `packed-refs`, `HEAD` and `config`; none for a reftable repository), `receipts` (the terminal receipts; key: the
+sample's stamps of the receipts and incoming trees), `routing` (the routing tables of every plan revision; key: the seq of
+the last `plan-applied`), `truths` and `history` (each obligation's verdict and evidence on the integration head, and its
+last observation before it; key: the head commit, the seq of the last `witnessed`, `external-witness`,
+`obligation-latched` or `plan-applied`, and the systems map's content hash). Journal facts are keyed by
+`JournalView.lastSeqOf(kinds)`, the seq of the last event of those kinds. What an obligation waits on (its units, their
+reasons) reads unit states and is derived on every capture. A shadow derivation checks the cells: status and summary
+derived again at the same journal position and clock with every cell computing, compared with what was published. The
+console runs it once the collector has been idle 60 s, at most once every 10 minutes and once per published capture; the
+test harness before every capture is published (`ArcCollector` option `shadow`). It counts only when a sample taken after
+it equals the published one. A difference is a `failed` with code `corruption`, `console derivation diverged at <path>`
+(the first differing path), logged; it stands, and the arc's collector publishes nothing more until the console restarts.
+What it remembers is bounded by bytes, not by
 the arc: git answers 64 MiB and records 128 MiB (a witness record as its parsed observation, never its text), least
 recently used first, neither keeping one entry over an eighth of its bound, and no record the capture under way used is
 dropped for another (a capture reading more than the bound keeps a stable set and reads only the rest again); parsed

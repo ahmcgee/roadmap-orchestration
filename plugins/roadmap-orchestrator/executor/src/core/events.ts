@@ -892,6 +892,8 @@ export type Fact =
   | FlakyFact
   | PropagationFact
   | ReviewFact;
+/** A fact's kind (`JournalView.lastSeqOf`). */
+export type FactKind = Fact['kind'];
 export type FactRecord = Readonly<{ type: 'fact'; fact: Fact }>;
 
 /**
