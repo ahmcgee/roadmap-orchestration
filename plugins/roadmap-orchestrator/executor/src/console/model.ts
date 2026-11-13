@@ -13,7 +13,7 @@ import type { IsoTime } from '../core/values.ts';
 import type { PlanM1 } from '../input/plan.ts';
 import type { CaptureWork, CollectorMessage, JournalPosition, Summary } from '../observation/collect.ts';
 import { exceptionsOf } from '../observation/observer.ts';
-import { byTime } from '../observation/invocations.ts';
+import { displayOrder } from '../observation/invocations.ts';
 import { type Admission, type ConsoleCode, type Envelope, type ObservationData, CONSOLE_PROTOCOL, ConsoleError } from '../observation/protocol.ts';
 import type { Status } from '../status.ts';
 import type { Entry, Invocation } from '../tui/types.ts';
@@ -34,8 +34,7 @@ type Base = Readonly<{ run: Run; clock: number; foldMs: number; seq: number; sta
 
 const SLICE_MS = 20, CHUNK = 1 << 20;
 const sortRows = (rows: Invocation[], order: ReadonlyMap<string, number>): Invocation[] =>
-  rows.sort((a, b) => Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? byTime(a.startedAt, b.startedAt) : byTime(b.endedAt!, a.endedAt))
-    || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  rows.sort((a, b) => displayOrder(a, b) || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 
 /** The journal as parsed here: complete lines of the verified prefix the collector named, up to `target`. */
 class ParsedJournal {

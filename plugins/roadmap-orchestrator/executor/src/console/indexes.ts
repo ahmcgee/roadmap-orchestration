@@ -98,13 +98,13 @@ export class StageIndex {
 export function stageIndex(events: readonly Event[]): StageIndex {
   const index = new StageIndex(); index.extend(events, 0); return index;
 }
+/** A row as the views read it. Retained calls may record execution kind only on WorkRun; this UI classification never rewrites the canonical Invocation. */
+export const displayInvocation = (recorded: Invocation): Invocation => recorded.execution === undefined && recorded.work
+  ? {...recorded, execution: recorded.work.kind === 'build' ? 'agent' : 'command'} : recorded;
 export function invocationIndex(invocations: readonly Invocation[], stages: Pick<StageIndex, 'steps' | 'parents'>) {
   const byUnit = new Map<string, Invocation[]>();
   const rows = invocations.map(recorded => {
-    // Retained calls may record execution kind only on WorkRun. This UI
-    // classification never rewrites the canonical Invocation.
-    const invocation: Invocation = recorded.execution === undefined && recorded.work
-      ? {...recorded, execution: recorded.work.kind === 'build' ? 'agent' : 'command'} : recorded;
+    const invocation = displayInvocation(recorded);
     const {op} = parseInvocationId(invocationIdOf(invocation.id)), parent = stages.parents.get(op);
     const step = parent?.type === 'stage' ? stages.steps.get(`${parent.unit}:${parent.attempt}`) : undefined;
     const unitRows = byUnit.get(invocation.unit) ?? []; unitRows.push(invocation); byUnit.set(invocation.unit, unitRows);

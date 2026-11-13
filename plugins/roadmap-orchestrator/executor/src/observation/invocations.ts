@@ -111,7 +111,7 @@ export class InvocationTable {
     if (this.#sorted === null) {
       const rows: Invocation[] = [];
       for (const slot of this.#slots.values()) if (slot.row !== null) rows.push(slot.row);
-      this.#sorted = rows.sort((a, b) => Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? byTime(a.startedAt, b.startedAt) : byTime(b.endedAt!, a.endedAt)));
+      this.#sorted = rows.sort(displayOrder);
     }
     return this.#sorted;
   }
@@ -133,6 +133,9 @@ export class InvocationTable {
 
 /** Recorded times are fixed-width ISO instants: their code-point order is their time order (localeCompare is slower, same answer). */
 export const byTime = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
+/** The display order of invocation rows: open rows by start time, then settled rows newest first. Ties keep spawn order. */
+export const displayOrder = (a: Readonly<{ startedAt: string; endedAt: string | null }>, b: Readonly<{ startedAt: string; endedAt: string | null }>): number =>
+  Number(a.endedAt !== null) - Number(b.endedAt !== null) || (a.endedAt === null ? byTime(a.startedAt, b.startedAt) : byTime(b.endedAt!, a.endedAt));
 const sameRelations = (a: Relations | undefined, b: Relations | undefined): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 function readRow(slot: Slot, alive: boolean, readers: Readonly<{ models: ModelReader; logs: TranscriptReader }>): Invocation {
