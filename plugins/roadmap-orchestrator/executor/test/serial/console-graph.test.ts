@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { serveConsole } from '../../src/console/http.ts';
 import { gitCommonDir } from '../../src/git/git.ts';
+import { CONSOLE_PROTOCOL } from '../../src/observation/protocol.ts';
 import { absPath } from '../../src/core/values.ts';
 import { investigationFixture } from '../fixtures/console-investigations.ts';
 import { ConsoleBrowser } from '../helpers/console-browser.ts';
@@ -32,7 +33,8 @@ async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed
  assert.deepEqual(result.hidden,[],'every node stays drawn');
  assert.deepEqual(result.badEdges,[],'every unit dependency and feed stays drawn');
  assert.ok(result.count>0,`${width} ${mode}: nodes rendered`);
- if(mode==='all')assert.equal(result.count,310,'All includes every unit and gate in the viewport');
+ // dev.81 (D2): the 300-unit arc's 13 withdrawn units are hidden by default: 287 units and 10 gates.
+ if(mode==='all')assert.equal(result.count,297,'All includes every visible unit and gate in the viewport');
  assert.deepEqual(result.bad,[],`${width} ${mode}: text fits boxes and meets the title/identifier legibility threshold`);
  assert.deepEqual(result.overlaps,[],`${width}: world boxes never overlap`);
  return result.coordinates;
@@ -135,7 +137,26 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  await until(async()=>await b.evaluate('()=>!!document.querySelector(".dag-canvas canvas")'),10_000,'scale graph canvas');
  await new Promise(r=>setTimeout(r,350));const coordinates=await assertRenderedLabels(b,'active',1440);
  const counts=await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return {active:cy.nodes('[state="active"][gate=0]').length,dependencies:cy.edges('[kind="dependency"]').length,waits:cy.edges('[kind="waits"]').length,feeds:cy.edges('[kind="feeds"]').length,bundles:cy.edges('[kind="bundle"]').length,hiddenWaits:cy.edges('[kind="waits"]').every(e=>e.style('display')==='none')};}`) as any;
- assert.ok(counts.active>=4);assert.equal(counts.dependencies,663);assert.equal(counts.waits,1004);assert.equal(counts.feeds,300);assert.ok(counts.hiddenWaits);assert.equal(counts.bundles,0,'milestone waits have no bundled routes');
+ // dev.81 (D2): withdrawn units are hidden by default. The 300-unit arc has 13 (u166, superseded by u167, and u289-u300,
+ // cut and carried by nothing): every edge of the visible graph is drawn, an end at a withdrawn unit re-pointed to its
+ // lineage head (dropped when it has none, drawn once when it duplicates another). The expectation is derived here from the
+ // served graph view, independently of the client's filtering.
+ const drawn=`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,of=kind=>cy.edges('[kind="'+kind+'"]').map(e=>e.source().id()+'>'+e.target().id()).sort();return {after:of('dependency'),milestone:of('waits'),feeds:of('feeds')};}`;
+ const expected=await b.evaluate<{all:Record<string,string[]>;visible:Record<string,string[]>;withdrawn:string[]}>(`async()=>{
+  const view=(await (await fetch('/api/${CONSOLE_PROTOCOL}/arcs/${fixture.arc}/graph')).json()).data,units=new Map(view.units.map(u=>[u.id,u]));
+  const head=id=>{if(id.startsWith('milestone:'))return id;let at=id;while(at!==null&&units.get(at).signal==='withdrawn')at=units.get(at).supersededBy??units.get(at).carriedBy[0]??null;return at;};
+  const all={},visible={};
+  for(const kind of ['after','milestone','feeds']){
+   const edges=view.edges.filter(e=>e.kind===kind);all[kind]=edges.map(e=>e.source+'>'+e.target).sort();
+   visible[kind]=[...new Set(edges.flatMap(e=>{const s=head(e.source),t=head(e.target);return s===null||t===null||s===t?[]:[s+'>'+t];}))].sort();
+  }
+  return {all,visible,withdrawn:view.units.filter(u=>u.signal==='withdrawn').map(u=>u.id)};
+ }`);
+ assert.equal(expected.withdrawn.length,13);assert.deepEqual([expected.all.after!.length,expected.all.milestone!.length,expected.all.feeds!.length],[663,1004,300]);
+ assert.equal(expected.visible.after!.length,626,'u166\'s dependencies re-point to u167, the cut units\' drop');
+ assert.deepEqual(await b.evaluate(drawn),expected.visible,'every edge of the visible graph is drawn, re-pointed to the lineage head');
+ assert.equal(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate=0]').length`),287,'the withdrawn units are not drawn');
+ assert.ok(counts.active>=4);assert.equal(counts.dependencies,626);assert.equal(counts.waits,expected.visible.milestone!.length);assert.equal(counts.feeds,expected.visible.feeds!.length);assert.ok(counts.hiddenWaits);assert.equal(counts.bundles,0,'milestone waits have no bundled routes');
  await assertActiveFrame(b);
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.getElementById('u226');cy.viewport({zoom:.8,pan:{x:720-n.position('x')*.8,y:320-n.position('y')*.8}});return true;}`);await new Promise(r=>setTimeout(r,160));
  assert.equal(await b.evaluate(`()=>{const marks=[...document.querySelectorAll('.node-status-row .signal')];return marks.length>0&&marks.every(n=>n.querySelector('svg path,svg circle')&&n.getBoundingClientRect().width>=8&&n.closest('.node-status-row').getBoundingClientRect().height>=15);}`),true,'full-card status rows keep a visible glyph and readable slot');
@@ -156,8 +177,8 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  const minimum=await b.evaluate<{zoom:number;min:number;nodes:number;dependencies:number}>(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return{zoom:cy.zoom(),min:cy.minZoom(),nodes:cy.nodes('[gate=0]').filter(n=>n.visible()).length,dependencies:cy.edges('[kind="dependency"]').filter(e=>e.visible()).length};}`);
  assert.ok(Math.abs(minimum.min/allZoom-.6)<.01,'minimum zoom is 0.6 × All framing');
  assert.equal(minimum.zoom,minimum.min,'real wheel zoom stops at the minimum');
- assert.equal(minimum.nodes,300,'every unit stays rendered at minimum zoom');
- assert.equal(minimum.dependencies,663,'every unit dependency stays drawn at minimum zoom');
+ assert.equal(minimum.nodes,287,'every visible unit stays rendered at minimum zoom');
+ assert.equal(minimum.dependencies,626,'every visible unit dependency stays drawn at minimum zoom');
  assert.deepEqual(await assertRenderedLabels(b,'all',1440),coordinates,'minimum zoom keeps the same layout');
  // Zoom back in: every original dependency is drawable, and gate surfaces occlude the buses.
  await b.call('browser_press_key',{key:'a'});
@@ -197,6 +218,13 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  const touch=async()=>b.call('browser_run_code_unsafe',{code:`async(page)=>{const client=await page.context().newCDPSession(page);await client.send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:1});await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:${point.x},y:${point.y}}]});await client.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await client.detach();}`});
  await touch();await until(async()=>await b.evaluate('()=>!!document.querySelector(".graph-hover")'),5000,'first native touch previews');assert.equal(await b.evaluate('()=>document.querySelectorAll(".drawer").length'),0);assert.ok((await b.evaluate<string>('()=>document.querySelector(".graph-hover").innerText')).includes(scaleTitle('u226')));
  await touch();await until(async()=>await b.evaluate('()=>document.querySelector(".unit-meta>span")?.textContent==="u226"'),5000,'second native touch opens details');
+ // Shown, every withdrawn unit is drawn and every original edge with it, exactly as served.
+ await b.call('browser_press_key',{key:'Escape'});await b.call('browser_resize',{width:1440,height:900});
+ assert.equal(await b.evaluate(`()=>document.querySelector('.withdrawn-toggle').textContent`),'Show withdrawn (13)');
+ await b.evaluate(`()=>{document.querySelector('.withdrawn-toggle').click();return true;}`);
+ await until(async()=>await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate=0]').length===300`),5000,'withdrawn units shown');
+ assert.deepEqual(await b.evaluate(drawn),expected.all,'with withdrawn units shown every original edge is drawn');
+ assert.equal(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.edges('[kind="dependency"]').filter(e=>{const a=e.sourceEndpoint(),b=e.targetEndpoint();return !a||!b||![a.x,a.y,b.x,b.y].every(Number.isFinite);}).length`),0,'every original dependency has finite endpoints');
 });
 
 test('50-unit design arc exposes explicit milestone health, gate states, Markdown and exact drawer dependencies', {timeout:120_000},async t=>{
@@ -210,12 +238,14 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
    await page.getByRole('button',{name:'All focus',exact:true}).click();
  }`});
  await until(async()=>await b.evaluate(`()=>document.querySelector('.graph-view').dataset.detailTier==='minimal'&&!document.querySelector('.dag-canvas')._cyreg.cy.animated()`),5000,'50-unit All framing settles with identifiers');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),box=nodes.renderedBoundingBox({includeLabels:false});return nodes.length===55&&nodes.every(n=>n.visible()&&n.style('label').trim()&&parseFloat(n.style('font-size'))*cy.zoom()>=10)&&box.x1>=0&&box.x2<=cy.width()&&box.y1>=0&&box.y2<=cy.height();}`),true,'All fits every unit at tier 2 at 1440');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,nodes=cy.nodes('[gate]'),box=nodes.renderedBoundingBox({includeLabels:false});return nodes.length===52&&nodes.every(n=>n.visible()&&n.style('label').trim()&&parseFloat(n.style('font-size'))*cy.zoom()>=10)&&box.x1>=0&&box.x2<=cy.width()&&box.y1>=0&&box.y2<=cy.height();}`),true,'All fits every unit at tier 2 at 1440');
  const ink=await b.evaluate<{count:number;outside:string[];badArrows:number;clipped:string[]}>(`()=>{
    const stage=document.querySelector('.graph-stage').getBoundingClientRect(),paths=[...document.querySelectorAll('.graph-edge')];
    return {count:paths.length,outside:paths.filter(p=>{const r=p.getBoundingClientRect();return r.left<stage.left||r.right>stage.right||r.top<stage.top||r.bottom>stage.bottom;}).map(p=>p.dataset.source+'>'+p.dataset.target),badArrows:paths.filter(p=>getComputedStyle(p).markerEnd==='none').length,clipped:[...document.querySelectorAll('.dag-canvas,.graph-edges,.node-signals')].filter(el=>getComputedStyle(el).clipPath!=='none').map(el=>el.className)};
  }`);
- assert.equal(ink.count,110,'all sixty dependencies and fifty gate feeds have actual SVG ink');assert.deepEqual(ink.outside,[],'every All-view curve stays on screen');assert.equal(ink.badArrows,0);assert.deepEqual(ink.clipped,[]);
+ // dev.81 (D2): u29 (superseded by u30), u49 and u50 (cut, carried by nothing) are hidden by default: of the 60
+ // dependencies 56 are drawn (u29's re-pointed to u30, the cut units' dropped), of the 50 gate feeds 47 (u29's duplicates u30's).
+ assert.equal(ink.count,103,'all 56 visible dependencies and 47 visible gate feeds have actual SVG ink');assert.deepEqual(ink.outside,[],'every All-view curve stays on screen');assert.equal(ink.badArrows,0);assert.deepEqual(ink.clipped,[]);
  const geometry=await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>({id:n.id(),position:n.position(),width:n.width(),height:n.height()}))`);
  const fade=await b.evaluate<{out:number;hidden:boolean;inside:number;shown:boolean}>(`async()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.nodes('[gate=0]')[0];cy.zoom(.4);await new Promise(r=>setTimeout(r,160));cy.zoom(.075);await new Promise(r=>setTimeout(r,60));const out=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));const hidden=n.style('label')===''&&parseFloat(n.style('text-opacity'))===0;cy.zoom(.4);await new Promise(r=>setTimeout(r,60));const inside=parseFloat(n.style('text-opacity'));await new Promise(r=>setTimeout(r,120));return{out,hidden,inside,shown:parseFloat(n.style('text-opacity'))===1};}`);
  assert.ok(fade.out>0&&fade.out<1,'text fades out over the tier boundary');
@@ -269,7 +299,7 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.match(await b.evaluate<string>('()=>document.querySelector(".station-health").textContent'),/Show 2 on hold units/);
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Show 2 on hold units',exact:true}).click();}`});
  assert.deepEqual(await b.evaluate(`()=>Object.fromEntries(document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate]').map(n=>[n.id(),n.position()]))`),coords,'held targets frame units without re-layout');
- assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return ['u37','u38'].every(id=>{const n=cy.getElementById(id),p=n.renderedPosition();return !n.hasClass('dim')&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();})&&cy.edges('[kind="dependency"]').length===60;}`),true,'exact held members stay highlighted with all dependencies retained');
+ assert.equal(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return ['u37','u38'].every(id=>{const n=cy.getElementById(id),p=n.renderedPosition();return !n.hasClass('dim')&&p.x>0&&p.x<cy.width()&&p.y>60&&p.y<cy.height();})&&cy.edges('[kind="dependency"]').length===56;}`),true,'exact held members stay highlighted with all visible dependencies retained');
  await b.openUnit('u39');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".unit-dependencies").textContent'),/Depends on \(1\).*Used by \(1\)/s);
  assert.equal(await b.evaluate('()=>document.querySelector(".unit-dependencies details").open'),false);
@@ -283,6 +313,7 @@ test('50-unit design arc exposes explicit milestone health, gate states, Markdow
  assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8 of 9 units merged[\s\S]*1 withdrawn[\s\S]*Not passed yet[\s\S]*Outstanding units \(1\)[\s\S]*u30[\s\S]*Withdrawn units \(1\)\nShow withdrawn \(1\)/s, 'dev.81: the withdrawn row is hidden until shown');
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.locator('.drawer').getByRole('button',{name:'Show withdrawn (1)',exact:true}).click();}`});
  await until(async()=>/Withdrawn units \(1\)\s*u29/.test(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText')),5000,'withdrawn row shown');
+ assert.deepEqual(await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy;return [cy.nodes('[gate]').length,cy.edges('[kind="dependency"]').length,cy.edges('[kind="feeds"]').length];}`),[55,60,50],'one toggle: the Graph shows the withdrawn units too, with every original dependency and feed');
  assert.match(await b.evaluate<string>('()=>document.querySelector(".drawer").innerText'),/8 of 9 units merged[\s\S]*1 withdrawn[\s\S]*Not passed yet[\s\S]*Outstanding units \(1\)[\s\S]*u30[\s\S]*Withdrawn units \(1\)[\s\S]*u29/s, 'dev.59: the superseded u29 is withdrawn from the count and listed apart');
  await b.call('browser_run_code_unsafe',{code:`async(page)=>{await page.getByRole('button',{name:'Focus this milestone',exact:true}).click();}`});
  await until(async()=>await b.evaluate('()=>!document.querySelector(".drawer")&&document.querySelector(".station[aria-pressed=true]")?.textContent.includes("MS-3")'),5000,'gate focus control');
