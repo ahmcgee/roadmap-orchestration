@@ -10,7 +10,7 @@ import { systemName } from '../src/core/ids.ts';
 // gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout. dev.81:
 // gate.escalation-revise-new, gate.escalation-revise-repeat.
 import assert from 'node:assert/strict';
-import { existsSync,readFileSync,writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -558,10 +558,17 @@ const approvals = (d: ArcDescriptor) => events(d.runDir).flatMap((e) => (e.type 
 test('gate.no-cpu-fence-deadlock: @cpu capacity 2, a gate and a rule whose docs lane needs both tokens race for the fence; both finish', T, async () => {
   // The gate's `@cpu`×1 and a fast lane's ×2 cannot run together: a gate holding its token while it waits for the
   // fence the rule holds through its docs publication (whose lane waits for @cpu) would deadlock.
-  const d = publishArc({ steps: straightToGate() }, (a) => editPlan(a, (p) => {
-    p['capacity'] = { cpu: 2 };
-    p.units[0]!['cpu'] = 2;
-  }));
+  // A holistic arc: a ruling alone publishes nothing since dev.81 (src/commands/apply.ts `publicationOf`), so the rule
+  // edits the cut line too and its revision publishes docs through the lane (fixtures/publish-common.ts `submitRule`).
+  const d = publishArc({ steps: straightToGate() }, (a) => {
+    writeFileSync(join(planDirOf(a), 'vision.json'), JSON.stringify(VISION));
+    writeFileSync(join(planDirOf(a), 'obligations.json'), JSON.stringify(OBLIGATIONS));
+    editPlan(a, (p) => {
+      p['capacity'] = { cpu: 2 };
+      p.units[0]!['cpu'] = 2;
+      p['holistic'] = { vision: 'vision.json', advances: ['V-1', 'V-2', 'V-3'], obligations: 'obligations.json' };
+    });
+  });
   const r = contextFor(d);
   const w = wire(r);
   const stop = ticking(w);
@@ -569,7 +576,7 @@ test('gate.no-cpu-fence-deadlock: @cpu capacity 2, a gate and a rule whose docs 
     await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
     const hold = await holdFence(r.journal);
     // The rule queues on the fence first, then the gate.
-    const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
+    const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2'), true));
     await sleep(1_500);
     const gating = step(w.stage, r.unit('u1'));
     await sleep(1_500);
@@ -581,6 +588,8 @@ test('gate.no-cpu-fence-deadlock: @cpu capacity 2, a gate and a rule whose docs 
     assert.equal(gated.kind, 'continue');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     assert.equal(judgmentInputs(d, 'gate')[0]!.planRev, 2, 'the gate captured the revision the rule committed');
+    assert.equal(r.journal.view.planApplied()!.publication?.pub, 'docs-1', 'the rule published docs');
+    assert.ok(readdirSync(join(d.runDir, 'evidence', 'jobs', 'docs-1')).some((l) => l.startsWith('suite-suite-')), 'the docs publication ran its suite lane, the one that needs both @cpu tokens');
     assert.deepEqual(r.journal.view.openIntents(), []);
   } finally {
     stop();
