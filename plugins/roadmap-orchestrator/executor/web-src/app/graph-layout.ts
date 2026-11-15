@@ -112,8 +112,11 @@ export function graphLayout(e: GraphData) {
       }
       if (!changed) break;
     }
-    // A shown withdrawn unit takes its successor's rank, so it sits in the same column, directly before it (below).
-    const rankOf = (id: string): number => { const next = successor.get(id); return next !== undefined && ids.has(next) ? rankOf(next) : ranks.get(id)!; };
+    // A shown withdrawn unit takes its successor's rank, so it sits in the same column, directly before it (below), unless
+    // that column would draw one of its own dependencies backwards (its successor sits left of its parents, or at or right
+    // of a unit depending on it): then it keeps its own rank, its original place.
+    const fits = (id: string, rank: number): boolean => rank >= ranks.get(id)! && band.ids.every(child => !(incoming.get(child) ?? []).includes(id) || ranks.get(child)! > rank);
+    const rankOf = (id: string): number => { const next = successor.get(id); if (next === undefined || !ids.has(next)) return ranks.get(id)!; const rank = rankOf(next); return fits(id, rank) ? rank : ranks.get(id)!; };
     for (const id of band.ids) if (successor.has(id)) ranks.set(id, rankOf(id));
     for (let rank = 0; rank <= Math.max(0, ...ranks.values()); rank++) {
       const members = band.ids.filter(id => ranks.get(id) === rank);

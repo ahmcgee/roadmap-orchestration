@@ -168,3 +168,15 @@ test('dev.81 D2: withdrawn units are hidden by default, their edges drawn to the
   assert.equal(s.bands.find(b=>b.ids.includes(gone))!.id,s.bands.find(b=>b.ids.includes(next))!.id,`${gone} and ${next} share a band`);
  }
 });
+
+test('dev.81 D2: a shown withdrawn unit whose successor sits left of its own dependency keeps its own column; no edge runs backwards',()=>{
+ // The scale arc's shape: u2 depends on u1 and is superseded by u3, a re-entry that does not depend on u1.
+ const unit=(id:string,more:Record<string,unknown>={})=>({id,title:id,titleTruncated:false,signal:'pending',state:'ready',stage:'build',stageFinished:false,systems:[],lineageRef:null,origin:'planned',supersededBy:null,carriedBy:[],...more});
+ const memberIds=['u1','u2','u3'],milestones=[{id:'MS-A',state:'building',passed:false,memberIds,total:2,merged:0,withdrawn:1,signal:'pending',reason:null,costUsd:0}];
+ const edges=[{kind:'after',source:'u1',target:'u2',on:'u1',met:false},...memberIds.map(id=>({kind:'feeds',source:id,target:'milestone:MS-A'}))];
+ const input=graphData({arc:'synthetic',revision:1,data:{units:[unit('u1'),unit('u2',{signal:'withdrawn',state:'superseded',supersededBy:'u3'}),unit('u3')],milestones,noMilestone:{ids:[],total:0,merged:0,withdrawn:0},groups:[],edges,focus:{activeIds:[],firstUncleared:'MS-A'}}},true);
+ const a=graphLayout(input) as unknown as Laid,p=(id:string)=>a.positions.get(id)!;
+ assert.ok(p('u2').x>p('u1').x,'the withdrawn unit stays right of its dependency');
+ assert.notEqual(p('u2').x,p('u3').x,'it does not take its successor\'s column');
+ for(const c of graphCurves(input,a.positions) as {source:string;target:string;points:{x:number}[]}[])assert.ok(c.points.at(-1)!.x>c.points[0]!.x,`${c.source} -> ${c.target} advances`);
+});
