@@ -452,6 +452,8 @@ test('executor.pause-fix-round-continues: a pause while a fix round is live (its
   const continued = readCalls(r.scenarioPath).filter((c) => c.stdin.includes(CONTINUE_DIRECTIVE));
   assert.equal(continued.length, 1);
   assert.ok(!continued[0]!.stdin.includes(NO_SESSION_NOTE), 'the continued session is not told it is fresh');
+  // dev.81 (B4): the continue owes its fix round's required checks, and names them.
+  assert.match(continued[0]!.stdin, /<required_checks>- mul \(expects exit 0/);
   // The continue only reported: the fix it made before the pause, left uncommitted, is what merged.
   assert.equal(git(r.repo, 'show', 'main:src/mul.js') + '\n', MUL['src/mul.js']);
   assert.equal(journalOf(r).view.unit(U1).counters.chargeableFailures, 1, 'the red series alone charged');

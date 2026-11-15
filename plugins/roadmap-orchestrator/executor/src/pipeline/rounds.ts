@@ -18,9 +18,10 @@
 //   continue  the round after an interrupted build attempt (a pause, a stop, a backend park), whatever that
 //             attempt's round was, a continue included: it resumes the interrupted invocation's own session
 //             in the unit worktree exactly as left (uncommitted changes, no reset, no salvage-SHA check, no
-//             checkout removal) with CONTINUE_DIRECTIVE alone, the session holding the spec and any fix
-//             inputs already. It keeps the decided round's window, and a continued resolve must still leave
-//             the merge committed (stages.ts). The driver asks for it from the fold (`UnitState.interrupted`).
+//             checkout removal) with CONTINUE_DIRECTIVE, the session holding the spec and any fix
+//             inputs already; the decided round's required checks are named again, since the continue's report owes
+//             their proof (dev.81 B4, stages.ts `missingChecks`). It keeps the decided round's window, and a continued
+//             resolve must still leave the merge committed (stages.ts). The driver asks for it from the fold (`UnitState.interrupted`).
 //
 // A session is read from the log, not kept in memory: `invocationSession` is the one reading of the session
 // of a build invocation, from its result.json, where the adapter recorded the id launch.json assigned (every
@@ -583,7 +584,8 @@ export async function prepareRound(ctx: StageContext, dispatch: ImplementerDispa
       };
       if (id === null) return { worktree, branch, ...fresh, deadlineAt, fresh: null };
       return {
-        worktree, branch, session: sessionOf(dispatch, id), fixRound: { failingEvidenceDirs: [], directives: [CONTINUE_DIRECTIVE] }, evidenceDirs: own.failingEvidenceDirs,
+        worktree, branch, session: sessionOf(dispatch, id), evidenceDirs: own.failingEvidenceDirs,
+        fixRound: { failingEvidenceDirs: [], directives: [CONTINUE_DIRECTIVE], ...(own.requiredChecks?.length ? { requiredChecks: own.requiredChecks } : {}) },
         deadlineAt, fresh,
       };
     }

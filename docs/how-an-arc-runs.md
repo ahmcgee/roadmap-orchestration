@@ -88,7 +88,8 @@ are proven in the final report's `checks`: one row per lane, with the commit HEA
 missing a row, or with a row at another commit or with another exit than the lane expects, goes back to its builder
 once, uncharged, as a new invocation of the same attempt (the same continuation a resolve round that leaves clauses
 unmet gets, so one continuation carries both). The next report is read as it is, since the lanes stage runs the lanes
-anyway.
+anyway. A continue of an interrupted fix round owes the same proof, and its resumed session is given the round's
+required checks again.
 
 **After a merge-in into a kept worktree** (a resolve round, or the first build on a clean merge-in no build has built
 on), the executor removes the worktree's ignored build output before the round (`bin`, `obj`, `dist`, `build`,
