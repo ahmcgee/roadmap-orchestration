@@ -235,6 +235,7 @@ describe('cli: M3 forms', () => {
       [['rerun', 'u1/lanes#7/mul', '--cause', 'infra', '--evidence', 'runner disk full 10:02'], { type: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'infra', evidence: 'runner disk full 10:02' }],
       [['audit'], { type: 'audit' }],
       [['close-admissions'], { type: 'close-admissions' }],
+      [['push'], { type: 'push' }],
     ];
     for (const [args, body] of cases) {
       const exit = await roadmap([...args, '--repo', repo, '--arc', 'arc-1']);
@@ -272,4 +273,15 @@ it('cli.rerun (dev.59): a lane failure reference, a closed cause and non-empty e
     [['rerun', 'u1/candidate#7/suite', '--cause', 'estate', '--evidence', 'x'], /a failure reference/],
     [['rerun', '--cause', 'estate', '--evidence', 'x'], /is required/],
   ] as const) assert.throws(() => parseCommand([...args]), (e: unknown) => e instanceof CliError && error.test(e.message), args.join(' '));
+});
+
+it('cli.ci-ref (dev.81): witness --at names the attested commit (absent: the CI ref); push takes no argument', () => {
+  const base = ['witness', 'I-1', '--result', 'pass', '--evidence', 'https://ci.example/1'];
+  assert.deepEqual(parseCommand(base), { command: 'witness', obligation: 'I-1', result: 'pass', evidence: 'https://ci.example/1', at: null, run: HOST });
+  assert.deepEqual(parseCommand([...base, '--at', 'abc123']), { command: 'witness', obligation: 'I-1', result: 'pass', evidence: 'https://ci.example/1', at: 'abc123', run: HOST });
+  assert.throws(() => parseCommand([...base, '--at']), /--at needs a value/);
+  assert.throws(() => parseCommand([...base, '--at', 'a', '--at', 'b']), /--at given twice/);
+  assert.deepEqual(parseCommand(['push']), { command: 'push', run: HOST });
+  assert.deepEqual(parseCommand(['push', ...EXPLICIT]), { command: 'push', run: EXPLICIT_RUN });
+  assert.throws(() => parseCommand(['push', 'now']), /unexpected argument/);
 });

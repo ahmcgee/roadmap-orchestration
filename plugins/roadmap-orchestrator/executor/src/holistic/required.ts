@@ -35,7 +35,7 @@ const binding = (o: ObligationDef): boolean => o.state.type === 'active' && !isE
  * The merge commit each unit published through `ff` (its own, or its repair batch's), as the log records it; a unit
  * that never published has none.
  */
-function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
+export function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
   const out = new Map<UnitId, Sha>();
   const batches = new Map<string, readonly UnitId[]>();
   for (const i of view.opsOf('candidate.merge')) if (i.expect.batch !== undefined) batches.set(i.expect.batch.job, i.expect.batch.members.map((m) => m.unit));

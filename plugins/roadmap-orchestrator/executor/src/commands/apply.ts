@@ -1,4 +1,4 @@
-import { inputPath, SPEC_INPUT, keptInput } from '../input/inforce.ts';
+import { inputPath, RULINGS_INPUT, SPEC_INPUT, keptInput, keptPayload } from '../input/inforce.ts';
 import { applyAnswer, findingsAnswered, resolutionProblem, resolutionProblems } from './resolution.ts';
 import { candidateReentryChange } from '../pipeline/candidate-red.ts';
 // Durable command effects, receipts and subject closure. Apply uses file CAS against an exported revision.
@@ -9,13 +9,13 @@ import type { IntentOf,OpOutcome,Parent,PlanAppliedFact,PlanChange,RevisionPaylo
 import { specReopenable,probeTargetKey } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { AlreadyExistsError, exclusivePublish } from '../core/fsx.ts';
-import { type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,type UnitId,invocationId,opKey,parseResourceUnit,planRev,resourceInstance } from '../core/ids.ts';
+import { type CommandId,type NeedsUserId,type PlanRev,type ResourceInstance,type ResourceName,type Sha,type UnitId,invocationId,opKey,parseResourceUnit,planRev,resourceInstance } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { CommandBody,CommandFile,NeedsUserAck,NeedsUserContent,ResidueKey,RevisionManifest,SpecM1,Stage } from '../core/records.ts';
 import type { ParkState } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
-import { type AbsPath,type RepoPath,absPath,isoTimeOf,repoPath } from '../core/values.ts';
+import { type AbsPath,type RepoPath,absPath,branchRef,isoTimeOf,repoPath } from '../core/values.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { registryOf } from '../corpus/registry.ts';
 import type { SourceFile } from '../corpus/source.ts';
@@ -23,7 +23,7 @@ import type { RulesRegistry } from '../corpus/types.ts';
 import { actOnDemo } from '../demo/promote.ts';
 import { CONSTRAINTS_DOC,renderConstraints } from '../docs/constraints.ts';
 import { INVARIANTS_DOC,renderInvariants } from '../docs/invariants.ts';
-import { gitRun } from '../git/git.ts';
+import { gitRun,revParse } from '../git/git.ts';
 import { WorktreeRecoveryError } from '../git/worktree.ts';
 import { staleSetOf } from '../holistic/staleset.ts';
 import type { BusyAttempt,DivergenceDraft } from '../holistic/types.ts';
@@ -42,6 +42,7 @@ import { chargeableBoundRecommendation,needsUserAckPath,openNeedsUser,raiseNeeds
 import type { ProberHandle } from '../park/probe.ts';
 import { APPLY,type Phase0Advisory,phase0InputOf,phase0Rows,revisionDefects,underRoot } from '../phase0/rows.ts';
 import { dispatchOf,repin,unitBranch } from '../pipeline/dispatch.ts';
+import { textAt } from '../pipeline/publish.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { applyRows } from '../preflight/checks.ts';
 import { laneRows } from '../preflight/lanerows.ts';
@@ -290,7 +291,15 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return closeAdmissions(ctx, command.id);
     case 'demo':
       return actOnDemo(ctx, command.id, body.act);
+    case 'push':
+      return requestPush(ctx, command.id);
   }
+}
+
+/** dev.81 (A3): `roadmap push` settles the last pushed CI head (src/forge/ciref.ts); the push worker advances the CI ref. */
+function requestPush(ctx: CommandContext, id: CommandId): Effect {
+  if (!ctx.journal.view.ciSettlers().some((s) => s.fact.kind === 'push-requested' && s.fact.command === id)) ctx.journal.fact({ kind: 'push-requested', command: id });
+  return { kind: 'applied', verified: ['the last pushed CI head counts as settled: the CI ref advances to the integration head'] };
 }
 
 function pause(ctx: CommandContext, id: CommandId, target: Extract<CommandBody, { type: 'pause' }>['target']): Effect {
@@ -659,29 +668,47 @@ export type RevisionVerdict =
 type Publication = Readonly<{ renders: readonly Render[] }>;
 
 /**
- * The docs publication a revision needs (A2): `constraints.md` when its rulings change, `invariants.md` when its obligations
- * do (§2.9), each only when its rendering changes; and the vision files it changes (`visionRenders`).
+ * The docs publication a revision needs (A2): `invariants.md` when its obligations (or a corpus pin) change (§2.9), and
+ * the vision files it changes (`visionRenders`), each only when its rendering changes, and (dev.81) only when it also
+ * differs from what the integration tip holds (a render equal to the tip is no publication, not an empty docs commit).
+ * dev.81 (A3): `constraints.md` rides along, never alone: it is
+ * published with something else when its living rendering of the next ledger differs both from the tip and from the
+ * rendering of the ledger the last publishing revision carried (`publishedLedger`): a ruling deferred since then. So a
+ * ruling-only revision makes no docs commit (each one a PR push that cancelled the running CI pipeline); the ruling
+ * takes effect at once through the ledger in force, and its rendering lands with the next publication that carries
+ * another changed render, or with the close-out (`closeOutFiles`, which compares against the tip too).
  * Empty when there is nothing to publish; the reasons when a vision file cannot be published.
  */
 function publicationOf(
-  view: JournalView, revision: RevisionInForce, inputs: NextInputs, proposal: InputFiles,
+  view: JournalView, runDir: AbsPath, revision: RevisionInForce, inputs: NextInputs, proposal: InputFiles, tip: Sha,
 ): Publication | Readonly<{ reasons: readonly string[] }> {
   const vision = visionRenders(revision, inputs, proposal);
   if ('reasons' in vision) return vision;
   const renders: Render[] = [...vision.renders];
   const latched = view.holistic().latched.map((l) => l.obligation);
-  if (inputs.changed.rulings) {
-    const before = renderConstraints(parseRulings(revision.ledger.bytes.toString('utf8'), 'the ledger in force'), 'living');
-    const after = renderConstraints(inputs.ledger, 'living');
-    if (after !== before) renders.push({ path: CONSTRAINTS_DOC, bytes: Buffer.from(after, 'utf8') });
-  }
   // M4a (R3): a corpus arc's `invariants.md` carries the rules registry of its pin, so a re-pin re-renders it too.
   if ((inputs.changed.obligations || inputs.changed.corpus) && inputs.obligations !== null) {
     const before = revision.obligations === null ? null : renderInvariants(revision.obligations.value, latched, revision.corpus === null ? undefined : registryOf(revision.corpus.pin.value));
     const after = renderInvariants(inputs.obligations, latched, nextRegistry(inputs));
     if (after !== before) renders.push({ path: INVARIANTS_DOC, bytes: Buffer.from(after, 'utf8') });
   }
-  return { renders };
+  const differs = (r: Render): boolean => textAt(proposal.repo, tip, r.path) !== r.bytes.toString('utf8');
+  const changed = renders.filter(differs);
+  if (changed.length === 0) return { renders: [] };
+  const living = renderConstraints(inputs.ledger, 'living');
+  const deferred = living !== renderConstraints(parseRulings(publishedLedger(view, runDir).toString('utf8'), 'the last published ledger'), 'living');
+  const constraints: Render = { path: CONSTRAINTS_DOC, bytes: Buffer.from(living, 'utf8') };
+  return { renders: deferred && differs(constraints) ? [constraints, ...changed] : changed };
+}
+
+/** The ledger bytes of the latest applied revision that published docs; the first revision's when none did. */
+function publishedLedger(view: JournalView, runDir: AbsPath): Buffer {
+  const payloads = view.opsOf('revision.commit').filter((c) => view.doneOf(c.op) !== null).map((c) => keptPayload(runDir, c.expect.payloadSha256));
+  const at = payloads.findLast((p) => p.publication !== null) ?? payloads[0];
+  if (at === undefined) throw new Error('a revision is evaluated with no applied revision.commit in the log');
+  const bytes = keptInput(runDir, at.manifest.rulings.ledgerSha256, RULINGS_INPUT);
+  if (bytes === null) throw new Error(`plan rev ${at.rev}'s ledger ${at.manifest.rulings.ledgerSha256} is not kept`);
+  return bytes;
 }
 
 /**
@@ -764,7 +791,7 @@ function evaluateClassifiedRevision(
   if (added.length > 0) return { kind: 'rejected', reasons: [rowText({ kind: 'plan-defect', defects: added })] };
   const manifest = revisionManifestOf(proposal);
   if ('missing' in manifest) return { kind: 'rejected', reasons: manifest.missing };
-  const publication = publicationOf(ctx.view, revision, verdict.inputs, proposal);
+  const publication = publicationOf(ctx.view, ctx.runDir, revision, verdict.inputs, proposal, revParse(proposal.repo, branchRef(inForce.plan.integrationBranch)));
   if ('reasons' in publication) return { kind: 'rejected', reasons: publication.reasons };
   const divergences: DivergenceDraft[] = [];
   // dev.17 (propagation): what the revision leaves stale, by code (src/holistic/staleset.ts), over the units still to land.

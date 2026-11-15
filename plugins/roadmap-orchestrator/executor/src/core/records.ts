@@ -1623,10 +1623,15 @@ export type CommandBody =
    * Scope {u}.
    */
   | Readonly<{ type: 'steer'; unit: UnitId; brief: Readonly<{ path: AbsPath; sha256: Sha256Hex }>; budgetMin: number; class: BuildClass | null; resume: boolean }>
-  /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
+  /**
+   * `roadmap witness <I-n> --result pass|fail --evidence <file|url> [--at <sha>]`: the root's attestation of external
+   * evidence. `expectedHead` (name kept) is the attested commit (dev.81, A3): `--at`, default the CI ref (the last pushed
+   * head; the local integration head when nothing was ever pushed); accepted when the integration branch contains it.
+   */
   | Readonly<{ type: 'witness'; obligation: ObligationId; expectedHead: Sha; result: 'pass' | 'fail'; evidence: string; evidenceFile: HashedFile | null }>
   | Readonly<{ type: 'dismiss'; finding: FindingId; counterEvidence: string }>
   | Readonly<{ type: 'note'; unit: UnitId; brief: HashedFile }>
+  /** `roadmap merge-in <u>` (M3): the integration head into the unit branch. Scope {u}. */
   | Readonly<{ type: 'merge-in'; unit: UnitId }>
   /**
    * `roadmap rerun <unit>/lanes#<attempt>/<lane> --cause estate|infra --evidence <line>` (dev.59): the unit's lanes again at the
@@ -1643,7 +1648,9 @@ export type CommandBody =
    * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
    * host's demo instance. Scope ∅.
    */
-  | Readonly<{ type: 'demo'; act: DemoAct }>;
+  | Readonly<{ type: 'demo'; act: DemoAct }>
+  /** `roadmap push` (dev.81, A3): the last pushed CI head counts as settled, so the CI ref advances now. Control, scope ∅. */
+  | Readonly<{ type: 'push' }>;
 
 /** dev.59: why the root says a lanes red is not the tree's (`roadmap rerun --cause`): the estate it runs against, or the infrastructure. */
 export const RERUN_CAUSES = ['estate', 'infra'] as const;
@@ -1679,7 +1686,7 @@ export function stopFields(f: Fields): StopOptions {
 }
 
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
-export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss'] as const;
+export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss', 'push'] as const;
 
 export type CommandFile = Readonly<{ v: SchemaVersion; id: CommandId; arc: ArcId; at: IsoTime; body: CommandBody }>;
 
@@ -1740,6 +1747,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
+  push: object((f): CommandBody => ({ type: f.get('type', literal('push')) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({

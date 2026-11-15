@@ -48,7 +48,9 @@ export interface JournalView {
   lastHash(): import('./ids.ts').Sha256Hex | null;
   ciFacts(): readonly CiFact[];
   walkMcp(): readonly import('./events.ts').WalkMcpFact[];
-  integrationPushes(): readonly Readonly<{ seq: number; fact: import('./events.ts').IntegrationPushFact }>[];
+  integrationPushes(): readonly Readonly<{ seq: number; at: IsoTime; fact: import('./events.ts').IntegrationPushFact }>[];
+  /** dev.81 (A3): the external witnesses and `push-requested` facts, with their seqs: what settles a pushed CI head. */
+  ciSettlers(): readonly CiSettler[];
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }>;
 
   /** Intents with no matching done or abort, in log order. At most one per key. */
@@ -180,6 +182,8 @@ export interface JournalView {
 export type SpecHistoryEntry = Readonly<{ seq: number; hash: Sha256Hex; by: SpecPatchBy | null }>;
 
 export type FlakeAt = Readonly<{ seq: number; at: IsoTime; fact: FlakyFact }>;
+/** dev.81 (A3): a fact that can settle a pushed CI head (src/forge/ciref.ts), at its seq. */
+export type CiSettler = Readonly<{ seq: number; fact: Extract<CiFact, { kind: 'external-witness' | 'push-requested' }> }>;
 export type WalkFactAt = Readonly<{ seq: number; at: IsoTime; fact: WalkFact }>;
 export type PropagationFactAt = Readonly<{ seq: number; at: IsoTime; fact: PropagationFact }>;
 

@@ -379,6 +379,12 @@ type PlanBase = Readonly<{
   /** M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. */
   capacity?: Readonly<{ cpu?: number }>;
   expectations?: Readonly<{ arcUsd?: number; perMilestoneUsd?: number }>;
+  /**
+   * dev.81 (A3): the CI ref's cadence. `settleMin`: minutes after a push when the pushed head counts as settled without
+   * a witness at it or `roadmap push` (non-negative, fractions allowed; 0 pushes every publication at once). Absent:
+   * `DEFAULT_SETTLE_MIN` (`ciSettleMin`).
+   */
+  ci?: Readonly<{ settleMin?: number }>;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
   resources: readonly ResourceDecl[];
   units: readonly PlanUnit[];
@@ -414,7 +420,7 @@ export function targetDocumentPaths(plan: PlanM1): readonly RepoPath[] {
 }
 
 /** The plan fields an apply's `plan-field` change compares (PLAN_FIELDS, src/core/events.ts); the target's read through its arm. */
-export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity' | 'expectations';
+export type PlanFieldName = 'contracts' | 'rulings' | 'architectureDoc' | 'architectureDigest' | 'direction' | 'capacity' | 'expectations' | 'ci';
 export function planFieldValue(plan: PlanM1, field: PlanFieldName): unknown {
   switch (field) {
     case 'architectureDoc':
@@ -509,6 +515,11 @@ const resourceDecl: Read<ResourceDecl> = object((f) => {
   const pool = f.optional('pool', object((g) => ({ size: g.get('size', positive) })));
   return { name, probe: f.get('probe', toolCommand), teardown: f.get('teardown', toolCommand), ...(pool === undefined ? {} : { pool }) };
 });
+
+/** dev.81 (A3): the default `ci.settleMin`, the field's 7200 s pipeline limit. */
+export const DEFAULT_SETTLE_MIN = 120;
+/** The minutes after a push when the pushed CI head counts as settled (`ci.settleMin`, else the default). */
+export const ciSettleMin = (plan: PlanM1): number => plan.ci?.settleMin ?? DEFAULT_SETTLE_MIN;
 
 /** A positive number of minutes; fractions allowed (an idle timeout of seconds is a fraction of a minute). */
 const positiveMinutes: Read<number> = (value, path) => {
@@ -800,6 +811,10 @@ export function parsePlan(value: unknown): PlanM1 {
       const arcUsd = g.optional('arcUsd', amount); const perMilestoneUsd = g.optional('perMilestoneUsd', amount);
       return { ...(arcUsd === undefined ? {} : { arcUsd }), ...(perMilestoneUsd === undefined ? {} : { perMilestoneUsd }) };
     }));
+    const ci = f.optional('ci', object((g) => {
+      const settleMin = g.optional('settleMin', (v, p) => { if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'a non-negative number of minutes', v); return v; });
+      return settleMin === undefined ? {} : { settleMin };
+    }));
     const target = planTarget(f);
     const limits = f.optional('limits', arcLimits);
     const previousHead = f.optional('previousHead', (v, p) => sha(v, p));
@@ -821,6 +836,7 @@ export function parsePlan(value: unknown): PlanM1 {
       ...(routing === undefined ? {} : { routing }),
       ...(capacity === undefined ? {} : { capacity }),
       ...(expectations === undefined ? {} : { expectations }),
+      ...(ci === undefined ? {} : { ci }),
       suite: f.get('suite', object((g) => ({ lanes: g.get('lanes', arrayOf(laneDefOf('suite'))) }))),
       resources: f.get('resources', arrayOf(resourceDecl)),
       units: f.get('units', arrayOf(planUnit, { nonEmpty: true })),

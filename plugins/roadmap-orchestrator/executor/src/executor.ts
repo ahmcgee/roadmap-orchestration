@@ -69,7 +69,7 @@ import { HandshakeAbandonedError,HandshakeMismatchError,HandshakeTimeoutError,Ow
 import { pressureAvailability } from './host/pressure.ts';
 import { readHostFingerprint,readHostSample } from './host/sample.ts';
 import { arcRolesOf,requirePlanInForce } from './input/inforce.ts';
-import { type PlanM1,hasMilestones } from './input/plan.ts';
+import { type PlanM1,ciSettleMin,hasMilestones } from './input/plan.ts';
 import { NEEDS_USER_DIR,needsUserPath,openBlockingItems } from './needsuser.ts';
 import { type ProberHandle,createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
@@ -237,7 +237,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     // Recovery before the smoke: it closes a smoke spawn a crashed start left open, like any other spawn.
     await recover({ stage: x.stage, commands: x.commands });
     // Recovery first completes any staged needs-user raise; background results must not race its replay.
-    pushes = startIntegrationPushes({ journal, repo: context.repo, runDir: context.runDir });
+    pushes = startIntegrationPushes({ journal, repo: context.repo, runDir: context.runDir, settleMin: () => ciSettleMin(x.stage.plan()) });
     pushes.recover(x.stage.plan().integrationBranch);
     // M3 (B3): the findings' moves the recovered log calls for (ownership, a killed mutant's dismissal).
     syncRepairs(x.stage);
