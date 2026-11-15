@@ -6,6 +6,7 @@ import { shellView, graphView } from '../src/console/views.ts';
 import { ConsoleMetadata } from '../src/console/metadata.ts';
 import { ConsoleViews } from '../src/console/views.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
+import { investigationFixture } from './fixtures/console-investigations.ts';
 const {ViewStore,lagState}=await import(new URL('../web-src/app/view-store.ts',import.meta.url).href);
 function fixture(){const f=consoleFixture(),e=new Observations(f.hostDir,'client','repo').read({runDir:f.runDir,arc:f.arc});return {e,notice:new ConsoleMetadata().read(e,new ConsoleViews(),e.arc)};}
 test('initial semantic notice coalesces pending reads; heartbeat and cached Back need no fetch',async()=>{
@@ -149,4 +150,26 @@ test('a burst of version changes loads a mounted view once at once and once trai
  // A person's reload is never paced.
  void store.load('graph',true);await settle(10);assert.equal(starts.length,5);
  store.dispose();
+});
+
+test('dev.81 D2: withdrawn units are hidden until a viewer shows them; the choice is kept, and a storage that throws reads as hidden',async()=>{
+ const {readShowWithdrawn,writeShowWithdrawn,subscribeShowWithdrawn,SHOW_WITHDRAWN_KEY}=await import(new URL('../web-src/app/withdrawn.ts',import.meta.url).href);
+ const {graphData}=await import(new URL('../web-src/app/graph-data.ts',import.meta.url).href);
+ const kept=new Map<string,string>(),storage={getItem:(k:string)=>kept.get(k)??null,setItem:(k:string,v:string)=>{kept.set(k,v);}};
+ const throwing={getItem:()=>{throw new Error('SecurityError');},setItem:()=>{throw new Error('QuotaExceededError');}};
+ assert.equal(readShowWithdrawn(storage),false,'hidden by default');
+ assert.equal(readShowWithdrawn(throwing),false,'a storage that throws reads as hidden');
+ assert.equal(readShowWithdrawn(null),false,'no storage reads as hidden');
+ let heard=0;const stop=subscribeShowWithdrawn(()=>heard++);
+ writeShowWithdrawn(true,storage);assert.equal(kept.get(SHOW_WITHDRAWN_KEY),'1');assert.equal(readShowWithdrawn(storage),true,'the choice is kept');
+ writeShowWithdrawn(false,storage);assert.equal(readShowWithdrawn(storage),false);
+ writeShowWithdrawn(true,throwing);assert.equal(readShowWithdrawn(throwing),true,'a choice the storage refused lasts for the page');
+ writeShowWithdrawn(false,storage);stop();assert.equal(heard,4,'every view hears each change');
+ // The toggle's count is the arc's withdrawn units, all of them hidden by default (a fixture that withdraws two).
+ const f=await investigationFixture(60);try{
+  const e=new Observations(f.hostDir,'withdrawn','graph').read({runDir:f.runDir,arc:f.arc}),graph=graphView(e),withdrawn=graph.units.filter(u=>u.signal==='withdrawn').length;
+  assert.ok(withdrawn>0,'the fixture withdraws a unit');const data=graphData({...e,data:graph});assert.equal(data.withdrawn,withdrawn);assert.equal(data.hiddenWithdrawn,withdrawn);
+  assert.equal(data.units.length,graph.units.length-withdrawn);
+  assert.equal(graphData({...e,data:graph},true).hiddenWithdrawn,0);
+ }finally{f.close();}
 });

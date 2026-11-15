@@ -1,6 +1,7 @@
 // Observe real records the previous release (dev.58) wrote with the new detached service; no runtime-schema bump or migration.
 // dev.59 pass 3 added derived status fields (units[].lineageAttempts, carries, carriedBy; milestones[].members, withdrawn,
-// live, merged): the status is identical to the previous release's apart from them, and they read their documented values.
+// live, merged), and dev.81 two more (units[].origin, repairs): the status is identical to the previous release's apart from
+// them, and they read their documented values.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -17,10 +18,10 @@ import { setConsolePort } from '../fixtures/console.ts';
 import { tmpDir } from '../helpers/repo.ts';
 
 const PREVIOUS_REF = 'a789d43d';
-const DEV59_UNIT = ['lineageAttempts', 'carries', 'carriedBy'] as const;
+const DEV59_UNIT = ['lineageAttempts', 'carries', 'carriedBy', 'origin', 'repairs'] as const;
 const DEV59_MILESTONE = ['members', 'withdrawn', 'live', 'merged'] as const;
 type Json = Record<string, unknown>;
-/** `status` without dev.59's additive fields, and those fields per unit and milestone. */
+/** `status` without dev.59's (and dev.81's) additive fields, and those fields per unit and milestone. */
 function splitDev59(status: Json): Readonly<{ rest: Json; units: readonly Json[]; milestones: readonly Json[] }> {
   const pick = (o: Json, keys: readonly string[]): readonly [Json, Json] =>
     [Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k))), Object.fromEntries(keys.map((k) => [k, o[k]]))];
@@ -55,8 +56,8 @@ test('dev.58 records are adopted read-only by the console with identical canonic
   const { portableStatus } = await import('../fixtures/status-parity.ts');
   const now = splitDev59(portableStatus(e.data) as Json);
   assert.deepEqual(now.rest, f.full);
-  // The fixture's three units ran nothing and carry nothing; MS-1 lists u1, which nothing re-enters or withdraws.
-  assert.deepEqual(now.units, [0, 1, 2].map(() => ({ lineageAttempts: { builds: 0, judged: 0, buildCap: 16, judgedCap: 40 }, carries: null, carriedBy: [] })));
+  // The fixture's three units ran nothing, carry nothing and are planned, repairing nothing; MS-1 lists u1, which nothing re-enters or withdraws.
+  assert.deepEqual(now.units, [0, 1, 2].map(() => ({ lineageAttempts: { builds: 0, judged: 0, buildCap: 16, judgedCap: 40 }, carries: null, carriedBy: [], origin: 'planned', repairs: [] })));
   assert.deepEqual(now.milestones, [{ members: ['u1'], withdrawn: [], live: 1, merged: 0 }]);
   assert.deepEqual(contents(runDir), before);
   assert.equal(JSON.parse(readFileSync(join(runDir, 'start.json'), 'utf8')).v, 2);

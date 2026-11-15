@@ -4,7 +4,7 @@ import { captureKey, type Envelope } from '../observation/protocol.ts';
 import { unitSignal } from './signals.ts';
 import { identityIndex, stageFinished } from './indexes.ts';
 import { arcTerminal, tokensFor } from './tokens.ts';
-import { milestoneMembership, milestoneReason, milestoneSignal } from './milestones.ts';
+import { milestoneMembership, milestoneReason, milestoneSignal, outsideGroups } from './milestones.ts';
 import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
 export function preview(text: string, detail: DetailRef, limit = 240): Preview {
@@ -37,7 +37,8 @@ export function graphView(e: Envelope): GraphView {
     const identity = identities.get(u.unit)!;
     return {id: String(u.unit), title: identity.title.slice(0, 96), titleTruncated: identity.title.length > 96,
       signal: unitSignal(u.state),
-      state: u.state, stage: u.stage, stageFinished: stageFinished(steps.get(u.unit), u.stage), systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null};
+      state: u.state, stage: u.stage, stageFinished: stageFinished(steps.get(u.unit), u.stage), systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null,
+      origin: u.origin, supersededBy: u.supersededBy === null ? null : String(u.supersededBy), carriedBy: u.carriedBy.map(String)};
   });
   const states = new Map(s.milestones.map(m => [String(m.id), m])), membership = milestoneMembership(e);
   const milestones: GraphView['milestones'] = (e.data.plan?.milestones ?? []).map(m => {
@@ -53,7 +54,7 @@ export function graphView(e: Envelope): GraphView {
     }
   });
   for (const m of milestones) for (const unit of m.memberIds) edges.push({kind: 'feeds', source: unit, target: `milestone:${m.id}`});
-  return versioned({units, milestones, noMilestone: {ids: membership.none.ids, total: membership.none.total, merged: membership.none.merged, withdrawn: membership.none.withdrawn}, edges, focus: {activeIds: units.filter(u => u.signal === 'active').map(u => u.id), firstUncleared: milestones.find(m => !m.passed)?.id ?? null}}, {basis: 'current', from: null, to: null});
+  return versioned({units, milestones, noMilestone: {ids: membership.none.ids, total: membership.none.total, merged: membership.none.merged, withdrawn: membership.none.withdrawn}, groups: outsideGroups(e, membership), edges, focus: {activeIds: units.filter(u => u.signal === 'active').map(u => u.id), firstUncleared: milestones.find(m => !m.passed)?.id ?? null}}, {basis: 'current', from: null, to: null});
 }
 /** Each projection has its own bounded cache. No observations or report objects are retained here. */
 export class ConsoleViews {

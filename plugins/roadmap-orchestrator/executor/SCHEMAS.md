@@ -1643,3 +1643,33 @@ Current admission wait starts are not reconstructed from queue order. Legacy unm
 explicit. Holistic audit outcomes/findings are shown; checkpoint job detail remains outside this console.
 Claude init/rate-limit records become collapsed session metadata, while the canonical TUI text remains
 unchanged. Transcript text is decoded, escaped and byte-paged in the browser, never a link to base64 JSON.
+
+### dev.81 D1–D3: console groups, withdrawn units, status size
+
+Status (additive, computed at read time; no record change): `units[].origin` is the plan unit's origin (`planned`
+when absent), and `units[].repairs` is the finding and obligation ids its spec repairs (`repairUnits`, `[]` when
+none). Both are display inputs only: nothing in `src/schedule` or `src/walk` reads them.
+
+The Graph view (strict shape) adds `units[].origin`, `units[].supersededBy` and `units[].carriedBy`. It also adds
+`groups`, which places every unit of `noMilestone` once, in drawing order (`console/milestones.ts`
+`outsideGroups`). Each group is `{kind, id, label, ids}`, plus `milestone` for `design | milestone-repair | polish`
+and `job` for `audit`. `hardening` and `deflake` add nothing. A unit takes the group of its lineage root, following
+`reenters` and then `carries`, transitively:
+
+- `deflake` and `polish`: the root's origin.
+- `design`: a milestone's `design.unit`.
+- `milestone-repair`: a `repair`-origin unit whose every repaired id resolves to one milestone. A finding resolves
+  through its `finding-opened` `milestone`, else through its raising job's milestone: the job's `walk-started`, or
+  a campaign audit's `stage-outcome`. An `I-n` resolves through the findings that name it.
+- `audit`: a repair that resolves to no single milestone, grouped by the job of its latest raising finding.
+- `hardening`: everything else.
+
+The client hides withdrawn units by default. A hidden unit's edges are re-pointed to its successor
+(`supersededBy`, else its first carrier, transitively), or dropped when it has none. When shown, a withdrawn unit
+keeps its band and is placed directly before its successor. The per-viewer choice is
+`localStorage['roadmap.show-withdrawn']`. Counts are unchanged.
+
+D3 (status payload) is deferred, measured. On the real-shape fixture (`generateScaleArc`, 40 units and 9,000
+invocations) the canonical status is 81 KB. `units[].work` + `host.work` + `decisionsSince` make up 33.7% of it,
+with `units[].work` alone at 33.2%. The design-field fixture is 104 KB, at 36.6%. Both are below the 50% gate, so
+`work` stays in the serialized status. Neither fixture reproduces the field's 7.8 MB.

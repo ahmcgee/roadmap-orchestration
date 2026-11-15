@@ -108,6 +108,8 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 //   units[].priority.priority  the unit's plan priority (F1b), first in its rank
 //   knownDefects  each plan known defect (F4): its fixer, whether its lineage merged, the units it holds at prepare now
 //   units[].carries / carriedBy  (dev.59, C4) the cut unit a fresh unit carries forward (plan `carries`), and back
+//   units[].origin / repairs  (dev.81, D1) the unit's plan origin (`planned` when absent) and the finding and obligation ids
+//                 its spec repairs (`[]` when none): what the console groups units of no milestone by (display only)
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
 //                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge
@@ -131,7 +133,7 @@ import { type ArcId,type BuildSessionName,CPU_POOL,type CommandId,type DebtId,ty
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
-import { type CommandBody,type ContainmentMode,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
+import { type CommandBody,type ContainmentMode,type RepairRef,type KnownDefectMatch,type NeedsUserReason,type Receipt,type RunStart,type Stage,heartbeat,runStart,} from './core/records.ts';
 import type { HolisticFold,Lineage,ResourceEntry,UnitState } from './core/state.ts';
 import { type AbsPath,type IsoTime,absPath,branchRef,isoTimeOf } from './core/values.ts';
 import type { CorpusPin } from './corpus/types.ts';
@@ -153,7 +155,7 @@ import { isAlive } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { readOwner } from './host/owner.ts';
 import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
-import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
+import { type KnownDefect,type PlanM1,type PlanUnit,type UnitOrigin,advancesOf,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
 import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,ownShare } from './meter.ts';
 import { type Supervision,supervision } from './watch-lease.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,type OpenBlockingDigest,supersededItems } from './needsuser.ts';
@@ -306,6 +308,10 @@ export type UnitStatusLine = Readonly<{
   carries: Readonly<{ unit: UnitId; tip: Sha }> | null;
   /** dev.59 (C4): on a cut unit, the units of the plan carrying its work forward, in plan order. */
   carriedBy: readonly UnitId[];
+  /** dev.81 (D1): the unit's plan origin, `planned` when the plan names none. */
+  origin: UnitOrigin;
+  /** dev.81 (D1): the findings and obligations its spec repairs (`repairUnits`), `[]` when none. Display only. */
+  repairs: readonly RepairRef[];
   /** The implementer's seat tier (A11), a tier, never a model; null before the first dispatch. */
   buildTier: RiskTier | null;
   running: UnitRunning | null;
@@ -319,7 +325,7 @@ export type UnitStatusLine = Readonly<{
   gate: GateAnswerView | null;
 }>;
 /** A unit's line as `derive` (and `watch`) reads it: everything but the failures and the gate answer, which read files. */
-type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate' | 'certification' | 'work'>;
+type UnitCore = Omit<UnitStatusLine, 'failures' | 'gate' | 'certification' | 'work' | 'repairs'>;
 
 /** The routing in force for the latest start, as classes: never a model. */
 export type RoutingView = Readonly<{
@@ -862,6 +868,7 @@ function unitLine(x: Inputs, unit: PlanUnit, times: Readonly<{ starts: ReadonlyM
     supersededBy: u.supersededBy,
     carries: unit.carries ?? null,
     carriedBy: plan.units.filter((p) => p.carries?.unit === unit.id).map((p) => p.id),
+    origin: unit.origin ?? 'planned',
     buildTier: u.buildTier,
     running: state === 'running' || state === 'preparing' ? runningOf(x.runDir, view, u, times, holds, now) : null,
   };
@@ -1743,11 +1750,12 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     const rows = byUnit.get(r.parent.unit) ?? []; rows.push(r); byUnit.set(r.parent.unit, rows);
   }
   const units = new Map(plan?.units.map((u) => [u.id, u]));
+  const repairsOf = new Map(repairs.map((r) => [r.unit, r.repairs]));
   return {
     arc,
     supervision: core.supervision,
     run: core.run,
-    units: d.units.map((l) => ({ ...l, certification: certify === null ? null : certify(units.get(l.unit)!, d.sched?.queue.find((q) => q.unit === l.unit && q.stage === 'lanes')?.attempt), work: byUnit.get(l.unit) ?? [], failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
+    units: d.units.map((l) => ({ ...l, certification: certify === null ? null : certify(units.get(l.unit)!, d.sched?.queue.find((q) => q.unit === l.unit && q.stage === 'lanes')?.attempt), work: byUnit.get(l.unit) ?? [], repairs: repairsOf.get(l.unit) ?? [], failures: laneFailures({ journal: { view }, runDir }, { id: l.unit }), gate: latestGateAnswer({ journal: { view }, runDir }, l.unit) })),
     edges: d.plan === null ? [] : edgesOf(view, d.plan),
     runOnly: view.runOnly(),
     needsUser: core.needsUser,

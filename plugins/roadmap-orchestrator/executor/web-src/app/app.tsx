@@ -2,7 +2,7 @@ import { saveVisit } from './activity-query.ts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { Button } from '../components/ui/button.tsx';
-import { ageWords, Clock, displayZone, elapsed, formatInstant, get, link, loadError, money, route, tabs, Time } from './shared.tsx';
+import { ageWords, Clock, displayZone, useShowWithdrawn, elapsed, formatInstant, get, link, loadError, money, route, tabs, Time } from './shared.tsx';
 import { lagState } from './view-store.ts';
 import { useObservation } from './observation.ts';
 import { Graph } from './graph.tsx';
@@ -49,7 +49,8 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
   const error=store?.error||failing(shell)||failing(graph)||'',refreshing=!store?.error&&Boolean(failing(shell)&&shell.data||failing(graph)&&graph.data);
   const checkedAt=store?.checkedAt??null,reload=store?.reload??false;
   const graphEnvelope=store?.entries.get('graph')?.value;
-  const graphInput=useMemo(()=>graphEnvelope?graphData(graphEnvelope):null,[graphEnvelope]);
+  const [showWithdrawn,setShowWithdrawn]=useShowWithdrawn();
+  const graphInput=useMemo(()=>graphEnvelope?graphData(graphEnvelope,showWithdrawn):null,[graphEnvelope,showWithdrawn]);
   const scrolls=useRef(new Map<string,number>());
   useLayoutEffect(()=>{const node=document.getElementById('content');if(!node)return;node.scrollTop=scrolls.current.get(where.tab)??0;const remember=()=>scrolls.current.set(where.tab,node.scrollTop);node.addEventListener('scroll',remember);return()=>{node.removeEventListener('scroll',remember);};},[where.tab,Boolean(graphInput)]);
   // One connection state at a time, and no contact yet is never presented as data behind. While behind or not connected, every
@@ -81,7 +82,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
     {(reload||error||listError||where.invalid)&&<div className="notice" role="alert">{where.invalid?'Unknown console route. Open the current arc.':reload?'Reload required: executor version changed':refreshing&&!listError?"Couldn't refresh this view. Trying again.":loadError(error||listError)}{reload?<Button onClick={()=>location.reload()}>Reload console</Button>:error&&<Button onClick={()=>{shell.retry();if(tab==='graph')graph.retry();}}>Retry</Button>}</div>}
     {p?.lifecycle.endedAt&&<div className="outcome">{stateWords(p.lifecycle.state)}. {counts.passed??0} units merged; {counts.withdrawn??0} withdrawn. Recorded spend {money(p.spend.costUsd)}. Elapsed {elapsed(p.lifecycle.startedAt?Date.parse(p.lifecycle.endedAt!)-Date.parse(p.lifecycle.startedAt):null)}.</div>}
     <main id="content" tabIndex={-1} className={tab==='graph'?'graph-main':'tab-content'}>
-      {graphInput&&<div hidden={tab!=='graph'} style={{height:'100%'}}><Graph key={arc} e={graphInput} open={open}/></div>}
+      {graphInput&&<div hidden={tab!=='graph'} style={{height:'100%'}}><Graph key={arc} e={graphInput} open={open} showWithdrawn={showWithdrawn} setShowWithdrawn={setShowWithdrawn}/></div>}
       {arc&&tab==='activity'&&<Activity arc={arc}/>}
       {arc&&tab==='timeline'&&<Timeline arc={arc}/>}
       {arc&&tab==='attention'&&<Attention arc={arc}/>}

@@ -35,17 +35,18 @@ test('a stopped field arc reads honestly in the console', { timeout: 300_000 }, 
   // dev.67: the gate is a drawn mark, not a text glyph; its state is named by its label.
   const stations = () => b.evaluate<string[]>('()=>[...document.querySelectorAll(".station")].map(s=>s.querySelector(".gate-glyph").getAttribute("aria-label")+" | "+s.innerText.replace(/\\n/g," | "))');
 
-  await t.test('C1: No milestone counts its own units once and reads no unit called "unbound"', async () => {
+  await t.test('C1: Hardening counts its own units once and reads no unit called "hardening"', async () => {
     await go('graph');
     // dev.59 recorded membership: re-entries count for their parent's milestone; here are only the units an apply added
-    // outside every milestone, and a re-entry of one of them.
-    assert.equal((await stations()).at(-1), 'pending | No milestone | 2/2 | – 1 withdrawn');
+    // outside every milestone, and a re-entry of one of them: planned work, so dev.81's Hardening group.
+    assert.equal((await stations()).at(-1), 'pending | Hardening | 2/2 | – 1 withdrawn');
     await b.evaluate('()=>{document.querySelector(".station-unbound").click();return true;}');
-    await until(async () => /No milestone/.test(await text('.station-health')), 5000, 'No milestone popover');
-    assert.match(await text('.station-health'), /^No milestone\n+Units that belong to no milestone in the plan\.[\s\S]*Show 2 passed units[\s\S]*Show 1 withdrawn unit$/);
+    await until(async () => /Hardening/.test(await text('.station-health')), 5000, 'Hardening popover');
+    // dev.81: withdrawn units are hidden by default; the popover offers to show them.
+    assert.match(await text('.station-health'), /^Hardening\n+Planned units that belong to no milestone\.[\s\S]*Show 2 passed units[\s\S]*Show 1 withdrawn unit \(hidden\)$/);
     await new Promise(r => setTimeout(r, 1000));
     const reads = await b.evaluate<{ url: string; status: number | string }[]>('()=>window.__reads');
-    assert.deepEqual(reads.filter(r => /unbound/.test(r.url)), [], 'no read for the station');
+    assert.deepEqual(reads.filter(r => /hardening/.test(r.url)), [], 'no read for the station');
     assert.deepEqual(reads.filter(r => typeof r.status === 'number' && r.status >= 400), [], 'no failed read');
   });
 
@@ -57,7 +58,11 @@ test('a stopped field arc reads honestly in the console', { timeout: 300_000 }, 
     const ms3 = await drawer('milestone:MS-3', /Outstanding units/);
     assert.match(ms3, /9 of 9 units merged\n.*1 withdrawn/);
     assert.match(ms3, /Not passed\. Its walkthrough has not run, and the arc is stopped\./);
-    assert.match(ms3, /Outstanding units \(0\)\n+None\n+Withdrawn units \(1\)\nu29\n.*\nReplaced\nReplaced by u30,\s+merged/);
+    // dev.81: withdrawn rows are hidden until the viewer shows them, then listed as before.
+    assert.match(ms3, /Outstanding units \(0\)\n+None\n+Withdrawn units \(1\)\nShow withdrawn \(1\)/);
+    await b.evaluate('()=>{[...document.querySelectorAll(".drawer button")].find(b=>b.textContent==="Show withdrawn (1)").click();return true;}');
+    await until(async () => /Replaced by u30/.test(await text('.drawer')), 5000, 'withdrawn rows shown');
+    assert.match(await text('.drawer'), /Outstanding units \(0\)\n+None\n+Withdrawn units \(1\)\nu29\n.*\nReplaced\nReplaced by u30,\s+merged/);
     assert.match(await drawer('u31', /Current blocker/), /Current blocker\nMilestone MS-3 has not passed: its walkthrough has not run, and the arc is stopped/);
     // A re-entry's id is long: rows in one list share an id column wide enough for every id, on one line.
     await drawer('u33-rollup-export-r2', /Depends on/);

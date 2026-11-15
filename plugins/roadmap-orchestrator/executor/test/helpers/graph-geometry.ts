@@ -4,9 +4,9 @@ import { graphView } from '../../src/console/views.ts';
 const {graphData}=await import(new URL('../../web-src/app/graph-data.ts',import.meta.url).href);
 type Point = {x:number;y:number};
 type GraphEnvelope = import('../../src/observation/protocol.ts').Envelope;
-/** Check actual curve geometry, independently of SVG serialization or renderer visibility. */
+/** Check actual curve geometry, independently of SVG serialization or renderer visibility, with every unit shown (withdrawn ones too). */
 export function assertGraphGeometry(e: GraphEnvelope) {
-  const started=performance.now(), input=graphData({...e,data:graphView(e)}), layout=graphLayout(input), curves=graphCurves(input,layout.positions);
+  const started=performance.now(), input=graphData({...e,data:graphView(e)},true), layout=graphLayout(input), curves=graphCurves(input,layout.positions);
   const expectedEdges:[string,string][] = e.data.display.status.edges.flatMap(edge=>edge.type==='after'?[[edge.effective,edge.unit] as [string,string]]:edge.type==='milestone'?[[`milestone:${edge.milestone}`,edge.unit] as [string,string]]:[]);
   for(const gate of e.data.plan?.milestones??[])for(const id of gate.units)expectedEdges.push([id,`milestone:${gate.id}`]);
   const elapsed=performance.now()-started;

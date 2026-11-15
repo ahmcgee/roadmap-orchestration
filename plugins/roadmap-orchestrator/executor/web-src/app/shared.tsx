@@ -1,4 +1,5 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useSyncExternalStore } from 'react';
+import { readShowWithdrawn, subscribeShowWithdrawn, writeShowWithdrawn } from './withdrawn.ts';
 import type { Signal } from './types.ts';
 import { preparedRead } from './prepared-read.ts';
 export { ApiError } from './prepared-read.ts';
@@ -37,6 +38,8 @@ export const plainText = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]
 export const sentence = (clause: string) => `${clause.charAt(0).toUpperCase()}${clause.slice(1)}${/[.!?]$/.test(clause) ? '' : '.'}`;
 export function elapsed(ms: number | null | undefined): string { if (ms == null) return 'Not recorded'; if (ms < 1000) return `${Math.round(ms)} ms`; const n = Math.floor(ms / 1000); return n < 60 ? `${n}s` : n < 3600 ? `${Math.floor(n / 60)}m ${n % 60}s` : n < 86400 ? `${Math.floor(n / 3600)}h ${Math.floor(n % 3600 / 60)}m` : `${Math.floor(n / 86400)}d ${Math.floor(n % 86400 / 3600)}h`; }
 export const Clock = createContext(Date.now());
+/** dev.81 (D2): whether withdrawn units are shown, one choice for every view (withdrawn.ts); hidden by default. */
+export function useShowWithdrawn(): [boolean, (show: boolean) => void] { return [useSyncExternalStore(subscribeShowWithdrawn, () => readShowWithdrawn()), writeShowWithdrawn]; }
 /** One display timezone for the whole console. An explicit `zone` in a deep link still overrides it for that view. */
 export function displayZone() { try { const z = localStorage.getItem('roadmap.zone'); if (z) return z; } catch { /* storage can be disabled */ } return Intl.DateTimeFormat().resolvedOptions().timeZone; }
 function zoneOrUtc(zone: string) { try { new Intl.DateTimeFormat('en', { timeZone: zone }); return zone; } catch { return 'UTC'; } }

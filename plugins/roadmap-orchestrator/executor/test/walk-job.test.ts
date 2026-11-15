@@ -162,6 +162,8 @@ describe('the milestone walk (dev.13)', () => {
       // Round 2 admitted nothing: MS-1 settles, passed.
       const s2 = status(r.ctx.runDir, r.journal.view.arc, r.ctx.hostDir);
       assert.deepEqual(s2.milestones.map((m) => [m.id, m.state, m.passed, m.round]), [['MS-1', 'settled', true, 2]]);
+      // dev.81 (D1): status names each unit's origin and what its spec repairs (what the console groups r1 under MS-1 by).
+      assert.deepEqual(s2.units.map((u) => [u.unit, u.origin, u.repairs]), [['u1', 'planned', []], ['u2', 'planned', []], ['u3', 'planned', []], ['r1', 'repair', ['F-1']]]);
       assert.deepEqual(await walk(r), { kind: 'none' });
       assert.deepEqual(readCalls(d.scenarioPath).filter((c) => c.step === null), [], 'every backend call matched its step');
     } finally {
