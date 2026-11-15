@@ -55,7 +55,9 @@
         },
         "work": [],
         "failures": [],
-        "gate": null
+        "gate": null,
+        "origin": "planned",
+        "repairs": []
       },
       {
         "unit": "u2",
@@ -107,7 +109,9 @@
         },
         "work": [],
         "failures": [],
-        "gate": null
+        "gate": null,
+        "origin": "planned",
+        "repairs": []
       },
       {
         "unit": "u3",
@@ -149,7 +153,9 @@
         },
         "work": [],
         "failures": [],
-        "gate": null
+        "gate": null,
+        "origin": "planned",
+        "repairs": []
       }
     ],
     "edges": [

@@ -20,6 +20,14 @@ import type { Entry, Invocation } from '../tui/types.ts';
 import type { Supervision } from '../watch-lease.ts';
 import { ViewTokens, registerTokens, unregisterTokens } from './tokens.ts';
 import type { ViewVersions } from './view-protocol.ts';
+import { wireStatus } from '../status-wire.ts';
+/** The printed form of a captured status, folded once per status object (an 11 MB field status folds in tens of ms). */
+const wired = new WeakMap<object, ReturnType<typeof wireStatus>>();
+function printed(s: Parameters<typeof wireStatus>[0]): ReturnType<typeof wireStatus> {
+  let w = wired.get(s);
+  if (w === undefined) { w = wireStatus(s); wired.set(s, w); }
+  return w;
+}
 
 /** Why a read waits: no observation yet, its watermark is ahead, or (a strict read) nothing was verified since it arrived. */
 export type ParkKind = 'cold' | 'watermark' | 'strict';
@@ -195,11 +203,12 @@ export class ArcModel {
   /**
    * What the status route returns for `e` (the canonical status, or its summary): the capture's, with the last check since it
    * applied: live elapsed and token-wait times advanced from the capture's clock to the check's, its heartbeat and supervision.
-   * An envelope this model no longer holds is answered as captured.
+   * An envelope this model no longer holds is answered as captured. The full status is the printed one (`wireStatus`, dev.81):
+   * its growing history folded; the envelope keeps it whole for the views.
    */
   status(e: Envelope, summary: boolean): unknown {
     const b = this.#base, o = this.#overlay;
-    const captured = summary ? e.data.summary : e.data.display.status;
+    const captured = summary ? e.data.summary : printed(e.data.display.status);
     if (b === null || o === null || e.data !== this.#envelope?.data) return captured;
     const kept = this.#statuses.get(summary);
     if (kept?.data === e.data && kept.overlay === o) return kept.value;
@@ -211,7 +220,7 @@ export class ArcModel {
         running: u.running === null ? null : { ...u.running, elapsed: u.running.elapsed === null ? null : u.running.elapsed + delta },
         waitingFor: u.waitingFor === null ? null : { ...u.waitingFor, ...(typeof u.waitingFor.tokenWaitMs === 'number' ? { tokenWaitMs: u.waitingFor.tokenWaitMs + delta } : {}) },
       }));
-      value = { ...s, units, run: { ...s.run, heartbeatAt: o.heartbeatAt }, supervision: o.supervision };
+      value = wireStatus({ ...s, units, run: { ...s.run, heartbeatAt: o.heartbeatAt }, supervision: o.supervision });
     }
     this.#statuses.set(summary, { data: e.data, overlay: o, value });
     return value;

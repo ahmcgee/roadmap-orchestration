@@ -37,9 +37,15 @@ const edge: Check = v => [
   object({kind: oneOf('contingent'), target: str, edge: str, condition: preview, resolved: bool}),
 ].some(check => check(v));
 export const graphShape = object({...base,
-  units: array(object({id: str, title: str, titleTruncated: bool, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), state: str, stage: str, stageFinished: bool, systems: array(str), lineageRef: nullable(str)})),
+  units: array(object({id: str, title: str, titleTruncated: bool, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), state: str, stage: str, stageFinished: bool, systems: array(str), lineageRef: nullable(str),
+    origin: oneOf('planned', 'repair', 'polish', 'deflake'), supersededBy: nullable(str), carriedBy: array(str)})),
   milestones: array(object({id: str, state: str, passed: bool, memberIds: array(str), total: nat, merged: nat, withdrawn: nat, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), reason: nullable(str), costUsd: num}, {name: str})),
   noMilestone: object({ids: array(str), total: nat, merged: nat, withdrawn: nat}),
+  groups: array(v => [
+    object({kind: oneOf('design', 'milestone-repair', 'polish'), id: str, label: str, ids: array(str), milestone: str}),
+    object({kind: oneOf('audit'), id: str, label: str, ids: array(str), job: str}),
+    object({kind: oneOf('hardening', 'deflake'), id: str, label: str, ids: array(str)}),
+  ].some(check => check(v))),
   edges: array(edge), focus: object({activeIds: array(str), firstUncleared: nullable(str)}),
 });
 const signal=oneOf('passed','active','held','pending','failed','withdrawn');

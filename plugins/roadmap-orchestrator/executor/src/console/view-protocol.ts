@@ -1,5 +1,7 @@
 // UI-only DTOs, intentionally separate from canonical ObservationData/status. Browser imports types only.
 // D1–D11 refer to the source-field register in phase2-plan.md. No executor record/schema changes.
+import type { OutsideGroup } from './milestones.ts';
+export type { OutsideGroup };
 export const CONSOLE_UI_SCHEMA = 2;
 export type ViewVersions = Record<'shell' | 'graph' | 'timeline' | 'activity' | 'holistic' | 'effort' | 'resources' | 'attention', string>;
 /** `lastEventAt`: the time of the journal's last event at this position (null for an empty journal). It moves with every event,
@@ -29,13 +31,18 @@ export type GraphEdge =
   | {kind: 'feeds'; source: string; target: string}
   | {kind: 'contingent'; target: string; edge: string; condition: Preview; resolved: boolean};
 export type GraphView = View & {
-  units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; stageFinished: boolean; systems: string[]; lineageRef: string | null}[];
+  /** dev.81: `origin` the plan's (D1); `supersededBy` and `carriedBy` the status line's, what a hidden withdrawn unit's
+   * edges are re-pointed to and a shown one is placed beside (D2). */
+  units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; stageFinished: boolean; systems: string[]; lineageRef: string | null;
+    origin: 'planned' | 'repair' | 'polish' | 'deflake'; supersededBy: string | null; carriedBy: string[]}[];
   /** `signal`: running only while its walkthrough runs or is due on a live arc; a stopped arc runs nothing.
    * Counts and reasons come from console/milestones.ts, the one membership source: `memberIds` every member, `total` the live ones
    * (superseded and cut members are withdrawn, `withdrawn` of them), `merged` the live ones merged. `costUsd`: status summary spend (its units, their re-entries and its walkthroughs). */
   milestones: {id: string; name?: string; state: string; passed: boolean; memberIds: string[]; total: number; merged: number; withdrawn: number; signal: Signal; reason: string | null; costUsd: number}[];
   /** Units in no milestone: the station that is not a gate. Counted as a milestone's members are. */
   noMilestone: {ids: string[]; total: number; merged: number; withdrawn: number};
+  /** dev.81 (D1): every unit of `noMilestone`, once, in the group the Graph draws it in, in drawing order (console/milestones.ts `outsideGroups`). */
+  groups: OutsideGroup[];
   edges: GraphEdge[];
   focus: {activeIds: string[]; firstUncleared: string | null};
 };
