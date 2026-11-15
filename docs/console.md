@@ -27,7 +27,7 @@ The landing page follows this repo's live run, or its latest retained run. To pi
 | **Timeline** | When each agent and command ran, and when a backend was unavailable. |
 | **Activity** | Recent journal events, plus audits, findings and root decisions. Successful housekeeping steps stay behind a toggle; failures remain visible. |
 | **Effort** | Work finished and time spent waiting, by unit, role or systems. |
-| **Resources** | Who holds shared resources now and who held them before; CPU reservations; recorded waiting by reason. |
+| **Resources** | Who holds shared resources now and who held them before; CPU reservations; recorded waiting by reason. Now also shows the CI ref beside the integration slot: the head `origin` has, whether CI is still on it and when it settles by, and the head that pushes next. The CPU and fast-suite pools appear under Everything current. |
 | **Attention** | Decisions waiting for you, with the exact terminal commands for human responses. |
 
 **Agent histories.** Open an agentic activity from its unit to read the retained brief, thoughts, tool

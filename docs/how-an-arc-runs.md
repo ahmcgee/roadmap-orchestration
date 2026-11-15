@@ -181,10 +181,11 @@ never cancels a pipeline still running on the last one.
   minutes after the push (plan field, default 120; 0 pushes every publication at once), or `roadmap push` (the root
   advances the CI ref now, for instance after cancelling a pipeline by hand).
 - Until then the wanted head waits; a later fast-forward replaces it (one pending head). Waiting writes no fact; status
-  shows `pushes` (`ciHead`, `pending`, `settleBy`). Startup recomputes it from the log. A head still waiting when the
-  executor exits is pushed by the next startup, and at the arc's end by `roadmap pr`.
+  shows `pushes` (`ciHead`, `pending`, `settleBy`). A head still waiting when the executor exits is pushed by the
+  next startup, and at the arc's end by `roadmap pr`.
 - Pushes use an explicit lease and require the remote tip to be an ancestor. `main` is never pushed.
-- Startup retries the current head after a crash; an up-to-date remote is a no-op.
+- Startup recomputes the settle rule from the log and retries the current head after a crash; an up-to-date remote
+  is a no-op.
 - Snapshots and retirement continue during network work, bounded by `PUSH_TIMEOUT_MS` (five minutes per attempt).
 - `push-failed` and `push-diverged` are non-blocking arc notices, once per failure episode. Later
   publication/startup retries; divergence only probes until ancestry is safe (or the notice is acked by id). A later

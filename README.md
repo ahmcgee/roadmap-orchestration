@@ -54,9 +54,12 @@ The stages:
    unit states its intent, its non-goals and the tests that will prove it.
 2. **Review.** A fresh reviewer checks the plan against the target before any work is admitted.
 3. **Build and certify.** Each ready unit is built in its own worktree. The executor then runs the full checks, and
-   a fresh reviewer (the gate) judges the diff against the unit's intent. Failures feed fix rounds.
+   a fresh reviewer (the gate) judges the diff against the unit's intent. Failures feed fix rounds. Once the
+   ordinary revise rounds are spent the gate escalates, and an escalation revise that raises new findings gets one
+   more, uncharged, build round.
 4. **Publish.** An approved unit is tested again on top of the current integration branch. Only that exact green
-   commit is fast-forwarded and pushed. `main` is never pushed.
+   commit is fast-forwarded. The remote branch, which CI tests, advances to the latest head once CI has settled on
+   the one before. `main` is never pushed.
 5. **Judge.** When a milestone's units have merged, a reviewer walks the product as a user would. Whole-campaign
    audits look for broken invariants, hollow tests and drift from the documents.
 6. **Supervise.** Throughout, the architect watches for events that need a decision, revises the plan through
