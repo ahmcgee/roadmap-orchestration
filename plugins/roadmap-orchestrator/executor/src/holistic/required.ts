@@ -7,7 +7,8 @@ import { type LaneId, type ObligationId, type Sha, type UnitId, type WitnessItem
 import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specObligations, specRepairs, specWitnesses } from '../core/records.ts';
 import { deliverers, delivers } from '../input/lineage.ts';
-import { type ObligationDef, type Obligations, type WitnessRecord, isExempt, isMustHold } from './types.ts';
+import { unmergedOf } from './blocking.ts';
+import { type ObligationDef, type Obligations, type PlanDefect, type WitnessRecord, isExempt, isMustHold } from './types.ts';
 
 /** Why a test id is required: a target the unit delivers or repairs, or a must-hold it declares and must keep (preservation). */
 export type WitnessRole = 'target' | 'preservation';
@@ -111,6 +112,33 @@ function compareRows(a: RequiredWitness, b: RequiredWitness): number {
 
 /** Mutation smoke's targets (Q16): the `target` rows; preservation must-holds are never smoked. */
 export const smokeTargets = (required: readonly RequiredWitness[]): readonly RequiredWitness[] => required.filter((r) => r.role === 'target');
+
+/**
+ * dev.81 (B3a): the plan defects behind smoke survivors no build of `unit` can kill. Each survivor's target rows must all
+ * be the witness of an obligation the unit repairs but does not deliver (`delivers`: a target obligation row the unit
+ * does not deliver is an `I-n` repair), with deliverers, every one of them merged (`unmergedOf`): another unit's merged
+ * work already holds the witness, so reverting this unit's change cannot fail it. One `repair-delivered-elsewhere` per
+ * such obligation, ascending. Empty when any survivor is something else (a delivered target, a witness item, a repair
+ * of an obligation nobody else delivers): the survivors are then the build's, `smoke-survived` as before.
+ */
+export function repairsDeliveredElsewhere(
+  view: JournalView, obligations: Obligations, unit: UnitId, targets: readonly RequiredWitness[], survived: readonly TestRef[],
+): readonly PlanDefect[] {
+  const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
+  const elsewhere = new Map<ObligationId, readonly UnitId[]>();
+  for (const ref of survived) {
+    const rows = targets.filter((t) => testRefKey(t) === testRefKey(ref));
+    if (rows.length === 0) throw new Error(`smoke survivor ${testRefKey(ref)} is not among unit ${unit}'s targets`);
+    for (const row of rows) {
+      if (row.source.type !== 'obligation') return [];
+      const o = byId.get(row.source.id)!;
+      const by = deliverers(view, o);
+      if (delivers(view, o, unit) || by.length === 0 || unmergedOf(view, by).length > 0) return [];
+      elsewhere.set(o.id, [...by].sort());
+    }
+  }
+  return [...elsewhere.keys()].sort(compareIds).map((id) => ({ type: 'repair-delivered-elsewhere', obligation: id, units: elsewhere.get(id)! }));
+}
 
 /**
  * Which required test ids a lane run's records fail to witness (the one comparator of the lanes stage and `witness-check`):

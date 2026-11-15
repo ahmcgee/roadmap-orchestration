@@ -70,7 +70,8 @@ import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,
 import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
-import { type SpecM1,specForces,specWitnesses } from '../core/records.ts';
+import { type SpecM1,specForces,specRepairs,specWitnesses } from '../core/records.ts';
+import { planDeliverers } from '../input/lineage.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,type RepoPattern,absPath,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
 import { readGuideBytes } from '../corpus/guide.ts';
@@ -147,6 +148,8 @@ export type Phase0Input = Readonly<{
    * passes (dev.19: a dev.17 `**` deflake unit, once merged, can be neither narrowed nor cut). Empty with no arc log.
    */
   settled: ReadonlySet<UnitId>;
+  /** dev.81 (B3a): the units the arc has merged (retired); empty with no arc log. */
+  merged: ReadonlySet<UnitId>;
 }>;
 
 /**
@@ -155,8 +158,16 @@ export type Phase0Input = Readonly<{
  */
 export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-design'; milestone: MilestoneId; unit: UnitId; design: UnitId }>;
 
+/**
+ * dev.81 (B3a), advisory: live unit `unit`'s spec repairs `obligation`, which other units deliver (`units`, through
+ * lineage) and every one of them is merged: reverting `unit` cannot fail its witness, so its mutation smoke cannot kill
+ * it (at run time the lanes stage parks that `plan-defect`, uncharged). Never a refusal: a repair of a currently red
+ * witness is legitimate.
+ */
+export type RepairDeliveredElsewhere = Readonly<{ kind: 'repair-delivered-elsewhere'; unit: UnitId; obligation: ObligationId; units: readonly UnitId[] }>;
+
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }>;
+export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }> | RepairDeliveredElsewhere;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -174,6 +185,7 @@ export function phase0InputOf(files: InputFiles, config: RepoConfig | null, view
     specs: new Map([...files.specs].map(([unit, file]) => [unit, file.bytes])),
     ledger: files.ledger.bytes === null ? [] : parseRulings(files.ledger.bytes.toString('utf8'), files.ledger.path),
     settled: view === null ? new Set() : settledUnits(files.plan, view),
+    merged: view === null ? new Set() : new Set(files.plan.units.filter((u) => view.unit(u.id).status === 'retired').map((u) => u.id)),
   };
 }
 
@@ -205,7 +217,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input)];
+  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input), ...repairsDeliveredElsewhere(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -716,6 +728,20 @@ function derivedUnregenerated(input: Phase0Input): readonly Phase0Advisory[] {
     const units = input.plan.units.filter((u) => isLive(input.plan, u) && !input.settled.has(u.id) && u.systems.some((s) => systems.includes(s))).map((u) => u.id).sort();
     return units.length === 0 ? [] : [{ kind: 'derived-unregenerated' as const, outputs: d.outputs, units }];
   });
+}
+
+/** dev.81 (B3a): each live, unsettled unit's `I-n` repair of a witnessed obligation every other deliverer of which is merged. */
+function repairsDeliveredElsewhere(input: Phase0Input): readonly RepairDeliveredElsewhere[] {
+  const obligations = visionAndObligations(input).obligations;
+  if (obligations === null) return [];
+  const live = new Set(input.plan.units.filter((u) => isLive(input.plan, u) && !input.settled.has(u.id)).map((u) => u.id));
+  return parsedSpecs(input).filter((s) => live.has(s.unit)).flatMap((s) => specRepairs(s).flatMap((ref): RepairDeliveredElsewhere[] => {
+    const o = obligations.obligations.find((x) => x.id === ref);
+    if (o === undefined || o.state.type !== 'active' || isExempt(o) || o.witness === null) return [];
+    const units = planDeliverers(input.plan, o);
+    if (units.length === 0 || units.includes(s.unit) || !units.every((u) => input.merged.has(u))) return [];
+    return [{ kind: 'repair-delivered-elsewhere', unit: s.unit, obligation: o.id, units: [...units].sort() }];
+  }));
 }
 
 /** Read-only proof smells, never verdicts: existing future-test files may already pass; multi-unit delivery needs a spanning lane. */

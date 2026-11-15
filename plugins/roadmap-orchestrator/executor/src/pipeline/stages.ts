@@ -49,7 +49,8 @@ import { WorktreeRecoveryError } from '../git/worktree.ts';
 import { selectObligations,unitRules } from '../holistic/impact.ts';
 import { delivers } from '../input/lineage.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
-import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
+import { type ImpactInput,type ObligationDef,type Obligations,type PlanDefect,type Vision,parseObligations,parseVision,planDefectText } from '../holistic/types.ts';
+import { repairsDeliveredElsewhere } from '../holistic/required.ts';
 import { witnessLaneReasons } from '../input/classify.ts';
 import { regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
 
@@ -1146,10 +1147,13 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
       return { kind: 'env-unavailable', environment: d2.environment };
     case 'not-run':
       return { kind: 'green' };
-    case 'ran':
-      return d2.verdict.survived.length === 0
-        ? { kind: 'green' }
-        : { kind: 'smoke-survived', detail: { kind: 'smoke-survived', obligations: survivingObligations(d2.targets, d2.verdict.survived), testIds: d2.verdict.survived } };
+    case 'ran': {
+      if (d2.verdict.survived.length === 0) return { kind: 'green' };
+      // dev.81 (B3a): survivors that are only repairs of obligations merged units deliver are the plan's to fix, not a build's.
+      const defects = repairsDeliveredElsewhere(ctx.journal.view, holisticInForce(ctx).obligations!, unit.id, d2.targets, d2.verdict.survived);
+      if (defects.length > 0) return { kind: 'plan-defect', detail: { kind: 'plan-defect', defects }, needsUser: repairElsewhereNeedsUser(unit, salvaged, defects) };
+      return { kind: 'smoke-survived', detail: { kind: 'smoke-survived', obligations: survivingObligations(d2.targets, d2.verdict.survived), testIds: d2.verdict.survived } };
+    }
     case 'interrupted':
       return { kind: 'interrupted' };
     case 'occupied':
@@ -1157,6 +1161,19 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
     case 'cleanup-failed':
       return { kind: 'cleanup-failed', failed: d2.failed };
   }
+}
+
+/** dev.81 (B3a): the blocking item of a `plan-defect` park for smoke survivors other merged units deliver. */
+function repairElsewhereNeedsUser(unit: PlanUnit, salvaged: Sha, defects: readonly PlanDefect[]): NeedsUserContent {
+  return {
+    blocking: true,
+    subject: { type: 'unit', unit: unit.id },
+    reason: 'plan-defect',
+    summary: `Unit ${unit.id}: its repaired witnesses survived mutation smoke at ${salvaged} for a reason no build round can fix: ${defects.map(planDefectText).join(' ')} The unit is parked, uncharged.`,
+    recommendation: `Fix the plan with \`roadmap apply\`: drop the delivered obligation from ${unit.id}'s spec \`repairs\` (or cut the unit if nothing else is left to repair), then \`roadmap resume ${unit.id}\` re-runs its lanes.`,
+    options: [],
+    evidence: [],
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
