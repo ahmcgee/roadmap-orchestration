@@ -592,7 +592,7 @@ test('compaction.driver-review: fake root resumes after explicit owner answers, 
   const reply = parseRecord(good).map((_, i) => `${i + 1}: approve`).join('\n');
   const init = event({ type: 'system', subtype: 'init', session_id: 'review-session', mcp_servers: [] });
   const result = (text: string) => event({ type: 'result', session_id: 'review-session', result: text, total_cost_usd: 0.1 });
-  fakeClaude(f, `const { writeFileSync } = require('node:fs');\nconst a=process.argv.slice(2);\n` + init +
+  fakeClaude(f, `const { writeFileSync } = process.getBuiltinModule('node:fs');\nconst a=process.argv.slice(2);\n` + init +
     `if (a.includes('medium')) { ${result(reply)} } else if (a.includes('--resume')) { writeFileSync(${JSON.stringify(join(f.l.inputs, 'drafts/compaction.md'))}, ${JSON.stringify(good)}); ${result('Recorded the approved decisions. Review complete.')} } else { ${result(batch)} }`);
   const budget: Budget = { spent: 0, cap: 1 };
   const g = await stageA(f, budget);
@@ -622,7 +622,7 @@ test('compaction.driver-review: saved K-n playback gets an owner turn before rec
   const init = event({ type: 'system', subtype: 'init', session_id: 'review-session', mcp_servers: [] });
   const countPath = join(f.l.dir, 'fake-turn');
   const turns = [saved[0]!.batch, saved[0]!.reply, saved[1]!.batch, saved[1]!.reply, playback, confirmation, 'Recorded. Review complete.'];
-  fakeClaude(f, `const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+  fakeClaude(f, `const { existsSync, readFileSync, writeFileSync } = process.getBuiltinModule('node:fs');
 const countPath=${JSON.stringify(countPath)};
 const n=existsSync(countPath) ? Number(readFileSync(countPath, 'utf8')) : 0;
 writeFileSync(countPath, String(n+1));
