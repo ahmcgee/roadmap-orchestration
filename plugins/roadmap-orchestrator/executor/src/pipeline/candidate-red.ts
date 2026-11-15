@@ -1,6 +1,9 @@
-// The canonical candidate-red diagnosis: persisted before the outcome, then reused by fixes and parks.
+// The canonical candidate-red diagnosis: persisted before the outcome, then reused by fixes and parks. dev.81 (B4): the fix round's
+// `failures` (each red suite or spec lane's failure text, rounds.ts `laneFailures`) are recomputed from the suite on every read,
+// never persisted in the detail.
 import { join } from 'node:path';
 import type { CandidateRedCause, CandidateRedDetail } from '../core/events.ts';
+import { isRed } from '../core/records.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { absPath } from '../core/values.ts';
@@ -8,7 +11,7 @@ import { type StageContext, type StageParent, evidenceRoot } from './dispatch.ts
 import { batchMemberFix, candidateBrakeFix, candidateSeriesRoot, latestCandidate, memberBatchCandidate } from './integrate.ts';
 import { type JourneyCheckout, type LaneRecord, seriesDirty, seriesLedger, witnessRecordPath } from './lanes.ts';
 import { mutantFix } from './reproduce.ts';
-import { failingEvidenceDirs, failingLaneDirectives } from './rounds.ts';
+import { failingEvidenceDirs, failingLaneDirectives, laneFailures } from './rounds.ts';
 import { loadUnitSpec } from './stages.ts';
 
 /** Why candidate attempt `at` (an outcome `red`) was red, as its fix round reads it: the fix, and the suite's ledger. */
@@ -25,7 +28,7 @@ export function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent,
       ...(path === 'mutant survivor' ? witnesses.map((w) => `Lane ${w.lane} RUN: ${w.inv}; record ${witnessRecordPath(ctx.runDir, w)}.`) : []),
       ...(changed ? [`Checkout integrity: dirty paths: ${checkout.dirty.join(', ') || 'none'}; ${checkout.movedTo === null ? 'HEAD unchanged' : `HEAD moved to ${checkout.movedTo}`}.`] : []),
     ]};
-    return { fix, suite, detail: { kind: 'candidate-red', path, causes: [...new Set([path, ...(fix.causes ?? []), ...(changed ? ['dirty/moved checkout' as const] : [])])], summary: `${path}: ${fix.directives.join(' ')}`, evidence, directives: fix.directives, baseComparison: fix.baseComparison ?? null } };
+    return { fix: { ...fix, failures: laneFailures(suite.filter((l) => isRed(l.verdict))) }, suite, detail: { kind: 'candidate-red', path, causes: [...new Set([path, ...(fix.causes ?? []), ...(changed ? ['dirty/moved checkout' as const] : [])])], summary: `${path}: ${fix.directives.join(' ')}`, evidence, directives: fix.directives, baseComparison: fix.baseComparison ?? null } };
   };
   if (detail !== null && detail.path !== 'legacy') {
     const root = candidateSeriesRoot(ctx.runDir, at);
@@ -33,7 +36,7 @@ export function candidateRed(ctx: StageContext, unit: PlanUnit, at: StageParent,
       ...seriesLedger(ctx, at, loadUnitSpec(ctx, unit).spec.lanes, 'spec', latestCandidate(ctx, unit.id).post.new, absPath(join(root, '_spec'))),
       ...seriesLedger(ctx, at, ctx.plan().suite.lanes, 'suite', latestCandidate(ctx, unit.id).post.new, root),
     ];
-    return {fix: {failingEvidenceDirs: detail.evidence, directives: detail.directives, baseComparison: detail.baseComparison}, suite, detail};
+    return {fix: {failingEvidenceDirs: detail.evidence, directives: detail.directives, baseComparison: detail.baseComparison, failures: laneFailures(suite.filter((l) => isRed(l.verdict)))}, suite, detail};
   }
   // M3 (B7): a member of a repair batch red on its own selection: the batch candidate's evidence.
   const batch = memberBatchCandidate(view, at);

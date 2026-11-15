@@ -111,7 +111,8 @@ judgmentDispatch,runOp,unitBranch,verdictOf,verificationWorktree,
 } from './dispatch.ts';
 import { invocationDir } from './invoke.ts';
 import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,specSeriesRoot } from './lanes.ts';
-import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
+import { approvalBlobs,gateDelta,ledgerFact,mergeInDrops,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
+import { repairMutants } from './reproduce.ts';
 import { gateSmokeChecks } from './smoke.ts';
 import { type JudgmentReader,type PreBuildDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,escalationOf,fastSuiteRoot,fastSuiteLanes,holisticInForce,inMs,integrationTip,judgedAnswer,judgmentOutput,judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,record,releaseJudgment,removeJudgmentCheckouts,start,targetDirs,unitImpactInput,unitMilestones,unitTarget,verdictKind,writeJudgmentInputs } from './stages.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
@@ -381,11 +382,16 @@ type GateCapture =
 /**
  * M4a rev 3 (D1, D2, R38): what the executable checks of lanes attempt `series` found at `head`: the witnesses it requires
  * (a gate follows only a green check, so none missing or failing) and its smoke's verdict, or why the smoke did not run;
- * both null outside a corpus arc.
+ * both null outside a corpus arc. dev.81 (B3 b, c): the mutants the spec's repairs carry, and a merge-in resolution's dropped
+ * approved lines (src/pipeline/review.ts `mergeInDrops`), in any arc.
  */
 function gateChecks(ctx: StageContext, unit: PlanUnit, series: StageParent, head: Sha, paths: readonly RepoPath[]): GateChecks {
   const witnesses = gateWitnessChecks(ctx, unit, head);
-  return { witnesses, smoke: witnesses === null ? null : gateSmokeChecks(ctx, unit, series, head, witnesses.required), regenerated: regeneratedChecks(ctx, series, head, paths) };
+  return {
+    witnesses, smoke: witnesses === null ? null : gateSmokeChecks(ctx, unit, series, head, witnesses.required), regenerated: regeneratedChecks(ctx, series, head, paths),
+    // dev.81 (B3 b, c): the mutants the build was given, and approved lines a merge-in resolution dropped.
+    mutants: repairMutants(ctx, loadUnitSpec(ctx, unit).spec), mergeIn: mergeInDrops(ctx, unit.id, head),
+  };
 }
 
 /**

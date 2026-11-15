@@ -52,8 +52,18 @@
 // nothing changed beyond it (HEAD the merge itself, the worktree clean), while acceptance clauses of the spec are still unmet
 // (src/pipeline/handover.ts `unmetClauses`), is not taken as the attempt's last word: its session is resumed once, as a new
 // invocation of the same attempt, with `resolveUnmetDirective` naming those clauses and a fresh build's window
-// (`resolveContinuation`). Its outcome is read the normal way. A crash between the two calls reads the first (recovery consumes
+// (`reportContinuation`). Its outcome is read the normal way. A crash between the two calls reads the first (recovery consumes
 // the attempt's latest call).
+//
+// Report checks (dev.81, B4 and B5): a fix round's required checks and an after-merge-in round's build-cadence suite lanes are
+// proven in the final report's `checks`, one row per lane at the worktree's HEAD with the lane's expected exit. A final report
+// missing one gets the same one continuation (`missingChecksDirective`), never `malformed`; the continuation's report is read
+// the normal way, rows or not (the lanes stage runs the lanes anyway). One continuation per attempt carries every directive.
+//
+// After a merge-in (dev.81, B5): a round on a kept worktree the integration tip was merged into since its last build (a resolve
+// round, or the first build on a clean merge-in no build has built on; `cleanAfterMergeIn`) first has the ignored build-output
+// dirs removed (`git clean -fdX`, src/git/ignored.ts `REBUILT_OUTPUT_DIRS`), so no build output of the pre-merge tree survives,
+// and is given the build-cadence suite lanes to re-run (`AfterMergeIn`). A continue never cleans: it resumes exactly as left.
 //
 // Session never persisted. A round that resumes a session (a fix, resume or resolve round, a continue, a
 // reopen's respec round) whose call ends `process-fault` with no complete JSON line on stdout never got its
@@ -84,13 +94,14 @@ import type { RequiredWitness } from '../holistic/required.ts';
 import { type ImplementerSessionId,type InvocationId,type SeatRev,type Sha,type Sha256Hex,type UnitId,invocationId,parseInvocationId } from '../core/ids.ts';
 import { keptInput } from '../input/inforce.ts';
 import type { UnitState } from '../core/state.ts';
-import { isRed,type Bounds,type ImplementerSession,type LaneDef,STDERR_FILE } from '../core/records.ts';
+import { isRed,type Bounds,type ImplementerSession,type LaneDef,STDERR_FILE,STDOUT_FILE } from '../core/records.ts';
 import { type AbsPath,type IsoTime,type RefName,type RepoPath,branchRef,isoTimeOf } from '../core/values.ts';
+import { cleanRebuiltOutput } from '../git/ignored.ts';
 import { refTarget,revParse } from '../git/git.ts';
-import { type FixRound,ignoredText } from '../prompts/inputs.ts';
+import { type AfterMergeIn,type BuildLane,type FixRound,type LaneFailureText,ignoredText } from '../prompts/inputs.ts';
 import {
 CONTINUE_DIRECTIVE,CONTINUE_FRESH_DIRECTIVE,NO_SESSION_NOTE,RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,differentFailuresDirective,dirtyFlakyLaneDirective,dirtyLanesDirective,
-flakyLaneDirective,movedHeadDirective,repeatRedDirective,resolveUnmetDirective,resumeDirectives,smokeFixDirectives,stalledLaneDirective,witnessFixDirectives,
+flakyLaneDirective,movedHeadDirective,repeatRedDirective,resumeDirectives,smokeFixDirectives,stalledLaneDirective,witnessFixDirectives,
 } from '../prompts/directives.ts';
 import { builderRunnableLane } from '../resources/reserve.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -102,6 +113,7 @@ import { invocationDir } from './invoke.ts';
 import { LANE_STALL_MS,type LaneRecord,type VerificationTree,dirtyPaths,removeVerificationTree,seriesDurationMs } from './lanes.ts';
 import type { BuildRound } from './transitions.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
+import { failureLine,failureSignature,linesOf,wrapper } from './redlane.ts';
 
 
 /** A steer's brief, kept content-addressed by `roadmap steer` (src/commands/steer.ts) as `inputs/<sha256>.brief.md`. */
@@ -197,6 +209,46 @@ export function failingLaneDirectives(failing: readonly LaneRecord[]): readonly 
 /** The evidence dirs a fix round reads: the failing run's and its diagnostic rerun's, red or green. */
 export const failingEvidenceDirs = (l: LaneRecord): readonly AbsPath[] => (l.diagnostic !== null ? [...l.fixDirs, ...l.diagnostic.fixDirs] : l.fixDirs);
 
+/** dev.81 (B4): how many trailing output lines, and how many bytes of them, a fix round quotes per failing lane. */
+export const FAILURE_EXCERPT_LINES = 20;
+export const FAILURE_EXCERPT_BYTES = 4 * 1024;
+
+/** The newest lines of `lines` that fit `FAILURE_EXCERPT_BYTES` (a single longer line: its last bytes), in order. */
+function capExcerpt(lines: readonly string[]): readonly string[] {
+  const kept: string[] = [];
+  let bytes = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const size = Buffer.byteLength(lines[i]!) + 1;
+    if (bytes + size > FAILURE_EXCERPT_BYTES) break;
+    kept.unshift(lines[i]!);
+    bytes += size;
+  }
+  if (kept.length > 0 || lines.length === 0) return kept;
+  const last = Buffer.from(lines.at(-1)!);
+  return [last.subarray(last.length - FAILURE_EXCERPT_BYTES + 1).toString('utf8')];
+}
+
+/**
+ * dev.81 (B4): each failing lane's failure text (`LaneFailureText`), from its run's output snapshot (`fixDirs[0]`, the lane's
+ * stdout and stderr; an output file the snapshot holds none of reads as empty, and a lane that printed nothing has no entry):
+ * the unmasked line its failure signature reads, whether that line is specific, and the last non-wrapper lines of its stderr
+ * (stdout when stderr has none), capped.
+ */
+export function laneFailures(failing: readonly LaneRecord[]): readonly LaneFailureText[] {
+  return failing.flatMap((l): LaneFailureText[] => {
+    const dir = l.fixDirs[0];
+    if (dir === undefined) throw new Error(`lane ${l.lane} (${l.inv}) has no output snapshot dir`);
+    const read = (name: string): string => (existsSync(join(dir, name)) ? readFileSync(join(dir, name), 'utf8') : '');
+    const stderr = read(STDERR_FILE), stdout = read(STDOUT_FILE);
+    const own = linesOf(stderr).filter((x) => !wrapper(x));
+    const lines = own.length > 0 ? own : linesOf(stdout).filter((x) => !wrapper(x));
+    const signature = failureLine(stderr, stdout, '');
+    if (signature === '') return [];
+    const specific = failureSignature({ verdict: l.verdict, exitCode: l.exitCode, stderr, stdout, checkout: '' }).specific;
+    return [{ lane: l.lane, signature, specific, excerpt: capExcerpt(lines.slice(-FAILURE_EXCERPT_LINES)) }];
+  });
+}
+
 /** The fix round after a red or not-certified series: failing evidence, runnable checks, and any dirty-checkout blocker. */
 export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly string[], salvage: Sha, lanes: readonly LaneDef[], comparisons: readonly CiFact[] = []): DecidedRound {
   const compared = comparisons.filter((c) => c.kind === 'lane-base-compared');
@@ -205,7 +257,7 @@ export function laneFixRound(ledger: readonly LaneRecord[], dirty: readonly stri
   const dirtyFlaky = dirty.length > 0 && red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass')
     ? red.map((l) => dirtyFlakyLaneDirective(l.lane)) : [];
   const requiredChecks = lanes.filter((l) => builderRunnableLane(l) && red.some((r) => r.lane === l.id));
-  if (red.length > 0) return { kind: 'fix', fix: { requiredChecks, baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...dirtyDirectives, ...dirtyFlaky, ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
+  if (red.length > 0) return { kind: 'fix', fix: { requiredChecks, failures: laneFailures(red), baseComparison: compared.map((c) => ({lane: c.lane, base: c.base, result: c.result, evidence: c.evidence})), failingEvidenceDirs: [...red.flatMap(failingEvidenceDirs), ...compared.map((c) => c.evidence)], directives: [...failingLaneDirectives(red), ...dirtyDirectives, ...dirtyFlaky, ...compared.map((c) => `Lane ${c.lane} is red on the unit and ${c.result === 'pass' ? 'green' : 'red'} at diffBase ${c.base}. Base comparison evidence: ${c.evidence}.`)] }, ledger, verification: null, salvage };
   if (dirty.length === 0) throw new Error('laneFixRound: the series was green and clean; there is nothing to fix');
   return {
     kind: 'fix',
@@ -411,16 +463,36 @@ export async function callRound(ctx: StageContext, round: PreparedRound, spec: (
 }
 
 /**
- * Field feedback 2026-10-23 item 4: the one continuation of resolve round `round` whose call `called` reported final with nothing
- * changed beyond the merge while `unmet` clauses are still unmet (stages.ts `build` decides that): its session resumed (fresh with
- * NO_SESSION_NOTE when it has none) with `resolveUnmetDirective`, under a fresh build's window.
+ * The one continuation of round `round` whose call `called` reported final without what the round asks of its report (stages.ts
+ * `build` decides that): field feedback 2026-10-23 item 4, a resolve round that changed nothing beyond the merge while clauses are
+ * unmet (`resolveUnmetDirective`); dev.81 (B4, B5), a round whose required checks or after-merge-in lanes its `checks` do not prove
+ * (`missingChecksDirective`). Its session resumed (fresh with NO_SESSION_NOTE when it has none) with `directives`, under a fresh
+ * build's window; uncharged, a new invocation of the same attempt.
  */
-export function resolveContinuation(
-  ctx: StageContext, dispatch: ImplementerDispatch, round: PreparedRound, called: Extract<BackendCallOutcome, Readonly<{ kind: 'result' }>>, unmet: readonly Readonly<{ clause: string; text: string }>[], unit: UnitId,
+export function reportContinuation(
+  ctx: StageContext, dispatch: ImplementerDispatch, round: PreparedRound, called: Extract<BackendCallOutcome, Readonly<{ kind: 'result' }>>, directives: readonly string[], unit: UnitId,
 ): PreparedRound {
-  const fix: FixRound = { failingEvidenceDirs: [], directives: [resolveUnmetDirective(unmet)] };
+  if (directives.length === 0) throw new Error(`reportContinuation of ${unit}: a continuation names what the report lacks`);
+  const fix: FixRound = { failingEvidenceDirs: [], directives };
   const deadlineAt = inMs(minutesMs(ctx.journal.view.unit(unit).bounds.freshBuildMin));
   return { worktree: round.worktree, branch: round.branch, ...resumed(dispatch, invocationSession(ctx, called.inv), fix, []), deadlineAt };
+}
+
+/**
+ * dev.81 (B5): when round `input` is the first on the kept `worktree` since a merge-in (the latest done `mergein.prepare` into it:
+ * a resolve round, or a clean merge-in no build has built on, HEAD still its merge), removes the worktree's ignored build output
+ * (src/git/ignored.ts `cleanRebuiltOutput`) and returns what the round is told (`rerun`: the build-cadence suite lanes it
+ * re-runs). Null for a continue (it resumes exactly as left), with no merge-in, after a later build, and for a worktree the
+ * merge-in's own preparation created (a re-entry's: no build output of an earlier tree is in it).
+ */
+export function cleanAfterMergeIn(ctx: StageContext, input: RoundInput, worktree: AbsPath, rerun: readonly BuildLane[]): AfterMergeIn | null {
+  if (input.kind === 'continue') return null;
+  const view = ctx.journal.view;
+  const merged = view.opsOf('mergein.prepare').filter((i) => i.expect.worktree === worktree && view.doneOf(i.op) !== null).at(-1);
+  if (merged === undefined) return null;
+  if (view.opsOfParent('worktree.create', merged.parent).some((c) => c.expect.path === worktree)) return null;
+  const pending = input.kind === 'resolve' || (merged.post.type === 'clean-merged' && revParse(worktree, 'HEAD') === merged.post.new);
+  return pending ? { cleaned: cleanRebuiltOutput(worktree), rerun } : null;
 }
 
 /** The unit worktree on the unit branch; created at the integration tip for the unit's first build. */

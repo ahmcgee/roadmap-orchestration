@@ -8,7 +8,7 @@ const envelopes = new Set(`documents document document_content source rulings re
 scope_envelope scope_references risk_floor checkouts lane_programs systems test_lanes design_limits
 orientation diff large_diff not_inlined changed delta diagnosis escalation executable_checks
 how_your_session_ends job milestones obligations previous_findings prior_attempt proofs_of_concept
-refused_proposals rejected_scope_growth specs_only stale_links subagents suite_lanes witness_checks
+refused_proposals rejected_scope_growth specs_only stale_links subagents suite_lanes witness_lanes mutants merge_in after_merge_in
 working_unattended browser`.split(/\s+/));
 const entities = (text: string): string => text.replace(/&(lt|gt|quot|apos|amp);/g, (_, name: string) => ({ lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' })[name]!);
 

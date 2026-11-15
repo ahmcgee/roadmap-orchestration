@@ -1,5 +1,5 @@
 import type { BuildInputs, PromptModule } from '../inputs.ts';
-import { UNIT_POLICY, buildBrowserText, bullets, documentsXml, fastLanesText, handoverText, milestoneDocuments, milestonesText, systemNotesText, suiteLanesText, witnessChecksText, targetDocument } from '../inputs.ts';
+import { UNIT_POLICY, afterMergeInText, buildBrowserText, bullets, documentsXml, fastLanesText, handoverText, laneFailuresText, mergeInText, milestoneDocuments, milestonesText, mutantsText, systemNotesText, suiteLanesText, witnessLanesText, targetDocument } from '../inputs.ts';
 import { methodModules } from '../method/index.ts';
 import { BUILD_SCHEMA } from '../schemas.ts';
 
@@ -22,7 +22,7 @@ The spec and corpus are normative. Contracts bind as written; contract changes a
 </implementation>
 
 <witnesses_and_lanes>
-For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. A witness whose test file its lane never runs (the lane's argv, file list or package script leaves the file out) is a spec error: report it as specWrong naming the lane, the file and the check that shows it, rather than adding tests the lane cannot select. Use the provided witness-check commands for targeted checks after changing witnesses. Before a final report requesting certification, run every <build_lanes> command once on your final tree. The <fix_round> required checks have the same requirement, including lanes of a later cadence. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run other suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
+For each acceptance clause and witness item, confirm the exact test id exists and runs in its declared lane. A missing id is a blocker. A witness whose test file its lane never runs (the lane's argv, file list or package script leaves the file out) is a spec error: report it as specWrong naming the lane, the file and the check that shows it, rather than adding tests the lane cannot select. <witness_lanes> lists every lane holding a witness test the unit must make pass: run a build-cadence lane's witness check after changing witnesses; a lanes-stage lane's command serves a targeted check. <mutants> names, per repaired vacuity finding, the tests that must fail with its patch applied. Before a final report requesting certification, run every <build_lanes> command once on your final tree. The <fix_round> required checks and the <after_merge_in> lanes have the same requirement, including lanes of a later cadence, and each goes in checks: the lane, the commit HEAD was at when it ran (git rev-parse HEAD) and its exit code; a final report missing one is sent back for the re-run. List them and every other development check in experiments with argv and exit code. Running build lanes is not rehearsing the suite: do not run other suite lanes or start executor-only environments. The executor runs the full lanes verbatim in a clean checkout after your report. Your build holds CPU; lanes reserve resources. When present, <last_lane_series> gives the last series’ duration in milliseconds and the resources it held.
 </witnesses_and_lanes>
 
 <decisions>
@@ -34,13 +34,13 @@ Stay inside the worktree and evidence directory. Never push, rebase, reset --har
 </safety>
 
 <report>
-Return summary, grounding, tooBig, experiments, blockers, notes, messages and final. Notes are useful observations for later rounds. Messages lists every message another Claude session sent you during this run: the sender's name, when it arrived and its text; an empty list when none arrived. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
+Return summary, grounding, tooBig, experiments, blockers, notes, messages, checks and final. Notes are useful observations for later rounds. Messages lists every message another Claude session sent you during this run: the sender's name, when it arrived and its text; an empty list when none arrived. Stop when the clauses hold and request certification. A fix round includes findings and their evidence, failing lanes, base comparisons, notes and remaining allowance; address the cause and check the repair, or rebut it with evidence.
 </report>
 `;
 
 export const PROMPT: PromptModule<'build'> = {
   system, schema: BUILD_SCHEMA,
-  fields: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'lastLaneSeries', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
+  fields: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'lastLaneSeries', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessLanes', 'mutants', 'mergeIn', 'afterMergeIn', 'milestones', 'browser', 'handover', 'method'],
   render: (i: BuildInputs) => `${documentsXml([
     { source: `spec.json ${i.spec.unit} rev ${i.spec.rev}`, content: i.spec.markdown },
     ...i.contracts.map((c) => ({ source: c.path, content: c.text })), ...milestoneDocuments(i.milestones), targetDocument(i.target),
@@ -52,9 +52,9 @@ export const PROMPT: PromptModule<'build'> = {
 <worktree>${i.worktree}</worktree>
 <evidence_dir>${i.evidenceDir}</evidence_dir>
 <notes>${bullets(i.notes, '(none)')}</notes>${systemNotesText(i.systemNotes)}${milestonesText(i.milestones)}
-<build_lanes>${fastLanesText(i.worktree, i.fastLanes)}</build_lanes>${i.lastLaneSeries === null ? '' : `<last_lane_series>${JSON.stringify(i.lastLaneSeries)}</last_lane_series>`}${suiteLanesText(i.worktree, i.suiteLanes)}${witnessChecksText(i.witnessChecks)}${buildBrowserText(i.browser)}
+<build_lanes>${fastLanesText(i.worktree, i.fastLanes)}</build_lanes>${i.lastLaneSeries === null ? '' : `<last_lane_series>${JSON.stringify(i.lastLaneSeries)}</last_lane_series>`}${suiteLanesText(i.worktree, i.suiteLanes)}${witnessLanesText(i.witnessLanes)}${mutantsText(i.mutants)}${mergeInText(i.mergeIn)}${afterMergeInText(i.worktree, i.afterMergeIn)}${buildBrowserText(i.browser)}
 ${i.handover === null ? '' : `<handover>${handoverText(i.handover)}</handover>`}
-${i.fixRound === null ? '' : `<fix_round>\n<required_checks>${i.fixRound.requiredChecks?.length ? fastLanesText(i.worktree, i.fixRound.requiredChecks) : '(none)'}</required_checks>\n<failing_lane_evidence>${bullets(i.fixRound.failingEvidenceDirs, '(none)')}</failing_lane_evidence>\n<findings_and_evidence>${bullets(i.fixRound.directives, '(none)')}</findings_and_evidence>\n<base_comparison>${JSON.stringify(i.fixRound.baseComparison ?? null)}</base_comparison>\n<notes>${bullets(i.notes, '(none)')}</notes>\n<cap_and_allowance>${JSON.stringify(i.fixRound.capState ?? null)}</cap_and_allowance>\n</fix_round>`}
+${i.fixRound === null ? '' : `<fix_round>\n<required_checks>${i.fixRound.requiredChecks?.length ? fastLanesText(i.worktree, i.fixRound.requiredChecks) : '(none)'}</required_checks>\n<failing_lanes>${laneFailuresText(i.fixRound.failures)}</failing_lanes>\n<failing_lane_evidence>${bullets(i.fixRound.failingEvidenceDirs, '(none)')}</failing_lane_evidence>\n<findings_and_evidence>${bullets(i.fixRound.directives, '(none)')}</findings_and_evidence>\n<base_comparison>${JSON.stringify(i.fixRound.baseComparison ?? null)}</base_comparison>\n<notes>${bullets(i.notes, '(none)')}</notes>\n<cap_and_allowance>${JSON.stringify(i.fixRound.capState ?? null)}</cap_and_allowance>\n</fix_round>`}
 ${methodModules('build', i.method)}
 Implement unit ${i.spec.unit}, run targeted checks, and return the report.`,
 };
