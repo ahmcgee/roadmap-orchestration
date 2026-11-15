@@ -131,7 +131,7 @@ OUTCOME_STAGES,type OperatorParkKind,type OutcomeStage,type PlanAppliedFact,
 type ProbeTarget,type RevisionPayload,type WalkOutcome,holderUnit,parentUnit,probeTargetKey,
 } from './core/events.ts';
 import { readJson } from './core/fsx.ts';
-import { type ArcId,type BuildSessionName,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,invocationId,sha } from './core/ids.ts';
+import { type ArcId,type BuildSessionName,CPU_POOL,type CommandId,type DebtId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type KnownDefectId,type LaneId,type MilestoneId,type NeedsUserId,type ObligationId,type PlanRev,type ResourceUnit,type RoutingRev,type RuleId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,compareIds,compareResourceUnits,cpuToken,FAST_SUITE_POOL,fastSuiteToken,invocationId,sha } from './core/ids.ts';
 import type { JournalView } from './core/interfaces.ts';
 import { EVENTS_FILE,type LogSnapshot,readJournal } from './core/log.ts';
 import { gateLargeDiffOf } from './core/projections.ts';
@@ -174,7 +174,7 @@ import { arcDebtLedger } from './pipeline/publish.ts';
 import { repairUnits,specFacts } from './pipeline/reproduce.ts';
 import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
 import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
-import { cpuCapacity,isDirty,poolUnits } from './resources/pool.ts';
+import { cpuCapacity,fastSuiteCapacity,isDirty,poolUnits } from './resources/pool.ts';
 import {
 type ResolvedRouting,type SeatSources,arcScopeOf,provenanceStack,resolveRouting,
 } from './routing/layers.ts';
@@ -358,7 +358,7 @@ export type HostView = Readonly<{
   containment: Readonly<{ mode: ContainmentMode | null; guarantee: string }>;
   /** Every resource unit that is not free, or has a transition open, ascending. */
   resources: readonly Readonly<{ resource: ResourceUnit; state: string; holder: Holder | null; pending: boolean }>[];
-  /** `@cpu` and each declared pool: instances, those in use (held or transitioning) and those dirty (a residue). */
+  /** `@cpu`, `@fast-suite` (dev.81) and each declared pool: instances, those in use (held or transitioning) and those dirty (a residue). */
   pools: Readonly<Record<string, Readonly<{ size: number; used: number; dirty: number }>>>;
   /** The arbiter's waiters, served first to last (sched.json; empty without a live executor). */
   queue: readonly QueueEntry[];
@@ -719,6 +719,8 @@ function pools(view: JournalView, plan: PlanM1): HostView['pools'] {
   };
   const out: Record<string, Readonly<{ size: number; used: number; dirty: number }>> = {
     [CPU_POOL]: count(Array.from({ length: cpuCapacity(plan) }, (_, i) => cpuToken(i + 1))),
+    // dev.81 (C4): the lanes-stage suite lanes running at once, so a `fast-suite-tokens` wait shows what it waits on.
+    [FAST_SUITE_POOL]: count(Array.from({ length: fastSuiteCapacity(plan) }, (_, i) => fastSuiteToken(i + 1))),
   };
   for (const d of plan.resources) if (d.pool !== undefined) out[d.name] = count(poolUnits(plan, d.name));
   return out;

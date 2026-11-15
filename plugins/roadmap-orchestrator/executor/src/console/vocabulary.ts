@@ -18,7 +18,8 @@ export const agentWords = (a:{role:string|null;backend:string|null;model:string|
 const outcomes:Record<string,[string,Signal]>={running:['Running','active'],started:['Started','active'],pass:['Passed','passed'],green:['Passed','passed'],success:['Succeeded','passed'],approve:['Approved','passed'],published:['Published','passed'],'probe passed':['Probe passed','passed'],
  empty:['No workloads running','passed'],captured:['Evidence captured','passed'],committed:['Changes saved','passed'],'committed-contract-touched':['Changes saved; contract updated','passed'],released:['Resources released','passed'],
  fail:['Failed','failed'],red:['Failed','failed'],'process-fault':['Process fault','failed'],'executor-fault':['Executor fault','failed'],'probe failed':['Probe failed','failed'],'cleanup-failed':['Cleanup failed','failed'],'commit-failed':['Commit failed','failed'],
- revise:['Changes requested','held'],unmerged:['Unmerged changes','held'],'pre-delivery':['Not delivered yet','pending']};
+ revise:['Changes requested','held'],unmerged:['Unmerged changes','held'],'pre-delivery':['Not delivered yet','pending'],
+ 'revise-new':['Changes requested (new findings)','held'],'deflake-held':['Held for a deflake fix','held'],'environment-divergence':['Lanes disagree with the builder\'s checks','held']};
 export const outcomeWords = (outcome:string):string => outcomes[outcome]?.[0] ?? plainWords(outcome);
 export const outcomeSignal = (outcome:string):Signal => outcomes[outcome]?.[1] ?? 'pending';
 /** A run's own result. A run that succeeded only finished: a review's verdict is its stage result, not the run's. */
@@ -41,7 +42,7 @@ export const waitCountWords = (c:{measured:number;unmeasured:number}):string => 
 export const stateChoices = (states:readonly string[]):{label:string;value:string}[] => {const by=new Map<string,string[]>();for(const s of states)by.set(stateWords(s),[...(by.get(stateWords(s))??[]),s]);return [...by].map(([label,values])=>({label,value:values.join(',')}));};
 /** The one display word for each status signal, everywhere a status is shown. */
 export const signalWords = {passed:'Passed',active:'Running',held:'On hold',failed:'Failed',pending:'Pending',withdrawn:'Withdrawn'} as const;
-export const reasonWords = (reason:string):string => ({'cpu-tokens':'CPU capacity','cpu-pressure':'CPU pressure','memory-pressure':'Memory pressure','publication-slot':'Integration slot','admission-hold:base-red':'Baseline hold','admission-hold:dependency':'Dependency','admission-hold:milestone':'Milestone gate','admission-hold:paused':'Paused','admission-hold:host-pressure':'Host pressure'}[reason] ?? reason.replace(/^admission-hold:/,'').replace(/^named-resource:/,'Resource: ').replaceAll('-',' '));
+export const reasonWords = (reason:string):string => ({'cpu-tokens':'CPU capacity','fast-suite-tokens':'Fast-suite capacity','resource-unhealthy':'Resource unhealthy','cpu-pressure':'CPU pressure','memory-pressure':'Memory pressure','publication-slot':'Integration slot','admission-hold:base-red':'Baseline hold','admission-hold:dependency':'Dependency','admission-hold:milestone':'Milestone gate','admission-hold:paused':'Paused','admission-hold:host-pressure':'Host pressure'}[reason] ?? reason.replace(/^admission-hold:/,'').replace(/^named-resource:/,'Resource: ').replaceAll('-',' '));
 /** "u32", "u32 and u34", "u32, u34 and u36". */
 export const listWords = (items:readonly string[]):string => items.length<2?items.join(''):`${items.slice(0,-1).join(', ')} and ${items.at(-1)}`;
 /** What a unit waits for, in words. `milestones` says why each unpassed milestone has not passed (console/milestones.ts). */

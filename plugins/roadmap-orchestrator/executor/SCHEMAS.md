@@ -1728,13 +1728,14 @@ All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
   `command.apply` op. Re-running after a crash finds the target's receipt and applies.
 - **`PlanChange {type: 'obligation'}` gains `fields?: ObligationEditField[]`** (C3b), present on `edit: 'edited'`.
   The closed set is `OBLIGATION_EDIT_FIELDS = serves | contracts | deliveredBy | activation | rule`. `drainsArc`
-  returns false for a `deliveredBy`-only edit and for `plan-field: capacity`.
+  returns false for a `deliveredBy`-only edit and for `plan-field: capacity` or `plan-field: ci`.
 - **Token pools** (C3b, C4). The pools are sized from the plan in force at each allocation. A request is refused while
   the held tokens (any number, those above the size included) reach the size. Built-in `@fast-suite` pool: tokens
   `@fast-suite#<n>` (`FastSuiteToken`, `ResourceUnitParts.type: 'fast-suite'`, lock order after `@cpu`, admission
   only). `ResourceRequest.fastSuite?: true`, which `laneRequest(..., fastSuite)` sets for a lanes-stage suite series'
   runs, takes one token. Plan `capacity.fastSuites?: positive` defaults to `max(1, floor(memGiB / 12))` from the host
   fingerprint. When it is absent, the executor logs the derived value once at startup as a `ROADMAP_CAPACITY` warning.
+  `Status.host.pools['@fast-suite']` reports its size and the tokens in use beside `@cpu`.
 - **Wait reasons** (appended): `fast-suite-tokens` (every `@fast-suite` token held) and `resource-unhealthy` (C3c: the
   request names an environment or resource instance that is a tripped breaker's target or an outstanding retryable
   park's target). A `resource-unhealthy` waiter is set aside like an environment-blocked one and blocks no backfill.

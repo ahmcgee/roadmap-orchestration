@@ -371,6 +371,11 @@
           "size": 16,
           "used": 0,
           "dirty": 0
+        },
+        "@fast-suite": {
+          "size": 2,
+          "used": 0,
+          "dirty": 0
         }
       },
       "queue": [],
@@ -736,6 +741,11 @@
       "unmeasuredReservations": 0,
       "byUnitStage": [],
       "byJobStage": []
+    },
+    "pushes": {
+      "ciHead": null,
+      "pending": "<sha>",
+      "settleBy": null
     }
   },
   "summary": {

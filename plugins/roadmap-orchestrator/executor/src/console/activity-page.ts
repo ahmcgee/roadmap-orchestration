@@ -9,7 +9,7 @@ export function activityPage(e:Envelope,activity:ConsoleActivity,params:Record<s
   const page=activity.pageEntries(e,params),data=page.view,entries=new Map(page.entries.map(entry=>[entry.row.id,entry]));
   const invocations=new Map(e.data.display.invocations.map(i=>[invocationDirName(invocationIdOf(i.id)),i]));
   const rows=data.rows.map(row=>{
-    if(row.kind!=='stage-outcome'||row.stage!=='gate'||row.outcome!=='revise')return row;
+    if(row.kind!=='stage-outcome'||row.stage!=='gate'||(row.outcome!=='revise'&&row.outcome!=='revise-new'))return row;
     const titles:string[]=[];
     for(const id of entries.get(row.id)?.invocations??[]){const i=invocations.get(id);if(!i||i.execution!=='agent'||!i.endedAt||Number(id.split('-')[0])>data.page.asOf.highWater)continue;
       const report=retainedReport(e,i.id);

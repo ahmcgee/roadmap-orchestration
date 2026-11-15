@@ -18,7 +18,7 @@ export const resourceStateWords=(state:string)=>({reserved:'Reserved',running:'I
 /** CPU reservation tokens read as slots of the CPU pool. */
 /** When in the arc: "Day 8, 7d 0h after the arc started". The date is the cell; this is its secondary line. */
 export const arcDay=(at:string,start:string)=>{const ms=Math.max(0,Date.parse(at)-Date.parse(start));return `Day ${Math.floor(ms/86400_000)+1}, ${elapsed(ms)} after the arc started`;};
-export const resourceName=(r:string)=>r==='integration-slot'?'Integration slot':r==='@cpu'?'CPU':r.startsWith('@cpu#')?`CPU slot ${r.slice(5)}`:r;
+export const resourceName=(r:string)=>r==='integration-slot'?'Integration slot':r==='@cpu'?'CPU':r.startsWith('@cpu#')?`CPU slot ${r.slice(5)}`:r==='@fast-suite'?'Fast suites':r.startsWith('@fast-suite#')?`Fast-suite slot ${r.slice(12)}`:r;
 /** How a call's CPU reservation was chosen. */
 export const basisWords=(b:NonNullable<ResourceCpuCall['basis']>)=>b.kind==='explicit'?'Reservation set in the plan':b.kind==='calibrated'?'Reservation calibrated from earlier runs':b.kind==='default'?'Default reservation':plainWords(b.kind);
 /** What CPU figures rest on, one fact per sentence. "Measured calls" are those measured against a reservation. */
@@ -128,6 +128,8 @@ function NowStrip({arc,now,nowEnd,terminalAt,ending,startedAt,detail,subject,sho
           :now.queueAvailable===true?<p>No one is waiting.</p>:<p>Queue unknown <Hint label="Why the queue is unknown"><p>The queue is read from the running executor. {now.queueAvailable===false?"The executor isn't running, so its queue can't be read.":"The executor hasn't reported a queue, so an empty queue can't be confirmed."}</p></Hint></p>}
         {now.queues.matching>now.queues.rows.length&&<p className="muted">{pluralise(now.queues.matching-now.queues.rows.length,'more unit')} waiting. <Button variant="ghost" onClick={showAll}>Show all</Button></p>}
         {others>0&&<p className="muted">{pluralise(others,'other queue entry','other queue entries')} wait for CPU or other resources.</p>}
+        <h4>CI ref</h4>
+        <CiRef ci={now.ci}/>
       </div>
       <div><h4>Reserved CPU</h4>
         {cpu?<><p className="resource-figure">{cpu.used} of {cpu.capacity} cores</p><span className="cpu-meter" aria-hidden="true"><span style={{width:`${cpu.capacity?Math.min(100,cpu.used/cpu.capacity*100):0}%`}}/></span><p className="muted">Reserved, not measured use.</p></>:<p>Not recorded</p>}
@@ -145,6 +147,21 @@ function NowStrip({arc,now,nowEnd,terminalAt,ending,startedAt,detail,subject,sho
     </div>
     {freshError&&<p role="alert">Couldn't update Now. {freshError} <Button onClick={retry}>Retry</Button></p>}
   </section>;
+}
+/** A commit id as its first twelve characters, the whole id on hover. */
+const Commit=({sha}:{sha:string})=><code title={sha}>{sha.slice(0,12)}</code>;
+/**
+ * dev.81: the CI ref, origin's integration branch. It advances to the local head only once the head it last pushed has
+ * settled: a witness at it, `roadmap push`, or the plan's `ci.settleMin` after the push.
+ */
+function CiRef({ci}:{ci:ResourceNow['ci']}) {
+  if(ci===null)return <p>Not recorded</p>;
+  const zone=route().query.get('zone')??displayZone();
+  return <>
+    {ci.ciHead===null?<p>Nothing has been pushed to origin.</p>:<p>Origin has <Commit sha={ci.ciHead}/>{ci.settleBy?', still under CI':', settled'}.</p>}
+    {ci.settleBy&&<p className="muted">Settles by <time dateTime={ci.settleBy} title={ci.settleBy}>{formatInstant(ci.settleBy,zone)} {zoneLabel(zone)}</time>, or sooner on a witness at it or <code>roadmap push</code>.</p>}
+    {ci.pending&&<p>Next to push: <Commit sha={ci.pending}/>{ci.settleBy?', once CI settles':''}.</p>}
+  </>;
 }
 /** Recorded bookings on the window's time axis: one lane per resource, or per pool instance, with backend holds pinned above. */
 function Schedule({arc,data,zone,clock,short,detail,openWindow}:{arc:string;data:ResourceView;zone:string;clock:number;short:(at:string)=>string;detail:(key:string)=>string;openWindow:(from:number,to:number)=>void}) {
