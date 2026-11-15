@@ -5,6 +5,7 @@ import { arcId } from '../core/ids.ts';
 import { readJson } from '../core/fsx.ts';
 import { runStart } from '../core/records.ts';
 import { absPath, type AbsPath } from '../core/values.ts';
+import { HOST_LOCK, hostPath } from '../host/hostdir.ts';
 import { readClaim } from '../host/lock.ts';
 import { SCHEMA_VERSION } from '../core/version.ts';
 import { commonDirOfRun } from '../answers.ts';
@@ -24,7 +25,10 @@ export function retainedRuns(common: AbsPath, hostDir: AbsPath) {
     if (isOlderSchema(raw)) return [];
     return [{ arc, runDir, at: runStart(raw, path).at }];
   }).sort((a, b) => b.at.localeCompare(a.at) || a.arc.localeCompare(b.arc));
-  const claim = readClaim(hostDir);
+  // A dev.32 claim (schema 1) names no arc this release can read: the console starts beside it and selects none by it, and
+  // the supervisor's own startup (src/host/legacy.ts) refuses or retires it. Temporary schema-cut scaffolding, deleted with legacy.ts.
+  const lock = hostPath(hostDir, HOST_LOCK);
+  const claim = existsSync(lock) && isOlderSchema(readJson(lock)) ? null : readClaim(hostDir);
   const live = claim && realpathSync(commonDirOfRun(claim.runDir)) === realpathSync(common) ? runs.find((r) => r.arc === claim.arc) : null;
   return { arcs: runs, selected: live?.arc ?? runs[0]?.arc ?? null };
 }
