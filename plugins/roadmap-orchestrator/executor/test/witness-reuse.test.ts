@@ -9,6 +9,8 @@ import {absPath} from '../src/core/values.ts';
 import {arcJourneyLane, laneRuntime, runJourneySeries} from '../src/pipeline/lanes.ts';
 import {holisticInForce} from '../src/pipeline/stages.ts';
 import {candidateTree, holisticArc, tipTree} from './fixtures/brake-common.ts';
+import {checksArc, outcomeFacts} from './fixtures/checks-common.ts';
+import {editJson} from './fixtures/route-common.ts';
 import {wire} from './fixtures/publish-common.ts';
 import {SCENARIO_TIMEOUT_MS, planCheckStep} from './fixtures/stage-common.ts';
 import {U1, applyBody, contextFor, gateStep, mulBuild, outcomes, stepUntil, syncInputs} from './fixtures/unit-common.ts';
@@ -47,5 +49,30 @@ for (const changed of [true, false]) test(`witness-reuse.${changed ? 'changed-wi
     assert.equal(outcomes(d).at(-1),'candidate:green', 'current witness passes; the old record must not grade it red');
     const after = r.journal.view.opsOf('proc.spawn').filter(i => i.expect.subject.purpose === 'journey' && i.parent.type === 'stage' && i.parent.stage === 'candidate').length;
     assert.equal(after - before, changed ? 1 : 0, changed ? 'the changed witness needs a new observation' : 'valid reuse stays free');
+  } finally {r.journal.close();}
+});
+
+// dev.81 (A2): the witness check (D1) reuses an observation only when it holds every id the unit requires on the lane,
+// its spec's witness items included. The journey lane's explicit `inputs` exclude what the build touches, so the salvage
+// tree's key equals the tip's and the tip's observation (t1 only) is a candidate for reuse; the unit's witness item W-1
+// requires w1, which that observation lacks, so the lane runs and sees it.
+test('witness-reuse.spec-item-runs: an observation lacking a spec witness item\'s id is not reused by the witness check; the lane runs and the item is seen', {timeout:SCENARIO_TIMEOUT_MS}, async () => {
+  const a = await checksArc({steps:[planCheckStep({decision:'approve'}), mulBuild(), gateStep({decision:'approve'})], witnesses:[{id:'W-1', testId:'w1'}],
+    trees:{'*':{outcomes:{t1:'pass'}}}});
+  editJson(join(a.planDir,'obligations.json'), (o) => { (o['lanes'] as Record<string, unknown>[])[0]!['inputs'] = ['README.md']; });
+  const r = contextFor(a.d);
+  try {
+    await stepUntil(r, 'u1', f => f.stage === 'pre-build');
+    // The tip's observation: t1 alone.
+    const lane = holisticInForce(r.ctx).obligations!.lanes[0]!;
+    const parent = {type:'stage', unit:U1, stage:'pre-build', attempt:r.journal.view.unit(U1).decided!.attempt} as const;
+    await runJourneySeries(r.ctx, {type:'unit', parent, rt:laneRuntime(r.ctx,U1)}, [arcJourneyLane(lane)],
+      {path:absPath(join(a.d.runDir,'tip-observed')), checkout:{type:'detached', at:sha(git(a.d.repo,'rev-parse','main'))}}, {reuse:false, stop:()=>false});
+    scriptTree(a.control, '*', {outcomes:{t1:'pass', w1:'pass'}});
+    await stepUntil(r, 'u1', f => f.stage === 'lanes');
+    const lanes = outcomeFacts(a.d).filter((f) => f.stage === 'lanes').at(-1)!;
+    assert.equal(lanes.outcome, 'green', JSON.stringify(lanes.detail ?? null));
+    const ran = r.journal.view.opsOf('proc.spawn').filter((i) => i.expect.subject.purpose === 'journey' && i.parent.type === 'stage' && i.parent.stage === 'lanes' && i.parent.attempt === lanes.attempt);
+    assert.equal(ran.length, 1, 'the witness lane ran at the salvage SHA instead of reusing the tip\'s observation');
   } finally {r.journal.close();}
 });

@@ -22,6 +22,7 @@ import { idleEnvironments } from '../src/resources/environments.ts';
 import { type ChecksArc,type ChecksOptions,checksArc,outcomeFacts } from './fixtures/checks-common.ts';
 import { managedEnv,startedCalls } from './fixtures/env-common.ts';
 import { treeWith } from './fixtures/repair-common.ts';
+import { editSpec } from './fixtures/route-common.ts';
 import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
 import { type ArcDescriptor,type ArcRun,MUL,codexStep,contextFor,gateStep,isGateCall,mulBuild,outcomes,stepUntil } from './fixtures/unit-common.ts';
 import { barrierDir,reached,release } from './helpers/barrier.ts';
@@ -488,6 +489,42 @@ describe('D2 mutation smoke', () => {
       assert.deepEqual([smokeRuns(a.d), smokeRan(a.d)], [[], []]);
       await stepUntil(r, 'u1', (x) => x.stage === 'gate');
       assert.match(gateCalls(a.d)[0]!.stdin, /Mutation smoke did not run: the unit has no target witness tests\./);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // dev.81 (B3a): u2 delivers I-1 and merges; u1 then repairs I-1. The reverted u1 tree still holds u2's merged work, so
+  // t1 survives: the plan's defect, parked uncharged; a survivor that is the unit's own (its witness item w1) keeps the
+  // charged smoke-survived.
+  for (const mixed of [false, true]) test(`smoke.repair-delivered-elsewhere${mixed ? '-mixed' : ''}: ${mixed ? 'a survivor of the unit\'s own beside it stays smoke-survived, charged' : 'every survivor a repair of an obligation merged units deliver parks plan-defect, uncharged; no fix round'}`, T, async () => {
+    const keyed = (unit: string, s: Step): Step => ({ ...s, unit });
+    const a = await checksArc({
+      steps: [
+        keyed('u2', planCheckStep({ decision: 'approve' })), keyed('u2', mulBuild()), keyed('u2', gateStep({ decision: 'approve' })),
+        keyed('u1', planCheckStep({ decision: 'approve' })), keyed('u1', codexStep([{ type: 'commit', message: 'u1', files: { 'src/u1.js': 'export const u1 = 1;\n' } }], { argv: ['exec', '-C'] })),
+      ],
+      activation: 'future', deliveredBy: ['u2'], more: ['u2'], testPaths: ['test/**'], ...(mixed ? { witnesses: [{ id: 'W-1', testId: 'w1' }] } : {}),
+    });
+    editSpec(a.d, 'u1', (s) => { s['repairs'] = ['I-1']; });
+    // u2's own smoke kills t1 (src/mul.js reverted), so u2 merges; u1's reverted tree is the tip, which holds u2's work.
+    scriptTree(a.control, mutantTreeOf(a), { outcomes: { t1: 'fail' } });
+    const r = contextFor(a.d);
+    try {
+      await stepUntil(r, 'u2', (f) => f.stage === 'snapshot');
+      assert.equal(r.journal.view.unit(unitId('u2')).status, 'retired');
+      await stepUntil(r, 'u1', (f) => f.stage === 'lanes');
+      const f = lanesFacts(a.d).at(-1)!;
+      assert.deepEqual(smokeRan(a.d).at(-1)?.verdict.survived, mixed ? [{ lane: 'journey', testId: 't1' }, { lane: 'journey', testId: 'w1' }] : [{ lane: 'journey', testId: 't1' }]);
+      if (mixed) {
+        assert.deepEqual([f.outcome, f.chargeable], ['smoke-survived', true]);
+        return;
+      }
+      assert.deepEqual([f.outcome, f.class, f.chargeable, f.park], ['plan-defect', 'park', false, { class: 'operator', kind: 'env' }]);
+      assert.deepEqual(f.detail, { kind: 'plan-defect', defects: [{ type: 'repair-delivered-elsewhere', obligation: 'I-1', units: ['u2'] }] });
+      const u = r.journal.view.unit(unitId('u1'));
+      assert.deepEqual([u.status, u.counters.chargeableFailures], ['park-pending', 0]);
+      assert.equal(readCalls(a.d.scenarioPath).length, 5, 'no fix round: u2\'s three calls, u1\'s pre-build and build');
     } finally {
       r.journal.close();
     }

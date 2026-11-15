@@ -44,7 +44,7 @@ import type { PlanUnit } from '../input/plan.ts';
 import type { GateChecks, WitnessCheckCommand } from '../prompts/inputs.ts';
 import { arcScopeOf } from '../routing/layers.ts';
 import { type StageContext, type StageParent, dispatchOf, witnessWorktree } from './dispatch.ts';
-import { type LaneRuntime, arcJourneyLane, intact, runJourneySeries } from './lanes.ts';
+import { type LaneRuntime, intact, requiredJourneyLane, runJourneySeries } from './lanes.ts';
 import type { LaneCancel } from './redlane.ts';
 import { holisticInForce, loadUnitSpec } from './stages.ts';
 
@@ -137,7 +137,8 @@ export type WitnessPresence =
 export async function witnessPresence(ctx: StageContext, unit: PlanUnit, parent: StageParent, salvaged: Sha, rt: LaneRuntime): Promise<WitnessPresence> {
   const required = requiredAt(ctx, unit, salvaged);
   if (required.length === 0) return { kind: 'skip' };
-  const lanes = requiredLanes(ctx, required).map(arcJourneyLane);
+  // dev.81 (A2): a reuse must hold every id the unit requires on the lane, its spec's witness items included.
+  const lanes = requiredLanes(ctx, required).map((l) => requiredJourneyLane(l, testIdsOf(required, l.id)));
   const checkout = { path: witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const series = await runJourneySeries(ctx, { type: 'unit', parent, rt }, lanes, checkout, { reuse: true, stop: () => false });
   crashPoint('witnesscheck.after-witnessed', unit.id);

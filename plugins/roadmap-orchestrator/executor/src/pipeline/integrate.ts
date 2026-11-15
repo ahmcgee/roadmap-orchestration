@@ -86,6 +86,7 @@ import type { WorktreeCreateRequest } from '../git/worktree.ts';
 import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, repairedObligations as repairedBy } from '../holistic/findings.ts';
 import { observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
+import { deliverers, delivers } from '../input/lineage.ts';
 import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
@@ -437,7 +438,7 @@ export type Claims = Readonly<{
   obligations: Obligations;
   /** The candidate's selection, split closure applied (`selectObligations`). */
   selected: ReadonlySet<ObligationId>;
-  /** Future obligations (not latched) whose `deliveredBy` the candidate completes. */
+  /** Future obligations (not latched) whose `deliveredBy`, resolved through lineage (dev.81), the candidate completes. */
   completing: ReadonlySet<ObligationId>;
   /** The obligations its units' specs declare they repair (a finding repair: its finding's obligation). */
   repairs: ReadonlySet<ObligationId>;
@@ -467,7 +468,7 @@ export function claimsOf(
   const latched = latchedSet(view);
   const published = new Set(view.publications().map((p) => p.unit));
   const chosen = new Set(selected);
-  const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
+  const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(deliverers(view, o), published, units)).map((o) => o.id));
   const needed = new Set(obligations.obligations.flatMap((o) => (chosen.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
   return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id)) };
 }
@@ -773,6 +774,8 @@ function observedRuns(ctx: StageContext, claims: Claims, commit: Sha): readonly 
  * Latching (plan "Latching"; §2.8): after `ff{published}` of `commit` publishing `units`, and before the snapshot, an
  * `obligation-latched` for each future obligation the publication completes and that holds on its tree (the `latch`
  * effect), where missing. From then on it is must-hold. A restart that re-reads the published ff writes what is missing.
+ * dev.81 (A1): completion reads the deliverers resolved through lineage, so a re-entry of a declared deliverer latches,
+ * and the fact names that publishing re-entry (src/holistic/required.ts reads its published merge).
  */
 export function latchPublished(
   ctx: Readonly<{ journal: Journal; runDir: AbsPath; repo: AbsPath; hostEnv: Readonly<Record<string, string | undefined>> }>, units: readonly UnitId[], commit: Sha,
@@ -782,7 +785,7 @@ export function latchPublished(
   const view = ctx.journal.view;
   const latched = latchedSet(view);
   const published = new Set(view.publications().map((p) => p.unit));
-  const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(o, published, units)).map((o) => o.id));
+  const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(deliverers(view, o), published, units)).map((o) => o.id));
   if (completing.size === 0) return;
   const tree = revParse(ctx.repo, `${commit}^{tree}`);
   const store = observations(ctx);
@@ -799,7 +802,8 @@ export function latchPublished(
   if (ids.length === 0) return;
   for (const id of ids) {
     const o = obligations.obligations.find((d) => d.id === id)!;
-    const unit = units.find((u) => o.deliveredBy.includes(u));
+    // dev.81 (A1): the publishing unit of the lineage, never a superseded parent the obligation names.
+    const unit = units.find((u) => delivers(view, o, u));
     if (unit === undefined) throw new Error(`obligation ${id} latches, but none of ${units.join(', ')} delivers it`);
     ctx.journal.fact({ kind: 'obligation-latched', obligation: id, unit, treeSha: tree });
   }

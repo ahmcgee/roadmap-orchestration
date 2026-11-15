@@ -24,7 +24,7 @@ import { selfIdentity } from '../src/host/liveness.ts';
 import { claimHost,releaseHost } from '../src/host/lock.ts';
 import { changesScope,classify,splitCutReason } from '../src/input/classify.ts';
 import { CORPUS_FILE_INPUT,keptInput,planInForce,readInputFiles,recordPlan,revisionInForce } from '../src/input/inforce.ts';
-import { MILESTONE_REFERENCES_BUDGET } from '../src/phase0/rows.ts';
+import { APPLY,MILESTONE_REFERENCES_BUDGET,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
 import { type StartChecks,type StartInput,runChecks } from '../src/preflight/checks.ts';
 import type { StartupRejection } from '../src/preflight/startup.ts';
 import {
@@ -527,6 +527,22 @@ describe('holistic arcs target a corpus (H4)', () => {
 });
 
 // Revision delta (2026-10-27; 1.0.0-dev.26): old defects remain visible without blocking unrelated work.
+describe('a repair delivered elsewhere (dev.81, B3a)', () => {
+  // u1 delivers the future I-1; u2's spec repairs it. Once u1 is merged, reverting u2 cannot fail I-1's witness: the
+  // apply's rows advise it (the lanes stage parks it plan-defect at run time), and never refuse it.
+  it('apply.repair-delivered-elsewhere: a live unit repairing an obligation only merged units deliver is an advisory, not a refusal', T, async () => {
+    const a = await corpusArc({ activation: 'future' });
+    writeFileSync(join(a.planDir, 'u2.json'), JSON.stringify({ ...readJsonFile(join(a.planDir, 'u1.json')), unit: 'u2', repairs: ['I-1'] }));
+    editPlan(a, (p) => ({ ...p, units: [...p['units'] as Json[], { ...(p['units'] as Json[])[0]!, id: 'u2', spec: 'u2.json' }] }));
+    const input = phase0InputOf(filesOf(a), readRepoConfig(a.repo), null);
+    const advised = (merged: readonly string[]) => phase0Rows({ ...input, merged: new Set(merged.map((u) => unitId(u))), settled: new Set(merged.map((u) => unitId(u))) }, APPLY);
+    assert.deepEqual(advised([]).advisories.filter((x) => x.kind === 'repair-delivered-elsewhere'), [], 'u1 unmerged: the repair may still be the one that delivers');
+    const merged = advised(['u1']);
+    assert.deepEqual(merged.advisories.filter((x) => x.kind === 'repair-delivered-elsewhere'), [{ kind: 'repair-delivered-elsewhere', unit: 'u2', obligation: 'I-1', units: ['u1'] }]);
+    assert.deepEqual(merged.rows, advised([]).rows, 'no refusal');
+  });
+});
+
 describe('revision plan-defect delta', () => {
   const milestone = (id: string, references: readonly string[]): Json => ({
     id, text: 'Berths work.', units: ['u1'], design: { supplied: true }, references,

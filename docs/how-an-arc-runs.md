@@ -264,6 +264,9 @@ every answer.
   whole argv). A red targeted run is confirmed by the lane's own argv, whose verdict counts: a runner that finds no
   test files never charges the unit.
 - Exact witness ids can be checked with `witness-check --lane-file` before requesting certification.
+- The lanes stage's witness check reuses a certified observation only when it holds every test id the unit requires
+  on that lane: obligation targets, repairs, its spec's witness items and the must-holds it keeps. One that lacks any
+  of them runs the lane again, so a lane whose `inputs` leave out a new test file never charges a missing witness.
 
 ## Attempt limits and diagnosis
 
@@ -289,6 +292,13 @@ every answer.
 - A re-entry must repair the recorded cause, such as a surviving mutant or dirty lane outputs.
 - Fresh build sessions with earlier lineage receive a handover of diagnosis, findings, unmet clauses, witness
   failures, decisions and original evidence.
+- Delivery follows lineage. An obligation whose `deliveredBy` names a re-entered unit is delivered by the unit that
+  re-enters it, so `deliveredBy` never needs editing after a re-entry. The re-entry is required to make its witnesses
+  pass, may name the obligation in a witness item, and latches it on publication; the latch names the re-entry.
+- A unit that repairs an obligation other units deliver, once all of them are merged, cannot make its mutation smoke
+  kill that witness, because reverting the unit leaves their work in place. The apply flags such a repair as an
+  advisory. If every surviving witness is a repair of this kind, the lanes stage parks the unit as an uncharged
+  `plan-defect`: drop the repair from the spec, or cut the unit.
 
 ## Flakes, environments and residue
 

@@ -97,7 +97,7 @@ function fromRef(repo: AbsPath, source: Extract<Phase0Source, { type: 'ref' }>):
     specs: new Map(ref.plan.units.map((u) => [u.id, kept(m.specs[u.id], SPEC_INPUT)])),
     ledger: parseRulings(ref.input(m.rulings.ledgerSha256, RULINGS_INPUT).toString('utf8'), `refs/roadmap/${ref.arc} (the rulings ledger)`),
     // A ref carries no unit state: every unit of its plan is judged.
-    settled: new Set(),
+    settled: new Set(), merged: new Set(),
   };
   const outcome = phase0Rows(input, FROM_REF);
   return { rows: outcome.rows, input, advisories: outcome.advisories };

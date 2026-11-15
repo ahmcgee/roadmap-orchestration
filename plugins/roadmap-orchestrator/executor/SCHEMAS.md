@@ -1643,3 +1643,22 @@ Current admission wait starts are not reconstructed from queue order. Legacy unm
 explicit. Holistic audit outcomes/findings are shown; checkpoint job detail remains outside this console.
 Claude init/rate-limit records become collapsed session metadata, while the canonical TUI text remains
 unchanged. Transcript text is decoded, escaped and byte-paged in the browser, never a link to base64 JSON.
+
+### dev.81 A1, A2, B3a delivery through lineage, required-id reuse, repairs delivered elsewhere
+
+- Delivery through lineage (A1): an obligation's `deliveredBy` is kept as declared; every reader resolves it at read
+  time through `src/input/lineage.ts`: `deliverers(view, o)` / `delivers(view, o, unit)` (from the log's
+  `supersededBy`, transitively; a cut deliverer stays itself) for run-time readers, and `planDeliverers(plan, o)` /
+  `planDelivers(plan, o, unit)` (from a plan's `reenters`) for checks that judge a revision before it is in force. No
+  record changes: `obligation-latched.unit` names the publishing unit, a re-entry where the obligation names its parent.
+  `ImpactInput` (in memory) gains `delivers: (o, unit) => boolean`.
+- Journey reuse (A2): `JourneyLane.required: string[] | null` (in memory): the witness check's lanes carry the unit's
+  required ids on that lane, which a reused observation must hold; null keeps every in-force obligation witness on the
+  lane (candidates, audits, baselines). No fact changes.
+- `PlanDefect` gains `{type:'repair-delivered-elsewhere', obligation:ObligationId, units:UnitId[] (non-empty)}` (B3a): every
+  mutation-smoke survivor is a target only as an `I-n` repair of an obligation the unit does not deliver, whose
+  deliverers (resolved through lineage) are all merged. The lanes stage records `plan-defect` with it, parked uncharged
+  as the witness check's plan defects are; a survivor of the unit's own keeps `smoke-survived`. Absent on dev.80 logs.
+- `Phase0Advisory` gains `{kind:'repair-delivered-elsewhere', unit, obligation, units}` (B3a): a live, unsettled unit whose
+  spec repairs a witnessed obligation that only merged units deliver (`planDeliverers`). Never a refusal.
+  `Phase0Input.merged` (in memory) holds the retired units.

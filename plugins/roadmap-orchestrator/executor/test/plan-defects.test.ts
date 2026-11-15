@@ -3,14 +3,14 @@ import { systemName } from '../src/core/ids.ts';
 // Plan defects (2026-10-16): a plan defect code can check is refused at Phase 0 (`plan-defect`, src/phase0/rows.ts row
 // 11), over a corpus arc's real files and git (test/helpers/corpusarc.ts). Named tests: plan-defect.witness-in-lane,
 // plan-defect.argv-forms, plan-defect.witness-reachable, plan-defect.undeclared, plan-defect.undeclared-per-witness,
-// plan-defect.derived, plan-defect.regenerate.
+// plan-defect.derived, plan-defect.regenerate, plan-defect.repair-delivered-elsewhere (dev.81: the run-time variant's reader).
 import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it } from 'node:test';
 import { obligationId,unitId } from '../src/core/ids.ts';
 import { repoPath,repoPattern } from '../src/core/values.ts';
-import { type ArcLaneDef,type PlanDefect,laneRevOf,parseObligations } from '../src/holistic/types.ts';
+import { type ArcLaneDef,type PlanDefect,laneRevOf,parseObligations,planDefect,planDefectText } from '../src/holistic/types.ts';
 import { laneMisses,specWitnessMiss } from '../src/holistic/witnessfiles.ts';
 import { parsePlan,regenerateLaneId } from '../src/input/plan.ts';
 import { APPLY,RESTART,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
@@ -289,5 +289,15 @@ describe('derived files', () => {
     const suite = base['suite'] as { lanes: Json[] };
     const taken = { ...(suite.lanes[0] ?? { argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [] }), id: ids([entry(GEN)])[0] };
     assert.throws(() => parsePlan({ ...base, suite: { lanes: [...suite.lanes, taken] }, derived: [entry(GEN)] }), /plan\.suite\.lanes/);
+  });
+});
+
+describe('a repair delivered elsewhere (dev.81, B3a)', () => {
+  it('plan-defect.repair-delivered-elsewhere: the run-time variant reads back as written and its text names the obligation and its deliverers', () => {
+    const d: PlanDefect = { type: 'repair-delivered-elsewhere', obligation: obligationId('I-3'), units: [unitId('u2'), unitId('u4-r1')] };
+    assert.deepEqual(planDefect(JSON.parse(JSON.stringify(d)), 'defect'), d);
+    assert.throws(() => planDefect({ ...d, units: [] }, 'defect'), /units/);
+    const text = planDefectText(d);
+    for (const id of ['I-3', 'u2', 'u4-r1']) assert.ok(text.includes(id), text);
   });
 });
