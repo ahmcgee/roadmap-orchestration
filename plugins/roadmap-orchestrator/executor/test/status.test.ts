@@ -25,6 +25,7 @@ import { MODEL_IDS } from '../src/routing/types.ts';
 import { PARK_ESCALATE_MS } from '../src/schedule/types.ts';
 import { fileSha256,loadSpec } from '../src/spec/spec.ts';
 import { SESSION_GUARANTEE,type Status,type UnitStatusLine,compactState,status } from '../src/status.ts';
+import type { WireStatus,WireUnitLine } from '../src/status-wire.ts';
 import { watch } from '../src/watch.ts';
 import {
 EXEC_TIMEOUT_MS,type ExecRun,SMOKE_CLAUDE_ONLY,SMOKE_DEFAULT,cli,journalOf,reasonOf,setupExec,startExec,statusOf,until,
@@ -60,9 +61,9 @@ async function completeRun(t: Owner, steps: readonly Step[], extra: readonly str
 }
 
 describe('status.subset', () => {
-  let before_: Status;
+  let before_: WireStatus;
   let r: ExecRun;
-  let after_: Status;
+  let after_: WireStatus;
   // A suite's before hook has no context to own the run: the suite's after hook tears it down.
   const teardowns: (() => Promise<void>)[] = [];
   after(async () => {
@@ -89,11 +90,13 @@ describe('status.subset', () => {
       commands: { pending: [], receipts: [] },
       spend: { byRole: [], byModel: { models: [], unresolvedRevs: [] }, byClass: { classes: [], unresolvedRevs: [] }, byJob: [], bySmoke: [] },
       host: {
-        containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], jobQueue: [], work: [], probes: [], backends: [],
+        containment: { mode: null, guarantee: SESSION_GUARANTEE }, resources: [], pools: {}, queue: [], jobQueue: [], probes: [], backends: [],
+        workTotals: { builds: 0, lanes: 0, measured: 0, runMs: 0, wallMs: 0 },
         log: { bytes: 0, events: 0, foldMs: 0, compactionDue: false },
       },
       parkedBackends: [],
       plan: null,
+      pushes: null,
       routing: null,
       rejection: null,
       holistic: false,
@@ -128,21 +131,26 @@ describe('status.subset', () => {
     assert.deepEqual(Object.keys(s).sort(), [
       'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
       'divergences', 'edges', 'findings', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
-      'packReview', 'parkedBackends', 'plan', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waiting', 'waived',
+      'packReview', 'parkedBackends', 'plan', 'pushes', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waiting', 'waived',
     ]);
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
     assert.equal(s.run.state, 'complete');
     assert.equal(s.run.owner.state, 'none', 'the lock was released');
     assert.ok(s.run.heartbeatAt !== null, 'the executor wrote its heartbeat');
-    assert.deepEqual(s.units.map(({ certification, work, ...u }) => u), [{
+    assert.deepEqual(s.units.map(({ certification, workTotals, ...u }) => u), [{
       unit: 'u1', stage: 'retire', status: 'retired', attempts: 12, chargeableFailures: 0, lineageAttempts: { builds: 1, judged: 3, buildCap: 16, judgedCap: 40 }, risk: 'med', seat: null,
       state: 'merged', waitingFor: null, holds: [], priority: null, park: null, lineage: null, supersededBy: null, carries: null, carriedBy: [], origin: 'planned', repairs: [], buildTier: 'med', running: null, failures: [],
       gate: { attempt: 8, decision: 'approve', findings: [], standing: []},
     }]);
     assert.equal(s.units[0]!.certification?.allowance, 3);
-    assert.deepEqual(s.units[0]!.certification?.lanes.map((l) => [l.id, l.state]), [['mul', 'green'], ['suite', 'green']], 'the completed certification retains both spec and suite lanes');
-    assert.ok(s.units[0]!.work.some((w) => w.kind === 'build' && w.cpuBasis?.kind === 'default' && w.measured !== null));
+    // dev.81 (D3): the printed status folds a merged unit's lanes to their count by state and its runs to totals; the full
+    // status, read in process, keeps the lanes and the run rows.
+    assert.deepEqual(s.units[0]!.certification !== null && 'laneStates' in s.units[0]!.certification ? s.units[0]!.certification.laneStates : null, { green: 2 });
+    const u1 = status(absPath(r.runDir), arcId(r.arc), absPath(r.hostDir)).units[0]!;
+    assert.deepEqual(u1.certification?.lanes.map((l) => [l.id, l.state]), [['mul', 'green'], ['suite', 'green']], 'the completed certification retains both spec and suite lanes');
+    assert.ok(u1.work.some((w) => w.kind === 'build' && w.cpuBasis?.kind === 'default' && w.measured !== null));
+    assert.ok(s.units[0]!.workTotals.builds >= 1 && s.units[0]!.workTotals.measured >= 1, JSON.stringify(s.units[0]!.workTotals));
     assert.deepEqual([s.edges, s.runOnly, s.host.resources, s.host.queue, s.host.probes, s.host.backends], [[], null, [], [], [], []]);
     assert.deepEqual(s.host.pools['@cpu']?.used, 0, 'every token released');
     assert.deepEqual(s.needsUser, []);
@@ -328,7 +336,7 @@ test('status.sup-items-and-arc-wide-state: file-only sup-/host- items are listed
 // The parallel view (M2 step 9)
 
 /** No model id anywhere in a status but `spend` (the one render-time derivation). */
-function assertNoModelIdsInStatus(s: Status): void {
+function assertNoModelIdsInStatus(s: Status | WireStatus): void {
   const text = JSON.stringify({ ...s, spend: null });
   for (const model of MODEL_IDS) assert.ok(!text.includes(model), `${model} in status outside spend.byModel`);
 }
@@ -337,11 +345,17 @@ const perUnit = (unit: string, steps: readonly Step[]): readonly Step[] => steps
 /** A build that commits mul and waits at its unit's barrier `<unit>.build`. */
 const heldBuild = codexStep([{ type: 'commit', message: 'add mul', files: MUL }, { type: 'barrier', name: 'build', timeoutMs: 120_000, perUnit: true }], { argv: ['exec', '-C'] });
 const heldUnit = (unit: string): readonly Step[] => perUnit(unit, [planCheckStep({ decision: 'approve' }), heldBuild, gateStep({ decision: 'approve' })]);
-const line = (s: Status, unit: string): UnitStatusLine => {
-  const l = s.units.find((u) => u.unit === unit);
+const line = <S extends Status | WireStatus>(s: S, unit: string): S['units'][number] => {
+  const l = (s.units as readonly S['units'][number][]).find((u) => u.unit === unit);
   assert.ok(l !== undefined, `unit ${unit} in status`);
   return l;
 };
+/** A live unit's lanes on the printed status: dev.81 (D3) folds only a merged, cut or superseded unit's certification. */
+function liveLanes(l: WireUnitLine): NonNullable<UnitStatusLine['certification']>['lanes'] {
+  const c = l.certification;
+  assert.ok(c !== null && 'lanes' in c, `${l.unit} (${l.state}): a live unit's lanes unfolded on the printed status`);
+  return c.lanes;
+}
 
 test('status.parallel: two independent units build at once and status shows both running (stage, attempt, elapsed, their @cpu tokens), a dependent waiting on its dependency, the pool in use and the edge; watch streams the same view compactly; once the dependency merges the paused dependent is held', T, async (t) => {
   const r = setupExec(t, { units: [{ id: 'u1' }, { id: 'u2' }, { id: 'u3', after: ['u1'] }], steps: [...SMOKE_DEFAULT, ...heldUnit('u1'), ...heldUnit('u2')] });
@@ -422,7 +436,7 @@ test('status.resources: CPU-only builds leave the pool free; one executor lane h
   for (const unit of ['u1', 'u2']) release(r.scenarioDir, `${unit}.build`);
   await until(async () => {
     s = await statusOf(r);
-    return s.units.some((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1') && l.certification?.lanes[0]?.state === 'running') && s.units.some((l) => l.state === 'waiting');
+    return s.units.some((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1') && l.certification !== null && 'lanes' in l.certification && l.certification.lanes[0]?.state === 'running') && s.units.some((l) => l.state === 'waiting');
   }, 60_000, 'one unit running its lane, the other waiting for the pool');
   const holder = s.units.find((l) => l.running?.stage === 'lanes' && l.holds.some((h) => h === 'est#1'))!;
   const waiter = s.units.find((l) => l.state === 'waiting')!;
@@ -441,11 +455,14 @@ test('status.resources: CPU-only builds leave the pool free; one executor lane h
   const est = s.host.resources.find((e) => e.resource === 'est#1');
   assert.deepEqual(est?.holder, { type: 'stage', unit: holder.unit, stage: 'lanes', attempt: holder.running?.attempt });
   assertNoModelIdsInStatus(s);
-  assert.deepEqual(holder.certification?.lanes.map((l) => [l.id, l.state]), [['a-pool', 'running'], ['mul', 'queued'], ['suite', 'queued']]);
-  assert.deepEqual(holder.certification?.lanes[0]?.holds, ['est#1']);
+  assert.deepEqual(liveLanes(holder).map((l) => [l.id, l.state]), [['a-pool', 'running'], ['mul', 'queued'], ['suite', 'queued']]);
+  assert.deepEqual(liveLanes(holder)[0]?.holds, ['est#1']);
   assert.equal(holder.certification?.left, 3);
-  assert.ok(waiter.certification?.lanes.every((l) => l.state === 'queued'));
-  const runningWork = holder.work.find((w) => w.inv === holder.certification?.lanes[0]?.inv)!;
+  assert.ok(liveLanes(waiter).every((l) => l.state === 'queued'));
+  // dev.81 (D3): the printed status carries run totals, not run rows; the full status, read in process, has the rows. The
+  // lane is held at its barrier, so the running lane's row is still the one the printed status names.
+  const full = () => status(absPath(r.runDir), arcId(r.arc), absPath(r.hostDir));
+  const runningWork = line(full(), holder.unit).work.find((w) => w.inv === liveLanes(holder)[0]?.inv)!;
   assert.equal(runningWork.reservedCpu, 4);
   assert.equal(runningWork.cpuBasis?.kind, 'default');
   assert.equal(runningWork.measured, null);
@@ -460,8 +477,10 @@ test('status.resources: CPU-only builds leave the pool free; one executor lane h
   s = await statusOf(r);
   assert.deepEqual(s.units.map((l) => l.state), ['merged', 'merged']);
   assert.deepEqual(s.host.pools['est'], { size: 1, used: 0, dirty: 0 });
-  assert.ok(s.units.every((u) => u.work.some((w) => w.kind === 'build' && w.measured !== null)));
-  assert.ok(s.units.find((u) => u.unit === waiter.unit)!.work.some((w) => w.lane === 'a-pool' && w.tokenWaitMs! > 0));
+  assert.ok(s.units.every((u) => u.workTotals.builds >= 1 && u.workTotals.measured >= 1), JSON.stringify(s.units.map((u) => u.workTotals)));
+  const done = full();
+  assert.ok(done.units.every((u) => u.work.some((w) => w.kind === 'build' && w.measured !== null)));
+  assert.ok(line(done, waiter.unit).work.some((w) => w.lane === 'a-pool' && w.tokenWaitMs! > 0));
 });
 
 // In process, over a log written directly: a live owner is a sleeping process named in this run's claim.
