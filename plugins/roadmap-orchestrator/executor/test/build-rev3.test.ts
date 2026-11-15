@@ -361,7 +361,7 @@ describe('dev.81: merge-in resolution', () => {
         const merge = resolve.stdin.match(/<merge_in>([\s\S]*?)<\/merge_in>/)?.[1];
         assert.ok(merge !== undefined, 'the resolve round names its merge-in');
         for (const needle of [tip, 'Conflicted paths: src/add.js', approved, `git diff ${approved} HEAD -- src/add.js`]) assert.ok(merge.includes(needle), needle);
-        const after = resolve.stdin.match(/<after_merge_in>([\s\S]*?)<\/after_merge_in>/)?.[1];
+        const after = resolve.stdin.match(/<after_merge_in>\n([\s\S]*?)<\/after_merge_in>/)?.[1];
         assert.ok(after !== undefined && after.includes('dist'), `the round is told what was removed: ${after}`);
         await stepUntil(r, 'u1', (f) => f.stage === 'gate');
         const gate = gateCalls(d).at(-1)!.stdin;
