@@ -18,6 +18,10 @@ import { WaitAccumulator } from './waits.ts';
 //       set aside: never granted, never blocking anyone. They re-activate by themselves once the residue is
 //       disposed and the unit released, at the next wake.
 //     - pressure-held workloads are also set aside before overlap checks, including jobs before unit judgments.
+//     - dev.81 (C3c): so are requests naming an environment or resource that is unhealthy (`unhealthyTargets`: a tripped
+//       breaker, or an outstanding retryable park, `env-unavailable` say, on it): `resource-unhealthy`. A series' later
+//       lane waits here, holding nothing, until the probe clears it, instead of coming up against the broken target and
+//       parking a second unit on it. Unit and job lanes alike; admission's breaker check covers only a stage's entry.
 //     - an active waiter whose request overlaps a blocked higher-ranked one (a shared named resource or pool,
 //       `@cpu` included, or both publications; `overlaps`) waits: backfill is disjoint-only, so a lower rank never
 //       overtakes a higher one on what the higher one waits for.
@@ -28,6 +32,8 @@ import { WaitAccumulator } from './waits.ts';
 import { PressureTicks, PRESSURE_SATURATED, hostCpuPressure } from '../host/pressure.ts';
 import { parseResourceUnit } from '../core/ids.ts';
 import type { Holder, Parent } from '../core/events.ts';
+import type { JournalView } from '../core/interfaces.ts';
+import { retryableParks, trippedTargets } from '../park/schedule.ts';
 import { canonicalJson } from '../core/json.ts';
 import { allocate, envBlocked, overlaps } from '../resources/pool.ts';
 import {
@@ -92,6 +98,19 @@ function parentOf(holder: AcquiringHolder): Parent {
   }
 }
 
+/**
+ * dev.81 (C3c): the environments and resource instances a request may not be granted now: each target of a tripped
+ * breaker, and each target an outstanding retryable park waits on (its probe has not passed yet).
+ */
+export function unhealthyTargets(view: JournalView): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const t of [...trippedTargets(view), ...retryableParks(view).flatMap((p) => p.outstanding)]) {
+    if (t.type === 'environment') out.add(t.environment);
+    else if (t.type === 'resource') out.add(t.instance);
+  }
+  return out;
+}
+
 function acquiring(holder: Holder): UnitAcquiringHolder {
   if (holder.type !== 'stage' && holder.type !== 'publication') throw new Error(`${canonicalJson(holder)} does not acquire as a unit (a job's holder uses acquireFirst)`);
   return holder;
@@ -125,12 +144,13 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     return reasons;
   };
 
-  const reasonsFor = (w: UnitWaiter | FirstWaiter, blocked: readonly ResourceRequest[], owner: ReturnType<typeof publicationOwner>): readonly WaitReason[] => {
+  const reasonsFor = (w: UnitWaiter | FirstWaiter, blocked: readonly ResourceRequest[], owner: ReturnType<typeof publicationOwner>, unhealthy: ReadonlySet<string>): readonly WaitReason[] => {
     const reasons = pressureReasons(w, owner);
+    if (w.request.named.some((n) => unhealthy.has(n))) reasons.push('resource-unhealthy');
     const allocation = allocate(resourceTable(ctx.journal.view), ctx.plan(), w.request);
     if (allocation.kind === 'busy') for (const unit of allocation.busy) {
       const parsed = parseResourceUnit(unit);
-      reasons.push(parsed.type === 'cpu' ? 'cpu-tokens' : unit === 'integration-slot' ? 'publication-slot' : `named-resource:${parsed.type === 'instance' ? parsed.pool : unit}`);
+      reasons.push(parsed.type === 'cpu' ? 'cpu-tokens' : parsed.type === 'fast-suite' ? 'fast-suite-tokens' : unit === 'integration-slot' ? 'publication-slot' : `named-resource:${parsed.type === 'instance' ? parsed.pool : unit}`);
     }
     if (blocked.some((b) => overlaps(b, w.request))) reasons.push('queue-precedence');
     return [...new Set(reasons)];
@@ -141,14 +161,15 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
     const blocked: ResourceRequest[] = [];
     const refused: FirstWaiter[] = [];
     const owner = publicationOwner(ctx.journal.view);
+    const unhealthy = unhealthyTargets(ctx.journal.view);
     const evaluate = <W extends UnitWaiter | FirstWaiter>(queue: W[], w: W, parent: Parent): void => {
       if (w.entry !== undefined) w.request = w.entry.refresh();
-      const reasons = reasonsFor(w, blocked, owner);
+      const reasons = reasonsFor(w, blocked, owner, unhealthy);
       w.wait.observe(reasons);
       if (reasons.length > 0) {
         if ('onBlocked' in w) refused.push(w as FirstWaiter);
         if (w.request.publication && reasons.includes('publication-slot')) blocked.push({ named: [], pools: [], cpu: 0, publication: true });
-        else if (!envBlocked(resourceTable(ctx.journal.view), plan, w.request) && !reasons.includes('cpu-pressure') && !reasons.includes('memory-pressure')) blocked.push(w.request);
+        else if (!envBlocked(resourceTable(ctx.journal.view), plan, w.request) && !reasons.includes('cpu-pressure') && !reasons.includes('memory-pressure') && !reasons.includes('resource-unhealthy')) blocked.push(w.request);
         return;
       }
       const got = reserve(ctx, w.holder, w.request, parent, Math.max(0, Date.now() - w.queuedAt), w.wait.measured(), w.entry?.slotHolder);

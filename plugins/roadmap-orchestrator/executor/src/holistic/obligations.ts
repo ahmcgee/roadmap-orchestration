@@ -20,11 +20,13 @@
 //              obligation is its retirement already.
 //   restored   an exempt obligation active again (strengthening)
 //   edited     serves, contracts, deliveredBy, or future → must-hold changed, or (M4a, R5) a rule anchor's textSha256
-//              refreshed after a rewording with the statement unchanged (no ruling needed)
+//              refreshed after a rewording with the statement unchanged (no ruling needed); dev.81 (C3b): its `fields`
+//              name which, and the plan change carries them (a deliveredBy-only edit drains nothing, src/input/classify.ts)
 // Everywhere: `rev` rises by one exactly when the statement, docRef, rule id or activation changes (a rule's hash
 // refresh alone is not normative); a parent is never
 // changed; a proof judgment bound to another obligation revision, lane revision or witness definition is stale; in an arc with a vision every
 // non-exempt obligation serves a clause, and newly cited clauses are active.
+import type { ObligationEditField } from '../core/events.ts';
 import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
 import { canonicalJson } from '../core/json.ts';
 import { type CorpusPin,activeRules } from '../corpus/types.ts';
@@ -43,7 +45,7 @@ export type ObligationChange =
   | Readonly<{ type: 'witness'; id: ObligationId }>
   | Readonly<{ type: 'disposed'; id: ObligationId; disposition: ObligationDisposition; reason: string; rev: number }>
   | Readonly<{ type: 'restored'; id: ObligationId }>
-  | Readonly<{ type: 'edited'; id: ObligationId; fields: readonly string[] }>;
+  | Readonly<{ type: 'edited'; id: ObligationId; fields: readonly ObligationEditField[] }>;
 
 export type ObligationsVerdict = Readonly<{
   changes: readonly ObligationChange[];
@@ -192,12 +194,12 @@ export function classifyObligations(prev: Obligations | null, next: Obligations,
       proves(o);
       changes.push({ type: 'witness', id: o.id });
     }
-    const edited = [
-      ...(canonicalJson(o.serves) !== canonicalJson(p.serves) ? ['serves'] : []),
-      ...(canonicalJson(o.contracts) !== canonicalJson(p.contracts) ? ['contracts'] : []),
-      ...(canonicalJson(o.deliveredBy) !== canonicalJson(p.deliveredBy) ? ['deliveredBy'] : []),
-      ...(p.activation === 'future' && o.activation === 'must-hold' ? ['activation'] : []),
-      ...(ruleRefreshed(p, o) && o.statement === p.statement ? ['rule'] : []),
+    const edited: ObligationEditField[] = [
+      ...(canonicalJson(o.serves) !== canonicalJson(p.serves) ? ['serves' as const] : []),
+      ...(canonicalJson(o.contracts) !== canonicalJson(p.contracts) ? ['contracts' as const] : []),
+      ...(canonicalJson(o.deliveredBy) !== canonicalJson(p.deliveredBy) ? ['deliveredBy' as const] : []),
+      ...(p.activation === 'future' && o.activation === 'must-hold' ? ['activation' as const] : []),
+      ...(ruleRefreshed(p, o) && o.statement === p.statement ? ['rule' as const] : []),
     ];
     if (edited.length > 0) changes.push({ type: 'edited', id: o.id, fields: edited });
   }

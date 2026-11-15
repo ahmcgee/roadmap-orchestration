@@ -376,8 +376,12 @@ type PlanBase = Readonly<{
   rulings: PlanPath;
   direction: string;
   routing?: RoutingLayer;
-  /** M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. */
-  capacity?: Readonly<{ cpu?: number }>;
+  /**
+   * M2: the size of the built-in `@cpu` pool; absent: `availableParallelism()`. dev.81 (C4): `fastSuites`, the size of the
+   * built-in `@fast-suite` pool (lanes-stage suite lanes running at once); absent: one per 12 GiB of host memory, at least
+   * one (src/resources/pool.ts `fastSuiteCapacity`). Either edit drains nothing (src/input/classify.ts `drainsArc`).
+   */
+  capacity?: Readonly<{ cpu?: number; fastSuites?: number }>;
   expectations?: Readonly<{ arcUsd?: number; perMilestoneUsd?: number }>;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;
   resources: readonly ResourceDecl[];
@@ -793,7 +797,8 @@ export function parsePlan(value: unknown): PlanM1 {
     const routing = f.optional('routing', routingLayer);
     const capacity = f.optional('capacity', object((g) => {
       const cpu = g.optional('cpu', positive);
-      return cpu === undefined ? {} : { cpu };
+      const fastSuites = g.optional('fastSuites', positive);
+      return { ...(cpu === undefined ? {} : { cpu }), ...(fastSuites === undefined ? {} : { fastSuites }) };
     }));
     const expectations = f.optional('expectations', object((g) => {
       const amount: Read<number> = (v, p) => { if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) throw new SchemaError(p, 'finite non-negative USD', v); return v; };

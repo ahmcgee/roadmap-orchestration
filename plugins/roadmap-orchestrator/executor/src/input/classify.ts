@@ -1072,7 +1072,7 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
       dispositions.push({ obligation: c.id, disposition: c.disposition, reason: c.reason, rev: c.rev });
     }
     if (c.type === 'split' && c.dropped.length > 0) dropped.push({ obligation: c.id, sentences: c.dropped });
-    changes.push({ type: 'obligation', id: c.id, edit: c.type });
+    changes.push({ type: 'obligation', id: c.id, edit: c.type, ...(c.type === 'edited' ? { fields: c.fields } : {}) });
     edited.add(`${c.id}\u0000${c.type}`);
   }
   // A changed arc lane re-witnesses every obligation it witnesses (their proof judgments bind its laneRev).
@@ -1229,18 +1229,24 @@ const unionScope = (scope: CommandScope, units: readonly UnitId[]): CommandScope
   (scope.type === 'arc' ? scope : unitsScope([...(scope.type === 'units' ? scope.units : []), ...units]));
 
 /**
- * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, capacity and the other
- * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin).
+ * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, the plan-wide fields, the
+ * suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). dev.81 (C3b): the drain follows
+ * the change. Two changes drain nothing, because every reader takes them from the plan in force at each use: `capacity`
+ * (the arbiter sizes the `@cpu` and `@fast-suite` pools at each wake, src/resources/pool.ts; a decrease stops new grants
+ * above the new size while the holders above it run out) and an obligation edit that changed `deliveredBy` alone (the
+ * required witnesses and the latch read the in-force obligations at each check).
  */
 export function drainsArc(c: PlanChange): boolean {
   switch (c.type) {
     case 'routing':
     case 'limits':
       return c.unit === undefined || c.unit === null;
+    case 'plan-field':
+      return c.field !== 'capacity';
+    case 'obligation':
+      return !(c.edit === 'edited' && c.fields !== undefined && c.fields.every((f) => f === 'deliveredBy'));
     case 'resource':
     case 'suite':
-    case 'plan-field':
-    case 'obligation':
     case 'mapping':
     case 'vision':
     case 'holistic':
@@ -1380,6 +1386,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'audit':
       case 'close-admissions':
       case 'demo':
+      case 'withdraw':
         return NONE;
       // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
       case 'witness':

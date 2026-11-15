@@ -4,12 +4,16 @@ import { type Read, Fields, SchemaError, nat, object } from './validate.ts';
 
 export const ADMISSION_HOLDS = ['paused', 'drain', 'run-only', 'backend-parked', 'breaker', 'base-red', 'blocking-item', 'finding-blocked', 'known-defect', 'host-pressure', 'compare', 'deflake', 'dependency', 'contingent-edge', 'milestone', 'baseline', 'pack-review', 'repair-batch'] as const;
 export type AdmissionHold = typeof ADMISSION_HOLDS[number];
-export type WaitReason = 'cpu-pressure' | 'memory-pressure' | 'cpu-tokens' | 'publication-slot' | 'queue-precedence' | `named-resource:${string}` | `admission-hold:${AdmissionHold}`;
+/**
+ * dev.81: `fast-suite-tokens` (C4: every `@fast-suite` token is held) and `resource-unhealthy` (C3c: the request names an
+ * environment or resource with a tripped breaker or an outstanding retryable park; set aside until it clears).
+ */
+export type WaitReason = 'cpu-pressure' | 'memory-pressure' | 'cpu-tokens' | 'publication-slot' | 'queue-precedence' | `named-resource:${string}` | `admission-hold:${AdmissionHold}` | 'fast-suite-tokens' | 'resource-unhealthy';
 export type Waited = Readonly<{ totalMs: number; byReasonMs: Readonly<Partial<Record<WaitReason, number>>> }>;
 
 export function waitReason(value: unknown, path: string): WaitReason {
   if (typeof value === 'string') {
-    if (['cpu-pressure', 'memory-pressure', 'cpu-tokens', 'publication-slot', 'queue-precedence'].includes(value)) return value as WaitReason;
+    if (['cpu-pressure', 'memory-pressure', 'cpu-tokens', 'publication-slot', 'queue-precedence', 'fast-suite-tokens', 'resource-unhealthy'].includes(value)) return value as WaitReason;
     if (value.startsWith('named-resource:')) { resourceName(value.slice('named-resource:'.length), path); return value as WaitReason; }
     if (value.startsWith('admission-hold:') && (ADMISSION_HOLDS as readonly string[]).includes(value.slice('admission-hold:'.length))) return value as WaitReason;
   }

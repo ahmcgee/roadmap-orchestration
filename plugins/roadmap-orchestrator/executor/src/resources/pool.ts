@@ -4,12 +4,18 @@
 //   named resource       `{name, probe, teardown}`        its own single instance, the name
 //   estate pool          `{name, pool:{size}, ...}`        instances `<name>#1..size`; a request takes one
 //   `@cpu`               `plan.capacity.cpu`               tokens `@cpu#1..N`, N default availableParallelism()
+//   `@fast-suite`        `plan.capacity.fastSuites`        (dev.81, C4) tokens `@fast-suite#1..M`, one per lanes-stage
+//                                                          suite lane run (`fastSuite` requests); M default
+//                                                          max(1, floor(MemTotal GiB / 12))
 //   `integration-slot`   built in                          a publication's
 //   environment (dev.17) plan `environments.<name>`        its own single instance, the name; no probe or teardown
 //                                                          in this cycle (src/resources/environments.ts runs its own)
 //
 // Allocation is pure over the fold's resource table: named resources and the slot must be free, each pool gives
-// its lowest free instance, `@cpu` its lowest free tokens. A unit is *dirty* while a residue keeps it out of use:
+// its lowest free instance, `@cpu` (and `@fast-suite`) its lowest free tokens. dev.81 (C3b): the token pools' sizes are
+// read from the plan in force at each allocation, so a capacity apply drains nothing: an increase grants at once, and a
+// decrease counts every held token against the new size (holders above it run out; nothing new is granted while the held
+// tokens reach it), never only the tokens numbered within it. A unit is *dirty* while a residue keeps it out of use:
 // cleanup-failed, or held by the reclaim or sweep that is cleaning its residue. Dirty units are never granted
 // and make a waiter environment-blocked (F8) when the request cannot be met from healthy capacity.
 //
@@ -20,8 +26,9 @@ import { availableParallelism } from 'node:os';
 import { RECLAIM_HOLDERS } from '../core/events.ts';
 import {
   type ResourceName, type ResourceUnit, type UnitId, CPU_POOL, INTEGRATION_SLOT, type LaneId, compareResourceUnits, cpuToken,
-  parseResourceUnit, poolInstance,
+  fastSuiteToken, parseResourceUnit, poolInstance,
 } from '../core/ids.ts';
+import { readHostFingerprint } from '../host/sample.ts';
 import type { LaneDef, SpecM1 } from '../core/records.ts';
 import { type ResourceEntry, FREE_RESOURCE } from '../core/state.ts';
 import { type PlanM1, type PlanUnit, type ResourceDecl, environmentOf, resourceEnvironments } from '../input/plan.ts';
@@ -34,6 +41,19 @@ import { CPU_COST, type ResourceRequest } from '../schedule/types.ts';
 /** The size of the built-in `@cpu` pool: `plan.capacity.cpu`, else the host's parallelism. */
 export function cpuCapacity(plan: PlanM1, host: number = availableParallelism()): number {
   return plan.capacity?.cpu ?? host;
+}
+
+/** dev.81 (C4): host memory per fast suite the default assumes (a field suite peaked near 3 GB; room for builds beside it). */
+export const FAST_SUITE_MEM_GIB = 12;
+/** The default `@fast-suite` size on a host of `memGiB`: one suite per FAST_SUITE_MEM_GIB, at least one. */
+export const defaultFastSuites = (memGiB: number): number => Math.max(1, Math.floor(memGiB / FAST_SUITE_MEM_GIB));
+let hostMemGiB: number | null = null;
+/** MemTotal in whole GiB as the host fingerprint reads it, once per process (a resize restarts the executor). */
+const memGiBOfHost = (): number => (hostMemGiB ??= readHostFingerprint().memGiB);
+
+/** dev.81 (C4): the size of the built-in `@fast-suite` pool: `plan.capacity.fastSuites`, else `defaultFastSuites` of the host. */
+export function fastSuiteCapacity(plan: PlanM1, memGiB: number = memGiBOfHost()): number {
+  return plan.capacity?.fastSuites ?? defaultFastSuites(memGiB);
 }
 
 /** A build's explicit override, else its scheduling-time calibration (the default at plan validation). */
@@ -114,6 +134,20 @@ export const poolUnits = (plan: PlanM1, pool: ResourceName): readonly ResourceUn
 };
 
 const cpuUnits = (n: number): readonly ResourceUnit[] => Array.from({ length: n }, (_, i) => cpuToken(i + 1));
+const fastSuiteUnits = (n: number): readonly ResourceUnit[] => Array.from({ length: n }, (_, i) => fastSuiteToken(i + 1));
+
+/**
+ * `want` tokens of a token pool of `size` (`tokens`: its units 1..size; `held`: every unit of the pool the table does not
+ * show free, numbered within the size or above it, dev.81): its lowest free tokens, or the held ones that block it.
+ */
+function tokens(table: ReadonlyMap<ResourceUnit, ResourceEntry>, all: readonly ResourceUnit[], held: readonly ResourceUnit[], want: number): Allocation {
+  const got = all.filter((u) => free(entryOf(table, u))).slice(0, Math.max(0, all.length - held.length));
+  return got.length < want ? { kind: 'busy', busy: held } : { kind: 'units', units: got.slice(0, want) };
+}
+
+/** The units of the token pool `type` the table holds (not free), whatever their number. */
+const heldTokens = (table: ReadonlyMap<ResourceUnit, ResourceEntry>, type: 'cpu' | 'fast-suite'): readonly ResourceUnit[] =>
+  [...table].filter(([u, e]) => parseResourceUnit(u).type === type && !free(e)).map(([u]) => u);
 
 /** The units a request would take now (lock order), or the units that block it (every busy candidate). */
 export type Allocation = Readonly<{ kind: 'units'; units: readonly ResourceUnit[] }> | Readonly<{ kind: 'busy'; busy: readonly ResourceUnit[] }>;
@@ -132,13 +166,13 @@ export function allocate(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: 
     if (first === undefined) busy.push(...all);
     else units.push(first);
   }
+  const take = (a: Allocation): void => void (a.kind === 'units' ? units.push(...a.units) : busy.push(...a.busy));
   if (request.cpu > 0) {
     const all = cpuUnits(cpuCapacity(plan));
     if (request.cpu > all.length) throw new Error(`a request for ${request.cpu} ${CPU_POOL} tokens exceeds the pool's ${all.length}; plan load refuses it (overCapacity)`);
-    const got = all.filter((u) => free(entryOf(table, u))).slice(0, request.cpu);
-    if (got.length < request.cpu) busy.push(...all.filter((u) => !free(entryOf(table, u))));
-    else units.push(...got);
+    take(tokens(table, all, heldTokens(table, 'cpu'), request.cpu));
   }
+  if (request.fastSuite === true) take(tokens(table, fastSuiteUnits(fastSuiteCapacity(plan)), heldTokens(table, 'fast-suite'), 1));
   if (request.publication) single(INTEGRATION_SLOT);
   if (units.length + busy.length === 0) throw new Error('an empty resource request');
   return busy.length > 0 ? { kind: 'busy', busy: [...busy].sort(compareResourceUnits) } : { kind: 'units', units: units.sort(compareResourceUnits) };
@@ -154,11 +188,12 @@ export function envBlocked(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan
   return request.pools.some((p) => poolUnits(plan, p).every((u) => isDirty(entryOf(table, u))));
 }
 
-/** Two requests compete: a shared named resource, a shared pool (`@cpu` included), or both publications. */
+/** Two requests compete: a shared named resource, a shared pool (`@cpu` and `@fast-suite` included), or both publications. */
 export function overlaps(a: ResourceRequest, b: ResourceRequest): boolean {
   return a.named.some((n) => b.named.includes(n))
     || a.pools.some((p) => b.pools.includes(p))
     || (a.cpu > 0 && b.cpu > 0)
+    || (a.fastSuite === true && b.fastSuite === true)
     || (a.publication && b.publication);
 }
 

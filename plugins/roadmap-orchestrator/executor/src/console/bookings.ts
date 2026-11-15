@@ -11,7 +11,7 @@ export function bookingSummaries(events: readonly Event[]): Booking[] {
     if (ev.type !== 'done' || ev.kind !== 'resource.transition') continue;
     const intent = intents.get(ev.op); if (!intent) continue;
     for (const resource of intent.expect.resources) {
-      const parsed = parseResourceUnit(resource); if (parsed.type === 'cpu') continue;
+      const parsed = parseResourceUnit(resource); if (parsed.type === 'cpu' || parsed.type === 'fast-suite') continue;
       const previous = active.get(resource), edge = intent.expect.edge.type;
       if (previous && (edge === 'reserve' || edge === 'reclaim' || edge === 'release')) {
         previous.endedAt = ev.at; previous.endSeq = ev.seq; previous.state = 'done'; active.delete(resource);
