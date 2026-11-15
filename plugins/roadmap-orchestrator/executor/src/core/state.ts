@@ -61,6 +61,8 @@ export type UnitCounters = Readonly<{
   staticReds: number;
   /** M4a rev 3 (D2): mutation-smoke fix rounds taken (0 for a unit folded from a 1.0.0-dev.6 log: none spent). */
   smokeRounds: number;
+  /** dev.81: escalation-seat revise rounds on new findings taken (gate `revise-new`; 0 in a log from before: none spent). */
+  escalationRevises: number;
   /** Uncharged retries taken, per stage. */
   retries: Readonly<Record<RetryStage, number>>;
 }>;
@@ -239,7 +241,7 @@ export function newUnitState(unit: UnitId, stage: Stage, risk: RiskTier | null, 
   const retries = Object.fromEntries(RETRY_STAGES.map((s) => [s, 0])) as Record<RetryStage, number>;
   return {
     unit, stage, risk, status: 'active', routedUp: [], promotion: false, decided: null, interrupted: null, pressureHold: null, pressureHolds: 0,
-    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, reviseRounds: 0, candidateReds: 0, staticReds: 0, smokeRounds: 0, retries },
+    approval: null, open: null, counters: { attempts: 0, chargeableFailures: 0, unchargedLanesReds: 0, reviseRounds: 0, candidateReds: 0, staticReds: 0, smokeRounds: 0, escalationRevises: 0, retries },
     spec, reopened: null, pendingRevision: null, staleRev: null,
     park: null, lastRecovery: null, buildTier: risk, lineage: null, supersededBy: null, bounds, entry: null, rerun: null, steering: null, failures: [],
   };
@@ -280,6 +282,7 @@ export function afterStageOutcome(u: UnitState, f: Pick<StageOutcomeFact, 'stage
       candidateReds: c.candidateReds + add('candidate-red'),
       staticReds: c.staticReds + add('static-red'),
       smokeRounds: c.smokeRounds + add('smoke'),
+      escalationRevises: c.escalationRevises + add('escalation-revise'),
       // The fact validator admits `retry` only at a retry stage.
       retries: f.class === 'retry' ? { ...c.retries, [f.stage]: c.retries[f.stage as RetryStage] + 1 } : c.retries,
     },
@@ -586,7 +589,7 @@ export type CounterRefs = Readonly<{
   meter: ReadonlyMap<string, MeterTotal>;
 }>;
 
-const UNIT_COUNTERS = ['attempts', 'chargeableFailures', 'reviseRounds', 'candidateReds', 'staticReds', 'smokeRounds'] as const;
+const UNIT_COUNTERS = ['attempts', 'chargeableFailures', 'reviseRounds', 'candidateReds', 'staticReds', 'smokeRounds', 'escalationRevises'] as const;
 const METER_COUNTERS = ['known', 'unavailable', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'turns', 'costUsd'] as const;
 
 /**

@@ -22,7 +22,8 @@ import { bytesSha256 } from '../spec/spec.ts';
 // crash cut short goes before the next attempt makes its own (stages.ts `removeJudgmentCheckouts`).
 //
 // Outcomes: approve (an `approval` fact binds it to the fingerprint, then the stage-outcome) · revise
-// (a fix round with the directives, bounded by the table) · escalate (route up) · an empty diff is refused
+// (a fix round with the directives, bounded by the table; dev.81: `revise-new` at the escalation seat once the revise
+// rounds are spent, when a blocking finding is one no builder was given, `reviseKind`) · escalate (route up) · an empty diff is refused
 // before any call (park) · refusal, malformed and faults as at pre-build. An answer off its schema takes the one judgment
 // repair turn first (dev.12, `repairTurnOf` in dispatch.ts): its own session resumed with why; refused again, `malformed`.
 //
@@ -74,13 +75,14 @@ import { crashPoint } from '../core/crash.ts';
 import { designSize } from '../core/design.ts';
 import type { GateLargeDiff,IntentOf } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
+import type { JournalView } from '../core/interfaces.ts';
 import { type JudgmentSessionId,type ObligationId,type Sha,type UnitId,canonicalIds,compareIds,invocationId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
 import { canonicalJson } from '../core/json.ts';
 import { gateLargeDiffOf,gateReviewOf } from '../core/projections.ts';
 import type { NeedsUserContent,PromptSize } from '../core/records.ts';
 import { type ApprovalFingerprint,type JudgmentSession,type ObligationRev,type SpecM1,obligationRevsOf,specRemoves,specWitnesses } from '../core/records.ts';
-import type { ApprovalBlobs,GateReview } from '../core/review.ts';
+import { type ApprovalBlobs,type GateReview,isSettled } from '../core/review.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,absPath,matchesPattern,repoPath } from '../core/values.ts';
 import { normalizeText } from '../corpus/rules.ts';
@@ -114,6 +116,7 @@ import { laneRecordIn,latestSpecSeries,observedViews,seriesLedger,seriesTree,spe
 import { approvalBlobs,gateDelta,ledgerFact,openDisputes,reviewInput,reviewRules,unitLedger } from './review.ts';
 import { gateSmokeChecks } from './smoke.ts';
 import { type JudgmentReader,type PreBuildDone,type StageDone,at,changedPremiseFiles,corpusInForce,enterJudgment,escalationOf,fastSuiteRoot,fastSuiteLanes,holisticInForce,inMs,integrationTip,judgedAnswer,judgmentOutput,judgmentSpawns,ledger,ledgerDir,library,loadUnitSpec,record,releaseJudgment,removeJudgmentCheckouts,start,targetDirs,unitImpactInput,unitMilestones,unitTarget,verdictKind,writeJudgmentInputs } from './stages.ts';
+import { judgmentSeat } from './transitions.ts';
 import { gateWitnessChecks } from './witnesscheck.ts';
 
 /** The unit's approved-or-not commit: its branch tip, which every build round and merge-in moves. */
@@ -576,8 +579,10 @@ export async function gateRead(
   };
   neverMet(ctx, unit, parent, out);
   if (out.decision !== 'approve') {
+    // Read before this attempt's ledger fact: what its findings re-raise is what earlier attempts minted.
+    const kind = out.decision === 'revise' ? reviseKind(ctx.journal.view, unit.id, parent.attempt, out) : out.decision;
     ledger(new Set());
-    return done(record(ctx, parent, out.decision, null, { backend: null, failed: [], environment: null, ordering: out.decision === 'escalate' ? out.ordering ?? null : null }));
+    return done(record(ctx, parent, kind, null, { backend: null, failed: [], environment: null, ordering: out.decision === 'escalate' ? out.ordering ?? null : null }));
   }
   const approved = ctx.journal.view.unit(unit.id).approval;
   if (approved !== null && approved.attempt === parent.attempt) {
@@ -590,6 +595,32 @@ export async function gateRead(
   ctx.journal.fact({ kind: 'approval', unit: unit.id, attempt: parent.attempt, fingerprint, blobs });
   ledger(bankGateNotes(ctx, unit.id, parent.attempt, out.findings));
   return done(record(ctx, parent, 'approve'), fingerprint);
+}
+
+/**
+ * dev.81 (field: an escalation seat's revise with new findings parked the unit whatever the seat said): the outcome a
+ * revise answer of gate attempt `attempt` records. Below the escalation seat, or with revise rounds left, `revise`. At the
+ * escalation seat with the revise rounds spent the table parks a `revise`; the answer is `revise-new` (one uncharged fix
+ * round, transitions.ts) when a blocking finding is new: it re-raises nothing, or it re-raises an open ledger entry that a
+ * gate attempt minted with no build of the unit after it (the route-up attempt's findings, never given to a builder). A
+ * re-raise of a settled entry, or of one a build has had since, is a repeat. Pure over the log.
+ */
+export function reviseKind(view: JournalView, unit: UnitId, attempt: number, out: GateOutput): 'revise' | 'revise-new' {
+  const u = view.unit(unit);
+  if (judgmentSeat(u, 'gate') !== 'escalation' || u.counters.reviseRounds < u.bounds.reviseRounds) return 'revise';
+  const mintedAt = new Map<string, number>();
+  for (let a = 1; a < attempt; a++) for (const m of view.review().ledgered(unit, a) ?? []) mintedAt.set(m.id, a);
+  const entries = new Map(view.review().ledger.filter((e) => e.unit === unit).map((e) => [e.id as string, e]));
+  const builds = view.spawnsOfUnit(unit, 'build').flatMap((s) => (s.parent.type === 'stage' ? [s.parent.attempt] : []));
+  const isNew = (reraises: string | null): boolean => {
+    if (reraises === null) return true;
+    const entry = entries.get(reraises);
+    const minted = mintedAt.get(reraises);
+    // The review rules refused a re-raise of no entry of this unit before this answer was read.
+    if (entry === undefined || minted === undefined) throw new Error(`gate ${unit}#${attempt}: a finding re-raises ${reraises}, which is no ledger entry of the unit`);
+    return !isSettled(entry) && !builds.some((b) => b > minted && b < attempt);
+  };
+  return out.findings.some((f) => f.severity === 'blocking' && isNew(f.reraises)) ? 'revise-new' : 'revise';
 }
 
 /**

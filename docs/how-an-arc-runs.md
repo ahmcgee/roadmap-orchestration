@@ -277,6 +277,7 @@ every answer.
 | 16 builds / 40 stages (fixed) | Raises an attempt-cap item for the architect. |
 | Certification reds | Three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that allowance. |
 | Gate revisions, candidate reds | Separate bounds. |
+| Gate revisions at the escalation seat | Once the revise rounds are spent, a revise routes the gate up to the escalation seat. A revise there with a blocking finding no builder was given (a new finding, or one the route-up round raised) gets one uncharged fix round; a second one, or one that only raises findings a builder already had, parks the unit. |
 
 - Spend expectations are forecasts, never caps.
 - Usage limits park a backend until explicit resume.

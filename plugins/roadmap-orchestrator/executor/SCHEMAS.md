@@ -1156,7 +1156,8 @@ launch.json and its `launchSha256` carry names only. A launch.json written befor
 carries passed values inside `env`; it reads and hashes as written and is never rewritten. Backend and bring-up launches
 pass nothing: their host PATH, HOME and CLI config-dir values stay literal in `env`.
 Only launch argv can carry model ids among executor-written runtime files. Exit is published after containment empties,
-before adaptation; `reported` follows a validated final report's bounded descendant grace. Binding mismatch refuses.
+before adaptation; `reported` follows a validated final report's bounded descendant grace (dev.81: for a judgment, whose
+schema has no `final`, a schema-valid latest result on a stream quiet for that grace). Binding mismatch refuses.
 
 ## Backend call kinds and read surface
 
@@ -1643,3 +1644,14 @@ Current admission wait starts are not reconstructed from queue order. Legacy unm
 explicit. Holistic audit outcomes/findings are shown; checkpoint job detail remains outside this console.
 Claude init/rate-limit records become collapsed session metadata, while the canonical TUI text remains
 unchanged. Transcript text is decoded, escaped and byte-paged in the browser, never a link to base64 JSON.
+
+### dev.81 B2 escalation revise
+
+Gate stage outcome `revise-new` (appended to the gate kinds) and outcome class `escalation-revise` (appended to the
+classes), both additive. A gate `revise` answer at the escalation seat, the unit's `reviseRounds` spent, is recorded
+`revise-new` when a blocking finding is new: `reraises: null`, or it re-raises an open ledger entry minted by a gate attempt
+after which no build of the unit ran (the route-up attempt's findings). A re-raise of a settled entry, or of one a build has
+had since, records `revise` (the escalation park, as before). `revise-new` takes one uncharged fix round (class
+`escalation-revise`, fold counter `UnitCounters.escalationRevises`, 0 in a dev.80 log: none spent); a second parks
+`escalation` (class `park`, design). A steered pass ends at it like a revise (`steered`, env). Gate schema unchanged.
+

@@ -503,10 +503,12 @@ export const STAGE_OUTCOME_KINDS = {
   // transition row, so a 1.0.0-dev.11 log whose latest gate or pre-build outcome is one still folds and retries.
   // dev.17 (proportional review): `delta-empty` (no file changed since the unit's approval and no target it bound moved:
   // code skips the gate and approves again at the new fingerprint, uncharged).
+  // dev.81: `revise-new` (a revise at the escalation seat, the revise rounds spent, with a blocking finding no builder was
+  // given: src/pipeline/gate.ts `reviseKind`; one uncharged fix round, then the escalation park).
   gate: [
     'checkout-residue',
     'approve', 'revise', 'escalate', 'empty-diff', 'refusal', 'malformed', 'process-fault', 'interrupted', 'routing-changed', 'unverified', 'read-denied', 'context-exceeded',
-    'executor-fault', 'delta-empty',
+    'executor-fault', 'delta-empty', 'revise-new',
   ],
   // M3: `preempted` (a docs publication took the slot before green, A7, uncharged); `finding-blocked` (an active P1
   // blocks a selected obligation, at admission or the pre-ff re-check, G10; uncharged, waits for the finding).
@@ -538,14 +540,15 @@ export type RetryStage = (typeof RETRY_STAGES)[number];
  * What a recorded outcome did to the unit, as the transition table decided it; the fold derives the
  * unit's counters and status from it. `advance`: on to another stage, no counter. `revise`,
  * `candidate-red`, `smoke` (M4a rev 3: a mutation-smoke fix round), `static-red` (dev.59: the one uncharged fix round of a
- * candidate red only on static lanes): a bounded round within its bound. `retry`: the stage's one uncharged retry.
+ * candidate red only on static lanes), `escalation-revise` (dev.81: the one uncharged fix round of a gate `revise-new`): a
+ * bounded round within its bound. `retry`: the stage's one uncharged retry.
  * `route-up`: re-dispatched at the role's escalation seat. `trigger`: a risk trigger (contract path touched,
  * scope growth) that puts the next judgment dispatch on the escalation seat. `hold`: the stage was interrupted
  * (a pause or stop cancel, or its backend parked arc-wide on a usage limit); the unit stays at the stage,
  * no counter moves, and a resume re-runs the stage as a new attempt. `park`, `stop`, `retire`: the unit
  * parks (needs-user), the arc stops (needs-user), the unit is done.
  */
-export const OUTCOME_CLASSES = ['advance', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire', 'static-red'] as const;
+export const OUTCOME_CLASSES = ['advance', 'revise', 'candidate-red', 'smoke', 'retry', 'route-up', 'trigger', 'hold', 'park', 'stop', 'retire', 'static-red', 'escalation-revise'] as const;
 export type OutcomeClass = (typeof OUTCOME_CLASSES)[number];
 
 /**
