@@ -1233,10 +1233,11 @@ const unionScope = (scope: CommandScope, units: readonly UnitId[]): CommandScope
 /**
  * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, the plan-wide fields, the
  * suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). dev.81 (C3b): the drain follows
- * the change. Two changes drain nothing, because every reader takes them from the plan in force at each use: `capacity`
+ * the change. Three changes drain nothing, because every reader takes them from the plan in force at each use: `capacity`
  * (the arbiter sizes the `@cpu` and `@fast-suite` pools at each wake, src/resources/pool.ts; a decrease stops new grants
- * above the new size while the holders above it run out) and an obligation edit that changed `deliveredBy` alone (the
- * required witnesses and the latch read the in-force obligations at each check).
+ * above the new size while the holders above it run out), `ci` (the CI ref worker reads `ci.settleMin` at each decision,
+ * src/forge/integration-push.ts) and an obligation edit that changed `deliveredBy` alone (the required witnesses and the
+ * latch read the in-force obligations at each check).
  */
 export function drainsArc(c: PlanChange): boolean {
   switch (c.type) {
@@ -1244,7 +1245,7 @@ export function drainsArc(c: PlanChange): boolean {
     case 'limits':
       return c.unit === undefined || c.unit === null;
     case 'plan-field':
-      return c.field !== 'capacity';
+      return c.field !== 'capacity' && c.field !== 'ci';
     case 'obligation':
       return !(c.edit === 'edited' && c.fields !== undefined && c.fields.every((f) => f === 'deliveredBy'));
     case 'resource':

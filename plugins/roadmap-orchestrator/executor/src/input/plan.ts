@@ -386,7 +386,7 @@ type PlanBase = Readonly<{
   /**
    * dev.81 (A3): the CI ref's cadence. `settleMin`: minutes after a push when the pushed head counts as settled without
    * a witness at it or `roadmap push` (non-negative, fractions allowed; 0 pushes every publication at once). Absent:
-   * `DEFAULT_SETTLE_MIN` (`ciSettleMin`).
+   * `DEFAULT_SETTLE_MIN` (`ciSettleMin`). An edit drains nothing (src/input/classify.ts `drainsArc`).
    */
   ci?: Readonly<{ settleMin?: number }>;
   suite: Readonly<{ lanes: readonly LaneDef[] }>;

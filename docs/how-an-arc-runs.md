@@ -257,8 +257,9 @@ roadmap apply --from <dir> --rev <N> --reason "<line>"
   attempt (a lanes red's fix round still reads the series as it ran) and is refused only while a candidate is under
   way.
 - The drain follows the change. Plan-wide edits (routing, limits, resources, the suite, the holistic layer) drain the
-  arc, but two drain nothing because they are read from the plan in force at each use:
+  arc, but three drain nothing because they are read from the plan in force at each use:
   - an obligation edit that changes only `deliveredBy`;
+  - a `ci` edit (`ci.settleMin`, read at each CI ref decision);
   - a `capacity` edit. An increase grants at once. After a decrease, units already holding tokens above the new size
     keep them until they finish, and nothing new is granted until the tokens held fall below the new size. This
     covers both `capacity.cpu` and `capacity.fastSuites`, the cap on lanes-stage suite lanes running at once. Without

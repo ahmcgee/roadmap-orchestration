@@ -374,7 +374,7 @@ test('apply.obligation-restored-edited: an exempt obligation made active again i
 });
 
 // dev.81 (C3b): an apply's drain follows what it changes.
-test('apply.drain-follows-change: a deliveredBy-only obligation edit and a capacity-only edit drain nothing (scope none) and record what changed; another obligation field or a suite edit still drains the arc', T, async () => {
+test('apply.drain-follows-change: a deliveredBy-only obligation edit, a capacity-only edit and a ci-only edit drain nothing (scope none) and record what changed; another obligation field or a suite edit still drains the arc', T, async () => {
   const r = holisticArc();
   try {
     const scope = (): ReturnType<ReturnType<typeof commandScope>> => commandScope({
@@ -391,6 +391,12 @@ test('apply.drain-follows-change: a deliveredBy-only obligation edit and a capac
     const second = (await command(r, applyBody(r.d))).outcome;
     assert.equal(second.kind, 'applied', JSON.stringify(second));
     assert.deepEqual(lastApplied(r).changes, [{ type: 'plan-field', field: 'capacity' }]);
+
+    editPlan(r.d, (p) => void (p['ci'] = { settleMin: 30 }));
+    assert.deepEqual(scope(), { type: 'none' });
+    const third = (await command(r, applyBody(r.d))).outcome;
+    assert.equal(third.kind, 'applied', JSON.stringify(third));
+    assert.deepEqual(lastApplied(r).changes, [{ type: 'plan-field', field: 'ci' }]);
 
     editObligations(r.d, (o) => {
       o.obligations[0]!['deliveredBy'] = [];
