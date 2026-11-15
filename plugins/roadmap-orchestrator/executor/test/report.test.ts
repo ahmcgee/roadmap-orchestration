@@ -29,7 +29,7 @@ const LINGER_MS = 120_000;
 const INTERIM_WAIT_MS = REPORT_GRACE_MS + 5_000;
 const T = { timeout: REPORT_GRACE_MS + 60_000 };
 
-const report = (summary: string, final: boolean) => ({ summary, grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final });
+const report = (summary: string, final: boolean) => ({ summary, grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [], checks: [], final });
 
 const verdict = (reason: string) => ({ decision: 'approve', ordering: null, findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null, rulings: [] });
 
