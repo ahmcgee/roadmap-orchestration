@@ -14,6 +14,8 @@ import { until } from '../fixtures/exec-common.ts';
 const corpus = JSON.parse(readFileSync(new URL('../helpers/scale-corpus.json',import.meta.url),'utf8'));
 const scaleTitle = (id:string):string => corpus.systems[Object.keys(corpus.systems)[(Number(id.slice(1))-1)%8]!][Math.floor((Number(id.slice(1))-1)/8)].title;
 
+/** Drawn or served edges by kind, each `source>target`, sorted. */
+type Edges={after:string[];milestone:string[];feeds:string[]};
 async function assertRenderedLabels(b:ConsoleBrowser,mode:'active'|'all'|'zoomed',width:number){
  const result=await b.evaluate<{count:number;bad:unknown[];overlaps:string[];coordinates:Record<string,unknown>;tier:string;hidden:string[];badEdges:string[]}>(`()=>{
   const cy=document.querySelector('.dag-canvas')._cyreg.cy,all=cy.nodes('[gate]'),extent=cy.extent();
@@ -142,7 +144,7 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
  // lineage head (dropped when it has none, drawn once when it duplicates another). The expectation is derived here from the
  // served graph view, independently of the client's filtering.
  const drawn=`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,of=kind=>cy.edges('[kind="'+kind+'"]').map(e=>e.source().id()+'>'+e.target().id()).sort();return {after:of('dependency'),milestone:of('waits'),feeds:of('feeds')};}`;
- const expected=await b.evaluate<{all:Record<string,string[]>;visible:Record<string,string[]>;withdrawn:string[]}>(`async()=>{
+ const expected=await b.evaluate<{all:Edges;visible:Edges;withdrawn:string[]}>(`async()=>{
   const view=(await (await fetch('/api/${CONSOLE_PROTOCOL}/arcs/${fixture.arc}/graph')).json()).data,units=new Map(view.units.map(u=>[u.id,u]));
   const head=id=>{if(id.startsWith('milestone:'))return id;let at=id;while(at!==null&&units.get(at).signal==='withdrawn')at=units.get(at).supersededBy??units.get(at).carriedBy[0]??null;return at;};
   const all={},visible={};
@@ -152,11 +154,11 @@ test('scale Graph keeps one layout, preserves every edge, uses bounded labels, a
   }
   return {all,visible,withdrawn:view.units.filter(u=>u.signal==='withdrawn').map(u=>u.id)};
  }`);
- assert.equal(expected.withdrawn.length,13);assert.deepEqual([expected.all.after!.length,expected.all.milestone!.length,expected.all.feeds!.length],[663,1004,300]);
- assert.equal(expected.visible.after!.length,626,'u166\'s dependencies re-point to u167, the cut units\' drop');
+ assert.equal(expected.withdrawn.length,13);assert.deepEqual([expected.all.after.length,expected.all.milestone.length,expected.all.feeds.length],[663,1004,300]);
+ assert.equal(expected.visible.after.length,626,'u166\'s dependencies re-point to u167, the cut units\' drop');
  assert.deepEqual(await b.evaluate(drawn),expected.visible,'every edge of the visible graph is drawn, re-pointed to the lineage head');
  assert.equal(await b.evaluate(`()=>document.querySelector('.dag-canvas')._cyreg.cy.nodes('[gate=0]').length`),287,'the withdrawn units are not drawn');
- assert.ok(counts.active>=4);assert.equal(counts.dependencies,626);assert.equal(counts.waits,expected.visible.milestone!.length);assert.equal(counts.feeds,expected.visible.feeds!.length);assert.ok(counts.hiddenWaits);assert.equal(counts.bundles,0,'milestone waits have no bundled routes');
+ assert.ok(counts.active>=4);assert.equal(counts.dependencies,626);assert.equal(counts.waits,expected.visible.milestone.length);assert.equal(counts.feeds,expected.visible.feeds.length);assert.ok(counts.hiddenWaits);assert.equal(counts.bundles,0,'milestone waits have no bundled routes');
  await assertActiveFrame(b);
  await b.evaluate(`()=>{const cy=document.querySelector('.dag-canvas')._cyreg.cy,n=cy.getElementById('u226');cy.viewport({zoom:.8,pan:{x:720-n.position('x')*.8,y:320-n.position('y')*.8}});return true;}`);await new Promise(r=>setTimeout(r,160));
  assert.equal(await b.evaluate(`()=>{const marks=[...document.querySelectorAll('.node-status-row .signal')];return marks.length>0&&marks.every(n=>n.querySelector('svg path,svg circle')&&n.getBoundingClientRect().width>=8&&n.closest('.node-status-row').getBoundingClientRect().height>=15);}`),true,'full-card status rows keep a visible glyph and readable slot');
