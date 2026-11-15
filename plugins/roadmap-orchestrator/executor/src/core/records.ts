@@ -1643,7 +1643,13 @@ export type CommandBody =
    * `release` resumes it (and promotes the latest settled milestone when it is newer); `up` and `down` start and stop the
    * host's demo instance. Scope ∅.
    */
-  | Readonly<{ type: 'demo'; act: DemoAct }>;
+  | Readonly<{ type: 'demo'; act: DemoAct }>
+  /**
+   * `roadmap withdraw <command-id>` (dev.81, C3a): a control command that takes back a pending mutation (a queued `apply`,
+   * say) before its op begins: the target gets `rejected{reason: withdrawn by <id>}` and its drain is released
+   * (src/commands/withdraw.ts). Scope ∅.
+   */
+  | Readonly<{ type: 'withdraw'; command: CommandId }>;
 
 /** dev.59: why the root says a lanes red is not the tree's (`roadmap rerun --cause`): the estate it runs against, or the infrastructure. */
 export const RERUN_CAUSES = ['estate', 'infra'] as const;
@@ -1679,7 +1685,7 @@ export function stopFields(f: Fields): StopOptions {
 }
 
 /** Control commands apply immediately (waiting only for an integration.ff critical section); mutations at safe points. */
-export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss'] as const;
+export const CONTROL_COMMANDS = ['pause', 'stop', 'ack', 'note', 'dismiss', 'withdraw'] as const;
 
 export type CommandFile = Readonly<{ v: SchemaVersion; id: CommandId; arc: ArcId; at: IsoTime; body: CommandBody }>;
 
@@ -1740,6 +1746,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   })),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
+  withdraw: object((f): CommandBody => ({ type: f.get('type', literal('withdraw')), command: f.get('command', cmdId) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({

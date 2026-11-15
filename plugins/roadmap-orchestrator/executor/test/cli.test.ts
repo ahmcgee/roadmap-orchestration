@@ -235,6 +235,7 @@ describe('cli: M3 forms', () => {
       [['rerun', 'u1/lanes#7/mul', '--cause', 'infra', '--evidence', 'runner disk full 10:02'], { type: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'infra', evidence: 'runner disk full 10:02' }],
       [['audit'], { type: 'audit' }],
       [['close-admissions'], { type: 'close-admissions' }],
+      [['withdraw', 'cmd-0123456789abcdef'], { type: 'withdraw', command: 'cmd-0123456789abcdef' }],
     ];
     for (const [args, body] of cases) {
       const exit = await roadmap([...args, '--repo', repo, '--arc', 'arc-1']);
@@ -258,6 +259,11 @@ describe('cli: M3 forms', () => {
 it('dismiss requires a named finding and non-empty counter-evidence', () => {
   assert.deepEqual(parseCommand(['dismiss', 'F-1', '--counter-evidence', 'test/a.ts:8']), {command: 'dismiss', finding: 'F-1', counterEvidence: 'test/a.ts:8', run: HOST});
   for (const args of [['dismiss', 'F-1'], ['dismiss', 'F-1', '--counter-evidence', '  '], ['dismiss', 'unknown', '--counter-evidence', 'proof']]) assert.throws(() => parseCommand(args), CliError);
+});
+
+it('cli.withdraw (dev.81): one command id; anything else is refused', () => {
+  assert.deepEqual(parseCommand(['withdraw', 'cmd-0123456789abcdef']), { command: 'withdraw', target: 'cmd-0123456789abcdef', run: HOST });
+  for (const args of [['withdraw'], ['withdraw', 'nu-7'], ['withdraw', 'cmd-0123456789abcdef', 'cmd-0123456789abcdee']]) assert.throws(() => parseCommand(args), CliError, args.join(' '));
 });
 
 it('cli.rerun (dev.59): a lane failure reference, a closed cause and non-empty evidence; a stage outcome or a candidate attempt is no lanes rerun', () => {

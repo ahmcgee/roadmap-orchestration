@@ -69,6 +69,7 @@ import { note } from './note.ts';
 import { isControl,readCommand,readReceipt,receiptPath,receiptSha256,writeReceipt } from './queue.ts';
 import { reverse } from './reverse.ts';
 import { steer } from './steer.ts';
+import { withdraw } from './withdraw.ts';
 
 /**
  * Everything an effect may touch: the reservation cycle's context, plus what a backend smoke and an apply
@@ -290,6 +291,9 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return closeAdmissions(ctx, command.id);
     case 'demo':
       return actOnDemo(ctx, command.id, body.act);
+    // dev.81 (C3a): take back a pending mutation (src/commands/withdraw.ts).
+    case 'withdraw':
+      return withdraw(ctx, command.id, body.command);
   }
 }
 
