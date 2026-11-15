@@ -1,13 +1,16 @@
 // M2 build rounds (src/pipeline/rounds.ts): a re-entry's fresh resolve round and the session-never-persisted rerun.
 // Integrated over real git and the fake backends where a round runs. Named tests: rounds.fresh-resolve,
 // rounds.session-unrecoverable. A stalled fix round stays on its seat (dev.17 retired D4): stage-m2's rounds.no-escalation.
-// dev.81 (B4): rounds.fix-failures, rounds.missing-checks, rounds.checks-continuation, rounds.checks-accepted.
+// dev.81 (B4): rounds.fix-failures, rounds.missing-checks, rounds.checks-continuation, rounds.checks-accepted; (B5)
+// rounds.after-merge-in-continuation, rounds.after-merge-in-proven.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { type UnitId, invocationId, laneId, opIdOf, resourceName, sha, unitId } from '../src/core/ids.ts';
 import { absPath, isoTimeOf, repoPath } from '../src/core/values.ts';
+import { applyCommand } from '../src/commands/apply.ts';
+import { submitCommand } from '../src/commands/queue.ts';
 import { mergeHead } from '../src/git/mergein.ts';
 import { readInputFiles, recordPlan } from '../src/input/inforce.ts';
 import { implementerDispatch, pinDispatch, unitBranch, unitWorktree, workDir } from '../src/pipeline/dispatch.ts';
@@ -22,7 +25,7 @@ import { promptFor } from '../src/prompts/index.ts';
 import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import { BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, planCheckStep, seated, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
-import { contextFor, setupArc, unitWorktreePath } from './fixtures/unit-common.ts';
+import { commandContextFor, contextFor, setupArc, unitWorktreePath } from './fixtures/unit-common.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 
@@ -315,3 +318,72 @@ test('rounds.checks-accepted: a fix round whose report proves every required che
   assert.equal(builds.length, 2, 'the fresh build and the fix round, no continuation');
   assert.equal(readCalls(run.scenario.path).length, 3);
 });
+
+// ---------------------------------------------------------------------------------------------------
+// dev.81 (B5): the first build after a clean merge-in into the kept worktree
+
+const SMOKE_SUITE = { id: 'smoke', argv: ['node', '-e', '0'] } as const;
+const STALE_OUTPUT = 'dist/stale.js';
+
+/**
+ * u1 built once; then the integration tip moves on with a file u1 never touches, stale ignored build output sits in u1's
+ * worktree (ignored through the repository's exclude file), and `roadmap merge-in u1` merges the tip in cleanly: the kept
+ * worktree's HEAD is the merge, and no build has built on it. The merge-in entry runs the lanes there, red (u1's build changed
+ * nothing): the fix round that follows is the first build after the merge-in.
+ */
+async function cleanMergedIn(run: StageRun): Promise<RoundInput> {
+  started(await preBuild(run.ctx, run.unit));
+  await buildToLanes(run, { kind: 'fresh' });
+  writeFiles(run.repo, { 'docs/elsewhere.md': 'integration moves on\n' });
+  commitAll(run.repo, 'integration moves on');
+  const worktree = unitWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1);
+  const exclude = git(worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude').trim();
+  mkdirSync(dirname(exclude), { recursive: true });
+  appendFileSync(exclude, 'dist/\n');
+  mkdirSync(join(worktree, 'dist'), { recursive: true });
+  writeFileSync(join(worktree, STALE_OUTPUT), 'stale\n');
+  const file = submitCommand(run.ctx.runDir, run.ctx.plan().arc, { type: 'merge-in', unit: U1 });
+  // commandContextFor reads only the stage context it is given.
+  const outcome = await applyCommand(commandContextFor(null as never, run.ctx), file);
+  assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
+  const merged = run.journal.view.opsOf('mergein.prepare').at(-1);
+  assert.ok(merged !== undefined && merged.post.type === 'clean-merged' && git(worktree, 'rev-parse', 'HEAD').trim() === merged.post.new);
+  const red = started(await lanes(run.ctx, run.unit, merged.post.new));
+  assert.ok(red.fix !== null && red.fix.kind === 'fix', red.outcome.kind);
+  return red.fix;
+}
+
+for (const proven of [false, true]) {
+  test(`rounds.after-merge-in-${proven ? 'proven' : 'continuation'}: the first build after a clean merge-in removes the stale build output and re-runs the suite lanes; a report ${proven ? 'proving them is read at once' : 'without their checks goes back once, uncharged'}`, T, async () => {
+    const report: Step = proven
+      // The fake reports a row per <after_merge_in> lane at its HEAD (test/fakes/fake-backend.ts `withBuildChecks`).
+      ? codexBuild([], { argv: ['exec', 'resume'] })
+      : { as: 'codex', expect: { argv: ['exec', 'resume'] }, acts: [{ type: 'emit', value: { ...BUILD_REPORT, checks: [] } }] };
+    const run = setupUnit({
+      suite: [SMOKE_SUITE],
+      steps: [
+        planCheckStep({ decision: 'approve' }),
+        codexBuild([], { argv: ['exec', '-C'] }),
+        report,
+        ...(proven ? [] : [codexBuild([], { argv: ['exec', 'resume'], stdinContains: ['smoke (no checks row)'] })]),
+      ],
+    });
+    const fix = await cleanMergedIn(run);
+    const worktree = unitWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1);
+    assert.ok(existsSync(join(worktree, STALE_OUTPUT)));
+    const charged = run.journal.view.unit(U1).counters.chargeableFailures;
+    const b = started(await build(run.ctx, run.unit, fix));
+    assert.equal(b.outcome.kind, 'success');
+    assert.equal(existsSync(join(worktree, STALE_OUTPUT)), false, 'the stale build output is removed before the round');
+    const calls = readCalls(run.scenario.path);
+    assert.ok(calls.every((c) => c.step !== null), `every call matched: ${calls.map((c) => c.step).join(',')}`);
+    const after = calls[2]!.stdin.match(/<after_merge_in>\n([\s\S]*?)<\/after_merge_in>/)?.[1];
+    assert.ok(after !== undefined, 'the round is told of the merge-in');
+    assert.ok(after.includes('removed the ignored build output dist') && after.includes('- smoke (expects exit 0'), `cleaned dirs and the suite lane to re-run: ${after}`);
+    assert.doesNotMatch(calls[1]!.stdin, /<after_merge_in>\n/, 'the build before the merge-in has none');
+    const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build').map((i) => i.parent);
+    assert.equal(builds.length, proven ? 2 : 3);
+    if (!proven) assert.deepEqual(builds[1], builds[2], 'the continuation is a new invocation of the same attempt');
+    assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, charged, 'nothing is charged');
+  });
+}

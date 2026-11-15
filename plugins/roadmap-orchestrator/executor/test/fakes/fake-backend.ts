@@ -272,7 +272,7 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
  */
 function withBuildChecks(value: JsonValue, call: Call): JsonValue {
   if (typeof value !== 'object' || value === null || Array.isArray(value) || !('grounding' in value) || !('experiments' in value) || 'checks' in value) return value;
-  const blocks = [...call.stdin.matchAll(/<(required_checks|after_merge_in)>([\s\S]*?)<\/\1>/g)].map((m) => m[2] ?? '');
+  const blocks = [...call.stdin.matchAll(/<(required_checks>|after_merge_in>\n)([\s\S]*?)<\/(?:required_checks|after_merge_in)>/g)].map((m) => m[2] ?? '');
   const lanes = [...new Map(blocks.flatMap((b) => [...b.matchAll(/^- (\S+) \(expects exit (\d+)/gm)].map((m) => [m[1]!, Number(m[2])] as const))).entries()];
   const head = lanes.length === 0 ? '' : git(call.cwd, 'rev-parse', 'HEAD').trim();
   return { ...value, checks: lanes.map(([lane, exit]) => ({ lane, head, exit })) };
