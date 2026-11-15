@@ -170,7 +170,7 @@ export const BUILD_SCHEMA: Schema = sObj({
     text: sDescribe(S_STR, `The message verbatim, or its first ${MESSAGE_EXCERPT_CHARS} characters when longer.`),
   })), 'Every message another Claude session sent you during this run, in arrival order; empty when none arrived.'),
   checks: sDescribe(sArr(sObj({
-    lane: sDescribe(S_TEXT, 'The lane id, as the message names it.'),
+    lane: sDescribe(S_ITEM_ID, 'The lane id, as the message names it.'),
     head: sDescribe(sPattern('^[0-9a-f]{40}$'), 'The commit HEAD was at when the lane ran (git rev-parse HEAD).'),
     exit: S_EXIT,
   })), 'Each required check and after-merge-in lane you ran on your final tree; empty when the message names none.'),
