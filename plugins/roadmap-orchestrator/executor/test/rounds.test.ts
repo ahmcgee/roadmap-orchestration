@@ -1,8 +1,9 @@
 // M2 build rounds (src/pipeline/rounds.ts): a re-entry's fresh resolve round and the session-never-persisted rerun.
 // Integrated over real git and the fake backends where a round runs. Named tests: rounds.fresh-resolve,
 // rounds.session-unrecoverable. A stalled fix round stays on its seat (dev.17 retired D4): stage-m2's rounds.no-escalation.
+// dev.81 (B4): rounds.fix-failures, rounds.missing-checks, rounds.checks-continuation, rounds.checks-accepted.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { type UnitId, invocationId, laneId, opIdOf, resourceName, sha, unitId } from '../src/core/ids.ts';
@@ -13,12 +14,12 @@ import { implementerDispatch, pinDispatch, unitBranch, unitWorktree, workDir } f
 import type { LaneDef } from '../src/core/records.ts';
 import { type LaneRecord, lastLaneSeriesCost } from '../src/pipeline/lanes.ts';
 import { prepare } from '../src/pipeline/prepare.ts';
-import { type RoundInput, callRound, laneFixRound, prepareRound } from '../src/pipeline/rounds.ts';
+import { FAILURE_EXCERPT_BYTES, FAILURE_EXCERPT_LINES, type RoundInput, callRound, laneFixRound, prepareRound } from '../src/pipeline/rounds.ts';
 import { NO_SESSION_NOTE, RESOLVE_DIRECTIVE } from '../src/prompts/directives.ts';
-import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, preBuild, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
+import { type LanesDone, at, build, buildRead, evidence, lanes, loadUnitSpec, missingChecks, preBuild, quiesce, record, salvage, start, teardown } from '../src/pipeline/stages.ts';
 import { laneCommand } from '../src/prompts/inputs.ts';
 import { promptFor } from '../src/prompts/index.ts';
-import { commitAll, git, writeFiles } from './helpers/repo.ts';
+import { commitAll, git, tmpDir, writeFiles } from './helpers/repo.ts';
 import { type CodexAct, type Expect, type Step, readCalls } from './helpers/scenario.ts';
 import { BUILD_REPORT, DB, SCENARIO_TIMEOUT_MS, type StageRun, U1, launchOf, outcomeFacts, planCheckStep, seated, setupUnit, spawnIntents, started } from './fixtures/stage-common.ts';
 import { contextFor, setupArc, unitWorktreePath } from './fixtures/unit-common.ts';
@@ -213,4 +214,104 @@ test('rounds.required-checks-dispatch: a non-build lane reaches the repair build
   const checks = repair.stdin.match(/<fix_round>[\s\S]*?<required_checks>([\s\S]*?)<\/required_checks>/)?.[1];
   assert.ok(checks !== undefined);
   assert.ok(checks.includes(laneCommand(unitWorktree(run.ctx.plan().worktreeRoot, run.ctx.plan().arc, U1), definition)));
+});
+
+// ---------------------------------------------------------------------------------------------------
+// dev.81 (B4): a fix round's failure text, and the final report's proof that it re-ran the required checks
+
+/** A red lane record whose output snapshot dir holds `stderr` and `stdout` (absent when undefined). */
+function redRecord(id: string, out: Readonly<{ stderr?: string; stdout?: string }>): LaneRecord {
+  const dir = tmpDir(`rounds-red-${id}`);
+  const files = join(dir, 'output', 'files');
+  mkdirSync(files, { recursive: true });
+  if (out.stderr !== undefined) writeFileSync(join(files, 'stderr'), out.stderr);
+  if (out.stdout !== undefined) writeFileSync(join(files, 'stdout'), out.stdout);
+  return {
+    lane: laneId(id), argv: ['make', id], expectedExit: 0, exitCode: 1, verdict: 'fail', evidenceDir: absPath(dir), ignored: null,
+    inv: invocationId(opIdOf('arc-1/9'), 1), at: isoTimeOf(new Date(0)), endedAt: isoTimeOf(new Date(1)), fixDirs: [absPath(files)],
+    host: null, signatures: [], voided: null, diagnostic: null, flaky: false, reused: null, redRev: 2, pressure: null, failure: null, repeat: null, hostSuspected: null,
+  };
+}
+
+test('rounds.fix-failures: each failing lane\'s signature line and stderr tail reach the fix round, capped; stdout when stderr is empty; nothing for a silent lane', () => {
+  const tail = Array.from({ length: 30 }, (_, i) => `at frame ${i}`);
+  const unit = redRecord('unit', { stderr: ['npm ERR! the wrapper', ...tail, 'AssertionError: expected 3, got 4 in add.test.js', 'npm ERR! code 1', ''].join('\n'), stdout: 'ok 1\n' });
+  const quiet = redRecord('quiet', { stderr: '', stdout: 'not ok 2 - mul handles zero\n# fail 1\n' });
+  const silent = redRecord('silent', {});
+  const huge = redRecord('huge', { stderr: Array.from({ length: 20 }, (_, i) => `${i}:${'x'.repeat(400)}`).join('\n') });
+  const round = laneFixRound([unit, quiet, silent, huge], [], sha('a'.repeat(40)), []);
+  assert.ok(round.kind === 'fix');
+  const failures = round.fix.failures ?? [];
+  assert.deepEqual(failures.map((f) => f.lane), ['unit', 'quiet', 'huge'], 'a lane that printed nothing has no entry');
+  const [u, q, h] = failures;
+  assert.equal(u!.signature, 'AssertionError: expected 3, got 4 in add.test.js');
+  assert.equal(u!.specific, true);
+  assert.equal(u!.excerpt.length, FAILURE_EXCERPT_LINES);
+  assert.equal(u!.excerpt.at(-1), 'AssertionError: expected 3, got 4 in add.test.js');
+  assert.ok(!u!.excerpt.some((l) => l.startsWith('npm ERR!')), 'wrapper lines are left out');
+  assert.equal(q!.signature, 'not ok 2 - mul handles zero');
+  assert.deepEqual(q!.excerpt, ['not ok 2 - mul handles zero', '# fail 1'], 'stdout when stderr has nothing');
+  assert.ok(Buffer.byteLength(h!.excerpt.join('\n')) <= FAILURE_EXCERPT_BYTES, 'the byte cap holds');
+  assert.equal(h!.excerpt.at(-1), `19:${'x'.repeat(400)}`, 'the newest lines are kept');
+  assert.ok(h!.excerpt.length < 20);
+});
+
+test('rounds.missing-checks: a required lane is proven by a checks row at HEAD with its expected exit; a report that does not parse owes nothing', () => {
+  const head = sha('c'.repeat(40));
+  const lane = (id: string, expectedExit = 0): LaneDef => ({ id: laneId(id), argv: ['true'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit, cadence: 'unit', resources: [], evidenceGlobs: [], evidenceExcludes: [] });
+  const owed = [lane('a'), lane('b'), lane('c', 3), lane('d'), lane('a')];
+  const report = { ...BUILD_REPORT, checks: [
+    { lane: 'a', head, exit: 0 }, { lane: 'b', head: 'd'.repeat(40), exit: 0 }, { lane: 'c', head, exit: 0 }, { lane: 'e', head, exit: 0 },
+  ] };
+  assert.deepEqual(missingChecks(report, owed, head), [
+    { lane: 'b', expectedExit: 0, why: 'other-head' }, { lane: 'c', expectedExit: 3, why: 'other-exit' }, { lane: 'd', expectedExit: 0, why: 'no-row' },
+  ]);
+  assert.deepEqual(missingChecks(report, [], head), [], 'a round that owes nothing');
+  assert.deepEqual(missingChecks({ summary: 'not a report' }, owed, head), [], 'buildRead reads it as malformed');
+});
+
+const ADD_FIX = { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' };
+
+test('rounds.checks-continuation: a fix round\'s final report without a row at HEAD for its required check goes back once, uncharged, as a new invocation of the attempt; the next report is read', T, async () => {
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      codexBuild([], { argv: ['exec', '-C'] }),
+      { as: 'codex', expect: { argv: ['exec', 'resume'] }, acts: [{ type: 'commit', message: 'fix add', files: ADD_FIX }, { type: 'emit', value: { ...BUILD_REPORT, checks: [{ lane: 'unit', head: 'f'.repeat(40), exit: 0 }] } }] },
+      codexBuild([], { argv: ['exec', 'resume'], stdinContains: ['does not prove these required lanes ran on your final tree: unit (its checks row names another commit'] }),
+    ],
+  });
+  started(await preBuild(run.ctx, run.unit));
+  const red = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
+  assert.ok(red.fix !== null && red.fix.kind === 'fix');
+  assert.deepEqual(red.fix.fix.requiredChecks?.map((l) => l.id), ['unit']);
+  const charged = run.journal.view.unit(U1).counters.chargeableFailures;
+  const b = started(await build(run.ctx, run.unit, red.fix));
+  assert.equal(b.outcome.kind, 'success');
+  const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build').map((i) => i.parent);
+  assert.equal(builds.length, 3, 'the fresh build, the fix round\'s report and its one continuation');
+  assert.deepEqual(builds[1], builds[2], 'the continuation is a new invocation of the fix round\'s attempt');
+  assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, charged);
+  const calls = readCalls(run.scenario.path);
+  assert.ok(calls.every((c) => c.step !== null), `every call matched: ${calls.map((c) => c.step).join(',')}`);
+  assert.match(calls[2]!.stdin, /<failing_lanes>- unit: /, 'the fix round quotes the failing lane');
+});
+
+test('rounds.checks-accepted: a fix round whose report proves every required check at HEAD is read at once; a fresh build owes no checks', T, async () => {
+  const run = setupUnit({
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'emit', value: { ...BUILD_REPORT, checks: [] } }] },
+      // The fake reports a row per <required_checks> lane at its HEAD (test/fakes/fake-backend.ts `withBuildChecks`).
+      codexBuild([{ type: 'commit', message: 'fix add', files: ADD_FIX }], { argv: ['exec', 'resume'] }),
+    ],
+  });
+  started(await preBuild(run.ctx, run.unit));
+  const red = started(await lanes(run.ctx, run.unit, await buildToLanes(run, { kind: 'fresh' })));
+  assert.ok(red.fix !== null && red.fix.kind === 'fix');
+  const b = started(await build(run.ctx, run.unit, red.fix));
+  assert.equal(b.outcome.kind, 'success');
+  const builds = spawnIntents(run).filter((i) => i.expect.subject.purpose === 'backend' && i.expect.subject.role === 'build');
+  assert.equal(builds.length, 2, 'the fresh build and the fix round, no continuation');
+  assert.equal(readCalls(run.scenario.path).length, 3);
 });
