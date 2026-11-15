@@ -3,19 +3,20 @@
 // diff base alone. Base green: the unit's red, an uncharged certification fix round whose evidence and prompt carry the suite lane. Base
 // red: `base-red`, uncharged, on to the gate; a base's verdict is run once per run. Real processes, real git, fake
 // backends. Named tests: lanes.fast-suite-own-red, lanes.fast-suite-base-red, lanes.fast-suite-base-is-salvage; dev.81:
-// lanes.fast-suite-base-fresh (C2: a confirmed red never trusts a kept base pass).
+// lanes.fast-suite-base-fresh (C2: a confirmed red never trusts a kept base pass), lanes.environment-divergence (B5).
 import assert from 'node:assert/strict';
 import { readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { type Sha,sha } from '../src/core/ids.ts';
+import { type Sha,laneId,sha } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { worktreeList } from '../src/git/git.ts';
 import { parsePlan } from '../src/input/plan.ts';
 import { pinDispatch,unitWorktree } from '../src/pipeline/dispatch.ts';
 import { stageSuiteLanes,suiteStandIns } from '../src/pipeline/lanes.ts';
 import { type LanesDone,fastSuiteRoot,lanes,loadUnitSpec,preBuild } from '../src/pipeline/stages.ts';
+import { environmentDivergenceDirective } from '../src/prompts/directives.ts';
 import { laneCommand } from '../src/prompts/inputs.ts';
 import { step } from '../src/pipeline/unit.ts';
 import {
@@ -220,6 +221,49 @@ test('lanes.fast-suite-base-fresh: an unconfirmed red reuses the kept green base
   assert.ok(onBase(fourth.attempt) > 0);
   assert.deepEqual(compared(fourth.attempt), [['fail', true]]);
   assert.deepEqual(fastCheckouts(run), []);
+});
+
+// dev.81 (B5): the builder's own lane checks against the lanes'. Every report here writes `checks` itself, so the fake
+// backend never fills them in (test/fakes/fake-backend.ts `withBuildChecks`).
+test('lanes.environment-divergence: a red lane with no passing check of the builder\'s is red as today; a red lane the builder\'s report says passed at that same head is environment-divergence, uncharged, and its fix round carries the divergence directive', T, async () => {
+  const lint: LaneJson = { id: 'lint', argv: ['sh', '-c', 'if grep -q TODO src/add.js; then echo "lint: TODO left in src/add.js" >&2; exit 1; fi'] };
+  const report = (checks: readonly Readonly<{ lane: string; head: string; exit: number }>[]): CodexAct => ({ type: 'emit', value: { ...BUILD_REPORT, checks } });
+  const run = setupUnit({
+    lanes: [UNIT],
+    suite: [SAME, lint, E2E],
+    steps: [
+      planCheckStep({ decision: 'approve' }),
+      { as: 'codex', expect: { argv: ['exec', '-C'] }, acts: [{ type: 'commit', message: 'add', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b; // TODO tidy\n}\n' } }, report([])] },
+    ],
+  });
+  started(await preBuild(run.ctx, run.unit));
+  while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
+  const first = run.journal.view.unit(U1).decided;
+  assert.ok(first?.stage === 'lanes');
+  assert.deepEqual([first.outcome, first.chargeable, first.unchargedLanesReds], ['red', false, 1], 'no builder check: the unit\'s red, in the certification allowance as today');
+  const salvaged = laneSpawns(run).find((s) => s.set === 'spec')!.at;
+
+  // The fix round commits nothing and reports lint passing at that very head.
+  const scenario = JSON.parse(readFileSync(run.scenario.path, 'utf8')) as { steps: Step[] };
+  scenario.steps.push(
+    { as: 'codex', expect: { argv: ['exec', 'resume'] }, acts: [report([{ lane: 'lint', head: salvaged, exit: 0 }])] },
+    // The divergence's fix round (not this test's subject): its report's rows are the fake's honest ones.
+    codexBuild([{ type: 'commit', message: 'tidy', files: { 'src/add.js': 'export function add(a, b) {\n  return a + b;\n}\n' } }], { argv: ['exec', 'resume'] }),
+  );
+  writeFileSync(run.scenario.path, `${JSON.stringify(scenario, null, 2)}\n`);
+  assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
+  while (run.journal.view.unit(U1).decided?.stage !== 'lanes') assert.equal((await step(run.ctx, run.unit)).kind, 'continue');
+  const diverged = run.journal.view.unit(U1).decided;
+  assert.ok(diverged?.stage === 'lanes' && diverged.attempt > first.attempt);
+  assert.ok(laneSpawns(run).some((s) => s.attempt === diverged.attempt && s.lane === 'lint' && s.set === 'suite' && s.at === salvaged), 'lint ran red again at the head the builder reported');
+  assert.deepEqual([diverged.outcome, diverged.chargeable, diverged.detail], ['environment-divergence', false, { kind: 'environment-divergence', head: salvaged, lanes: ['lint'], builderChecks: [{ lane: 'lint', head: salvaged, exit: 0 }] }]);
+  assert.deepEqual([run.journal.view.unit(U1).counters.chargeableFailures, run.journal.view.unit(U1).counters.unchargedLanesReds], [0, 1], 'uncharged, and no allowance used');
+
+  // Its fix round is told of the divergence.
+  const fixed = await step(run.ctx, run.unit);
+  assert.equal(fixed.kind, 'continue', JSON.stringify([fixed, run.journal.view.unit(U1).decided]));
+  const calls = readCalls(run.scenario.path);
+  assert.ok(calls.at(-1)!.stdin.includes(environmentDivergenceDirective([laneId('lint')], salvaged)), 'the fix round carries the divergence directive');
 });
 
 test('lanes.fast-suite-base-is-salvage: a unit whose commit is its base fails on the base by its own run: base-red, nothing run twice', T, async () => {
