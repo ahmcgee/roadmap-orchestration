@@ -173,8 +173,16 @@ the first scheduled lane's resources (spec first, otherwise the selected suite).
 | Only red lanes are declared static checks (`kind: static`: lint, typecheck) | One uncharged fix round of its own. A second is read as any candidate red. |
 
 **Pushes to `origin`.** Every successful integration fast-forward (unit, repair batch, docs revision or close-out)
-queues a background push to `origin` with user credentials.
+asks for a background push to `origin` with user credentials. `origin`'s integration branch is the CI ref: what CI is
+testing or has tested, and the PR head. It advances only once the previous pushed head has settled, so a new push
+never cancels a pipeline still running on the last one.
 
+- A pushed head settles at the first of: an external witness recorded at it (`roadmap witness`), `ci.settleMin`
+  minutes after the push (plan field, default 120; 0 pushes every publication at once), or `roadmap push` (the root
+  advances the CI ref now, for instance after cancelling a pipeline by hand).
+- Until then the wanted head waits; a later fast-forward replaces it (one pending head). Waiting writes no fact; status
+  shows `pushes` (`ciHead`, `pending`, `settleBy`). Startup recomputes it from the log. A head still waiting when the
+  executor exits is pushed by the next startup, and at the arc's end by `roadmap pr`.
 - Pushes use an explicit lease and require the remote tip to be an ancestor. `main` is never pushed.
 - Startup retries the current head after a crash; an up-to-date remote is a no-op.
 - Snapshots and retirement continue during network work, bounded by `PUSH_TIMEOUT_MS` (five minutes per attempt).
@@ -282,12 +290,22 @@ the same container are reachable.
 - A passing later baseline settles baseline items; a superseding review settles pack-review items.
 - Finding requests close when their findings settle or a root apply supplies all named repairs.
 - Dismissal suppresses the same finding on unchanged code.
-- External witnesses are explicit root attestations with head-bound file/URL evidence. No output matching
-  substitutes for proof.
+- External witnesses are explicit root attestations with commit-bound file/URL evidence. No output matching
+  substitutes for proof. `roadmap witness <I-n> --result pass|fail --evidence <file|url> [--at <sha>]` attests the
+  commit CI tested: `--at`, by default the CI ref (the last pushed head). Any commit the integration branch contains
+  is accepted, and the verdict binds to that commit's lane inputs, so it holds on later heads whose declared `inputs`
+  or `systems` match. A pass latches a future obligation once every deliverer's published merge is in that commit. A
+  fail reopens each delivering unit (its lineage head) with a brief listing the publications between the
+  obligation's last pass (or the arc start) and the attested commit: the suspects.
 
 ## 7. Close out and check in
 
-Final audit, witnesses, batch lanes, document publication and snapshots settle before completion. The architect
+Final audit, witnesses, batch lanes, document publication and snapshots settle before completion.
+
+A revision publishes rendered documents only where they differ from the integration tip, and never `constraints.md`
+alone: a ruling-only revision takes effect at once through the ledger in force but makes no docs commit (each one
+would be a CI-ref push). Its `constraints.md` rendering lands with the next publication that changes another
+document, or with the close-out, which re-renders every document against the tip. The architect
 prepares the stacked PR, presents `brief` and the demo/rough edges, then acknowledges the exact brief only after the
 owner does. Another arc starts only within the chain bound and while the vision calls for work.
 

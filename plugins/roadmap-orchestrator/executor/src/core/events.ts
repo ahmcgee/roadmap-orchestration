@@ -775,7 +775,13 @@ export type DiffShown = Readonly<{ inlined: readonly RepoPath[]; notInlined: rea
 export type GateLargeDiff = Readonly<{ overflow: number }>;
 
 export type CiFact =
-  | Readonly<{ kind: 'external-witness'; command: CommandId; obligation: ObligationId; obligationRev: number; laneRev: LaneRev; inputSha: Sha; head: Sha; result: 'pass' | 'fail'; evidence: string; evidenceSha256: Sha256Hex | null }>
+  /**
+   * `roadmap witness` (dev.81, A3): `head` is the attested commit (`--at`, default the CI ref: the last pushed head), any
+   * commit the integration branch contains; `inputSha` the lane-input hash of its tree. `since` is the head of the
+   * obligation's previous `pass` attestation (null: none, the range runs from the arc start); absent on a line an executor
+   * before dev.81 wrote, read as null.
+   */
+  | Readonly<{ kind: 'external-witness'; command: CommandId; obligation: ObligationId; obligationRev: number; laneRev: LaneRev; inputSha: Sha; head: Sha; result: 'pass' | 'fail'; evidence: string; evidenceSha256: Sha256Hex | null; since?: Sha | null }>
   | Readonly<{ kind: 'external-reopened'; command: CommandId; unit: UnitId }>
   | Readonly<{ kind: 'spike-completed'; unit: UnitId }>
   | Readonly<{ kind: 'attempt-marker'; unit: UnitId; marker: 'M4'; builds: number; judged: number }>
@@ -784,7 +790,9 @@ export type CiFact =
    * dev.81 (C2): `fresh`, the base ran again for a confirmed red, its memoised check and every earlier pass of it bypassed
    * (src/pipeline/stages.ts `baseCheck`). Absent: the run's memoised check, reuse allowed (every fact before dev.81).
    */
-  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail'; fresh?: true }>;
+  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail'; fresh?: true }>
+  /** dev.81 (A3): `roadmap push`: the last pushed head counts as settled, so the CI ref advances to the wanted head now. */
+  | Readonly<{ kind: 'push-requested'; command: CommandId }>;
 
 export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
 export type SurfaceFact =
@@ -1200,8 +1208,8 @@ export type PropagationFactKind = PropagationFact['kind'];
 export type HolisticFactKind = HolisticFact['kind'];
 export type PlanAppliedFact = Extract<Fact, { kind: 'plan-applied' }>;
 
-/** The plan fields besides units, suite, resources and routing that an apply may change. `capacity` since M2. */
-export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity', 'expectations'] as const;
+/** The plan fields besides units, suite, resources and routing that an apply may change. `capacity` since M2, `ci` since dev.81. */
+export const PLAN_FIELDS = ['contracts', 'rulings', 'architectureDoc', 'architectureDigest', 'direction', 'capacity', 'expectations', 'ci'] as const;
 export type PlanField = (typeof PLAN_FIELDS)[number];
 
 /**
@@ -2017,7 +2025,8 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fac
     };
     return out;
   }),
-  'external-witness': object((f): Fact => ({ kind: f.get('kind', literal('external-witness')), command: f.get('command', cmdR), obligation: f.get('obligation', obligationR), obligationRev: f.get('obligationRev', positive), laneRev: f.get('laneRev', laneRevR), inputSha: f.get('inputSha', shaR), head: f.get('head', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceSha256: f.get('evidenceSha256', nullable(sha256R)) })),
+  'external-witness': object((f): Fact => ({ kind: f.get('kind', literal('external-witness')), command: f.get('command', cmdR), obligation: f.get('obligation', obligationR), obligationRev: f.get('obligationRev', positive), laneRev: f.get('laneRev', laneRevR), inputSha: f.get('inputSha', shaR), head: f.get('head', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceSha256: f.get('evidenceSha256', nullable(sha256R)), ...(() => { const since = f.optional('since', nullable(shaR)); return since === undefined ? {} : { since }; })() })),
+  'push-requested': object((f): Fact => ({ kind: f.get('kind', literal('push-requested')), command: f.get('command', cmdR) })),
   'external-reopened': object((f): Fact => ({ kind: f.get('kind', literal('external-reopened')), command: f.get('command', cmdR), unit: f.get('unit', unitR) })),
   'spike-completed': object((f): Fact => ({ kind: f.get('kind', literal('spike-completed')), unit: f.get('unit', unitR) })),
   'attempt-marker': object((f): Fact => ({ kind: f.get('kind', literal('attempt-marker')), unit: f.get('unit', unitR), marker: f.get('marker', literal('M4')), builds: f.get('builds', nat), judged: f.get('judged', nat) })),

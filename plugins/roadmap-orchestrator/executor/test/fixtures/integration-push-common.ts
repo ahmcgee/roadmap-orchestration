@@ -18,11 +18,15 @@ export function pushScene(): PushScene {
   git(repo, 'branch', BRANCH);
   return { repo, runDir: tmpDir('push-run') };
 }
-export function openPush(s: PushScene) {
+/**
+ * `settleMin` (dev.81): the CI ref's settle window; 0, the default here, pushes every publication at once (the
+ * transport and recovery tests). The cadence tests pass a window and settle it.
+ */
+export function openPush(s: PushScene, settleMin = 0) {
   const repo = absPath(s.repo);
   const runDir = absPath(s.runDir);
   const journal = openJournal(runDir, arcId('push'));
-  const pushes = startIntegrationPushes({ repo, runDir, journal });
+  const pushes = startIntegrationPushes({ repo, runDir, journal, settleMin: () => settleMin });
   return { repo, runDir, journal, pushes };
 }
 export type PushRun = ReturnType<typeof openPush>;

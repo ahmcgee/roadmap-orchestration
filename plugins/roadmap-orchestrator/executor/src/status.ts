@@ -153,7 +153,8 @@ import { isAlive } from './host/liveness.ts';
 import { readClaim } from './host/lock.ts';
 import { readOwner } from './host/owner.ts';
 import { type CorpusInForce,type InForce,PLAN_INPUT,RULING_INPUT,type RevisionInForce,keptInput,keptPayload,planInForce,revisionInForce,routingBaseOf } from './input/inforce.ts';
-import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
+import { type KnownDefect,type PlanM1,type PlanUnit,advancesOf,ciSettleMin,hasMilestones,knownDefectsOf,milestonesOf,parsePlan } from './input/plan.ts';
+import { ciRefOf } from './forge/ciref.ts';
 import { type ClassTotal,type JobTotal,type ModelTotal,type RoleTotal,type SmokeTotal,byClass,byModel,ownShare } from './meter.ts';
 import { type Supervision,supervision } from './watch-lease.ts';
 import { type BlockingItem,blockingItems,holdsUnit,openItems,openBlockingDigest,type OpenBlockingDigest,supersededItems } from './needsuser.ts';
@@ -572,7 +573,23 @@ export type Status = Readonly<{
    * polishing | settled`), its node, its walks in log order (the last round's number), and its active walkthrough findings.
    */
   milestones: readonly MilestoneView[];
+  /** dev.81 (A3): the CI ref (src/forge/ciref.ts); null before a start recorded a plan. */
+  pushes: PushesView | null;
 }>;
+
+/**
+ * dev.81 (A3): what CI is testing and when the CI ref advances next. `ciHead`: the last successful push (null: none);
+ * `pending`: the local integration head when origin does not have it yet (null: up to date, or no origin); `settleBy`:
+ * when the timer settles the last pushed head, null once settled (a witness at it or `roadmap push` settles it sooner).
+ */
+export type PushesView = Readonly<{ ciHead: Sha | null; pending: Sha | null; settleBy: IsoTime | null }>;
+
+function pushesOf(view: JournalView, repo: AbsPath, plan: PlanM1, now: number): PushesView {
+  const ci = ciRefOf(view, ciSettleMin(plan), now);
+  const local = revParse(repo, branchRef(plan.integrationBranch));
+  const noOrigin = view.integrationPushes().at(-1)?.fact.result === 'no-origin';
+  return { ciHead: ci.ciHead, pending: noOrigin || local === ci.ciHead ? null : local, settleBy: ci.settleBy };
+}
 
 export type MilestoneView = Readonly<{
   id: MilestoneId; state: MilestoneState; passed: boolean; round: number; walks: readonly Readonly<{ job: JobId; round: number; outcome: WalkOutcome | null }>[];
@@ -1802,6 +1819,7 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     demo: core.demo,
     milestones: core.milestones,
     waiting: core.waiting,
+    pushes: plan === null || start === null ? null : pushesOf(view, start.record.repo, plan, now),
   };
 }
 

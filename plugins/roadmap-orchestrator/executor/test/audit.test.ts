@@ -59,8 +59,9 @@ function watermarks(ctx: AuditContext, lenses: readonly Lens[]): readonly (reado
   const now = head(ctx.repo);
   return coverageOf(ctx.journal.view.holistic(), coverageBase(ctx, now)!, lenses, now).map((c) => [c.lens, c.watermark, c.outstanding] as const);
 }
+/** A ruling applied with a cut-line edit, so its revision publishes docs (dev.81: a ruling alone publishes nothing). */
 async function rule(w: Wired, r: ArcRun, id: string, over: Record<string, unknown> = {}): Promise<void> {
-  const outcome = await applyCommand(w.commands, submitRule(r, ruleRecord(r, id, over)));
+  const outcome = await applyCommand(w.commands, submitRule(r, ruleRecord(r, id, over), true));
   assert.equal(outcome.kind, 'applied', JSON.stringify(outcome));
 }
 /** The arbiter's wake loop, as the scheduler runs it. */
@@ -262,7 +263,7 @@ describe('the audit job', () => {
     const stop = ticking(w);
     try {
       const asked = requestAudit(r);
-      const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', API_OP)));
+      const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', API_OP), true));
       await reached(barrier, 'lane', 120_000);
       const audit = runAudit(ctx);
       await sleep(500);

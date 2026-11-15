@@ -25,7 +25,7 @@ prevHash,probeTargetKey,serializeEvent
 } from './events.ts';
 import { CounterRegressionError } from './fsx.ts';
 import { type ArcId,type ClaudeSessionId,type CommandId,type DivergenceId,type EdgeId,type FindingId,type InvocationId,type JobId,type JobKind,type MilestoneId,type NeedsUserId,type ObligationId,type OpId,type OpKey,type PlanRev,type PolishId,type ResourceInstance,type ResourceUnit,type ReviewFindingId,type RoutingRev,type Sha,type Sha256Hex,type SpecRev,type UnitId,compareResourceUnits,divergenceIdOf,findingIdOf,jobId,parseInvocationId,parseJobId,parseOpId,polishIdOf,reviewFindingIdOf } from './ids.ts';
-import type { ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,SpecHistoryEntry,WalkFactAt } from './interfaces.ts';
+import type { CiSettler,ControlState,FlakeAt,JournalView,NeedsUserAckState,NeedsUserState,PropagationFactAt,SpecHistoryEntry,WalkFactAt } from './interfaces.ts';
 import { canonicalJson } from './json.ts';
 import { type ApprovalFingerprint,type Bounds,type ContainmentMode,type DispatchRecord,type ResidueKey,type Stage,type StopOptions,DEFAULT_BOUNDS,boundsOfRecord } from './records.ts';
 import type { ApprovalBlobs,FindingsLedgerEntry } from './review.ts';
@@ -79,6 +79,8 @@ export type UnitStatus = 'active' | 'held' | 'park-pending' | 'stop-pending' | '
  * seq), its class as recorded (or the interim M2 shim's operator reading), and the retryable targets a covering probe has passed.
  * The park recovers, and the unit re-runs the parked stage, once every target has passed.
  */
+let legacyWitnessSinceWarned = false;
+
 export type ParkState = Readonly<{ seq: number; at: IsoTime; park: ParkRecord; passed: readonly ProbeTarget[] }>;
 
 /**
@@ -732,7 +734,9 @@ export class Fold implements JournalView {
   readonly #stageJobOutcomes: import('./events.ts').JobStageOutcomeFact[] = [];
   readonly #ciFacts: CiFact[] = [];
   readonly #walkMcp: import('./events.ts').WalkMcpFact[] = [];
-  readonly #integrationPushes: { seq: number; fact: import('./events.ts').IntegrationPushFact }[] = [];
+  readonly #integrationPushes: { seq: number; at: IsoTime; fact: import('./events.ts').IntegrationPushFact }[] = [];
+  /** dev.81 (A3): what settles a pushed CI head, in log order (src/forge/ciref.ts). */
+  readonly #ciSettlers: CiSettler[] = [];
   readonly #walkFacts: WalkFactAt[] = [];
   /** Open walks and their recorded proposals, in log order. */
   readonly #openWalks = new Map<JobId, PolishId[]>();
@@ -1019,7 +1023,16 @@ export class Fold implements JournalView {
     const f = raw.kind === 'stage-outcome' && 'unit' in raw ? candidateRedDefault(raw) : raw;
     switch (f.kind) {
       case 'external-witness':
+        if (f.since === undefined && !legacyWitnessSinceWarned) {
+          legacyWitnessSinceWarned = true;
+          process.emitWarning('reading an external-witness without since (before dev.81) as since: null (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+        }
         this.#ciFacts.push(f);
+        this.#ciSettlers.push({ seq: at.seq, fact: f });
+        return;
+      case 'push-requested':
+        this.#ciFacts.push(f);
+        this.#ciSettlers.push({ seq: at.seq, fact: f });
         return;
       case 'external-reopened': {
         this.#ciFacts.push(f);
@@ -1263,7 +1276,7 @@ export class Fold implements JournalView {
         return;
       }
       case 'integration-push':
-        this.#integrationPushes.push({ seq: at.seq, fact: f });
+        this.#integrationPushes.push({ seq: at.seq, at: at.at, fact: f });
         return;
       case 'needs-user-acked':
         if (this.#acks.has(f.id)) fail(`second acknowledgement of needs-user ${f.id}`);
@@ -2180,7 +2193,8 @@ export class Fold implements JournalView {
 
   ciFacts(): readonly CiFact[] { return this.#ciFacts; }
   walkMcp(): readonly import('./events.ts').WalkMcpFact[] { return this.#walkMcp; }
-  integrationPushes(): readonly Readonly<{ seq: number; fact: import('./events.ts').IntegrationPushFact }>[] { return this.#integrationPushes; }
+  integrationPushes(): readonly Readonly<{ seq: number; at: IsoTime; fact: import('./events.ts').IntegrationPushFact }>[] { return this.#integrationPushes; }
+  ciSettlers(): readonly CiSettler[] { return this.#ciSettlers; }
 
   attemptCounts(unit: UnitId): Readonly<{ builds: number; judged: number }> {
     const u = this.#units.get(unit);

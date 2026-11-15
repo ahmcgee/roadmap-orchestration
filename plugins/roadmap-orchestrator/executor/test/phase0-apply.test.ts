@@ -31,7 +31,7 @@ import {
 type CorpusArc,PIN_FILE,W1_FILE,W_SCRIPTS_LISTED,corpusArc,editJsonFile,editPhase0,editPlan,filesOf,inForce,newHostDir,readJsonFile,runDirOfArc,
 visionRecord,w1Item,wScriptsArchitecture,withForge,withSpecWitness,
 } from './helpers/corpusarc.ts';
-import { commitAll,makeRepo,revParse,tmpDir,writeFiles } from './helpers/repo.ts';
+import { commitAll,git as gitIn,makeRepo,revParse,tmpDir,writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -410,6 +410,8 @@ describe('vision edits publish (dev.16)', () => {
     try {
       const v = readJsonFile(join(a.repo, '.roadmap/vision.json'));
       const next = `${JSON.stringify({ ...v, rev: 2, clauses: [...(v['clauses'] as Json[]), V3] })}\n`;
+      // On the owner's branch: the integration tip does not hold it yet (dev.81: a render equal to the tip is no publication).
+      gitIn(a.repo, 'checkout', '--quiet', '-b', 'owner');
       writeFiles(a.repo, { '.roadmap/vision.json': next });
       commitAll(a.repo, 'vision rev 2');
       const out = accepted(await apply(a, j, true));
@@ -423,6 +425,7 @@ describe('vision edits publish (dev.16)', () => {
   it('vision.repin-publishes-doc: a same-repo re-pin that changes the vision document publishes it (its bytes at the pin\'s commit) with the vision record that confirms it', T, async () => {
     const { a, j } = await arcInForce();
     try {
+      gitIn(a.repo, 'checkout', '--quiet', '-b', 'owner');
       const commit = commitCorpus(a, '0005_Vision.md', (t) => `${t}Quiet nights in every berth.\n`);
       await repin(a, commit);
       const doc = readFileSync(join(a.repo, VISION_PATH), 'utf8');

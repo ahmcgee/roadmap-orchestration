@@ -91,9 +91,24 @@ export const API_OP = {
   contractOps: [{ path: 'contracts/api.md', anchor: '#api-contract', oldText: 'the sum of two numbers', newText: 'the sum of two finite numbers' }],
 } as const;
 
-/** Writes `record` to a file and submits `rule <file>`. */
-export function submitRule(r: ArcRun, record: Record<string, unknown>): CommandFile {
+let cutLines = 0;
+/**
+ * Edits the cut line of a holistic arc's exported obligations: a revision change that re-renders `invariants.md`
+ * and selects no obligation, so the revision publishes docs with no witness run (dev.81: a ruling alone publishes
+ * nothing, src/commands/apply.ts `publicationOf`).
+ */
+export function editCutLine(r: ArcRun, line = `cut ${++cutLines}`): void {
+  const path = join(r.d.planPath, '..', 'obligations.json');
+  writeFileSync(path, JSON.stringify({ ...(JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>), cutLine: line }));
+}
+
+/**
+ * Writes `record` to a file and submits `rule <file>`. `publish` (a holistic arc): the same apply edits the cut line
+ * (`editCutLine`), so the revision publishes its constraints rendering beside invariants.md.
+ */
+export function submitRule(r: ArcRun, record: Record<string, unknown>, publish = false): CommandFile {
   syncInputs(r);
+  if (publish) editCutLine(r);
   const path = join(r.d.planPath, '..', 'rulings.md');
   let text = readFileSync(path, 'utf8');
   const id = String(record['id']) === 'C-?' ? `C-${Math.max(0, ...[...text.matchAll(/^C-(\d+)/gm)].map((m) => Number(m[1]))) + 1}` : String(record['id']);

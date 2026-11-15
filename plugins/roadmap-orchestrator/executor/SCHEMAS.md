@@ -1738,3 +1738,26 @@ All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
 - **Wait reasons** (appended): `fast-suite-tokens` (every `@fast-suite` token held) and `resource-unhealthy` (C3c: the
   request names an environment or resource instance that is a tripped breaker's target or an outstanding retryable
   park's target). A `resource-unhealthy` waiter is set aside like an environment-blocked one and blocks no backfill.
+
+### dev.81 A3: the CI ref and the external evidence path
+
+- `integration-push` facts are unchanged; the push worker (`src/forge/integration-push.ts`) gates on the CI ref
+  (`src/forge/ciref.ts` `ciRefOf`): the last `pushed` head is settled by an `external-witness` at it written after
+  the push, by `ci.settleMin` minutes after the push's `at`, or by a `push-requested` after it. A deferral writes no
+  fact; the state is derived at read time. `JournalView.integrationPushes()` entries carry `at`;
+  `JournalView.ciSettlers()` lists the `external-witness` and `push-requested` facts with their seqs.
+- Plan: `ci?: {settleMin?: number}` (non-negative minutes, fractions allowed; absent: 120, `DEFAULT_SETTLE_MIN`).
+  `ci` is a `PLAN_FIELDS` member (an apply may change it).
+- Command `push` (`{type: 'push'}`): a control command, scope none; writes `push-requested{command}` once.
+- Fact `push-requested{command}` (new kind).
+- `external-witness.since?: Sha | null`: the head of the obligation's previous `pass` attestation (null: none).
+  Absent on lines written before dev.81, read as null (one `ROADMAP_UPGRADE` warning).
+- Command `witness.expectedHead` keeps its name and means the attested commit: the CLI's `--at <rev>`, default the CI
+  ref (last `pushed`/`up-to-date` head; the local integration head when nothing was pushed). The command accepts any
+  commit the integration branch contains (`merge-base --is-ancestor`); `head` and `inputSha` are that commit's. A pass
+  latches when every deliverer is retired with a published merge the commit contains; the latch names the deliverer
+  whose merge published last, with that commit's tree.
+- A revision publishes a changed render only when it also differs from the integration tip's bytes; `constraints.md` is added only beside
+  another changed render, and only when its living rendering differs from the one of the ledger the last publishing
+  revision carried (a deferred ruling). A ruling-only revision's `plan-applied` has no `publication`.
+- `Status.pushes: {ciHead: Sha | null; pending: Sha | null; settleBy: IsoTime | null} | null` (null before a start).

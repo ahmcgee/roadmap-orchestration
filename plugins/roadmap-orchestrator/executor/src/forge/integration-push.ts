@@ -2,6 +2,14 @@
 // writes the journal. Durable done records cover every live ff site; startup covers recovered ffs.
 // Startup publishes the current ref, so death before enqueue or before recording a network result is
 // harmless. Remote-equals-head is a no-op. Failed attempts retry only at the next ff or startup.
+//
+// dev.81 (A3): origin's branch is the CI ref (src/forge/ciref.ts). A request records the wanted head (latest wins: one
+// pending target per branch) and pushes only once the previous pushed head has settled; otherwise it parks, writing
+// no fact (a deferral is not an attempt). Settlement re-runs the decision: a journal subscription for
+// `external-witness` and `push-requested`, and a timer armed for the pushed head's `settleBy`. A push of the head
+// already pushed is never gated (it checks the remote, `up-to-date` at most). `recover(branch)` applies the same rule
+// at startup. A head still parked when the executor exits is not pushed then: the next startup recovers it, and at the
+// arc's end `roadmap pr` pushes the final head itself.
 import { fork } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,10 +20,12 @@ import type { OpenJournal } from '../core/log.ts';
 import { type AbsPath, type BranchName, absPath, branchName, refName } from '../core/values.ts';
 import { refTarget } from '../git/git.ts';
 import { openNeedsUser, raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
+import { ciRefOf } from './ciref.ts';
 import { PUSH_TIMEOUT_MS } from './push.ts';
 
 type Result = Pick<IntegrationPushFact, 'result' | 'error'>;
-type Context = Readonly<{ journal: OpenJournal; repo: AbsPath; runDir: AbsPath }>;
+/** `settleMin`: the plan's `ci.settleMin` in force (`ciSettleMin`), read at each decision. */
+type Context = Readonly<{ journal: OpenJournal; repo: AbsPath; runDir: AbsPath; settleMin: () => number }>;
 
 function network(repo: AbsPath, branch: BranchName, head: Sha): Promise<Result> {
   return new Promise((resolve) => {
@@ -82,9 +92,27 @@ export function startIntegrationPushes(ctx: Context): Readonly<{
     }
   }
 
-  function request(branch: BranchName, head: Sha): void {
+  let wanted: Readonly<{ branch: BranchName; head: Sha }> | null = null;
+  let inFlight = false;
+  let timer: NodeJS.Timeout | null = null;
+  const disarm = (): void => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+
+  /** Pushes the wanted head when the CI ref may advance; parks it (timer armed) while the pushed head is unsettled. */
+  function decide(): void {
+    if (fatal !== null || inFlight || wanted === null) return;
+    const ci = ciRefOf(journal.view, ctx.settleMin(), Date.now());
+    disarm();
+    if (!ci.settled && wanted.head !== ci.pushed) {
+      timer = setTimeout(decide, Math.max(0, Date.parse(ci.settleBy!) - Date.now()));
+      return;
+    }
+    const { branch, head } = wanted;
+    wanted = null;
+    inFlight = true;
     tail = tail.then(async () => {
-      if (fatal !== null) return;
       restoreNotices();
       const outcome = await network(repo, branch, head);
       crashPoint('integration-push.after-network');
@@ -99,10 +127,22 @@ export function startIntegrationPushes(ctx: Context): Readonly<{
       // retries, rather than pushes stopping silently until the arc ends.
       fatal = error;
       setImmediate(() => { throw error; });
+    }).finally(() => {
+      inFlight = false;
+      decide();
     });
   }
 
+  function request(branch: BranchName, head: Sha): void {
+    wanted = { branch, head };
+    decide();
+  }
+
   const unsubscribe = journal.subscribe((event) => {
+    if (event.type === 'fact' && (event.fact.kind === 'external-witness' || event.fact.kind === 'push-requested')) {
+      decide();
+      return;
+    }
     if (event.type !== 'done' || event.kind !== 'integration.ff' || event.outcome.kind !== 'published') return;
     const ff = journal.view.latestIntent(event.op);
     if (ff.kind !== 'integration.ff') throw new Error(`publication ${event.op} has no integration.ff intent`);
@@ -124,6 +164,6 @@ export function startIntegrationPushes(ctx: Context): Readonly<{
       request(branch, head);
     },
     drain,
-    close: async () => { unsubscribe(); await drain(); },
+    close: async () => { unsubscribe(); disarm(); wanted = null; await drain(); },
   };
 }

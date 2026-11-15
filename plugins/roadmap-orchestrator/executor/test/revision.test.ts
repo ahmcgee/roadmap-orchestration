@@ -515,12 +515,12 @@ test('apply.core-proposal: the core evaluates an in-memory proposal from any pro
     assert.equal(asRule.kind, 'accepted', JSON.stringify(asRule));
     if (asRule.kind !== 'accepted') return;
     assert.deepEqual(asRule.draft.changes, [], 'a ledger line alone is no plan change');
-    assert.deepEqual(asRule.draft.publication?.renders.map((x) => x.path), ['.roadmap/constraints.md']);
+    assert.equal(asRule.draft.publication, null, 'dev.81: a ruling-only revision publishes nothing (its rendering waits for the next publication)');
     const rule = newCommandId();
     const committed = await commitUnderFence(ctxOf(r), asRule, { type: 'apply', reason: 'Ledger update reviewed' }, { type: 'command', command: rule }, { type: 'command', command: rule });
     assert.equal(committed.kind, 'applied', JSON.stringify(committed));
     const fact = lastApplied(r);
-    assert.deepEqual([fact.rev, fact.command, fact.rulingsSha256, fact.publication?.pub], [2, rule, fileSha256Bytes(ledger.bytes), 'docs-1']);
+    assert.deepEqual([fact.rev, fact.command, fact.rulingsSha256, fact.publication], [2, rule, fileSha256Bytes(ledger.bytes), undefined]);
     const now = revisionInForce(r.ctx.runDir, requirePlanInForce(r.ctx.runDir, r.journal.view));
     assert.match(now.ledger.bytes.toString('utf8'), /C-3 — A rule\.\n$/, 'the ledger in force is the kept one, not the live file');
   } finally {
