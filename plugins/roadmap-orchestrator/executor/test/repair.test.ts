@@ -2,12 +2,13 @@
 // tree). Named tests: reproduce.reproduced, reproduce.not-reproduced, reproduce.inapplicable, mutant.kill-in-candidate,
 // mutant.survivor-red, p1.blocks-selecting, p1.repair-exempt, p1.opened-mid-candidate-blocks-ff (G10), repair.batch
 // (R7 with B2's publishBatch), findings.pre-build-vision-conflict (R17), plancheck.reads-captured-spec, and the crash
-// cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine.
+// cells of the matrix rows FF_ELIGIBILITY and MUTANT_APPLY (test/matrix.ts), recovered by the recovery engine. dev.81 (B3 c):
+// repair.mutant-inputs, repair.mutant-every-test.
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import type { Fact,IntentOf } from '../src/core/events.ts';
-import { findingId,invocationId,jobId,resourceName,sha,unitId } from '../src/core/ids.ts';
+import { findingId,invocationId,jobId,laneId,resourceName,sha,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { mutantOf } from '../src/core/projections.ts';
 import { absPath } from '../src/core/values.ts';
@@ -16,7 +17,9 @@ import { batchable,findingMetrics,openFinding,ruleFinding } from '../src/holisti
 import { publishBatch } from '../src/pipeline/integrate.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { observations } from '../src/pipeline/lanes.ts';
-import { repairUnits,specFacts } from '../src/pipeline/reproduce.ts';
+import { repairMutants,repairUnits,specFacts } from '../src/pipeline/reproduce.ts';
+import { loadUnitSpec } from '../src/pipeline/stages.ts';
+import { mutantPatchPath } from '../src/git/mutant.ts';
 import { runUnit,step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { idleEnvironments } from '../src/resources/environments.ts';
@@ -33,7 +36,7 @@ import { type ArcRun, U1, codexStep, contextFor, gateStep, mulBuild, outcomes, s
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
-import type { Step } from './helpers/scenario.ts';
+import { type Step,readCalls } from './helpers/scenario.ts';
 import { scriptTree } from './helpers/witness.ts';
 import { FF_ELIGIBILITY,MUTANT_APPLY,crashCells } from './matrix.ts';
 
@@ -421,4 +424,50 @@ test('reproduce.timeout: mutant launches enforce their arc lane limit and retain
     assert.deepEqual(worktrees(r), [], 'timed-out mutant checkout is cleaned');
     assert.ok(!outcomes(d, 'v1').includes('reproduce:reproduced'), 'timeout cannot establish reproduction');
   } finally { r.journal.close(); }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// dev.81 (B3 c): the mutants a vacuity repair's build and gate are given
+
+describe('vacuity repairs: the mutant in the build and gate inputs', () => {
+  test('repair.mutant-inputs: the build and the gate are given the mutant with the ids that must fail (its obligation\'s witness on the mutant\'s lane), the lane and the kept patch', T, async () => {
+    const { d, control } = vacuityArc();
+    const tip = tipOf(d);
+    scriptTree(control, treeWith(d.repo, tip, STRICT_TEST, MUTANT_PATCH), { outcomes: { t1: 'fail' } });
+    const r = contextFor(d);
+    try {
+      const patch = mutantPatchPath(absPath(d.runDir), finding(r).mutant!.patchSha256);
+      assert.deepEqual(repairMutants(r.ctx, loadUnitSpec(r.ctx, r.unit('v1')).spec), [{ finding: F1, lane: laneId('journey'), mustFail: ['t1'], patch }]);
+      assert.deepEqual(await runUnit(r.ctx, r.unit('v1'), admitAll), { kind: 'merged' }, outcomes(d, 'v1').join(' '));
+      const calls = readCalls(d.scenarioPath);
+      const block = (stdin: string, tag: string): string | undefined => stdin.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1];
+      const build = calls.find((c) => c.stdin.includes('Implement unit v1'));
+      const mutants = build === undefined ? undefined : block(build.stdin, 'mutants');
+      assert.ok(mutants !== undefined && mutants.includes('- F-1 on lane journey: with the patch applied, tests t1 must fail.') && mutants.includes(patch), `build: ${mutants}`);
+      const gate = calls.find((c) => c.stdin.includes('Gate unit v1'));
+      const checks = gate === undefined ? undefined : block(gate.stdin, 'executable_checks');
+      assert.ok(checks !== undefined && checks.includes('- F-1 on lane journey: with the patch applied, tests t1 must fail.') && checks.includes(patch), `gate: ${checks}`);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('repair.mutant-every-test: a mutant on a lane other than its obligation\'s witness must fail every test the lane reports', T, async () => {
+    const { d } = holisticArc({
+      steps: [],
+      units: [{ id: 'v1', origin: 'repair', repairs: ['F-1'], obligations: ['I-1'], lanes: [{ id: 'strict', argv: ['node', '--test', 'test/strict.test.js'] }] }],
+      lanes: ['journey', 'other'],
+      obligations: [{ id: 'I-1', testIds: ['t1'], lane: 'other' }],
+      mapping: MAPPED,
+      trees: { '*': { outcomes: { t1: 'pass' } } },
+      beforeStart: (a) => openBefore(vacuityDraftOf(a.runDir))(a),
+    });
+    const r = contextFor(d);
+    try {
+      const [m] = repairMutants(r.ctx, loadUnitSpec(r.ctx, r.unit('v1')).spec);
+      assert.deepEqual([m?.lane, m?.mustFail], [laneId('journey'), 'every-test']);
+    } finally {
+      r.journal.close();
+    }
+  });
 });

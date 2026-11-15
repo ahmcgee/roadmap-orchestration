@@ -31,7 +31,7 @@ import { type FindingId,type LaneId,type OpId,type ResourceInstance,type Resourc
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { mutantOf } from '../core/projections.ts';
-import { type NeedsUserContent,STDERR_FILE,STDOUT_FILE,specRepairs } from '../core/records.ts';
+import { type NeedsUserContent,STDERR_FILE,STDOUT_FILE,type SpecM1,specRepairs } from '../core/records.ts';
 import type { FindingState,UnitState } from '../core/state.ts';
 import { type AbsPath,absPath,repoPattern } from '../core/values.ts';
 import { capturedEvidence } from '../git/evidence.ts';
@@ -44,7 +44,7 @@ import { type SpecLinks,specLinksOf } from '../holistic/staleset.ts';
 import { type ArcLaneDef,type MutantRef,type ObservationVerdict,type WitnessRecord,type WitnessRef,laneRevOf,witnessRecord } from '../holistic/types.ts';
 import { WITNESS_LINES,WITNESS_RECORD_FILE,collectWitness,witnessEnv,witnessRecordOf,writeWitnessRecord } from '../holistic/witness.ts';
 import { type PlanM1,type PlanUnit,environmentsOf } from '../input/plan.ts';
-import type { FixRound } from '../prompts/inputs.ts';
+import type { FixRound,MutantInput } from '../prompts/inputs.ts';
 import { evidenceSnapshotOp,mutantApplyOp,worktreeRemoveOp } from '../recover/ops.ts';
 import { releaseEnvironment,useEnvironment } from '../resources/environments.ts';
 import { type Reservation,type StageHolder,cleanup } from '../resources/reserve.ts';
@@ -106,6 +106,20 @@ function mutantTarget(ctx: StageContext, finding: VacuityFinding): MutantTarget 
   const o = finding.obligation === null ? undefined : obligations.obligations.find((d) => d.id === finding.obligation);
   const witness = o?.witness !== undefined && o.witness !== null && o.witness.lane === lane.id ? o.witness : null;
   return { finding, lane, witness };
+}
+
+/**
+ * dev.81 (B3 c): the mutants of the active vacuity findings `spec` repairs, as the build and the gate are given them (`MutantInput`):
+ * the lane in force each runs on (`mutantTarget`), the test ids that must fail with its patch (its target's witness; `every-test`
+ * without one on that lane, as `mutantVerdict` reads the run) and the kept patch. A mutant whose lane is no longer in force is
+ * left out: acceptance skips it too.
+ */
+export function repairMutants(ctx: StageContext, spec: SpecM1): readonly MutantInput[] {
+  return vacuityTargets(ctx.journal.view.holistic().findings, specRepairs(spec)).flatMap((finding): MutantInput[] => {
+    const target = mutantTarget(ctx, finding);
+    if ('inapplicable' in target) return [];
+    return [{ finding: finding.id, lane: target.lane.id, mustFail: target.witness === null ? 'every-test' : [...target.witness.testIds], patch: mutantPatchPath(ctx.runDir, finding.mutant.patchSha256) }];
+  });
 }
 
 /** How a mutant run came out: its verdict on the patched tree, or why it has none. */

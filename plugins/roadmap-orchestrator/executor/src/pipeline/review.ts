@@ -23,10 +23,14 @@ import { protectedPathsInForce } from '../input/protected.ts';
 //    A systems-only re-entry (field report 2026-10-24) carries the re-entered unit's approval to a unit with none of its own,
 //    for an empty delta only (`carriedApproval`).
 //
+// 4. A merge-in resolution (dev.81, B3 b). A resolve round after the unit's approval is told which conflicted paths that approval
+//    covered (`mergeInInput`), and the next gate which lines the approved diff added there the resolved head no longer holds
+//    (`mergeInDrops`, its `checks.mergeIn`), recomputed from git and the log: a note to judge, never a block or a charge.
+//
 // What a gate attempt was given is recorded on its `judgment-inputs` (`GateReview`), so the rules its answer is held to
 // follow from the log on replay and recovery; an attempt a dev.16 executor captured has none and is read without them.
 import { join } from 'node:path';
-import { type ReviewFact,parentUnit } from '../core/events.ts';
+import { type IntentOf,type ReviewFact,parentUnit } from '../core/events.ts';
 import { type ReviewFindingId,type Sha,type SpecRev,type UnitId,reviewFindingIdOf } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
@@ -40,14 +44,15 @@ import type { ReviewApproval } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
 import { type AbsPath,type RepoPath,absPath,repoPath } from '../core/values.ts';
 import { git,gitRun } from '../git/git.ts';
-import { transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
+import { isAncestor } from '../git/ff.ts';
+import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git/transient.ts';
 import { specLinksOf } from '../holistic/staleset.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import { reviewDisputeDirective } from '../prompts/directives.ts';
-import type { GateReviewInput } from '../prompts/inputs.ts';
+import type { GateReviewInput,MergeInDrops,MergeInInput } from '../prompts/inputs.ts';
 import { DECISIONS_FILE, type GateFinding, type GateOutput, validateGateOutput } from '../prompts/schemas.ts';
 import { type StageContext, type StageParent, workDir } from './dispatch.ts';
-import { type JudgmentReader,judgmentOutput,judgmentSpawns,loadUnitSpec,readDecisions } from './stages.ts';
+import { type JudgmentReader,judgmentOutput,judgmentSpawns,latestMergein,loadUnitSpec,readDecisions } from './stages.ts';
 
 /** The blob of `path` at `commit`, or null when the commit has no such file. */
 export function blobAt(repo: AbsPath, commit: Sha, path: string): Sha | null {
@@ -352,4 +357,74 @@ export function disputeDirective(ctx: StageContext, unit: UnitId, attempt: numbe
   const texts = ledgerTexts(ctx, unit);
   const open = minted.filter((m) => ledger.get(m.id)?.outcome === null).map((m) => ({ id: m.id, path: ledger.get(m.id)!.path, text: texts.get(m.id)?.text ?? '' }));
   return open.length === 0 ? null : reviewDisputeDirective(open);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// dev.81 (B3 b): a merge-in resolution against the unit's approval
+
+/**
+ * The lines the approved diff `diffBase(tip, head)..head` adds to `path`, in diff order, blank ones left out: the hunk lines
+ * starting `+` (the `+++` header precedes the first hunk, so it is never one of them).
+ */
+export function approvedAddedLines(repo: AbsPath, tip: Sha, head: Sha, path: RepoPath): readonly string[] {
+  const out = git(repo, ['diff', '--no-color', '--no-ext-diff', '-U0', diffBase(repo, tip, head), head, '--', path]);
+  let inHunk = false;
+  const added: string[] = [];
+  for (const line of out.split('\n')) {
+    if (line.startsWith('@@')) inHunk = true;
+    else if (line.startsWith('diff --git')) inHunk = false;
+    else if (inHunk && line.startsWith('+') && line.slice(1).trim() !== '') added.push(line.slice(1));
+  }
+  return added;
+}
+
+type BlobbedApproval = ReviewApproval & Readonly<{ blobs: ApprovalBlobs }>;
+
+/**
+ * The unit's approval that a merge-in `intent` came after: the latest approval, when it has its blobs (dev.17) and approved a
+ * commit the branch held before the merge (an ancestor of `old`); null otherwise (none, a dev.16 approval, or one after it).
+ */
+function approvalBeforeMergein(ctx: StageContext, unit: UnitId, intent: IntentOf<'mergein.prepare'>): BlobbedApproval | null {
+  const approval = ctx.journal.view.review().approval(unit);
+  if (approval === null || approval.blobs === null || !isAncestor(ctx.repo, approval.fingerprint.unitCommit, intent.expect.old)) return null;
+  return { ...approval, blobs: approval.blobs };
+}
+
+/** The conflicted paths of a conflicted merge-in that `approval` approved, ascending. */
+function approvedConflicts(intent: IntentOf<'mergein.prepare'>, approval: BlobbedApproval): readonly RepoPath[] {
+  if (intent.expect.merge.type !== 'conflicted') throw new Error(`merge-in ${intent.op} was clean: it has no conflicts`);
+  const approved = new Set<string>(approval.blobs.files.map((f) => f.path));
+  return intent.expect.merge.conflicts.filter((p) => approved.has(p));
+}
+
+/** A resolve round's `mergeIn` input: the unit's latest merge-in (conflicted: a resolve round follows only that) and its approval. */
+export function mergeInInput(ctx: StageContext, unit: UnitId): MergeInInput {
+  const intent = latestMergein(ctx, unit);
+  if (intent === null || intent.expect.merge.type !== 'conflicted') throw new Error(`a resolve round of ${unit} without a conflicted merge-in`);
+  const approval = approvalBeforeMergein(ctx, unit, intent);
+  return {
+    integrationTip: intent.expect.integrationTip, old: intent.expect.old, conflicts: intent.expect.merge.conflicts,
+    approved: approval === null ? null : { attempt: approval.attempt, head: approval.fingerprint.unitCommit, paths: approvedConflicts(intent, approval) },
+  };
+}
+
+/**
+ * The gate's `checks.mergeIn` at `head`: when `head` holds the resolution of the unit's latest merge-in (a conflicted one, after
+ * the unit's approval), per conflicted path the approval covered, the lines the approved diff added that `head` no longer holds
+ * (compared trimmed, so a re-indented line is kept). Null without such a merge-in. Recomputed from git and the log at each gate.
+ */
+export function mergeInDrops(ctx: StageContext, unit: UnitId, head: Sha): MergeInDrops | null {
+  const intent = latestMergein(ctx, unit);
+  if (intent === null || intent.expect.merge.type !== 'conflicted') return null;
+  if (!isAncestor(ctx.repo, intent.expect.old, head) || !isAncestor(ctx.repo, intent.expect.integrationTip, head)) return null;
+  const approval = approvalBeforeMergein(ctx, unit, intent);
+  if (approval === null) return null;
+  const approvedHead = approval.fingerprint.unitCommit;
+  const dropped = approvedConflicts(intent, approval).flatMap((path) => {
+    const blob = blobAt(ctx.repo, head, path);
+    const held = new Set(blob === null ? [] : git(ctx.repo, ['cat-file', 'blob', blob]).split('\n').map((l) => l.trim()));
+    const lines = [...new Set(approvedAddedLines(ctx.repo, intent.expect.integrationTip, approvedHead, path).filter((l) => !held.has(l.trim())))];
+    return lines.length === 0 ? [] : [{ path, lines }];
+  });
+  return { approved: approvedHead, dropped };
 }

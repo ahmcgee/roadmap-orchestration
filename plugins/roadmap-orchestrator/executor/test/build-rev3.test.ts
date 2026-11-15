@@ -3,12 +3,16 @@
 // [old, T]: build.resolve-follow-up-commits-accepted, build.resolve-without-merge-in-chain-malformed; I3, the build
 // answer's per-call schema (targeted `experiments`, no `lanesRun`) and the resume round quoting why an answer was
 // malformed: build.certification-schema, build.experiments-accepted, build.malformed-keeps-error. dev.12: a decisions.json
-// that does not validate makes the build malformed, never silently dropped: build.decisions-invalid-malformed.
+// that does not validate makes the build malformed, never silently dropped: build.decisions-invalid-malformed. dev.81: the
+// report's checks read-time default, build.checks-read-time-default; (B3 b,
+// B5): build.resolve-merge-in-drops-approved, build.resolve-merge-in-keeps-approved.
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { arcId, invocationId } from '../src/core/ids.ts';
+import { absPath } from '../src/core/values.ts';
+import { cleanAfterMergeIn } from '../src/pipeline/rounds.ts';
 import { schemaViolation } from '../src/backends/adapter.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
 import { BUILD_SCHEMA, buildOutput } from '../src/prompts/schemas.ts';
@@ -44,12 +48,12 @@ describe('dev.59: received messages', () => {
     const onWarning = (w: Error): void => { warnings.push(w); };
     process.on('warning', onWarning);
     try {
-      const { messages: _none, ...legacy } = BUILD_REPORT;
+      const { messages: _none, ...legacy } = { ...BUILD_REPORT, checks: [] };
       assert.equal(schemaViolation(BUILD_SCHEMA, legacy), '$.messages: required, missing');
       assert.deepEqual(buildOutput(legacy, 'build').messages, []);
       assert.deepEqual(buildOutput(legacy, 'build').messages, []);
       const sent = [{ from: 'atlas2-root', at: '2026-11-10T09:12:03Z', text: 'Stop: the v2 endpoint is retired; keep v1.' }];
-      const current = { ...BUILD_REPORT, messages: sent };
+      const current = { ...BUILD_REPORT, checks: [], messages: sent };
       assert.equal(schemaViolation(BUILD_SCHEMA, current), null);
       assert.deepEqual(buildOutput(current, 'build').messages, sent);
       assert.throws(() => buildOutput({ ...BUILD_REPORT, messages: [{ from: '', at: '', text: 'x' }] }, 'build'), /messages\[0\]\.from/);
@@ -60,6 +64,28 @@ describe('dev.59: received messages', () => {
     const upgrade = warnings.filter((w) => (w as Error & { code?: string }).code === 'ROADMAP_UPGRADE');
     assert.equal(upgrade.length, 1);
     assert.match(upgrade[0]!.message, /before 1\.0\.0-dev\.59.*no cross-session messages/);
+  });
+
+  // Second in the file, for the same reason: no earlier test reads a report without checks.
+  test('build.checks-read-time-default: a report without checks (written before dev.81) reads as none, with one upgrade warning; one with them reads them; the wire schema requires the field', async () => {
+    const warnings: Error[] = [];
+    const onWarning = (w: Error): void => { warnings.push(w); };
+    process.on('warning', onWarning);
+    try {
+      assert.equal(schemaViolation(BUILD_SCHEMA, BUILD_REPORT), '$.checks: required, missing');
+      assert.deepEqual(buildOutput(BUILD_REPORT, 'build').checks, []);
+      assert.deepEqual(buildOutput(BUILD_REPORT, 'build').checks, []);
+      const checks = [{ lane: 'mul', head: 'a'.repeat(40), exit: 0 }];
+      assert.equal(schemaViolation(BUILD_SCHEMA, { ...BUILD_REPORT, checks }), null);
+      assert.deepEqual(buildOutput({ ...BUILD_REPORT, checks }, 'build').checks, checks);
+      assert.throws(() => buildOutput({ ...BUILD_REPORT, checks: [{ lane: 'mul', head: 'HEAD', exit: 0 }] }, 'build'), /checks\[0\]\.head/);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', onWarning);
+    }
+    const upgrade = warnings.filter((w) => (w as Error & { code?: string }).code === 'ROADMAP_UPGRADE');
+    assert.equal(upgrade.length, 1);
+    assert.match(upgrade[0]!.message, /before 1\.0\.0-dev\.81.*no lane checks/);
   });
 
   test('build.messages-in-evidence: a Claude build\'s report listing a message it received is a success, and the invocation\'s result keeps the message', T, async () => {
@@ -188,7 +214,7 @@ describe('I3: the build answer schema', () => {
       const schema = schemaOf(build!) as unknown as JsonSchema;
       assert.equal(Object.hasOwn(schema.properties, 'lanesRun'), false);
       assert.equal(schema.required?.includes('lanesRun'), false);
-      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'experiments', 'final', 'grounding', 'messages', 'notes', 'summary', 'tooBig']);
+      assert.deepEqual(Object.keys(schema.properties).sort(), ['blockers', 'checks', 'experiments', 'final', 'grounding', 'messages', 'notes', 'summary', 'tooBig']);
       const experiments = schema.properties['experiments']!;
       assert.deepEqual(Object.keys(experiments.items.properties).sort(), ['argv', 'exit', 'name']);
       assert.ok(schema.required?.includes('experiments'), 'experiments is required');
@@ -300,4 +326,53 @@ describe('I3: the build answer schema', () => {
       r.journal.close();
     }
   });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// dev.81 (B3 b, B5): a resolve round's merge-in inputs, its clean of stale build output, and the next gate's dropped lines
+
+const gateCalls = (d: ArcDescriptor): readonly CallRecord[] => readCalls(d.scenarioPath).filter((c) => c.stdin.includes('Gate unit u1'));
+const STALE = 'dist/stale.js';
+
+describe('dev.81: merge-in resolution', () => {
+  for (const kept of [false, true]) {
+    test(`build.resolve-merge-in-${kept ? 'keeps' : 'drops'}-approved: the resolve round is told the conflicted paths its approval covers and starts without the pre-merge build output; the next gate ${kept ? 'names no dropped line' : 'names the approved line the resolution dropped'}`, T, async () => {
+      const resolved = kept ? UNIT_ADD : RESOLVED_ADD;
+      const { r, approved, tip } = await toResolve([
+        codexStep([{ type: 'commit', message: 'resolve the merge', files: { 'src/add.js': resolved } }], { argv: ['exec', 'resume'], stdinContains: [RESOLVE_DIRECTIVE] }),
+        gateStep({ decision: 'approve' }),
+      ]);
+      const { d } = r;
+      try {
+        const worktree = unitWorktreePath(r);
+        // Ignored build output of the pre-merge tree (ignored through the repository's exclude file, so no tree changes).
+        const exclude = git(worktree, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude').trim();
+        mkdirSync(dirname(exclude), { recursive: true });
+        appendFileSync(exclude, 'dist/\n');
+        mkdirSync(join(worktree, 'dist'), { recursive: true });
+        writeFileSync(join(worktree, STALE), 'stale\n');
+        // A continue resumes the worktree exactly as left: nothing is cleaned.
+        assert.equal(cleanAfterMergeIn(r.ctx, { kind: 'continue', of: { kind: 'resolve' }, interrupted: invocationId(r.journal.view.opsOf('proc.spawn').at(-1)!.op, 1) }, absPath(worktree), []), null, 'a continue resumes as left');
+        assert.ok(existsSync(join(worktree, STALE)));
+        await stepUntil(r, 'u1', (f) => f.stage === 'build');
+        assert.equal(outcomes(d).at(-1), 'build:success');
+        assert.equal(existsSync(join(worktree, STALE)), false, 'the stale build output is removed before the round');
+        const resolve = codexCalls(d).at(-1)!;
+        const merge = resolve.stdin.match(/<merge_in>([\s\S]*?)<\/merge_in>/)?.[1];
+        assert.ok(merge !== undefined, 'the resolve round names its merge-in');
+        for (const needle of [tip, 'Conflicted paths: src/add.js', approved, `git diff ${approved} HEAD -- src/add.js`]) assert.ok(merge.includes(needle), needle);
+        const after = resolve.stdin.match(/<after_merge_in>([\s\S]*?)<\/after_merge_in>/)?.[1];
+        assert.ok(after !== undefined && after.includes('dist'), `the round is told what was removed: ${after}`);
+        await stepUntil(r, 'u1', (f) => f.stage === 'gate');
+        const gate = gateCalls(d).at(-1)!.stdin;
+        if (kept) assert.doesNotMatch(gate, /Merge-in resolution/);
+        else {
+          const checks = gate.match(/<executable_checks>([\s\S]*?)<\/executable_checks>/)?.[1];
+          assert.ok(checks !== undefined && checks.includes(`approved at ${approved}`) && checks.includes('src/add.js (1 line)') && checks.includes('return a + b; // unit u1'), `the gate names the dropped line: ${checks}`);
+        }
+      } finally {
+        r.journal.close();
+      }
+    });
+  }
 });

@@ -5,7 +5,7 @@
 // and MUTATION_SMOKE (labels witnesscheck.after-lane-files, witnesscheck.after-witnessed, smoke.after-patch-kept,
 // smoke.after-apply, smoke.after-witnessed, smoke.after-ran-before-outcome).
 import assert from 'node:assert/strict';
-import { readFileSync,writeFileSync } from 'node:fs';
+import { existsSync,readdirSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,test } from 'node:test';
 import type { Fact,IntentOf } from '../src/core/events.ts';
@@ -13,7 +13,9 @@ import { arcId,resourceName,unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { patchedTree } from '../src/git/mutant.ts';
-import { verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { unitWorktree,verificationWorktree } from '../src/pipeline/dispatch.ts';
+import { holisticInForce } from '../src/pipeline/stages.ts';
+import { laneCommand } from '../src/prompts/inputs.ts';
 import { unitTip } from '../src/pipeline/gate.ts';
 import { removeCheckout,seriesTree } from '../src/pipeline/lanes.ts';
 import { runUnit,step } from '../src/pipeline/unit.ts';
@@ -321,6 +323,26 @@ describe('the build\'s witness checks (R56)', () => {
       assert.match(file, /\/work\/u1\/[0-9]+-build\/witness\/journey\.json$/);
       const lane = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
       assert.deepEqual([lane['lane'], lane['required'], lane['reporter']], ['journey', ['t1'], 'jsonl']);
+      const rows = build.stdin.match(/<witness_lanes>\n([\s\S]*?)<\/witness_lanes>/)?.[1];
+      assert.ok(rows !== undefined && /- journey \(build;[^\n]*\): required t1\n {2}\S+ witness-check --lane-file /.test(rows), `the build-cadence row: ${rows}`);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('build.witness-lanes-every-cadence: a required candidate-cadence witness lane reaches the build with its ids and command line in the worktree, and no lane file (dev.81 B3 d)', T, async () => {
+    const { a, r } = await lanesOf({ steps: [planCheckStep({ decision: 'approve' }), mulBuild()], cadence: 'candidate' });
+    try {
+      const build = readCalls(a.d.scenarioPath)[1]!;
+      assert.doesNotMatch(build.stdin, /witness-check --lane-file/);
+      const lane = holisticInForce(r.ctx).obligations!.lanes.find((l) => l.id === 'journey')!;
+      assert.equal(lane.cadence, 'candidate');
+      const rows = build.stdin.match(/<witness_lanes>\n([\s\S]*?)<\/witness_lanes>/)?.[1];
+      assert.ok(rows !== undefined, 'the build is told of the lane');
+      const command = laneCommand(unitWorktree(r.ctx.plan().worktreeRoot, r.ctx.plan().arc, unitId('u1')), lane);
+      assert.ok(rows.includes(`- journey (candidate; `) && rows.includes('): required t1\n') && rows.includes(`  ${command}`), `the candidate-cadence row: ${rows}`);
+      const work = readdirSync(join(r.ctx.runDir, 'work', 'u1')).filter((x) => x.endsWith('-build'));
+      assert.ok(work.length > 0 && work.every((w) => !existsSync(join(r.ctx.runDir, 'work', 'u1', w, 'witness'))), 'no lane file is published for it');
     } finally {
       r.journal.close();
     }

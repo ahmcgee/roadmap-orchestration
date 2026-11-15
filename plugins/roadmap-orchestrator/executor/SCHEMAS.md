@@ -1674,3 +1674,33 @@ had since, records `revise` (the escalation park, as before). `revise-new` takes
 `escalation-revise`, fold counter `UnitCounters.escalationRevises`, 0 in a dev.80 log: none spent); a second parks
 `escalation` (class `park`, design). A steered pass ends at it like a revise (`steered`, env). Gate schema unchanged.
 
+
+### dev.81 B3–B5: build inputs and the report's checks
+
+Additive, with no record change (`SCHEMA_VERSION` stays 2); nothing new is persisted.
+
+- `BuildInputs.witnessLanes: WitnessLane[]` replaces `witnessChecks`: one row per arc lane the unit's required witnesses
+  name, ascending. `{runs:'build-check', lane, cadence:'build', testIds, laneFile, command}` is the write-once lane file
+  and its `roadmap witness-check` command (unchanged); `{runs:'lanes-stage', lane, cadence, testIds, command}` a later
+  cadence the builder can run (`command`: the lane's command line in the worktree); `{runs:'executor-only', lane,
+  cadence, testIds}` a lane with an environment or reserved resources.
+- `BuildInputs.mutants` and `GateChecks.mutants: {finding, lane, mustFail: string[]|'every-test', patch}[]`: the active
+  vacuity findings the spec repairs (`reproduce.ts repairMutants`); a mutant whose lane is no longer in force is left out.
+- `BuildInputs.mergeIn: {integrationTip, old, conflicts, approved: {attempt, head, paths}|null}|null`, on a resolve round
+  only. `approved` is the unit's latest approval when it has blobs and approved an ancestor of `old`; `paths` the
+  conflicted paths it covered. `GateChecks.mergeIn: {approved, dropped: {path, lines}[]}|null`: at a head holding that
+  merge, per such path, the non-blank lines `diffBase(T, approved)..approved` added that the head no longer holds
+  (compared trimmed). Recomputed from git and the log at every gate.
+- `BuildInputs.afterMergeIn: {cleaned: RepoPath[], rerun: BuildLane[]}|null`: set for a round other than a continue on a
+  kept worktree whose latest done `mergein.prepare` is a conflict (a resolve round) or a clean merge still at HEAD,
+  unless that merge-in's own parent created the worktree. `cleaned`: the outermost ignored `bin`, `obj`, `dist`,
+  `build`, `target` and `__pycache__` dirs that `git clean -fdX` emptied (never under `node_modules` or `.venv`);
+  `rerun`: the plan's build-cadence suite lanes (`builderSuiteLanes`).
+- `FixRound.failures?: {lane, signature, specific, excerpt}[]`: per red lane of a lanes or candidate fix round, from its
+  output snapshot (`fixDirs[0]`): `failureLine` unmasked, the signature's `specific`, and the last 20 non-wrapper
+  stderr lines (stdout when stderr has none), the newest kept within 4 KiB. A lane with no output has no entry.
+- `BuildOutput.checks: {lane, head: Sha, exit}[]` is required in the wire schema. The reader defaults a missing field to
+  `[]` with one `ROADMAP_UPGRADE` warning (temporary scaffolding, like dev.59's `messages`). For a fix round's
+  `requiredChecks` and an after-merge-in round's `rerun`, each lane needs a row with `head` equal to the worktree's HEAD
+  after the call and `exit` equal to its `expectedExit` (`stages.ts missingChecks`). A miss gets the one report
+  continuation (`rounds.ts reportContinuation`, `missingChecksDirective`), never `malformed` and never charged.

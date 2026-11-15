@@ -64,8 +64,9 @@ import { referenceFiles } from '../phase0/rows.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
 import type { ArchitectureInput,BuildBrowser,BuildLane,CorpusInput,DocText,EscalationInput,GateTargetInput,MilestonesInput,ReferenceIndex,RulingText,TargetInput,UnitMilestone,UnitTargetInput,VisionInput } from '../prompts/inputs.ts';
 import { type Handover,visionInputOf } from '../prompts/inputs.ts';
+import { type MissingCheck,missingChecksDirective,resolveUnmetDirective } from '../prompts/directives.ts';
 import {
-BUILD_SCHEMA,
+BUILD_SCHEMA,type BuildOutput,
 DECISIONS_FILE,type DecisionsFile,type Premise,buildOutput,
 validateDecisionsFile,
 } from '../prompts/schemas.ts';
@@ -92,10 +93,12 @@ import { invocationDir,quiescent } from './invoke.ts';
 import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,laneSummaryIn,lastLaneSeriesCost,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
 
 import {
-type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
-resolveContinuation,
+type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,cleanAfterMergeIn,decidedRound,laneFixRound,prepareRound,
+reportContinuation,
 steerBrief,
 } from './rounds.ts';
+import { repairMutants } from './reproduce.ts';
+import { mergeInInput } from './review.ts';
 import { mutationSmoke,survivingObligations } from './smoke.ts';
 
 import { pressureCause,seriesRuling } from './starved.ts';
@@ -725,6 +728,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const dispatch = seated.dispatch;
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const round = await prepareRound(ctx, dispatch, input, parent);
+  const suiteLanes = builderSuiteLanes(ctx.plan().suite.lanes, spec);
+  // dev.81 (B5): the first round on the kept worktree since a merge-in starts without the pre-merge tree's build output.
+  const afterMergeIn = cleanAfterMergeIn(ctx, input, round.worktree, suiteLanes);
 
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
@@ -739,8 +745,12 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   // dev.42: every Claude build gets configured walkthrough MCP servers; bring-ups follow membership/design/repairs.
   // Codex builds have no MCP path. Screenshots go in `work`.
   const browser = buildBrowser(ctx, spec, dispatch.triple.backend, work);
-  // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
-  const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
+  // D1 (R56): the lane files of the fast required witness lanes, published before the call; dev.81 (B3 d): every other required
+  // witness lane beside them.
+  const witnessLanes = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, round.worktree, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
+  // dev.81 (B3 b, c): the mutants the candidate must kill; a resolve round's merge-in and the approval it follows.
+  const mutants = repairMutants(ctx, spec);
+  const mergeIn = decidedRound(input) === 'resolve' ? mergeInInput(ctx, unit.id) : null;
   // Field feedback 2026-10-23 item 1: a call on a fresh session gets the handover (src/pipeline/handover.ts); a resumed one does not.
   const handover = handoverOf(ctx, unit.id, spec, parent);
   const handed = (call: RoundCall): Handover | null => (call.session.mode === 'fresh' ? handover : null);
@@ -751,9 +761,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: [`Attempt state: ${ctx.journal.view.attemptCounts(unit.id).builds} builds, ${ctx.journal.view.attemptCounts(unit.id).judged} judged stages; diagnosis at 8 builds or 20 stages. Chargeable failures ${ctx.journal.view.unit(unit.id).counters.chargeableFailures}/${boundsOf(ctx.plan(), unit).chargeable}.`, ...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
     method: methodContext(ctx, unit, spec),
-    fastLanes: activeBuildLanes(spec), lastLaneSeries: lastLaneSeriesCost(ctx, unit.id), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
+    fastLanes: activeBuildLanes(spec), lastLaneSeries: lastLaneSeriesCost(ctx, unit.id), suiteLanes, evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, baseComparison: call.fixRound.baseComparison ?? null, capState: {builds: ctx.journal.view.attemptCounts(unit.id).builds, judgedStages: ctx.journal.view.attemptCounts(unit.id).judged, chargeableFailures: state.counters.chargeableFailures, chargeableBound: state.bounds.chargeable, certificationAllowance: allowance}, directives: [...call.fixRound.directives,
-      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, handover: handed(call),
+      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessLanes, mutants, mergeIn, afterMergeIn, milestones, browser: browser?.input ?? null, handover: handed(call),
   }, dispatch.triple.backend);
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -765,12 +775,43 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   });
   const called = await callRound(ctx, round, callFor(round));
   // Field feedback 2026-10-23 item 4: a resolve round that reported final with nothing beyond the merge while clauses are unmet
-  // goes back to its builder once (rounds.ts `resolveContinuation`); the continuation's outcome is read the normal way.
-  const unmet = decidedRound(input) === 'resolve' && called.kind === 'result' && called.result.outcome.kind === 'success' && mergeOnly(ctx, unit.id)
+  // goes back to its builder once (rounds.ts `reportContinuation`); the continuation's outcome is read the normal way.
+  const succeeded = called.kind === 'result' && called.result.outcome.kind === 'success';
+  const unmet = decidedRound(input) === 'resolve' && succeeded && mergeOnly(ctx, unit.id)
     ? unmetClauses(ctx, lineageOf(ctx.journal.view, unit.id), spec) : [];
-  if (unmet.length === 0 || called.kind !== 'result') return buildRead(ctx, unit, parent, decidedRound(input), called, held.reservation);
-  const again = resolveContinuation(ctx, dispatch, round, called, unmet, unit.id);
+  // dev.81 (B4, B5): a final report whose checks do not prove the round's required lanes goes back the same way, in the same one
+  // continuation. A continue's session holds its decided round's inputs, so it owes the same proof.
+  const decided = input.kind === 'continue' ? input.of : input;
+  const owed = [...(decided.kind === 'fix' ? decided.fix.requiredChecks ?? [] : []), ...(afterMergeIn?.rerun ?? [])];
+  const missing = succeeded && called.kind === 'result' && called.result.outcome.kind === 'success' ? missingChecks(called.result.outcome.value, owed, revParse(round.worktree, 'HEAD')) : [];
+  const directives = [...(unmet.length === 0 ? [] : [resolveUnmetDirective(unmet)]), ...(missing.length === 0 ? [] : [missingChecksDirective(missing, revParse(round.worktree, 'HEAD'))])];
+  if (directives.length === 0 || called.kind !== 'result') return buildRead(ctx, unit, parent, decidedRound(input), called, held.reservation);
+  const again = reportContinuation(ctx, dispatch, round, called, directives, unit.id);
   return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, again, callFor(again)), held.reservation);
+}
+
+/**
+ * dev.81 (B4, B5): the lanes of `owed` (a fix round's required checks, an after-merge-in round's suite lanes; each lane once) that
+ * a final build report `value` does not prove: no `checks` row for the lane at `head` (the worktree's HEAD after the call) with the
+ * lane's expected exit. A report that does not parse proves nothing and owes nothing here: `buildRead` reads it as malformed.
+ */
+export function missingChecks(value: unknown, owed: readonly LaneDef[], head: Sha): readonly MissingCheck[] {
+  if (owed.length === 0) return [];
+  let checks: BuildOutput['checks'];
+  try {
+    checks = buildOutput(value, 'build').checks;
+  } catch (error) {
+    if (!(error instanceof SchemaError)) throw error;
+    return [];
+  }
+  const lanes = [...new Map(owed.map((l) => [l.id, l])).values()];
+  return lanes.flatMap((l): MissingCheck[] => {
+    const rows = checks.filter((c) => c.lane === l.id);
+    if (rows.length === 0) return [{ lane: l.id, expectedExit: l.expectedExit, why: 'no-row' }];
+    const at = rows.filter((c) => c.head === head);
+    if (at.length === 0) return [{ lane: l.id, expectedExit: l.expectedExit, why: 'other-head' }];
+    return at.some((c) => c.exit === l.expectedExit) ? [] : [{ lane: l.id, expectedExit: l.expectedExit, why: 'other-exit' }];
+  });
 }
 
 /**

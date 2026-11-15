@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import type { TestRef } from '../core/events.ts';
 import type { ClauseId,FindingId,InvocationId,JobId,LaneId,MilestoneId,ObligationId,PolishId,ReviewFindingId,ResourceUnit,RulingId,ServeName,Sha,SpecRev,SystemName,UnitId,VisionClauseId,WitnessItemId } from '../core/ids.ts';
 import type { JsonValue } from '../core/json.ts';
-import type { CommandVerdict,FailureRef,IgnoredCensus,LaneDef } from '../core/records.ts';
+import type { CommandVerdict,FailureRef,IgnoredCensus,LaneCadence,LaneDef } from '../core/records.ts';
 import type { GateDelta,LedgerOutcome } from '../core/review.ts';
 import type { AbsPath,RepoPath,RepoPattern } from '../core/values.ts';
 import type { PinnedRule } from '../corpus/types.ts';
@@ -69,11 +69,68 @@ export type UnitTargetInput = ArchitectureInput | UnitCorpusInput;
 export type GateTargetInput = ArchitectureInput | (UnitCorpusInput & Readonly<{ visionDoc: null }>);
 
 export type FixRound = Readonly<{ failingEvidenceDirs: readonly AbsPath[]; directives: readonly string[];
-  /** Failing lanes runnable in the builder worktree, including later cadences. */
+  /**
+   * Failing lanes runnable in the builder worktree, including later cadences. dev.81 (B4): the round's final report proves it
+   * re-ran each of them (`BuildOutput.checks`, stages.ts `missingChecks`).
+   */
   requiredChecks?: readonly LaneDef[];
   baseComparison?: readonly Readonly<{lane: LaneId; base: Sha; result: 'pass' | 'fail'; evidence: AbsPath}>[] | null;
   capState?: Readonly<{builds: number; judgedStages: number; chargeableFailures: number; chargeableBound: number; certificationAllowance: number}>;
+  /** dev.81 (B4): each failing lane's failure text, so the round starts from the failure, not from a directory listing. */
+  failures?: readonly LaneFailureText[];
 }>;
+
+/**
+ * dev.81 (B4): what a red lane printed, as a fix round reads it (rounds.ts `laneFailures`): the line its failure signature
+ * reads (src/pipeline/redlane.ts `failureLine`, unmasked) and whether that line identifies the failure (`specific`), then
+ * the last non-wrapper lines of its stderr (stdout when stderr has none), at most `FAILURE_EXCERPT_LINES` lines and
+ * `FAILURE_EXCERPT_BYTES` bytes, the newest kept.
+ */
+export type LaneFailureText = Readonly<{ lane: LaneId; signature: string; specific: boolean; excerpt: readonly string[] }>;
+
+/**
+ * dev.81 (B3 d): one required witness lane as the build sees it, by where it runs. `build-check`: a build-cadence lane, its lane
+ * file published under the evidence dir (`laneFile`) and `command` the `roadmap witness-check` that runs it; `lanes-stage`: a
+ * later cadence the executor's lanes stage runs at the salvage SHA, `command` the lane's own command line in the worktree,
+ * runnable for a targeted check; `executor-only`: a lane that needs an environment or reserved resources, run only by the
+ * executor (no command). `testIds`: the ids the unit must make pass on it, ascending.
+ */
+export type WitnessLane =
+  | Readonly<{ runs: 'build-check'; lane: LaneId; cadence: 'build'; testIds: readonly string[]; laneFile: AbsPath; command: string }>
+  | Readonly<{ runs: 'lanes-stage'; lane: LaneId; cadence: LaneCadence; testIds: readonly string[]; command: string }>
+  | Readonly<{ runs: 'executor-only'; lane: LaneId; cadence: LaneCadence; testIds: readonly string[] }>;
+
+/**
+ * dev.81 (B3 c): a vacuity finding the spec repairs, with the mutant the candidate must kill (src/pipeline/reproduce.ts
+ * `repairMutants`): the arc lane it runs on, the test ids that must fail with the patch applied (the finding's obligation's
+ * witness on that lane; `every-test` when the witness is on another lane, so every test the run reports counts), and the
+ * kept patch.
+ */
+export type MutantInput = Readonly<{ finding: FindingId; lane: LaneId; mustFail: readonly string[] | 'every-test'; patch: AbsPath }>;
+
+/**
+ * dev.81 (B3 b): a resolve round's merge-in (the unit's latest `mergein.prepare`): the integration tip merged, the branch's
+ * commit before it, the conflicted paths, and the unit's gate approval when it approved a commit the branch held before the
+ * merge (`approved.paths`: the conflicted paths the approval covered; null: no such approval).
+ */
+export type MergeInInput = Readonly<{
+  integrationTip: Sha; old: Sha; conflicts: readonly RepoPath[];
+  approved: Readonly<{ attempt: number; head: Sha; paths: readonly RepoPath[] }> | null;
+}>;
+
+/**
+ * dev.81 (B5): a build round after a merge-in into its kept worktree (rounds.ts `cleanAfterMergeIn`): the ignored build-output
+ * dirs the executor removed before the round (`cleaned`, which the build regenerates), and the build-cadence suite lanes the
+ * round re-runs before its final report, proven in `checks` like a fix round's required checks.
+ */
+export type AfterMergeIn = Readonly<{ cleaned: readonly RepoPath[]; rerun: readonly BuildLane[] }>;
+
+/**
+ * dev.81 (B3 b): what the gate is told of a merge-in resolution after the unit's approval: the approved head, and per
+ * conflicted path the approval covered, the lines the approved diff added that the gated head no longer holds (only paths
+ * with such lines). Null: no resolved merge-in follows the unit's approval.
+ */
+export type MergeInDrops = Readonly<{ approved: Sha; dropped: readonly Readonly<{ path: RepoPath; lines: readonly string[] }>[] }>;
 
 /** One executor-run lane at the diff head: the ledger the gate reads. */
 export type LaneLedgerEntry = Readonly<{
@@ -161,10 +218,17 @@ export type BuildInputs = Readonly<{
   systems: readonly SystemName[];
   fixRound: FixRound | null;
   /**
-   * M4a rev 3 (D1, R56): per fast required witness lane, the exact `roadmap witness-check --lane-file <file>` command the
-   * implementer runs after its last change; empty outside a corpus arc or without required witnesses.
+   * dev.81 (B3 d; M4a rev 3 D1, R56): every required witness lane, by where it runs (`WitnessLane`): a build-cadence lane with
+   * its `roadmap witness-check --lane-file <file>` command, a later cadence with its own command, an executor-only lane by
+   * name; empty outside a corpus arc or without required witnesses.
    */
-  witnessChecks: readonly WitnessCheckCommand[];
+  witnessLanes: readonly WitnessLane[];
+  /** dev.81 (B3 c): the mutants of the vacuity findings the spec repairs, which the candidate must kill; empty when none. */
+  mutants: readonly MutantInput[];
+  /** dev.81 (B3 b): a resolve round's merge-in; null on every other round. */
+  mergeIn: MergeInInput | null;
+  /** dev.81 (B5): the round follows a merge-in into its kept worktree; null otherwise. */
+  afterMergeIn: AfterMergeIn | null;
   /** dev.13: the milestones the unit takes part in and their design references; null when it is in none. */
   milestones: MilestonesInput | null;
   /** Configured Claude MCP servers and member/design/repair bring-ups (possibly empty); null without servers or on Codex. */
@@ -234,9 +298,6 @@ export function handoverText(h: Handover): string {
   ].join('\n');
 }
 
-/** One fast lane's witness check, as the build prompt names it. */
-export type WitnessCheckCommand = Readonly<{ lane: LaneId; command: string }>;
-
 /** Why mutation smoke did not run (D2): low risk, no targets, a target lane without `testPaths`, a tests-only diff, the allowance spent. */
 export const SMOKE_NOT_RUN = ['low-risk', 'no-targets', 'no-test-paths', 'tests-only-diff', 'allowance'] as const;
 export type SmokeNotRun = (typeof SMOKE_NOT_RUN)[number];
@@ -251,6 +312,10 @@ export type GateChecks = Readonly<{
   smoke: Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[]; notRun: SmokeNotRun | null }> | null;
   /** dev.12: per plan `derived` entry whose outputs the diff touches, in entry order, whether regeneration verified them. */
   regenerated: readonly RegeneratedCheck[];
+  /** dev.81 (B3 c): the mutants the candidate must kill, as the build was given them; empty when the spec repairs none. */
+  mutants: readonly MutantInput[];
+  /** dev.81 (B3 b): approved lines a merge-in resolution dropped; null when no resolved merge-in follows the approval. */
+  mergeIn: MergeInDrops | null;
 }>;
 
 /**
@@ -508,7 +573,7 @@ export type RoleInputs = {
 export const ROLE_INPUTS = {
   experienceVerdict: ['mode', 'brief'],
   campaignAudit: ['method', 'vision', 'obligations', 'range', 'owners', 'priorFindings', 'contracts', 'target', 'checkout'],
-  build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'lastLaneSeries', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessChecks', 'milestones', 'browser', 'handover', 'method'],
+  build: ['systemNotes', 'notes', 'target', 'spec', 'intent', 'nonGoals', 'contracts', 'index', 'fastLanes', 'lastLaneSeries', 'suiteLanes', 'evidenceDir', 'worktree', 'systems', 'fixRound', 'witnessLanes', 'mutants', 'mergeIn', 'afterMergeIn', 'milestones', 'browser', 'handover', 'method'],
   packReview: ['vision', 'plan', 'specs', 'obligations', 'rulesIndex', 'phase0', 'delta'],
   verifier: ['mode', 'brief'],
 } as const satisfies { readonly [R in Role]: readonly (keyof RoleInputs[R])[] };
@@ -690,9 +755,32 @@ function regeneratedText(r: RegeneratedCheck): string {
   }
 }
 
+/** dev.81 (B3 c): one mutant the candidate must kill, as a line: its finding, lane, the tests that must fail, and the patch. */
+function mutantText(m: MutantInput): string {
+  return `- ${m.finding} on lane ${m.lane}: with the patch applied, ${m.mustFail === 'every-test' ? 'every test the lane reports' : `tests ${m.mustFail.join(', ')}`} must fail. Patch: ${m.patch}`;
+}
+
+/** How many dropped lines per path the gate and the build are shown; the rest are counted. */
+export const DROPPED_LINES_SHOWN = 20;
+
+/** dev.81 (B3 b): the approved lines a merge-in resolution dropped, per path, as the gate reads them. */
+function mergeInDropsText(m: MergeInDrops): readonly string[] {
+  if (m.dropped.length === 0) return [];
+  return [
+    `Merge-in resolution: the unit was approved at ${m.approved}, then integration was merged in with conflicts. Lines the approved diff added that this head no longer holds, per conflicted path:`,
+    ...m.dropped.flatMap((d) => [
+      `- ${d.path} (${d.lines.length} ${d.lines.length === 1 ? 'line' : 'lines'}):`,
+      ...d.lines.slice(0, DROPPED_LINES_SHOWN).map((l) => `    ${l}`),
+      ...(d.lines.length > DROPPED_LINES_SHOWN ? [`    (${d.lines.length - DROPPED_LINES_SHOWN} more)`] : []),
+    ]),
+  ];
+}
+
 export function gateChecksText(c: GateChecks): string {
   const regenerated = c.regenerated.length === 0 ? [] : ['Regenerated outputs this diff touches (plan `derived` entries):', ...c.regenerated.map(regeneratedText)];
-  if (c.witnesses === null && c.smoke === null && regenerated.length === 0) return '';
+  const mutants = c.mutants.length === 0 ? [] : ['Mutants of the vacuity findings this spec repairs, which the candidate stage applies and runs (a surviving mutant is a red candidate):', ...c.mutants.map(mutantText)];
+  const dropped = c.mergeIn === null ? [] : mergeInDropsText(c.mergeIn);
+  if (c.witnesses === null && c.smoke === null && regenerated.length === 0 && mutants.length === 0 && dropped.length === 0) return '';
   const w = c.witnesses;
   const witnesses = w === null ? [] : [
     `Witness presence: ${w.required.length} required witness ${w.required.length === 1 ? 'test' : 'tests'} on the arc lanes at this head.`,
@@ -706,12 +794,48 @@ export function gateChecksText(c: GateChecks): string {
     `- survived: ${refsText(s.survived)}`,
     `- inconclusive: ${refsText(s.inconclusive)}`,
   ];
-  return `\n\n<executable_checks>\n${[...witnesses, ...smoke, ...regenerated].join('\n')}\n</executable_checks>`;
+  return `\n\n<executable_checks>\n${[...witnesses, ...smoke, ...regenerated, ...mutants, ...dropped].join('\n')}\n</executable_checks>`;
 }
 
-/** The implementer's witness checks: one exact command per fast required witness lane (R56), or nothing. */
-export function witnessChecksText(checks: readonly WitnessCheckCommand[]): string {
-  return checks.length === 0 ? '' : `\n\n<witness_checks>\n${checks.map((w) => `- ${w.lane}:\n  ${w.command}`).join('\n')}\n</witness_checks>`;
+/** What each `WitnessLane.runs` means, as a clause. */
+const WITNESS_LANE_RUNS: { readonly [K in WitnessLane['runs']]: string } = {
+  'build-check': 'build cadence; run its witness check after your last change',
+  'lanes-stage': 'run by the executor\'s lanes stage at your salvage commit; its command runs here for a targeted check',
+  'executor-only': 'needs an environment or reserved resources: the executor alone runs it',
+};
+
+/** dev.81 (B3 d): every required witness lane (R56), with its required ids and its command when the build can run it; or nothing. */
+export function witnessLanesText(lanes: readonly WitnessLane[]): string {
+  if (lanes.length === 0) return '';
+  const row = (w: WitnessLane): string => `- ${w.lane} (${w.cadence}; ${WITNESS_LANE_RUNS[w.runs]}): required ${w.testIds.join(', ')}${w.runs === 'executor-only' ? '' : `\n  ${w.command}`}`;
+  return `\n\n<witness_lanes>\nEvery arc lane holding a witness test this unit must make pass:\n${lanes.map(row).join('\n')}\n</witness_lanes>`;
+}
+
+/** dev.81 (B3 c): the mutants the candidate must kill, or nothing. */
+export function mutantsText(mutants: readonly MutantInput[]): string {
+  return mutants.length === 0 ? '' : `\n\n<mutants>\nThe vacuity findings this spec repairs carry these mutants. The candidate stage applies each patch and runs its lane; the repair holds only when the named tests fail with it:\n${mutants.map(mutantText).join('\n')}\n</mutants>`;
+}
+
+/** dev.81 (B3 b): a resolve round's merge-in, or nothing. */
+export function mergeInText(m: MergeInInput | null): string {
+  if (m === null) return '';
+  const approved = m.approved === null ? 'No gate approval of this branch precedes the merge.' : m.approved.paths.length === 0
+    ? `The gate approved this unit at ${m.approved.head} (gate attempt ${m.approved.attempt}); none of the conflicted paths is in that approval.`
+    : `The gate approved this unit at ${m.approved.head} (gate attempt ${m.approved.attempt}). These conflicted paths are in that approval: ${m.approved.paths.join(', ')}. After you commit the merge, \`git diff ${m.approved.head} HEAD -- ${m.approved.paths.join(' ')}\` shows only what integration changed in them: every line the approved diff added is still there.`;
+  return `\n\n<merge_in>\nIntegration ${m.integrationTip} was merged into this branch at ${m.old}. Conflicted paths: ${m.conflicts.join(', ')}.\n${approved}\n</merge_in>`;
+}
+
+/** dev.81 (B5): the round after a merge-in into the kept worktree, or nothing. */
+export function afterMergeInText(worktree: AbsPath, a: AfterMergeIn | null): string {
+  if (a === null) return '';
+  const cleaned = a.cleaned.length === 0 ? 'No ignored build output was there to remove.' : `The executor removed the ignored build output ${a.cleaned.join(', ')} before this round; your build regenerates it.`;
+  return `\n\n<after_merge_in>\nIntegration was merged into this worktree since your last build. ${cleaned} Re-run these lanes on your final tree and report each in checks:\n${fastLanesText(worktree, a.rerun)}\n</after_merge_in>`;
+}
+
+/** dev.81 (B4): each failing lane's failure text in a fix round, or `(none)`. */
+export function laneFailuresText(failures: readonly LaneFailureText[] | undefined): string {
+  if (failures === undefined || failures.length === 0) return '(none)';
+  return failures.map((f) => `- ${f.lane}: ${f.signature}${f.specific ? '' : ' (a summary line: the failure is in the output above it)'}\n${f.excerpt.map((l) => `    ${l}`).join('\n')}`).join('\n');
 }
 
 /**
