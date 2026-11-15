@@ -244,6 +244,13 @@ export const TABLE: Table = {
     // dev.59: a red series of a lanes rerun the root ordered (`roadmap rerun`): its claim that the cause is outside the tree did
     // not hold. Uncharged; the root decides (`resume <unit>` restores the decision the rerun waived).
     'rerun-red': park('rerun-red', 'env'),
+    // dev.81 (C1): the red lane is one an open deflake unit owns (not the unit's own lineage's): the ledger's flake, not the
+    // unit's. Uncharged, like a known defect: it waits at prepare until the deflake merges, parks or is cut, then merges the
+    // tip in and runs its lanes again; a lane still red then is charged as any other.
+    'deflake-held': go(at('prepare')),
+    // dev.81 (B5): every red lane passed in the builder's own reported check at the salvage head: the lanes' environment
+    // diverges from the builder's. Uncharged; a fix round told to reproduce the red in a fresh checkout.
+    'environment-divergence': go(build('fix')),
   },
   gate: {
     'checkout-residue': checkoutResidue,

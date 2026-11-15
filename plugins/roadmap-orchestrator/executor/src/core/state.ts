@@ -1130,9 +1130,10 @@ export class Fold implements JournalView {
         }
         const status = existing?.state.status;
         if (status === 'cut' || status === 'superseded') fail(`stage-outcome for ${f.unit} ${key}, which is ${status}`);
-        // M4a rev 3 (F4): a unit that hit a known defect prepares again (its decided outcome is lanes `known-defect`).
-        const knownDefect = existing?.state.decided?.stage === 'lanes' && existing.state.decided.outcome === 'known-defect';
-        if (f.stage === 'prepare' && (existing?.state.lineage ?? null) === null && !knownDefect) fail(`prepare outcome for ${f.unit}, which re-enters no unit and hit no known defect`);
+        // M4a rev 3 (F4): a unit that hit a known defect prepares again (its decided outcome is lanes `known-defect`); dev.81
+        // (C1): so does one a deflake held (lanes `deflake-held`).
+        const knownDefect = existing?.state.decided?.stage === 'lanes' && (existing.state.decided.outcome === 'known-defect' || existing.state.decided.outcome === 'deflake-held');
+        if (f.stage === 'prepare' && (existing?.state.lineage ?? null) === null && !knownDefect) fail(`prepare outcome for ${f.unit}, which re-enters no unit and hit no known defect or deflake`);
         if (f.cause?.type === 'backend' && this.#backendParkSeqs.get(f.cause.parkSeq) !== f.cause.backend) {
           fail(`hold of ${f.unit} ${key} caused by backend ${f.cause.backend}'s park at seq ${f.cause.parkSeq}, which is no park of that backend`);
         }

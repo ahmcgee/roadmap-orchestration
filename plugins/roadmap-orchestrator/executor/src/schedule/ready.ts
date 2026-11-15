@@ -20,7 +20,9 @@
 // `known-defect{id, fixUnit}` while the plan's entry of that id is active for it; a removed entry releases it.
 //
 // dev.17 (flaky ledger): a unit not yet dispatched whose lanes include an open deflake unit's lane waits on that code edge
-// at any admission (`deflakeHold`, src/pipeline/deflake.ts), until the deflake merges, parks or is cut.
+// at any admission (`deflakeHold`, src/pipeline/deflake.ts), until the deflake merges, parks or is cut. dev.81 (C1): a
+// dispatched unit whose decided outcome is lanes `deflake-held{deflake, lane}` waits at `prepare` under the same
+// `deflake{deflake, lane}` constraint while that deflake is open (`deflakeShieldHold`), mirroring a known defect.
 //
 // dev.13 (agent D): a polish unit's candidate admission waits for its compare (`compare`): until its `tweak-judged`, and
 // for ever after a `drop` (its cut follows, src/walk/compare.ts); a `keep` admits it.
@@ -41,7 +43,7 @@ import { pressureHoldWaits } from '../host/pressure.ts';
 import { lineageMembers } from '../input/lineage.ts';
 import { type KnownDefect,type PlanM1,type PlanUnit,knownDefectsOf,priorityOf } from '../input/plan.ts';
 import { systemsMapInForce } from '../input/systems.ts';
-import { deflakeHold } from '../pipeline/deflake.ts';
+import { deflakeHold,deflakeState } from '../pipeline/deflake.ts';
 import { decidedBy,judgmentSeat } from '../pipeline/transitions.ts';
 import type { Backend,JudgmentRole,RoutingTable } from '../routing/types.ts';
 import { milestoneEdges,milestonePassedSeq,milestoneWaits } from '../walk/node.ts';
@@ -178,7 +180,7 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
       else if (judged.decision === 'drop') c.push({ type: 'compare', decision: 'drop' });
     }
     if (stage === 'prepare') {
-      const hold = knownDefectHold(view, plan, unit.id);
+      const hold = knownDefectHold(view, plan, unit.id) ?? deflakeShieldHold(view, unit.id);
       if (hold !== null) c.push(hold);
     }
     // dev.17: a code edge from an open deflake unit whose lane this undispatched unit runs (src/pipeline/deflake.ts).
@@ -225,6 +227,17 @@ function knownDefectHold(view: JournalView, plan: PlanM1, unit: UnitId): Extract
   const k = knownDefectsOf(plan).find((e) => e.id === id);
   if (k === undefined || canonicalJson(k.match) !== canonicalJson(match)) return null;
   return knownDefectActive(view, plan, k, unit) ? { type: 'known-defect', id, fixUnit: k.fixUnit } : null;
+}
+
+/**
+ * dev.81 (C1): the deflake holding `unit`'s `prepare`: its decided outcome is lanes `deflake-held{deflake, lane}` and that
+ * deflake is still open (src/pipeline/deflake.ts `deflakeState`); null otherwise (merged, parked or cut releases it).
+ */
+function deflakeShieldHold(view: JournalView, unit: UnitId): Extract<AdmissionConstraint, { type: 'deflake' }> | null {
+  const d = view.unit(unit).decided;
+  if (d?.stage !== 'lanes' || d.outcome !== 'deflake-held') return null;
+  if (d.detail?.kind !== 'deflake-held') throw new Error(`unit ${unit}: its lanes deflake-held outcome (attempt ${d.attempt}) names no deflake`);
+  return deflakeState(view, d.detail.deflake) === 'open' ? { type: 'deflake', deflake: d.detail.deflake, lane: d.detail.lane } : null;
 }
 
 // ---------------------------------------------------------------------------------------------------

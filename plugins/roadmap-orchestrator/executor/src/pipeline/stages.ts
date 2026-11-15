@@ -20,7 +20,7 @@ import { walkMcpConfig } from '../backends/mcp.ts';
 
 import type { Verification } from '../core/design.ts';
 import {
-BACKEND_PARK_CLASSES,RERUN_REDS,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
+BACKEND_PARK_CLASSES,RERUN_REDS,type BuilderCheck,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
 } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
@@ -64,7 +64,7 @@ import type { ArchitectureInput,BuildBrowser,BuildLane,CorpusInput,DocText,Escal
 import { type Handover,visionInputOf } from '../prompts/inputs.ts';
 import {
 BUILD_SCHEMA,
-DECISIONS_FILE,type DecisionsFile,type Premise,buildOutput,
+type BuildOutput,DECISIONS_FILE,type DecisionsFile,type Premise,buildOutput,
 validateDecisionsFile,
 } from '../prompts/schemas.ts';
 import { evidenceSnapshotOp,salvageCommitOp,worktreeRemoveOp } from '../recover/ops.ts';
@@ -81,7 +81,7 @@ import { specPatchOp } from '../spec/patch.ts';
 import { renderSpec } from '../spec/render.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 
-import { verifyRunsOf } from './deflake.ts';
+import { deflakeShield,verifyRunsOf } from './deflake.ts';
 import { builderDecisions, decisionDeparture, departures } from './design.ts';
 import { type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,backendOf,cancelledNow,dispatchOf,enter,evidenceRoot,fastSuiteWorktree,implementerDispatch,isCancelled,matchesVerificationPath,nonEmpty,pinDispatch,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir } from './dispatch.ts';
 
@@ -1171,7 +1171,10 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 // suite runs on the current tip, so a tip that fixed the base since passes, and a tip still red is its `base-red` (merges
 // halt, `needs-user`). A park here could not heal: the unit's commit never contains a later fix of its base, and only
 // the candidate merges the tip. A base check's verdict is shared by every unit of the run (`BASE_CHECKS`): units red on
-// the same lanes over the same base run it once.
+// the same lanes over the same base run it once. dev.81 (C2): a confirmed red (its diagnostic rerun red too, or a repeat of
+// the unit's earlier red, `confirmedRed`) never takes a kept base *pass*: it compares against a fresh base run (`baseCheck`
+// `fresh`: no earlier pass reused, no test-only run), where a base lane that is flaky counts as failed (a flaky base proves
+// nothing against a timing red); its `lane-base-compared` fact says `fresh: true`. A kept base red still stands for it.
 //
 // Regenerate checks (dev.12): the regenerate lane of each derived entry whose sources or outputs the unit's diff touches
 // (`unitRegenerateLanes`, src/input/derived.ts) runs first in the same series, as a fast suite lane: a hand edit hidden in
@@ -1182,9 +1185,13 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 /** Where a lanes attempt keeps the evidence of its fast suite: at the salvage SHA (`suite`), on the diff base alone (`base`). */
 export const fastSuiteRoot = (runDir: AbsPath, parent: StageParent, at: 'suite' | 'base'): AbsPath => absPath(join(evidenceRoot(runDir, parent), `_${at}`));
 
+/** dev.81 (C2): a red the diagnostic rerun confirmed (red again, not flaky) or that repeats the unit's earlier red. */
+const confirmedRed = (lane: LaneRecord): boolean => (lane.diagnostic !== null && !lane.flaky) || lane.repeat !== null;
+
 /** The fast suite on the diff base alone: whether it failed (a red lane, or a changed checkout), or no verdict (what the attempt records). */
 type BaseCheck =
-  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean; evidence: AbsPath }>
+  /** dev.81 (C2): `fresh`, the base ran for this check with nothing reused (`baseCheck` `fresh`). */
+  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean; evidence: AbsPath; fresh: boolean }>
   | Readonly<{ kind: 'none'; verdict: LanesVerdict }>;
 
 /**
@@ -1221,17 +1228,21 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
  */
 async function fastSuiteSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime,
-  verify: ReadonlyMap<LaneId, number> = new Map(), set: 'spec' | 'suite' = 'suite',
+  verify: ReadonlyMap<LaneId, number> = new Map(), set: 'spec' | 'suite' = 'suite', fresh = false,
 ): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, set, checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
+  const series = await runLaneSeries(ctx, parent, lanes, set, checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify, fresh);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
 
-/** `lanes` on `base` alone, run once per run for every unit asking (a check without a verdict is not kept). */
-async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime, set: 'spec' | 'suite' = 'suite'): Promise<BaseCheck> {
+/**
+ * `lanes` on `base` alone, run once per run for every unit asking (a check without a verdict is not kept). `fresh` (dev.81,
+ * C2): for a confirmed red, a kept failed verdict stands (a base red is still a base red), but a kept pass is not trusted:
+ * the base runs again, nothing reused, a flaky base lane counted as failed, and its verdict is kept in place of the old.
+ */
+async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime, set: 'spec' | 'suite' = 'suite', fresh = false): Promise<BaseCheck> {
   const checks = BASE_CHECKS.get(ctx.journal) ?? new Map<string, Promise<BaseCheck>>();
   BASE_CHECKS.set(ctx.journal, checks);
   const key = canonicalJson({ base, lanes, set });
@@ -1239,18 +1250,20 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
   if (known !== undefined) {
     try {
       const check = await known;
-      if (check.kind === 'verdict') return check;
+      // A kept verdict is no fresh run of this comparison's own.
+      if (check.kind === 'verdict' && (!fresh || check.failed)) return { ...check, fresh: false };
     } catch (error) {
       // The originating unit owns its failed checkout; another unit compares in its own checkout.
       if (!(error instanceof WorktreeRecoveryError)) throw error;
     }
   }
   const running = (async (): Promise<BaseCheck> => {
-    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), set);
+    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), set, fresh);
     const fault = suiteFault(ctx, parent.unit, series);
     if (fault !== null) return { kind: 'none', verdict: fault };
-    const red = series.end.kind === 'red' ? [series.end.lane.lane] : [];
-    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'base') };
+    const red = fresh ? [...new Set(series.ledger.filter((l) => isRed(l.verdict) || l.flaky).map((l) => l.lane))]
+      : series.end.kind === 'red' ? [series.end.lane.lane] : [];
+    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'base'), fresh };
   })();
   checks.set(key, running);
   try {
@@ -1326,13 +1339,26 @@ async function fastSuite(
   const failing = end.kind === 'red' ? lanes.filter((l) => l.id === end.lane.lane) : lanes.filter((l) => series.ledger.some((r) => r.lane === l.id));
   const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
   // A unit whose commit is its base (nothing of its own) failed on the base in this very run.
+  const fresh = end.kind === 'red' && confirmedRed(end.lane);
   const check: BaseCheck = base === salvaged
-    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'suite') }
-    : await baseCheck(ctx, parent, base, failing, rt);
+    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'suite'), fresh: false }
+    : await baseCheck(ctx, parent, base, failing, rt, 'suite', fresh);
   if (check.kind === 'none') return { verdict: check.verdict, series };
-  if (end.kind === 'red' && red.has(end.lane.lane) && !end.lane.flaky && !ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass' });
+  if (end.kind === 'red' && red.has(end.lane.lane) && !end.lane.flaky && !ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass', ...(check.fresh ? { fresh: true as const } : {}) });
   if (!check.failed) return { verdict: { kind: end.kind === 'red' ? (red.has(end.lane.lane) && !end.lane.flaky ? 'regression' : 'red') : 'not-certified' }, series };
   return { verdict: { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } }, series };
+}
+
+/**
+ * dev.81 (B5): the lane checks the unit's latest build report says it ran (`BuildOutput.checks`, B4's final-report proof);
+ * empty before its first build, or from a report without them.
+ */
+function builderChecks(ctx: StageContext, unit: UnitId): readonly BuilderCheck[] {
+  const latest = ctx.journal.view.spawnsOfUnit(unit, 'build').at(-1);
+  if (latest === undefined) return [];
+  // INTEGRATION (dev.81): `checks` is WS-C's B4 addition to `BuildOutput`; drop this widening once it is in the type.
+  const report = judgmentOutput(ctx, latest, (v) => buildOutput(v, 'build')) as (BuildOutput & Readonly<{ checks?: readonly BuilderCheck[] }>) | null;
+  return report?.checks ?? [];
 }
 
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone | Cancelled> {
@@ -1388,10 +1414,12 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (verdict.kind === 'red' && end.kind === 'red' && (priorBaseRed !== undefined || end.lane.repeat !== null || red.spec.has(end.lane.lane)) && !end.lane.flaky && ctx.journal.view.completedLanesOutcome(unit.id)?.outcome !== 'known-defect') {
     const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
     const failing = order.filter((l) => l.id === end.lane.lane);
-    const check: BaseCheck = priorBaseRed?.kind === 'lane-base-compared' ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: false, evidence: priorBaseRed.evidence } : base === salvaged ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: series.dirty.length > 0, evidence: specSeriesRoot(ctx.runDir, parent) } : await baseCheck(ctx, parent, base, failing, rt, 'spec');
+    // dev.81 (C2): a prior base red stands; a prior base pass is never reused for a confirmed red (`fresh`).
+    const fresh = confirmedRed(end.lane);
+    const check: BaseCheck = priorBaseRed?.kind === 'lane-base-compared' ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: false, evidence: priorBaseRed.evidence, fresh: false } : base === salvaged ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: series.dirty.length > 0, evidence: specSeriesRoot(ctx.runDir, parent), fresh: false } : await baseCheck(ctx, parent, base, failing, rt, 'spec', fresh);
     if (check.kind === 'none') verdict = check.verdict;
     else {
-      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass' });
+      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass', ...(check.fresh ? { fresh: true as const } : {}) });
       if (!check.failed) verdict = { kind: 'regression' };
       if (check.failed) {
         verdict = { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } };
@@ -1405,6 +1433,22 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (verdict.kind === 'red') {
     const red = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict));
     if (red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass') && series.dirty.length === 0 && (suite?.series?.dirty.length ?? 0) === 0) verdict = { kind: 'flaky' };
+  }
+  if (verdict.kind === 'red' || verdict.kind === 'regression' || verdict.kind === 'not-certified') {
+    const redLanes = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict)).map((l) => l.lane);
+    // dev.81 (C1): a red on the lane an open deflake unit owns is the ledger's flake: uncharged, held at prepare until it
+    // settles (src/pipeline/deflake.ts `deflakeShield`).
+    const shields = redLanes.map((lane) => ({ lane, deflake: deflakeShield(ctx.journal.view, ctx.plan(), unit.id, lane) }));
+    const held = shields[0];
+    if (held !== undefined && held.deflake !== null && shields.every((x) => x.deflake !== null)) verdict = { kind: 'deflake-held', detail: { kind: 'deflake-held', deflake: held.deflake, lane: held.lane } };
+    // dev.81 (B5): every red lane passed in the builder's own reported check at this head: the environments diverge.
+    else if (redLanes.length > 0) {
+      const defs = [...order, ...fastSuiteLanes(ctx, spec, salvaged)];
+      const checks = builderChecks(ctx, unit.id).filter((c) => c.head === salvaged && redLanes.includes(c.lane) && c.exit === defs.find((d) => d.id === c.lane)?.expectedExit);
+      if (redLanes.every((lane) => checks.some((c) => c.lane === lane))) {
+        verdict = { kind: 'environment-divergence', detail: { kind: 'environment-divergence', head: salvaged, lanes: [...new Set(redLanes)], builderChecks: checks } };
+      }
+    }
   }
   // D1, D2 (corpus arcs): only after a green certified spec series and a fast suite that passed or was the base's red.
   if ((verdict.kind === 'green' || verdict.kind === 'base-red') && checksApply(ctx)) {
@@ -1422,7 +1466,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
   const compared = ctx.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt);
-  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, [...spec.lanes, ...fastSuiteLanes(ctx, spec, salvaged)], compared) : null;
+  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || kind === 'environment-divergence' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, [...spec.lanes, ...fastSuiteLanes(ctx, spec, salvaged)], compared) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

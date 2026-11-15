@@ -215,6 +215,17 @@ roadmap apply --from <dir> --rev <N> --reason "<line>"
 - An apply that touches running work queues to its stage boundary. A suite-lane edit waits behind a running lanes
   attempt (a lanes red's fix round still reads the series as it ran) and is refused only while a candidate is under
   way.
+- The drain follows the change. Plan-wide edits (routing, limits, resources, the suite, the holistic layer) drain the
+  arc, but two drain nothing because they are read from the plan in force at each use:
+  - an obligation edit that changes only `deliveredBy`;
+  - a `capacity` edit. An increase grants at once. After a decrease, units already holding tokens above the new size
+    keep them until they finish, and nothing new is granted until the tokens held fall below the new size. This
+    covers both `capacity.cpu` and `capacity.fastSuites`, the cap on lanes-stage suite lanes running at once. Without
+    `fastSuites` the cap is one per 12 GiB of host memory, at least one, and the executor logs the derived value at
+    startup.
+- `roadmap withdraw <command-id>` takes back a pending mutation, such as a queued apply, before it starts applying.
+  The mutation is rejected `withdrawn by <id>`, its drain is released at once, and no dropped-apply item is raised.
+  A control command, a command that is already terminal, and one whose apply has begun cannot be withdrawn.
 
 **Reaching a unit.**
 
@@ -264,6 +275,11 @@ every answer.
   whole argv). A red targeted run is confirmed by the lane's own argv, whose verdict counts: a runner that finds no
   test files never charges the unit.
 - Exact witness ids can be checked with `witness-check --lane-file` before requesting certification.
+- A red lanes-stage suite lane runs again on the unit's diff base alone. That base verdict is kept for the run, so
+  units red on the same lanes over the same base share it. A kept base red stands for every unit. A kept base pass is
+  never trusted against a confirmed red, meaning one whose diagnostic rerun was red too or that repeats the unit's
+  earlier red. For a confirmed red the base runs again with nothing reused and no test-only run, and a lane that flakes
+  on the base counts as failed there. Its `lane-base-compared` fact says `fresh`.
 
 ## Attempt limits and diagnosis
 
@@ -273,6 +289,7 @@ every answer.
 | 16 builds / 40 stages (fixed) | Raises an attempt-cap item for the architect. |
 | Certification reds | Three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that allowance. |
 | Gate revisions, candidate reds | Separate bounds. |
+| `flaky`, `deflake-held`, `environment-divergence`, `known-defect`, `base-red` lanes outcomes | Uncharged, outside the certification allowance. |
 
 - Spend expectations are forecasts, never caps.
 - Usage limits park a backend until explicit resume.
@@ -294,6 +311,17 @@ every answer.
 
 - A same-commit red→green run is flaky. Unit-tree flakes need repair, while eligible tip flakes can be forgiven and
   mint deflake units. Stochastic k-of-n lanes follow their declared rule instead.
+- An open deflake unit shields the lane it owns. A unit not yet started that runs the lane waits at its first
+  admission. A unit already running whose lanes stage is red on that lane records `deflake-held`, is not charged, and
+  waits at `prepare` until the deflake merges, parks or is cut. Prepare then merges the integration tip in and the
+  lanes run again. If the lane is still red, the unit is charged as usual. A unit of the deflake's own lineage is
+  never shielded.
+- When every red lane passed in the builder's own reported check at the same head, the lanes record
+  `environment-divergence`: the lanes' clean checkout and the builder's worktree differ. The unit gets an uncharged
+  fix round told to reproduce the red in a fresh checkout of that head.
+- A lane does not start while the environment or resource it names is unhealthy, meaning it has a tripped breaker or
+  a retryable park on it whose probe has not passed. The lane waits and holds nothing until the probe clears it. It
+  does not come up against the broken target and park a second unit.
 - Ordering parks wake when their named blockers merge.
 - Managed environments start lazily, stay up while used and stop when idle. Failed up/probe parks retryably rather
   than counting as a red test.
