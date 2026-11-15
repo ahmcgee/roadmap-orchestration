@@ -106,7 +106,7 @@ export class SummaryFold {
     if (f.kind === 'walk-started') add(this.#jobsByMilestone, f.milestone, f.job);
     if (f.kind === 'compare-started') add(this.#jobsByUnit, f.unit, f.job);
     if (f.kind === 'meter' && f.usage.costEstimated === true) this.#estimatedCalls++;
-    if (f.kind === 'stage-outcome' && 'unit' in f && f.stage === 'gate' && f.outcome === 'revise') this.#gateRevisions++;
+    if (f.kind === 'stage-outcome' && 'unit' in f && f.stage === 'gate' && (f.outcome === 'revise' || f.outcome === 'revise-new')) this.#gateRevisions++;
     if (f.kind === 'finding-opened' && !this.#findings.has(f.key)) { this.#findings.add(f.key); this.#byLens[f.lens] = (this.#byLens[f.lens] ?? 0) + 1; }
     if (f.kind === 'stage-outcome' && !('unit' in f)) this.#verdicts.push(f);
   }

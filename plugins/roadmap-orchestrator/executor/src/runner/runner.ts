@@ -10,7 +10,9 @@
 // process. Once the latest report on its output is schema-valid and `final: true`, and the workload is still running
 // REPORT_GRACE_MS later (a pending wake-up or monitor keeps the CLI alive, or descendants outlive it), the runner kills
 // it with cause `reported` and the adapter reads that report. An interim report (`final: false`, a turn ended to wait)
-// never ends anything; waiting is unrestricted until the final report, and the deadline stays the backstop.
+// never ends anything; waiting is unrestricted until the final report, and the deadline stays the backstop. A judgment
+// (no `final` in its schema, dev.81) ends the same way once its latest result is schema-valid and its stream has stayed
+// quiet for REPORT_GRACE_MS: a background subagent's events keep it alive, a silent lingering session does not.
 //
 // Cpu wait (M4b rev 3): at every poll the runner reads the schedstat of every thread of the workload
 // (src/host/pressure.ts `WorkloadCpu`: the members when the stall watchdog or the descendants' wait scans

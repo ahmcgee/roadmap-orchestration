@@ -64,7 +64,8 @@ export const watchLease: Read<WatchLease> = object((f) => ({
 /**
  * `preempt` (M3, A7): a docs publication abandons a unit candidate before green; uncharged. `supersede` (paid M4b run 3):
  * a revision changed the plan or vision an in-flight checkpoint call was captured on (src/holistic/checkpoint.ts).
- * `reported`: the runner ends what a build left pending `REPORT_GRACE_MS` after its final report (src/runner/report.ts).
+ * `reported`: the runner ends what a build left pending `REPORT_GRACE_MS` after its final report, or a judgment
+ * `REPORT_GRACE_MS` after a schema-valid result on a quiet stream (dev.81; src/runner/report.ts).
  * `teardown` (dev.13): the owner of a bring-up's long-lived `serve` process stops it once it is done with the product
  * (src/walk/bringup.ts); only a `bring-up` command is cancelled for it.
  */
@@ -355,8 +356,9 @@ export type ChildEnd =
   | Readonly<{ type: 'spawn-failed'; error: string }>;
 /**
  * `exited` = the child ended on its own; the others name why the runner killed the workload. `reported`: a backend's
- * final, schema-valid report was on its output for `REPORT_GRACE_MS` while the workload still ran (a pending wake-up,
- * monitor or background process; src/runner/report.ts): the report, not the kill, decides the outcome.
+ * final, schema-valid report (a judgment's: its schema-valid latest result, the stream quiet since) was on its output
+ * for `REPORT_GRACE_MS` while the workload still ran (a pending wake-up, monitor or background process;
+ * src/runner/report.ts): the report, not the kill, decides the outcome.
  */
 export const EXIT_CAUSES = ['exited', 'deadline', 'timeout', 'stall', 'cancel', 'recovery-kill', 'reported'] as const;
 export type ExitCause = (typeof EXIT_CAUSES)[number];

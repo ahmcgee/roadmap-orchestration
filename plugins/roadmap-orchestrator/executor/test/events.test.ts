@@ -118,6 +118,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
+  { kind: 'stage-outcome', unit, stage: 'gate', attempt: 3, outcome: 'revise-new', class: 'escalation-revise', chargeable: false },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
   { kind: 'needs-user-acked', id: needsUserId('nu-7'), command: commandId('cmd-0123456789abcdef'), choice: 'retry' },
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'unit', unit } },
