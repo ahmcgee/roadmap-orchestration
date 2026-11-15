@@ -18,7 +18,7 @@ Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 liv
 |---|---|
 | `roadmap --version` | Installed executor release. |
 | `roadmap start --repo <path> --plan <plan.json> [--profile default|claude-only] [--wait <ms>]` | Validate inputs and backend smoke, claim host, launch detached supervisor/executor, or recover the existing schema-2 run. The input plan supplies baseline/previousHead/chain. On a restart with a plan in force, keep its recorded routing profile; a conflicting `--profile` refuses (use a routing apply to change it). CLI/config/default selection applies only at first start. |
-| `roadmap status [--summary] [--repo <path> --arc <arc>]` | Full JSON or compact owner JSON; read-only, no status lock. |
+| `roadmap status [--summary] [--repo <path> --arc <arc>]` | Full JSON or compact owner JSON; read-only, no status lock. Run history is folded to counts: `units[].workTotals` and `host.workTotals` (not per-run rows), a merged, cut or superseded unit's `certification.laneStates` (not its lanes), and an applied receipt's first 20 `verified` lines with `verifiedTotal` (the whole receipt is `commands/receipts/<id>.applied.json`). The console shows every run. |
 | `roadmap console start|stop|status --repo <path>` | Read-only web console, independent of executor/watch. Start/status print the URL on stderr; stop persists until another start. |
 | `roadmap tui [--repo <path> --arc <arc>]` | Read-only terminal observer. Use an interactive terminal. |
 | `roadmap watch [--repo <path> --arc <arc>]` | Stream events. |

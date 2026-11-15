@@ -154,14 +154,17 @@ test('checks while a unit runs leave the revision and data; the status route adv
     running: u.running === null ? null : { ...u.running, elapsed: u.running.elapsed === null ? null : u.running.elapsed + delta },
     waitingFor: u.waitingFor === null ? null : { ...u.waitingFor, ...(typeof u.waitingFor.tokenWaitMs === 'number' ? { tokenWaitMs: u.waitingFor.tokenWaitMs + delta } : {}) } })),
     run: { ...status.run, heartbeatAt: '2026-06-01T00:00:05.000Z' }, supervision };
-  const read = model.status(e, false) as typeof status;
+  const read = model.status(e, false) as { units: { running: { elapsed: number | null } | null }[] };
   assert.equal(read.units[0]!.running!.elapsed, 5_000 + 10_000);
-  assert.equal(canonicalJson(read), canonicalJson(expected));
+  // dev.81 (D3): the route prints the folded status (`wireStatus`).
+  const { wireStatus } = await import('../src/status-wire.ts');
+  assert.equal(canonicalJson(read), canonicalJson(wireStatus(expected as never)));
   assert.equal(canonicalJson(model.status(e, true)), canonicalJson({ ...observation.summary, supervision }));
   assert.equal(model.status(e, false), read, 'answered once per check');
   // The next capture is as of its own clock: nothing applied until a check after it.
   model.apply({ ...observation, status, clock: at + 500, asOf: at + 500 }, at + 500);
-  assert.equal(model.status(model.envelope()!, false), status);
+  assert.equal(canonicalJson(model.status(model.envelope()!, false)), canonicalJson(wireStatus(status as never)));
+  assert.equal(model.status(model.envelope()!, false), model.status(model.envelope()!, false), 'folded once per capture');
 });
 
 // dev.75 (S-b): view versions are computed once, when the model publishes, and kept with the capture: a notice for an envelope

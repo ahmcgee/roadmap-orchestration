@@ -1644,7 +1644,7 @@ explicit. Holistic audit outcomes/findings are shown; checkpoint job detail rema
 Claude init/rate-limit records become collapsed session metadata, while the canonical TUI text remains
 unchanged. Transcript text is decoded, escaped and byte-paged in the browser, never a link to base64 JSON.
 
-### dev.81 D1–D3: console groups, withdrawn units, status size
+### dev.81 D1–D3: console groups, withdrawn units, the printed status
 
 Status (additive, computed at read time; no record change): `units[].origin` is the plan unit's origin (`planned`
 when absent), and `units[].repairs` is the finding and obligation ids its spec repairs (`repairUnits`, `[]` when
@@ -1669,7 +1669,18 @@ The client hides withdrawn units by default. A hidden unit's edges are re-pointe
 keeps its band and is placed directly before its successor. The per-viewer choice is
 `localStorage['roadmap.show-withdrawn']`. Counts are unchanged.
 
-D3 (status payload) is deferred, measured. On the real-shape fixture (`generateScaleArc`, 40 units and 9,000
-invocations) the canonical status is 81 KB. `units[].work` + `host.work` + `decisionsSince` make up 33.7% of it,
-with `units[].work` alone at 33.2%. The design-field fixture is 104 KB, at 36.6%. Both are below the 50% gate, so
-`work` stays in the serialized status. Neither fixture reproduces the field's 7.8 MB.
+D3 (the printed status): `roadmap status`, the console's status route and its local fallback print `wireStatus(status)`
+(`src/status-wire.ts`). The full `Status` stays whole in the observer's envelope, where the TUI and every console view read
+it in-process, so no view loses a run. The print folds the history that grows with an arc:
+
+- `units[].work` becomes `units[].workTotals`, and `host.work` becomes `host.workTotals`. Each is
+  `{builds,lanes,measured,runMs,wallMs}`.
+- On a `merged`, `cut` or `superseded` unit, `certification.lanes` becomes `certification.laneStates`, a count by lane
+  state. A live unit keeps its lanes.
+- An applied receipt keeps its first 20 `verified` lines (`VERIFIED_SHOWN`) and adds `verifiedTotal`. The whole receipt
+  stays on disk.
+
+The field figure was atlas2 m6: 11.63 MB, of which work rows were 6.09 MB (13,998 over 158 units), certification lanes
+1.16 MB and two receipts' `verified` 2.42 MB. The fixture measurement (real-shape fixture, 81 KB, 33.7% work) did not
+reproduce it. `test/status-wire.test.ts` checks that a retired unit's printed bytes stay flat as its runs grow. The summary
+is unchanged.

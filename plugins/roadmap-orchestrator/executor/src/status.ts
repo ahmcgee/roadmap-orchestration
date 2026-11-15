@@ -110,6 +110,8 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 //   units[].carries / carriedBy  (dev.59, C4) the cut unit a fresh unit carries forward (plan `carries`), and back
 //   units[].origin / repairs  (dev.81, D1) the unit's plan origin (`planned` when absent) and the finding and obligation ids
 //                 its spec repairs (`[]` when none): what the console groups units of no milestone by (display only)
+//   (dev.81, D3) `roadmap status` prints this status folded (src/status-wire.ts `wireStatus`): run history as totals; the
+//                 observer's envelope keeps it whole for the TUI and the console views
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
 //                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge

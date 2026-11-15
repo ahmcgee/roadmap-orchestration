@@ -36,6 +36,9 @@ and explicit expansion keep long transcripts bounded. Deterministic activities k
 
 **How to read the numbers.**
 
+- `roadmap status` prints run history as totals (per-unit and host `workTotals`, settled units' certification lane counts, an
+  applied receipt's first 20 postconditions and their count). The console's views still show every run: CPU evidence, a
+  unit's invocations and the invocation details.
 - Times are relative, with local time on hover. Stopped or completed runs retain their recorded time range.
 - Missing measurements are labelled as missing.
 - Time charts show partial recorded effort, not wall-time coverage. Overlapping waiting reasons are never summed,

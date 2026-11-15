@@ -55,7 +55,9 @@ test('dev.58 records are adopted read-only by the console with identical canonic
   const e = await response.json() as { data: unknown };
   const { portableStatus } = await import('../fixtures/status-parity.ts');
   const now = splitDev59(portableStatus(e.data) as Json);
-  assert.deepEqual(now.rest, f.full);
+  // dev.81 (D3): the route prints the folded status: the previous release's status, folded the same way.
+  const { wireStatus } = await import('../../src/status-wire.ts');
+  assert.deepEqual(now.rest, portableStatus(wireStatus(f.full as never)));
   // The fixture's three units ran nothing, carry nothing and are planned, repairing nothing; MS-1 lists u1, which nothing re-enters or withdraws.
   assert.deepEqual(now.units, [0, 1, 2].map(() => ({ lineageAttempts: { builds: 0, judged: 0, buildCap: 16, judgedCap: 40 }, carries: null, carriedBy: [], origin: 'planned', repairs: [] })));
   assert.deepEqual(now.milestones, [{ members: ['u1'], withdrawn: [], live: 1, merged: 0 }]);
