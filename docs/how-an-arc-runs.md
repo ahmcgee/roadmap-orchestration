@@ -67,6 +67,35 @@ independent pre-build review annotates risky traits, non-local proof or changed 
 
 **Build.** Builders ground their specs first, implement, run targeted checks and report evidence.
 
+**What a build is given beyond the spec.**
+
+- Every required witness lane with the ids the unit must make pass on it: a build-cadence lane with its
+  `roadmap witness-check` command, a later cadence with its own command line (the lanes stage runs it at the salvage
+  commit), and a lane that needs an environment or reserved resources by name only (the executor's to run).
+- The mutants of the vacuity findings the spec repairs: per finding, the lane, the test ids that must fail with the
+  patch applied (every test the lane reports when the obligation's witness is on another lane) and the patch. The
+  gate is given the same list.
+- A fix round quotes each failing lane's failure line (the one its failure signature reads) and the last stderr lines
+  (stdout when stderr has none), at most 20 lines and 4 KiB per lane, beside the evidence dirs. A candidate fix round
+  recomputes them from the candidate's red lanes.
+- A resolve round is told the merge-in: the integration tip, the branch's commit before it, the conflicted paths, and
+  which of them the unit's gate approval covered, with the `git diff` that must show only integration's changes there.
+  The next gate is shown every line the approved diff added on those paths that the resolved head no longer holds, as
+  evidence to judge. It never blocks or charges by itself.
+
+**A round's proof of its checks.** A fix round's required checks, and the lanes a round after a merge-in re-runs,
+are proven in the final report's `checks`: one row per lane, with the commit HEAD was at and the exit code. A report
+missing a row, or with a row at another commit or with another exit than the lane expects, goes back to its builder
+once, uncharged, as a new invocation of the same attempt (the same continuation a resolve round that leaves clauses
+unmet gets, so one continuation carries both). The next report is read as it is, since the lanes stage runs the lanes
+anyway.
+
+**After a merge-in into a kept worktree** (a resolve round, or the first build on a clean merge-in no build has built
+on), the executor removes the worktree's ignored build output before the round (`bin`, `obj`, `dist`, `build`,
+`target` and `__pycache__` dirs at any depth; never `node_modules` or `.venv`). The round is told what was removed and
+re-runs the plan's build-cadence suite lanes, proven in `checks`. A continue never cleans, and a re-entry's fresh
+worktree has nothing to clean.
+
 **Parks during build.**
 
 | Park | How it re-opens |
