@@ -1,7 +1,9 @@
 // The build's final report ends the invocation (src/runner/report.ts): the real runner over the fake CLIs. A build
 // that reports `final: true` and leaves something pending (the CLI lingering for a wake-up, a descendant outliving it)
 // is ended REPORT_GRACE_MS later with cause `reported` and its report read as the answer; an interim `final: false`
-// answer never starts that clock, however long the wait after it.
+// answer never starts that clock, however long the wait after it. A judgment (dev.81: no `final` in its schema) ends the
+// same way once its latest result is schema-valid and its stream stays quiet for the grace; a stream still growing (a
+// background subagent's events) is never cut.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -10,11 +12,11 @@ import { describe, it } from 'node:test';
 import { adapt, writeResult } from '../src/backends/adapter.ts';
 import { statOf } from '../src/contain/proc.ts';
 import { canonicalJson } from '../src/core/json.ts';
-import { implementerSessionId } from '../src/core/ids.ts';
+import { implementerSessionId, judgmentSessionId } from '../src/core/ids.ts';
 import type { BackendResult, ExitFile, LaunchTerminal } from '../src/core/records.ts';
 import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
-import { buildOutput, BUILD_SCHEMA } from '../src/prompts/schemas.ts';
+import { buildOutput, BUILD_SCHEMA, GATE_SCHEMA } from '../src/prompts/schemas.ts';
 import { awaitRunner, prepareLaunch, startRunner } from '../src/runner/launch.ts';
 import { REPORT_GRACE_MS } from '../src/runner/report.ts';
 import { launchBase, newInvocation } from './helpers/invocation.ts';
@@ -29,20 +31,29 @@ const T = { timeout: REPORT_GRACE_MS + 60_000 };
 
 const report = (summary: string, final: boolean) => ({ summary, grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final });
 
+const verdict = (reason: string) => ({ decision: 'approve', ordering: null, findings: [], directives: [], reasons: [reason], premises: [], standing: [], clusters: null, rulings: [] });
+
 type Run = Readonly<{ exit: ExitFile; result: BackendResult; wallMs: number }>;
 
 /** One build invocation of the fake `as` CLI performing `acts`, through the real runner, adapted once the runner exits. */
 async function build(as: 'claude' | 'codex', acts: readonly Act[]): Promise<Run> {
+  return invoke(as, 'build', acts);
+}
+
+/** One invocation of `role` (a build, or a Claude gate judgment) through the real runner, adapted once it exits. */
+async function invoke(as: 'claude' | 'codex', role: 'build' | 'verifier', acts: readonly Act[]): Promise<Run> {
   const scenario = writeScenario(tmpDir('report-scenario'), [{ as, expect: {}, acts } as never]);
   const inv = newInvocation();
   const schemaPath = absPath(join(inv.root, 'schema.json'));
-  writeFileSync(schemaPath, `${canonicalJson(BUILD_SCHEMA)}\n`);
+  writeFileSync(schemaPath, `${canonicalJson(role === 'build' ? BUILD_SCHEMA : GATE_SCHEMA)}\n`);
   const session = randomUUID();
   const outputPath = absPath(join(inv.invDir, as === 'claude' ? 'stdout' : 'last.json'));
-  const base = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath, outputPath, role: 'build' } as const;
-  const terminal: LaunchTerminal = as === 'claude'
-    ? { ...base, session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(session) } }
-    : { ...base, session: { backend: 'codex', mode: 'fresh' } };
+  const base = { type: 'backend', purpose: 'backend', routingRev: ROUTING_REV, schemaPath, outputPath } as const;
+  const terminal: LaunchTerminal = role === 'verifier'
+    ? { ...base, role, session: { backend: 'claude', mode: 'fresh', id: judgmentSessionId(session) } }
+    : as === 'claude'
+      ? { ...base, role, session: { backend: 'claude', mode: 'fresh', id: implementerSessionId(session) } }
+      : { ...base, role, session: { backend: 'codex', mode: 'fresh' } };
   const argv = as === 'claude' ? ['claude', '-p', '--session-id', session] : ['codex', 'exec', '-m', 'gpt-5.6-luna', '--json', '-o', outputPath, '-'];
   const launch = prepareLaunch({ ...launchBase(inv, { argv, deadlineMs: 5 * 60_000 }), env: { PATH: `${scenario.binDir}:${process.env['PATH']}` }, terminal });
   const started = Date.now();
@@ -103,6 +114,31 @@ describe('report: the final report ends the build', { concurrency: true }, () =>
     assert.ok(run.wallMs >= INTERIM_WAIT_MS, `ended ${run.wallMs} ms after the start, inside the interim wait`);
     // The latest result is the answer: the final one, not the interim.
     assert.deepEqual(run.result.outcome, { kind: 'success', value: report('done after the wait', true) });
+  });
+});
+
+/** A subagent's event on the judge's stream: the stream grows while the subagent works. */
+const subagentEvent = { type: 'assistant', parent_tool_use_id: 'toolu_1', message: { role: 'assistant', content: [{ type: 'text', text: 'checking' }] } };
+
+describe('report: a judgment ends on a quiet schema-valid result', { concurrency: true }, () => {
+  it('report.judgment-lingers: a valid gate verdict, then the CLI stays alive and silent → ended after the grace, cause reported, the verdict read', T, async () => {
+    const run = await invoke('claude', 'verifier', [{ type: 'emit', value: verdict('done') }, { type: 'hang', ms: LINGER_MS }]);
+    assert.equal(run.exit.cause, 'reported');
+    assert.deepEqual(run.exit.child, { type: 'signalled', signal: 'SIGTERM' });
+    assert.deepEqual(run.result.outcome, { kind: 'success', value: verdict('done') });
+    assert.ok(run.wallMs >= REPORT_GRACE_MS, `ended ${run.wallMs} ms after the start, before the grace`);
+    assert.ok(run.wallMs < REPORT_GRACE_MS + 20_000, `ended ${run.wallMs} ms after the start, not within the grace`);
+  });
+
+  it('report.judgment-interim-not-cut: a valid interim verdict, the stream keeps growing past the grace, then the final verdict → runs to its own exit', T, async () => {
+    // A subagent event every 5 s for longer than the grace: each one restarts the quiet count.
+    const working: Act[] = [];
+    for (let t = 0; t < INTERIM_WAIT_MS; t += 5_000) working.push({ type: 'hang', ms: 5_000 }, { type: 'stream', events: [subagentEvent] });
+    const run = await invoke('claude', 'verifier', [{ type: 'emit', value: verdict('interim') }, ...working, { type: 'emit', value: verdict('final') }]);
+    assert.equal(run.exit.cause, 'exited');
+    assert.deepEqual(run.exit.child, { type: 'exited', code: 0 });
+    assert.ok(run.wallMs >= INTERIM_WAIT_MS, `ended ${run.wallMs} ms after the start, inside the subagent's work`);
+    assert.deepEqual(run.result.outcome, { kind: 'success', value: verdict('final') });
   });
 });
 

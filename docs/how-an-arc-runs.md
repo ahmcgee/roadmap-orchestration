@@ -116,6 +116,10 @@ be resolved.
 
 - Every judgment begins in a fresh named session. One invalid answer may be repaired in that same session, schema
   and checkout.
+- A judgment ends once its latest result is schema-valid and its output has stayed quiet for 30 seconds: a session
+  left lingering after its verdict is ended and the verdict stands. Output still arriving (a background subagent at
+  work) keeps it running, so an interim result is never taken for the verdict. Builds end on their `final: true`
+  report instead.
 - Verifier directives accompany only a revise decision, including in annotation modes.
 - Backend schemas use plain object roots and encode supported field constraints; property descriptions state
   remaining semantic rules.
