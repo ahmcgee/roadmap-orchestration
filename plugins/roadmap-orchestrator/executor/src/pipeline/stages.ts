@@ -47,6 +47,7 @@ import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git
 import { WorktreeRecoveryError } from '../git/worktree.ts';
 
 import { selectObligations,unitRules } from '../holistic/impact.ts';
+import { delivers } from '../input/lineage.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
 import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
 import { witnessLaneReasons } from '../input/classify.ts';
@@ -459,6 +460,7 @@ export function unitImpactInput(ctx: StageContext, unit: PlanUnit, spec: SpecM1,
     changedPaths,
     revised: [],
     latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
+    delivers: (o, u) => delivers(ctx.journal.view, o, u),
   };
 }
 

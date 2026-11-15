@@ -4,14 +4,14 @@ import { systemsMap } from '../src/input/systems.ts';
 // record's rules (coverage both directions, withdrawn cites, edits).
 import assert from 'node:assert/strict';
 import { describe,it } from 'node:test';
-import { type ObligationId,divergenceId,obligationId,rulingId,unitId,visionClauseId } from '../src/core/ids.ts';
+import { type ObligationId,type UnitId,divergenceId,obligationId,rulingId,unitId,visionClauseId } from '../src/core/ids.ts';
 import { canonicalJson } from '../src/core/json.ts';
 import { repoPath } from '../src/core/values.ts';
 import { parseInvariantsBlock,renderInvariants } from '../src/docs/invariants.ts';
 import { gateObligations,selectObligations } from '../src/holistic/impact.ts';
 import { type ClassifyContext,classifyObligations } from '../src/holistic/obligations.ts';
 import { rederive } from '../src/holistic/rederive.ts';
-import { type Obligations,type Vision,laneRevOf,parseObligations,parseVision } from '../src/holistic/types.ts';
+import { type ObligationDef,type Obligations,type Vision,laneRevOf,parseObligations,parseVision } from '../src/holistic/types.ts';
 import { advancesReasons,citeReasons,visionCoverage,visionEditReasons } from '../src/holistic/vision.ts';
 
 const LANE = {
@@ -179,6 +179,8 @@ describe('obligation edits', () => {
   });
 });
 
+/** `ImpactInput.delivers` as declared (no lineage): what the impact cases read unless they say otherwise. */
+const declaredDelivers = (o: ObligationDef, u: UnitId): boolean => o.deliveredBy.includes(u);
 const IMPACT_MAP = systemsMap({ systems: { format: { paths: ['src/format.js'] }, report: { paths: ['src/report', 'src/report/**'] }, src: { paths: ['src/**'] } } }, 'map');
 
 describe('impact selection', () => {
@@ -187,7 +189,7 @@ describe('impact selection', () => {
     ob('I-4', { statement: 'Parse errors name the line.', docRef: { path: 'docs/parse.md', anchor: '#errors', quotedText: 'line' }, witness: { lane: 'journey', testIds: ['parse'] } }),
   ], [{ system: 'format', obligations: ['I-3'] }, { system: 'report', obligations: ['I-1'] }, { system: 'src', obligations: ['I-4'] }]);
   const select = (over: Partial<Parameters<typeof selectObligations>[0]> = {}): readonly ObligationId[] => selectObligations({
-    systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
+    systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: [], repairs: [] }], closure: [], changedPaths: [], revised: [], latched: new Set(), delivers: declaredDelivers, ...over,
   });
   const ids = (...xs: string[]): ObligationId[] => xs.map((x) => obligationId(x));
 
@@ -211,6 +213,12 @@ describe('impact selection', () => {
     assert.deepEqual(select({ units: [{ unit: unitId('report'), declared: [], repairs: [] }] }), ids('I-1'));
   });
 
+  it('impact.future-lineage (dev.81, A1): a re-entry of a deliverer selects what its parent delivers, through `delivers`', () => {
+    const reentered = (o: ObligationDef, u: UnitId): boolean => u === unitId('report-r1') ? o.deliveredBy.includes(unitId('report')) : declaredDelivers(o, u);
+    assert.deepEqual(select({ units: [{ unit: unitId('report-r1'), declared: [], repairs: [] }], delivers: reentered }), ids('I-1'));
+    assert.deepEqual(select({ units: [{ unit: unitId('report-r1'), declared: [], repairs: [] }] }), [], 'declared ids alone: the re-entry delivers nothing');
+  });
+
   it('impact.unmapped-selects-must-hold: a changed path no mapping pattern matches selects every must-hold obligation', () => {
     assert.deepEqual(select({ changedPaths: [repoPath('README.md')] }), ids('I-2', 'I-3', 'I-4'));
   });
@@ -218,7 +226,7 @@ describe('impact selection', () => {
   it('impact.gate-standing: only fallback selections are standing, including latched future obligations', () => {
     const input = {
       systemsMap: IMPACT_MAP, obligations: O, units: [{ unit: unitId('tidy'), declared: ids('I-3'), repairs: [] }],
-      closure: [], changedPaths: [repoPath('README.md')], revised: [], latched: new Set(ids('I-1')),
+      closure: [], changedPaths: [repoPath('README.md')], revised: [], latched: new Set(ids('I-1')), delivers: declaredDelivers,
     };
     assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3'), standing: ids('I-1', 'I-2', 'I-4') });
     // An unmapped contract/doc/witness path still selects its own obligations directly.
@@ -228,7 +236,7 @@ describe('impact selection', () => {
   });
 
   it('impact.gate-mapped: a mapped path has no standing obligations', () => {
-    const input = { systemsMap: IMPACT_MAP, obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>() };
+    const input = { systemsMap: IMPACT_MAP, obligations: O, units: [], closure: [], changedPaths: [repoPath('src/format.js')], revised: [], latched: new Set<ObligationId>(), delivers: declaredDelivers };
     assert.deepEqual(gateObligations(input), { selected: selectObligations(input), direct: ids('I-3', 'I-4'), standing: [] });
   });
 
@@ -246,13 +254,13 @@ describe('impact selection', () => {
       ob('I-5'),
     ], [{ system: 'a', obligations: ['I-4'] }, { system: 'b', obligations: ['I-5'] }]);
     const pick = (over: Partial<Parameters<typeof selectObligations>[0]>): readonly ObligationId[] => selectObligations({
-      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), ...over,
+      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [], revised: [], latched: new Set(), delivers: declaredDelivers, ...over,
     });
     assert.deepEqual(pick({ changedPaths: [repoPath('src/a.js')] }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ revised: ids('I-1') }), ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(pick({ changedPaths: [repoPath('src/b.js')] }), ids('I-5'));
     const partition = gateObligations({
-      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(),
+      systemsMap: systemsMap({ systems: { a: { paths: ['src/a.js'] }, b: { paths: ['src/b.js'] } } }, 'map'), obligations: S, units: [], closure: [], changedPaths: [repoPath('src/a.js'), repoPath('README.md')], revised: [], latched: new Set(), delivers: declaredDelivers,
     });
     assert.deepEqual(partition.direct, ids('I-1', 'I-2', 'I-3', 'I-4'));
     assert.deepEqual(partition.standing, ids('I-5'));

@@ -119,11 +119,22 @@ describe('table.effects: the table over an obligations file', () => {
     const [o] = file([raw('I-1', { activation: 'future', deliveredBy: ['parse', 'report'] })]);
     assert.ok(o !== undefined);
     const u = (...xs: string[]): UnitId[] => xs.map((x) => unitId(x));
-    assert.equal(completes(o, new Set(u('parse')), u('report')), true);
-    assert.equal(completes(o, new Set(), u('parse', 'report')), true);
-    assert.equal(completes(o, new Set(), u('report')), false);
-    assert.equal(completes(o, new Set(u('parse', 'report')), u('tidy')), false, 'already delivered: this candidate completes nothing');
-    assert.equal(completes(o, new Set(u('parse')), u('tidy')), false);
+    const by = o.deliveredBy;
+    assert.equal(completes(by, new Set(u('parse')), u('report')), true);
+    assert.equal(completes(by, new Set(), u('parse', 'report')), true);
+    assert.equal(completes(by, new Set(), u('report')), false);
+    assert.equal(completes(by, new Set(u('parse', 'report')), u('tidy')), false, 'already delivered: this candidate completes nothing');
+    assert.equal(completes(by, new Set(u('parse')), u('tidy')), false);
+  });
+
+  it('completes.lineage (dev.81, A1): the resolved deliverers decide, so a re-entry of a deliverer completes it', () => {
+    // `parse` re-entered as `parse-r1` (src/input/lineage.ts `deliverers` resolves it); the parent never publishes.
+    const resolved = [unitId('parse-r1'), unitId('report')];
+    const u = (...xs: string[]): UnitId[] => xs.map((x) => unitId(x));
+    assert.equal(completes(resolved, new Set(u('report')), u('parse-r1')), true);
+    assert.equal(completes(resolved, new Set(u('parse-r1')), u('report')), true);
+    assert.equal(completes(resolved, new Set(), u('parse-r1')), false, 'report still unpublished');
+    assert.equal(completes(resolved, new Set(u('report')), u('parse')), false, 'the superseded parent delivers nothing');
   });
 
   it('latches and the brake', () => {

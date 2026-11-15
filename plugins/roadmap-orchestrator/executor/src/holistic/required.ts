@@ -6,6 +6,7 @@ import { type TestRef, testRefKey } from '../core/events.ts';
 import { type LaneId, type ObligationId, type Sha, type UnitId, type WitnessItemId, compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specObligations, specRepairs, specWitnesses } from '../core/records.ts';
+import { deliverers, delivers } from '../input/lineage.ts';
 import { type ObligationDef, type Obligations, type WitnessRecord, isExempt, isMustHold } from './types.ts';
 
 /** Why a test id is required: a target the unit delivers or repairs, or a must-hold it declares and must keep (preservation). */
@@ -52,7 +53,9 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
 /**
  * The witness test ids unit `unit` must make pass on `at` (R33), ascending by lane, test id, then source:
  *   - targets: the witnesses of each binding obligation the unit completes (its `deliveredBy` names the unit, and every
- *     other deliverer's published merge is an ancestor of `at`); of each binding obligation its spec repairs; and the
+ *     other deliverer's published merge is an ancestor of `at`; dev.81, A1: deliverers resolved through lineage, so a
+ *     re-entry completes what its parent was named for, and a superseded co-deliverer stands for its re-entry, whose
+ *     merge it waits for); of each binding obligation its spec repairs; and the
  *     spec's active witness items;
  *   - preservation: the witnesses of each binding obligation its spec declares that is must-hold (by activation, or a
  *     future one latched by a publication whose merge is an ancestor of `at`) and is not already a target.
@@ -63,7 +66,7 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
 export function requiredWitnesses(view: JournalView, obligations: Obligations, unit: UnitId, spec: SpecM1, at: WitnessTree): readonly RequiredWitness[] {
   const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
   const merges = published(view);
-  const completes = (o: ObligationDef): boolean => o.deliveredBy.includes(unit) && o.deliveredBy.every((d) => {
+  const completes = (o: ObligationDef): boolean => delivers(view, o, unit) && deliverers(view, o).every((d) => {
     if (d === unit) return true;
     const merge = merges.get(d);
     return merge !== undefined && at.isAncestor(merge);

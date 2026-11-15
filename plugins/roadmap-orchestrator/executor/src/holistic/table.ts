@@ -72,10 +72,11 @@ export type EffectsInput = Readonly<{
 
 /**
  * Whether a candidate publishing `units` completes a future obligation's `deliveredBy`: every delivering unit is
- * then published, and at least one of them by this candidate.
+ * then published, and at least one of them by this candidate. `deliverers` is the obligation's deliverers resolved
+ * through lineage (dev.81, A1: `deliverers`, src/input/lineage.ts): a superseded parent never publishes, its re-entry does.
  */
-export function completes(o: ObligationDef, published: ReadonlySet<UnitId>, units: readonly UnitId[]): boolean {
-  return o.deliveredBy.some((u) => units.includes(u)) && o.deliveredBy.every((u) => published.has(u) || units.includes(u));
+export function completes(deliverers: readonly UnitId[], published: ReadonlySet<UnitId>, units: readonly UnitId[]): boolean {
+  return deliverers.some((u) => units.includes(u)) && deliverers.every((u) => published.has(u) || units.includes(u));
 }
 
 /** Every obligation's effect (the table, total); a split parent's from its children's, recursively (H14). */

@@ -600,6 +600,8 @@ export type ImpactInput = Readonly<{
   revised: readonly ObligationId[];
   /** The future obligations latched so far (the fold's `obligation-latched`): must-hold, so an unmapped path selects them. */
   latched: ReadonlySet<ObligationId>;
+  /** dev.81 (A1): whether a unit delivers an obligation, declared or through lineage (src/input/lineage.ts `delivers`). */
+  delivers: (o: ObligationDef, unit: UnitId) => boolean;
 }>;
 /** The selected obligations, ascending, split closure applied (H14: a selected child selects its parent and back). */
 export type SelectObligations = (input: ImpactInput) => readonly ObligationId[];

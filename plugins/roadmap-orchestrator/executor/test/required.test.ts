@@ -15,8 +15,11 @@ const C1 = sha('1'.repeat(40));
 const C2 = sha('2'.repeat(40));
 const AT = sha('a'.repeat(40));
 
-/** A view holding unit publications (`unit` → its published merge) and latched obligations; nothing else is read. */
-function view(published: Readonly<Record<string, Sha>>, latched: readonly string[] = []): JournalView {
+/**
+ * A view holding unit publications (`unit` → its published merge), latched obligations and re-entries (`superseded`:
+ * parent → its re-entry, what `deliverers` reads); nothing else is read.
+ */
+function view(published: Readonly<Record<string, Sha>>, latched: readonly string[] = [], superseded: Readonly<Record<string, string>> = {}): JournalView {
   const ffs: IntentRecord[] = Object.entries(published).map(([unit, merge], i) => ({
     type: 'intent', op: opId(ARC as never, i + 1), kind: 'integration.ff', key: `ff:${unit}` as never, parent: { type: 'stage', unit: unitId(unit), stage: 'ff', attempt: 1 },
     ordinal: 1, deadlineAt: null, expect: { ref: 'refs/heads/main' as never, old: AT, new: merge, fingerprint: {} as never }, post: null,
@@ -25,6 +28,7 @@ function view(published: Readonly<Record<string, Sha>>, latched: readonly string
     opsOf: (kind: string) => (kind === 'integration.ff' ? ffs : []),
     doneOf: (): DoneRecord => ({ type: 'done', op: opId(ARC as never, 1), kind: 'integration.ff', outcome: { kind: 'published' }, recoveredBy: null }),
     holistic: () => ({ latched: latched.map((o) => ({ obligation: o, unit: unitId('u0'), treeSha: AT, seq: 1 })) }),
+    unit: (u: string) => ({ supersededBy: superseded[u] === undefined ? null : unitId(superseded[u]) }),
   };
   return stub as unknown as JournalView;
 }
@@ -64,6 +68,14 @@ describe('required', () => {
     assert.deepEqual(rows(requiredWitnesses(view({ u2: C2 }), OBLIGATIONS, unitId('u1'), spec(), tree([]))), ['target I-1 t-delivered'], 'u2 published, not merged in');
     assert.deepEqual(rows(requiredWitnesses(view({}), OBLIGATIONS, unitId('u1'), spec(), tree([C2]))), ['target I-1 t-delivered'], 'u2 never published');
     assert.deepEqual(rows(requiredWitnesses(view({ u2: C2 }), OBLIGATIONS, unitId('u1'), spec(), tree([C2]))), ['target I-1 t-delivered', 'target I-2 t-shared']);
+  });
+
+  it('required.lineage (dev.81, A1): a re-entry completes what its parent was named for; a superseded co-deliverer stands for its re-entry', () => {
+    const r1 = unitId('u1-r1');
+    assert.deepEqual(rows(requiredWitnesses(view({}, [], { u1: 'u1-r1' }), OBLIGATIONS, r1, spec({ unit: 'u1-r1' }), tree([]))), ['target I-1 t-delivered']);
+    assert.deepEqual(rows(requiredWitnesses(view({}, [], { u1: 'u1-r1' }), OBLIGATIONS, unitId('u1'), spec(), tree([]))), [], 'the superseded parent delivers nothing');
+    // u2 re-entered as u2-r1, which published C2: u1 completes I-2 once C2 is in its tree; u2 itself never publishes.
+    assert.deepEqual(rows(requiredWitnesses(view({ 'u2-r1': C2 }, [], { u2: 'u2-r1' }), OBLIGATIONS, unitId('u1'), spec(), tree([C2]))), ['target I-1 t-delivered', 'target I-2 t-shared']);
   });
 
   it('required.repairs-and-witness-items: repaired obligations and active witness items are targets; struck items are not', () => {
