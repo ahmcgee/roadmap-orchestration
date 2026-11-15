@@ -153,7 +153,10 @@ for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (
     const comparisons = run.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared');
     assert.equal(comparisons.length, 2);
     assert.ok(comparisons.every((f) => f.kind === 'lane-base-compared' && existsSync(f.evidence)));
-    assert.equal(comparisons[0]!.kind === 'lane-base-compared' && comparisons[0]!.evidence, comparisons[1]!.kind === 'lane-base-compared' && comparisons[1]!.evidence, 'a cached comparison keeps the original evidence directory');
+    // dev.81 (C2): a repeated red is confirmed, so its base never reuses a kept pass: each comparison ran fresh, in its own
+    // attempt's evidence directory.
+    assert.ok(comparisons.every((f) => f.kind === 'lane-base-compared' && f.fresh === true), 'a confirmed red compares a fresh base');
+    assert.notEqual(comparisons[0]!.kind === 'lane-base-compared' && comparisons[0]!.evidence, comparisons[1]!.kind === 'lane-base-compared' && comparisons[1]!.evidence, 'a fresh comparison keeps its own evidence directory');
   }
   assert.ok(run.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.result === (baseGreen ? 'pass' : 'fail')));
 });

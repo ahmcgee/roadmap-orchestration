@@ -18,24 +18,10 @@ import { publishedHeads } from '../holistic/coverage.ts';
 import { published } from '../holistic/required.ts';
 import { type ObligationDef, laneRevOf } from '../holistic/types.ts';
 import { keepInput } from '../input/inforce.ts';
+import { deliverers } from '../input/lineage.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { holisticInForce } from '../pipeline/stages.ts';
 import type { CommandContext, Effect } from './apply.ts';
-
-/**
- * The deliverers of `o` the witness latches or reopens through. dev.81 WS-B: the declared ids exactly; A1 (WS-A)
- * replaces this body with `deliverers(view, o)` from src/input/lineage.ts (each declared deliverer's live lineage head).
- */
-function delivering(_view: JournalView, o: ObligationDef): readonly UnitId[] {
-  return o.deliveredBy;
-}
-
-/** A unit's lineage head: itself, or the unit that supersedes it, transitively (identity on a head). */
-function lineageHead(view: JournalView, unit: UnitId): UnitId {
-  let u = unit;
-  while (view.unit(u).supersededBy !== null) u = view.unit(u).supersededBy!;
-  return u;
-}
 
 /** The root attests to external evidence explicitly. No output matching or automated seal can attest. */
 export function witness(ctx: CommandContext, command: CommandId, body: Extract<CommandBody, { type: 'witness' }>): Effect {
@@ -77,8 +63,7 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
   }
   if (body.result === 'fail') {
     const suspects = suspectsText(ctx, fact.since ?? null, at);
-    for (const deliverer of delivering(view, o)) {
-      const unit = lineageHead(view, deliverer);
+    for (const unit of deliverers(view, o)) {
       if (view.unit(unit).status === 'cut') continue;
       if (view.ciFacts().some((f) => f.kind === 'external-reopened' && f.command === command && f.unit === unit)) continue;
       const brief = Buffer.from(`External witness ${o.id} failed at ${at}. Evidence: ${body.evidence}. Reproduce and repair the delivered claim.\n${suspects}`);
@@ -97,7 +82,7 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
 function latchingUnit(ctx: CommandContext, o: ObligationDef, at: Sha): UnitId | null {
   const view = ctx.journal.view;
   const merges = published(view);
-  const units = delivering(view, o);
+  const units = deliverers(view, o);
   for (const u of units) {
     const merge = merges.get(u);
     if (view.unit(u).status !== 'retired' || merge === undefined || !isAncestor(ctx.repo, merge, at)) return null;
