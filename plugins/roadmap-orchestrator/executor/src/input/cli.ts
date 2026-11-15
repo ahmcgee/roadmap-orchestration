@@ -2,7 +2,7 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-type FindingId,findingId,type LaneId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
+type CommandId,commandId,type FindingId,findingId,type LaneId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
 type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
 import { journalNeedsUserIds,parseFailureRef,DEMO_ACTS,RERUN_CAUSES,type DemoAct,type PauseTarget,type RerunCause,type ResumeTarget } from '../core/records.ts';
@@ -71,6 +71,8 @@ export type Command =
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ command: 'audit'; run: RunLocator }>
   | Readonly<{ command: 'close-admissions'; run: RunLocator }>
+  /** dev.81 (C3a): take back pending mutation `target` (a queued apply, say) before it applies. */
+  | Readonly<{ command: 'withdraw'; target: CommandId; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
   | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>
   // M4a host acts (not queued; no host lock): src/commands/{phase0,corpus,brief,pr,chain}.ts.
@@ -359,6 +361,10 @@ export function parseCommand(argv: readonly string[]): Command {
       const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);
       return { command, run: locator(p, command) };
+    }
+    case 'withdraw': {
+      const p = parseRest(rest, LOCATOR, command);
+      return { command, target: arg(command, '<command-id>', commandId, onePositional(p, command, '<command-id>')), run: locator(p, command) };
     }
     case 'gc': {
       const p = parseRest(rest, { repo: 'value', keep: 'value', 'dry-run': 'switch' }, command);

@@ -1704,3 +1704,37 @@ Additive, with no record change (`SCHEMA_VERSION` stays 2); nothing new is persi
   `requiredChecks` and an after-merge-in round's `rerun`, each lane needs a row with `head` equal to the worktree's HEAD
   after the call and `exit` equal to its `expectedExit` (`stages.ts missingChecks`). A miss gets the one report
   continuation (`rounds.ts reportContinuation`, `missingChecksDirective`), never `malformed` and never charged.
+
+### dev.81 C1–C4, B5(2): scheduling, commands and lanes outcomes
+
+All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
+
+- **Lanes outcomes** (appended to `STAGE_OUTCOME_KINDS.lanes`, both in `DETAILED_OUTCOMES`):
+  - `deflake-held` with detail `{kind: 'deflake-held', deflake: UnitId, lane: LaneId}` (C1). Every red lane of a
+    `red`, `regression` or `not-certified` verdict is the keys' lane of an open deflake unit outside the unit's lineage
+    (`deflakeShield`). Row `go(at('prepare'))`, uncharged. Admission at `prepare` pushes
+    `{type: 'deflake', deflake, lane}` while that deflake's `deflakeState` is `open`. Prepare takes the known-defect path,
+    merging in the tip and returning `clean-verify`, and the fold admits `prepare` after this outcome.
+  - `environment-divergence` with detail `{kind, head: Sha, lanes: LaneId[] (non-empty), builderChecks:
+    {lane, head, exit}[] (non-empty)}` (B5). Every red lane has a row in the latest build report's `checks` at the
+    salvage head with `exit === expectedExit`. Row `go(build('fix'))`, uncharged. The fix round adds the divergence
+    directive.
+- **`lane-base-compared.fresh?: true`** (C2). The base comparison ran fresh for a confirmed red: its diagnostic rerun
+  was red, or it repeats an earlier red. The kept pass was bypassed, nothing was reused, and a base lane that flaked
+  counted as failed. A kept base red is still reused. Absent means the run's kept verdict.
+- **`CommandBody {type: 'withdraw', command: CommandId}`** (C3a), appended to `CONTROL_COMMANDS`, scope ∅. The target
+  gets `rejected{reason: 'withdrawn by <id>'}` through `writeReceipt`, which raises no `apply-dropped` item. It is
+  refused when the target is the withdraw itself, unknown, terminal, a control command, or has a begun
+  `command.apply` op. Re-running after a crash finds the target's receipt and applies.
+- **`PlanChange {type: 'obligation'}` gains `fields?: ObligationEditField[]`** (C3b), present on `edit: 'edited'`.
+  The closed set is `OBLIGATION_EDIT_FIELDS = serves | contracts | deliveredBy | activation | rule`. `drainsArc`
+  returns false for a `deliveredBy`-only edit and for `plan-field: capacity`.
+- **Token pools** (C3b, C4). The pools are sized from the plan in force at each allocation. A request is refused while
+  the held tokens (any number, those above the size included) reach the size. Built-in `@fast-suite` pool: tokens
+  `@fast-suite#<n>` (`FastSuiteToken`, `ResourceUnitParts.type: 'fast-suite'`, lock order after `@cpu`, admission
+  only). `ResourceRequest.fastSuite?: true`, which `laneRequest(..., fastSuite)` sets for a lanes-stage suite series'
+  runs, takes one token. Plan `capacity.fastSuites?: positive` defaults to `max(1, floor(memGiB / 12))` from the host
+  fingerprint. When it is absent, the executor logs the derived value once at startup as a `ROADMAP_CAPACITY` warning.
+- **Wait reasons** (appended): `fast-suite-tokens` (every `@fast-suite` token held) and `resource-unhealthy` (C3c: the
+  request names an environment or resource instance that is a tripped breaker's target or an outstanding retryable
+  park's target). A `resource-unhealthy` waiter is set aside like an environment-blocked one and blocks no backfill.

@@ -1,17 +1,18 @@
 // The durable command queue and the `command.apply` op (src/commands/{queue,apply}.ts, src/recover/command.ts):
 // real journal, real invocations of res-tool.ts as the residue teardown, fake backends for the resume smoke,
-// and a child executor SIGKILLed at the op's crash points.
+// and a child executor SIGKILLed at the op's crash points. dev.81: cmd.withdraw.
 import assert from 'node:assert/strict';
 import { existsSync,readFileSync,readdirSync,rmSync,statSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it,test } from 'node:test';
-import { type CommandContext,applyCommand,applyControl } from '../src/commands/apply.ts';
-import { incomingPath,isControl,pollCommands,readCommand,readReceipt,receiptPath,receiptSha256,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
+import { type CommandContext,applyCommand,applyControl,finish } from '../src/commands/apply.ts';
+import { enqueueCommand,incomingPath,isControl,pollCommands,readCommand,readReceipt,receiptPath,receiptSha256,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import { type IntentOf,probeTargetKey } from '../src/core/events.ts';
-import { type ArcId,type CommandId,arcId,invocationId,needsUserId,opId,opKey,sha,specRev,unitId } from '../src/core/ids.ts';
+import { type ArcId,type CommandId,arcId,commandId,invocationId,needsUserId,opId,opKey,sha,specRev,unitId } from '../src/core/ids.ts';
 import { type OpenJournal,openJournal } from '../src/core/log.ts';
 import { NEEDS_USER_REASONS, type CommandBody,type CommandFile } from '../src/core/records.ts';
 import { absPath,isoTimeOf,refName } from '../src/core/values.ts';
+import { SCHEMA_VERSION } from '../src/core/version.ts';
 import { readResidues,recordResidue,undispositioned } from '../src/host/residues.ts';
 import { m3Blocking,needsUserAckPath,openBlocking,raiseNeedsUser,readNeedsUserAck } from '../src/needsuser.ts';
 import type { ProberHandle } from '../src/park/probe.ts';
@@ -254,6 +255,48 @@ describe('command queue', () => {
     assert.deepEqual(mutations.kind === 'applied' ? mutations.outcomes.map((o) => o.command) : mutations, [resume.id]);
     assert.deepEqual(journal.view.control(), { stop: stop.id, stopOptions: { mode: 'immediate', deadline: null }, pausedAll: false, pausedUnits: [] });
     assert.deepEqual(poll(ctx), []);
+    journal.close();
+  });
+
+  // dev.81 (C3a): `withdraw`, a control command that takes back a pending mutation before its op begins.
+  it('cmd.withdraw: a pending mutation is rejected `withdrawn by <id>` and no longer pending; a terminal, a control, an unknown or an applying command is refused, and the applying one lands', T, async () => {
+    const run = newCmdRun();
+    const { ctx, journal } = openCommandRun(run);
+    const stage = openStageIntent(journal);
+    const resume = submit(ctx, { type: 'resume', target: { type: 'all' } });
+    const withdraw = submit(ctx, { type: 'withdraw', command: resume.id });
+    const control = await applyControl(ctx, poll(ctx));
+    assert.deepEqual(control.kind === 'applied' ? control.outcomes.map((o) => [o.command, o.outcome.kind]) : control, [[withdraw.id, 'applied']]);
+    const rejected = terminalReceipt(ctx.runDir, resume.id);
+    assert.deepEqual(rejected?.state === 'rejected' ? rejected.reason : rejected, `withdrawn by ${withdraw.id}`);
+    assert.deepEqual(applyOps(ctx, resume.id), [], 'the withdrawn command never applied');
+    assert.deepEqual(poll(ctx), [], 'nothing pending: its drain is gone');
+    assert.deepEqual(journal.view.opsOf('needsuser.raise'), [], 'no item is raised for it');
+
+    const reason = async (body: CommandBody): Promise<string> => {
+      const c = submit(ctx, body);
+      const out = await applyControl(ctx, poll(ctx));
+      const o = out.kind === 'applied' ? out.outcomes.find((x) => x.command === c.id)?.outcome : undefined;
+      return o?.kind === 'rejected' ? o.reason : assert.fail(`expected ${c.id} rejected, got ${JSON.stringify(out)}`);
+    };
+    assert.match(await reason({ type: 'withdraw', command: resume.id }), /is already rejected/);
+    assert.match(await reason({ type: 'withdraw', command: withdraw.id }), /is already applied/);
+    assert.match(await reason({ type: 'withdraw', command: commandId('cmd-00000000000000ff') }), /unknown command/);
+    // A control command still pending (later in id order than the withdraw) is refused: it applies at once.
+    const pause = commandId('cmd-ffffffffffff0000');
+    enqueueCommand(ctx.runDir, { v: SCHEMA_VERSION, id: pause, arc: journal.view.arc, at: isoTimeOf(new Date()), body: { type: 'pause', target: { type: 'unit', unit: UNIT } } });
+    assert.match(await reason({ type: 'withdraw', command: pause }), /a control command/);
+    assert.equal(terminalReceipt(ctx.runDir, pause)?.state, 'applied', 'the pause applied after the refused withdraw');
+
+    // An applying mutation (its op begun) is refused, and lands.
+    journal.abort(stage.op, 'precondition', 'test: stage over');
+    const later = submit(ctx, { type: 'resume', target: { type: 'all' } });
+    const { sha256: commandSha256 } = readCommand(ctx.runDir, later.id, journal.view.arc);
+    const { op } = journal.begin({ kind: 'command.apply', key: opKey(`command:${later.id}`), parent: { type: 'command', command: later.id }, deadlineAt: null, body: () => ({ expect: { command: later.id, commandSha256 }, post: null }) });
+    assert.match(await reason({ type: 'withdraw', command: later.id }), new RegExp(`is applying \\(op ${op} began\\)`));
+    const outcome = await finish(ctx, journal.view.latestIntent(op) as IntentOf<'command.apply'>, later);
+    journal.done(op, 'command.apply', outcome, null);
+    assert.equal(terminalReceipt(ctx.runDir, later.id)?.state, 'applied', 'the applying mutation lands');
     journal.close();
   });
 

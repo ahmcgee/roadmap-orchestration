@@ -2,9 +2,10 @@
 // the plan's fast suite lanes run at the salvage SHA, less any identical to a spec lane; a red one runs again on the unit's
 // diff base alone. Base green: the unit's red, an uncharged certification fix round whose evidence and prompt carry the suite lane. Base
 // red: `base-red`, uncharged, on to the gate; a base's verdict is run once per run. Real processes, real git, fake
-// backends. Named tests: lanes.fast-suite-own-red, lanes.fast-suite-base-red, lanes.fast-suite-base-is-salvage.
+// backends. Named tests: lanes.fast-suite-own-red, lanes.fast-suite-base-red, lanes.fast-suite-base-is-salvage; dev.81:
+// lanes.fast-suite-base-fresh (C2: a confirmed red never trusts a kept base pass).
 import assert from 'node:assert/strict';
-import { readFileSync,writeFileSync } from 'node:fs';
+import { readFileSync,rmSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
@@ -20,7 +21,7 @@ import { step } from '../src/pipeline/unit.ts';
 import {
 BUILD_REPORT,type LaneJson,SCENARIO_TIMEOUT_MS,type StageRun,U1,applyFilesNow,keptSpec,outcomeFacts,planCheckStep,setupUnit,spawnIntents,started,
 } from './fixtures/stage-common.ts';
-import { git } from './helpers/repo.ts';
+import { git,tmpDir } from './helpers/repo.ts';
 import { type CodexAct,type Expect,type Step,readCalls } from './helpers/scenario.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -181,6 +182,43 @@ test('lanes.fast-suite-base-red: a fast suite lane red on the unit\'s base alone
   assert.ok(onBase.length > 0 && onBase.every((s) => s.lane === 'lint' && s.set === 'suite' && s.attempt === first.attempt), 'the base ran under the first attempt only');
   assert.deepEqual(laneSpawns(run).filter((s) => s.attempt === second.attempt).map((s) => [s.lane, s.at]), [['lint', salvaged], ['lint', salvaged]]);
   assert.ok(!laneSpawns(run).some((s) => s.lane === 'same' || s.lane === 'e2e'));
+  assert.deepEqual(fastCheckouts(run), []);
+});
+
+// dev.81 (C2): a kept base pass is never trusted against a confirmed red. lint is red on the unit's BAD extra.js; with
+// `det` set it prints a no-rerun pattern (an unconfirmed red: no diagnostic rerun), without it its diagnostic rerun is red
+// too (confirmed); `basered` makes it red on the base as well.
+test('lanes.fast-suite-base-fresh: an unconfirmed red reuses the kept green base; a confirmed red runs the base again with nothing reused (green: regression, red: base-red), its fact saying fresh', T, async () => {
+  const dir = tmpDir('base-fresh');
+  const lint: LaneJson = { id: 'lint', argv: ['sh', '-c', `if grep -q BAD src/extra.js 2>/dev/null; then [ -f ${dir}/det ] && echo DETERMINISTIC >&2; echo "lint: BAD in src/extra.js" >&2; exit 1; fi; [ -f ${dir}/basered ] && exit 1; exit 0`] };
+  const run = setupUnit({ steps: [], lanes: [UNIT], suite: [SAME, lint, E2E] });
+  pinDispatch(run.ctx, run.unit, keptSpec(run.journal));
+  const plan = run.ctx.plan();
+  const ctx = { ...run.ctx, plan: () => ({ ...plan, suite: { lanes: plan.suite.lanes.map((l) => (l.id === 'lint' ? { ...l, noRerunPatterns: ['DETERMINISTIC'] } : l)) } }) };
+  const salvaged = unitCommit(run, 'src/extra.js', 'export const extra = "BAD";\n');
+  const onBase = (attempt: number): number => laneSpawns(run).filter((s) => s.attempt === attempt && s.at === run.base).length;
+  const compared = (attempt: number) => run.journal.view.ciFacts().flatMap((f) => (f.kind === 'lane-base-compared' && f.attempt === attempt ? [[f.result, f.fresh]] : []));
+
+  writeFileSync(join(dir, 'det'), '');
+  const first = started(await lanes(ctx, run.unit, salvaged));
+  assert.equal(first.outcome.kind, 'red');
+  assert.equal(onBase(first.attempt), 1, 'the base ran once, green, and is kept');
+  const second = started(await lanes(ctx, run.unit, salvaged));
+  assert.equal(second.outcome.kind, 'regression');
+  assert.equal(onBase(second.attempt), 0, 'an unconfirmed red reuses the kept base');
+  assert.deepEqual(compared(second.attempt), [['pass', undefined]]);
+
+  rmSync(join(dir, 'det'));
+  const third = started(await lanes(ctx, run.unit, salvaged));
+  assert.equal(third.outcome.kind, 'regression');
+  assert.equal(onBase(third.attempt), 1, 'a confirmed red runs the base again');
+  assert.deepEqual(compared(third.attempt), [['pass', true]]);
+
+  writeFileSync(join(dir, 'basered'), '');
+  const fourth = started(await lanes(ctx, run.unit, salvaged));
+  assert.equal(fourth.outcome.kind, 'base-red', 'the kept green base is not trusted: the base is red now');
+  assert.ok(onBase(fourth.attempt) > 0);
+  assert.deepEqual(compared(fourth.attempt), [['fail', true]]);
   assert.deepEqual(fastCheckouts(run), []);
 });
 

@@ -6,7 +6,7 @@ import { readNeedsUser,raiseNeedsUser } from '../src/needsuser.ts';
 // the docs `ff` it leaves in the log. Named tests: apply.ledger-in-manifest, apply.ledger-edit-refused,
 // apply.stale-base, apply.route-unit, apply.route-unsupported, apply.limits-below-spent, apply.obligation-added,
 // apply.obligation-witness, apply.obligation-split, apply.obligation-disposed, apply.obligation-restored-edited,
-// apply.obligation-split-parent-stays, apply.scope-growth-ruling, apply.holistic-add, apply.core-proposal,
+// apply.obligation-split-parent-stays, apply.drain-follows-change (dev.81), apply.scope-growth-ruling, apply.holistic-add, apply.core-proposal,
 // apply.ruling-sidecar-one-revision, apply.ruling-sidecar-invalid-refused (M4a rev 3, I2),
 // startup.obligation-dropped, reverse.preimage-restores,
 // reverse.conflict-refused, reverse.repair-unit-refused, reverse.spec-preimage-exact, reverse.obligation-fresh-rev,
@@ -367,7 +367,42 @@ test('apply.obligation-restored-edited: an exempt obligation made active again i
       o.obligations[0]!['serves'] = ['V-1', 'V-2'];
     });
     assert.equal((await command(r, applyBody(r.d))).outcome.kind, 'applied');
-    assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'edited' }, { type: 'obligation', id: 'I-2', edit: 'restored' }]);
+    assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'edited', fields: ['serves'] }, { type: 'obligation', id: 'I-2', edit: 'restored' }]);
+  } finally {
+    r.journal.close();
+  }
+});
+
+// dev.81 (C3b): an apply's drain follows what it changes.
+test('apply.drain-follows-change: a deliveredBy-only obligation edit and a capacity-only edit drain nothing (scope none) and record what changed; another obligation field or a suite edit still drains the arc', T, async () => {
+  const r = holisticArc();
+  try {
+    const scope = (): ReturnType<ReturnType<typeof commandScope>> => commandScope({
+      runDir: r.ctx.runDir, repo: absPath(r.d.repo), hostDir: r.ctx.hostDir, planFile: absPath(r.d.planPath), routingBase: r.ctx.routingBase,
+    })(applyBody(r.d) as never, r.journal.view, r.ctx.plan());
+    editObligations(r.d, (o) => void (o.obligations[0]!['deliveredBy'] = ['u1']));
+    assert.deepEqual(scope(), { type: 'none' });
+    const first = (await command(r, applyBody(r.d))).outcome;
+    assert.equal(first.kind, 'applied', JSON.stringify(first));
+    assert.deepEqual(lastApplied(r).changes, [{ type: 'obligation', id: 'I-1', edit: 'edited', fields: ['deliveredBy'] }]);
+
+    editPlan(r.d, (p) => void (p['capacity'] = { cpu: 8, fastSuites: 1 }));
+    assert.deepEqual(scope(), { type: 'none' });
+    const second = (await command(r, applyBody(r.d))).outcome;
+    assert.equal(second.kind, 'applied', JSON.stringify(second));
+    assert.deepEqual(lastApplied(r).changes, [{ type: 'plan-field', field: 'capacity' }]);
+
+    editObligations(r.d, (o) => {
+      o.obligations[0]!['deliveredBy'] = [];
+      o.obligations[0]!['serves'] = ['V-1', 'V-2'];
+    });
+    assert.deepEqual(scope(), { type: 'arc' }, 'deliveredBy with another field drains the arc');
+    editObligations(r.d, (o) => {
+      o.obligations[0]!['deliveredBy'] = ['u1'];
+      o.obligations[0]!['serves'] = ['V-1'];
+    });
+    editPlan(r.d, (p) => void ((p['suite'] as { lanes: Json[] }).lanes[0]!['argv'] = ['sh', '-c', 'exit 0']));
+    assert.deepEqual(scope(), { type: 'arc' }, 'a suite edit still drains the arc');
   } finally {
     r.journal.close();
   }

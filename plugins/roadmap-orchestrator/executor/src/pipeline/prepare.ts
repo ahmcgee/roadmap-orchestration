@@ -22,7 +22,8 @@
 // Cause `known-defect` (F4): steps 3 and 4 only, in the unit's own worktree (it built), scoped to the prepare attempts
 // after the known-defect outcome (never an earlier preparation's merge, e.g. the re-entry's), with crash label
 // `prepare.known-defect-after-mergein` after the merge-in. Outcomes: `conflicted` (a resolve round), else `clean-verify`
-// (lanes at the prepared head).
+// (lanes at the prepared head). dev.81 (C1): cause `deflake-held` (the unit's red lane was an open deflake's; admission held
+// it until the deflake settled) takes the same path, merging in the tip that now holds the deflake's fix.
 //
 // Re-entry after a crash: the attempt a crash cut short runs again as a new attempt once `recover()` has
 // closed its open intent through the op's own M1 reconciler. Each step the log shows done (a created
@@ -84,9 +85,9 @@ export async function prepare(ctx: StageContext, unit: PlanUnit): Promise<Prepar
   const view = ctx.journal.view;
   const u = view.unit(unit.id);
   const decided = u.decided;
-  if (decided?.stage === 'lanes' && decided.outcome === 'known-defect') return prepareKnownDefect(ctx, unit, decided.attempt);
+  if (decided?.stage === 'lanes' && (decided.outcome === 'known-defect' || decided.outcome === 'deflake-held')) return prepareKnownDefect(ctx, unit, decided.attempt, decided.outcome);
   const lineage = u.lineage;
-  if (lineage === null) throw new Error(`prepare of ${unit.id}, which re-enters no unit and hit no known defect`);
+  if (lineage === null) throw new Error(`prepare of ${unit.id}, which re-enters no unit and hit no known defect or deflake`);
   if (unit.reenters?.unit !== lineage.reenters) {
     throw new Error(`prepare of ${unit.id}: the plan says it re-enters ${unit.reenters?.unit ?? 'nothing'}, the log ${lineage.reenters}`);
   }
@@ -128,22 +129,24 @@ export async function prepare(ctx: StageContext, unit: PlanUnit): Promise<Prepar
 }
 
 /**
- * F4: the unit's way back from a known defect: the integration tip merged into its branch unless the branch holds it
- * already, then the snapshot; both only from the prepare attempts after the known-defect outcome (`since`, its attempt).
+ * F4: the unit's way back from a known defect (dev.81: or a deflake's hold, `cause`): the integration tip merged into its
+ * branch unless the branch holds it already, then the snapshot; both only from the prepare attempts after that lanes
+ * outcome (`since`, its attempt).
  */
-async function prepareKnownDefect(ctx: StageContext, unit: PlanUnit, since: number): Promise<PrepareDone> {
+async function prepareKnownDefect(ctx: StageContext, unit: PlanUnit, since: number, cause: 'known-defect' | 'deflake-held'): Promise<PrepareDone> {
   const view = ctx.journal.view;
   const parent = at(start(ctx, unit.id, 'prepare'), 'prepare');
   const { arc, worktreeRoot, integrationBranch } = ctx.plan();
   const worktree = unitWorktree(worktreeRoot, arc, unit.id);
   const branch = unitBranch(arc, unit.id);
-  if (!existsSync(worktree)) throw new Error(`prepare of ${unit.id} after a known defect: its worktree ${worktree} does not exist, yet the unit built`);
+  const after = cause === 'known-defect' ? 'a known defect' : 'a deflake hold';
+  if (!existsSync(worktree)) throw new Error(`prepare of ${unit.id} after ${after}: its worktree ${worktree} does not exist, yet the unit built`);
 
   let merged = preparedOps(view, unit.id, 'mergein.prepare', since).at(-1) ?? null;
   if (merged === null && !isAncestor(ctx.repo, integrationTip(ctx), revParse(worktree, 'HEAD'))) {
     merged = await runOp(ctx.journal, mergeinOp(ctx.repo), `mergein:${unit.id}`, parent, {
       worktree, branch, integration: branchRef(integrationBranch), identity: executorIdentity(),
-      message: `roadmap ${arc}: merge ${integrationBranch} into unit ${unit.id} (after a known defect)\n`,
+      message: `roadmap ${arc}: merge ${integrationBranch} into unit ${unit.id} (after ${after})\n`,
     });
     crashPoint('prepare.known-defect-after-mergein', unit.id);
   }

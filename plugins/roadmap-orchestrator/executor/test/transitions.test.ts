@@ -173,6 +173,12 @@ const ROWS: readonly Row[] = [
   // dev.59: a red series of a lanes rerun the root ordered parks for the root, uncharged, even at the bound's edge.
   ['lanes', 'rerun-red', {}, 'park:rerun-red', 'park', {}],
   ['lanes', 'rerun-red', { counters: { chargeableFailures: 2 } }, 'park:rerun-red', 'park', {}],
+  // dev.81 (C1): a red on an open deflake's lane waits at prepare, uncharged, even at the bound's edge.
+  ['lanes', 'deflake-held', {}, 'prepare', 'advance', {}],
+  ['lanes', 'deflake-held', { counters: { chargeableFailures: 2 } }, 'prepare', 'advance', {}],
+  // dev.81 (B5): every red lane passed in the builder's own check at the head: an uncharged fix round, even at the bound's edge.
+  ['lanes', 'environment-divergence', {}, 'build/fix@med', 'advance', {}],
+  ['lanes', 'environment-divergence', { counters: { chargeableFailures: 2 } }, 'build/fix@med', 'advance', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],

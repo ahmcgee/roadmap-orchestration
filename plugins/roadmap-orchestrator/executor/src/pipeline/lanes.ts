@@ -315,11 +315,16 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
   return declaredEnv(ctx, lane, executorEnv(ownerLabel(ctx.plan().arc, unit), held));
 }
 
-/** A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. */
-export function laneRequest(ctx: ResourceContext, lane: LaneDef): ResourceRequest | null {
+/**
+ * A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. dev.81 (C4):
+ * `fastSuite`, a lanes-stage suite lane (the fast suite or its base check, `runLaneSeries`), which also takes one
+ * `@fast-suite` token, so the plan's `capacity.fastSuites` caps how many run at once (a candidate's suite is not one).
+ */
+export function laneRequest(ctx: ResourceContext, lane: LaneDef, fastSuite = false): ResourceRequest | null {
   const basis = cpuCost(ctx, laneCpuKey(lane), CPU_COST.lane[lane.cadence], lane.cpu);
   const cpu = laneCpu(lane, basis);
   const names = lane.environment === undefined ? lane.resources : [...lane.resources, lane.environment];
+  if (fastSuite) return { ...requestOf(ctx.plan(), names, cpu, basis), fastSuite: true };
   return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu, basis);
 }
 
@@ -985,11 +990,13 @@ function retainedCheckout(ctx: StageContext, unit: UnitId, path: AbsPath): boole
  * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
  * `verify` (dev.17): a deflake unit's verification runs per lane (src/pipeline/deflake.ts `verifyRunsOf`): that lane runs
  * fresh, that many times, every run passing. A flaky lane (red, then green on its diagnostic rerun) is recorded in the
- * flaky ledger (`observeFlake`) and passes when the ledger forgives it.
+ * flaky ledger (`observeFlake`) and passes when the ledger forgives it. `fresh` (dev.81, C2): every lane runs its own argv
+ * now, no earlier pass reused and none test-only (a base check for a confirmed red, src/pipeline/stages.ts `baseCheck`).
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
   rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), verify: ReadonlyMap<LaneId, number> = new Map(),
+  fresh = false,
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -1040,8 +1047,10 @@ export async function runLaneSeries(
     keepWitness(ctx, witness, record.inv, suiteWitnessDir(ctx.runDir, parent, witness, record.inv), treeSha, { type: 'candidate', unit: parent.unit, attempt: parent.attempt });
   };
 
+  // dev.81 (C4): a lanes-stage suite series' runs each take a `@fast-suite` token (`laneRequest`).
+  const fastSuite = set === 'suite' && parent.stage === 'lanes';
   const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null, verifyRuns: number | null = null): Promise<Attempt> => {
-    const request = laneRequest(ctx, lane);
+    const request = laneRequest(ctx, lane, fastSuite);
     const environments: ResourceName[] = [];
     let held: Reservation<'running', StageHolder> | null = null;
     if (request !== null) {
@@ -1132,8 +1141,8 @@ export async function runLaneSeries(
       continue;
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
-    const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
-    const partial = reusable !== null || witnesses.has(lane.id) || rootRerun ? null : testOnlyRun(ctx, lane, at, now);
+    const reusable = witnesses.has(lane.id) || fresh ? null : reusablePass(ctx, parent, lane, at, now);
+    const partial = reusable !== null || witnesses.has(lane.id) || rootRerun || fresh ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {
       // The stage's entry reservation was the first lane's: unused, it is released before the next lane takes its own.

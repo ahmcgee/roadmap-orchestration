@@ -118,6 +118,13 @@ export function flakyLaneDirective(lane: LaneId, rerunEvidence: string): string 
   return `Lane ${lane} is flaky: it failed, then passed when the executor reran it at the same commit; its passing rerun's evidence is in ${rerunEvidence}. A flaky lane counts as red: find what makes it nondeterministic and make it pass every time.`;
 }
 
+/**
+ * dev.81 (B5): lanes red at the salvage head that the builder's own report says passed there: the environments diverge.
+ */
+export function environmentDivergenceDirective(lanes: readonly LaneId[], head: string): string {
+  return `Lanes ${lanes.join(', ')} failed in the executor's clean checkout of ${head}, though your report says they passed at that commit: your worktree differs from a fresh checkout (an ignored build output, a cache, an untracked file, an environment variable). Reproduce the failure in a fresh checkout of ${head} (git worktree add), find what your worktree had that it lacks, and fix the tree so the lanes pass from a clean checkout. This round is not charged.`;
+}
+
 /** Lanes that left tracked or unignored paths changed in a clean checkout of the commit (not certified). */
 export function dirtyLanesDirective(dirty: readonly string[]): string {
   return `The lanes changed these paths in a clean checkout of your commit: ${dirty.join(', ')}. A lane may write only ignored paths; make the lanes leave every tracked and unignored file as committed.`;

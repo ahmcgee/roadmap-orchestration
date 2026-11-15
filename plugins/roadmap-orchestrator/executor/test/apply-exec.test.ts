@@ -4,7 +4,8 @@
 // apply.exec-revision-in-flight, apply.exec-routing-parks, apply.exec-resume-at-boundary,
 // apply.exec-respawn-ignores-unapplied-edit; the crash cells of the matrix row "start: a later start whose files
 // change the plan". dev.17: apply.exec-queued-at-boundary, apply.exec-queued-dropped and the crash cells of the row
-// QUEUED_APPLY (apply.exec-queued-crash). dev.59: apply.exec-suite-queued-at-lanes.
+// QUEUED_APPLY (apply.exec-queued-crash). dev.59: apply.exec-suite-queued-at-lanes. dev.81: apply.exec-withdraw-queued,
+// apply.exec-capacity-no-drain.
 import assert from 'node:assert/strict';
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -257,6 +258,58 @@ test('apply.exec-queued-dropped: a spec edit queued behind a running gate that a
   const item = readNeedsUser(absPath(r.runDir), dropped[0]!.id)!;
   assert.match(item.summary, new RegExp(`^apply ${id}, queued behind the stage boundary of u1, was refused when it landed there; none of its edits is in force: apply rejected .*its spec is fixed`));
   assert.deepEqual(item.evidence, [join(r.runDir, 'commands', 'receipts', `${id}.rejected.json`)]);
+});
+
+// dev.81 (C3a): a queued apply the root takes back with `roadmap withdraw`: its drain is released at once.
+test('apply.exec-withdraw-queued: a spec edit queued behind a running build is withdrawn: the apply is rejected `withdrawn by <id>`, no item is raised, nothing of it is in force, and the unit runs on unheld', T, async (t) => {
+  const r = setupExec(t, {
+    steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1'), gateStep({ decision: 'approve' })],
+  });
+  const run = startExec(r);
+  await reached(r.scenarioDir, 'build1', WAIT_MS);
+  await exportForEdit(r);
+  editSpec(r, 'u1', addA2);
+  const id = await apply(r);
+  await until(() => queuedReceipt(r, id) !== null, WAIT_MS, 'the queued receipt');
+  const line = JSON.parse((await cli(r, ['withdraw', id])).stdout) as { command: string; type: string };
+  assert.equal(line.type, 'withdraw');
+  const withdraw = commandId(line.command);
+  await until(() => receiptOf(r, withdraw) !== null, WAIT_MS, 'the withdraw to apply while the build runs');
+  assert.equal(receiptOf(r, withdraw)?.state, 'applied');
+  const target = receiptOf(r, id);
+  assert.ok(target?.state === 'rejected' && target.reason === `withdrawn by ${withdraw}`, JSON.stringify(target));
+  assert.deepEqual((await statusOf(r)).commands.pending, [], 'nothing pending: no drain holds u1');
+  release(r.scenarioDir, 'build1');
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+  assert.deepEqual(outcomes(r, 'u1'), STRAIGHT);
+  assert.deepEqual(factsOf(r, 'plan-applied').map((f) => f.command), [null], 'nothing of the withdrawn edit is in force');
+  assert.equal(journalOf(r).view.unit(U1).approval?.fingerprint.specRev, 1);
+  assert.deepEqual((await statusOf(r)).needsUser.filter((n) => n.reason === 'apply-dropped'), [], 'a withdrawn apply raises no apply-dropped item');
+});
+
+// dev.81 (C3b): a capacity edit drains nothing: it applies while the build runs, never queued.
+test('apply.exec-capacity-no-drain: a capacity-only edit applied while u1 builds lands at once (no queued receipt, nothing killed), and u1 merges', T, async (t) => {
+  const r = setupExec(t, {
+    steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), blockedBuild('build1'), gateStep({ decision: 'approve' })],
+  });
+  const run = startExec(r);
+  await reached(r.scenarioDir, 'build1', WAIT_MS);
+  await exportForEdit(r);
+  editPlan(r, (p) => void (p['capacity'] = { cpu: 8, fastSuites: 1 }));
+  const id = await apply(r);
+  await until(() => receiptOf(r, id) !== null, WAIT_MS, 'the capacity apply to land while u1 still builds');
+  assert.equal(receiptOf(r, id)?.state, 'applied');
+  assert.equal(queuedReceipt(r, id), null, 'never queued behind the build');
+  assert.equal(journalOf(r).view.unit(U1).decided?.stage, 'pre-build', 'u1\'s build has recorded nothing yet');
+  release(r.scenarioDir, 'build1');
+  const exit = await run.exit;
+  assert.equal(exit.code, 0, exit.stderr);
+  assert.deepEqual(reasonOf(exit), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+  assert.deepEqual(kills(r), []);
+  assert.deepEqual(outcomes(r, 'u1'), STRAIGHT);
+  assert.deepEqual(factsOf(r, 'plan-applied').at(-1)?.changes, [{ type: 'plan-field', field: 'capacity' }]);
 });
 
 // dev.59 (item 8, cmd-01a1b06537057bbe): a suite edit while a lanes attempt runs the fast suite was refused at once; it is

@@ -1,25 +1,26 @@
 import { systemName } from '../src/core/ids.ts';
 // Pools, `@cpu` tokens and the M2 holders (src/resources/{pool,reserve}.ts): all-or-none requests in lock order,
 // the instance binding persisted into residue recipes and replayed by a retry's reclaim, the over-capacity rows
-// and the legacy reading of a declared `cpu`, the publication holder.
+// and the legacy reading of a declared `cpu`, the publication holder; dev.81: capacity read live (res.capacity-live) and
+// the `@fast-suite` pool (res.fast-suites).
 import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe,it } from 'node:test';
 import {
-INTEGRATION_SLOT,cpuToken,laneId,poolInstance,resourceName,unitId,
+INTEGRATION_SLOT,type ResourceUnit,cpuToken,fastSuiteToken,laneId,poolInstance,resourceName,unitId,
 } from '../src/core/ids.ts';
 import type { SpecM1 } from '../src/core/records.ts';
 import { absPath } from '../src/core/values.ts';
 import { readResidues,undispositioned } from '../src/host/residues.ts';
-import { cpuCapacity,instanceEnv,instanceEnvVar,overCapacity,requestOf } from '../src/resources/pool.ts';
+import { cpuCapacity,defaultFastSuites,fastSuiteCapacity,instanceEnv,instanceEnvVar,overCapacity,overlaps,requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
 type PublicationHolder,
 type Refused,
 type Reservation,
 type RetryHolder,type StageHolder,cleanup,entryOf,heldReservation,reserve,
-resourceTable,retryReclaim,run,
+resourceTable,retryReclaim,run,transition as move,
 } from '../src/resources/reserve.ts';
 import type { ResourceRequest } from '../src/schedule/types.ts';
 import { CPU,DB,ESTATE,QUEUE,newRun,openPoolRun,poolPlanFor } from './fixtures/pool-plan.ts';
@@ -34,6 +35,12 @@ function granted<H extends StageHolder | PublicationHolder>(r: Reservation<'rese
 }
 
 const holderOf = (unit: string, stage: StageHolder['stage'] = 'build', attempt = 1): StageHolder => stageHolder(stage, attempt, unitId(unit));
+
+/** Cleans and releases `units` of `holder` (reserved) without teardowns: the table is all allocation reads. */
+function transition(ctx: Parameters<typeof reserve>[0], holder: StageHolder, units: readonly ResourceUnit[]): void {
+  move(ctx, holder, units, { type: 'clean', from: 'reserved' }, stageParent(holder));
+  move(ctx, holder, units, { type: 'release' }, stageParent(holder));
+}
 
 describe('res.pool-all-or-none', () => {
   it('a request takes its named resources, one instance per pool and its @cpu tokens at once in lock order, or nothing', T, () => {
@@ -176,6 +183,55 @@ describe('res.over-capacity', () => {
     ]);
     assert.equal(cpuCapacity(plan, 64), CPU, 'plan.capacity.cpu wins');
     assert.equal(cpuCapacity(poolPlanFor(r, { capacity: {} }), 64), 64, 'absent: the host parallelism');
+  });
+});
+
+// dev.81 (C3b): the token pools are sized by the plan in force at each allocation, so a capacity edit drains nothing.
+describe('res.capacity-live', () => {
+  it('an increase grants at once; a decrease counts every held token, those above the new size too, and grants nothing until the held fall below it', T, () => {
+    const r = newRun();
+    const { ctx: base, journal } = openPoolRun(r);
+    let cpu = 2;
+    const ctx = { ...base, plan: () => ({ ...base.plan(), capacity: { cpu } }) };
+    const a = holderOf('a');
+    granted(reserve(ctx, a, req({ cpu: 2 }), stageParent(a)));
+    const b = holderOf('b');
+    assert.deepEqual((reserve(ctx, b, req({ cpu: 1 }), stageParent(b)) as Refused).busy, [cpuToken(1), cpuToken(2)]);
+    cpu = 4;
+    assert.deepEqual(granted(reserve(ctx, b, req({ cpu: 2 }), stageParent(b))).resources, [cpuToken(3), cpuToken(4)], 'the increase grants at once');
+
+    // a releases @cpu#1..2; b still holds #3..4, above the decreased size 2: nothing is granted while they are held.
+    transition(ctx, a, [cpuToken(1), cpuToken(2)]);
+    cpu = 2;
+    const c = holderOf('c');
+    assert.deepEqual((reserve(ctx, c, req({ cpu: 1 }), stageParent(c)) as Refused).busy, [cpuToken(3), cpuToken(4)], 'the holders above the size count');
+    transition(ctx, b, [cpuToken(3), cpuToken(4)]);
+    assert.deepEqual(granted(reserve(ctx, c, req({ cpu: 2 }), stageParent(c))).resources, [cpuToken(1), cpuToken(2)]);
+    journal.close();
+  });
+});
+
+// dev.81 (C4): the `@fast-suite` pool caps the lanes-stage suite lanes running at once.
+describe('res.fast-suites', () => {
+  it('a fast-suite request takes one @fast-suite token; at capacity it is refused on the tokens alone; other requests never count; the default is one per 12 GiB', T, () => {
+    const r = newRun();
+    const { ctx: base, journal } = openPoolRun(r);
+    const ctx = { ...base, plan: () => ({ ...base.plan(), capacity: { cpu: CPU, fastSuites: 1 } }) };
+    const a = holderOf('a', 'lanes');
+    assert.deepEqual(granted(reserve(ctx, a, req({ cpu: 1, fastSuite: true }), stageParent(a))).resources, [cpuToken(1), fastSuiteToken(1)]);
+    const b = holderOf('b', 'lanes');
+    assert.deepEqual((reserve(ctx, b, req({ cpu: 1, fastSuite: true }), stageParent(b)) as Refused).busy, [fastSuiteToken(1)]);
+    const c = holderOf('c', 'candidate');
+    assert.deepEqual(granted(reserve(ctx, c, req({ cpu: 1 }), stageParent(c))).resources, [cpuToken(2)], 'a candidate suite lane is not counted');
+    transition(ctx, a, [cpuToken(1), fastSuiteToken(1)]);
+    assert.deepEqual(granted(reserve(ctx, b, req({ cpu: 1, fastSuite: true }), stageParent(b))).resources, [cpuToken(1), fastSuiteToken(1)]);
+    assert.ok(overlaps(req({ fastSuite: true }), req({ fastSuite: true })) && !overlaps(req({ fastSuite: true }), req({ named: [DB] })));
+
+    assert.deepEqual([defaultFastSuites(8), defaultFastSuites(30), defaultFastSuites(64)], [1, 2, 5]);
+    assert.equal(fastSuiteCapacity(ctx.plan(), 64), 1, 'plan.capacity.fastSuites wins');
+    assert.equal(fastSuiteCapacity(poolPlanFor(r, { capacity: {} }), 30), 2, 'absent: derived from host memory');
+    assert.deepEqual(poolPlanFor(r, { capacity: { fastSuites: 3 } }).capacity, { fastSuites: 3 });
+    journal.close();
   });
 });
 

@@ -156,6 +156,9 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'audit' });
     case 'close-admissions':
       return submit(command.run, hostDir, { type: 'close-admissions' });
+    // dev.81 (C3a): take back a pending mutation.
+    case 'withdraw':
+      return submit(command.run, hostDir, { type: 'withdraw', command: command.target });
     case 'gc': {
       const outcome = await gc({ hostDir, repo: absPath(resolve(command.repo)), keep: command.keep ?? DEFAULT_KEEP, dryRun: command.dryRun });
       if (outcome.kind === 'done') {

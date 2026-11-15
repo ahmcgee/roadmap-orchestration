@@ -490,11 +490,14 @@ export const STAGE_OUTCOME_KINDS = {
   // ran, or that no build of the unit could create: an uncharged park naming the defects, src/pipeline/witnesscheck.ts);
   // dev.17: `env-unavailable` (a lane's environment did not come up or failed its probe: a retryable park on the
   // environment, never a red lane), here and at the candidate. dev.59: `rerun-red` (a red, regression, flaky, not-certified or
-  // witnesses-missing series of a lanes rerun the root ordered, `lanes-rerun`: an uncharged park for the root).
+  // witnesses-missing series of a lanes rerun the root ordered, `lanes-rerun`: an uncharged park for the root). dev.81:
+  // `deflake-held` (C1: the unit's red lane is one an open deflake unit owns; uncharged, it waits at prepare for the deflake,
+  // then merges the tip in) and `environment-divergence` (B5: every red lane passed in the builder's own reported check at
+  // the salvage head; an uncharged fix round that reproduces it in a fresh checkout).
   lanes: [
     'checkout-residue',
     'green', 'red', 'regression', 'flaky', 'not-certified', 'blocked', 'interrupted', 'occupied', 'cleanup-failed', 'witnesses-missing', 'smoke-survived', 'known-defect', 'base-red',
-    'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable', 'rerun-red',
+    'witness-lane-missing', 'plan-defect', 'executor-fault', 'env-unavailable', 'rerun-red', 'deflake-held', 'environment-divergence',
   ],
   // M4a rev 3 (paid run 11): `unverified` (no green verification checkout of the head: the lanes run again, uncharged).
   // Paid M4b run 5: `read-denied` (an approve from a session the CLI refused a read: not an approval; one uncharged retry).
@@ -638,7 +641,16 @@ export type StageOutcomeDetail =
    */
   | Readonly<{ kind: 'context-exceeded'; inv: InvocationId; promptBytes: number }>
   /** 1.0.0-dev.17: `executor-fault` at any stage that has it, the thrown error's stack (its message when it has none). */
-  | Readonly<{ kind: 'executor-fault'; stack: string }>;
+  | Readonly<{ kind: 'executor-fault'; stack: string }>
+  /** dev.81 (C1): lanes `deflake-held`, the open deflake unit that owns the red lane (its keys' lane), and that lane. */
+  | Readonly<{ kind: 'deflake-held'; deflake: UnitId; lane: LaneId }>
+  /**
+   * dev.81 (B5): lanes `environment-divergence`, the red lanes (non-empty), and the builder's reported checks of them
+   * (`BuildOutput.checks`) that passed at the salvage head `head`.
+   */
+  | Readonly<{ kind: 'environment-divergence'; head: Sha; lanes: readonly LaneId[]; builderChecks: readonly BuilderCheck[] }>;
+/** dev.81 (B5): one lane check a builder's final report says it ran (`BuildOutput.checks`, B4): the lane, at which head, its exit. */
+export type BuilderCheck = Readonly<{ lane: LaneId; head: Sha; exit: number }>;
 /** The (stage, outcome) pairs that carry a detail, keyed `<stage>/<outcome>`, with the detail's kind. */
 export const DETAILED_OUTCOMES = {
   'lanes/witnesses-missing': 'witnesses-missing', 'lanes/smoke-survived': 'smoke-survived', 'lanes/known-defect': 'known-defect',
@@ -650,6 +662,7 @@ export const DETAILED_OUTCOMES = {
   'build/executor-fault': 'executor-fault', 'quiesce/executor-fault': 'executor-fault', 'evidence/executor-fault': 'executor-fault',
   'salvage/executor-fault': 'executor-fault', 'teardown/executor-fault': 'executor-fault', 'lanes/executor-fault': 'executor-fault',
   'gate/executor-fault': 'executor-fault', 'candidate/executor-fault': 'executor-fault',
+  'lanes/deflake-held': 'deflake-held', 'lanes/environment-divergence': 'environment-divergence',
 } as const satisfies Readonly<Record<string, StageOutcomeDetail['kind']>>;
 
 /**
@@ -767,7 +780,11 @@ export type CiFact =
   | Readonly<{ kind: 'spike-completed'; unit: UnitId }>
   | Readonly<{ kind: 'attempt-marker'; unit: UnitId; marker: 'M4'; builds: number; judged: number }>
   | Readonly<{ kind: 'attempt-capped'; unit: UnitId; builds: number; judged: number }>
-  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail' }>;
+  /**
+   * dev.81 (C2): `fresh`, the base ran again for a confirmed red, its memoised check and every earlier pass of it bypassed
+   * (src/pipeline/stages.ts `baseCheck`). Absent: the run's memoised check, reuse allowed (every fact before dev.81).
+   */
+  | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail'; fresh?: true }>;
 
 export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
 export type SurfaceFact =
@@ -1215,7 +1232,11 @@ export type PlanChange =
    */
   | Readonly<{ type: 'unit-reentered'; unit: UnitId; reenters: UnitId; reset: boolean; }>
   /** M3: an obligation added, split (H14), re-witnessed, or disposed by a ruling in force (weakening). */
-  | Readonly<{ type: 'obligation'; id: ObligationId; edit: ObligationEdit }>
+  /**
+   * dev.81 (C3b): `fields`, on an `edited` change, the fields the edit changed (`OBLIGATION_EDIT_FIELDS`): a `deliveredBy`-only
+   * edit drains nothing (src/input/classify.ts `drainsArc`). Absent on every other edit and on facts before dev.81.
+   */
+  | Readonly<{ type: 'obligation'; id: ObligationId; edit: ObligationEdit; fields?: readonly ObligationEditField[] }>
   | Readonly<{ type: 'mapping' }>
   /** M3: the vision's new `rev` (owner-only: source `command`). */
   | Readonly<{ type: 'vision'; rev: number }>
@@ -1254,6 +1275,9 @@ export type PlanChange =
  */
 export const OBLIGATION_EDITS = ['added', 'split', 'witness', 'disposed', 'restored', 'edited'] as const;
 export type ObligationEdit = (typeof OBLIGATION_EDITS)[number];
+/** dev.81 (C3b): what an `edited` obligation change changed (src/holistic/obligations.ts `classifyObligations`). */
+export const OBLIGATION_EDIT_FIELDS = ['serves', 'contracts', 'deliveredBy', 'activation', 'rule'] as const;
+export type ObligationEditField = (typeof OBLIGATION_EDIT_FIELDS)[number];
 
 /**
  * A revision's full evaluated payload (G1), kept content-addressed as `inputs/<sha256>.revision.json` and named by
@@ -1346,7 +1370,8 @@ const resR: Read<ResourceName> = (v, p) => resourceName(v, p);
 /** Canonical resource request reader, also used by the derived scheduler file. */
 export const resourceRequest: Read<ResourceRequest> = object((f) => {
   const basis = f.optional('cpuBasis', cpuBasis);
-  return { named: f.get('named', arrayOf(resR)), pools: f.get('pools', arrayOf(resR)), cpu: f.get('cpu', nat), publication: f.get('publication', bool), ...(basis === undefined ? {} : { cpuBasis: basis }) };
+  const fastSuite = f.optional('fastSuite', literal(true));
+  return { named: f.get('named', arrayOf(resR)), pools: f.get('pools', arrayOf(resR)), cpu: f.get('cpu', nat), publication: f.get('publication', bool), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(fastSuite === undefined ? {} : { fastSuite }) };
 });
 const instR: Read<ResourceInstance> = (v, p) => resourceInstance(v, p);
 const unitResR: Read<ResourceUnit> = (v, p) => resourceUnit(v, p);
@@ -1831,7 +1856,10 @@ const planChange: Read<PlanChange> = tagged('type', {
     if (out.reenters === out.unit) throw new SchemaError(`${f.path}.reenters`, 'a unit other than the re-entering one', out.reenters);
     return out;
   }),
-  obligation: object((f): PlanChange => ({ type: f.get('type', literal('obligation')), id: f.get('id', obligationR), edit: f.get('edit', oneOf(OBLIGATION_EDITS)) })),
+  obligation: object((f): PlanChange => {
+    const fields = f.optional('fields', arrayOf(oneOf(OBLIGATION_EDIT_FIELDS), { nonEmpty: true }));
+    return { type: f.get('type', literal('obligation')), id: f.get('id', obligationR), edit: f.get('edit', oneOf(OBLIGATION_EDITS)), ...(fields === undefined ? {} : { fields }) };
+  }),
   mapping: object((f): PlanChange => ({ type: f.get('type', literal('mapping')) })),
   vision: object((f): PlanChange => ({ type: f.get('type', literal('vision')), rev: f.get('rev', positive) })),
   limits: object((f): PlanChange => ({ type: f.get('type', literal('limits')), unit: f.get('unit', nullable(unitR)) })),
@@ -1935,6 +1963,11 @@ const stageOutcomeDetail: Read<StageOutcomeDetail> = tagged('kind', {
     kind: f.get('kind', literal('context-exceeded')), inv: f.get('inv', invR), promptBytes: f.get('promptBytes', nat),
   })),
   'executor-fault': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('executor-fault')), stack: f.get('stack', str) })),
+  'deflake-held': object((f): StageOutcomeDetail => ({ kind: f.get('kind', literal('deflake-held')), deflake: f.get('deflake', unitR), lane: f.get('lane', laneR) })),
+  'environment-divergence': object((f): StageOutcomeDetail => ({
+    kind: f.get('kind', literal('environment-divergence')), head: f.get('head', shaR), lanes: f.get('lanes', arrayOf(laneR, { nonEmpty: true })),
+    builderChecks: f.get('builderChecks', arrayOf(object((g) => ({ lane: g.get('lane', laneR), head: g.get('head', shaR), exit: g.get('exit', int(0, 255)) })), { nonEmpty: true })),
+  })),
 
 });
 
@@ -1989,7 +2022,10 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fac
   'spike-completed': object((f): Fact => ({ kind: f.get('kind', literal('spike-completed')), unit: f.get('unit', unitR) })),
   'attempt-marker': object((f): Fact => ({ kind: f.get('kind', literal('attempt-marker')), unit: f.get('unit', unitR), marker: f.get('marker', literal('M4')), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
   'attempt-capped': object((f): Fact => ({ kind: f.get('kind', literal('attempt-capped')), unit: f.get('unit', unitR), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
-  'lane-base-compared': object((f): Fact => ({ kind: f.get('kind', literal('lane-base-compared')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lane: f.get('lane', laneR), base: f.get('base', shaR), evidence: f.get('evidence', absR), result: f.get('result', oneOf(['pass', 'fail'] as const)) })),
+  'lane-base-compared': object((f): Fact => {
+    const fresh = f.optional('fresh', literal(true));
+    return { kind: f.get('kind', literal('lane-base-compared')), unit: f.get('unit', unitR), attempt: f.get('attempt', positive), lane: f.get('lane', laneR), base: f.get('base', shaR), evidence: f.get('evidence', absR), result: f.get('result', oneOf(['pass', 'fail'] as const)), ...(fresh === undefined ? {} : { fresh }) };
+  }),
   'lane-reused': object((f): Fact => {
     const set = f.optional('set', oneOf(['spec', 'suite'] as const));
     const at = f.optional('at', shaR);
