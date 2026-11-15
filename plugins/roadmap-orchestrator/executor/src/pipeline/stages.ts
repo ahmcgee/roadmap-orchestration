@@ -1416,9 +1416,7 @@ async function fastSuite(
 function builderChecks(ctx: StageContext, unit: UnitId): readonly BuilderCheck[] {
   const latest = ctx.journal.view.spawnsOfUnit(unit, 'build').at(-1);
   if (latest === undefined) return [];
-  // INTEGRATION (dev.81): `checks` is WS-C's B4 addition to `BuildOutput`; drop this widening once it is in the type.
-  const report = judgmentOutput(ctx, latest, (v) => buildOutput(v, 'build')) as (BuildOutput & Readonly<{ checks?: readonly BuilderCheck[] }>) | null;
-  return report?.checks ?? [];
+  return judgmentOutput(ctx, latest, (v) => buildOutput(v, 'build'))?.checks ?? [];
 }
 
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone | Cancelled> {

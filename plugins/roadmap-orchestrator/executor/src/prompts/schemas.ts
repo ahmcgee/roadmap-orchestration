@@ -6,6 +6,7 @@ import { type SystemName,systemName } from '../core/ids.ts';
 import { type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type ReviewFindingId,type Sha,type UnitId,type VisionClauseId,answerIds,clauseId,findingId,journeyId,laneId,obligationId,reviewFindingId,sha,unitId,visionClauseId } from '../core/ids.ts';
 import { type JsonValue } from '../core/json.ts';
 import { type NoteDef,SPEC_SCHEMA,specM1 } from '../core/records.ts';
+import type { BuilderCheck } from '../core/events.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import { Fields,type Read,SchemaError,arrayOf,assertUnique,envName,int,literal,nullable,object,oneOf,str,tagged,text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
@@ -147,14 +148,13 @@ export type ReceivedMessage = Readonly<{ from: string; at: string; text: string 
  * dev.81 (B4, B5): one lane the builder ran on its final tree: the lane, the commit HEAD was at, and the exit code. A fix round's
  * required checks and an after-merge-in round's suite lanes are proven by these rows (stages.ts `missingChecks`).
  */
-export type BuildCheck = Readonly<{ lane: LaneId; head: Sha; exit: number }>;
 export type BuildOutput = Readonly<{
   summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
   grounding: Grounding; tooBig: TooBig | null; notes: readonly string[];
   /** dev.59: every cross-session message received; read as none from a report written before 1.0.0-dev.59 (`buildOutput`). */
   messages: readonly ReceivedMessage[];
   /** dev.81: the lanes it ran on its final tree; read as none from a report written before 1.0.0-dev.81 (`buildOutput`). */
-  checks: readonly BuildCheck[];
+  checks: readonly BuilderCheck[];
   final: true;
 }>;
 /** The longest message text a build report quotes whole; a longer one is quoted by its opening this long. */
@@ -179,7 +179,7 @@ export const BUILD_SCHEMA: Schema = sObj({
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
 const receivedMessage: Read<ReceivedMessage> = object((g) => ({ from: g.get('from', str), at: g.get('at', text), text: g.get('text', str) }));
-const buildCheck: Read<BuildCheck> = object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), head: g.get('head', (v, p) => sha(v, p)), exit: g.get('exit', int(0, 255)) }));
+const buildCheck: Read<BuilderCheck> = object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), head: g.get('head', (v, p) => sha(v, p)), exit: g.get('exit', int(0, 255)) }));
 /** dev.59 upgrade warning latch: the missing-`messages` notice prints once per process. */
 let legacyMessagesWarned = false;
 /** dev.81 upgrade warning latch: the missing-`checks` notice prints once per process. */
