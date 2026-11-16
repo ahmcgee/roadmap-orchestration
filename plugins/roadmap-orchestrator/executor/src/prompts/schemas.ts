@@ -173,7 +173,7 @@ export const BUILD_SCHEMA: Schema = sObj({
     lane: sDescribe(S_ITEM_ID, 'The lane id, as the message names it.'),
     head: sDescribe(sPattern('^[0-9a-f]{40}$'), 'The commit HEAD was at when the lane ran (git rev-parse HEAD).'),
     exit: S_EXIT,
-  })), 'Each required check and after-merge-in lane you ran on your final tree; empty when the message names none.'),
+  })), 'Each required check and after-merge-in lane you ran on your final tree; empty when the message names none, and in an interim report (final: false).'),
   final: S_FINAL,
 });
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
