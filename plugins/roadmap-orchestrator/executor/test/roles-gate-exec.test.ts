@@ -144,7 +144,7 @@ test('roles.read-only-act: a real act with readOnly runs the next claude on PATH
   const scenario = writeScenario(tmpDir('roles-ro'), [{ as: 'claude', expect: {}, acts: [{ type: 'real', readOnly: { repo, runDir } }] }]);
   const stub = tmpDir('roles-stub');
   const record = join(stub, 'record.json');
-  writeFileSync(join(stub, 'claude'), `#!/usr/bin/env node\nconst fs = require('node:fs');\nfs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin: fs.readFileSync(0, 'utf8') }));\nprocess.exit(0);\n`, { mode: 0o755 });
+  writeFileSync(join(stub, 'claude'), `#!/usr/bin/env node\nconst fs = process.getBuiltinModule('node:fs');\nfs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin: fs.readFileSync(0, 'utf8') }));\nprocess.exit(0);\n`, { mode: 0o755 });
   const ctx = { repo: absPath(repo), runDir: absPath(runDir) };
   const triple = { backend: 'claude', model: 'claude-opus-5-5', effort: 'medium' } as const;
   const session = freshJudgmentSession();

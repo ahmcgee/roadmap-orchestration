@@ -35,7 +35,7 @@ export function ownerLabel(arc: ArcId, unit: UnitId): string {
 /** The declaration whose probe and teardown a resource instance runs: a pool instance's is its pool's. */
 export function resourceDecl(plan: PlanM1, resource: ResourceInstance): ResourceDecl {
   const p = parseResourceUnit(resource);
-  if (p.type === 'cpu') throw new Error(`${resource} is an @cpu token: it has no probe or teardown`);
+  if (p.type === 'cpu' || p.type === 'fast-suite') throw new Error(`${resource} is an admission token: it has no probe or teardown`);
   return declOf(plan, p.type === 'instance' ? p.pool : p.name);
 }
 
@@ -72,14 +72,14 @@ export function commandEnv(recipe: TeardownRecipe): Readonly<{ env: Readonly<Rec
 }
 
 /**
- * The units that declare a probe and a teardown: named resources and pool instances (not `@cpu`, not the slot, and not
+ * The units that declare a probe and a teardown: named resources and pool instances (not `@cpu` or `@fast-suite`, not the slot, and not
  * an environment, dev.17: its probe and lifecycle are src/resources/environments.ts's, and a lane leaves nothing in it
  * for a teardown to remove).
  */
 export function instancesOf(plan: PlanM1, resources: readonly ResourceUnit[]): readonly ResourceInstance[] {
   return resources.flatMap((r) => {
     const p = parseResourceUnit(r);
-    if (p.type === 'cpu' || r === INTEGRATION_SLOT) return [];
+    if (p.type === 'cpu' || p.type === 'fast-suite' || r === INTEGRATION_SLOT) return [];
     if (p.type === 'named' && environmentOf(plan, p.name) !== null) return [];
     return [r as ResourceInstance];
   });

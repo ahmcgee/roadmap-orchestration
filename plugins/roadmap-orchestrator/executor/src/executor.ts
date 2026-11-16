@@ -68,8 +68,9 @@ import { readClaim } from './host/lock.ts';
 import { HandshakeAbandonedError,HandshakeMismatchError,HandshakeTimeoutError,OwnerMismatchError,awaitHandshake } from './host/owner.ts';
 import { pressureAvailability } from './host/pressure.ts';
 import { readHostFingerprint,readHostSample } from './host/sample.ts';
+import { fastSuiteCapacity } from './resources/pool.ts';
 import { arcRolesOf,requirePlanInForce } from './input/inforce.ts';
-import { type PlanM1,hasMilestones } from './input/plan.ts';
+import { type PlanM1,ciSettleMin,hasMilestones } from './input/plan.ts';
 import { NEEDS_USER_DIR,needsUserPath,openBlockingItems } from './needsuser.ts';
 import { type ProberHandle,createProber } from './park/probe.ts';
 import type { StageContext } from './pipeline/dispatch.ts';
@@ -229,6 +230,10 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     journal.fact({ kind: 'executor-started', generation: claim.generation, host: readHostFingerprint(), pressure: pressureAvailability() });
 
     const x = contexts(args, context, journal);
+    // dev.81 (C4): a plan without `capacity.fastSuites` runs the host-derived default; say which, so its owner can set it.
+    if (x.stage.plan().capacity?.fastSuites === undefined) {
+      process.emitWarning(`plan capacity.fastSuites is absent: at most ${fastSuiteCapacity(x.stage.plan())} lanes-stage suite lanes run at once (one per 12 GiB of host memory); set capacity.fastSuites to change it`, { code: 'ROADMAP_CAPACITY' });
+    }
     const stopped = args.controlOnly ? await controlOnly(x) : null;
     if (stopped !== null) {
       writeExitReason(args.hostDir, claim, stopped.kind);
@@ -237,7 +242,7 @@ export async function runExecutor(args: ExecutorArgs): Promise<ExitReason> {
     // Recovery before the smoke: it closes a smoke spawn a crashed start left open, like any other spawn.
     await recover({ stage: x.stage, commands: x.commands });
     // Recovery first completes any staged needs-user raise; background results must not race its replay.
-    pushes = startIntegrationPushes({ journal, repo: context.repo, runDir: context.runDir });
+    pushes = startIntegrationPushes({ journal, repo: context.repo, runDir: context.runDir, settleMin: () => ciSettleMin(x.stage.plan()) });
     pushes.recover(x.stage.plan().integrationBranch);
     // M3 (B3): the findings' moves the recovered log calls for (ownership, a killed mutant's dismissal).
     syncRepairs(x.stage);

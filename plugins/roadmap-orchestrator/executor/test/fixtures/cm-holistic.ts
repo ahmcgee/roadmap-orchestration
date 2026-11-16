@@ -182,16 +182,21 @@ export function layoutHolisticConcurrent(t: Owner, peer: HolisticPeer): Holistic
   // The pin parks on its first run only (publish-common.ts `barrierSuite`): the preempting kill ends that run, and every
   // later run (the publication's own suite, u1's fresh candidate) passes at once.
   const r = setupExec(t, { steps: [], suite: [SUITE_LANE, { ...barrierSuite(barriers), id: 'c-pin' }] });
+  // Holistic (a ruling alone publishes nothing since dev.81, src/commands/apply.ts `publicationOf`): the rule's apply
+  // edits the cut line too, so its revision publishes invariants.md beside constraints.md.
+  makeHolistic(r, []);
   // Editing the cited ledger changes the approval fingerprint. After the docs publication preempts the
   // candidate, the unit is gated again; a plain ledger edit rewrites no contract and needs no new build.
-  appendSteps(r, [...SMOKE_DEFAULT, ...keyed('u1', [
+  appendSteps(r, [...SMOKE_DEFAULT, packReviewStep('review-1'), ...keyed('u1', [
     planCheckStep({ decision: 'approve' }), build(MUL), gateStep({ decision: 'approve' }),
     gateStep({ decision: 'approve' }),
-  ])]);
+  ]), lensStep('audit-1', 'vision')]);
   const hooks: readonly Hook[] = [
     once('rule', () => existsSync(join(barriers, 'lane.reached')), () => {
       exportCurrentInputs(r);
       writeFileSync(join(r.planPath, '..', 'rulings.md'), 'C-1 — Helpers take finite numbers.\n');
+      const obligations = join(r.planPath, '..', 'obligations.json');
+      writeFileSync(obligations, JSON.stringify({ ...(JSON.parse(readFileSync(obligations, 'utf8')) as Json), cutLine: 'the helpers ship with finite inputs' }));
       submit(r, applyBody(r));
     }),
     once('release', () => restarted(r), () => writeFileSync(join(barriers, 'lane.release'), '')),

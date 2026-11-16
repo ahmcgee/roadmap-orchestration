@@ -44,7 +44,7 @@ const pack = {
   dispositions: [{ job: 'review-1', index: 0, disposition: 'resolved' }], reasons: ['Why'], premises: premise,
 };
 const examples: [Role, JsonValue][] = [
-  ['build', { final: true, summary: 'Built', blockers: ['Help'], experiments: [{ name: 'check', argv: [''], exit: 0 }], grounding: { specWrong: '', touches: [''] }, tooBig: { estimate: '', suggestedChildren: [''] }, notes: ['Done'], messages: [{ from: 'root', at: '', text: 'Use the v2 endpoint' }] }],
+  ['build', { final: true, summary: 'Built', blockers: ['Help'], experiments: [{ name: 'check', argv: [''], exit: 0 }], grounding: { specWrong: '', touches: [''] }, tooBig: { estimate: '', suggestedChildren: [''] }, notes: ['Done'], messages: [{ from: 'root', at: '', text: 'Use the v2 endpoint' }], checks: [{ lane: 'test', head: 'a'.repeat(40), exit: 0 }] }],
   ['verifier', gate], ['verifier', { ...gate, findings: [{ ...finding, experiments: [{ command: 'node check', output: 'ok' }] }] }],
   ['verifier', { ...gate, decision: 'escalate', directives: [], ordering: { blockers: ['u2'] } }],
   ['verifier', { ...gate, decision: 'approve', directives: [], findings: [] }],

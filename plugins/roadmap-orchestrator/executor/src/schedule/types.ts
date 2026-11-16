@@ -47,6 +47,11 @@ export type ResourceRequest = Readonly<{
   cpu: number;
   cpuBasis?: CpuBasis;
   publication: boolean;
+  /**
+   * dev.81 (C4): a lanes-stage suite lane run (the fast suite at the salvage SHA, or its base check) takes one `@fast-suite`
+   * token (src/pipeline/lanes.ts `laneRequest`), so at most `plan.capacity.fastSuites` of them run at once. Absent: none.
+   */
+  fastSuite?: true;
 }>;
 
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */

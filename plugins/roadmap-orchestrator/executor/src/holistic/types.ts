@@ -310,6 +310,11 @@ const witnessRef: Read<WitnessRef> = object((f) => {
  *                             than `MILESTONE_REFERENCES_BUDGET` (src/phase0/rows.ts): every text file under them is
  *                             inlined whole into each pre-build, build and gate prompt of its units and its walkthrough.
  *                             `bytes` the total, `largest` its largest text files (at most five, largest first).
+ *   repair-delivered-elsewhere (dev.81, B3a) a unit repairs obligation `obligation`, whose witness survived its mutation
+ *                             smoke because other units deliver it and every one of them (`units`, resolved through
+ *                             lineage) is merged: reverting this unit's change cannot fail the witness, so no build round
+ *                             kills it (src/holistic/required.ts `repairsDeliveredElsewhere`; Phase 0 flags the same spec
+ *                             as an advisory, src/phase0/rows.ts).
  */
 export type PlanDefect =
   | Readonly<{ type: 'witness-not-in-lane'; obligation: ObligationId; lane: LaneId; file: RepoPath; missing: 'test-paths' | 'argv' }>
@@ -318,7 +323,8 @@ export type PlanDefect =
   | Readonly<{ type: 'witness-files-undeclared'; obligation: ObligationId }>
   | Readonly<{ type: 'lane-test-paths-undeclared'; lane: LaneId }>
   | Readonly<{ type: 'derived-overlaps-corpus'; output: RepoPattern }>
-  | Readonly<{ type: 'milestone-references-oversize'; milestone: MilestoneId; bytes: number; budget: number; largest: readonly Readonly<{ path: RepoPath; bytes: number }>[] }>;
+  | Readonly<{ type: 'milestone-references-oversize'; milestone: MilestoneId; bytes: number; budget: number; largest: readonly Readonly<{ path: RepoPath; bytes: number }>[] }>
+  | Readonly<{ type: 'repair-delivered-elsewhere'; obligation: ObligationId; units: readonly UnitId[] }>;
 
 /** A plan defect in one sentence, for a needs-user and a refusal's reader. */
 export function planDefectText(d: PlanDefect): string {
@@ -345,6 +351,9 @@ export function planDefectText(d: PlanDefect): string {
       return `Milestone ${d.milestone}'s references hold ${d.bytes} bytes of text, over the ${d.budget}-byte budget: every text file under them is inlined into `
         + `each pre-build, build and gate prompt of its units and its walkthrough. The largest: ${d.largest.map((f) => `${f.path} (${f.bytes} bytes)`).join(', ')}. `
         + 'Narrow `references` to the design documents; build output and comps belong outside them.';
+    case 'repair-delivered-elsewhere':
+      return `${d.obligation} is delivered by ${d.units.join(', ')}, already merged, so its witness passes without this unit's change: reverting the unit cannot fail it, `
+        + 'and no build round can make the mutation smoke kill it.';
   }
 }
 
@@ -368,6 +377,9 @@ export const planDefect: Read<PlanDefect> = tagged('type', {
   'milestone-references-oversize': object((f): PlanDefect => ({
     type: f.get('type', literal('milestone-references-oversize')), milestone: f.get('milestone', (v, p) => milestoneId(v, p)), bytes: f.get('bytes', nat),
     budget: f.get('budget', nat), largest: f.get('largest', arrayOf(object((g) => ({ path: g.get('path', pathR), bytes: g.get('bytes', nat) })), { nonEmpty: true })),
+  })),
+  'repair-delivered-elsewhere': object((f): PlanDefect => ({
+    type: f.get('type', literal('repair-delivered-elsewhere')), obligation: f.get('obligation', oid), units: f.get('units', arrayOf((v, p) => unitId(v, p), { nonEmpty: true })),
   })),
 });
 
@@ -600,6 +612,8 @@ export type ImpactInput = Readonly<{
   revised: readonly ObligationId[];
   /** The future obligations latched so far (the fold's `obligation-latched`): must-hold, so an unmapped path selects them. */
   latched: ReadonlySet<ObligationId>;
+  /** dev.81 (A1): whether a unit delivers an obligation, declared or through lineage (src/input/lineage.ts `delivers`). */
+  delivers: (o: ObligationDef, unit: UnitId) => boolean;
 }>;
 /** The selected obligations, ascending, split closure applied (H14: a selected child selects its parent and back). */
 export type SelectObligations = (input: ImpactInput) => readonly ObligationId[];

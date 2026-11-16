@@ -53,7 +53,7 @@ function show(n: Next): string {
 function flat(c: UnitCounters): Record<Counter, number> {
   const out: Record<string, number> = {
     chargeableFailures: c.chargeableFailures, unchargedLanesReds: c.unchargedLanesReds, reviseRounds: c.reviseRounds, candidateReds: c.candidateReds, smokeRounds: c.smokeRounds,
-    staticReds: c.staticReds,
+    staticReds: c.staticReds, escalationRevises: c.escalationRevises,
   };
   for (const s of RETRY_STAGES) out[`retries.${s}`] = c.retries[s];
   return out as Record<Counter, number>;
@@ -173,12 +173,23 @@ const ROWS: readonly Row[] = [
   // dev.59: a red series of a lanes rerun the root ordered parks for the root, uncharged, even at the bound's edge.
   ['lanes', 'rerun-red', {}, 'park:rerun-red', 'park', {}],
   ['lanes', 'rerun-red', { counters: { chargeableFailures: 2 } }, 'park:rerun-red', 'park', {}],
+  // dev.81 (C1): a red on an open deflake's lane waits at prepare, uncharged, even at the bound's edge.
+  ['lanes', 'deflake-held', {}, 'prepare', 'advance', {}],
+  ['lanes', 'deflake-held', { counters: { chargeableFailures: 2 } }, 'prepare', 'advance', {}],
+  // dev.81 (B5): every red lane passed in the builder's own check at the head: an uncharged fix round, even at the bound's edge.
+  ['lanes', 'environment-divergence', {}, 'build/fix@med', 'advance', {}],
+  ['lanes', 'environment-divergence', { counters: { chargeableFailures: 2 } }, 'build/fix@med', 'advance', {}],
   // gate (fresh judgment)
   ['gate', 'approve', {}, 'candidate', 'advance', {}],
   ['gate', 'revise', {}, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
   ['gate', 'revise', { counters: { reviseRounds: 1 } }, 'build/fix@med', 'revise', { reviseRounds: 1, chargeableFailures: 1 }],
   ['gate', 'revise', { counters: { reviseRounds: 2 } }, 'gate@escalation', 'route-up', {}],
   ['gate', 'revise', { counters: { reviseRounds: 2 }, routedUp: ['gate'] }, 'park:escalation', 'park', {}],
+  // dev.81: an escalation-seat revise with new findings (recorded only there, the revise rounds spent): one uncharged fix round,
+  // whatever the chargeable count; a second parks as a spent revise does.
+  ['gate', 'revise-new', { counters: { reviseRounds: 2 }, routedUp: ['gate'] }, 'build/fix@med', 'escalation-revise', { escalationRevises: 1 }],
+  ['gate', 'revise-new', { counters: { reviseRounds: 2, chargeableFailures: 2 }, routedUp: ['gate'] }, 'build/fix@med', 'escalation-revise', { escalationRevises: 1 }],
+  ['gate', 'revise-new', { counters: { reviseRounds: 2, escalationRevises: 1 }, routedUp: ['gate'] }, 'park:escalation', 'park', {}],
   ['gate', 'escalate', {}, 'gate@escalation', 'route-up', {}],
   ['gate', 'escalate', { promotion: true }, 'park:escalation', 'park', {}],
   ['gate', 'empty-diff', {}, 'park:empty-diff', 'park', {}],
@@ -277,7 +288,7 @@ describe('transitions', () => {
       'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env', 'lanes rerun-red': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'salvage cleanup-failed': 'retryable', 'teardown cleanup-failed': 'retryable',
       'lanes red': 'design', 'lanes regression': 'design', 'lanes witnesses-missing': 'design', 'build infeasible': 'design', 'lanes blocked': 'retryable', 'lanes cleanup-failed': 'retryable', 'lanes occupied': 'env',
-      'gate revise': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
+      'gate revise': 'design', 'gate revise-new': 'design', 'gate escalate': 'design', 'gate empty-diff': 'design', 'gate refusal': 'design', 'gate malformed': 'design',
       'gate process-fault': 'retryable', 'gate routing-changed': 'env', 'gate read-denied': 'env',
       'pre-build context-exceeded': 'env', 'build context-exceeded': 'env', 'gate context-exceeded': 'env',
       'candidate red': 'design', 'candidate static-red': 'design', 'candidate base-red': 'env', 'candidate blocked': 'retryable', 'candidate occupied': 'env', 'candidate cleanup-failed': 'retryable',
@@ -433,6 +444,29 @@ describe('transitions', () => {
     assert.deepEqual(perRole.nexts.map(show), [
       'build/fresh@med', 'gate@med', 'gate@escalation', 'build/fix@med', 'gate@escalation', 'park:escalation',
     ]);
+  });
+
+  it('transitions.escalation-revise: two revises, the route-up, an escalation revise with new findings takes one uncharged fix round, the next parks', () => {
+    const { nexts, state } = drive([
+      outcome('gate', 'revise'), outcome('lanes', 'green'), outcome('gate', 'revise'), outcome('lanes', 'green'),
+      outcome('gate', 'revise'), outcome('gate', 'revise-new'), outcome('lanes', 'green'), outcome('gate', 'revise-new'),
+    ]);
+    assert.deepEqual(nexts.map(show), [
+      'build/fix@med', 'gate@med', 'build/fix@med', 'gate@med', 'gate@escalation', 'build/fix@med', 'gate@escalation', 'park:escalation',
+    ]);
+    assert.deepEqual([state.counters.reviseRounds, state.counters.escalationRevises, state.counters.chargeableFailures], [2, 1, 2]);
+    // A repeat at the escalation seat parks without a fix round, as before dev.81.
+    const repeat = drive([outcome('gate', 'revise'), outcome('lanes', 'green'), outcome('gate', 'revise'), outcome('lanes', 'green'), outcome('gate', 'revise'), outcome('gate', 'revise')]);
+    assert.equal(show(repeat.nexts.at(-1)!), 'park:escalation');
+  });
+
+  it('transitions.steer-exit-revise-new: a steered pass ends at an escalation revise with new findings, uncharged', () => {
+    const u = { ...unit({ counters: { reviseRounds: 2 }, routedUp: ['gate'] }), steering: { seq: 1, resume: false } };
+    const o = outcome('gate', 'revise-new');
+    assert.equal(show(transition(u, o)), 'park:steered');
+    const fact = outcomeFact(u, o, 1);
+    assert.deepEqual([fact.class, fact.chargeable, fact.park], ['park', false, { class: 'operator', kind: 'env' }]);
+    assert.deepEqual(decidedBy(fact), { kind: 'park', reason: 'steered' });
   });
 
   it('transitions.risk-promotion-next-judgment-only', () => {

@@ -11,6 +11,9 @@
 //   round runs (and a C row charges); beyond it the exhausted action runs uncharged, as no round happened.
 //   dev.59: a candidate red only on static lanes (`static-red`: lint, typecheck) takes one uncharged fix round of its own,
 //   then is read as any candidate red (its exhausted action is the `red` row).
+//   dev.81: a gate revise at the escalation seat once the revise rounds are spent, with a blocking finding no builder was
+//   given (`revise-new`, src/pipeline/gate.ts), takes one uncharged fix round of its own (`escalation-revise`), so the seat's
+//   own verdict stands; then (or for a revise that only raises findings a builder had) the escalation park.
 // - One uncharged retry at pre-build, build (a resume), lanes and gate, then park. Retries are counted per
 //   stage over the whole unit. A backend call lost with its runner is retried once inside its stage, as a new
 //   invocation with the same deadline (dispatch.ts), before any outcome is recorded; an implementer call
@@ -97,7 +100,7 @@ type Hold = Readonly<{ do: 'hold' }>;
 type RouteUp = Readonly<{ do: 'route-up'; reason: 'refusal' | 'escalation' }>;
 /** The stage's one uncharged retry, then park with `reason` and class `park`. */
 type Retry = Readonly<{ do: 'retry'; reason: NeedsUserReason; park: ParkClass }>;
-type BoundedRound = 'revise' | 'candidate-red' | 'smoke' | 'static-red';
+type BoundedRound = 'revise' | 'candidate-red' | 'smoke' | 'static-red' | 'escalation-revise';
 /**
  * A round the unit may take `bounds[bound]` times (`1`: once, not configurable); the next one takes `then`, uncharged.
  * M4a rev 3 (D2, R38): the smoke round's `then` goes on to the gate, which decides with the survivors (`Go`, never a halt).
@@ -244,11 +247,20 @@ export const TABLE: Table = {
     // dev.59: a red series of a lanes rerun the root ordered (`roadmap rerun`): its claim that the cause is outside the tree did
     // not hold. Uncharged; the root decides (`resume <unit>` restores the decision the rerun waived).
     'rerun-red': park('rerun-red', 'env'),
+    // dev.81 (C1): the red lane is one an open deflake unit owns (not the unit's own lineage's): the ledger's flake, not the
+    // unit's. Uncharged, like a known defect: it waits at prepare until the deflake merges, parks or is cut, then merges the
+    // tip in and runs its lanes again; a lane still red then is charged as any other.
+    'deflake-held': go(at('prepare')),
+    // dev.81 (B5): every red lane passed in the builder's own reported check at the salvage head: the lanes' environment
+    // diverges from the builder's. Uncharged; a fix round told to reproduce the red in a fresh checkout.
+    'environment-divergence': go(build('fix')),
   },
   gate: {
     'checkout-residue': checkoutResidue,
     approve: go(at('candidate')),
     revise: { do: 'bounded', round: 'revise', bound: 'reviseRounds', to: build('fix'), chargeable: true, then: routeUp('escalation') },
+    // dev.81: recorded only at the escalation seat with the revise rounds spent; a second one parks as a spent revise does.
+    'revise-new': { do: 'bounded', round: 'escalation-revise', bound: 1, to: build('fix'), chargeable: false, then: routeUp('escalation') },
     escalate: routeUp('escalation'),
     'empty-diff': park('empty-diff', 'design'),
     refusal: routeUp('refusal'),
@@ -317,7 +329,7 @@ type Step =
   | Readonly<{ to: 'hold' | 'retire' }>;
 type Decision = Readonly<{ class: OutcomeClass; chargeable: boolean; step: Step }>;
 
-const ROUND_COUNTERS = { revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds', 'static-red': 'staticReds' } as const satisfies {
+const ROUND_COUNTERS = { revise: 'reviseRounds', 'candidate-red': 'candidateReds', smoke: 'smokeRounds', 'static-red': 'staticReds', 'escalation-revise': 'escalationRevises' } as const satisfies {
   readonly [R in BoundedRound]: keyof UnitCounters;
 };
 
@@ -417,7 +429,7 @@ function apply(u: UnitState, o: StageOutcome, rule: Rule<OutcomeStage>, why: str
 function steerExit(u: UnitState, o: StageOutcome): Decision | null {
   if (u.steering === null) return null;
   const ends = (o.stage === 'lanes' && (o.kind === 'red' || o.kind === 'not-certified'))
-    || (o.stage === 'gate' && (o.kind === 'revise' || (o.kind === 'approve' && !u.steering.resume)));
+    || (o.stage === 'gate' && (o.kind === 'revise' || o.kind === 'revise-new' || (o.kind === 'approve' && !u.steering.resume)));
   if (!ends) return null;
   const why = o.kind === 'approve' ? ': the steer pass is green; review it, then resume the unit or steer it again' : ': the steer pass ends here';
   return halt('park', 'steered', o, why, 'env');
@@ -550,7 +562,8 @@ export function decidedBy(fact: StageOutcomeFact): Decided {
     case 'revise':
     case 'candidate-red':
     case 'smoke':
-    case 'static-red': {
+    case 'static-red':
+    case 'escalation-revise': {
       // The round the class names: the rule's own, or (dev.59) the bounded round its exhausted `then` runs.
       let round: Rule<OutcomeStage> = rule;
       while (round.do === 'bounded' && round.round !== fact.class) round = round.then;

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
 <title id="title">How an arc runs</title>
-<desc id="desc">Three lanes. The owner confirms the vision, answers questions and acknowledges the brief. The architect plans the arc, supervises it and closes it out. The executor reviews the plan, builds and certifies each unit, publishes the tested head, then judges milestones and audits the campaign. Events and findings flow up to the architect; revisions and steering flow down. Numbers match the steps in the README.</desc>
+<desc id="desc">Three lanes. The owner confirms the vision, answers questions and acknowledges the brief. The architect plans the arc, supervises it and closes it out. The executor reviews the plan, builds and certifies each unit (fix rounds until tests and gate pass, one more uncharged round when an escalation raises new findings), publishes the tested head (the remote CI ref advances once CI has settled on the head before), then judges milestones and audits the campaign. Events and findings flow up to the architect; revisions and steering flow down. Numbers match the steps in the README.</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#334155" stroke-width="1.6"/></marker>
 </defs>
@@ -57,7 +57,7 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#172b45;text-anchor:middle}
 <text x="485" y="420" class="what">One isolated worktree per unit</text>
 <rect x="640" y="368" width="230" height="72" rx="10" class="box executor"/>
 <text x="755" y="399" class="name">4 · Publish</text>
-<text x="755" y="420" class="what">Only the exact tested head</text>
+<text x="755" y="420" class="what">Tested head; CI ref waits on CI</text>
 <rect x="910" y="368" width="230" height="72" rx="10" class="box executor"/>
 <text x="1025" y="399" class="name">5 · Judge</text>
 <text x="1025" y="420" class="what">Milestone walks, campaign audit</text>
@@ -71,7 +71,7 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#172b45;text-anchor:middle}
 
 <!-- fix rounds -->
 <path d="M545 440V472H425V442" class="edge"/>
-<text x="485" y="492" class="note">fix rounds until tests and gate pass</text>
+<text x="485" y="492" class="note">fix rounds until tests and gate pass; new escalation findings get one uncharged round</text>
 
 <!-- messages -->
 <path d="M215 148V210" class="edge msg"/>

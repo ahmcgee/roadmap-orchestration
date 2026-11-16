@@ -31,6 +31,10 @@ export const MAX_LANE_FILES = 1000;
 export const CENSUS_GROUPS = 20;
 /** Directory names whose contents are build output at any depth: rebuilt, never evidence. */
 const BUILD_OUTPUT_DIRS: ReadonlySet<string> = new Set(['bin', 'obj', 'dist', 'build', 'target', 'node_modules', '.venv', '__pycache__']);
+/** The dependency installs among them: fetched, not built from the tree, so a merge-in does not make them stale output. */
+const DEPENDENCY_DIRS: ReadonlySet<string> = new Set(['node_modules', '.venv']);
+/** dev.81 (B5): the build-output dirs a merge-in into a kept worktree makes stale: every one but the dependency installs. */
+export const REBUILT_OUTPUT_DIRS: ReadonlySet<string> = new Set([...BUILD_OUTPUT_DIRS].filter((d) => !DEPENDENCY_DIRS.has(d)));
 /**
  * Never captured by default: key material and credentials. A leading `**` also crosses dot directories here
  * (`matchesExclude`), which a glob's own `**` does not; a dotfile needs its own pattern (`.*kubeconfig*`).
@@ -53,6 +57,27 @@ export function ignoredWrites(tree: AbsPath, sinceMs: number): readonly IgnoredW
     if (st.ctimeMs >= sinceMs) out.push({ path: repoPath(path), bytes: st.size, regular: st.isFile() });
   }
   return out;
+}
+
+/**
+ * dev.81 (B5): removes the ignored files under every `REBUILT_OUTPUT_DIRS` dir of `tree` (at any depth, outside dependency
+ * installs) with `git clean -fdX`, and returns those dirs, ascending, outermost only; tracked and unignored files are untouched.
+ * Idempotent: what it removes the next build regenerates.
+ */
+export function cleanRebuiltOutput(tree: AbsPath): readonly RepoPath[] {
+  // `--directory` lists a wholly ignored dir once, with a trailing slash; a dir with some ignored files lists those files.
+  const listed = git(tree, ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z']).split('\0').filter((s) => s !== '');
+  const roots = new Set<string>();
+  for (const entry of listed) {
+    const dir = entry.endsWith('/');
+    const segments = entry.replace(/\/+$/, '').split('/');
+    const at = segments.findIndex((x) => REBUILT_OUTPUT_DIRS.has(x));
+    if (at === -1 || (at === segments.length - 1 && !dir) || segments.slice(0, at).some((x) => DEPENDENCY_DIRS.has(x))) continue;
+    roots.add(segments.slice(0, at + 1).join('/'));
+  }
+  const outer = [...roots].sort().filter((r, _, all) => !all.some((o) => o !== r && r.startsWith(`${o}/`)));
+  if (outer.length > 0) git(tree, ['clean', '-fdX', '--', ...outer]);
+  return outer.map((r) => repoPath(r));
 }
 
 /** `pattern` as salvage matches it (a glob or a directory prefix), with a leading `**` also crossing dot dirs. */

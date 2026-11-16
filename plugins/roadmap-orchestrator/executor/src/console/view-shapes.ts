@@ -37,9 +37,15 @@ const edge: Check = v => [
   object({kind: oneOf('contingent'), target: str, edge: str, condition: preview, resolved: bool}),
 ].some(check => check(v));
 export const graphShape = object({...base,
-  units: array(object({id: str, title: str, titleTruncated: bool, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), state: str, stage: str, stageFinished: bool, systems: array(str), lineageRef: nullable(str)})),
+  units: array(object({id: str, title: str, titleTruncated: bool, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), state: str, stage: str, stageFinished: bool, systems: array(str), lineageRef: nullable(str),
+    origin: oneOf('planned', 'repair', 'polish', 'deflake'), supersededBy: nullable(str), carriedBy: array(str)})),
   milestones: array(object({id: str, state: str, passed: bool, memberIds: array(str), total: nat, merged: nat, withdrawn: nat, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), reason: nullable(str), costUsd: num}, {name: str})),
   noMilestone: object({ids: array(str), total: nat, merged: nat, withdrawn: nat}),
+  groups: array(v => [
+    object({kind: oneOf('design', 'milestone-repair', 'polish'), id: str, label: str, ids: array(str), milestone: str}),
+    object({kind: oneOf('audit'), id: str, label: str, ids: array(str), job: str}),
+    object({kind: oneOf('hardening', 'deflake'), id: str, label: str, ids: array(str)}),
+  ].some(check => check(v))),
   edges: array(edge), focus: object({activeIds: array(str), firstUncleared: nullable(str)}),
 });
 const signal=oneOf('passed','active','held','pending','failed','withdrawn');
@@ -125,7 +131,7 @@ const nowBlocker=object({id:str,kind:oneOf('blocker'),subject:resourceSubject,re
 const nowPool=object({id:str,kind:oneOf('pool'),resource:str,detailKey:str,size:num,used:num,dirty:num});
 const resourceNowRow:Check=v=>nowResource(v)||nowQueue(v)||nowBlocker(v)||nowPool(v);
 const nowPreview=(row:Check)=>object({rows:v=>Array.isArray(v)&&v.length<=5&&v.every(row),matching:nat});
-const resourceNow=object({queueAvailable:nullable(bool),cpuReservation:nullable(object({used:num,capacity:num})),integration:nowPreview(nowResource),queues:nowPreview(nowQueue),blockers:nowPreview(nowBlocker),counts:object({resources:nat,queues:nat,pools:nat,blockers:nat}),unknownQueueStarts:nat});
+const resourceNow=object({queueAvailable:nullable(bool),ci:nullable(object({ciHead:nullable(str),pending:nullable(str),settleBy:nullable(date)})),cpuReservation:nullable(object({used:num,capacity:num})),integration:nowPreview(nowResource),queues:nowPreview(nowQueue),blockers:nowPreview(nowBlocker),counts:object({resources:nat,queues:nat,pools:nat,blockers:nat}),unknownQueueStarts:nat});
 const resourceFilters=object({section:oneOf('schedule','cpu','waiting','now'),window:oneOf('arc','24h','7d',null),from:nullable(date),to:nullable(date),zone:str,resource:array(str),unit:array(str),stage:array(str),state:array(str),reason:array(str),utilization:oneOf('all','under10','over100','unmeasured'),q:str,sort:oneOf('resource','start','duration','unit','utilization','coreTime','reason','count','scheduler'),direction:oneOf('asc','desc')});
 const resourceBounds=object({from:nullable(date),to:date,terminalAt:nullable(date)});
 const resourcesBase=object({...base,section:oneOf('schedule','cpu','waiting','now'),filters:resourceFilters,facets:facets(['resource','unit','stage','reason']),bounds:resourceBounds,now:resourceNow,counts:object({schedule:nullable(nat),cpu:nullable(nat),waiting:nullable(nat),now:nullable(nat)}),coverage:object({matchedCalls:nat,excludedCalls:nat,unmeasuredCalls:nat,zeroWallCalls:nat,unreservedCalls:nat,measuredStages:nat,under10Stages:nat,over100Stages:nat,waitingMeasurements:nat,unmeasuredReservations:nullable(nat)}),overview:object({backendHolds:nullable(object({rows:array(backendHold),matching:nat})),resourceCount:nat,arc:nullable(arcOverview),lanes:nullable(object({rows:v=>Array.isArray(v)&&v.length<=24&&v.every(resourceLane),matching:nat})),reasons:array(resourceReason),reasonCount:nat,totalWaitingMs:nullable(num),unallocatedMs:nullable(num)}),rows:array(v=>resourceBooking(v)||resourceCpu(v)||resourceWait(v)||resourceNowRow(v)),page:collectionPage(oneOf(25,50,100))});

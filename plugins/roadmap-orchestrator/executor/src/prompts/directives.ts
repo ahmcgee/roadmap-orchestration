@@ -8,6 +8,7 @@
 //   RESPEC_DIRECTIVE      the spec was amended after the earlier work (RESPEC_FRESH_DIRECTIVE: told to a fresh session)
 //   CONTINUE_DIRECTIVE    the continue of an interrupted build (CONTINUE_FRESH_DIRECTIVE: told to a fresh session)
 //   resolveUnmetDirective the continuation of a resolve round that left unmet clauses untouched (field feedback 2026-10-23)
+//   missingChecksDirective dev.81: the continuation of a final report whose checks do not prove a required lane's re-run
 //   STEER_DIRECTIVE       the architect's steer brief follows
 //   judgmentRepairDirective  every judgment role's one repair turn: the refused answer's reasons (2026-10-15; all roles dev.12)
 //   stalledLaneDirective, flakyLaneDirective, dirtyLanesDirective, movedHeadDirective   a failing or uncertified series
@@ -37,6 +38,16 @@ export const CONTINUE_FRESH_DIRECTIVE = `An earlier session on this task was int
 export function resolveUnmetDirective(unmet: readonly Readonly<{ clause: string; text: string }>[]): string {
   if (unmet.length === 0) throw new Error('resolveUnmetDirective: a continuation names the unmet clauses');
   return `The merge is committed, but the resolve round changed nothing beyond it while these acceptance clauses of the spec are still unmet: ${unmet.map((u) => `${u.clause} (${u.text})`).join('; ')}. Carry them out now, run targeted checks and return your report for executor certification.`;
+}
+/**
+ * dev.81 (B4, B5): the one continuation of a final report whose `checks` lack a row proving a lane the round asked it to re-run:
+ * per lane, why (no row, a row at another commit than HEAD `head`, or a row with another exit than the lane expects).
+ */
+export type MissingCheck = Readonly<{ lane: LaneId; expectedExit: number; why: 'no-row' | 'other-head' | 'other-exit' }>;
+export function missingChecksDirective(missing: readonly MissingCheck[], head: string): string {
+  if (missing.length === 0) throw new Error('missingChecksDirective: a continuation names the lanes it lacks');
+  const why = (m: MissingCheck): string => m.why === 'no-row' ? 'no checks row' : m.why === 'other-head' ? `its checks row names another commit than HEAD ${head}` : `its checks row has another exit than the expected ${m.expectedExit}`;
+  return `Your final report does not prove these required lanes ran on your final tree: ${missing.map((m) => `${m.lane} (${why(m)})`).join('; ')}. Run each on the worktree as it is now and return your report with a checks row per lane: the lane, git rev-parse HEAD and its exit code. If a lane still fails, fix the cause or report the blocker.`;
 }
 /** A steer round's directive (R11): the architect's brief follows it verbatim. */
 export const STEER_DIRECTIVE = 'The architect is steering this unit: the brief below is their direction for this round, and it takes precedence over any earlier round\'s directives. The worktree holds the unit\'s work so far (committed, and possibly uncommitted changes); read it before you change anything. Follow the brief against the unit\'s intent and non-goals, run targeted checks and return your report for executor certification. The brief:';
@@ -105,6 +116,13 @@ export function stalledLaneDirective(lane: LaneId, stallMs: number): string {
 /** A lane that failed, then passed when rerun at the same commit (redlane.ts). */
 export function flakyLaneDirective(lane: LaneId, rerunEvidence: string): string {
   return `Lane ${lane} is flaky: it failed, then passed when the executor reran it at the same commit; its passing rerun's evidence is in ${rerunEvidence}. A flaky lane counts as red: find what makes it nondeterministic and make it pass every time.`;
+}
+
+/**
+ * dev.81 (B5): lanes red at the salvage head that the builder's own report says passed there: the environments diverge.
+ */
+export function environmentDivergenceDirective(lanes: readonly LaneId[], head: string): string {
+  return `Lanes ${lanes.join(', ')} failed in the executor's clean checkout of ${head}, though your report says they passed at that commit: your worktree differs from a fresh checkout (an ignored build output, a cache, an untracked file, an environment variable). Reproduce the failure in a fresh checkout of ${head} (git worktree add), find what your worktree had that it lacks, and fix the tree so the lanes pass from a clean checkout. This round is not charged.`;
 }
 
 /** Lanes that left tracked or unignored paths changed in a clean checkout of the commit (not certified). */

@@ -19,6 +19,11 @@
 //              publication's `docs-covered{pub, T → D}` (A17), the snapshot, the slot released.
 // A refusal before the ff releases the slot and aborts the revision (nothing is in force); the command reports why.
 //
+// What a revision publishes (dev.81, A3; src/commands/apply.ts `publicationOf`): each render compared with the tip's
+// bytes, so a render equal to the tip publishes nothing, and `constraints.md` never alone: a ruling-only revision makes
+// no docs commit (every docs ff is a push of the CI ref, src/forge/ciref.ts). Its rendering rides with the next
+// publication that changes another render, and the close-out re-renders it against the tip, so it is never lost.
+//
 // Selection (G12; SCHEMAS "Choices made in M3 A4"): the renders are not changed paths: the executor renders them from
 // in-force records or publishes the vision in force, and as unmapped paths they would select every must-hold
 // obligation. A docs candidate selects the obligations the revision adds,
@@ -170,8 +175,8 @@ async function releaseSlot(ctx: ResourceContext, pub: JobId): Promise<void> {
 // ---------------------------------------------------------------------------------------------------
 // The files
 
-/** A path's text at `commit`, or null when absent. */
-function textAt(repo: AbsPath, commit: Sha, path: RepoPath): string | null {
+/** A path's text at `commit`, or null when absent (also the revision's publication rule, apply.ts `publicationOf`). */
+export function textAt(repo: AbsPath, commit: Sha, path: RepoPath): string | null {
   const r = gitRun(repo, ['cat-file', 'blob', `${commit}:${path}`], { okCodes: [0, 128] });
   return r.code === 0 ? r.stdout : null;
 }
@@ -248,7 +253,7 @@ export const revisedObligations = (changes: readonly PlanChange[]): readonly Obl
 export function docsSelection(
   obligations: Obligations, changes: readonly PlanChange[], latched: ReadonlySet<ObligationId>,
 ): readonly ObligationId[] {
-  return selectObligations({ obligations, systemsMap: null, units: [], closure: [], changedPaths: [], revised: revisedObligations(changes), latched });
+  return selectObligations({ obligations, systemsMap: null, units: [], closure: [], changedPaths: [], revised: revisedObligations(changes), latched, delivers: () => false });
 }
 
 /** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */

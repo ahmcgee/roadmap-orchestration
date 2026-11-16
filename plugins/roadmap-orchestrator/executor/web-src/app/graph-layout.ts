@@ -12,11 +12,13 @@ export const MIN_ID_CHARS = 6;
 export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };
 /** A drawn group of units. A milestone band holds exactly its members and its gate; an outside group holds units of no
- * milestone, placed where they sit in the flow (just before the band whose work needs them, or after the last band). */
+ * milestone: a milestone's design, repair or polish units beside its band, Hardening units where they sit in the flow
+ * (just before the band whose work needs them, or after the last band), then each audit job's repairs and Deflake. */
 export type Band = { id: string; kind: 'milestone' | 'outside'; label: string; ids: string[]; x: number; y: number; width: number; height: number };
-/** A line-map station: one per milestone, then No milestone. Counts are membership (console/milestones.ts), never placement.
- * `frame` is what selecting it shows: a milestone's members, its gate and the outside units placed just before it. */
-export type Station = { id: string; label: string; passed: number; total: number; withdrawn: number; state: string; frame: string[]; groups: string[] };
+/** A line-map station: one per milestone, then Hardening, each audit job and Deflake. A milestone's counts are membership
+ * (console/milestones.ts), never placement; an outside station counts its own units. `frame` is what selecting it shows:
+ * a milestone's members, its gate and the outside groups placed with it; an outside station's units. */
+export type Station = { id: string; kind: 'milestone' | 'outside'; label: string; passed: number; total: number; withdrawn: number; state: string; frame: string[]; groups: string[] };
 export function graphLayout(e: GraphData) {
   const started = performance.now(), m = e;
   const gates = e.milestones ?? [];
@@ -36,37 +38,62 @@ export function graphLayout(e: GraphData) {
     for (const child of childrenOf.get(id) ?? []) { const left = pending.get(child)! - 1; pending.set(child, left); if (left === 0) ready.push(child); }
   }
   if (flow.length !== m.units.length) throw new Error(`graph dependencies form a cycle through ${m.units.filter(u => pending.get(u.id)! > 0).map(u => u.id).join(', ')}`);
-  // A unit of no milestone takes slot k: the outside group just before band k (gates.length: after the last band).
-  // It comes after the latest milestone it waits on, directly or through what it depends on, and as late as the
-  // earliest band that needs it allows, so it sits beside the work it feeds. Waiting wins over feeding: a member that
-  // needs a unit placed after its own band keeps its band, and that edge is drawn running backwards.
+  // dev.81 (D1): units of no milestone are drawn in the groups the server names (console/milestones.ts `outsideGroups`).
+  // A group attached to a milestone sits with its band: its design units just before it, its repair and polish units
+  // just after it. Audit and Deflake groups follow the last band. Hardening units are placed by the flow: each takes
+  // slot k, the Hardening group just before band k (gates.length: after the last band). It comes after the latest
+  // milestone it waits on, directly or through what it depends on, and as late as the earliest band that needs it
+  // allows, so it sits beside the work it feeds. Waiting wins over feeding: a member that needs a unit placed after its
+  // own band keeps its band, and that edge is drawn running backwards. A placed group's units count, for the flow, as
+  // sitting just before (design) or just after (repair, polish) their milestone's band, or after the last (the rest).
+  const gateIndex = new Map(gates.map((g, i) => [g.id, i]));
+  const groupOf = new Map<string, GraphData['groups'][number]>();
+  for (const g of e.groups ?? []) for (const id of g.ids) groupOf.set(id, g);
+  const fixed = (id: string): { before: number; after: number } | null => {
+    const g = groupOf.get(id);
+    if (g === undefined || g.kind === 'hardening') return null;
+    if (g.kind === 'design') { const i = gateIndex.get(g.milestone)!; return { before: i, after: i }; }
+    if (g.kind === 'milestone-repair' || g.kind === 'polish') { const i = gateIndex.get(g.milestone)! + 1; return { before: i, after: i }; }
+    return { before: gates.length, after: gates.length };
+  };
+  const hardening = (id: string) => !memberOf.has(id) && fixed(id) === null;
   const earliest = new Map<string, number>(), slot = new Map<string, number>();
-  for (const id of flow) if (!memberOf.has(id)) {
+  for (const id of flow) if (hardening(id)) {
     let after = -Infinity;
     for (const gate of waitsOn.get(id) ?? []) after = Math.max(after, gate + 1);
-    for (const parent of parentsOf.get(id) ?? []) after = Math.max(after, memberOf.has(parent) ? memberOf.get(parent)! + 1 : earliest.get(parent)!);
+    for (const parent of parentsOf.get(id) ?? []) after = Math.max(after, memberOf.has(parent) ? memberOf.get(parent)! + 1 : fixed(parent)?.after ?? earliest.get(parent)!);
     earliest.set(id, after);
   }
-  for (const id of [...flow].reverse()) if (!memberOf.has(id)) {
+  for (const id of [...flow].reverse()) if (hardening(id)) {
     let needed = Infinity;
-    for (const child of childrenOf.get(id) ?? []) needed = Math.min(needed, memberOf.get(child) ?? slot.get(child)!);
+    for (const child of childrenOf.get(id) ?? []) needed = Math.min(needed, memberOf.get(child) ?? fixed(child)?.before ?? slot.get(child)!);
     const after = earliest.get(id)!;
-    // Unconnected to any milestone: the trailing No milestone group.
+    // Unconnected to any milestone: the trailing Hardening group.
     slot.set(id, needed < Infinity ? Math.max(after, needed) : after > -Infinity ? after : gates.length);
   }
-  const outside = (k: number) => m.units.filter(u => slot.get(u.id) === k).map(u => u.id);
+  // dev.81 (D2): a shown withdrawn unit sits beside its successor: in the successor's slot, and (below) its column.
+  const successor = new Map(m.units.flatMap(u => u.successor !== null && u.successor !== undefined ? [[u.id, u.successor] as const] : []));
+  const slotOf = (id: string): number => { const next = successor.get(id); return next !== undefined && hardening(next) ? slotOf(next) : slot.get(id)!; };
+  for (const id of successor.keys()) if (hardening(id)) slot.set(id, slotOf(id));
+  const outside = (k: number) => m.units.filter(u => hardening(u.id) && slot.get(u.id) === k).map(u => u.id);
   const group = (id: string, kind: Band['kind'], label: string, ids: string[]): Band => ({ id, kind, label, ids, x: 0, y: 0, width: 0, height: 0 });
   const bands: Band[] = [], stations: Station[] = [];
   gates.forEach((g, i) => {
     const lead = outside(i), members = g.units.filter(id => memberOf.get(id) === i), id = `milestone:${g.id}`;
-    if (lead.length) bands.push(group(`lead:${g.id}`, 'outside', 'No milestone', lead));
-    bands.push(group(id, 'milestone', g.name ?? g.id, members));
-    stations.push({ id, label: g.name ?? g.id, passed: g.merged, total: g.total, withdrawn: g.withdrawn, state: g.signal, frame: [...lead, ...members, id], groups: [...lead.length ? [`lead:${g.id}`] : [], id] });
+    const attached = (kind: string) => (e.groups ?? []).filter(o => o.kind === kind && 'milestone' in o && o.milestone === g.id).map(o => group(o.id, 'outside', o.label, o.ids));
+    const before = [...lead.length ? [group(`lead:${g.id}`, 'outside', 'Hardening', lead)] : [], ...attached('design')], after = [...attached('milestone-repair'), ...attached('polish')];
+    bands.push(...before, group(id, 'milestone', g.name ?? g.id, members), ...after);
+    stations.push({ id, kind: 'milestone', label: g.name ?? g.id, passed: g.merged, total: g.total, withdrawn: g.withdrawn, state: g.signal, frame: [...before.flatMap(b => b.ids), ...members, id, ...after.flatMap(b => b.ids)], groups: [...before.map(b => b.id), id, ...after.map(b => b.id)] });
   });
   const trailing = outside(gates.length);
-  if (trailing.length) bands.push(group('unbound', 'outside', 'No milestone', trailing));
-  const unplaced = m.units.filter(u => !memberOf.has(u.id)).map(u => u.id);
-  if (unplaced.length) stations.push({ id: 'unbound', label: 'No milestone', passed: e.noMilestone.merged, total: e.noMilestone.total, withdrawn: e.noMilestone.withdrawn, state: 'pending', frame: unplaced, groups: bands.filter(b => b.kind === 'outside').map(b => b.id) });
+  if (trailing.length) bands.push(group('hardening', 'outside', 'Hardening', trailing));
+  const counts = (g: GraphData['groups'][number]) => ({ passed: g.passed, total: g.total, withdrawn: g.withdrawn });
+  const everyHardening = m.units.filter(u => hardening(u.id)).map(u => u.id), hardeningGroup = (e.groups ?? []).find(g => g.kind === 'hardening');
+  if (hardeningGroup) stations.push({ id: 'hardening', kind: 'outside', label: 'Hardening', ...counts(hardeningGroup), state: 'pending', frame: everyHardening, groups: bands.filter(b => b.id === 'hardening' || b.id.startsWith('lead:')).map(b => b.id) });
+  for (const o of e.groups ?? []) if (o.kind === 'audit' || o.kind === 'deflake') {
+    bands.push(group(o.id, 'outside', o.label, o.ids));
+    stations.push({ id: o.id, kind: 'outside', label: o.label, ...counts(o), state: 'pending', frame: o.ids, groups: [o.id] });
+  }
   const assigned = new Set(bands.flatMap(b => b.ids));
   const positions = new Map<string, Point>();
   const unitEdges = m.graph.edges.filter(([a,b]) => assigned.has(a) && (assigned.has(b) || b.startsWith('milestone:')));
@@ -85,6 +112,12 @@ export function graphLayout(e: GraphData) {
       }
       if (!changed) break;
     }
+    // A shown withdrawn unit takes its successor's rank, so it sits in the same column, directly before it (below), unless
+    // that column would draw one of its own dependencies backwards (its successor sits left of its parents, or at or right
+    // of a unit depending on it): then it keeps its own rank, its original place.
+    const fits = (id: string, rank: number): boolean => rank >= ranks.get(id)! && band.ids.every(child => !(incoming.get(child) ?? []).includes(id) || ranks.get(child)! > rank);
+    const rankOf = (id: string): number => { const next = successor.get(id); if (next === undefined || !ids.has(next)) return ranks.get(id)!; const rank = rankOf(next); return fits(id, rank) ? rank : ranks.get(id)!; };
+    for (const id of band.ids) if (successor.has(id)) ranks.set(id, rankOf(id));
     for (let rank = 0; rank <= Math.max(0, ...ranks.values()); rank++) {
       const members = band.ids.filter(id => ranks.get(id) === rank);
       if (members.length) { for (const id of members) columnOf.set(id, columns.length); columns.push(members); }
@@ -120,6 +153,15 @@ export function graphLayout(e: GraphData) {
       refresh(column);
     }
   }
+  // Each shown withdrawn unit directly before its successor in their column (a chain of re-entries stays in order).
+  const beside = (id: string): void => {
+    const next = successor.get(id), column = next === undefined ? undefined : ordered[columnOf.get(id)!];
+    if (next === undefined || column === undefined || !column.includes(next)) return;
+    beside(next);
+    column.splice(column.indexOf(id), 1); column.splice(column.indexOf(next), 0, id);
+  };
+  for (const id of successor.keys()) beside(id);
+  ordered.forEach(refresh);
   let x = 36;
   for (let i = 0; i < columns.length; i++) {
     const column = columns[i]!, width = NODE_WIDTH;

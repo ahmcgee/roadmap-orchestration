@@ -6,7 +6,9 @@ import { type TestRef, testRefKey } from '../core/events.ts';
 import { type LaneId, type ObligationId, type Sha, type UnitId, type WitnessItemId, compareIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specObligations, specRepairs, specWitnesses } from '../core/records.ts';
-import { type ObligationDef, type Obligations, type WitnessRecord, isExempt, isMustHold } from './types.ts';
+import { deliverers, delivers } from '../input/lineage.ts';
+import { unmergedOf } from './blocking.ts';
+import { type ObligationDef, type Obligations, type PlanDefect, type WitnessRecord, isExempt, isMustHold } from './types.ts';
 
 /** Why a test id is required: a target the unit delivers or repairs, or a must-hold it declares and must keep (preservation). */
 export type WitnessRole = 'target' | 'preservation';
@@ -35,7 +37,7 @@ const binding = (o: ObligationDef): boolean => o.state.type === 'active' && !isE
  * The merge commit each unit published through `ff` (its own, or its repair batch's), as the log records it; a unit
  * that never published has none.
  */
-function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
+export function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
   const out = new Map<UnitId, Sha>();
   const batches = new Map<string, readonly UnitId[]>();
   for (const i of view.opsOf('candidate.merge')) if (i.expect.batch !== undefined) batches.set(i.expect.batch.job, i.expect.batch.members.map((m) => m.unit));
@@ -52,7 +54,9 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
 /**
  * The witness test ids unit `unit` must make pass on `at` (R33), ascending by lane, test id, then source:
  *   - targets: the witnesses of each binding obligation the unit completes (its `deliveredBy` names the unit, and every
- *     other deliverer's published merge is an ancestor of `at`); of each binding obligation its spec repairs; and the
+ *     other deliverer's published merge is an ancestor of `at`; dev.81, A1: deliverers resolved through lineage, so a
+ *     re-entry completes what its parent was named for, and a superseded co-deliverer stands for its re-entry, whose
+ *     merge it waits for); of each binding obligation its spec repairs; and the
  *     spec's active witness items;
  *   - preservation: the witnesses of each binding obligation its spec declares that is must-hold (by activation, or a
  *     future one latched by a publication whose merge is an ancestor of `at`) and is not already a target.
@@ -63,7 +67,7 @@ function published(view: JournalView): ReadonlyMap<UnitId, Sha> {
 export function requiredWitnesses(view: JournalView, obligations: Obligations, unit: UnitId, spec: SpecM1, at: WitnessTree): readonly RequiredWitness[] {
   const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
   const merges = published(view);
-  const completes = (o: ObligationDef): boolean => o.deliveredBy.includes(unit) && o.deliveredBy.every((d) => {
+  const completes = (o: ObligationDef): boolean => delivers(view, o, unit) && deliverers(view, o).every((d) => {
     if (d === unit) return true;
     const merge = merges.get(d);
     return merge !== undefined && at.isAncestor(merge);
@@ -108,6 +112,33 @@ function compareRows(a: RequiredWitness, b: RequiredWitness): number {
 
 /** Mutation smoke's targets (Q16): the `target` rows; preservation must-holds are never smoked. */
 export const smokeTargets = (required: readonly RequiredWitness[]): readonly RequiredWitness[] => required.filter((r) => r.role === 'target');
+
+/**
+ * dev.81 (B3a): the plan defects behind smoke survivors no build of `unit` can kill. Each survivor's target rows must all
+ * be the witness of an obligation the unit repairs but does not deliver (`delivers`: a target obligation row the unit
+ * does not deliver is an `I-n` repair), with deliverers, every one of them merged (`unmergedOf`): another unit's merged
+ * work already holds the witness, so reverting this unit's change cannot fail it. One `repair-delivered-elsewhere` per
+ * such obligation, ascending. Empty when any survivor is something else (a delivered target, a witness item, a repair
+ * of an obligation nobody else delivers): the survivors are then the build's, `smoke-survived` as before.
+ */
+export function repairsDeliveredElsewhere(
+  view: JournalView, obligations: Obligations, unit: UnitId, targets: readonly RequiredWitness[], survived: readonly TestRef[],
+): readonly PlanDefect[] {
+  const byId = new Map(obligations.obligations.map((o) => [o.id, o]));
+  const elsewhere = new Map<ObligationId, readonly UnitId[]>();
+  for (const ref of survived) {
+    const rows = targets.filter((t) => testRefKey(t) === testRefKey(ref));
+    if (rows.length === 0) throw new Error(`smoke survivor ${testRefKey(ref)} is not among unit ${unit}'s targets`);
+    for (const row of rows) {
+      if (row.source.type !== 'obligation') return [];
+      const o = byId.get(row.source.id)!;
+      const by = deliverers(view, o);
+      if (delivers(view, o, unit) || by.length === 0 || unmergedOf(view, by).length > 0) return [];
+      elsewhere.set(o.id, [...by].sort());
+    }
+  }
+  return [...elsewhere.keys()].sort(compareIds).map((id) => ({ type: 'repair-delivered-elsewhere', obligation: id, units: elsewhere.get(id)! }));
+}
 
 /**
  * Which required test ids a lane run's records fail to witness (the one comparator of the lanes stage and `witness-check`):

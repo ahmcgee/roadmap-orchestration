@@ -4,7 +4,7 @@ import { Fragment, useContext, useEffect, useRef, useState } from 'react';
 import { Drawer, Intent } from './drawer.tsx';
 import { HistoryMarkdown } from './markdown.tsx';
 import { Button } from '../components/ui/button.tsx';
-import { Clock, elapsed, link, money, pluralise, route, sentence, SignalMark, Time, get } from './shared.tsx';
+import { Clock, elapsed, link, money, pluralise, route, sentence, SignalMark, Time, get, useShowWithdrawn } from './shared.tsx';
 import { useSelectedDetail, Views } from './view-state.ts';
 import type { UnitView, MilestoneView, DetailPage } from '../../src/console/detail-protocol.ts';
 import { costWords, holdClassWords, plainWords, stageStatusWords, stageWords, stateWords, signalWords, timedWords, waitCountWords } from '../../src/console/vocabulary.ts';
@@ -12,6 +12,7 @@ function More({page,load}:{page:DetailPage<unknown>;load:()=>void}){return page.
 export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void}) {
   const cache=useContext(Views);
   const now=useContext(Clock),[trail,setTrail]=useState<string[]>([]),[housekeeping,setHousekeeping]=useState(false);
+  const [showWithdrawn,setShowWithdrawn]=useShowWithdrawn();
   const path=id.startsWith('milestone:')?`milestones/${encodeURIComponent(id.slice(10))}`:`units/${encodeURIComponent(id)}`;
   const request=useRef(0);useEffect(()=>()=>{request.current++;},[path,cache?.generation]);
   const selected=useSelectedDetail(arc,cache?.metadata?path:null),[detail,setDetail]=useState<any>(null),[error,setError]=useState('');
@@ -41,7 +42,7 @@ export function UnitDetail({arc,id,close}:{arc:string;id:string;close:()=>void})
       {g.reason&&<p className="milestone-reason">Not passed. {sentence(g.reason)}</p>}
       <Button variant="outline" onClick={()=>{close();window.dispatchEvent(new CustomEvent('roadmap-focus-milestone',{detail:id}));}}>Focus this milestone</Button>
       <section><h3>Outstanding units ({g.total-g.merged})</h3><div className="outstanding-units">{outstanding.map(row)}</div>{!outstanding.length&&!g.members.next&&<p className="muted">None</p>}</section>
-      {g.withdrawn>0&&<section><h3>Withdrawn units ({g.withdrawn})</h3><div className="outstanding-units">{withdrawn.map(row)}</div></section>}<More page={g.members} load={()=>void more('members')}/>{intent}{continuations}
+      {g.withdrawn>0&&<section><h3>Withdrawn units ({g.withdrawn})</h3>{showWithdrawn?<div className="outstanding-units">{withdrawn.map(row)}</div>:<Button variant="outline" onClick={()=>setShowWithdrawn(true)}>Show withdrawn ({g.withdrawn})</Button>}</section>}<More page={g.members} load={()=>void more('members')}/>{intent}{continuations}
     </Drawer>;
   }
   const d=detail as UnitView,u=d.unit,signal=u.signal;

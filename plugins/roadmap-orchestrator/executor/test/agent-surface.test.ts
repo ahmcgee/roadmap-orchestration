@@ -1,5 +1,6 @@
 import { lensCoverage } from '../src/holistic/coverage.ts';
 import { sha,sha256 } from '../src/core/ids.ts';
+import type { JsonValue } from '../src/core/json.ts';
 import { claudeBuilderRouting } from '../src/routing/eligibility.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { cadence } from '../src/holistic/cadence.ts';
@@ -319,15 +320,24 @@ test('surface.fix-round: a gate revision delivers findings, experiments and live
   } finally {r.journal.close();}
   const broken = {...MUL, 'src/add.js': 'export function add(a, b) { return a - b; }\n'};
   const report = {...BUILD_REPORT, notes: ['Keep the narrow regression experiment and inspect the passing base.']};
-  const step = (files: Readonly<Record<string, string>>, message: string) => ({as: 'codex' as const, expect: {}, acts: [{type: 'commit' as const, message, files}, {type: 'emit' as const, value: report}]});
+  const step = (files: Readonly<Record<string, string>>, message: string, value: JsonValue = report) => ({as: 'codex' as const, expect: {}, acts: [{type: 'commit' as const, message, files}, {type: 'emit' as const, value}]});
   const lanes = [{id: 'regression', argv: ['sh', '-c', 'if grep -q "return a - b" src/add.js; then echo "src/add.js:1 ASSERTION_ADD broken sum"; exit 1; fi']}];
-  const red = setupArc({units: [{id: 'u1', lanes}], steps: [step(broken, 'introduce regression'), step({'src/round-two.js': 'export const round = 2;\n'}, 'retain regression'), step({'src/add.js': 'export function add(a, b) { return a + b; }\n'}, 'fix regression'), gateStep({decision: 'approve'})]});
+  // dev.81 (B4, B5): the round that retains the regression claims no passing check of it (a report the fake would otherwise fill
+  // with the required check passing at HEAD, which the red lane would read as an environment divergence, not a regression). Its
+  // report owes the required check, so it is continued once; the continuation still claims none.
+  const unproven = {...report, checks: []};
+  const red = setupArc({units: [{id: 'u1', lanes}], steps: [
+    step(broken, 'introduce regression'), step({'src/round-two.js': 'export const round = 2;\n'}, 'retain regression', unproven),
+    {as: 'codex' as const, expect: {}, acts: [{type: 'emit' as const, value: unproven}]},
+    step({'src/add.js': 'export function add(a, b) { return a + b; }\n'}, 'fix regression'), gateStep({decision: 'approve'}),
+  ]});
   const runtime = contextFor(red);
   try {
     assert.deepEqual(await runUnit(runtime.ctx, runtime.unit('u1'), admitAll), {kind: 'merged'});
     const builds = readCalls(red.scenarioPath).filter((c) => c.as === 'codex');
-    assert.equal(builds.length, 3);
-    const prompt = builds[2]!.stdin;
+    assert.equal(builds.length, 4);
+    assert.match(builds[2]!.stdin, /does not prove these required lanes ran on your final tree: regression \(no checks row\)/);
+    const prompt = builds[3]!.stdin;
     const comparisons = runtime.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared');
     assert.equal(comparisons.length, 1);
     const compared = comparisons[0]!;

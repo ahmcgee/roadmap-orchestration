@@ -5,7 +5,7 @@ import { pathClass } from '../input/systems.ts';
 //   - every obligation a changed path touches: one of its contracts, its docRef's document (a rule-anchored one, M4a,
 //     touches no document path), a file its witness lane
 //     runs (an argv entry resolved against the lane's cwd), or a mapping pattern naming it;
-//   - the future obligations its units deliver;
+//   - the future obligations its units deliver (dev.81: through lineage, `ImpactInput.delivers`);
 //   - every must-hold obligation (`isMustHold`: a latched future one included) when a changed path matches no mapping pattern;
 //   - a revision publication's added, split or re-witnessed obligations (G12);
 // then the split closure (H14), to a fixed point: a selected child selects its parent, a selected parent its
@@ -49,7 +49,7 @@ function select(input: ImpactInput, unmappedFallback: boolean): readonly Obligat
       if (unmappedFallback && mapped.length === 0 && isMustHold(o, input.latched)) picked.add(o.id);
     }
   }
-  for (const o of all.values()) if (o.activation === 'future' && o.deliveredBy.some((u) => units.includes(u))) picked.add(o.id);
+  for (const o of all.values()) if (o.activation === 'future' && units.some((u) => input.delivers(o, u))) picked.add(o.id);
 
   // Split closure, to a fixed point.
   for (let grew = true; grew;) {

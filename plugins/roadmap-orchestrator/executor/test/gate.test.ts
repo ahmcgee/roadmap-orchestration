@@ -7,9 +7,10 @@ import { systemName } from '../src/core/ids.ts';
 // gate.approval-captured-fingerprint, gate.partial-supersession-regates. 2026-10-16 (the read surface widened; a refused read
 // voids nothing): gate.read-surface, pre-build.read-surface. 2026-10-16 (prompt_too_long): context-exceeded.gate,
 // context-exceeded.pre-build, context-exceeded.build. dev.12: gate.repair-turn; the large-diff gate: gate.large-diff,
-// gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout.
+// gate.large-diff-seat, gate.cluster-coverage. dev.13: gate.acting-checkout. dev.16: gate.symlink-in-checkout. dev.81:
+// gate.escalation-revise-new, gate.escalation-revise-repeat.
 import assert from 'node:assert/strict';
-import { existsSync,readFileSync,writeFileSync } from 'node:fs';
+import { existsSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { describe,it,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -557,10 +558,17 @@ const approvals = (d: ArcDescriptor) => events(d.runDir).flatMap((e) => (e.type 
 test('gate.no-cpu-fence-deadlock: @cpu capacity 2, a gate and a rule whose docs lane needs both tokens race for the fence; both finish', T, async () => {
   // The gate's `@cpu`×1 and a fast lane's ×2 cannot run together: a gate holding its token while it waits for the
   // fence the rule holds through its docs publication (whose lane waits for @cpu) would deadlock.
-  const d = publishArc({ steps: straightToGate() }, (a) => editPlan(a, (p) => {
-    p['capacity'] = { cpu: 2 };
-    p.units[0]!['cpu'] = 2;
-  }));
+  // A holistic arc: a ruling alone publishes nothing since dev.81 (src/commands/apply.ts `publicationOf`), so the rule
+  // edits the cut line too and its revision publishes docs through the lane (fixtures/publish-common.ts `submitRule`).
+  const d = publishArc({ steps: straightToGate() }, (a) => {
+    writeFileSync(join(planDirOf(a), 'vision.json'), JSON.stringify(VISION));
+    writeFileSync(join(planDirOf(a), 'obligations.json'), JSON.stringify(OBLIGATIONS));
+    editPlan(a, (p) => {
+      p['capacity'] = { cpu: 2 };
+      p.units[0]!['cpu'] = 2;
+      p['holistic'] = { vision: 'vision.json', advances: ['V-1', 'V-2', 'V-3'], obligations: 'obligations.json' };
+    });
+  });
   const r = contextFor(d);
   const w = wire(r);
   const stop = ticking(w);
@@ -568,7 +576,7 @@ test('gate.no-cpu-fence-deadlock: @cpu capacity 2, a gate and a rule whose docs 
     await stepUntil(r, 'u1', (f) => f.stage === 'lanes' && f.outcome === 'green');
     const hold = await holdFence(r.journal);
     // The rule queues on the fence first, then the gate.
-    const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2')));
+    const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2'), true));
     await sleep(1_500);
     const gating = step(w.stage, r.unit('u1'));
     await sleep(1_500);
@@ -580,6 +588,8 @@ test('gate.no-cpu-fence-deadlock: @cpu capacity 2, a gate and a rule whose docs 
     assert.equal(gated.kind, 'continue');
     assert.equal(outcomes(d).at(-1), 'gate:approve');
     assert.equal(judgmentInputs(d, 'gate')[0]!.planRev, 2, 'the gate captured the revision the rule committed');
+    assert.equal(r.journal.view.planApplied()!.publication?.pub, 'docs-1', 'the rule published docs');
+    assert.ok(readdirSync(join(d.runDir, 'evidence', 'jobs', 'docs-1')).some((l) => l.startsWith('suite-suite-')), 'the docs publication ran its suite lane, the one that needs both @cpu tokens');
     assert.deepEqual(r.journal.view.openIntents(), []);
   } finally {
     stop();
@@ -752,4 +762,55 @@ describe('tail.gate-debt', () => {
       { index: 3, what: 'add() drops a trailing zero.' },
     ]);
   });
+});
+
+// dev.81 (B2): the escalation seat's revise once the revise rounds are spent. Two charged revises, the route-up (the risk
+// seat's third revise, same head), then the escalation seat's answer.
+const escBlocking = (text: string, reraises: string | null): JsonValue =>
+  ({ evidence: ['src/mul.js:1'], severity: 'blocking', path: 'src/mul.js', text, contractRef: null, experiments: [], defect: 'incorrect-behaviour', reraises, hunk: null, debt: null });
+const escRevise = (text: string, reraises: string | null): Step => gateStep({ rulings: [], decision: 'revise', directives: [`Fix: ${text}`], findings: [escBlocking(text, reraises)] });
+/** A fix round (the build session resumed) adding export `name` to src/mul.js, so every round changes the file. */
+const escFix = (round: number): Step => codexStep([{ type: 'commit', message: `fix round ${round}`, files: { 'src/mul.js': `${MUL['src/mul.js']}${Array.from({ length: round }, (_, i) => `export const round${i + 1} = ${i + 1};\n`).join('')}` } }], { argv: ['exec', 'resume'] });
+/** gate 1 mints R-1; gate 2 re-raises it (R-2); gate 3, the route-up, raises R-3, which no builder is given. */
+const toEscalation = (): readonly Step[] => [
+  planCheckStep({ decision: 'approve' }), mulBuild(),
+  escRevise('mul rounds wrongly.', null), escFix(1),
+  escRevise('mul still rounds wrongly.', 'R-1'), escFix(2),
+  escRevise('mul overflows.', null),
+];
+const gateKinds = (d: ArcDescriptor): readonly string[] => outcomes(d).filter((o) => o.startsWith('gate:'));
+
+test('gate.escalation-revise-new: an escalation revise re-raising the route-up\'s finding takes one uncharged fix round; the next escalation revise parks', T, async () => {
+  const d = setupArc({ steps: [...toEscalation(), escRevise('mul still overflows.', 'R-3'), escFix(3), escRevise('mul drops the sign.', null)] });
+  const r = contextFor(d);
+  try {
+    const result = await runUnit(r.ctx, r.unit('u1'), live());
+    assert.equal(result.kind, 'parked');
+    assert.equal(result.kind === 'parked' ? result.needsUser.reason : null, 'escalation');
+    assert.deepEqual(gateKinds(d), ['gate:revise', 'gate:revise', 'gate:revise', 'gate:revise-new', 'gate:revise-new']);
+    const gates = events(d.runDir).flatMap((e) => (e.type === 'fact' && e.fact.kind === 'stage-outcome' && 'unit' in e.fact && e.fact.stage === 'gate' ? [[e.fact.class, e.fact.chargeable]] : []));
+    assert.deepEqual(gates, [['revise', true], ['revise', true], ['route-up', false], ['escalation-revise', false], ['park', false]]);
+    const u = r.journal.view.unit(U1);
+    assert.deepEqual([u.counters.reviseRounds, u.counters.escalationRevises, u.counters.chargeableFailures, u.routedUp], [2, 1, 2, ['gate']]);
+    // The escalation fix round is a build like any revise's: it was given the escalation seat's directive.
+    const fixes = readCalls(d.scenarioPath).filter((c) => c.as === 'codex' && c.argv.includes('resume'));
+    assert.equal(fixes.length, 3);
+    assert.ok(fixes[2]!.stdin.includes('Fix: mul still overflows.'));
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('gate.escalation-revise-repeat: an escalation revise whose every blocking finding re-raises one a builder had parks, as before', T, async () => {
+  const d = setupArc({ steps: [...toEscalation(), escRevise('mul still rounds wrongly, again.', 'R-2')] });
+  const r = contextFor(d);
+  try {
+    const result = await runUnit(r.ctx, r.unit('u1'), live());
+    assert.equal(result.kind === 'parked' ? result.needsUser.reason : result.kind, 'escalation');
+    assert.deepEqual(gateKinds(d), ['gate:revise', 'gate:revise', 'gate:revise', 'gate:revise']);
+    assert.equal(r.journal.view.unit(U1).counters.escalationRevises, 0);
+    assert.equal(readCalls(d.scenarioPath).filter((c) => c.as === 'codex' && c.argv.includes('resume')).length, 2, 'no escalation fix round');
+  } finally {
+    r.journal.close();
+  }
 });

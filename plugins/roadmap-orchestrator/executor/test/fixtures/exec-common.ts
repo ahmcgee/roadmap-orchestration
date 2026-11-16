@@ -12,7 +12,7 @@ import { arcId } from '../../src/core/ids.ts';
 import { type LogSnapshot, readJournal } from '../../src/core/log.ts';
 import { absPath } from '../../src/core/values.ts';
 import type { ExitReason } from '../../src/executor.ts';
-import type { Status } from '../../src/status.ts';
+import type { WireStatus } from '../../src/status-wire.ts';
 import { type Exit, fixture, runFixture } from '../helpers/proc.ts';
 import { type Owner, own } from '../helpers/reap.ts';
 import { git, tmpDir } from '../helpers/repo.ts';
@@ -111,8 +111,9 @@ export async function cli(r: ExecRun, argv: readonly string[]): Promise<Exit> {
   return out;
 }
 
-export async function statusOf(r: ExecRun): Promise<Status> {
-  return JSON.parse((await cli(r, ['status'])).stdout) as Status;
+/** The status `roadmap status` prints: folded for the wire (src/status-wire.ts, dev.81 D3). */
+export async function statusOf(r: ExecRun): Promise<WireStatus> {
+  return JSON.parse((await cli(r, ['status'])).stdout) as WireStatus;
 }
 
 /** The exit reason `roadmap start` printed (its one stdout line). */

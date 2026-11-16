@@ -55,7 +55,9 @@
         },
         "work": [],
         "failures": [],
-        "gate": null
+        "gate": null,
+        "origin": "planned",
+        "repairs": []
       },
       {
         "unit": "u2",
@@ -107,7 +109,9 @@
         },
         "work": [],
         "failures": [],
-        "gate": null
+        "gate": null,
+        "origin": "planned",
+        "repairs": []
       },
       {
         "unit": "u3",
@@ -149,7 +153,9 @@
         },
         "work": [],
         "failures": [],
-        "gate": null
+        "gate": null,
+        "origin": "planned",
+        "repairs": []
       }
     ],
     "edges": [
@@ -277,6 +283,11 @@
       "pools": {
         "@cpu": {
           "size": 16,
+          "used": 0,
+          "dirty": 0
+        },
+        "@fast-suite": {
+          "size": 2,
           "used": 0,
           "dirty": 0
         }
@@ -492,6 +503,11 @@
       "unmeasuredReservations": 0,
       "byUnitStage": [],
       "byJobStage": []
+    },
+    "pushes": {
+      "ciHead": null,
+      "pending": "<sha>",
+      "settleBy": null
     }
   },
   "summary": {

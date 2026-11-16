@@ -24,14 +24,14 @@ import { selfIdentity } from '../src/host/liveness.ts';
 import { claimHost,releaseHost } from '../src/host/lock.ts';
 import { changesScope,classify,splitCutReason } from '../src/input/classify.ts';
 import { CORPUS_FILE_INPUT,keptInput,planInForce,readInputFiles,recordPlan,revisionInForce } from '../src/input/inforce.ts';
-import { MILESTONE_REFERENCES_BUDGET } from '../src/phase0/rows.ts';
+import { APPLY,MILESTONE_REFERENCES_BUDGET,phase0InputOf,phase0Rows } from '../src/phase0/rows.ts';
 import { type StartChecks,type StartInput,runChecks } from '../src/preflight/checks.ts';
 import type { StartupRejection } from '../src/preflight/startup.ts';
 import {
 type CorpusArc,PIN_FILE,W1_FILE,W_SCRIPTS_LISTED,corpusArc,editJsonFile,editPhase0,editPlan,filesOf,inForce,newHostDir,readJsonFile,runDirOfArc,
 visionRecord,w1Item,wScriptsArchitecture,withForge,withSpecWitness,
 } from './helpers/corpusarc.ts';
-import { commitAll,makeRepo,revParse,tmpDir,writeFiles } from './helpers/repo.ts';
+import { commitAll,git as gitIn,makeRepo,revParse,tmpDir,writeFiles } from './helpers/repo.ts';
 
 const T = { timeout: 120_000 };
 type Json = Record<string, unknown>;
@@ -410,6 +410,8 @@ describe('vision edits publish (dev.16)', () => {
     try {
       const v = readJsonFile(join(a.repo, '.roadmap/vision.json'));
       const next = `${JSON.stringify({ ...v, rev: 2, clauses: [...(v['clauses'] as Json[]), V3] })}\n`;
+      // On the owner's branch: the integration tip does not hold it yet (dev.81: a render equal to the tip is no publication).
+      gitIn(a.repo, 'checkout', '--quiet', '-b', 'owner');
       writeFiles(a.repo, { '.roadmap/vision.json': next });
       commitAll(a.repo, 'vision rev 2');
       const out = accepted(await apply(a, j, true));
@@ -423,6 +425,7 @@ describe('vision edits publish (dev.16)', () => {
   it('vision.repin-publishes-doc: a same-repo re-pin that changes the vision document publishes it (its bytes at the pin\'s commit) with the vision record that confirms it', T, async () => {
     const { a, j } = await arcInForce();
     try {
+      gitIn(a.repo, 'checkout', '--quiet', '-b', 'owner');
       const commit = commitCorpus(a, '0005_Vision.md', (t) => `${t}Quiet nights in every berth.\n`);
       await repin(a, commit);
       const doc = readFileSync(join(a.repo, VISION_PATH), 'utf8');
@@ -527,6 +530,22 @@ describe('holistic arcs target a corpus (H4)', () => {
 });
 
 // Revision delta (2026-10-27; 1.0.0-dev.26): old defects remain visible without blocking unrelated work.
+describe('a repair delivered elsewhere (dev.81, B3a)', () => {
+  // u1 delivers the future I-1; u2's spec repairs it. Once u1 is merged, reverting u2 cannot fail I-1's witness: the
+  // apply's rows advise it (the lanes stage parks it plan-defect at run time), and never refuse it.
+  it('apply.repair-delivered-elsewhere: a live unit repairing an obligation only merged units deliver is an advisory, not a refusal', T, async () => {
+    const a = await corpusArc({ activation: 'future' });
+    writeFileSync(join(a.planDir, 'u2.json'), JSON.stringify({ ...readJsonFile(join(a.planDir, 'u1.json')), unit: 'u2', repairs: ['I-1'] }));
+    editPlan(a, (p) => ({ ...p, units: [...p['units'] as Json[], { ...(p['units'] as Json[])[0]!, id: 'u2', spec: 'u2.json' }] }));
+    const input = phase0InputOf(filesOf(a), readRepoConfig(a.repo), null);
+    const advised = (merged: readonly string[]) => phase0Rows({ ...input, merged: new Set(merged.map((u) => unitId(u))), settled: new Set(merged.map((u) => unitId(u))) }, APPLY);
+    assert.deepEqual(advised([]).advisories.filter((x) => x.kind === 'repair-delivered-elsewhere'), [], 'u1 unmerged: the repair may still be the one that delivers');
+    const merged = advised(['u1']);
+    assert.deepEqual(merged.advisories.filter((x) => x.kind === 'repair-delivered-elsewhere'), [{ kind: 'repair-delivered-elsewhere', unit: 'u2', obligation: 'I-1', units: ['u1'] }]);
+    assert.deepEqual(merged.rows, advised([]).rows, 'no refusal');
+  });
+});
+
 describe('revision plan-defect delta', () => {
   const milestone = (id: string, references: readonly string[]): Json => ({
     id, text: 'Berths work.', units: ['u1'], design: { supplied: true }, references,

@@ -4,14 +4,17 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { acknowledge, applyCommand } from '../src/commands/apply.ts';
 import { submitCommand } from '../src/commands/queue.ts';
-import { commandId } from '../src/core/ids.ts';
+import { arcId, commandId, laneRev, obligationId, sha } from '../src/core/ids.ts';
 import { branchName } from '../src/core/values.ts';
+import { ciRefOf } from '../src/forge/ciref.ts';
+import { ciSettleMin } from '../src/input/plan.ts';
 import { startIntegrationPushes } from '../src/forge/integration-push.ts';
 import { PUSH_TIMEOUT_MS, pushBranch, pushWithLease } from '../src/forge/push.ts';
 import { openNeedsUser, raiseNeedsUser, readNeedsUser } from '../src/needsuser.ts';
 import { publishCloseOut } from '../src/pipeline/publish.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { createArbiter } from '../src/schedule/arbiter.ts';
+import { status } from '../src/status.ts';
 import { BRANCH, openPush, publish, pushScene, type PushRun } from './fixtures/integration-push-common.ts';
 import { publishArc, wire } from './fixtures/publish-common.ts';
 import { admitAll, planCheckStep } from './fixtures/stage-common.ts';
@@ -19,6 +22,7 @@ import { applyBody, contextFor, gateStep, mulBuild, syncInputs } from './fixture
 import { reached } from './helpers/barrier.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { attachOrigin, makeBareOrigin, originRef } from './helpers/origin.ts';
+import { waitFor } from './helpers/invocation.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 
@@ -27,17 +31,17 @@ const items = (r: PushRun) => r.journal.view.needsUser().map((n) => readNeedsUse
 async function close(r: PushRun) { try { await r.pushes.close(); } finally { r.journal.close(); } }
 
 // These are actual pipeline publications, not hand-authored done records.
-test('integration push: a unit merge, revision docs and close-out each push their exact head; main remains the m5 seed', T, async () => {
+test('integration push: a unit merge and the close-out each push their exact head; a ruling-only revision pushes nothing; main remains the m5 seed', T, async () => {
   const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] }, (d) => {
     git(d.repo, 'branch', BRANCH);
     const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
-    writeFileSync(d.planPath, JSON.stringify({ ...plan, integrationBranch: BRANCH }));
+    writeFileSync(d.planPath, JSON.stringify({ ...plan, integrationBranch: BRANCH, ci: { settleMin: 0 } }));
   });
   const origin = makeBareOrigin();
   attachOrigin(d.repo, origin);
   const seed = originRef(origin, 'main');
   const r = contextFor(d);
-  const pushes = startIntegrationPushes({ ...r.ctx, journal: r.journal });
+  const pushes = startIntegrationPushes({ ...r.ctx, journal: r.journal, settleMin: () => ciSettleMin(r.ctx.plan()) });
   const w = wire(r);
   const tick = setInterval(() => w.arbiter.wake(), 25);
   try {
@@ -46,6 +50,16 @@ test('integration push: a unit merge, revision docs and close-out each push thei
     await pushes.drain();
     assert.equal(originRef(origin, BRANCH), unit, 'unit merge head pushed');
 
+    // dev.81 (A3): a revision whose only changed rendering is constraints.md publishes no docs commit.
+    syncInputs(r);
+    const ledger = join(d.planPath, '..', 'rulings.md');
+    writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}C-2 — Helpers take finite numbers only.\n`);
+    const cmd = submitCommand(r.ctx.runDir, r.ctx.plan().arc, { ...applyBody(d), reason: 'Document finite numbers.' });
+    const applied = await applyCommand(w.commands, cmd);
+    assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+    assert.equal(git(d.repo, 'rev-parse', BRANCH), unit, 'no docs commit for a ruling-only revision');
+    await pushes.drain();
+
     const arbiter = createArbiter(r.ctx);
     const outcome = await publishCloseOut({ ...r.ctx, arbiter });
     assert.equal(outcome.kind, 'published', JSON.stringify(outcome));
@@ -53,18 +67,8 @@ test('integration push: a unit merge, revision docs and close-out each push thei
     const closed = git(d.repo, 'rev-parse', BRANCH);
     assert.equal(originRef(origin, BRANCH), closed, 'close-out head pushed');
     assert.notEqual(closed, unit);
-
-    syncInputs(r);
-    const ledger = join(d.planPath, '..', 'rulings.md');
-    writeFileSync(ledger, `${readFileSync(ledger, 'utf8')}C-2 — Helpers take finite numbers only.\n`);
-    const cmd = submitCommand(r.ctx.runDir, r.ctx.plan().arc, { ...applyBody(d), reason: 'Document finite numbers.' });
-    const applied = await applyCommand(w.commands, cmd);
-    assert.equal(applied.kind, 'applied', JSON.stringify(applied));
-    const docs = git(d.repo, 'rev-parse', BRANCH);
-    assert.notEqual(docs, closed);
-    await pushes.drain();
-    assert.equal(originRef(origin, BRANCH), docs, 'revision docs head pushed');
-    assert.deepEqual(r.journal.view.integrationPushes().map((p) => p.fact.result), ['pushed', 'pushed', 'pushed']);
+    assert.match(git(d.repo, 'show', `${closed}:.roadmap/constraints.md`), /C-2 — Helpers take finite numbers only/, 'the close-out carries the deferred ruling rendering');
+    assert.deepEqual(r.journal.view.integrationPushes().map((p) => p.fact.result), ['pushed', 'pushed']);
     assert.equal(originRef(origin, 'main'), seed, 'm5: origin main stays at the seed');
     assert.deepEqual(pushBranch(r.ctx.repo, BRANCH, r.journal.view.integrationPushes().at(-1)!.fact.head), { kind: 'up-to-date' }, 'roadmap pr uses this same no-op');
   } finally {
@@ -283,7 +287,8 @@ test('integration push: supervised executor startup and unit publication push or
   const r = setupExec(t, { steps: [...SMOKE_DEFAULT, planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] });
   git(r.repo, 'branch', BRANCH);
   const plan = JSON.parse(readFileSync(r.planPath, 'utf8'));
-  writeFileSync(r.planPath, JSON.stringify({ ...plan, integrationBranch: BRANCH }));
+  // settleMin 0: the startup push leaves nothing to settle, so the merge pushes at once (the cadence tests below gate it).
+  writeFileSync(r.planPath, JSON.stringify({ ...plan, integrationBranch: BRANCH, ci: { settleMin: 0 } }));
   const origin = makeBareOrigin();
   attachOrigin(r.repo, origin);
   const seed = originRef(origin, 'main');
@@ -358,4 +363,129 @@ test('integration push: success settles only named push notices and leaves unrel
     assert.deepEqual(r.journal.view.integrationPushes().at(-1)!.fact.settles, [failed.id]);
     assert.deepEqual(openNeedsUser(r.journal.view).map((n) => n.id), [unrelated]);
   } finally { await close(r); }
+});
+
+// dev.81 (A3): origin's branch is the CI ref; it advances only once the previous pushed head has settled.
+const SETTLE = 120;
+let witnessSeq = 0;
+/** An external-witness fact at `head`, as `roadmap witness` records one (the worker reads only its seq and head). */
+function witnessAt(r: PushRun, head: string): void {
+  witnessSeq += 1;
+  r.journal.fact({
+    kind: 'external-witness', command: commandId(`cmd-${String(witnessSeq).padStart(16, 'a')}`), obligation: obligationId('I-1'), obligationRev: 1, laneRev: laneRev('0123456789abcdef'),
+    inputSha: sha('1'.repeat(40)), head: sha(head), result: 'pass', evidence: 'https://ci.example/run/1', evidenceSha256: null, since: null,
+  });
+}
+
+test('integration push (dev.81): two ffs in a row push once; the second advances only after a witness at the first head', T, async () => {
+  const s = pushScene();
+  const origin = makeBareOrigin();
+  attachOrigin(s.repo, origin);
+  const r = openPush(s, SETTLE);
+  try {
+    const first = await publish(r);
+    await r.pushes.drain();
+    const second = await publish(r);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), first, 'the second head parks while CI tests the first');
+    assert.deepEqual(r.journal.view.integrationPushes().map((p) => [p.fact.head, p.fact.result]), [[first, 'pushed']], 'a deferral writes no fact');
+    assert.equal(ciRefOf(r.journal.view, SETTLE, Date.now()).settled, false);
+    witnessAt(r, second);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), first, 'a witness at another head settles nothing');
+    witnessAt(r, first);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), second, 'the witness at the pushed head settles it');
+    const third = await publish(r);
+    const fourth = await publish(r);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), second);
+    witnessAt(r, second);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), fourth, 'latest wins: one pending target');
+    assert.ok(!r.journal.view.integrationPushes().some((p) => p.fact.head === third));
+  } finally { await close(r); }
+});
+
+test('integration push (dev.81): the settle timer advances the CI ref without a witness', T, async () => {
+  const s = pushScene();
+  const origin = makeBareOrigin();
+  attachOrigin(s.repo, origin);
+  const settleMin = 0.03; // 1.8 s
+  const r = openPush(s, settleMin);
+  try {
+    const first = await publish(r);
+    await r.pushes.drain();
+    const second = await publish(r);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), first);
+    const pushed = r.journal.view.integrationPushes().at(-1)!;
+    assert.equal(ciRefOf(r.journal.view, settleMin, Date.now()).settleBy, new Date(Date.parse(pushed.at) + settleMin * 60_000).toISOString());
+    await waitFor('the timer push', 30_000, () => (originRef(origin, BRANCH) === second ? true : null));
+    await r.pushes.drain();
+    assert.deepEqual(r.journal.view.integrationPushes().map((p) => p.fact.head), [first, second]);
+  } finally { await close(r); }
+});
+
+test('integration push (dev.81): startup keeps an unsettled pending head parked and pushes the current head once settled', T, async () => {
+  const s = pushScene();
+  const origin = makeBareOrigin();
+  attachOrigin(s.repo, origin);
+  let r = openPush(s, SETTLE);
+  const first = await publish(r);
+  await r.pushes.drain();
+  const second = await publish(r);
+  await close(r);
+  r = openPush(s, SETTLE);
+  try {
+    r.pushes.recover(BRANCH);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), first, 'startup does not push over an unsettled CI head');
+    assert.equal(r.journal.view.integrationPushes().length, 1);
+  } finally { await close(r); }
+  r = openPush(s, SETTLE);
+  try {
+    r.journal.fact({ kind: 'push-requested', command: commandId('cmd-00000000000000aa') });
+    r.pushes.recover(BRANCH);
+    await r.pushes.drain();
+    assert.equal(originRef(origin, BRANCH), second, 'startup after settlement pushes the current head');
+  } finally { await close(r); }
+});
+
+test('integration push (dev.81): the close-out head parks behind an unsettled CI head and `roadmap push` advances it at once', T, async () => {
+  const d = publishArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'approve' })] }, (d) => {
+    git(d.repo, 'branch', BRANCH);
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8'));
+    writeFileSync(d.planPath, JSON.stringify({ ...plan, integrationBranch: BRANCH }));
+  });
+  const origin = makeBareOrigin();
+  attachOrigin(d.repo, origin);
+  const r = contextFor(d);
+  assert.equal(ciSettleMin(r.ctx.plan()), 120, 'the default window');
+  const pushes = startIntegrationPushes({ ...r.ctx, journal: r.journal, settleMin: () => ciSettleMin(r.ctx.plan()) });
+  const w = wire(r);
+  const tick = setInterval(() => w.arbiter.wake(), 25);
+  try {
+    assert.deepEqual(await runUnit(w.stage, r.unit('u1'), admitAll), { kind: 'merged' });
+    const unit = git(d.repo, 'rev-parse', BRANCH);
+    await pushes.drain();
+    assert.equal(originRef(origin, BRANCH), unit);
+    const outcome = await publishCloseOut({ ...r.ctx, arbiter: createArbiter(r.ctx) });
+    assert.equal(outcome.kind, 'published', JSON.stringify(outcome));
+    await pushes.drain();
+    const closed = git(d.repo, 'rev-parse', BRANCH);
+    assert.equal(originRef(origin, BRANCH), unit, 'the close-out head waits for the merge head to settle');
+    const pushedAt = r.journal.view.integrationPushes().at(-1)!.at;
+    assert.deepEqual(status(r.ctx.runDir, arcId(d.arc), r.ctx.hostDir).pushes, { ciHead: unit, pending: closed, settleBy: new Date(Date.parse(pushedAt) + 120 * 60_000).toISOString() });
+    const cmd = submitCommand(r.ctx.runDir, r.ctx.plan().arc, { type: 'push' });
+    assert.equal((await applyCommand(w.commands, cmd)).kind, 'applied');
+    await pushes.drain();
+    assert.equal(originRef(origin, BRANCH), closed, 'roadmap push advances the CI ref now');
+    assert.deepEqual(status(r.ctx.runDir, arcId(d.arc), r.ctx.hostDir).pushes, { ciHead: closed, pending: null, settleBy: new Date(Date.parse(r.journal.view.integrationPushes().at(-1)!.at) + 120 * 60_000).toISOString() });
+    assert.deepEqual(r.journal.view.ciSettlers().map((x) => x.fact.kind), ['push-requested']);
+  } finally {
+    clearInterval(tick);
+    await pushes.close();
+    r.journal.close();
+  }
 });

@@ -2,19 +2,21 @@ import { recover } from '../src/recover/recover.ts';
 import { wire } from './fixtures/publish-common.ts';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { commandId, laneId, obligationId, sha, sha256, unitId } from '../src/core/ids.ts';
 import { sha256Hex } from '../src/core/json.ts';
 import { laneDef } from '../src/core/records.ts';
 import { absPath, repoPattern } from '../src/core/values.ts';
 import { inputShaOf } from '../src/git/reusekey.ts';
+import { keptInput } from '../src/input/inforce.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { ciReasons, lanePlacementReasons } from '../src/input/ci.ts';
 import { parseCommand } from '../src/input/cli.ts';
 import { attemptSignals } from '../src/pipeline/attempts.ts';
 import { pinDispatch, unitWorktree } from '../src/pipeline/dispatch.ts';
-import { lanes } from '../src/pipeline/stages.ts';
+import { at, keptSpecPath, lanes, record, start } from '../src/pipeline/stages.ts';
 import { haltResult, runUnit } from '../src/pipeline/unit.ts';
 import { witness } from '../src/commands/witness.ts';
 import { externalVerdict } from '../src/holistic/external.ts';
@@ -23,7 +25,8 @@ import { captureLaunch } from '../src/pipeline/capture.ts';
 import { unitSteps, moduleFiles } from './fixtures/audit-common.ts';
 import { checkpointContext } from './fixtures/checkpoint-common.ts';
 import { holisticArc } from './fixtures/brake-common.ts';
-import { applyBody, contextFor, codexStep, gateStep, mulBuild, setupArc, syncInputs } from './fixtures/unit-common.ts';
+import { appendSteps, applyBody, commandContextFor, contextFor, codexStep, gateStep, mulBuild, setupArc, stepUntil, syncInputs } from './fixtures/unit-common.ts';
+import { editPlan } from './fixtures/route-common.ts';
 import { DB, admitAll, planCheckStep, keptSpec, setupUnit, started, U1, SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { git, tmpDir } from './helpers/repo.ts';
 import { applyCommand } from '../src/commands/apply.ts';
@@ -150,7 +153,10 @@ for (const baseGreen of [true, false]) test(`ci repeated red compares diffBase (
     const comparisons = run.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared');
     assert.equal(comparisons.length, 2);
     assert.ok(comparisons.every((f) => f.kind === 'lane-base-compared' && existsSync(f.evidence)));
-    assert.equal(comparisons[0]!.kind === 'lane-base-compared' && comparisons[0]!.evidence, comparisons[1]!.kind === 'lane-base-compared' && comparisons[1]!.evidence, 'a cached comparison keeps the original evidence directory');
+    // dev.81 (C2): a repeated red is confirmed, so its base never reuses a kept pass: each comparison ran fresh, in its own
+    // attempt's evidence directory.
+    assert.ok(comparisons.every((f) => f.kind === 'lane-base-compared' && f.fresh === true), 'a confirmed red compares a fresh base');
+    assert.notEqual(comparisons[0]!.kind === 'lane-base-compared' && comparisons[0]!.evidence, comparisons[1]!.kind === 'lane-base-compared' && comparisons[1]!.evidence, 'a fresh comparison keeps its own evidence directory');
   }
   assert.ok(run.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.result === (baseGreen ? 'pass' : 'fail')));
 });
@@ -187,6 +193,99 @@ test('ci external witness: root command records immutable evidence, refuses loca
   const local = contextFor(holisticArc({ steps: [], obligations: [{ id: 'I-1', testIds: ['ci'] }], trees: {}, mapping: [] }).d);
   assert.equal(witness(checkpointContext(local).w.commands, commandId('cmd-5555555555555555'), body).kind, 'rejected');
   assert.throws(() => parseCommand(['witness', 'I-1', '--result', 'green', '--evidence', 'x']), /pass|fail/);
+});
+
+test('ci external witness (dev.81): an attestation at a commit the integration branch contains binds to that tree; another commit is refused; a fail names the publications since the last pass', T, async () => {
+  const h = holisticArc({ steps: unitSteps('u1', moduleFiles('mul', '*')), obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['ci'] }], trees: {}, mapping: [], laneExtra: { journey: { witnessClass: 'external', inputs: ['src/**'] } } });
+  const run = contextFor(h.d);
+  const { w } = checkpointContext(run);
+  const tick = setInterval(() => w.arbiter.wake(), 20);
+  try { assert.deepEqual(await runUnit(w.stage, w.stage.plan().units[0]!, admitAll), { kind: 'merged' }); } finally { clearInterval(tick); }
+  const branch = run.ctx.plan().integrationBranch;
+  const merged = sha(git(h.d.repo, 'rev-parse', branch));
+  // The local integration branch moves on (a later publication CI has not tested yet); a sibling is no integration commit.
+  const later = sha(git(h.d.repo, 'commit-tree', `${merged}^{tree}`, '-p', merged, '-m', 'later publication'));
+  git(h.d.repo, 'update-ref', `refs/heads/${branch}`, later, merged);
+  const sibling = sha(git(h.d.repo, 'commit-tree', `${merged}^{tree}`, '-p', merged, '-m', 'not integrated'));
+  const body = { type: 'witness', obligation: obligationId('I-1'), expectedHead: merged, result: 'fail', evidence: 'https://ci.example/run/1', evidenceFile: null } as const;
+  const refused = witness(w.commands, commandId('cmd-0000000000000001'), { ...body, expectedHead: sibling });
+  assert.equal(refused.kind, 'rejected');
+  assert.match(refused.kind === 'rejected' ? refused.reason : '', /not a commit the integration branch contains/);
+
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000002'), body).kind, 'applied');
+  const defs = holisticInForce(run.ctx).obligations!;
+  const first = run.journal.view.ciFacts().findLast((f) => f.kind === 'external-witness')!;
+  assert.ok(first.kind === 'external-witness');
+  const tree = sha(git(h.d.repo, 'rev-parse', `${merged}^{tree}`));
+  assert.deepEqual([first.head, first.inputSha, first.since], [merged, inputShaOf(run.ctx.repo, tree, defs.lanes[0]!, systemsMapInForce(run.journal.view.planApplied())), null]);
+  const note = run.journal.view.notes(unitId('u1')).find((n) => n.command === commandId('cmd-0000000000000002'))!;
+  const brief = keptInput(run.ctx.runDir, note.brief, 'brief.md')!.toString('utf8');
+  assert.ok(brief.includes(`failed at ${merged}`));
+  assert.ok(brief.includes(`Publications since the arc start up to ${merged}`));
+  assert.ok(brief.includes(`- unit u1 ${merged}`), brief);
+  assert.equal(run.journal.view.unit(unitId('u1')).status, 'active', 'the fail reopens the delivering unit');
+  assert.equal(externalVerdict(run.ctx.repo, run.journal.view, sha(git(h.d.repo, 'rev-parse', `${later}^{tree}`)), defs.lanes[0]!, defs.obligations[0]!), 'not-held', 'the verdict carries to a later head with the same lane inputs');
+
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000003'), { ...body, result: 'pass' }).kind, 'applied');
+  assert.equal(run.journal.view.holistic().latched.length, 0, 'no latch while the delivering unit is reopened');
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000004'), body).kind, 'applied');
+  const third = run.journal.view.ciFacts().findLast((f) => f.kind === 'external-witness')!;
+  assert.ok(third.kind === 'external-witness' && third.since === merged, 'since: the last pass');
+  const again = keptInput(run.ctx.runDir, run.journal.view.notes(unitId('u1')).find((n) => n.command === commandId('cmd-0000000000000004'))!.brief, 'brief.md')!.toString('utf8');
+  assert.ok(!again.includes('Publications since'), 'nothing published since the last pass up to the attested commit');
+});
+
+test('ci external witness (dev.81): a fail at an older commit reopens the re-entered deliverer\'s lineage head with the range', T, async () => {
+  const h = holisticArc({ steps: unitSteps('u1', moduleFiles('mul', '*')), obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['ci'] }], trees: {}, mapping: [], laneExtra: { journey: { witnessClass: 'external', inputs: ['src/**'] } } });
+  let run = contextFor(h.d);
+  await stepUntil(run, 'u1', (f) => f.stage === 'gate');
+  record(run.ctx, at(start(run.ctx, unitId('u1'), 'candidate'), 'candidate'), 'interrupted');
+  const inForce = JSON.parse(readFileSync(keptSpecPath(run.ctx, run.unit('u1')), 'utf8')) as Record<string, unknown>;
+  syncInputs(run);
+  writeFileSync(join(dirname(h.d.planPath), 'u2.json'), JSON.stringify({ ...inForce, unit: 'u2', rev: 1 }));
+  editPlan(h.d, (p) => void p.units.push({ ...p.units[0]!, id: 'u2', spec: 'u2.json', reenters: { unit: 'u1', enterAt: 'verify' } }));
+  const applied = await applyCommand(commandContextFor(run), submitCommand(run.ctx.runDir, run.ctx.plan().arc, applyBody(h.d)));
+  assert.equal(applied.kind, 'applied', JSON.stringify(applied));
+  run.journal.close();
+  appendSteps(h.d, [{ ...gateStep({ decision: 'approve' }), unit: 'u2' }]);
+  run = contextFor(h.d);
+  const { w } = checkpointContext(run);
+  const tick = setInterval(() => w.arbiter.wake(), 20);
+  try { assert.deepEqual(await runUnit(w.stage, run.unit('u2'), admitAll), { kind: 'merged' }); } finally { clearInterval(tick); }
+  assert.equal(run.journal.view.unit(unitId('u1')).status, 'superseded');
+  const branch = run.ctx.plan().integrationBranch;
+  const merged = sha(git(h.d.repo, 'rev-parse', branch));
+  const later = sha(git(h.d.repo, 'commit-tree', `${merged}^{tree}`, '-p', merged, '-m', 'later publication'));
+  git(h.d.repo, 'update-ref', `refs/heads/${branch}`, later, merged);
+  const body = { type: 'witness', obligation: obligationId('I-1'), expectedHead: merged, result: 'fail', evidence: 'https://ci.example/run/2', evidenceFile: null } as const;
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000001'), body).kind, 'applied');
+  assert.deepEqual(run.journal.view.notes(unitId('u1')), [], 'the superseded parent is not the one reopened');
+  const note = run.journal.view.notes(unitId('u2')).find((n) => n.command === commandId('cmd-0000000000000001'))!;
+  const brief = keptInput(run.ctx.runDir, note.brief, 'brief.md')!.toString('utf8');
+  assert.ok(brief.includes(`- unit u2 ${merged}`), brief);
+  assert.equal(run.journal.view.unit(unitId('u2')).status, 'active', 'the lineage head reopens');
+  assert.ok(run.journal.view.ciFacts().some((f) => f.kind === 'external-reopened' && f.unit === unitId('u2')));
+});
+
+test('ci external witness (dev.81): a pass at an ancestor latches through the deliverer whose merge it contains, on that tree', T, async () => {
+  const h = holisticArc({ steps: unitSteps('u1', moduleFiles('mul', '*')), obligations: [{ id: 'I-1', activation: 'future', deliveredBy: ['u1'], testIds: ['ci'] }], trees: {}, mapping: [], laneExtra: { journey: { witnessClass: 'external', inputs: ['src/**'] } } });
+  const run = contextFor(h.d);
+  const { w } = checkpointContext(run);
+  const tick = setInterval(() => w.arbiter.wake(), 20);
+  try { assert.deepEqual(await runUnit(w.stage, w.stage.plan().units[0]!, admitAll), { kind: 'merged' }); } finally { clearInterval(tick); }
+  const branch = run.ctx.plan().integrationBranch;
+  const merged = sha(git(h.d.repo, 'rev-parse', branch));
+  const parent = sha(git(h.d.repo, 'rev-parse', `${merged}^1`));
+  const later = sha(git(h.d.repo, 'commit-tree', `${merged}^{tree}`, '-p', merged, '-m', 'later publication'));
+  git(h.d.repo, 'update-ref', `refs/heads/${branch}`, later, merged);
+  const body = { type: 'witness', obligation: obligationId('I-1'), expectedHead: parent, result: 'pass', evidence: 'https://ci.example/run/1', evidenceFile: null } as const;
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000001'), body).kind, 'applied');
+  assert.deepEqual(run.journal.view.holistic().latched, [], 'a commit before the merge cannot latch it');
+  assert.equal(witness(w.commands, commandId('cmd-0000000000000002'), { ...body, expectedHead: merged }).kind, 'applied');
+  const latch = run.journal.view.holistic().latched;
+  assert.deepEqual(latch.map((l) => [l.obligation, l.unit]), [['I-1', 'u1']]);
+  const fact = run.journal.view.ciFacts().findLast((f) => f.kind === 'external-witness')!;
+  assert.ok(fact.kind === 'external-witness' && fact.head === merged && fact.since === parent, 'since: the earlier pass');
 });
 
 test('ci capture requires a leased slot and preserves stack/script/state declarations', () => {

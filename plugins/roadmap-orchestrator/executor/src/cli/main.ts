@@ -15,14 +15,16 @@ import { submitCommand } from '../commands/queue.ts';
 import { resumeArc } from '../commands/resumearc.ts';
 import { witnessCheck } from '../commands/witnesscheck.ts';
 import { readJson } from '../core/fsx.ts';
-import { type NeedsUserId,planRev,sha256 } from '../core/ids.ts';
+import { type NeedsUserId,type Sha,planRev,sha256 } from '../core/ids.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
 import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
-import { revParse } from '../git/git.ts';
+import { catFileType,revParse } from '../git/git.ts';
 import { branchRef } from '../core/values.ts';
+import { ciRefOf } from '../forge/ciref.ts';
 import { requirePlanInForce } from '../input/inforce.ts';
+import { ciSettleMin } from '../input/plan.ts';
 import { START_FILE } from '../executor.ts';
 import { HOST_DIR } from '../host/hostdir.ts';
 import { CliError,type Command,type RunLocator,parseCommand } from '../input/cli.ts';
@@ -57,7 +59,11 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       const run = locate(command.run, hostDir);
       const { view } = readJournal(run.runDir, run.arc);
       const plan = requirePlanInForce(run.runDir, view).plan;
-      const expectedHead = revParse(startOf(run).repo, branchRef(plan.integrationBranch));
+      const repo = startOf(run).repo;
+      // dev.81 (A3): the attested commit: `--at`, else the CI ref (what CI tested), else the local head (nothing pushed).
+      const expectedHead = command.at !== null
+        ? atCommit(repo, command.at)
+        : ciRefOf(view, ciSettleMin(plan), Date.now()).ciHead ?? revParse(repo, branchRef(plan.integrationBranch));
       const url = /^https?:\/\//.test(command.evidence);
       const path = absPath(resolve(command.evidence));
       const evidenceFile = url ? null : { path, sha256: sha256(sha256Hex(readFileSync(path))) };
@@ -152,10 +158,15 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'rerun', unit: command.unit, attempt: command.attempt, lane: command.lane, cause: command.cause, evidence: command.evidence });
     case 'demo':
       return submit(command.run, hostDir, { type: 'demo', act: command.act });
+    case 'push':
+      return submit(command.run, hostDir, { type: 'push' });
     case 'audit':
       return submit(command.run, hostDir, { type: 'audit' });
     case 'close-admissions':
       return submit(command.run, hostDir, { type: 'close-admissions' });
+    // dev.81 (C3a): take back a pending mutation.
+    case 'withdraw':
+      return submit(command.run, hostDir, { type: 'withdraw', command: command.target });
     case 'gc': {
       const outcome = await gc({ hostDir, repo: absPath(resolve(command.repo)), keep: command.keep ?? DEFAULT_KEEP, dryRun: command.dryRun });
       if (outcome.kind === 'done') {
@@ -233,6 +244,12 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
 }
 
 const repoOf = (repo: string): AbsPath => absPath(resolve(repo));
+
+/** `witness --at <rev>`: the commit it names in the arc's repo. */
+function atCommit(repo: AbsPath, rev: string): Sha {
+  if (catFileType(repo, `${rev}^{commit}`) !== 'commit') throw new CliError(`witness: --at ${rev} names no commit in ${repo}`);
+  return revParse(repo, `${rev}^{commit}`);
+}
 
 /** A host act's refusal: the row as JSON, exit 78. */
 function refused(rejection: StartupRejection): void {

@@ -41,22 +41,28 @@ export const INTEGRATION_SLOT = resourceName('integration-slot');
 // Resource units (M2): what one reservation moves. A named resource is its own single instance; a declared
 // pool `p` of size n has instances `p#1..p#n`; the built-in `@cpu` pool has tokens `@cpu#1..@cpu#N`. `@`
 // cannot occur in a ResourceName slug, so `@cpu` never collides with a declared name (a resource named `cpu`
-// is a named resource).
+// is a named resource). dev.81 (C4): the built-in `@fast-suite` pool, tokens `@fast-suite#1..@fast-suite#M`, one per
+// lanes-stage suite series (src/resources/pool.ts `fastSuiteCapacity`), admission only like `@cpu`.
 
 /** One instance of a declared estate pool: `<pool>#<n>`. */
 export type PoolInstance = Brand<string, 'PoolInstance'>;
 /** One token of the built-in `@cpu` pool: `@cpu#<n>`. Admission only: no workload binding, probe or teardown. */
 export type CpuToken = Brand<string, 'CpuToken'>;
+/** dev.81 (C4): one token of the built-in `@fast-suite` pool: `@fast-suite#<n>`. Admission only, like a `@cpu` token. */
+export type FastSuiteToken = Brand<string, 'FastSuiteToken'>;
 /** What a probe, teardown or residue names: a named resource or a pool instance. */
 export type ResourceInstance = ResourceName | PoolInstance;
 /** What a `resource.transition` moves. */
-export type ResourceUnit = ResourceInstance | CpuToken;
+export type ResourceUnit = ResourceInstance | CpuToken | FastSuiteToken;
 
 /** The built-in cpu pool's name, as capacity and `status` show it. */
 export const CPU_POOL = '@cpu';
+/** dev.81 (C4): the built-in fast-suite pool's name. */
+export const FAST_SUITE_POOL = '@fast-suite';
 
 const INSTANCE = new RegExp(`^(${SLUG})#(${POS})$`);
 const CPU = new RegExp(`^@cpu#(${POS})$`);
+const FAST_SUITE = new RegExp(`^@fast-suite#(${POS})$`);
 const NAME = new RegExp(`^${SLUG}$`);
 export const poolInstanceOf: IdReader<PoolInstance> = textual('PoolInstance', INSTANCE, '<pool>#<n>');
 export const cpuTokenOf: IdReader<CpuToken> = textual('CpuToken', CPU, '@cpu#<n>');
@@ -69,6 +75,11 @@ export function cpuToken(n: number): CpuToken {
   return cpuTokenOf(`@cpu#${n}`);
 }
 
+export const fastSuiteTokenOf: IdReader<FastSuiteToken> = textual('FastSuiteToken', FAST_SUITE, '@fast-suite#<n>');
+export function fastSuiteToken(n: number): FastSuiteToken {
+  return fastSuiteTokenOf(`@fast-suite#${n}`);
+}
+
 export function resourceInstance(value: unknown, path = 'ResourceInstance'): ResourceInstance {
   if (typeof value === 'string' && INSTANCE.test(value)) return value as PoolInstance;
   if (typeof value === 'string' && NAME.test(value)) return value as ResourceName;
@@ -77,18 +88,22 @@ export function resourceInstance(value: unknown, path = 'ResourceInstance'): Res
 
 export function resourceUnit(value: unknown, path = 'ResourceUnit'): ResourceUnit {
   if (typeof value === 'string' && CPU.test(value)) return value as CpuToken;
+  if (typeof value === 'string' && FAST_SUITE.test(value)) return value as FastSuiteToken;
   if (typeof value === 'string' && (INSTANCE.test(value) || NAME.test(value))) return value as ResourceInstance;
-  throw new InvalidIdError('ResourceUnit', path, 'a resource name, <pool>#<n> or @cpu#<n>', value);
+  throw new InvalidIdError('ResourceUnit', path, 'a resource name, <pool>#<n>, @cpu#<n> or @fast-suite#<n>', value);
 }
 
 export type ResourceUnitParts =
   | Readonly<{ type: 'named'; name: ResourceName }>
   | Readonly<{ type: 'instance'; pool: ResourceName; n: number }>
-  | Readonly<{ type: 'cpu'; n: number }>;
+  | Readonly<{ type: 'cpu'; n: number }>
+  | Readonly<{ type: 'fast-suite'; n: number }>;
 
 export function parseResourceUnit(unit: ResourceUnit): ResourceUnitParts {
   const cpu = CPU.exec(unit);
   if (cpu !== null) return { type: 'cpu', n: Number(cpu[1]) };
+  const fast = FAST_SUITE.exec(unit);
+  if (fast !== null) return { type: 'fast-suite', n: Number(fast[1]) };
   const inst = INSTANCE.exec(unit);
   if (inst !== null) return { type: 'instance', pool: inst[1] as ResourceName, n: Number(inst[2]) };
   return { type: 'named', name: unit as ResourceName };
@@ -96,14 +111,16 @@ export function parseResourceUnit(unit: ResourceUnit): ResourceUnitParts {
 
 /**
  * Lock order: named resources and pool instances ascending by name (instances of one pool numerically), then
- * `@cpu#*` numerically, then `integration-slot`. Over plain names it is the M1 order (ascending, the slot last).
+ * `@cpu#*` numerically, then (dev.81) `@fast-suite#*` numerically, then `integration-slot`. Over plain names it is the M1
+ * order (ascending, the slot last).
  */
 export function compareResourceUnits(a: ResourceUnit, b: ResourceUnit): number {
   const key = (u: ResourceUnit): readonly [number, string, number] => {
-    if (u === INTEGRATION_SLOT) return [2, '', 0];
+    if (u === INTEGRATION_SLOT) return [3, '', 0];
     const p = parseResourceUnit(u);
     switch (p.type) {
       case 'cpu': return [1, '', p.n];
+      case 'fast-suite': return [2, '', p.n];
       case 'instance': return [0, p.pool, p.n];
       case 'named': return [0, p.name, 0];
     }

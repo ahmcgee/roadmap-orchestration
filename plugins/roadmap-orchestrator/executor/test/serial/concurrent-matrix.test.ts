@@ -45,6 +45,7 @@
 // holder at a time, the rule applied once with one docs ff, u1 published once onto the recorded tree).
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type TestContext, after, test } from 'node:test';
 import { type Event, type IntentOf, type Parent, parseEventLine, prevHash, recordUnit } from '../../src/core/events.ts';
@@ -75,7 +76,7 @@ import {
   CONCURRENT_BATCH, CONCURRENT_DEBT, CONCURRENT_PUBLICATION, CONCURRENT_RESIDUE, CONCURRENT_TEARDOWN, crashCells,
 } from '../matrix.ts';
 import {
-  type OracleRun, type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, productTree, provenance, publicationsPerUnit, recoveryHoldsOf, recoveryTrace,
+  type OracleRun, type Trace, UNCRASHED, assertOracle, needsUserExactly, noModelIds, oracleRun, outcomesOf, provenance, publicationsPerUnit, recoveryHoldsOf, recoveryTrace,
   snapshotVerifies, unitStates, usagePerInvocation, withRecoveryHolds,
 } from '../oracle.ts';
 import { HOLISTIC_PEERS, type HolisticPeer, type JobRow, STEPPING, layoutHolisticConcurrent, sampleJob } from '../fixtures/cm-holistic.ts';
@@ -690,6 +691,12 @@ const docsFfs = (snap: LogSnapshot): number => snap.events.filter((e) => {
   const i = snap.view.latestIntent(e.op);
   return i.kind === 'integration.ff' && i.expect.subject?.type === 'docs';
 }).length;
+/** The integration head's `.roadmap/` renderings by path, each layout temp directory (`tmpDir`) named by its prefix only. */
+function renderings(repo: string): Readonly<Record<string, string>> {
+  const paths = git(repo, 'ls-tree', '-r', '--name-only', 'main', '--', '.roadmap').split('\n');
+  const tmp = new RegExp(`${tmpdir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/roadmap-([a-z0-9-]+)-[A-Za-z0-9]{6}`, 'g');
+  return Object.fromEntries(paths.map((p) => [p, git(repo, 'show', `main:${p}`).replace(tmp, '<tmp:$1>')]));
+}
 /** The commands applied in a log. */
 const commandsApplied = (snap: LogSnapshot): number => snap.events.filter((e) => e.type === 'done' && e.kind === 'command.apply' && e.outcome.kind === 'applied').length;
 
@@ -865,11 +872,15 @@ async function jobCell(t: Owner, ref: JobReference, row: JobRow, c: Sampled): Pr
   if (ref.peer === 'preempt') {
     // Safety: the crash may let the candidate go green before the publication (its pin released by the restart).
     const verdicts = [
-      productTree(run, 'main', ref.tree), provenance(run, 'main', baselineOf(r)), publicationsPerUnit(run, { [A]: 1 }), snapshotVerifies(run),
+      provenance(run, 'main', baselineOf(r)), publicationsPerUnit(run, { [A]: 1 }), snapshotVerifies(run),
       unitStates(run, units), needsUserExactly(run, []), usagePerInvocation(run), noModelIds(run),
       recoveryTrace(run, { recoveredBy: ['reconciled', 'redone', 'adopted'], required: false, tailDiscarded: c.label === 'log.append.after-partial-write' }),
     ];
     assert.deepEqual(verdicts.filter((v) => !v.pass), []);
+    // The scenario is holistic since dev.81: invariants.md names this layout's witness lane path, so the tree is compared
+    // as the product as uncrashed plus every rendering byte for byte with the layout's temp paths named alike.
+    assert.deepEqual(holisticProduct(r.repo), holisticProduct(ref.repo), 'the product as uncrashed, and the same renderings');
+    assert.deepEqual(renderings(r.repo), renderings(ref.repo), 'every rendering as uncrashed, the rule\'s docs publication included');
     assert.deepEqual([docsFfs(end), commandsApplied(end)], [1, 1], 'the rule applied once with one docs ff');
     assert.ok(outcomesOf(run, A).filter((o) => o === 'candidate:preempted').length <= 1, 'u1 preempted at most once');
     void assertPublicationSafe(r, end);

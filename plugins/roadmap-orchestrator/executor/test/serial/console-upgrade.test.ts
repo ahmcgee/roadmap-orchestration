@@ -1,6 +1,7 @@
 // Observe real records the previous release (dev.58) wrote with the new detached service; no runtime-schema bump or migration.
 // dev.59 pass 3 added derived status fields (units[].lineageAttempts, carries, carriedBy; milestones[].members, withdrawn,
-// live, merged): the status is identical to the previous release's apart from them, and they read their documented values.
+// live, merged), and dev.81 more (units[].origin, repairs; top-level pushes; the built-in host.pools['@fast-suite']): the
+// status is identical to the previous release's apart from them, and they read their documented values.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -17,16 +18,21 @@ import { setConsolePort } from '../fixtures/console.ts';
 import { tmpDir } from '../helpers/repo.ts';
 
 const PREVIOUS_REF = 'a789d43d';
-const DEV59_UNIT = ['lineageAttempts', 'carries', 'carriedBy'] as const;
+const DEV59_UNIT = ['lineageAttempts', 'carries', 'carriedBy', 'origin', 'repairs'] as const;
 const DEV59_MILESTONE = ['members', 'withdrawn', 'live', 'merged'] as const;
 type Json = Record<string, unknown>;
-/** `status` without dev.59's additive fields, and those fields per unit and milestone. */
-function splitDev59(status: Json): Readonly<{ rest: Json; units: readonly Json[]; milestones: readonly Json[] }> {
+/** `status` without dev.59's (and dev.81's) additive fields, those fields per unit and milestone, and dev.81's top-level ones. */
+function splitDev59(status: Json): Readonly<{ rest: Json; units: readonly Json[]; milestones: readonly Json[]; dev81: Json }> {
   const pick = (o: Json, keys: readonly string[]): readonly [Json, Json] =>
     [Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k))), Object.fromEntries(keys.map((k) => [k, o[k]]))];
   const units = (status['units'] as Json[]).map((u) => pick(u, DEV59_UNIT));
   const milestones = (status['milestones'] as Json[]).map((m) => pick(m, DEV59_MILESTONE));
-  return { rest: { ...status, units: units.map(([r]) => r), milestones: milestones.map(([r]) => r) }, units: units.map(([, a]) => a), milestones: milestones.map(([, a]) => a) };
+  const { pushes, host, ...others } = status; const { pools, ...hostRest } = host as Json;
+  const { '@fast-suite': fastSuite, ...poolsRest } = pools as Json;
+  return {
+    rest: { ...others, host: { ...hostRest, pools: poolsRest }, units: units.map(([r]) => r), milestones: milestones.map(([r]) => r) },
+    units: units.map(([, a]) => a), milestones: milestones.map(([, a]) => a), dev81: { pushes, fastSuite },
+  };
 }
 function contents(root: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -54,9 +60,18 @@ test('dev.58 records are adopted read-only by the console with identical canonic
   const e = await response.json() as { data: unknown };
   const { portableStatus } = await import('../fixtures/status-parity.ts');
   const now = splitDev59(portableStatus(e.data) as Json);
-  assert.deepEqual(now.rest, f.full);
-  // The fixture's three units ran nothing and carry nothing; MS-1 lists u1, which nothing re-enters or withdraws.
-  assert.deepEqual(now.units, [0, 1, 2].map(() => ({ lineageAttempts: { builds: 0, judged: 0, buildCap: 16, judgedCap: 40 }, carries: null, carriedBy: [] })));
+  // dev.81 (D3): the route prints the folded status: the previous release's status, folded the same way.
+  const { wireStatus } = await import('../../src/status-wire.ts');
+  const prior = splitDev59(portableStatus(wireStatus(f.full as never)) as Json);
+  assert.deepEqual(now.rest, prior.rest);
+  assert.deepEqual(prior.dev81, { pushes: undefined, fastSuite: undefined });
+  // dev.81: nothing was ever pushed, so the CI ref has no head and the local integration head is pending with no settle timer;
+  // the fixture's plan sets no capacity.fastSuites, so the built-in pool is the host default, idle and clean.
+  const { readHostFingerprint } = await import('../../src/host/sample.ts');
+  const { defaultFastSuites } = await import('../../src/resources/pool.ts');
+  assert.deepEqual(now.dev81, { pushes: { ciHead: null, pending: '<sha>', settleBy: null }, fastSuite: { size: defaultFastSuites(readHostFingerprint().memGiB), used: 0, dirty: 0 } });
+  // The fixture's three units ran nothing, carry nothing and are planned, repairing nothing; MS-1 lists u1, which nothing re-enters or withdraws.
+  assert.deepEqual(now.units, [0, 1, 2].map(() => ({ lineageAttempts: { builds: 0, judged: 0, buildCap: 16, judgedCap: 40 }, carries: null, carriedBy: [], origin: 'planned', repairs: [] })));
   assert.deepEqual(now.milestones, [{ members: ['u1'], withdrawn: [], live: 1, merged: 0 }]);
   assert.deepEqual(contents(runDir), before);
   assert.equal(JSON.parse(readFileSync(join(runDir, 'start.json'), 'utf8')).v, 2);

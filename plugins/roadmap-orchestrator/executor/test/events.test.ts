@@ -118,6 +118,7 @@ const FACTS: readonly Fact[] = [
   { kind: 'usage-unavailable', inv, routingRev: rev, subject: { type: 'smoke', backend: 'codex' }, reason: 'no-result' },
   { kind: 'dispatch', record: { unit, specRev: specRev(1), specSha256: H,  riskFloor: 'med', routingRev: rev, implementerSeatRev: seatRev('fedcba9876543210'), at, transientRules: 'm3' } },
   { kind: 'stage-outcome', unit, stage: 'gate', attempt: 2, outcome: 'revise', class: 'revise', chargeable: true },
+  { kind: 'stage-outcome', unit, stage: 'gate', attempt: 3, outcome: 'revise-new', class: 'escalation-revise', chargeable: false },
   { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 1, outcome: 'blocked', class: 'retry', chargeable: false },
   { kind: 'needs-user-acked', id: needsUserId('nu-7'), command: commandId('cmd-0123456789abcdef'), choice: 'retry' },
   { kind: 'paused', command: commandId('cmd-0123456789abcdef'), target: { type: 'unit', unit } },
@@ -125,6 +126,11 @@ const FACTS: readonly Fact[] = [
   { kind: 'stop-requested', command: commandId('cmd-0123456789abcdef') },
   { kind: 'resumed', command: commandId('cmd-0123456789abcdef'), target: { type: 'backend', backend: 'codex' } },
   { kind: 'executor-started', pressure: 'unavailable', generation: 3 },
+  // dev.81: the lanes outcomes with their details (C1, B5), and a base comparison with and without `fresh` (C2).
+  { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 3, outcome: 'deflake-held', class: 'advance', chargeable: false, detail: { kind: 'deflake-held', deflake: unitId('deflake-1'), lane: laneId('L1') } },
+  { kind: 'stage-outcome', unit, stage: 'lanes', attempt: 4, outcome: 'environment-divergence', class: 'advance', chargeable: false, detail: { kind: 'environment-divergence', head: A, lanes: [laneId('L1')], builderChecks: [{ lane: laneId('L1'), head: A, exit: 0 }] } },
+  { kind: 'lane-base-compared', unit, attempt: 2, lane: laneId('L1'), base: B, evidence: wt, result: 'pass', fresh: true },
+  { kind: 'lane-base-compared', unit, attempt: 1, lane: laneId('L1'), base: B, evidence: wt, result: 'fail' },
 ];
 
 function envelope(seq: number): Envelope {

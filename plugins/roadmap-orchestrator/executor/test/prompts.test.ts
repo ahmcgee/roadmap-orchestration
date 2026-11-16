@@ -191,13 +191,20 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
     {target: {kind: 'full', doc: doc('docs/target-0.md', 'TARGET-0')},  notes: ['NOTE-A'],
       systemNotes: [], intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], spec: spec(1, 'SPEC-A'), contracts: [doc('docs/api.md', 'CONTRACT-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [lane('unit', ['npm', 'test'])], suiteLanes: [], evidenceDir: absPath('/run/ev/a'), worktree: absPath('/wt/a'),
-      lastLaneSeries: null, systems: [systemName('app-a')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
+      lastLaneSeries: null, systems: [systemName('app-a')], fixRound: null, witnessLanes: [], mutants: [], mergeIn: null, afterMergeIn: null, milestones: null, browser: null, handover: null,
     },
     {target: {kind: 'full', doc: doc('docs/target-1.md', 'TARGET-1')},  notes: ['NOTE-B'],
       systemNotes: [repoPath('docs/systems/SYSTEM-NOTES-B.md')], intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], spec: spec(2, 'SPEC-B'), contracts: [doc('docs/b.md', 'CONTRACT-B')], index: index('docs/y.md', 'C-8', '/plan/b/rulings.md'),
       method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, fastLanes: [lane('lint', ['npx', 'tsc', '--noEmit'])], suiteLanes: [lane('eslint', ['npx', 'eslint', '.'])], evidenceDir: absPath('/run/ev/b'), worktree: absPath('/wt/b'),
       lastLaneSeries: { durationMs: 123456, resources: [resourceUnit('kind-estate'), resourceUnit('@cpu#1')] }, systems: [systemName('app-b')], fixRound: { failingEvidenceDirs: [absPath('/run/inv/9-1')], directives: ['DIRECTIVE-B'] },
-      witnessChecks: [{ lane: laneId('journey'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' }],
+      witnessLanes: [
+        { runs: 'build-check', lane: laneId('journey'), cadence: 'build', testIds: ['WITNESS-B'], laneFile: absPath('/run/ev/b/witness/journey.json'), command: 'roadmap witness-check --lane-file /run/ev/b/witness/journey.json' },
+        { runs: 'lanes-stage', lane: laneId('e2e-b'), cadence: 'candidate', testIds: ['E2E-WITNESS-B'], command: 'cd /wt/b && E2E-COMMAND-B' },
+        { runs: 'executor-only', lane: laneId('estate-b'), cadence: 'candidate', testIds: ['ESTATE-WITNESS-B'] },
+      ],
+      mutants: [{ finding: findingId('F-4'), lane: laneId('journey'), mustFail: ['MUST-FAIL-B'], patch: absPath('/run/inputs/MUTANT-PATCH-B.patch') }],
+      mergeIn: { integrationTip: SHA_A, old: SHA_B, conflicts: [repoPath('src/b/CONFLICT-B.ts')], approved: { attempt: 3, head: SHA_B, paths: [repoPath('src/b/CONFLICT-B.ts')] } },
+      afterMergeIn: { cleaned: [repoPath('CLEANED-B/dist')], rerun: [lane('rerun-b', ['npm', 'run', 'RERUN-B'])] },
       milestones: milestonesSample(), browser: browserSample(),
       handover: {
         lineage: [unitId('u-one'), unitId('u-zero')],
@@ -224,7 +231,7 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, direction: 'DIR-A',  obligations: [], standingObligations: [],
       diff: { bounded: shown(SHA_A, SHA_B, 'DIFF-A'), claims: { acceptance: [clauseId('A1')], witnesses: [], obligations: [] } },
       laneLedger: [{ lane: laneId('unit'), argv: ['npm', 'test'], expectedExit: 0, exitCode: 0, verdict: 'pass', evidenceDir: absPath('/run/inv/3-1'), ignored: null, reused: null }],
-      reach: [], traits: [], reachTraits: [], evidence: [absPath('/run/ev/a')], systems: [systemName('app-a')], priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [] },
+      reach: [], traits: [], reachTraits: [], evidence: [absPath('/run/ev/a')], systems: [systemName('app-a')], priorRound: null, checks: { witnesses: null, smoke: null, regenerated: [], mutants: [], mergeIn: null },
       escalation: null, largeDiff: null, milestones: null, review: { ledger: [], disputes: [], delta: null }, undeclaredContracts: [],
     },
     {touches: ['BUILDER-TOUCH-B'],
@@ -249,7 +256,7 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
           missing: [{ lane: laneId('journey'), testId: 'WITNESS-B' }], failed: [],
         },
         smoke: { killed: [], survived: [{ lane: laneId('journey'), testId: 'SURVIVOR-B' }], inconclusive: [], notRun: null },
-        regenerated: [],
+        regenerated: [], mutants: [], mergeIn: null,
       },
       escalation: { kind: 'risk-trigger' },
       largeDiff: { overflow: 2741, changed: 3012, list: absPath('/run/ev/b/diff/CHANGED-LIST-B.txt') }, milestones: milestonesSample(),
@@ -330,7 +337,7 @@ const OUTPUTS: Record<keyof TestInputs, unknown> = {
     dispositions: [{ job: 'review-1', index: 0, disposition: 'still-open' }], reasons: ['the census misses T-1'], premises: [],
   },
   build: {
-    summary: 'Added the parser.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [],  final: true,
+    summary: 'Added the parser.', grounding: {specWrong: null, touches: []}, tooBig: null, notes: [], blockers: [], experiments: [], messages: [], checks: [{ lane: 'unit', head: 'a'.repeat(40), exit: 0 }],  final: true,
   },
   gate: {rulings: [],
     decision: 'revise', ordering: null, reasons: ['A2 untested'], directives: ['Add a test for A2.'],
@@ -492,7 +499,7 @@ describe('prompts', () => {
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const text = mod.render({mode, brief: {...SAMPLES.verifier[0].brief, history: [], vision: null}}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
 
-  it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => { for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) { const mod = promptFor('build', model); assert.ok(mod.system.includes(UNIT_POLICY)); const text = mod.render(SAMPLES.build[1]); assert.match(text, /\/run\/inv\/9-1/); assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.deepEqual(Object.keys((ROLE_SCHEMAS.build as {properties: object}).properties), ['summary', 'blockers', 'experiments', 'grounding', 'tooBig', 'notes', 'messages', 'final']); } });
+  it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => { for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) { const mod = promptFor('build', model); assert.ok(mod.system.includes(UNIT_POLICY)); const text = mod.render(SAMPLES.build[1]); assert.match(text, /\/run\/inv\/9-1/); assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.deepEqual(Object.keys((ROLE_SCHEMAS.build as {properties: object}).properties), ['summary', 'blockers', 'experiments', 'grounding', 'tooBig', 'notes', 'messages', 'checks', 'final']); } });
 
   it('dev.13: a milestone unit\'s pre-build, build and gate embed its design references as documents and name its milestones; others carry none', () => {
     for (const role of ['build', 'gate'] as const) for (const model of MODEL_IDS) {
@@ -858,7 +865,7 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
   const BUILDERS = ['claude-opus-5-5', 'gpt-5.6-luna'] as const;
   const JUDGES = ['claude-opus-5-5', 'claude-fable-5-1'] as const;
 
-  it('prompts.build-witness-commands: each lane\'s exact witness check, run after the last change; a checklist by exact test id; negative witnesses on the entry point; experiments', () => { for (const model of BUILDERS) { const mod = promptFor('build', model); const plain = mod.render(SAMPLES.build[0]); assert.doesNotMatch(plain, /witness-check/); const text = mod.render({...SAMPLES.build[1], fixRound: null}); assert.match(text, /- journey:\n {2}roadmap witness-check --lane-file \/run\/ev\/b\/witness\/journey\.json/); const props = (BUILD_SCHEMA as {properties: Record<string, unknown>}).properties; assert.ok(props['experiments'] && props['grounding'] && props['blockers'] && props['final']); assert.ok(!props['lanesRun'] && !props['changedPaths'] && !props['docsOnlySince']); } });
+  it('prompts.build-witness-commands: each lane\'s exact witness check, run after the last change; a checklist by exact test id; negative witnesses on the entry point; experiments', () => { for (const model of BUILDERS) { const mod = promptFor('build', model); const plain = mod.render(SAMPLES.build[0]); assert.doesNotMatch(plain, /witness-check|<witness_lanes>/); const text = mod.render({...SAMPLES.build[1], fixRound: null}); assert.match(text, /- journey \(build;[^\n]*\): required WITNESS-B\n {2}roadmap witness-check --lane-file \/run\/ev\/b\/witness\/journey\.json/); const props = (BUILD_SCHEMA as {properties: Record<string, unknown>}).properties; assert.ok(props['experiments'] && props['grounding'] && props['blockers'] && props['final']); assert.ok(!props['lanesRun'] && !props['changedPaths'] && !props['docsOnlySince']); } });
 
   it('prompts.build-suite-lanes: the plan\'s resource-free suite lanes as references for targeted checks, reported as experiments; nothing without them', () => {
     for (const model of BUILDERS) {
@@ -888,6 +895,49 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
     }
   });
 
+  it('prompts.build-dev81-inputs: witness lanes, mutants, the merge-in, the after-merge-in lanes and fix-round failure text render their values only when present', () => {
+    for (const model of BUILDERS) {
+      const mod = promptFor('build', model);
+      const none = mod.render(SAMPLES.build[0]);
+      for (const tag of ['<witness_lanes>', '<mutants>', '<merge_in>', '<after_merge_in>']) assert.ok(!none.includes(tag), `${model}: no ${tag} without data`);
+      const text = mod.render(SAMPLES.build[1]);
+      const block = (tag: string): string => { const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))?.[1]; assert.ok(m !== undefined, `${model}: <${tag}>`); return m; };
+      const lanes = block('witness_lanes');
+      assert.match(lanes, /- e2e-b \(candidate;[^\n]*\): required E2E-WITNESS-B\n {2}cd \/wt\/b && E2E-COMMAND-B/);
+      assert.match(lanes, /- estate-b \(candidate;[^\n]*\): required ESTATE-WITNESS-B(\n|$)/);
+      assert.doesNotMatch(lanes, /- estate-b[^\n]*\n {2}/, 'an executor-only lane has no command');
+      const mutants = block('mutants');
+      for (const needle of ['F-4', 'journey', 'MUST-FAIL-B', '/run/inputs/MUTANT-PATCH-B.patch']) assert.ok(mutants.includes(needle), `${model}: mutants ${needle}`);
+      assert.ok(mod.render({ ...SAMPLES.build[1], mutants: [{ ...SAMPLES.build[1].mutants[0]!, mustFail: 'every-test' }] }).match(/<mutants>[\s\S]*?<\/mutants>/)?.[0].includes('every test'), `${model}: every-test`);
+      const merge = block('merge_in');
+      for (const needle of [SHA_A, SHA_B, 'src/b/CONFLICT-B.ts', `git diff ${SHA_B} HEAD -- src/b/CONFLICT-B.ts`]) assert.ok(merge.includes(needle), `${model}: merge_in ${needle}`);
+      assert.doesNotMatch(mod.render({ ...SAMPLES.build[1], mergeIn: { ...SAMPLES.build[1].mergeIn!, approved: null } }).match(/<merge_in>[\s\S]*?<\/merge_in>/)?.[0] ?? '', /git diff/, `${model}: no approved diff without an approval`);
+      const after = block('after_merge_in');
+      assert.ok(after.includes('CLEANED-B/dist'), `${model}: cleaned`);
+      assert.ok(after.includes('- rerun-b (expects exit 0):\n  cd /wt/b && env CI=1 npm run RERUN-B'), `${model}: rerun lane command`);
+      const fixed = mod.render({ ...SAMPLES.build[1], fixRound: { failingEvidenceDirs: [], directives: [], failures: [{ lane: laneId('unit'), signature: 'SIGNATURE-B', specific: true, excerpt: ['EXCERPT-1', 'EXCERPT-2'] }] } });
+      const failing = fixed.match(/<failing_lanes>([\s\S]*?)<\/failing_lanes>/)?.[1];
+      assert.ok(failing !== undefined && /- unit: SIGNATURE-B\n {4}EXCERPT-1\n {4}EXCERPT-2/.test(failing), `${model}: failing lanes ${failing}`);
+      assert.match(text, /<failing_lanes>\(none\)<\/failing_lanes>/, `${model}: a fix round without failure text`);
+    }
+  });
+
+  it('gate.dev81-checks: the mutants and a merge-in resolution\'s dropped approved lines render in the executable checks only when present', () => {
+    for (const model of JUDGES) {
+      const mod = promptFor('gate', model);
+      const base = { witnesses: null, smoke: null, regenerated: [], mutants: [], mergeIn: null } as const;
+      assert.doesNotMatch(mod.render({ ...SAMPLES.gate[0], checks: { ...base, mergeIn: { approved: SHA_A, dropped: [] } } }), /executable_checks/, `${model}: nothing dropped, no block`);
+      const text = mod.render({ ...SAMPLES.gate[0], checks: {
+        ...base,
+        mutants: [{ finding: findingId('F-9'), lane: laneId('journey'), mustFail: ['GATE-MUST-FAIL'], patch: absPath('/run/inputs/GATE-PATCH.patch') }],
+        mergeIn: { approved: SHA_B, dropped: [{ path: repoPath('src/DROPPED.ts'), lines: ['  return DROPPED_LINE;'] }] },
+      } });
+      const checks = text.match(/<executable_checks>([\s\S]*?)<\/executable_checks>/)?.[1];
+      assert.ok(checks !== undefined, model);
+      for (const needle of ['F-9', 'GATE-MUST-FAIL', '/run/inputs/GATE-PATCH.patch', SHA_B, 'src/DROPPED.ts', 'return DROPPED_LINE;']) assert.ok(checks.includes(needle), `${model}: ${needle}`);
+    }
+  });
+
   it('prompts.build-handover: a fresh session\'s handover renders every record it carries; no handover block without one', () => {
     for (const model of BUILDERS) {
       const mod = promptFor('build', model);
@@ -907,7 +957,7 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
       assert.doesNotMatch(mod.render(SAMPLES.gate[0]), /executable_checks/, `${model}: no block when neither check applied`);
       const text = mod.render(SAMPLES.gate[1]);
       assert.match(text, /<executable_checks>\nWitness presence: 1 required witness test on the arc lanes at this head\.\n- missing \(absent, skipped, selected zero times, or a malformed record\): journey WITNESS-B \(W-1, target\)\n- failing: none\nMutation smoke \(the unit's production change reverted, its test files kept, the target witness tests run again\):\n- killed: none\n- survived: journey SURVIVOR-B\n- inconclusive: none\n<\/executable_checks>/, model);
-      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' }, regenerated: [] } });
+      const notRun = mod.render({ ...SAMPLES.gate[1], checks: { witnesses: null, smoke: { killed: [], survived: [], inconclusive: [], notRun: 'no-test-paths' }, regenerated: [], mutants: [], mergeIn: null } });
       assert.match(notRun, /<executable_checks>\nMutation smoke did not run: a target lane declares no testPaths, so its test files cannot be told from production code\.\n<\/executable_checks>/);
       // dev.12: the regenerate checks, one line per derived entry the diff touches, in each state.
       const gen = ['node', 'tools/gen.ts'];
@@ -916,7 +966,7 @@ describe('M4a rev 3 prompts: executable checks, the checkpoint admits', () => {
         { state: 'differs', outputs: [repoPattern('dist/a.js')], argv: gen, evidenceDir: absPath('/run/ev/regen') },
         { state: 'not-run', outputs: [repoPattern('dist/b.js')], argv: gen },
         { state: 'no-generator', outputs: [repoPattern('docs/api.md')] },
-      ] } });
+      ], mutants: [], mergeIn: null } });
       assert.match(regenerated, new RegExp([
         '<executable_checks>', 'Regenerated outputs this diff touches \\(plan `derived` entries\\):',
         '- goldens/\\*\\*: verified by regeneration\\. The executor ran \\["node","tools/gen\\.ts"\\] in a clean checkout of this head and every output came out byte-identical to the commit[^\\n]*',

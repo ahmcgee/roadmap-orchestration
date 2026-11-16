@@ -315,11 +315,16 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
   return declaredEnv(ctx, lane, executorEnv(ownerLabel(ctx.plan().arc, unit), held));
 }
 
-/** A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. */
-export function laneRequest(ctx: ResourceContext, lane: LaneDef): ResourceRequest | null {
+/**
+ * A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. dev.81 (C4):
+ * `fastSuite`, a lanes-stage suite lane (the fast suite or its base check, `runLaneSeries`), which also takes one
+ * `@fast-suite` token, so the plan's `capacity.fastSuites` caps how many run at once (a candidate's suite is not one).
+ */
+export function laneRequest(ctx: ResourceContext, lane: LaneDef, fastSuite = false): ResourceRequest | null {
   const basis = cpuCost(ctx, laneCpuKey(lane), CPU_COST.lane[lane.cadence], lane.cpu);
   const cpu = laneCpu(lane, basis);
   const names = lane.environment === undefined ? lane.resources : [...lane.resources, lane.environment];
+  if (fastSuite) return { ...requestOf(ctx.plan(), names, cpu, basis), fastSuite: true };
   return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu, basis);
 }
 
@@ -985,11 +990,13 @@ function retainedCheckout(ctx: StageContext, unit: UnitId, path: AbsPath): boole
  * first lane is reused). `witnesses`: a candidate's suite lanes that also run as an identical arc lane (F6), by id.
  * `verify` (dev.17): a deflake unit's verification runs per lane (src/pipeline/deflake.ts `verifyRunsOf`): that lane runs
  * fresh, that many times, every run passing. A flaky lane (red, then green on its diagnostic rerun) is recorded in the
- * flaky ledger (`observeFlake`) and passes when the ledger forgives it.
+ * flaky ledger (`observeFlake`) and passes when the ledger forgives it. `fresh` (dev.81, C2): every lane runs its own argv
+ * now, no earlier pass reused and none test-only (a base check for a confirmed red, src/pipeline/stages.ts `baseCheck`).
  */
 export async function runLaneSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], set: LaneSet, checkout: WorktreeCreateRequest, root: AbsPath,
   rt: LaneRuntime, entered: boolean, witnesses: ReadonlyMap<LaneId, ArcLaneDef> = new Map(), verify: ReadonlyMap<LaneId, number> = new Map(),
+  fresh = false,
 ): Promise<Series> {
   if (checkout.checkout.type !== 'detached') throw new Error(`a lane series runs in a detached checkout, not on ${checkout.checkout.branch}`);
   const ids = new Set<string>(lanes.map((l) => l.id));
@@ -1040,8 +1047,10 @@ export async function runLaneSeries(
     keepWitness(ctx, witness, record.inv, suiteWitnessDir(ctx.runDir, parent, witness, record.inv), treeSha, { type: 'candidate', unit: parent.unit, attempt: parent.attempt });
   };
 
+  // dev.81 (C4): a lanes-stage suite series' runs each take a `@fast-suite` token (`laneRequest`).
+  const fastSuite = set === 'suite' && parent.stage === 'lanes';
   const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null, verifyRuns: number | null = null): Promise<Attempt> => {
-    const request = laneRequest(ctx, lane);
+    const request = laneRequest(ctx, lane, fastSuite);
     const environments: ResourceName[] = [];
     let held: Reservation<'running', StageHolder> | null = null;
     if (request !== null) {
@@ -1132,8 +1141,8 @@ export async function runLaneSeries(
       continue;
     }
     // A stand-in for an arc lane always runs: its run is also the arc lane's witness (F6).
-    const reusable = witnesses.has(lane.id) ? null : reusablePass(ctx, parent, lane, at, now);
-    const partial = reusable !== null || witnesses.has(lane.id) || rootRerun ? null : testOnlyRun(ctx, lane, at, now);
+    const reusable = witnesses.has(lane.id) || fresh ? null : reusablePass(ctx, parent, lane, at, now);
+    const partial = reusable !== null || witnesses.has(lane.id) || rootRerun || fresh ? null : testOnlyRun(ctx, lane, at, now);
     const carried = reusable ?? (partial !== null && partial.files.length === 0 ? partial.base : null);
     if (carried !== null) {
       // The stage's entry reservation was the first lane's: unused, it is released before the next lane takes its own.
@@ -1483,13 +1492,18 @@ export function seriesDirty(view: JournalView, root: AbsPath): readonly RepoPath
  * One lane a journey series runs: a suite lane (a job's; `witness` null), or an arc lane, whose run is a witness.
  * `suite`: its exit verdict is a suite lane's (a suite lane, or an arc lane standing in for an identical suite lane,
  * F6), so it always runs: an observation carries no exit verdict.
+ * `required` (dev.81, A2): the test ids a reused observation of an arc lane must hold, else the lane runs: a unit's
+ * required ids on the lane (the witness check, `requiredJourneyLane`: obligation targets, repairs, its spec's witness
+ * items, preservation rows); null: every in-force obligation's witness on the lane (candidates, audits, baselines).
  */
-export type JourneyLane = Readonly<{ def: LaneDef; laneRev: LaneRev; witness: ArcLaneDef | null; suite: boolean }>;
+export type JourneyLane = Readonly<{ def: LaneDef; laneRev: LaneRev; witness: ArcLaneDef | null; suite: boolean; required: readonly string[] | null }>;
 
 /** A suite lane's rev, as an arc lane's (`laneRevOf`): what its `journey` spawn names. */
 export const suiteLaneRev = (lane: LaneDef): LaneRev => laneRev(sha256Hex(canonicalJson(lane)).slice(0, 16));
-export const suiteJourneyLane = (def: LaneDef): JourneyLane => ({ def, laneRev: suiteLaneRev(def), witness: null, suite: true });
-export const arcJourneyLane = (def: ArcLaneDef): JourneyLane => ({ def, laneRev: laneRevOf(def), witness: def, suite: false });
+export const suiteJourneyLane = (def: LaneDef): JourneyLane => ({ def, laneRev: suiteLaneRev(def), witness: null, suite: true, required: null });
+export const arcJourneyLane = (def: ArcLaneDef): JourneyLane => ({ def, laneRev: laneRevOf(def), witness: def, suite: false, required: null });
+/** dev.81 (A2): an arc lane whose reuse must hold the unit's required test ids `required` on it (the witness check). */
+export const requiredJourneyLane = (def: ArcLaneDef, required: readonly string[]): JourneyLane => ({ ...arcJourneyLane(def), required });
 /** An arc lane run once as itself and as the identical suite lane it stands in for (F6, `sameExecution`). */
 export const standInJourneyLane = (def: ArcLaneDef): JourneyLane => ({ ...arcJourneyLane(def), suite: true });
 
@@ -1841,7 +1855,8 @@ export async function runJourneySeries(
   for (const lane of lanes) {
     if (lane.witness?.witnessClass === 'external') continue;
     if (store !== null && lane.witness !== null && !lane.suite) {
-      const witnesses = holisticInForce(ctx).obligations?.obligations.flatMap((o) => o.witness?.lane === lane.def.id ? [o.witness] : []) ?? [];
+      const witnesses = lane.required !== null ? [{ lane: lane.def.id, testIds: lane.required }]
+        : holisticInForce(ctx).obligations?.obligations.flatMap((o) => o.witness?.lane === lane.def.id ? [o.witness] : []) ?? [];
       const o = reuse(store, arcLaneKey(ctx, treeSha, lane.witness, laneEnvId(ctx, lane.witness)), witnesses);
       if (o !== null) {
         runs.push({ lane: lane.def.id, inv: null, verdict: null, flaky: false, dir: null, record: o.record });

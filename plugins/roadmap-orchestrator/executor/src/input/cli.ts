@@ -2,7 +2,7 @@
 // no git, no fs. Paths are returned as given; step 13 resolves them against the caller's cwd.
 import { posix } from 'node:path';
 import {
-type FindingId,findingId,type LaneId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
+type CommandId,commandId,type FindingId,findingId,type LaneId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
 type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
 import { journalNeedsUserIds,parseFailureRef,DEMO_ACTS,RERUN_CAUSES,type DemoAct,type PauseTarget,type RerunCause,type ResumeTarget } from '../core/records.ts';
@@ -62,7 +62,8 @@ export type Command =
   | Readonly<{ command: 'reverse'; divergence: DivergenceId; run: RunLocator }>
   /** M3: an alternate implementer entry for a parked or preparing unit; `class` null keeps its routing. */
   | Readonly<{ command: 'steer'; unit: UnitId; brief: string; budgetMin: number; class: BuildClass | null; resume: boolean; run: RunLocator }>
-  | Readonly<{ command: 'witness'; obligation: ObligationId; result: 'pass' | 'fail'; evidence: string; run: RunLocator }>
+  /** `at` (`--at <rev>`, dev.81): the attested commit as given, resolved by the caller; null for the CI ref (the last pushed head). */
+  | Readonly<{ command: 'witness'; obligation: ObligationId; result: 'pass' | 'fail'; evidence: string; at: string | null; run: RunLocator }>
   | Readonly<{ command: 'dismiss'; finding: FindingId; counterEvidence: string; run: RunLocator }>
   | Readonly<{ command: 'note'; unit: UnitId; brief: string; run: RunLocator }>
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
@@ -71,6 +72,8 @@ export type Command =
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ command: 'audit'; run: RunLocator }>
   | Readonly<{ command: 'close-admissions'; run: RunLocator }>
+  /** dev.81 (C3a): take back pending mutation `target` (a queued apply, say) before it applies. */
+  | Readonly<{ command: 'withdraw'; target: CommandId; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
   | Readonly<{ command: 'gc'; repo: string; keep: number | null; dryRun: boolean }>
   // M4a host acts (not queued; no host lock): src/commands/{phase0,corpus,brief,pr,chain}.ts.
@@ -96,7 +99,9 @@ export type Command =
   | Readonly<{ command: 'resume-arc'; repo: string }>
   /** `inputs export --repo <repo> --arc <arc> --out <dir>` (I1, F17): the arc's current input view, read-only, into a new dir. */
   | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>
-  | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>;
+  | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>
+  /** dev.81 (A3): `push`: advance the CI ref now (the last pushed head counts as settled). */
+  | Readonly<{ command: 'push'; run: RunLocator }>;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
 export type Phase0Source = Readonly<{ type: 'plan'; plan: string }> | Readonly<{ type: 'ref'; arc: ArcId }>;
@@ -311,8 +316,8 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, divergence: arg(command, '<D-n>', divergenceId, onePositional(p, command, '<D-n>')), run: locator(p, command) };
     }
     case 'witness': {
-      const p = parseRest(rest, { ...LOCATOR, result: 'value', evidence: 'value' }, command);
-      return { command, obligation: arg(command, '<obligation>', obligationId, onePositional(p, command, '<obligation>')), result: arg(command, '--result', (v, p = 'result') => oneOf(['pass', 'fail'] as const)(v, p), required(p, command, 'result', 'pass|fail')), evidence: required(p, command, 'evidence', '<file|url>'), run: locator(p, command) };
+      const p = parseRest(rest, { ...LOCATOR, result: 'value', evidence: 'value', at: 'value' }, command);
+      return { command, obligation: arg(command, '<obligation>', obligationId, onePositional(p, command, '<obligation>')), result: arg(command, '--result', (v, p = 'result') => oneOf(['pass', 'fail'] as const)(v, p), required(p, command, 'result', 'pass|fail')), evidence: required(p, command, 'evidence', '<file|url>'), at: value(p, 'at') ?? null, run: locator(p, command) };
     }
     case 'dismiss': {
       const p = parseRest(rest, { ...LOCATOR, 'counter-evidence': 'value' }, command);
@@ -359,6 +364,10 @@ export function parseCommand(argv: readonly string[]): Command {
       const p = parseRest(rest, LOCATOR, command);
       positionals(p, command, 0);
       return { command, run: locator(p, command) };
+    }
+    case 'withdraw': {
+      const p = parseRest(rest, LOCATOR, command);
+      return { command, target: arg(command, '<command-id>', commandId, onePositional(p, command, '<command-id>')), run: locator(p, command) };
     }
     case 'gc': {
       const p = parseRest(rest, { repo: 'value', keep: 'value', 'dry-run': 'switch' }, command);
@@ -442,6 +451,11 @@ export function parseCommand(argv: readonly string[]): Command {
         out: required(p, 'inputs export', 'out', '<dir>'),
       };
     }
+    case 'push': {
+      const p = parseRest(rest, LOCATOR, command);
+      positionals(p, command, 0);
+      return { command, run: locator(p, command) };
+    }
     case 'demo': {
       const [act, ...args] = rest;
       if (!(DEMO_ACTS as readonly (string | undefined)[]).includes(act)) throw new CliError(`demo: expected the act up, down, hold or release, got ${JSON.stringify(act ?? '')}`);
@@ -451,7 +465,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release, push`,
       );
   }
 }

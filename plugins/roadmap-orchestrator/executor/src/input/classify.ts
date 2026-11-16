@@ -42,6 +42,7 @@ import type { CommandScope,ScopeOf } from '../schedule/types.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
 import { baseFiles,compareAndSwap } from './cas.ts';
+import { planDelivers } from './lineage.ts';
 import { type InForce,type InputFiles,PLAN_INPUT,type RevisionInForce,type RoutingBase,SPEC_INPUT,inForceFiles,inputPath,keptInput,phase0RecordOf,planInForce,planRouting,readInputFiles,revisionInForce,revisionManifestOf,unitRouting } from './inforce.ts';
 import {
 type KnownDefect,type PlanM1,type PlanUnit,ALL_WITHDRAWN_WAYS_OUT,allWithdrawnText,boundsOf,derivedOf,environmentOf,environmentsOf,hasMilestones,knownDefectsOf,milestoneMembers,milestonesNeedHolistic,milestonesOf,parsePlan,
@@ -1072,7 +1073,7 @@ function obligationRows(input: ClassifyInput, inputs: NextInputs, reasons: strin
       dispositions.push({ obligation: c.id, disposition: c.disposition, reason: c.reason, rev: c.rev });
     }
     if (c.type === 'split' && c.dropped.length > 0) dropped.push({ obligation: c.id, sentences: c.dropped });
-    changes.push({ type: 'obligation', id: c.id, edit: c.type });
+    changes.push({ type: 'obligation', id: c.id, edit: c.type, ...(c.type === 'edited' ? { fields: c.fields } : {}) });
     edited.add(`${c.id}\u0000${c.type}`);
   }
   // A changed arc lane re-witnesses every obligation it witnesses (their proof judgments bind its laneRev).
@@ -1113,7 +1114,7 @@ function specRows(input: ClassifyInput, inputs: NextInputs, specs: ReadonlyMap<U
       protectedPaths: protectedPaths(input.next.corpus === null || inputs.corpus?.pin == null || input.next.corpus.guide.bytes === null ? null
         : { pin: { value: inputs.corpus.pin }, guide: { bytes: input.next.corpus.guide.bytes } }),
     }));
-    reasons.push(...witnessReuseReasons(unit.id, spec, obligations));
+    reasons.push(...witnessReuseReasons(input.next.plan, unit.id, spec, obligations));
     const declared = specObligations(spec);
     const byId = new Map((obligations?.obligations ?? []).map((o) => [o.id, o]));
     const unknown = declared.filter((id) => !byId.has(id));
@@ -1141,15 +1142,16 @@ export function witnessLaneReasons(unit: UnitId, spec: SpecM1, obligations: Obli
 
 /**
  * Paid M4b run 6, a classifier row since 2026-10-15: each active witness item naming an obligation
- * (`WitnessItemDef.obligation`) names a binding obligation the unit delivers (its `deliveredBy` names the unit, or its
- * spec repairs it), and restates that obligation's witness exactly: its lane and one of its test ids. The build then
- * holds one required name per test, never two to rename between.
+ * (`WitnessItemDef.obligation`) names a binding obligation the unit delivers (its `deliveredBy` names the unit, or, dev.81
+ * (A1), a unit it re-enters in the revised plan, `planDelivers`; or its spec repairs it), and restates that obligation's
+ * witness exactly: its lane and one of its test ids. The build then holds one required name per test, never two to
+ * rename between.
  */
-function witnessReuseReasons(unit: UnitId, spec: SpecM1, obligations: Obligations | null): readonly string[] {
+function witnessReuseReasons(plan: PlanM1, unit: UnitId, spec: SpecM1, obligations: Obligations | null): readonly string[] {
   const linked = specWitnesses(spec).filter((w) => w.state === 'active' && w.obligation !== undefined);
   if (linked.length === 0) return [];
   const repairs = new Set<string>(specRepairs(spec));
-  const delivered = (obligations?.obligations ?? []).filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null && (o.deliveredBy.includes(unit) || repairs.has(o.id)));
+  const delivered = (obligations?.obligations ?? []).filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null && (planDelivers(plan, o, unit) || repairs.has(o.id)));
   const tests = (o: (typeof delivered)[number]): string => `lane ${o.witness!.lane}, test ${o.witness!.testIds.map((t) => JSON.stringify(t)).join(' or ')}`;
   return linked.flatMap((w) => {
     const o = delivered.find((x) => x.id === w.obligation);
@@ -1229,18 +1231,25 @@ const unionScope = (scope: CommandScope, units: readonly UnitId[]): CommandScope
   (scope.type === 'arc' ? scope : unitsScope([...(scope.type === 'units' ? scope.units : []), ...units]));
 
 /**
- * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, capacity and the other
- * plan-wide fields, the suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin).
+ * Whether a change drains the whole arc (A12): plan-wide routing or limits, a resource or pool, the plan-wide fields, the
+ * suite, and the holistic layer (obligations, mapping, vision, advances, the corpus pin). dev.81 (C3b): the drain follows
+ * the change. Three changes drain nothing, because every reader takes them from the plan in force at each use: `capacity`
+ * (the arbiter sizes the `@cpu` and `@fast-suite` pools at each wake, src/resources/pool.ts; a decrease stops new grants
+ * above the new size while the holders above it run out), `ci` (the CI ref worker reads `ci.settleMin` at each decision,
+ * src/forge/integration-push.ts) and an obligation edit that changed `deliveredBy` alone (the required witnesses and the
+ * latch read the in-force obligations at each check).
  */
 export function drainsArc(c: PlanChange): boolean {
   switch (c.type) {
     case 'routing':
     case 'limits':
       return c.unit === undefined || c.unit === null;
+    case 'plan-field':
+      return c.field !== 'capacity' && c.field !== 'ci';
+    case 'obligation':
+      return !(c.edit === 'edited' && c.fields !== undefined && c.fields.every((f) => f === 'deliveredBy'));
     case 'resource':
     case 'suite':
-    case 'plan-field':
-    case 'obligation':
     case 'mapping':
     case 'vision':
     case 'holistic':
@@ -1380,6 +1389,8 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'audit':
       case 'close-admissions':
       case 'demo':
+      case 'withdraw':
+      case 'push':
         return NONE;
       // M3 (plan "Commands"): `reverse` restores revisions of any artifact; `steer` and `merge-in` touch their unit.
       case 'witness':

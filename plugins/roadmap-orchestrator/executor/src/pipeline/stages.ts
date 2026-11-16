@@ -20,7 +20,7 @@ import { walkMcpConfig } from '../backends/mcp.ts';
 
 import type { Verification } from '../core/design.ts';
 import {
-BACKEND_PARK_CLASSES,RERUN_REDS,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
+BACKEND_PARK_CLASSES,RERUN_REDS,type BuilderCheck,type DiffShown,type GateLargeDiff,type HoldCause,type IntentOf,type JudgmentStage,type OpKind,type OutcomeStage,type StageOutcomeDetail,type StageOutcomeKind
 } from '../core/events.ts';
 import { holdFence } from '../core/fence.ts';
 import { durableMkdir } from '../core/fsx.ts';
@@ -47,8 +47,10 @@ import { diffBase,transientCheck,unitDiffPaths,unitTransientRules } from '../git
 import { WorktreeRecoveryError } from '../git/worktree.ts';
 
 import { selectObligations,unitRules } from '../holistic/impact.ts';
+import { delivers } from '../input/lineage.ts';
 import { ruleMentions } from '../holistic/rederive.ts';
-import { type ImpactInput,type ObligationDef,type Obligations,type Vision,parseObligations,parseVision } from '../holistic/types.ts';
+import { type ImpactInput,type ObligationDef,type Obligations,type PlanDefect,type Vision,parseObligations,parseVision,planDefectText } from '../holistic/types.ts';
+import { repairsDeliveredElsewhere } from '../holistic/required.ts';
 import { witnessLaneReasons } from '../input/classify.ts';
 import { regenerateLanes,unitRegenerateLanes } from '../input/derived.ts';
 
@@ -62,8 +64,9 @@ import { referenceFiles } from '../phase0/rows.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
 import type { ArchitectureInput,BuildBrowser,BuildLane,CorpusInput,DocText,EscalationInput,GateTargetInput,MilestonesInput,ReferenceIndex,RulingText,TargetInput,UnitMilestone,UnitTargetInput,VisionInput } from '../prompts/inputs.ts';
 import { type Handover,visionInputOf } from '../prompts/inputs.ts';
+import { type MissingCheck,missingChecksDirective,resolveUnmetDirective } from '../prompts/directives.ts';
 import {
-BUILD_SCHEMA,
+BUILD_SCHEMA,type BuildOutput,
 DECISIONS_FILE,type DecisionsFile,type Premise,buildOutput,
 validateDecisionsFile,
 } from '../prompts/schemas.ts';
@@ -81,7 +84,7 @@ import { specPatchOp } from '../spec/patch.ts';
 import { renderSpec } from '../spec/render.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 
-import { verifyRunsOf } from './deflake.ts';
+import { deflakeShield,verifyRunsOf } from './deflake.ts';
 import { builderDecisions, decisionDeparture, departures } from './design.ts';
 import { type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type Cancelled,type ImplementerDispatch,type Pinned,type StageContext,type StageParent,backendOf,cancelledNow,dispatchOf,enter,evidenceRoot,fastSuiteWorktree,implementerDispatch,isCancelled,matchesVerificationPath,nonEmpty,pinDispatch,runOp,runPrepared,steerDispatch,unitBranch,unitWorktree,verdictOf,verificationWorktree,workDir } from './dispatch.ts';
 
@@ -90,10 +93,12 @@ import { invocationDir,quiescent } from './invoke.ts';
 import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,laneSummaryIn,lastLaneSeriesCost,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
 
 import {
-type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,decidedRound,laneFixRound,prepareRound,
-resolveContinuation,
+type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,cleanAfterMergeIn,decidedRound,laneFixRound,prepareRound,
+reportContinuation,
 steerBrief,
 } from './rounds.ts';
+import { repairMutants } from './reproduce.ts';
+import { mergeInInput } from './review.ts';
 import { mutationSmoke,survivingObligations } from './smoke.ts';
 
 import { pressureCause,seriesRuling } from './starved.ts';
@@ -459,6 +464,7 @@ export function unitImpactInput(ctx: StageContext, unit: PlanUnit, spec: SpecM1,
     changedPaths,
     revised: [],
     latched: new Set(ctx.journal.view.holistic().latched.map((l) => l.obligation)),
+    delivers: (o, u) => delivers(ctx.journal.view, o, u),
   };
 }
 
@@ -722,6 +728,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   const dispatch = seated.dispatch;
   const pinned = dispatchOf(ctx.journal.view, unit.id);
   const round = await prepareRound(ctx, dispatch, input, parent);
+  const suiteLanes = builderSuiteLanes(ctx.plan().suite.lanes, spec);
+  // dev.81 (B5): the first round on the kept worktree since a merge-in starts without the pre-merge tree's build output.
+  const afterMergeIn = cleanAfterMergeIn(ctx, input, round.worktree, suiteLanes);
 
   const work = workDir(ctx.runDir, parent);
   durableMkdir(work);
@@ -736,8 +745,12 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   // dev.42: every Claude build gets configured walkthrough MCP servers; bring-ups follow membership/design/repairs.
   // Codex builds have no MCP path. Screenshots go in `work`.
   const browser = buildBrowser(ctx, spec, dispatch.triple.backend, work);
-  // D1 (R56): the lane files of the fast required witness lanes, published before the call, and their commands.
-  const witnessChecks = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
+  // D1 (R56): the lane files of the fast required witness lanes, published before the call; dev.81 (B3 d): every other required
+  // witness lane beside them.
+  const witnessLanes = checksApply(ctx) ? publishWitnessLaneFiles(ctx, unit, work, round.worktree, requiredAt(ctx, unit, revParse(round.worktree, 'HEAD'))) : [];
+  // dev.81 (B3 b, c): the mutants the candidate must kill; a resolve round's merge-in and the approval it follows.
+  const mutants = repairMutants(ctx, spec);
+  const mergeIn = decidedRound(input) === 'resolve' ? mergeInInput(ctx, unit.id) : null;
   // Field feedback 2026-10-23 item 1: a call on a fresh session gets the handover (src/pipeline/handover.ts); a resumed one does not.
   const handover = handoverOf(ctx, unit.id, spec, parent);
   const handed = (call: RoundCall): Handover | null => (call.session.mode === 'fresh' ? handover : null);
@@ -748,9 +761,9 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
     systemNotes: systemNotes(ctx.repo, revParse(round.worktree, 'HEAD'), unit.systems, ctx.routingBase.config),
     notes: [`Attempt state: ${ctx.journal.view.attemptCounts(unit.id).builds} builds, ${ctx.journal.view.attemptCounts(unit.id).judged} judged stages; diagnosis at 8 builds or 20 stages. Chargeable failures ${ctx.journal.view.unit(unit.id).counters.chargeableFailures}/${boundsOf(ctx.plan(), unit).chargeable}.`, ...ctx.journal.view.spawnsOfUnit(unit.id, 'build').slice(-1).flatMap((i) => judgmentOutput(ctx, i, (v) => buildOutput(v, 'build'))?.notes ?? []), ...ctx.journal.view.buildNotes(unit.id, parent.attempt).map((sha) => steerBrief(ctx.runDir, sha)), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.note !== null ? [steerBrief(ctx.runDir, f.note)] : []), ...ctx.journal.view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit.id && f.mode === 'pre-build' ? f.items.map((x) => `${x.id}: ${x.text} (${x.evidence.join('; ')})`) : [])],
     method: methodContext(ctx, unit, spec),
-    fastLanes: activeBuildLanes(spec), lastLaneSeries: lastLaneSeriesCost(ctx, unit.id), suiteLanes: builderSuiteLanes(ctx.plan().suite.lanes, spec), evidenceDir: work, worktree: round.worktree, systems: unit.systems,
+    fastLanes: activeBuildLanes(spec), lastLaneSeries: lastLaneSeriesCost(ctx, unit.id), suiteLanes, evidenceDir: work, worktree: round.worktree, systems: unit.systems,
     fixRound: call.fixRound === null ? null : { ...call.fixRound, baseComparison: call.fixRound.baseComparison ?? null, capState: {builds: ctx.journal.view.attemptCounts(unit.id).builds, judgedStages: ctx.journal.view.attemptCounts(unit.id).judged, chargeableFailures: state.counters.chargeableFailures, chargeableBound: state.bounds.chargeable, certificationAllowance: allowance}, directives: [...call.fixRound.directives,
-      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessChecks, milestones, browser: browser?.input ?? null, handover: handed(call),
+      `Certification allowance: ${allowance} uncharged red certifications remaining before the next charge.`] }, witnessLanes, mutants, mergeIn, afterMergeIn, milestones, browser: browser?.input ?? null, handover: handed(call),
   }, dispatch.triple.backend);
   const callFor = (prepared: PreparedRound) => (call: RoundCall): BackendCallSpec => ({
     unit: unit.id, parent,
@@ -762,12 +775,43 @@ export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput
   });
   const called = await callRound(ctx, round, callFor(round));
   // Field feedback 2026-10-23 item 4: a resolve round that reported final with nothing beyond the merge while clauses are unmet
-  // goes back to its builder once (rounds.ts `resolveContinuation`); the continuation's outcome is read the normal way.
-  const unmet = decidedRound(input) === 'resolve' && called.kind === 'result' && called.result.outcome.kind === 'success' && mergeOnly(ctx, unit.id)
+  // goes back to its builder once (rounds.ts `reportContinuation`); the continuation's outcome is read the normal way.
+  const succeeded = called.kind === 'result' && called.result.outcome.kind === 'success';
+  const unmet = decidedRound(input) === 'resolve' && succeeded && mergeOnly(ctx, unit.id)
     ? unmetClauses(ctx, lineageOf(ctx.journal.view, unit.id), spec) : [];
-  if (unmet.length === 0 || called.kind !== 'result') return buildRead(ctx, unit, parent, decidedRound(input), called, held.reservation);
-  const again = resolveContinuation(ctx, dispatch, round, called, unmet, unit.id);
+  // dev.81 (B4, B5): a final report whose checks do not prove the round's required lanes goes back the same way, in the same one
+  // continuation. A continue's session holds its decided round's inputs, so it owes the same proof.
+  const decided = input.kind === 'continue' ? input.of : input;
+  const owed = [...(decided.kind === 'fix' ? decided.fix.requiredChecks ?? [] : []), ...(afterMergeIn?.rerun ?? [])];
+  const missing = succeeded && called.kind === 'result' && called.result.outcome.kind === 'success' ? missingChecks(called.result.outcome.value, owed, revParse(round.worktree, 'HEAD')) : [];
+  const directives = [...(unmet.length === 0 ? [] : [resolveUnmetDirective(unmet)]), ...(missing.length === 0 ? [] : [missingChecksDirective(missing, revParse(round.worktree, 'HEAD'))])];
+  if (directives.length === 0 || called.kind !== 'result') return buildRead(ctx, unit, parent, decidedRound(input), called, held.reservation);
+  const again = reportContinuation(ctx, dispatch, round, called, directives, unit.id);
   return buildRead(ctx, unit, parent, decidedRound(input), await callRound(ctx, again, callFor(again)), held.reservation);
+}
+
+/**
+ * dev.81 (B4, B5): the lanes of `owed` (a fix round's required checks, an after-merge-in round's suite lanes; each lane once) that
+ * a final build report `value` does not prove: no `checks` row for the lane at `head` (the worktree's HEAD after the call) with the
+ * lane's expected exit. A report that does not parse proves nothing and owes nothing here: `buildRead` reads it as malformed.
+ */
+export function missingChecks(value: unknown, owed: readonly LaneDef[], head: Sha): readonly MissingCheck[] {
+  if (owed.length === 0) return [];
+  let checks: BuildOutput['checks'];
+  try {
+    checks = buildOutput(value, 'build').checks;
+  } catch (error) {
+    if (!(error instanceof SchemaError)) throw error;
+    return [];
+  }
+  const lanes = [...new Map(owed.map((l) => [l.id, l])).values()];
+  return lanes.flatMap((l): MissingCheck[] => {
+    const rows = checks.filter((c) => c.lane === l.id);
+    if (rows.length === 0) return [{ lane: l.id, expectedExit: l.expectedExit, why: 'no-row' }];
+    const at = rows.filter((c) => c.head === head);
+    if (at.length === 0) return [{ lane: l.id, expectedExit: l.expectedExit, why: 'other-head' }];
+    return at.some((c) => c.exit === l.expectedExit) ? [] : [{ lane: l.id, expectedExit: l.expectedExit, why: 'other-exit' }];
+  });
 }
 
 /**
@@ -1144,10 +1188,13 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
       return { kind: 'env-unavailable', environment: d2.environment };
     case 'not-run':
       return { kind: 'green' };
-    case 'ran':
-      return d2.verdict.survived.length === 0
-        ? { kind: 'green' }
-        : { kind: 'smoke-survived', detail: { kind: 'smoke-survived', obligations: survivingObligations(d2.targets, d2.verdict.survived), testIds: d2.verdict.survived } };
+    case 'ran': {
+      if (d2.verdict.survived.length === 0) return { kind: 'green' };
+      // dev.81 (B3a): survivors that are only repairs of obligations merged units deliver are the plan's to fix, not a build's.
+      const defects = repairsDeliveredElsewhere(ctx.journal.view, holisticInForce(ctx).obligations!, unit.id, d2.targets, d2.verdict.survived);
+      if (defects.length > 0) return { kind: 'plan-defect', detail: { kind: 'plan-defect', defects }, needsUser: repairElsewhereNeedsUser(unit, salvaged, defects) };
+      return { kind: 'smoke-survived', detail: { kind: 'smoke-survived', obligations: survivingObligations(d2.targets, d2.verdict.survived), testIds: d2.verdict.survived } };
+    }
     case 'interrupted':
       return { kind: 'interrupted' };
     case 'occupied':
@@ -1155,6 +1202,19 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
     case 'cleanup-failed':
       return { kind: 'cleanup-failed', failed: d2.failed };
   }
+}
+
+/** dev.81 (B3a): the blocking item of a `plan-defect` park for smoke survivors other merged units deliver. */
+function repairElsewhereNeedsUser(unit: PlanUnit, salvaged: Sha, defects: readonly PlanDefect[]): NeedsUserContent {
+  return {
+    blocking: true,
+    subject: { type: 'unit', unit: unit.id },
+    reason: 'plan-defect',
+    summary: `Unit ${unit.id}: its repaired witnesses survived mutation smoke at ${salvaged} for a reason no build round can fix: ${defects.map(planDefectText).join(' ')} The unit is parked, uncharged.`,
+    recommendation: `Fix the plan with \`roadmap apply\`: drop the delivered obligation from ${unit.id}'s spec \`repairs\` (or cut the unit if nothing else is left to repair), then \`roadmap resume ${unit.id}\` re-runs its lanes.`,
+    options: [],
+    evidence: [],
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1171,7 +1231,10 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 // suite runs on the current tip, so a tip that fixed the base since passes, and a tip still red is its `base-red` (merges
 // halt, `needs-user`). A park here could not heal: the unit's commit never contains a later fix of its base, and only
 // the candidate merges the tip. A base check's verdict is shared by every unit of the run (`BASE_CHECKS`): units red on
-// the same lanes over the same base run it once.
+// the same lanes over the same base run it once. dev.81 (C2): a confirmed red (its diagnostic rerun red too, or a repeat of
+// the unit's earlier red, `confirmedRed`) never takes a kept base *pass*: it compares against a fresh base run (`baseCheck`
+// `fresh`: no earlier pass reused, no test-only run), where a base lane that is flaky counts as failed (a flaky base proves
+// nothing against a timing red); its `lane-base-compared` fact says `fresh: true`. A kept base red still stands for it.
 //
 // Regenerate checks (dev.12): the regenerate lane of each derived entry whose sources or outputs the unit's diff touches
 // (`unitRegenerateLanes`, src/input/derived.ts) runs first in the same series, as a fast suite lane: a hand edit hidden in
@@ -1182,9 +1245,13 @@ async function executableChecks(ctx: StageContext, unit: PlanUnit, parent: Stage
 /** Where a lanes attempt keeps the evidence of its fast suite: at the salvage SHA (`suite`), on the diff base alone (`base`). */
 export const fastSuiteRoot = (runDir: AbsPath, parent: StageParent, at: 'suite' | 'base'): AbsPath => absPath(join(evidenceRoot(runDir, parent), `_${at}`));
 
+/** dev.81 (C2): a red the diagnostic rerun confirmed (red again, not flaky) or that repeats the unit's earlier red. */
+const confirmedRed = (lane: LaneRecord): boolean => (lane.diagnostic !== null && !lane.flaky) || lane.repeat !== null;
+
 /** The fast suite on the diff base alone: whether it failed (a red lane, or a changed checkout), or no verdict (what the attempt records). */
 type BaseCheck =
-  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean; evidence: AbsPath }>
+  /** dev.81 (C2): `fresh`, the base ran for this check with nothing reused (`baseCheck` `fresh`). */
+  | Readonly<{ kind: 'verdict'; failed: boolean; lanes: readonly LaneId[]; changedCheckout: boolean; evidence: AbsPath; fresh: boolean }>
   | Readonly<{ kind: 'none'; verdict: LanesVerdict }>;
 
 /**
@@ -1221,17 +1288,21 @@ function suiteFault(ctx: StageContext, unit: UnitId, series: Series): LanesVerdi
  */
 async function fastSuiteSeries(
   ctx: StageContext, parent: StageParent, lanes: readonly LaneDef[], at: Sha, which: 'suite' | 'base', rt: LaneRuntime,
-  verify: ReadonlyMap<LaneId, number> = new Map(), set: 'spec' | 'suite' = 'suite',
+  verify: ReadonlyMap<LaneId, number> = new Map(), set: 'spec' | 'suite' = 'suite', fresh = false,
 ): Promise<Series> {
   const { worktreeRoot, arc } = ctx.plan();
   const checkout = { path: fastSuiteWorktree(worktreeRoot, arc, parent.unit, parent.attempt, which), checkout: { type: 'detached', at } } as const;
-  const series = await runLaneSeries(ctx, parent, lanes, set, checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify);
+  const series = await runLaneSeries(ctx, parent, lanes, set, checkout, fastSuiteRoot(ctx.runDir, parent, which), rt, false, new Map(), verify, fresh);
   if (series.tree !== null) await removeVerificationTree(ctx, series.tree, parent);
   return series;
 }
 
-/** `lanes` on `base` alone, run once per run for every unit asking (a check without a verdict is not kept). */
-async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime, set: 'spec' | 'suite' = 'suite'): Promise<BaseCheck> {
+/**
+ * `lanes` on `base` alone, run once per run for every unit asking (a check without a verdict is not kept). `fresh` (dev.81,
+ * C2): for a confirmed red, a kept failed verdict stands (a base red is still a base red), but a kept pass is not trusted:
+ * the base runs again, nothing reused, a flaky base lane counted as failed, and its verdict is kept in place of the old.
+ */
+async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lanes: readonly LaneDef[], rt: LaneRuntime, set: 'spec' | 'suite' = 'suite', fresh = false): Promise<BaseCheck> {
   const checks = BASE_CHECKS.get(ctx.journal) ?? new Map<string, Promise<BaseCheck>>();
   BASE_CHECKS.set(ctx.journal, checks);
   const key = canonicalJson({ base, lanes, set });
@@ -1239,18 +1310,20 @@ async function baseCheck(ctx: StageContext, parent: StageParent, base: Sha, lane
   if (known !== undefined) {
     try {
       const check = await known;
-      if (check.kind === 'verdict') return check;
+      // A kept verdict is no fresh run of this comparison's own.
+      if (check.kind === 'verdict' && (!fresh || check.failed)) return { ...check, fresh: false };
     } catch (error) {
       // The originating unit owns its failed checkout; another unit compares in its own checkout.
       if (!(error instanceof WorktreeRecoveryError)) throw error;
     }
   }
   const running = (async (): Promise<BaseCheck> => {
-    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), set);
+    const series = await fastSuiteSeries(ctx, parent, lanes, base, 'base', rt, new Map(), set, fresh);
     const fault = suiteFault(ctx, parent.unit, series);
     if (fault !== null) return { kind: 'none', verdict: fault };
-    const red = series.end.kind === 'red' ? [series.end.lane.lane] : [];
-    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'base') };
+    const red = fresh ? [...new Set(series.ledger.filter((l) => isRed(l.verdict) || l.flaky).map((l) => l.lane))]
+      : series.end.kind === 'red' ? [series.end.lane.lane] : [];
+    return { kind: 'verdict', failed: red.length > 0 || series.dirty.length > 0, lanes: red, changedCheckout: series.dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'base'), fresh };
   })();
   checks.set(key, running);
   try {
@@ -1326,13 +1399,24 @@ async function fastSuite(
   const failing = end.kind === 'red' ? lanes.filter((l) => l.id === end.lane.lane) : lanes.filter((l) => series.ledger.some((r) => r.lane === l.id));
   const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
   // A unit whose commit is its base (nothing of its own) failed on the base in this very run.
+  const fresh = end.kind === 'red' && confirmedRed(end.lane);
   const check: BaseCheck = base === salvaged
-    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'suite') }
-    : await baseCheck(ctx, parent, base, failing, rt);
+    ? { kind: 'verdict', failed: true, lanes: end.kind === 'red' ? [end.lane.lane] : [], changedCheckout: dirty.length > 0, evidence: fastSuiteRoot(ctx.runDir, parent, 'suite'), fresh: false }
+    : await baseCheck(ctx, parent, base, failing, rt, 'suite', fresh);
   if (check.kind === 'none') return { verdict: check.verdict, series };
-  if (end.kind === 'red' && red.has(end.lane.lane) && !end.lane.flaky && !ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass' });
+  if (end.kind === 'red' && red.has(end.lane.lane) && !end.lane.flaky && !ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass', ...(check.fresh ? { fresh: true as const } : {}) });
   if (!check.failed) return { verdict: { kind: end.kind === 'red' ? (red.has(end.lane.lane) && !end.lane.flaky ? 'regression' : 'red') : 'not-certified' }, series };
   return { verdict: { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } }, series };
+}
+
+/**
+ * dev.81 (B5): the lane checks the unit's latest build report says it ran (`BuildOutput.checks`, B4's final-report proof);
+ * empty before its first build, or from a report without them.
+ */
+function builderChecks(ctx: StageContext, unit: UnitId): readonly BuilderCheck[] {
+  const latest = ctx.journal.view.spawnsOfUnit(unit, 'build').at(-1);
+  if (latest === undefined) return [];
+  return judgmentOutput(ctx, latest, (v) => buildOutput(v, 'build'))?.checks ?? [];
 }
 
 export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): Promise<LanesDone | Cancelled> {
@@ -1388,10 +1472,12 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (verdict.kind === 'red' && end.kind === 'red' && (priorBaseRed !== undefined || end.lane.repeat !== null || red.spec.has(end.lane.lane)) && !end.lane.flaky && ctx.journal.view.completedLanesOutcome(unit.id)?.outcome !== 'known-defect') {
     const base = diffBase(ctx.repo, integrationTip(ctx), salvaged);
     const failing = order.filter((l) => l.id === end.lane.lane);
-    const check: BaseCheck = priorBaseRed?.kind === 'lane-base-compared' ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: false, evidence: priorBaseRed.evidence } : base === salvaged ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: series.dirty.length > 0, evidence: specSeriesRoot(ctx.runDir, parent) } : await baseCheck(ctx, parent, base, failing, rt, 'spec');
+    // dev.81 (C2): a prior base red stands; a prior base pass is never reused for a confirmed red (`fresh`).
+    const fresh = confirmedRed(end.lane);
+    const check: BaseCheck = priorBaseRed?.kind === 'lane-base-compared' ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: false, evidence: priorBaseRed.evidence, fresh: false } : base === salvaged ? { kind: 'verdict', failed: true, lanes: [end.lane.lane], changedCheckout: series.dirty.length > 0, evidence: specSeriesRoot(ctx.runDir, parent), fresh: false } : await baseCheck(ctx, parent, base, failing, rt, 'spec', fresh);
     if (check.kind === 'none') verdict = check.verdict;
     else {
-      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass' });
+      if (!ctx.journal.view.ciFacts().some((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt && f.lane === end.lane.lane)) ctx.journal.fact({ kind: 'lane-base-compared', unit: unit.id, attempt: parent.attempt, lane: end.lane.lane, base, evidence: check.evidence, result: check.failed ? 'fail' : 'pass', ...(check.fresh ? { fresh: true as const } : {}) });
       if (!check.failed) verdict = { kind: 'regression' };
       if (check.failed) {
         verdict = { kind: 'base-red', detail: { kind: 'base-red', base, lanes: check.lanes, changedCheckout: check.changedCheckout } };
@@ -1405,6 +1491,22 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   if (verdict.kind === 'red') {
     const red = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict));
     if (red.length > 0 && red.every((l) => l.flaky && l.diagnostic?.verdict === 'pass') && series.dirty.length === 0 && (suite?.series?.dirty.length ?? 0) === 0) verdict = { kind: 'flaky' };
+  }
+  if (verdict.kind === 'red' || verdict.kind === 'regression' || verdict.kind === 'not-certified') {
+    const redLanes = [...series.ledger, ...(suite?.series?.ledger ?? [])].filter((l) => isRed(l.verdict)).map((l) => l.lane);
+    // dev.81 (C1): a red on the lane an open deflake unit owns is the ledger's flake: uncharged, held at prepare until it
+    // settles (src/pipeline/deflake.ts `deflakeShield`).
+    const shields = redLanes.map((lane) => ({ lane, deflake: deflakeShield(ctx.journal.view, ctx.plan(), unit.id, lane) }));
+    const held = shields[0];
+    if (held !== undefined && held.deflake !== null && shields.every((x) => x.deflake !== null)) verdict = { kind: 'deflake-held', detail: { kind: 'deflake-held', deflake: held.deflake, lane: held.lane } };
+    // dev.81 (B5): every red lane passed in the builder's own reported check at this head: the environments diverge.
+    else if (redLanes.length > 0) {
+      const defs = [...order, ...fastSuiteLanes(ctx, spec, salvaged)];
+      const checks = builderChecks(ctx, unit.id).filter((c) => c.head === salvaged && redLanes.includes(c.lane) && c.exit === defs.find((d) => d.id === c.lane)?.expectedExit);
+      if (redLanes.every((lane) => checks.some((c) => c.lane === lane))) {
+        verdict = { kind: 'environment-divergence', detail: { kind: 'environment-divergence', head: salvaged, lanes: [...new Set(redLanes)], builderChecks: checks } };
+      }
+    }
   }
   // D1, D2 (corpus arcs): only after a green certified spec series and a fast suite that passed or was the base's red.
   if ((verdict.kind === 'green' || verdict.kind === 'base-red') && checksApply(ctx)) {
@@ -1422,7 +1524,7 @@ export async function lanes(ctx: StageContext, unit: PlanUnit, salvaged: Sha): P
   const ledger = [...series.ledger, ...(suite?.series?.ledger ?? [])];
   const dirty = [...series.dirty, ...(suite?.series?.dirty ?? [])];
   const compared = ctx.journal.view.ciFacts().filter((f) => f.kind === 'lane-base-compared' && f.unit === unit.id && f.attempt === parent.attempt);
-  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, [...spec.lanes, ...fastSuiteLanes(ctx, spec, salvaged)], compared) : null;
+  const fix = kind === 'red' || kind === 'regression' || kind === 'flaky' || kind === 'environment-divergence' || (kind === 'not-certified' && dirty.length > 0) ? laneFixRound(ledger, dirty, salvaged, [...spec.lanes, ...fastSuiteLanes(ctx, spec, salvaged)], compared) : null;
   const facts = verdict.environment === undefined ? failedFacts(verdict.failed ?? []) : environmentFacts(verdict.environment);
   return { ...record(ctx, parent, kind, verdict.needsUser ?? null, facts, verdict.cause, verdict.detail), at: salvaged, ledger: series.ledger, verification: keep, fix };
 }

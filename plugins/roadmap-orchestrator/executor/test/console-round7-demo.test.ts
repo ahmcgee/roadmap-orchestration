@@ -9,6 +9,7 @@ import { portableStatus } from './fixtures/status-parity.ts';
 import { serveConsole } from '../src/console/http.ts';
 import { CONSOLE_PROTOCOL } from '../src/observation/protocol.ts';
 import { status } from '../src/status.ts';
+import { type WireStatus, wireStatus } from '../src/status-wire.ts';
 import { openJournal } from '../src/core/log.ts';
 import { milestoneId, serveName, sha } from '../src/core/ids.ts';
 import { readBootId, identityOf } from '../src/contain/proc.ts';
@@ -29,12 +30,13 @@ for (const change of ['record', 'process death'] as const) test(`F2 demo ${chang
   } };
   writeDemoRecord(f.hostDir, record);
   const server = await serveConsole({ ...f, host: '127.0.0.1', port: 0 }); t.after(() => server.close());
-  const read = async () => { const response = await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/status`); assert.equal(response.status, 200); return await response.json() as { revision: number; data: ReturnType<typeof status> }; };
+  const read = async () => { const response = await fetch(`${server.url}/api/${CONSOLE_PROTOCOL}/arcs/${f.arc}/status`); assert.equal(response.status, 200); return await response.json() as { revision: number; data: WireStatus }; };
   const before = await read(); assert.equal(before.data.demo?.serving, promoted);
   const journalBytes = readFileSync(join(f.runDir, 'events.jsonl'));
   if (change === 'record') writeDemoRecord(f.hostDir, { ...record, ports: { [web]: 23456 } });
   else { child.kill('SIGKILL'); await exited; }
-  const after = await read(), local = status(f.runDir, f.arc, f.hostDir);
+  // The status route serves the printed status (dev.81 D3): the local status folded the same way.
+  const after = await read(), local = wireStatus(status(f.runDir, f.arc, f.hostDir));
   assert.deepEqual(portableStatus(after.data), portableStatus(local));
   assert.ok(after.revision > before.revision);
   assert.equal(after.data.demo?.serving, change === 'record' ? promoted : null);

@@ -45,7 +45,7 @@ test('real replay corpus covers every role, contains only sanitized values, and 
  * upgrade-in-place read-time default). A replay lacking one must miss exactly that field on the wire, read with its default,
  * and pass the current schema with the default supplied: the rest of the answer is still held to the schema in force.
  */
-const READ_TIME_DEFAULTS: Partial<Record<Role, Readonly<Record<string, JsonValue>>>> = { build: { messages: [] } };
+const READ_TIME_DEFAULTS: Partial<Record<Role, Readonly<Record<string, JsonValue>>>> = { build: { messages: [], checks: [] } };
 function withDefaults(role: Role, value: JsonValue): JsonValue {
   const defaults = READ_TIME_DEFAULTS[role] ?? {};
   const record = value as Record<string, JsonValue>;
@@ -57,14 +57,18 @@ function withDefaults(role: Role, value: JsonValue): JsonValue {
   return { ...record, ...Object.fromEntries(missing.map((k) => [k, defaults[k]!])) };
 }
 
-test('read-time defaults: every build replay predates messages (dev.59) and reads with none', () => {
+test('read-time defaults: every build replay predates messages (dev.59) and checks (dev.81) and reads with none of either', () => {
   const builds = cases.filter((c) => c.role === 'build' && c.expect === 'accepted');
   assert.ok(builds.length > 0);
   for (const c of builds) {
     const value = JSON.parse(fixtureText(c.file)) as Record<string, JsonValue>;
     assert.equal(Object.hasOwn(value, 'messages'), false, c.file);
     assert.equal(schemaViolation(ROLE_SCHEMAS.build, value), '$.messages: required, missing', c.file);
-    assert.deepEqual(ROLE_VALIDATORS.build(value).messages, [], c.file);
+    assert.equal(Object.hasOwn(value, 'checks'), false, c.file);
+    assert.equal(schemaViolation(ROLE_SCHEMAS.build, { ...value, messages: [] }), '$.checks: required, missing', c.file);
+    const read = ROLE_VALIDATORS.build(value);
+    assert.deepEqual(read.messages, [], c.file);
+    assert.deepEqual(read.checks, [], c.file);
   }
 });
 

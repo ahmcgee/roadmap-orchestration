@@ -3,9 +3,10 @@ import { type SystemName,systemName } from '../core/ids.ts';
 // Strict role-result schemas and validators. Verifier pre-build and diagnosis modes annotate;
 // gate mode approves, requests a fix or escalates. Builders report grounding and experiments;
 // campaign audits report findings and root requests. Cross-field checks supplement JSON Schema.
-import { type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type ReviewFindingId,type UnitId,type VisionClauseId,answerIds,clauseId,findingId,journeyId,laneId,obligationId,reviewFindingId,unitId,visionClauseId } from '../core/ids.ts';
+import { type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type ReviewFindingId,type Sha,type UnitId,type VisionClauseId,answerIds,clauseId,findingId,journeyId,laneId,obligationId,reviewFindingId,sha,unitId,visionClauseId } from '../core/ids.ts';
 import { type JsonValue } from '../core/json.ts';
 import { type NoteDef,SPEC_SCHEMA,specM1 } from '../core/records.ts';
+import type { BuilderCheck } from '../core/events.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import { Fields,type Read,SchemaError,arrayOf,assertUnique,envName,int,literal,nullable,object,oneOf,str,tagged,text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
@@ -143,11 +144,17 @@ export type TooBig = Readonly<{ estimate: string; suggestedChildren: readonly st
  * bounds it), so the exception leaves a trace in the build's evidence.
  */
 export type ReceivedMessage = Readonly<{ from: string; at: string; text: string }>;
+/**
+ * dev.81 (B4, B5): one lane the builder ran on its final tree: the lane, the commit HEAD was at, and the exit code. A fix round's
+ * required checks and an after-merge-in round's suite lanes are proven by these rows (stages.ts `missingChecks`).
+ */
 export type BuildOutput = Readonly<{
   summary: string; blockers: readonly string[]; experiments: readonly Experiment[];
   grounding: Grounding; tooBig: TooBig | null; notes: readonly string[];
   /** dev.59: every cross-session message received; read as none from a report written before 1.0.0-dev.59 (`buildOutput`). */
   messages: readonly ReceivedMessage[];
+  /** dev.81: the lanes it ran on its final tree; read as none from a report written before 1.0.0-dev.81 (`buildOutput`). */
+  checks: readonly BuilderCheck[];
   final: true;
 }>;
 /** The longest message text a build report quotes whole; a longer one is quoted by its opening this long. */
@@ -162,16 +169,25 @@ export const BUILD_SCHEMA: Schema = sObj({
     at: sDescribe(S_TEXT, 'When it arrived, as precisely as you know it; empty when unknown.'),
     text: sDescribe(S_STR, `The message verbatim, or its first ${MESSAGE_EXCERPT_CHARS} characters when longer.`),
   })), 'Every message another Claude session sent you during this run, in arrival order; empty when none arrived.'),
+  checks: sDescribe(sArr(sObj({
+    lane: sDescribe(S_ITEM_ID, 'The lane id, as the message names it.'),
+    head: sDescribe(sPattern('^[0-9a-f]{40}$'), 'The commit HEAD was at when the lane ran (git rev-parse HEAD).'),
+    exit: S_EXIT,
+  })), 'Each required check and after-merge-in lane you ran on your final tree; empty when the message names none, and in an interim report (final: false).'),
   final: S_FINAL,
 });
 const decision: Read<NoteDef> = object((f) => ({ id: f.get('id', (v, p): ClauseId => clauseId(v, p)), text: f.get('text', str) }));
 const experiment: Read<Experiment> = object((g) => ({ name: g.get('name', str), argv: g.get('argv', arrayOf(text, { nonEmpty: true })), exit: g.get('exit', int(0, 255)) }));
 const receivedMessage: Read<ReceivedMessage> = object((g) => ({ from: g.get('from', str), at: g.get('at', text), text: g.get('text', str) }));
+const buildCheck: Read<BuilderCheck> = object((g) => ({ lane: g.get('lane', (v, p) => laneId(v, p)), head: g.get('head', (v, p) => sha(v, p)), exit: g.get('exit', int(0, 255)) }));
 /** dev.59 upgrade warning latch: the missing-`messages` notice prints once per process. */
 let legacyMessagesWarned = false;
+/** dev.81 upgrade warning latch: the missing-`checks` notice prints once per process. */
+let legacyChecksWarned = false;
 /**
- * A build report. `messages` (dev.59) is read as none from a report an earlier release's build wrote (its launch's schema had no
- * such field), with a warning; temporary scaffolding, deleted once no arc started before 1.0.0-dev.59 is in flight.
+ * A build report. `messages` (dev.59) and `checks` (dev.81) are read as none from a report an earlier release's build wrote (its
+ * launch's schema had no such field), with a warning; temporary scaffolding, deleted once no arc started before that release is in
+ * flight.
  */
 export const buildOutput: Read<BuildOutput> = object((f) => {
   const messages = f.optional('messages', arrayOf(receivedMessage));
@@ -179,11 +195,16 @@ export const buildOutput: Read<BuildOutput> = object((f) => {
     process.emitWarning('reading a build report from before 1.0.0-dev.59 as having received no cross-session messages (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
     legacyMessagesWarned = true;
   }
+  const checks = f.optional('checks', arrayOf(buildCheck));
+  if (checks === undefined && !legacyChecksWarned) {
+    process.emitWarning('reading a build report from before 1.0.0-dev.81 as having reported no lane checks (further occurrences are not repeated)', { code: 'ROADMAP_UPGRADE' });
+    legacyChecksWarned = true;
+  }
   return {
     summary: f.get('summary', str), blockers: f.get('blockers', arrayOf(str)), experiments: f.get('experiments', arrayOf(experiment)),
     grounding: f.get('grounding', object((g) => ({ specWrong: g.get('specWrong', nullable(text)), touches: g.get('touches', arrayOf(text)) }))),
     tooBig: f.get('tooBig', nullable(object((g) => ({ estimate: g.get('estimate', text), suggestedChildren: g.get('suggestedChildren', arrayOf(text, { nonEmpty: true })) })))),
-    notes: f.get('notes', arrayOf(str)), messages: messages ?? [], final: f.get('final', literal(true)),
+    notes: f.get('notes', arrayOf(str)), messages: messages ?? [], checks: checks ?? [], final: f.get('final', literal(true)),
   };
 });
 export function validateBuildOutput(value: unknown): BuildOutput { return buildOutput(value, 'build'); }

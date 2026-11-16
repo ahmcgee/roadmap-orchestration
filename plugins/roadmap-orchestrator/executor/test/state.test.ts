@@ -86,7 +86,8 @@ describe('fold derives', () => {
       }],
       decided: { kind: 'stage-outcome', unit: U1, stage: 'lanes', attempt: 1, outcome: 'red', class: 'advance', chargeable: true },
       counters: {
-        attempts: 7, chargeableFailures: 1, unchargedLanesReds: 0, reviseRounds: 1, candidateReds: 0, staticReds: 0, smokeRounds: 0,
+        // dev.81: a log without an escalation revise (any dev.80 log) folds the counter to 0: none spent.
+        attempts: 7, chargeableFailures: 1, unchargedLanesReds: 0, reviseRounds: 1, candidateReds: 0, staticReds: 0, smokeRounds: 0, escalationRevises: 0,
         retries: { build: 1, lanes: 0, gate: 0 },
       },
     }]);
@@ -102,6 +103,13 @@ describe('fold derives', () => {
     assert.equal(u.counters.chargeableFailures, 3);
     assert.equal(u.counters.reviseRounds, 1);
     assert.equal(u.risk, null, 'no dispatch fact in this log');
+
+    // dev.81: an escalation-seat revise with new findings counts its own uncharged round, not a revise round.
+    const escalated = fold(ARC, chain([
+      stageOutcome({ stage: 'gate', attempt: 1, outcome: 'refusal', class: 'route-up' }),
+      stageOutcome({ stage: 'gate', attempt: 2, outcome: 'revise-new', class: 'escalation-revise' }),
+    ])).units[0]!;
+    assert.deepEqual([escalated.counters.escalationRevises, escalated.counters.reviseRounds, escalated.counters.chargeableFailures, escalated.status], [1, 0, 0, 'active']);
 
     // A judgment decision spends a pending promotion; a retry of the same judgment does not.
     const spent = fold(ARC, chain([

@@ -20,7 +20,9 @@ import { mapInForce } from './lanes.ts';
 // Implementer side (R56): before the build call the executor publishes, write-once, one lane file per fast required
 // witness lane, `<evidenceDir>/witness/<lane>.json` (`WitnessLaneFile`), and gives the build the exact command that runs
 // it (`roadmap witness-check --lane-file <file>`). The same attempt writes the same bytes (the spec rev and the required
-// set fix them); a file that differs fails loud. Estate witness lanes stay the executor's.
+// set fix them); a file that differs fails loud. dev.81 (B3 d): the build is told of every other required witness lane too
+// (`WitnessLane`), with its required ids: a later cadence with its own command line in the worktree (the lanes stage runs it
+// at the salvage SHA), an estate lane (an environment or reserved resources) by name only, the executor's to run.
 //
 // The gate's `checks.witnesses` (`gateWitnessChecks`) is the requirement at the head it judges: a gate only runs after a
 // green check, so nothing is missing or failing there.
@@ -41,10 +43,12 @@ import { type ArcLaneDef, type PlanDefect, type WitnessLaneFile, planDefectText 
 import { laneMisses, specWitnessMiss } from '../holistic/witnessfiles.ts';
 import { gitRun } from '../git/git.ts';
 import type { PlanUnit } from '../input/plan.ts';
-import type { GateChecks, WitnessCheckCommand } from '../prompts/inputs.ts';
+import type { GateChecks, WitnessLane } from '../prompts/inputs.ts';
+import { laneCommand } from '../prompts/inputs.ts';
+import { builderRunnableLane } from '../resources/reserve.ts';
 import { arcScopeOf } from '../routing/layers.ts';
 import { type StageContext, type StageParent, dispatchOf, witnessWorktree } from './dispatch.ts';
-import { type LaneRuntime, arcJourneyLane, intact, runJourneySeries } from './lanes.ts';
+import { type LaneRuntime, intact, requiredJourneyLane, runJourneySeries } from './lanes.ts';
 import type { LaneCancel } from './redlane.ts';
 import { holisticInForce, loadUnitSpec } from './stages.ts';
 
@@ -88,20 +92,24 @@ const testIdsOf = (required: readonly RequiredWitness[], lane: LaneId): readonly
 // The implementer's lane files (WITNESS_FILES)
 
 /**
- * Publishes, write-once, the lane file of each build-cadence arc lane `required` names under `<evidenceDir>/witness/<lane>.json`, and
- * returns the command per lane the build is given. A file already there must hold the same bytes (a retry of the same
- * attempt); anything else fails loud.
+ * Every arc lane `required` names, ascending by id, as the build in `worktree` is given it (`WitnessLane`): a build-cadence lane's
+ * lane file published, write-once, under `<evidenceDir>/witness/<lane>.json` with the command that checks it; a later cadence
+ * with its command line; a lane the builder cannot run (an environment or reserved resources) by name. A lane file already
+ * there must hold the same bytes (a retry of the same attempt); anything else fails loud.
  */
-export function publishWitnessLaneFiles(ctx: StageContext, unit: PlanUnit, evidenceDir: AbsPath, required: readonly RequiredWitness[]): readonly WitnessCheckCommand[] {
-  const fast = requiredLanes(ctx, required).filter((l) => l.cadence === 'build');
-  if (fast.length === 0) return [];
+export function publishWitnessLaneFiles(ctx: StageContext, unit: PlanUnit, evidenceDir: AbsPath, worktree: AbsPath, required: readonly RequiredWitness[]): readonly WitnessLane[] {
+  const lanes = requiredLanes(ctx, required);
+  if (lanes.length === 0) return [];
   const dir = absPath(join(evidenceDir, WITNESS_LANE_DIR));
-  durableMkdir(dir);
-  const out = fast.map((lane): WitnessCheckCommand => {
+  const out = lanes.map((lane): WitnessLane => {
+    const testIds = testIdsOf(required, lane.id);
+    if (!builderRunnableLane(lane)) return { runs: 'executor-only', lane: lane.id, cadence: lane.cadence, testIds };
+    if (lane.cadence !== 'build') return { runs: 'lanes-stage', lane: lane.id, cadence: lane.cadence, testIds, command: laneCommand(worktree, lane) };
     const file: WitnessLaneFile = {
       v: SCHEMA_VERSION, lane: lane.id, argv: lane.argv, cwd: lane.cwd, env: { set: lane.env.set, pass: [...lane.env.pass] }, reporter: lane.reporter,
-      required: testIdsOf(required, lane.id),
+      required: testIds,
     };
+    durableMkdir(dir);
     const path = absPath(join(dir, `${lane.id}.json`));
     const bytes = `${canonicalJson(file)}\n`;
     if (existsSync(path)) {
@@ -109,9 +117,10 @@ export function publishWitnessLaneFiles(ctx: StageContext, unit: PlanUnit, evide
     } else {
       exclusivePublish(path, bytes);
     }
-    return { lane: lane.id, command: `${ROADMAP_BIN} witness-check --lane-file ${path}` };
+    return { runs: 'build-check', lane: lane.id, cadence: 'build', testIds, laneFile: path, command: `${ROADMAP_BIN} witness-check --lane-file ${path}` };
   });
-  crashPoint('witnesscheck.after-lane-files', unit.id);
+  // The crash row is the lane files' publication: a build with none publishes nothing.
+  if (out.some((w) => w.runs === 'build-check')) crashPoint('witnesscheck.after-lane-files', unit.id);
   return out;
 }
 
@@ -137,7 +146,8 @@ export type WitnessPresence =
 export async function witnessPresence(ctx: StageContext, unit: PlanUnit, parent: StageParent, salvaged: Sha, rt: LaneRuntime): Promise<WitnessPresence> {
   const required = requiredAt(ctx, unit, salvaged);
   if (required.length === 0) return { kind: 'skip' };
-  const lanes = requiredLanes(ctx, required).map(arcJourneyLane);
+  // dev.81 (A2): a reuse must hold every id the unit requires on the lane, its spec's witness items included.
+  const lanes = requiredLanes(ctx, required).map((l) => requiredJourneyLane(l, testIdsOf(required, l.id)));
   const checkout = { path: witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt), checkout: { type: 'detached', at: salvaged } } as const;
   const series = await runJourneySeries(ctx, { type: 'unit', parent, rt }, lanes, checkout, { reuse: true, stop: () => false });
   crashPoint('witnesscheck.after-witnessed', unit.id);

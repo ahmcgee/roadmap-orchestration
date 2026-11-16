@@ -104,21 +104,31 @@ export function maskFailureLine(raw: string, checkout: string): string {
 }
 const wordsOf = (line: string): string[] => line.replace(/<(time|checkout|hex|n)>/g, ' ').toLowerCase().match(/[a-z]+/g) ?? [];
 const specificLine = (line: string): boolean => wordsOf(line).some((w) => !GENERIC_SUMMARY_WORDS.has(w));
-const wrapper = (line: string): boolean => /^make(?:\[\d+\])?:.*\*\*\*/i.test(line)
+/** A build tool's or test runner's own framing line (make's `***`, npm's error banner, an exit status, a FAIL/PASS/ok summary). */
+export const wrapper = (line: string): boolean => /^make(?:\[\d+\])?:.*\*\*\*/i.test(line)
   || /^npm\s+(?:ERR!|error)(?:\s|$)/i.test(line)
   || /^(?:error:\s*)?exit status \d+$/i.test(line)
   || /^(?:FAIL|PASS|ok)(?:\s|$)/.test(line);
-const linesOf = (text: string): string[] => text.split('\n').map((l) => l.trim()).filter(Boolean);
+/** The non-blank lines of an output, trimmed. */
+export const linesOf = (text: string): string[] => text.split('\n').map((l) => l.trim()).filter(Boolean);
 
 /**
- * The failure signature (F2, R53): sha256 of the canonical `{verdict, exitCode, line}`, where `line` is the last
- * specific non-wrapper stderr line (else stdout's), falling back to the last summary when no diagnostic exists.
- * ISO timestamps, the checkout path, hex runs of 7 or more and digit runs are masked. Specific when the masked line keeps a word outside `GENERIC_SUMMARY_WORDS`.
+ * The line a failure signature reads, unmasked: the last specific non-wrapper stderr line (else stdout's), falling back to the
+ * last non-wrapper line, then the last line, when no diagnostic exists ('' for no output). dev.81 (B4): a fix round quotes it.
+ */
+export function failureLine(stderr: string, stdout: string, checkout: string): string {
+  const err = linesOf(stderr), out = linesOf(stdout);
+  const useful = (lines: string[]) => lines.filter((l) => !wrapper(l) && specificLine(maskFailureLine(l, checkout))).at(-1);
+  return useful(err) ?? useful(out) ?? err.filter((l) => !wrapper(l)).at(-1) ?? out.filter((l) => !wrapper(l)).at(-1) ?? err.at(-1) ?? out.at(-1) ?? '';
+}
+
+/**
+ * The failure signature (F2, R53): sha256 of the canonical `{verdict, exitCode, line}`, where `line` is `failureLine` masked:
+ * ISO timestamps, the checkout path, hex runs of 7 or more and digit runs. Specific when the masked line keeps a word outside
+ * `GENERIC_SUMMARY_WORDS`.
  */
 export function failureSignature(input: FailureInput): FailureSignature {
-  const stderr = linesOf(input.stderr), stdout = linesOf(input.stdout);
-  const useful = (lines: string[]) => lines.filter((l) => !wrapper(l) && specificLine(maskFailureLine(l, input.checkout))).at(-1);
-  const raw = useful(stderr) ?? useful(stdout) ?? stderr.filter((l) => !wrapper(l)).at(-1) ?? stdout.filter((l) => !wrapper(l)).at(-1) ?? stderr.at(-1) ?? stdout.at(-1) ?? '';
+  const raw = failureLine(input.stderr, input.stdout, input.checkout);
   const line = maskFailureLine(raw, input.checkout);
   return {
     failure: sha256(sha256Hex(canonicalJson({ verdict: input.verdict, exitCode: input.exitCode, line }))),

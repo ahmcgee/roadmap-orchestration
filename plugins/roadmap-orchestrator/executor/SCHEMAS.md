@@ -1156,7 +1156,8 @@ launch.json and its `launchSha256` carry names only. A launch.json written befor
 carries passed values inside `env`; it reads and hashes as written and is never rewritten. Backend and bring-up launches
 pass nothing: their host PATH, HOME and CLI config-dir values stay literal in `env`.
 Only launch argv can carry model ids among executor-written runtime files. Exit is published after containment empties,
-before adaptation; `reported` follows a validated final report's bounded descendant grace. Binding mismatch refuses.
+before adaptation; `reported` follows a validated final report's bounded descendant grace (dev.81: for a judgment, whose
+schema has no `final`, a schema-valid latest result on a stream quiet for that grace). Binding mismatch refuses.
 
 ## Backend call kinds and read surface
 
@@ -1643,3 +1644,162 @@ Current admission wait starts are not reconstructed from queue order. Legacy unm
 explicit. Holistic audit outcomes/findings are shown; checkpoint job detail remains outside this console.
 Claude init/rate-limit records become collapsed session metadata, while the canonical TUI text remains
 unchanged. Transcript text is decoded, escaped and byte-paged in the browser, never a link to base64 JSON.
+
+### dev.81 A1, A2, B3a delivery through lineage, required-id reuse, repairs delivered elsewhere
+
+- Delivery through lineage (A1): an obligation's `deliveredBy` is kept as declared; every reader resolves it at read
+  time through `src/input/lineage.ts`: `deliverers(view, o)` / `delivers(view, o, unit)` (from the log's
+  `supersededBy`, transitively; a cut deliverer stays itself) for run-time readers, and `planDeliverers(plan, o)` /
+  `planDelivers(plan, o, unit)` (from a plan's `reenters`) for checks that judge a revision before it is in force. No
+  record changes: `obligation-latched.unit` names the publishing unit, a re-entry where the obligation names its parent.
+  `ImpactInput` (in memory) gains `delivers: (o, unit) => boolean`.
+- Journey reuse (A2): `JourneyLane.required: string[] | null` (in memory): the witness check's lanes carry the unit's
+  required ids on that lane, which a reused observation must hold; null keeps every in-force obligation witness on the
+  lane (candidates, audits, baselines). No fact changes.
+- `PlanDefect` gains `{type:'repair-delivered-elsewhere', obligation:ObligationId, units:UnitId[] (non-empty)}` (B3a): every
+  mutation-smoke survivor is a target only as an `I-n` repair of an obligation the unit does not deliver, whose
+  deliverers (resolved through lineage) are all merged. The lanes stage records `plan-defect` with it, parked uncharged
+  as the witness check's plan defects are; a survivor of the unit's own keeps `smoke-survived`. Absent on dev.80 logs.
+- `Phase0Advisory` gains `{kind:'repair-delivered-elsewhere', unit, obligation, units}` (B3a): a live, unsettled unit whose
+  spec repairs a witnessed obligation that only merged units deliver (`planDeliverers`). Never a refusal.
+  `Phase0Input.merged` (in memory) holds the retired units.
+
+### dev.81 B2 escalation revise
+
+Gate stage outcome `revise-new` (appended to the gate kinds) and outcome class `escalation-revise` (appended to the
+classes), both additive. A gate `revise` answer at the escalation seat, the unit's `reviseRounds` spent, is recorded
+`revise-new` when a blocking finding is new: `reraises: null`, or it re-raises an open ledger entry minted by a gate attempt
+after which no build of the unit ran (the route-up attempt's findings). A re-raise of a settled entry, or of one a build has
+had since, records `revise` (the escalation park, as before). `revise-new` takes one uncharged fix round (class
+`escalation-revise`, fold counter `UnitCounters.escalationRevises`, 0 in a dev.80 log: none spent); a second parks
+`escalation` (class `park`, design). A steered pass ends at it like a revise (`steered`, env). Gate schema unchanged.
+
+
+### dev.81 B3–B5: build inputs and the report's checks
+
+Additive, with no record change (`SCHEMA_VERSION` stays 2); nothing new is persisted.
+
+- `BuildInputs.witnessLanes: WitnessLane[]` replaces `witnessChecks`: one row per arc lane the unit's required witnesses
+  name, ascending. `{runs:'build-check', lane, cadence:'build', testIds, laneFile, command}` is the write-once lane file
+  and its `roadmap witness-check` command (unchanged); `{runs:'lanes-stage', lane, cadence, testIds, command}` a later
+  cadence the builder can run (`command`: the lane's command line in the worktree); `{runs:'executor-only', lane,
+  cadence, testIds}` a lane with an environment or reserved resources.
+- `BuildInputs.mutants` and `GateChecks.mutants: {finding, lane, mustFail: string[]|'every-test', patch}[]`: the active
+  vacuity findings the spec repairs (`reproduce.ts repairMutants`); a mutant whose lane is no longer in force is left out.
+- `BuildInputs.mergeIn: {integrationTip, old, conflicts, approved: {attempt, head, paths}|null}|null`, on a resolve round
+  only. `approved` is the unit's latest approval when it has blobs and approved an ancestor of `old`; `paths` the
+  conflicted paths it covered. `GateChecks.mergeIn: {approved, dropped: {path, lines}[]}|null`: at a head holding that
+  merge, per such path, the non-blank lines `diffBase(T, approved)..approved` added that the head no longer holds
+  (compared trimmed). Recomputed from git and the log at every gate.
+- `BuildInputs.afterMergeIn: {cleaned: RepoPath[], rerun: BuildLane[]}|null`: set for a round other than a continue on a
+  kept worktree whose latest done `mergein.prepare` is a conflict (a resolve round) or a clean merge still at HEAD,
+  unless that merge-in's own parent created the worktree. `cleaned`: the outermost ignored `bin`, `obj`, `dist`,
+  `build`, `target` and `__pycache__` dirs that `git clean -fdX` emptied (never under `node_modules` or `.venv`);
+  `rerun`: the plan's build-cadence suite lanes (`builderSuiteLanes`).
+- `FixRound.failures?: {lane, signature, specific, excerpt}[]`: per red lane of a lanes or candidate fix round, from its
+  output snapshot (`fixDirs[0]`): `failureLine` unmasked, the signature's `specific`, and the last 20 non-wrapper
+  stderr lines (stdout when stderr has none), the newest kept within 4 KiB. A lane with no output has no entry.
+- `BuildOutput.checks: {lane, head: Sha, exit}[]` is required in the wire schema. The reader defaults a missing field to
+  `[]` with one `ROADMAP_UPGRADE` warning (temporary scaffolding, like dev.59's `messages`). For a fix round's
+  `requiredChecks` and an after-merge-in round's `rerun`, each lane needs a row with `head` equal to the worktree's HEAD
+  after the call and `exit` equal to its `expectedExit` (`stages.ts missingChecks`). A miss gets the one report
+  continuation (`rounds.ts reportContinuation`, `missingChecksDirective`), never `malformed` and never charged.
+
+### dev.81 C1–C4, B5(2): scheduling, commands and lanes outcomes
+
+All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
+
+- **Lanes outcomes** (appended to `STAGE_OUTCOME_KINDS.lanes`, both in `DETAILED_OUTCOMES`):
+  - `deflake-held` with detail `{kind: 'deflake-held', deflake: UnitId, lane: LaneId}` (C1). Every red lane of a
+    `red`, `regression` or `not-certified` verdict is the keys' lane of an open deflake unit outside the unit's lineage
+    (`deflakeShield`). Row `go(at('prepare'))`, uncharged. Admission at `prepare` pushes
+    `{type: 'deflake', deflake, lane}` while that deflake's `deflakeState` is `open`. Prepare takes the known-defect path,
+    merging in the tip and returning `clean-verify`, and the fold admits `prepare` after this outcome.
+  - `environment-divergence` with detail `{kind, head: Sha, lanes: LaneId[] (non-empty), builderChecks:
+    {lane, head, exit}[] (non-empty)}` (B5). Every red lane has a row in the latest build report's `checks` at the
+    salvage head with `exit === expectedExit`. Row `go(build('fix'))`, uncharged. The fix round adds the divergence
+    directive.
+- **`lane-base-compared.fresh?: true`** (C2). The base comparison ran fresh for a confirmed red: its diagnostic rerun
+  was red, or it repeats an earlier red. The kept pass was bypassed, nothing was reused, and a base lane that flaked
+  counted as failed. A kept base red is still reused. Absent means the run's kept verdict.
+- **`CommandBody {type: 'withdraw', command: CommandId}`** (C3a), appended to `CONTROL_COMMANDS`, scope ∅. The target
+  gets `rejected{reason: 'withdrawn by <id>'}` through `writeReceipt`, which raises no `apply-dropped` item. It is
+  refused when the target is the withdraw itself, unknown, terminal, a control command, or has a begun
+  `command.apply` op. Re-running after a crash finds the target's receipt and applies.
+- **`PlanChange {type: 'obligation'}` gains `fields?: ObligationEditField[]`** (C3b), present on `edit: 'edited'`.
+  The closed set is `OBLIGATION_EDIT_FIELDS = serves | contracts | deliveredBy | activation | rule`. `drainsArc`
+  returns false for a `deliveredBy`-only edit and for `plan-field: capacity` or `plan-field: ci`.
+- **Token pools** (C3b, C4). The pools are sized from the plan in force at each allocation. A request is refused while
+  the held tokens (any number, those above the size included) reach the size. Built-in `@fast-suite` pool: tokens
+  `@fast-suite#<n>` (`FastSuiteToken`, `ResourceUnitParts.type: 'fast-suite'`, lock order after `@cpu`, admission
+  only). `ResourceRequest.fastSuite?: true`, which `laneRequest(..., fastSuite)` sets for a lanes-stage suite series'
+  runs, takes one token. Plan `capacity.fastSuites?: positive` defaults to `max(1, floor(memGiB / 12))` from the host
+  fingerprint. When it is absent, the executor logs the derived value once at startup as a `ROADMAP_CAPACITY` warning.
+  `Status.host.pools['@fast-suite']` reports its size and the tokens in use beside `@cpu`.
+- **Wait reasons** (appended): `fast-suite-tokens` (every `@fast-suite` token held) and `resource-unhealthy` (C3c: the
+  request names an environment or resource instance that is a tripped breaker's target or an outstanding retryable
+  park's target). A `resource-unhealthy` waiter is set aside like an environment-blocked one and blocks no backfill.
+
+### dev.81 A3: the CI ref and the external evidence path
+
+- `integration-push` facts are unchanged; the push worker (`src/forge/integration-push.ts`) gates on the CI ref
+  (`src/forge/ciref.ts` `ciRefOf`): the last `pushed` head is settled by an `external-witness` at it written after
+  the push, by `ci.settleMin` minutes after the push's `at`, or by a `push-requested` after it. A deferral writes no
+  fact; the state is derived at read time. `JournalView.integrationPushes()` entries carry `at`;
+  `JournalView.ciSettlers()` lists the `external-witness` and `push-requested` facts with their seqs.
+- Plan: `ci?: {settleMin?: number}` (non-negative minutes, fractions allowed; absent: 120, `DEFAULT_SETTLE_MIN`).
+  `ci` is a `PLAN_FIELDS` member (an apply may change it).
+- Command `push` (`{type: 'push'}`): a control command, scope none; writes `push-requested{command}` once.
+- Fact `push-requested{command}` (new kind).
+- `external-witness.since?: Sha | null`: the head of the obligation's previous `pass` attestation (null: none).
+  Absent on lines written before dev.81, read as null (one `ROADMAP_UPGRADE` warning).
+- Command `witness.expectedHead` keeps its name and means the attested commit: the CLI's `--at <rev>`, default the CI
+  ref (last `pushed`/`up-to-date` head; the local integration head when nothing was pushed). The command accepts any
+  commit the integration branch contains (`merge-base --is-ancestor`); `head` and `inputSha` are that commit's. A pass
+  latches when every deliverer is retired with a published merge the commit contains; the latch names the deliverer
+  whose merge published last, with that commit's tree.
+- A revision publishes a changed render only when it also differs from the integration tip's bytes; `constraints.md` is added only beside
+  another changed render, and only when its living rendering differs from the one of the ledger the last publishing
+  revision carried (a deferred ruling). A ruling-only revision's `plan-applied` has no `publication`.
+- `Status.pushes: {ciHead: Sha | null; pending: Sha | null; settleBy: IsoTime | null} | null` (null before a start).
+
+### dev.81 D1–D3: console groups, withdrawn units, the printed status
+
+Status (additive, computed at read time; no record change): `units[].origin` is the plan unit's origin (`planned`
+when absent), and `units[].repairs` is the finding and obligation ids its spec repairs (`repairUnits`, `[]` when
+none). Both are display inputs only: nothing in `src/schedule` or `src/walk` reads them.
+
+The Graph view (strict shape) adds `units[].origin`, `units[].supersededBy` and `units[].carriedBy`. It also adds
+`groups`, which places every unit of `noMilestone` once, in drawing order (`console/milestones.ts`
+`outsideGroups`). Each group is `{kind, id, label, ids}`, plus `milestone` for `design | milestone-repair | polish`
+and `job` for `audit`. `hardening` and `deflake` add nothing. A unit takes the group of its lineage root, following
+`reenters` and then `carries`, transitively:
+
+- `deflake` and `polish`: the root's origin.
+- `design`: a milestone's `design.unit`.
+- `milestone-repair`: a `repair`-origin unit whose every repaired id resolves to one milestone. A finding resolves
+  through its `finding-opened` `milestone`, else through its raising job's milestone: the job's `walk-started`, or
+  a campaign audit's `stage-outcome`. An `I-n` resolves through the findings that name it.
+- `audit`: a repair that resolves to no single milestone, grouped by the job of its latest raising finding.
+- `hardening`: everything else.
+
+The client hides withdrawn units by default. A hidden unit's edges are re-pointed to its successor
+(`supersededBy`, else its first carrier, transitively), or dropped when it has none. When shown, a withdrawn unit
+keeps its band and is placed directly before its successor. The per-viewer choice is
+`localStorage['roadmap.show-withdrawn']`. Counts are unchanged.
+
+D3 (the printed status): `roadmap status`, the console's status route and its local fallback print `wireStatus(status)`
+(`src/status-wire.ts`). The full `Status` stays whole in the observer's envelope, where the TUI and every console view read
+it in-process, so no view loses a run. The print folds the history that grows with an arc:
+
+- `units[].work` becomes `units[].workTotals`, and `host.work` becomes `host.workTotals`. Each is
+  `{builds,lanes,measured,runMs,wallMs}`.
+- On a `merged`, `cut` or `superseded` unit, `certification.lanes` becomes `certification.laneStates`, a count by lane
+  state. A live unit keeps its lanes.
+- An applied receipt keeps its first 20 `verified` lines (`VERIFIED_SHOWN`) and adds `verifiedTotal`. The whole receipt
+  stays on disk.
+
+The field figure was atlas2 m6: 11.63 MB, of which work rows were 6.09 MB (13,998 over 158 units), certification lanes
+1.16 MB and two receipts' `verified` 2.42 MB. The fixture measurement (real-shape fixture, 81 KB, 33.7% work) did not
+reproduce it. `test/status-wire.test.ts` checks that a retired unit's printed bytes stay flat as its runs grow. The summary
+is unchanged.

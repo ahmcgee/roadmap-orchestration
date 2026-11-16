@@ -11,8 +11,15 @@
 // The runner watches the terminal's output: Claude's stdout stream (its latest `result` event's `structured_output`),
 // Codex's `-o` file (written once, at the end of the turn). Once the latest report is schema-valid and final, and the
 // workload is still running `REPORT_GRACE_MS` later (the CLI exiting, or descendants outliving it), the runner ends
-// it with cause `reported`. Before a final report, waiting is unrestricted; the deadline stays the backstop. A schema
-// without `final` (every judgment, the smoke) is never watched.
+// it with cause `reported`. Before a final report, waiting is unrestricted; the deadline stays the backstop.
+//
+// A judgment (dev.81, field: a gate that lingered after its verdict ran to the 45-minute judgment deadline, and the
+// kill read as a process fault, discarding the verdict): its schema has no `final`, so the runner reads a quiet stream
+// as the end instead. Once the latest result is schema-valid and the stream has not grown since the previous poll, the
+// watch holds; any growth (a background subagent's events stream on the same stdout) withdraws it, so the rule is "a
+// schema-valid latest result and a quiet stream for REPORT_GRACE_MS". An interim result a judge emits while its
+// subagent still works is therefore never cut; a silent lingering shell or wake-up is. The smoke (`purpose: 'smoke'`)
+// is never watched.
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { backendSchemaViolation } from '../backends/adapter.ts';
 import type { BackendTerminal, LaunchTerminal } from '../core/records.ts';
@@ -26,22 +33,31 @@ export type ReportWatch = () => boolean;
 type Json = Readonly<Record<string, unknown>>;
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** The watch for `terminal`, or null when its schema declares no `final` (nothing to watch). */
+/**
+ * The watch for `terminal`: a schema with `final` is watched for a final report; a judgment (any other role, purpose
+ * `backend`) for a schema-valid latest result on a quiet stream; anything else (commands, the smoke) is not watched.
+ */
 export function reportWatch(terminal: LaunchTerminal): ReportWatch | null {
   if (terminal.type !== 'backend') return null;
   const schema: unknown = JSON.parse(readFileSync(terminal.schemaPath, 'utf8'));
+  const valid = (value: unknown): boolean => backendSchemaViolation(schema, value, terminal.role) === null;
   const final = isObject(schema) && isObject(schema['properties']) ? schema['properties']['final'] : undefined;
-  if (!isObject(final) || final['type'] !== 'boolean') return null;
-  const isFinal = (value: unknown): boolean => isObject(value) && value['final'] === true && backendSchemaViolation(schema, value, terminal.role) === null;
-  return terminal.session.backend === 'claude' ? streamWatch(terminal, isFinal) : fileWatch(terminal, isFinal);
+  if (isObject(final) && final['type'] === 'boolean') {
+    const isFinal = (value: unknown): boolean => isObject(value) && value['final'] === true && valid(value);
+    return terminal.session.backend === 'claude' ? streamWatch(terminal, isFinal, false) : fileWatch(terminal, isFinal);
+  }
+  if (terminal.role === 'build' || terminal.purpose !== 'backend') return null;
+  // A judgment session is Claude's only (records.ts `JudgmentSession`).
+  return streamWatch(terminal, valid, true);
 }
 
 /**
  * Claude: the stdout stream, read incrementally. Only complete lines count (a torn last line waits for its newline); the
  * latest `result` event decides, so an interim answer after a final one withdraws it. A result line that is not JSON
- * reads as not final: the adapter, not the runner, judges malformed output.
+ * reads as not final: the adapter, not the runner, judges malformed output. With `quiet` (a judgment), a poll that
+ * found the stream grown reads as not done, so the grace counts from the last byte, not from the result.
  */
-function streamWatch(terminal: BackendTerminal, isFinal: (value: unknown) => boolean): ReportWatch {
+function streamWatch(terminal: BackendTerminal, isFinal: (value: unknown) => boolean, quiet: boolean): ReportWatch {
   let offset = 0;
   // Bytes after the last newline: split on bytes, so a UTF-8 character torn across two reads is decoded whole.
   let pending = Buffer.alloc(0);
@@ -58,7 +74,7 @@ function streamWatch(terminal: BackendTerminal, isFinal: (value: unknown) => boo
       const bytes = Buffer.concat([pending, chunk.subarray(0, got)]);
       const end = bytes.lastIndexOf(0x0a);
       pending = bytes.subarray(end + 1);
-      if (end < 0) return latest;
+      if (end < 0) return latest && !quiet;
       for (const line of bytes.subarray(0, end).toString('utf8').split('\n')) {
         if (!line.includes('"result"')) continue;
         let event: unknown;
@@ -70,7 +86,7 @@ function streamWatch(terminal: BackendTerminal, isFinal: (value: unknown) => boo
         }
         if (isObject(event) && event['type'] === 'result') latest = isFinal(event['structured_output']);
       }
-      return latest;
+      return latest && !quiet;
     } finally {
       closeSync(fd);
     }

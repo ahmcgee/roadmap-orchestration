@@ -1,7 +1,7 @@
 // The arbiter (src/schedule/arbiter.ts) over a real journal, with synthetic ranks: rank order, disjoint-only
 // backfill, environment-blocked waiters set aside, cancellation holding nothing, a fresh arbiter after a restart,
 // and a randomized interleaving (fixed seed) checking that no two holders ever share a unit and that no grant
-// overtakes a higher-ranked active waiter it overlaps.
+// overtakes a higher-ranked active waiter it overlaps. dev.81: arbiter.fast-suites (C4).
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -561,6 +561,25 @@ for (const ownerKind of ['unit', 'docs', 'batch'] as const) test(`slot-holder-no
     const unrelated = wait(arb, req({ cpu: 1 }), holderOf('other'), rank('other', 3), abort.signal);
     await tick(); assert.equal(unrelated.box.grant, null);
     abort.abort(); await Promise.all([entrant.done, own.done, unrelated.done]);
+  } finally { abort.abort(); journal.close(); }
+});
+
+// dev.81 (C4): with `capacity.fastSuites: 1`, two units' fast suites run one at a time; the second waits on the tokens.
+test('arbiter.fast-suites: a second lanes-stage suite lane waits on fast-suite-tokens while the first runs, and is granted once it releases', T, async () => {
+  const { ctx: base, journal } = openPoolRun(newRun());
+  const ctx = { ...base, plan: () => ({ ...base.plan(), capacity: { cpu: CPU, fastSuites: 1 } }) };
+  const arb = createArbiter(ctx); const abort = new AbortController();
+  try {
+    const a = stageHolder('lanes', 1, unitId('a')); const b = stageHolder('lanes', 1, unitId('b'));
+    const first = wait(arb, req({ cpu: 1, fastSuite: true }), a, rank('a', 1), abort.signal);
+    const second = wait(arb, req({ cpu: 1, fastSuite: true }), b, rank('b', 2), abort.signal);
+    await tick();
+    assert.equal(first.box.grant?.kind, 'granted');
+    assert.equal(second.box.grant, null);
+    assert.deepEqual(arb.waiting().map((w) => [w.holder.unit, w.reasons]), [['b', ['fast-suite-tokens']]]);
+    release(ctx, a); arb.wake(); await tick();
+    assert.equal((second.box.grant as Grant | null)?.kind, 'granted');
+    await Promise.all([first.done, second.done]);
   } finally { abort.abort(); journal.close(); }
 });
 

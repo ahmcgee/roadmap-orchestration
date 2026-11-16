@@ -77,7 +77,7 @@ import type { PlanM1,PlanUnit } from '../input/plan.ts';
 import { planOf } from '../input/inforce.ts';
 import { chargeableBoundRecommendation,raiseNeedsUser,raisedFor,readNeedsUser,reentryRecommendation,reopenRecommendation,routingChangedRecommendation } from '../needsuser.ts';
 import { NO_PARK_FACTS } from '../park/table.ts';
-import { dirtyLanesDirective,revertedPathsDirective } from '../prompts/directives.ts';
+import { dirtyLanesDirective,environmentDivergenceDirective,revertedPathsDirective } from '../prompts/directives.ts';
 import { DECISIONS_FILE,buildOutput } from '../prompts/schemas.ts';
 import { worktreeRemoveOp } from '../recover/ops.ts';
 import { reconcileUnitWorktrees } from '../recover/recover.ts';
@@ -371,6 +371,13 @@ function lanesFixRound(ctx: StageContext, unit: PlanUnit, f: StageOutcomeFact, t
       const dest = absPath(join(witnessRoot, `_dirty-${basename(witnessWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, parent.attempt))}`));
       const snap = view.opsOf('evidence.snapshot').find((i) => i.expect.dest === dest);
       return witnessCheckoutFixRound(snap === undefined ? [] : snap.expect.globs.map(patternPath), [...witnessEvidence(ctx, parent), ...(snap === undefined ? [] : [dest])], ledger, tip);
+    }
+    // dev.81 (B5): the red series' round, told the builder's passing checks of those lanes diverge from the lanes' run.
+    case 'environment-divergence': {
+      if (f.detail?.kind !== 'environment-divergence') throw new Error(`unit ${unit.id}: lanes#${f.attempt} environment-divergence without its detail`);
+      const round = laneFixRound(series, dirty, tip, definitions);
+      if (round.kind !== 'fix') throw new Error(`unit ${unit.id}: lanes#${f.attempt} environment-divergence rebuilt as a ${round.kind} round`);
+      return { ...round, fix: { ...round.fix, directives: [...round.fix.directives, environmentDivergenceDirective(f.detail.lanes, f.detail.head)] } };
     }
     default: {
       const compared = view.ciFacts().filter((c) => c.kind === 'lane-base-compared' && c.unit === unit.id && c.attempt === parent.attempt);

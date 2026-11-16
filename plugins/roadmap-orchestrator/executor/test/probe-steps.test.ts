@@ -20,7 +20,7 @@ for (const [unit, fixture] of [['walk-1', 'experienceVerdict-01.json'], ['compar
     // installed Claude/Codex executable is ever called, even if the developer has one on PATH.
     const calls = join(root, 'forwarded.jsonl');
     writeFileSync(join(stubDir, 'claude'), `#!${process.execPath}
-const fs = require('node:fs');
+const fs = process.getBuiltinModule('node:fs');
 fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({argv:process.argv.slice(2),stdin:fs.readFileSync(0,'utf8')})+'\\n');
 process.stdout.write(JSON.stringify({type:'result',structured_output:JSON.parse(process.env.STUB_VALUE)})+'\\n');
 `, { mode: 0o755 });

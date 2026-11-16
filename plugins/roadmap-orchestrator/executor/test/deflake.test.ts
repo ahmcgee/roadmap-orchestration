@@ -9,6 +9,7 @@ import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 // edges), deflake.unit-own (dev.21: a flake of a spec lane on the unit's own commit is its red, a fix round, and mints
 // nothing), deflake.reflake (a flake after the deflake merged mints a second, told of the first; one after the second raises
 // `flake-recurring` and mints nothing), deflake.park (a parked deflake drops its edges and raises `deflake-parked`),
+// deflake.shield (dev.81: a dispatched unit red on an open deflake's lane is held uncharged at prepare until it merges),
 // deflake.verification-budget (runs × the lane's measured median against the verification budget),
 // deflake.verification-budget-repair (an approve over it repaired through the pre-build's repair turn), deflake.verify-runs (a
 // deflake unit's verification runs its lane that many times, every run passing), deflake.stochastic (a k-of-n lane never
@@ -19,13 +20,13 @@ import { join } from 'node:path';
 import { describe, test } from 'node:test';
 import type { DesignRecord } from '../src/core/design.ts';
 import type { JsonValue } from '../src/core/json.ts';
-import type { Fact } from '../src/core/events.ts';
+import type { Fact, StageOutcomeFact } from '../src/core/events.ts';
 import { readJournal } from '../src/core/log.ts';
 import { absPath } from '../src/core/values.ts';
 import { requirePlanInForce } from '../src/input/inforce.ts';
 import { type PlanM1, milestonesOfUnit } from '../src/input/plan.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
-import { deflakeDue, deflakeState, flakyLedger, medianLaneMinutes, verificationCap, verificationReasons, verifyRunsOf } from '../src/pipeline/deflake.ts';
+import { deflakeDue, deflakeShield, deflakeState, flakyLedger, medianLaneMinutes, verificationCap, verificationReasons, verifyRunsOf } from '../src/pipeline/deflake.ts';
 import { applyDeflake, deflakeJobPending, raiseDeflakeParked } from '../src/pipeline/deflakemint.ts';
 import { laneFailures } from '../src/pipeline/failures.ts';
 import { invocationDir } from '../src/pipeline/invoke.ts';
@@ -33,7 +34,7 @@ import { LANE_DEADLINE_MS, laneOrder, reserveNow, runLaneSeries, seriesLedger, s
 import { pinDispatch, type StageParent } from '../src/pipeline/dispatch.ts';
 import { specFacts } from '../src/pipeline/reproduce.ts';
 import { lanes, loadUnitSpec } from '../src/pipeline/stages.ts';
-import { type Gate, runUnit } from '../src/pipeline/unit.ts';
+import { type Gate, runUnit, step } from '../src/pipeline/unit.ts';
 import { recover } from '../src/recover/recover.ts';
 import { admitter, rankOf } from '../src/schedule/ready.ts';
 import { type Admission, compareRank } from '../src/schedule/types.ts';
@@ -76,7 +77,7 @@ const facts = (r: ArcRun): readonly Fact[] => readJournal(r.ctx.runDir, r.journa
 const planOf = (r: ArcRun): PlanM1 => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
 
 /** The admission the scheduler would give unit `id`'s `stage` now: the real admitter over the plan in force. */
-function admission(r: ArcRun, id: string, stage: 'pre-build' | 'build'): Admission {
+function admission(r: ArcRun, id: string, stage: 'pre-build' | 'build' | 'prepare'): Admission {
   const { w } = deflakeContext(r);
   return admitter((u) => r.ctx.routing(u).table, specFacts(w.stage))({
     view: r.journal.view, plan: planOf(r), unit: unitInForce(r, id), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
@@ -92,6 +93,23 @@ async function run(r: ArcRun, id: string, gate: Gate = admitted(r, id)) {
   const tick = setInterval(() => w.arbiter.wake(), 50);
   try {
     return await runUnit(w.stage, unitInForce(r, id), gate);
+  } finally {
+    clearInterval(tick);
+  }
+}
+
+/** Steps unit `id` over the run's wiring (the plan in force) until its decided outcome satisfies `until`. */
+async function stepInForce(r: ArcRun, id: string, until: (f: StageOutcomeFact) => boolean): Promise<void> {
+  const { w } = deflakeContext(r);
+  const tick = setInterval(() => w.arbiter.wake(), 50);
+  try {
+    for (let i = 0; i < 60; i++) {
+      const s = await step(w.stage, unitInForce(r, id));
+      const f = r.journal.view.unit(unitInForce(r, id).id).decided;
+      if (f !== null && until(f)) return;
+      if (s.kind !== 'continue') throw new Error(`unit ${id} ended ${s.kind} before the condition held`);
+    }
+    throw new Error(`unit ${id}: the condition did not hold within 60 steps`);
   } finally {
     clearInterval(tick);
   }
@@ -279,6 +297,56 @@ describe('the flaky ledger', () => {
       assert.deepEqual(await run(r, 'u2'), { kind: 'merged' });
       assert.equal(r.journal.view.flakes().length, 2);
       assert.equal(pending(r), false);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  // dev.81 (C1): the shield. The lane flakes once on u1's candidate (the tip's: deflake-1 is minted), and is red on u2's own
+  // tree while `red` is set (u2's flaky/u2.txt beside it), every run: a red the diagnostic rerun confirms.
+  test('deflake.shield: a dispatched unit red on an open deflake\'s lane is deflake-held, uncharged, and waits at prepare until the deflake merges; then prepare merges the tip, the lanes run again and a lane still red is charged', T, async () => {
+    const dir = tmpDir('shield');
+    const flaky = (cadence?: 'candidate') => ({
+      id: 'flaky', ...(cadence === undefined ? {} : { cadence, systems: ['flaky'] }),
+      argv: ['sh', '-c', `if [ -f ${dir}/red ] && [ -f flaky/u2.txt ]; then echo "race: expected 3, got 4" >&2; exit 1; fi; if [ ! -f ${dir}/once ]; then touch ${dir}/once; echo "expected 3, got 4" >&2; exit 1; fi; exit 0`],
+    });
+    const d = setupArc({
+      units: [{ id: 'u1', systems: ['core', 'flaky'] }, { id: 'u2', systems: ['core', 'flaky'], lanes: [MUL_LANE, flaky()] }],
+      suite: [SUITE_LANE, flaky('candidate')], systemsMap: SYSTEMS,
+      steps: [...straight('u1', {}), ...straight('u2', { 'src/u2.js': 'export const u2 = 2;\n' }).slice(0, 2), ...straight('deflake-1', { 'flaky/note.txt': 'deterministic now\n' })],
+    });
+    const r = contextFor(d);
+    try {
+      assert.deepEqual(await run(r, 'u1'), { kind: 'merged' });
+      // u2 is dispatched before the deflake exists (no code edge holds it), then the ledger mints deflake-1.
+      await stepUntil(r, 'u2', (f) => f.stage === 'pre-build');
+      assert.deepEqual(await mint(r), { kind: 'applied', admitted: ['deflake-1'], recurring: 0 });
+      const plan = planOf(r);
+      const u2 = unitInForce(r, 'u2').id;
+      assert.equal(deflakeShield(r.journal.view, plan, u2, 'flaky' as never), 'deflake-1');
+      assert.equal(deflakeShield(r.journal.view, plan, u2, 'mul' as never), null, 'a red on another lane is not shielded');
+      assert.equal(deflakeShield(r.journal.view, plan, unitInForce(r, 'deflake-1').id, 'flaky' as never), null, 'the deflake\'s own red is never shielded');
+
+      writeFileSync(join(dir, 'red'), '');
+      await stepInForce(r, 'u2', (f) => f.stage === 'lanes');
+      const held = r.journal.view.unit(u2).decided;
+      assert.ok(held?.stage === 'lanes');
+      assert.deepEqual([held.outcome, held.chargeable, held.detail], ['deflake-held', false, { kind: 'deflake-held', deflake: 'deflake-1', lane: 'flaky' }]);
+      assert.deepEqual([r.journal.view.unit(u2).counters.chargeableFailures, r.journal.view.unit(u2).counters.unchargedLanesReds], [0, 0], 'nothing charged, no allowance used');
+      assert.deepEqual(admission(r, 'u2', 'prepare'), HELD_BY_DEFLAKE_1);
+      assert.deepEqual(await run(r, 'u2'), { kind: 'held', needsUser: null });
+
+      // The deflake merges (u2's tree is not in the tip, so its lane is green there); the hold is released.
+      assert.deepEqual(await run(r, 'deflake-1'), { kind: 'merged' });
+      assert.deepEqual(admission(r, 'u2', 'prepare'), { kind: 'admit' });
+      const tip = r.journal.view.publications().at(-1)!;
+      await stepInForce(r, 'u2', (f) => f.stage === 'lanes');
+      assert.deepEqual(outcomes(d, 'u2').slice(-3), ['lanes:deflake-held', 'prepare:clean-verify', 'lanes:regression']);
+      const mergeIn = r.journal.view.opsOf('mergein.prepare').filter((i) => i.parent.type === 'stage' && i.parent.unit === u2);
+      assert.equal(mergeIn.length, 1, 'prepare merged the tip (with the deflake\'s fix) into u2');
+      assert.equal(tip.unit, 'deflake-1');
+      const red = r.journal.view.unit(u2).decided;
+      assert.deepEqual([red?.outcome, red?.chargeable, r.journal.view.unit(u2).counters.chargeableFailures], ['regression', true, 1], 'still red once the deflake merged: charged');
     } finally {
       r.journal.close();
     }

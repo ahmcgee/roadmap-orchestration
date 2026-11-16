@@ -292,7 +292,7 @@ test('roles.real-act: the real act runs the next claude on PATH with the call\'s
   const scenario = writeScenario(tmpDir('roles-real'), [{ as: 'claude', expect: {}, acts: [{ type: 'real' }] }]);
   const stub = tmpDir('roles-stub');
   const record = join(stub, 'record.json');
-  writeFileSync(join(stub, 'claude'), `#!/usr/bin/env node\nconst fs = require('node:fs');\nfs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin: fs.readFileSync(0, 'utf8'), probe: process.env.ROLES_PROBE }));\nprocess.stdout.write('{"type":"result"}\\n');\nprocess.exit(3);\n`, { mode: 0o755 });
+  writeFileSync(join(stub, 'claude'), `#!/usr/bin/env node\nconst fs = process.getBuiltinModule('node:fs');\nfs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin: fs.readFileSync(0, 'utf8'), probe: process.env.ROLES_PROBE }));\nprocess.stdout.write('{"type":"result"}\\n');\nprocess.exit(3);\n`, { mode: 0o755 });
   const cwd = tmpDir('roles-cwd');
   const r = spawnSync(join(scenario.binDir, 'claude'), ['-p', '--model', 'm', '--add-dir', '/a b'], {
     cwd, input: 'the prompt\n', encoding: 'utf8', env: { ...process.env, PATH: `${scenario.binDir}:${stub}:${process.env['PATH']}`, ROLES_PROBE: 'kept' },

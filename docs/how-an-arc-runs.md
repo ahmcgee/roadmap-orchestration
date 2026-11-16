@@ -67,6 +67,36 @@ independent pre-build review annotates risky traits, non-local proof or changed 
 
 **Build.** Builders ground their specs first, implement, run targeted checks and report evidence.
 
+**What a build is given beyond the spec.**
+
+- Every required witness lane with the ids the unit must make pass on it: a build-cadence lane with its
+  `roadmap witness-check` command, a later cadence with its own command line (the lanes stage runs it at the salvage
+  commit), and a lane that needs an environment or reserved resources by name only (the executor's to run).
+- The mutants of the vacuity findings the spec repairs: per finding, the lane, the test ids that must fail with the
+  patch applied (every test the lane reports when the obligation's witness is on another lane) and the patch. The
+  gate is given the same list.
+- A fix round quotes each failing lane's failure line (the one its failure signature reads) and the last stderr lines
+  (stdout when stderr has none), at most 20 lines and 4 KiB per lane, beside the evidence dirs. A candidate fix round
+  recomputes them from the candidate's red lanes.
+- A resolve round is told the merge-in: the integration tip, the branch's commit before it, the conflicted paths, and
+  which of them the unit's gate approval covered, with the `git diff` that must show only integration's changes there.
+  The next gate is shown every line the approved diff added on those paths that the resolved head no longer holds, as
+  evidence to judge. It never blocks or charges by itself.
+
+**A round's proof of its checks.** A fix round's required checks, and the lanes a round after a merge-in re-runs,
+are proven in the final report's `checks`: one row per lane, with the commit HEAD was at and the exit code. A report
+missing a row, or with a row at another commit or with another exit than the lane expects, goes back to its builder
+once, uncharged, as a new invocation of the same attempt (the same continuation a resolve round that leaves clauses
+unmet gets, so one continuation carries both). The next report is read as it is, since the lanes stage runs the lanes
+anyway. A continue of an interrupted fix round owes the same proof, and its resumed session is given the round's
+required checks again.
+
+**After a merge-in into a kept worktree** (a resolve round, or the first build on a clean merge-in no build has built
+on), the executor removes the worktree's ignored build output before the round (`bin`, `obj`, `dist`, `build`,
+`target` and `__pycache__` dirs at any depth; never `node_modules` or `.venv`). The round is told what was removed and
+re-runs the plan's build-cadence suite lanes, proven in `checks`. A continue never cleans, and a re-entry's fresh
+worktree has nothing to clean.
+
 **Parks during build.**
 
 | Park | How it re-opens |
@@ -116,6 +146,10 @@ be resolved.
 
 - Every judgment begins in a fresh named session. One invalid answer may be repaired in that same session, schema
   and checkout.
+- A judgment ends once its latest result is schema-valid and its output has stayed quiet for 30 seconds: a session
+  left lingering after its verdict is ended and the verdict stands. Output still arriving (a background subagent at
+  work) keeps it running, so an interim result is never taken for the verdict. Builds end on their `final: true`
+  report instead.
 - Verifier directives accompany only a revise decision, including in annotation modes.
 - Backend schemas use plain object roots and encode supported field constraints; property descriptions state
   remaining semantic rules.
@@ -140,10 +174,19 @@ the first scheduled lane's resources (spec first, otherwise the selected suite).
 | Only red lanes are declared static checks (`kind: static`: lint, typecheck) | One uncharged fix round of its own. A second is read as any candidate red. |
 
 **Pushes to `origin`.** Every successful integration fast-forward (unit, repair batch, docs revision or close-out)
-queues a background push to `origin` with user credentials.
+asks for a background push to `origin` with user credentials. `origin`'s integration branch is the CI ref: what CI is
+testing or has tested, and the PR head. It advances only once the previous pushed head has settled, so a new push
+never cancels a pipeline still running on the last one.
 
+- A pushed head settles at the first of: an external witness recorded at it (`roadmap witness`), `ci.settleMin`
+  minutes after the push (plan field, default 120; 0 pushes every publication at once), or `roadmap push` (the root
+  advances the CI ref now, for instance after cancelling a pipeline by hand).
+- Until then the wanted head waits; a later fast-forward replaces it (one pending head). Waiting writes no fact; status
+  shows `pushes` (`ciHead`, `pending`, `settleBy`). A head still waiting when the executor exits is pushed by the
+  next startup, and at the arc's end by `roadmap pr`.
 - Pushes use an explicit lease and require the remote tip to be an ancestor. `main` is never pushed.
-- Startup retries the current head after a crash; an up-to-date remote is a no-op.
+- Startup recomputes the settle rule from the log and retries the current head after a crash; an up-to-date remote
+  is a no-op.
 - Snapshots and retirement continue during network work, bounded by `PUSH_TIMEOUT_MS` (five minutes per attempt).
 - `push-failed` and `push-diverged` are non-blocking arc notices, once per failure episode. Later
   publication/startup retries; divergence only probes until ancestry is safe (or the notice is acked by id). A later
@@ -215,6 +258,18 @@ roadmap apply --from <dir> --rev <N> --reason "<line>"
 - An apply that touches running work queues to its stage boundary. A suite-lane edit waits behind a running lanes
   attempt (a lanes red's fix round still reads the series as it ran) and is refused only while a candidate is under
   way.
+- The drain follows the change. Plan-wide edits (routing, limits, resources, the suite, the holistic layer) drain the
+  arc, but three drain nothing because they are read from the plan in force at each use:
+  - an obligation edit that changes only `deliveredBy`;
+  - a `ci` edit (`ci.settleMin`, read at each CI ref decision);
+  - a `capacity` edit. An increase grants at once. After a decrease, units already holding tokens above the new size
+    keep them until they finish, and nothing new is granted until the tokens held fall below the new size. This
+    covers both `capacity.cpu` and `capacity.fastSuites`, the cap on lanes-stage suite lanes running at once. Without
+    `fastSuites` the cap is one per 12 GiB of host memory, at least one, and the executor logs the derived value at
+    startup.
+- `roadmap withdraw <command-id>` takes back a pending mutation, such as a queued apply, before it starts applying.
+  The mutation is rejected `withdrawn by <id>`, its drain is released at once, and no dropped-apply item is raised.
+  A control command, a command that is already terminal, and one whose apply has begun cannot be withdrawn.
 
 **Reaching a unit.**
 
@@ -238,12 +293,22 @@ the same container are reachable.
 - A passing later baseline settles baseline items; a superseding review settles pack-review items.
 - Finding requests close when their findings settle or a root apply supplies all named repairs.
 - Dismissal suppresses the same finding on unchanged code.
-- External witnesses are explicit root attestations with head-bound file/URL evidence. No output matching
-  substitutes for proof.
+- External witnesses are explicit root attestations with commit-bound file/URL evidence. No output matching
+  substitutes for proof. `roadmap witness <I-n> --result pass|fail --evidence <file|url> [--at <sha>]` attests the
+  commit CI tested: `--at`, by default the CI ref (the last pushed head). Any commit the integration branch contains
+  is accepted, and the verdict binds to that commit's lane inputs, so it holds on later heads whose declared `inputs`
+  or `systems` match. A pass latches a future obligation once every deliverer's published merge is in that commit. A
+  fail reopens each delivering unit (its lineage head) with a brief listing the publications between the
+  obligation's last pass (or the arc start) and the attested commit: the suspects.
 
 ## 7. Close out and check in
 
-Final audit, witnesses, batch lanes, document publication and snapshots settle before completion. The architect
+Final audit, witnesses, batch lanes, document publication and snapshots settle before completion.
+
+A revision publishes rendered documents only where they differ from the integration tip, and never `constraints.md`
+alone: a ruling-only revision takes effect at once through the ledger in force but makes no docs commit (each one
+would be a CI-ref push). Its `constraints.md` rendering lands with the next publication that changes another
+document, or with the close-out, which re-renders every document against the tip. The architect
 prepares the stacked PR, presents `brief` and the demo/rough edges, then acknowledges the exact brief only after the
 owner does. Another arc starts only within the chain bound and while the vision calls for work.
 
@@ -264,6 +329,14 @@ every answer.
   whole argv). A red targeted run is confirmed by the lane's own argv, whose verdict counts: a runner that finds no
   test files never charges the unit.
 - Exact witness ids can be checked with `witness-check --lane-file` before requesting certification.
+- The lanes stage's witness check reuses a certified observation only when it holds every test id the unit requires
+  on that lane: obligation targets, repairs, its spec's witness items and the must-holds it keeps. One that lacks any
+  of them runs the lane again, so a lane whose `inputs` leave out a new test file never charges a missing witness.
+- A red lanes-stage suite lane runs again on the unit's diff base alone. That base verdict is kept for the run, so
+  units red on the same lanes over the same base share it. A kept base red stands for every unit. A kept base pass is
+  never trusted against a confirmed red, meaning one whose diagnostic rerun was red too or that repeats the unit's
+  earlier red. For a confirmed red the base runs again with nothing reused and no test-only run, and a lane that flakes
+  on the base counts as failed there. Its `lane-base-compared` fact says `fresh`.
 
 ## Attempt limits and diagnosis
 
@@ -273,6 +346,8 @@ every answer.
 | 16 builds / 40 stages (fixed) | Raises an attempt-cap item for the architect. |
 | Certification reds | Three uncharged reds before the fourth charges (defaults); witnesses-missing counts in that allowance. |
 | Gate revisions, candidate reds | Separate bounds. |
+| Gate revisions at the escalation seat | Once the revise rounds are spent, a revise routes the gate up to the escalation seat. A revise there with a blocking finding no builder was given (a new finding, or one the route-up round raised) gets one uncharged fix round; a second one, or one that only raises findings a builder already had, parks the unit. |
+| `flaky`, `deflake-held`, `environment-divergence`, `known-defect`, `base-red` lanes outcomes | Uncharged, outside the certification allowance. |
 
 - Spend expectations are forecasts, never caps.
 - Usage limits park a backend until explicit resume.
@@ -289,11 +364,29 @@ every answer.
 - A re-entry must repair the recorded cause, such as a surviving mutant or dirty lane outputs.
 - Fresh build sessions with earlier lineage receive a handover of diagnosis, findings, unmet clauses, witness
   failures, decisions and original evidence.
+- Delivery follows lineage. An obligation whose `deliveredBy` names a re-entered unit is delivered by the unit that
+  re-enters it, so `deliveredBy` never needs editing after a re-entry. The re-entry is required to make its witnesses
+  pass, may name the obligation in a witness item, and latches it on publication; the latch names the re-entry.
+- A unit that repairs an obligation other units deliver, once all of them are merged, cannot make its mutation smoke
+  kill that witness, because reverting the unit leaves their work in place. The apply flags such a repair as an
+  advisory. If every surviving witness is a repair of this kind, the lanes stage parks the unit as an uncharged
+  `plan-defect`: drop the repair from the spec, or cut the unit.
 
 ## Flakes, environments and residue
 
 - A same-commit red→green run is flaky. Unit-tree flakes need repair, while eligible tip flakes can be forgiven and
   mint deflake units. Stochastic k-of-n lanes follow their declared rule instead.
+- An open deflake unit shields the lane it owns. A unit not yet started that runs the lane waits at its first
+  admission. A unit already running whose lanes stage is red on that lane records `deflake-held`, is not charged, and
+  waits at `prepare` until the deflake merges, parks or is cut. Prepare then merges the integration tip in and the
+  lanes run again. If the lane is still red, the unit is charged as usual. A unit of the deflake's own lineage is
+  never shielded.
+- When every red lane passed in the builder's own reported check at the same head, the lanes record
+  `environment-divergence`: the lanes' clean checkout and the builder's worktree differ. The unit gets an uncharged
+  fix round told to reproduce the red in a fresh checkout of that head.
+- A lane does not start while the environment or resource it names is unhealthy, meaning it has a tripped breaker or
+  a retryable park on it whose probe has not passed. The lane waits and holds nothing until the probe clears it. It
+  does not come up against the broken target and park a second unit.
 - Ordering parks wake when their named blockers merge.
 - Managed environments start lazily, stay up while used and stop when idle. Failed up/probe parks retryably rather
   than counting as a red test.

@@ -2,7 +2,8 @@ import { systemName } from '../src/core/ids.ts';
 // dev.17 plan environments (src/resources/environments.ts), integrated over real processes and real git: env-tool.ts
 // stands in for an environment's up, down and probe, logging every call. Named tests: env.lazy-up-reuse,
 // env.idle-teardown, env.start-waits-for-stop, env.probe-fails-parks, env.up-fails-parks, env.job-suite-lane, env.plain-no-lifecycle,
-// env.unavailable-to-arc, env.crash-before-up-runs, env.crash-after-up-ran, env.pause-brings-down, env.schema.
+// env.unavailable-to-arc, env.crash-before-up-runs, env.crash-after-up-ran, env.pause-brings-down, env.schema; dev.81:
+// env.unhealthy-waits (the arbiter's resource-health guard).
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -158,6 +159,36 @@ test('env.probe-fails-parks: a failed probe parks the lanes stage on the environ
   assert.equal(run.journal.view.unit(U1).status, 'active', 'the passing probe recovers the park');
   assert.equal(environmentState(run.journal.view, STACK), 'up', 'left up for the lane\'s re-run');
   assert.deepEqual(startedCalls(state).slice(3), ['up stack', 'probe stack', 'down stack', 'up stack', 'probe stack']);
+});
+
+// dev.81 (C3c): the resource-health guard at each lane start, in the arbiter.
+test('env.unhealthy-waits: while a retryable park on an environment is outstanding, a lane request naming it is set aside (resource-unhealthy) holding nothing, not granted to come up against it; the passing probe clears it and the request is granted', T, async () => {
+  const { run, state } = withEnv((s) => managedEnv(s, 'stack', 60), [envLane('one')]);
+  writeFileSync(join(state, 'stack.probe-fails'), '');
+  assert.equal(started(await lanes(run.ctx, run.unit, run.base)).outcome.kind, 'env-unavailable');
+  const arb = createArbiter(run.ctx);
+  const abort = new AbortController();
+  try {
+    const request = laneRequest(run.ctx, loadUnitSpec(run.ctx, run.unit).spec.lanes[0]!)!;
+    assert.ok(request.named.includes(STACK));
+    const job = jobId('audit', 1);
+    let grant: string | null = null;
+    const waiting = arb.acquireFirst(request, { type: 'job', job }, abort.signal).then((g) => (grant = g.kind));
+    await sleep(20);
+    assert.equal(grant, null, 'set aside: the environment is free, but unhealthy');
+    assert.deepEqual(arb.waitingFirst().map((w) => w.reasons), [['resource-unhealthy']]);
+    assert.deepEqual(run.journal.view.resources().get(STACK)?.status ?? { state: 'free' }, { state: 'free' }, 'it holds nothing while it waits');
+
+    rmSync(join(state, 'stack.probe-fails'));
+    const { prober } = testProbes(run.ctx);
+    for (const j of prober.due(run.journal.view, new Date(Date.now() + 3_600_000))) assert.equal(await prober.run(j, new AbortController().signal), 'pass');
+    arb.wake();
+    await waiting;
+    assert.equal(grant, 'granted');
+    assert.equal((await cleanup(run.ctx, heldReservation(run.ctx, { type: 'job', job }, 'reserved'), { type: 'job', job })).kind, 'released');
+  } finally {
+    abort.abort();
+  }
 });
 
 test('env.up-fails-parks: a failed up parks the lanes stage on the environment, the partial environment brought down', T, async () => {

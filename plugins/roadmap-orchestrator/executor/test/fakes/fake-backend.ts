@@ -265,6 +265,19 @@ function runReal(call: Call, scenarioDir: string, readOnly: Readonly<{ repo: str
 
 // ---------------------------------------------------------------------------------------------------
 
+/**
+ * dev.81 (B4, B5): a build report the scenario wrote without `checks` (the field is in the build schema since 1.0.0-dev.81) is
+ * given the rows an honest builder reports: one per lane the prompt's <required_checks> and <after_merge_in> list, at the cwd's
+ * HEAD with the lane's expected exit. A scenario that tests the proof writes `checks` itself.
+ */
+function withBuildChecks(value: JsonValue, call: Call): JsonValue {
+  if (typeof value !== 'object' || value === null || Array.isArray(value) || !('grounding' in value) || !('experiments' in value) || 'checks' in value) return value;
+  const blocks = [...call.stdin.matchAll(/<(required_checks>|after_merge_in>\n)([\s\S]*?)<\/(?:required_checks|after_merge_in)>/g)].map((m) => m[2] ?? '');
+  const lanes = [...new Map(blocks.flatMap((b) => [...b.matchAll(/^- (\S+) \(expects exit (\d+)/gm)].map((m) => [m[1]!, Number(m[2])] as const))).entries()];
+  const head = lanes.length === 0 ? '' : git(call.cwd, 'rev-parse', 'HEAD').trim();
+  return { ...value, checks: lanes.map(([lane, exit]) => ({ lane, head, exit })) };
+}
+
 function paths(files: FileSet): string[] {
   return Object.keys(files);
 }
@@ -276,7 +289,7 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
   switch (act.type) {
     case 'emit':
     case 'noUsage': {
-      let value = act.value;
+      let value = withBuildChecks(act.value, call);
       const wireSchema = flagValue(call.argv, '--json-schema');
       if (wireSchema !== undefined && typeof value === 'object' && value !== null && !Array.isArray(value)) {
         const schema = JSON.parse(wireSchema) as Record<string, unknown>;
@@ -294,13 +307,14 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       return;
     }
     case 'capacityText': {
-      const text = JSON.stringify(act.value);
+      const value = withBuildChecks(act.value, call);
+      const text = JSON.stringify(value);
       if (codex) {
         const command = { type: 'item.completed', item: { id: 'item_0', type: 'command_execution', command: 'npm test', aggregated_output: CAPACITY_TEXT, exit_code: 0, status: 'completed' } };
         const note = { type: 'item.completed', item: { id: 'item_1', type: 'agent_message', text: `The log said: ${CAPACITY_TEXT}` } };
         codexEmit(call.argv, thread(), text, [command, note], true);
       } else {
-        claudeResult(session(), { result: `The log said: ${CAPACITY_TEXT}`, structured_output: act.value });
+        claudeResult(session(), { result: `The log said: ${CAPACITY_TEXT}`, structured_output: value });
       }
       return;
     }
@@ -318,7 +332,7 @@ function perform(act: Act, call: Call, step: Step, index: number, scenarioDir: s
       claudeResult(session(), { result: "I can't help with that.", stop_reason: 'refusal' }, ['structured_output']);
       return;
     case 'advised':
-      claudeAdvisedResult(call, session(), act.value);
+      claudeAdvisedResult(call, session(), withBuildChecks(act.value, call));
       return;
     case 'globAboveAddDir': {
       const first = flagValue(call.argv, '--add-dir');

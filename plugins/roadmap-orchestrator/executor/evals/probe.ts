@@ -697,7 +697,7 @@ async function main(): Promise<void> {
   const unitLane = { id: UNIT, argv: ['sh', '-c', 'grep -q hello hello.txt'], cwd: repoPath('.'), env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'build', resources: [], evidenceGlobs: [], evidenceExcludes: [] } as const;
   const buildInputs = (worktree: AbsPath, evidenceDir: AbsPath): BuildInputs => ({target: {kind: 'full', doc: {path: repoPath('SPEC.md'), text: buildSpec}}, intent: 'Implement the stated acceptance.', nonGoals: ['No unrelated changes.'], systemNotes: [], notes: [],
     spec: { unit: unitId('u-hello'), rev: specRev(1), markdown: buildSpec }, contracts: [], index: MINI_INDEX, method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, fastLanes: [unitLane], suiteLanes: [], lastLaneSeries: null,
-    evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessChecks: [], milestones: null, browser: null, handover: null,
+    evidenceDir, worktree, systems: [systemName('app')], fixRound: null, witnessLanes: [], mutants: [], mergeIn: null, afterMergeIn: null, milestones: null, browser: null, handover: null,
   });
 
   // (4) roadmap witness-check over a real node --test run with the node-test witness reporter.

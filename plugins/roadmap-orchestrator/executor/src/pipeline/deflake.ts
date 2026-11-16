@@ -34,6 +34,13 @@
 // select) waits at its first admission until that deflake merges. A deflake unit is never held by an edge. A parked
 // deflake holds nothing (its item is `deflake-parked`), nor does a cut one.
 //
+// The shield (dev.81, C1, `deflakeShield`): the edge above holds only units not yet dispatched. A dispatched unit whose lanes
+// stage goes red (`red`, `regression`) on the lane an open deflake unit owns (its keys' lane) is not charged: it records
+// lanes `deflake-held{deflake, lane}` and waits at `prepare` while that deflake is open (src/schedule/ready.ts); once it
+// merges, parks or is cut, prepare merges the tip in and the lanes run again, and a lane still red is the unit's, charged as
+// any other. A unit of that deflake's lineage is never shielded: the red is its own to fix. Spec and suite flakes name no
+// test, so the shield matches by lane, like the edge.
+//
 // Verification (`verificationReasons`): a deflake unit's approving pre-build carries `verification` in its design record:
 // `reproduce-then-fix` (the induced condition fails the old tree and passes the new), or `repeat` with a rationale. Its
 // `runs` times the lane's measured median duration (the ledger's red and green runs of the key) must fit the verification
@@ -269,6 +276,18 @@ export function deflakeHold(
     const lane = d.deflake!.keys[0]!.lane;
     const suite = plan.suite.lanes.find((l) => l.id === lane);
     if (lanes.has(lane) || (suite !== undefined && cadenceAtOrBefore(suite.cadence, 'candidate') && (map === null || suite.systems === undefined || suite.systems.some((s) => dependentsClosure(map, unit.systems).has(s))))) return { type: 'deflake', deflake: d.id, lane };
+  }
+  return null;
+}
+
+/**
+ * dev.81 (C1): the open deflake unit owning `lane` (its keys' lane) that shields `unit` (see the header), in plan order, or
+ * null: none is open on that lane, or `unit` is of its lineage.
+ */
+export function deflakeShield(view: JournalView, plan: PlanM1, unit: UnitId, lane: LaneId): UnitId | null {
+  for (const d of deflakeUnits(plan)) {
+    if (d.deflake!.keys[0]!.lane !== lane || deflakeState(view, d.id) !== 'open') continue;
+    if (!lineageMembers(view, d.id).includes(unit)) return d.id;
   }
   return null;
 }

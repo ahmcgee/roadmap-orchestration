@@ -98,7 +98,7 @@ test('surface.fix-evidence: both builders receive findings, lane evidence, a bas
     intent: 'Repair the failure', nonGoals: ['No unrelated change'], contracts: [], index: {contracts: [], rulings: [], withdrawn: [], ledger: absPath('/run/rulings')},
     systemNotes: [], notes: ['Retain the restart experiment'], fastLanes: [], suiteLanes: [], lastLaneSeries: null, evidenceDir: absPath('/run/build'), worktree: absPath('/work'), systems: [],
     fixRound: {failingEvidenceDirs: [absPath('/run/lanes/failed')], directives: ['Lost write: src/store.ts:42; experiment node restart.mjs: exit 1'], baseComparison: null, capState: {builds: 4, judgedStages: 12, chargeableFailures: 1, chargeableBound: 3, certificationAllowance: 2}},
-    method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, witnessChecks: [], milestones: null, browser: null, handover: null,
+    method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, witnessLanes: [], mutants: [], mergeIn: null, afterMergeIn: null, milestones: null, browser: null, handover: null,
   };
   for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) {
     const p = promptFor('build', model), rendered = p.render(inputs);

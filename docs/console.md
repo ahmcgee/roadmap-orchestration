@@ -23,11 +23,11 @@ The landing page follows this repo's live run, or its latest retained run. To pi
 
 | View | Shows |
 |---|---|
-| **Graph** | The milestone line map and full dependency graph. Open a node for the unit's purpose, rounds, agent histories and check output. Milestone nodes show executor gates, including when all member units have passed. |
+| **Graph** | The milestone line map and full dependency graph. Open a node for the unit's purpose, rounds, agent histories and check output. Milestone nodes show executor gates, including when all member units have passed. Units in no milestone are grouped by what raised them: a milestone's design unit sits just before its band, and a repair raised by its walkthrough (or by an audit of it) and its polish units sit just after it. Planned units in no milestone are grouped as Hardening, beside the work they feed. Other repairs are grouped by the audit job that raised them, newest first, and deflake units under Deflake. Each group has its own station. Withdrawn (superseded or cut) units are hidden by default, and their links are drawn to the unit that replaced them. **Show withdrawn (N)** beside Filters shows them, each in its own band directly before the unit that replaced it, or in its own column when the replacement's column would draw one of its dependencies backwards. The choice is remembered in this browser and also applies to the withdrawn list in a milestone's details. Counts always include withdrawn units. |
 | **Timeline** | When each agent and command ran, and when a backend was unavailable. |
 | **Activity** | Recent journal events, plus audits, findings and root decisions. Successful housekeeping steps stay behind a toggle; failures remain visible. |
 | **Effort** | Work finished and time spent waiting, by unit, role or systems. |
-| **Resources** | Who holds shared resources now and who held them before; CPU reservations; recorded waiting by reason. |
+| **Resources** | Who holds shared resources now and who held them before; CPU reservations; recorded waiting by reason. Now also shows the CI ref beside the integration slot: the head `origin` has, whether CI is still on it and when it settles by, and the head that pushes next. The CPU and fast-suite pools appear under Everything current. |
 | **Attention** | Decisions waiting for you, with the exact terminal commands for human responses. |
 
 **Agent histories.** Open an agentic activity from its unit to read the retained brief, thoughts, tool
@@ -36,6 +36,9 @@ and explicit expansion keep long transcripts bounded. Deterministic activities k
 
 **How to read the numbers.**
 
+- `roadmap status` prints run history as totals (per-unit and host `workTotals`, settled units' certification lane counts, an
+  applied receipt's first 20 postconditions and their count). The console's views still show every run: CPU evidence, a
+  unit's invocations and the invocation details.
 - Times are relative, with local time on hover. Stopped or completed runs retain their recorded time range.
 - Missing measurements are labelled as missing.
 - Time charts show partial recorded effort, not wall-time coverage. Overlapping waiting reasons are never summed,

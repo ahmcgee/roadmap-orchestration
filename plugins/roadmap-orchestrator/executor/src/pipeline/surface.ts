@@ -13,6 +13,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import type { SpecM1 } from '../core/records.ts';
 import { appliedRevisions } from '../holistic/coverage.ts';
 import { type PlanUnit, environmentOf } from '../input/plan.ts';
+import { delivers } from '../input/lineage.ts';
 import { pathSystems, systemTraits } from '../input/systems.ts';
 import { keepInput } from '../input/inforce.ts';
 import { promptFor, renderPrompt } from '../prompts/index.ts';
@@ -36,7 +37,7 @@ export function proofNotLocal(ctx: MarkerContext, unit: PlanUnit): boolean {
   const obligations = holisticInForce(ctx).obligations;
   if (obligations === null) return false;
   return obligations.obligations.some((o) => {
-    if (o.state.type !== 'active' || !o.deliveredBy.includes(unit.id)) return false;
+    if (o.state.type !== 'active' || !delivers(ctx.journal.view, o, unit.id)) return false;
     if (o.witness === null || o.witness.testIds.length === 0) return true;
     const lane = obligations.lanes.find((l) => l.id === o.witness!.lane);
     if (lane === undefined) return true;
@@ -98,7 +99,7 @@ export async function runReview(ctx: StageContext, unit: PlanUnit, parent: Stage
     await removeJudgmentCheckouts(ctx, unit.id, parent);
     await runOp(ctx.journal, worktreeCreateOp(ctx.repo), `worktree:${unit.id}:review`, parent, {path: checkout, checkout: {type: 'detached', at: integrationTip(ctx)}});
   }
-  const measured = renderPrompt(prompt, { mode, brief: {target: unitTarget(ctx, integrationTip(ctx), 'full', holisticInForce(ctx).obligations?.obligations.filter((o) => (spec.obligations ?? []).includes(o.id) || o.deliveredBy.includes(unit.id)) ?? [], ruleMentions(renderSpec(spec))), vision: visionInput(ctx), spec: {unit: unit.id, rev: spec.rev, markdown: renderSpec(spec)}, intent: spec.intent, nonGoals: spec.nonGoals, contracts: library(ctx, spec, integrationTip(ctx)).contracts, systems: unit.systems, method: methodContext(ctx, unit, spec), history: mode === 'diagnosis' ? view.unit(unit.id).failures.slice(-20).map((f) => JSON.stringify({ref: `${unit.id}/${f.fact.stage}#${f.fact.attempt}`, outcome: f.fact.outcome, detail: f.fact.detail ?? null, evidence: join(ctx.runDir, 'evidence', unit.id, `${f.fact.attempt}-${f.fact.stage}`)})) : [], standing: reviewItems(view, unit.id) } });
+  const measured = renderPrompt(prompt, { mode, brief: {target: unitTarget(ctx, integrationTip(ctx), 'full', holisticInForce(ctx).obligations?.obligations.filter((o) => (spec.obligations ?? []).includes(o.id) || delivers(view, o, unit.id)) ?? [], ruleMentions(renderSpec(spec))), vision: visionInput(ctx), spec: {unit: unit.id, rev: spec.rev, markdown: renderSpec(spec)}, intent: spec.intent, nonGoals: spec.nonGoals, contracts: library(ctx, spec, integrationTip(ctx)).contracts, systems: unit.systems, method: methodContext(ctx, unit, spec), history: mode === 'diagnosis' ? view.unit(unit.id).failures.slice(-20).map((f) => JSON.stringify({ref: `${unit.id}/${f.fact.stage}#${f.fact.attempt}`, outcome: f.fact.outcome, detail: f.fact.detail ?? null, evidence: join(ctx.runDir, 'evidence', unit.id, `${f.fact.attempt}-${f.fact.stage}`)})) : [], standing: reviewItems(view, unit.id) } });
   const session = freshJudgmentSession();
   const call = (repair?: {reasons: readonly string[]; turn: NonNullable<ReturnType<typeof repairTurnOf>>}) => callBackend(ctx, {unit: unit.id, parent, request: {kind: 'judgment', dispatch, session: repair === undefined ? session : repair.turn.session, evidenceDirs: targetDirs(unitTarget(ctx, integrationTip(ctx), 'full', [], ruleMentions(renderSpec(spec))))}, system: prompt.system, rendered: repair === undefined ? measured.rendered : judgmentRepairDirective(repair.reasons), prompt: repair === undefined ? measured.prompt : null, schema: prompt.schema, cwd: checkout, deadlineAt: inMs(judgmentDeadlineMs(dispatchOf(view, unit.id)))});
   let called = recorded ?? await call();
