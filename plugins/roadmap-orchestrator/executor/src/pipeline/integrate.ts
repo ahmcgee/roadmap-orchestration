@@ -101,7 +101,7 @@ import { lineageAttempts, lineageAttemptsText } from './attempts.ts';
 import { type Cancelled, type StageContext, type StageParent, candidateVerificationWorktree, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
-  type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
+  type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, nextJobCheckout, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, seriesEntry, standInJourneyLane, suiteJourneyLane, suiteStandIns, witnessRecordPath,
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
@@ -1357,13 +1357,14 @@ function batchForeignMove(ctx: StageContext, job: JobId, detail: string): NeedsU
 // strict descendant of the integration tip T (the architect merges the tip in by hand when units published meanwhile);
 // anything else is refused before the slot. `landEndgame` takes `integration-slot` under `endgame{job}` (first of every
 // unit waiter), runs the plan's suite lanes the head's diff on T selects and the arc lanes witnessing every active,
-// non-exempt obligation (never a deferred lane) as a journey series under `job{job}` in a detached checkout of the head,
+// non-exempt obligation (never a deferred lane) as a journey series under `job{job}` in a detached checkout of the head
+// (`nextJobCheckout`: a fresh path each attempt),
 // and grades it as a batch: the brake over every obligation, the obligations the episode's fixes in T..head close as its
 // repairs, the tip alone when it is not clean. Green: `ff{subject: endgame}` T → head; then `finishLanding`: the
 // `endgame-landed` fact, the findings' moves (a landed fix resolves what it names), the snapshot, the slot released.
 // Red or base-red: nothing moves; the outcome names the lanes and obligations red. Recovery (src/recover/resource.ts): an
-// endgame holder whose ff published keeps the slot for `finishLanding`; any other is abandoned (`abandonLanding`). Its ff's
-// CAS is never redone (src/recover/ff.ts).
+// endgame holder whose ff published keeps the slot for `finishLanding`; any other is abandoned (`abandonLanding`), and the
+// job, still running in its episode, lands again (src/endgame/jobs.ts). Its ff's CAS is never redone (src/recover/ff.ts).
 
 export type LandingContext = StageContext & Readonly<{ acquireFirst: AcquireFirst }>;
 
@@ -1374,8 +1375,6 @@ export type LandingOutcome =
   | Readonly<{ kind: 'red'; job: JobId; lanes: readonly LaneId[]; obligations: readonly ObligationId[]; baseRed: boolean }>
   | Readonly<{ kind: 'no-verdict'; job: JobId; end: JourneyEnd }>
   | Readonly<{ kind: 'foreign-move'; job: JobId; needsUser: NeedsUserContent }>;
-
-const landingCheckout = (root: AbsPath, arc: string, job: JobId, which: 'candidate' | 'base'): AbsPath => absPath(join(root, arc, `${job}.${which}`));
 
 /** The endgame `ff` of `job`, if one was begun. */
 const landingFfOf = (view: JournalView, job: JobId): IntentOf<'integration.ff'> | undefined =>
@@ -1487,7 +1486,7 @@ export async function landEndgame(ctx: LandingContext, job: JobId, head: Sha, re
     ...claimed.filter((l) => !standing.has(l.id)).map(arcJourneyLane),
   ];
   const suiteRed = (r: JourneyRun): boolean => (r.record === null || standing.has(r.lane)) && journeyRed(r);
-  const onHead = await runJourneySeries(ctx, owner, lanes, { path: landingCheckout(plan.worktreeRoot, plan.arc, job, 'candidate'), checkout: { type: 'detached', at: head } }, { reuse: true, stop: suiteRed });
+  const onHead = await runJourneySeries(ctx, owner, lanes, { path: nextJobCheckout(ctx, job, 'candidate'), checkout: { type: 'detached', at: head } }, { reuse: true, stop: suiteRed });
   if (onHead.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: onHead.end });
   const p1 = p1Obligations(ctx.journal.view);
   const gradeOn = (series: JourneySeries, on: 'head' | 'tip'): TreeGrade => ({
@@ -1498,7 +1497,7 @@ export async function landEndgame(ctx: LandingContext, job: JobId, head: Sha, re
   });
   const grade = gradeOn(onHead, 'head');
   if (!clean(grade)) {
-    const alone = await runJourneySeries(ctx, owner, lanes, { path: landingCheckout(plan.worktreeRoot, plan.arc, job, 'base'), checkout: { type: 'detached', at: tip } }, { reuse: true, stop: () => false });
+    const alone = await runJourneySeries(ctx, owner, lanes, { path: nextJobCheckout(ctx, job, 'base'), checkout: { type: 'detached', at: tip } }, { reuse: true, stop: () => false });
     if (alone.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: alone.end });
     const verdict = brakeVerdict(grade, gradeOn(alone, 'tip'), claims?.repairs ?? new Set());
     if (verdict.kind !== 'green') {

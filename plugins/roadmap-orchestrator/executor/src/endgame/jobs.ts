@@ -1,6 +1,6 @@
 // The endgame's jobs (dev.82, WS-5): what the scheduler's holistic slot runs for an opened episode, one at a time, each a
 // durable job `endgame-<n>` (`endgame-job-started` … `endgame-job-ended`; a started job without its end resumes as the
-// same job after a restart).
+// same job after a restart: a landing recovery abandoned lands again, a run runs again in a fresh checkout).
 //
 // - **Requests** (src/commands/endgame.ts), in log order, each served once: `land` (src/pipeline/integrate.ts `landEndgame`:
 //   the endgame branch's head, a strict descendant of the integration tip, tested and published by ff); `review` (the
@@ -12,19 +12,17 @@
 // - **Outcomes** (`endgame-job-ended`): a landing `landed`, `refused` (nothing to land, not a descendant, the tip moved, or
 //   another mover moved integration: then a blocking `foreign-ref-move` item too), `red` (the lanes and obligations red
 //   named; nothing moved) or `no-verdict`; a review `reviewed` or `no-verdict`; a run `ran` (each lane's verdict named).
-import { join } from 'node:path';
 import type { EndgameJobOutcome, EndgameJobRequest, EndgameRequest } from '../core/events.ts';
 import type { CommandId, EnvId, JobId, LaneId, ObligationId, Sha } from '../core/ids.ts';
 import type { EndgameEpisode } from '../core/state.ts';
-import { absPath } from '../core/values.ts';
 import { isAncestor } from '../git/ff.ts';
 import { refTarget } from '../git/git.ts';
 import { repairedObligations } from '../holistic/findings.ts';
 import type { ArcLaneDef } from '../holistic/types.ts';
 import { raiseNeedsUser } from '../needsuser.ts';
 import { jobSeat } from '../pipeline/dispatch.ts';
-import { type LandingContext, type LandingOutcome, landEndgame } from '../pipeline/integrate.ts';
-import { arcJourneyLane, journeyRed, runJourneySeries, suiteJourneyLane } from '../pipeline/lanes.ts';
+import { type LandingContext, type LandingOutcome, finishLanding, heldLanding, landEndgame } from '../pipeline/integrate.ts';
+import { arcJourneyLane, journeyRed, nextJobCheckout, removeJobCheckouts, runJourneySeries, suiteJourneyLane } from '../pipeline/lanes.ts';
 import { endDetail } from '../pipeline/publish.ts';
 import { holisticInForce } from '../pipeline/stages.ts';
 import { endgameBranch, endgameNow, reviewDue } from './open.ts';
@@ -91,10 +89,14 @@ export async function runEndgameJob(ctx: LandingContext, due: EndgameJobDue): Pr
     if (at === null) throw new Error(`${job}: ${endgameBranch(ctx.plan().arc)} does not exist`);
     return at;
   };
-  // A job a restart cut short after its landing or review was recorded only ends.
+  // A job a restart cut short after its landing or review was recorded only ends; a landing still holding the slot (its
+  // snapshot or release cut short) is finished first.
   const episode = openEpisode(view);
   const landed = episode?.landings.find((l) => l.job === job);
-  if (landed !== undefined) return end('landed', `landed ${landed.old}..${landed.head}`);
+  if (landed !== undefined) {
+    if (heldLanding(view)?.job === job) await finishLanding(ctx, job);
+    return end('landed', `landed ${landed.old}..${landed.head}`);
+  }
   const reviewed = episode?.reviews.find((r) => r.job === job);
   if (reviewed !== undefined) return end('reviewed', `reviewed; findings ${reviewed.findings.join(', ') || 'none'}`);
   switch (due.request.type) {
@@ -129,8 +131,10 @@ export async function runEndgameJob(ctx: LandingContext, due: EndgameJobDue): Pr
         if (arc === undefined) throw new Error(`${job}: lane ${id} is neither a suite lane nor an arc lane in force (the command checked it)`);
         return arcJourneyLane(arc);
       };
+      // A resumed run removes what the cut-short one left and runs in a fresh checkout.
+      await removeJobCheckouts(ctx, job);
       const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, due.request.lanes.map(lane), {
-        path: absPath(join(plan.worktreeRoot, plan.arc, `${job}.run`)), checkout: { type: 'detached', at },
+        path: nextJobCheckout(ctx, job, 'run'), checkout: { type: 'detached', at },
       }, { reuse: true, stop: () => false });
       if (series.end.kind !== 'ran') return end('no-verdict', `a lane gave no verdict (${endDetail(series.end)})`);
       return end('ran', `at ${at}: ${series.runs.map((r) => `${r.lane} ${journeyRed(r) ? 'red' : 'green'}`).join(', ')}`);

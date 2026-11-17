@@ -1600,6 +1600,18 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
   }
 }
 
+/**
+ * dev.82: a job's next checkout `<worktreeRoot>/<arc>/<job>.<which>-<n>`, `n` one past every such checkout the job created,
+ * so a job resumed after a restart never runs a series in a checkout path it certified before (the fold refuses a second
+ * `series-certified` of one checkout under one parent).
+ */
+export function nextJobCheckout(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; plan: () => Readonly<{ worktreeRoot: AbsPath; arc: string }> }>, job: JobId, which: string): AbsPath {
+  const parent = canonicalJson({ type: 'job', job });
+  const prefix = `${job}.${which}-`;
+  const made = ctx.journal.view.opsOf('worktree.create').filter((i) => canonicalJson(i.parent) === parent && basename(i.expect.path).startsWith(prefix)).length;
+  return absPath(join(ctx.plan().worktreeRoot, ctx.plan().arc, `${prefix}${made + 1}`));
+}
+
 /** A job's kinds of journey series: the baseline's, an audit's lanes, a re-witness (an audit's or a checkpoint's), a batch point's (dev.17). */
 export type JobSeriesKind = 'checkout' | 'lanes' | 'rewitness' | 'batch' | 'probe';
 
