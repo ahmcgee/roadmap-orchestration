@@ -10,7 +10,8 @@
 //              barrier while report merges inside it, which puts the arc in the endgame (dev.82, src/endgame/phase.ts),
 //              and opens the I-2 witness P1 (F-1). With no unit running, audit-2 is the endgame's final audit, F-1 still
 //              active; the episode opens on it, and the driver, as the architect, admits the repair by a root apply. The
-//              repair runs, resolves F-1 and moves the head, so the final audit runs again: audit-3.
+//              repair runs and resolves F-1, which empties the worklist: the step is closing, and its final audit (audit-3) reads
+//              only the range the repair published (dev.82: incremental, and nothing armed while the step was open).
 //   prevented  branch P, after paid run 3: tidy's pre-build twice answers `infeasible` with a V-2 vision conflict
 //              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
@@ -81,7 +82,7 @@ const NO_OP = checkpointAnswer({ decision: 'no-op' });
 const PACK_REVIEW = packReviewStep('review-1');
 
 // audit-1 (requested) opens the witness P1 itself; audit-2 is the endgame's final audit with it active; audit-3 is the
-// final audit again, on the head the repair published.
+// closing step's final audit, over the range the repair published.
 const JOB_STEPS_R: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants'), lensStep('audit-3', 'invariants')];
 
 /** tidy's pre-build in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */

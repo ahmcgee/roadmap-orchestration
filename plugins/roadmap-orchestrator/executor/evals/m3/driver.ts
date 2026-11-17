@@ -34,7 +34,7 @@
 //                architect's root repair by `roadmap apply`, adding the repair unit (setup.ts REPAIR_UNIT) and editing
 //                the plan's `direction` (setup.ts DIRECTION_EDITED). Waiting for the handover makes R's order
 //                deterministic: the endgame's final audit runs with the P1 active, the repair is admitted in the
-//                episode and runs, and the final audit runs again on the head it publishes
+//                episode and runs, and the closing step's final audit runs on the head it publishes
 //   staleApplied once that apply's receipt is `applied` (any other receipt fails the run)
 //   added        every unit a revision adds (read from its `plan-applied` change)
 //   admit        once a revision added units: `run-only` the plan units allowed so far (all once the barrier fired, else `parse`
