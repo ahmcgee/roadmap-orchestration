@@ -2,7 +2,7 @@ import { systemName } from '../src/core/ids.ts';
 // Pools, `@cpu` tokens and the M2 holders (src/resources/{pool,reserve}.ts): all-or-none requests in lock order,
 // the instance binding persisted into residue recipes and replayed by a retry's reclaim, the over-capacity rows
 // and the legacy reading of a declared `cpu`, the publication holder; dev.81: capacity read live (res.capacity-live) and
-// the `@fast-suite` pool (res.fast-suites).
+// the `@fast-suite` pool (res.fast-suites); dev.82: pools held whole by a lane's `exclusive` (res.exclusive).
 import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,10 +10,11 @@ import { describe,it } from 'node:test';
 import {
 INTEGRATION_SLOT,type ResourceUnit,cpuToken,fastSuiteToken,laneId,poolInstance,resourceName,unitId,
 } from '../src/core/ids.ts';
-import type { SpecM1 } from '../src/core/records.ts';
+import { type SpecM1,laneDef } from '../src/core/records.ts';
+import { SchemaError } from '../src/core/validate.ts';
 import { absPath } from '../src/core/values.ts';
 import { readResidues,undispositioned } from '../src/host/residues.ts';
-import { cpuCapacity,defaultFastSuites,fastSuiteCapacity,instanceEnv,instanceEnvVar,overCapacity,overlaps,requestOf } from '../src/resources/pool.ts';
+import { cpuCapacity,defaultFastSuites,envBlocked,exclusiveProblems,fastSuiteCapacity,instanceEnv,instanceEnvVar,overCapacity,overlaps,requestOf } from '../src/resources/pool.ts';
 import { probe } from '../src/resources/probe.ts';
 import {
 type PublicationHolder,
@@ -95,7 +96,8 @@ describe('res.instance-binding-persisted', () => {
   it('RESOURCE_INSTANCE_<POOL> reaches the probe and teardown, is recorded in the residue recipe, and a retry replays it', T, async () => {
     assert.equal(instanceEnvVar(resourceName('my-pool')), 'RESOURCE_INSTANCE_MY_POOL');
     assert.deepEqual(instanceEnv([DB, poolInstance(ESTATE, 2), cpuToken(1), INTEGRATION_SLOT]), { RESOURCE_INSTANCE_ESTATE: '2' });
-    assert.throws(() => instanceEnv([poolInstance(ESTATE, 1), poolInstance(ESTATE, 2)]), /two instances of pool estate/);
+    // dev.82 (E4): a pool held whole (`exclusive`) binds no one instance; each instance's own commands bind it (res.exclusive).
+    assert.deepEqual(instanceEnv([poolInstance(ESTATE, 1), poolInstance(ESTATE, 2)]), {});
 
     const r = newRun();
     const { ctx, journal } = openPoolRun(r);
@@ -232,6 +234,74 @@ describe('res.fast-suites', () => {
     assert.equal(fastSuiteCapacity(poolPlanFor(r, { capacity: {} }), 30), 2, 'absent: derived from host memory');
     assert.deepEqual(poolPlanFor(r, { capacity: { fastSuites: 3 } }).capacity, { fastSuites: 3 });
     journal.close();
+  });
+});
+
+// dev.82 (E4): a mutator of a shared estate holds its pool whole; readers take one instance each.
+describe('res.exclusive', () => {
+  const whole = (r: Partial<ResourceRequest> = {}): ResourceRequest => req({ pools: [ESTATE], exclusive: [ESTATE], ...r });
+
+  it('an exclusive request takes every instance of the pool or none: it waits for every reader, and readers wait for it; each instance is probed under its own binding', T, async () => {
+    const r = newRun();
+    const { ctx, journal } = openPoolRun(r);
+    assert.deepEqual(requestOf(ctx.plan(), [ESTATE, DB], 1, undefined, [ESTATE]), { named: [DB], pools: [ESTATE], cpu: 1, publication: false, exclusive: [ESTATE] });
+    assert.throws(() => requestOf(ctx.plan(), [ESTATE, DB], 0, undefined, [DB]), /names no requested pool/);
+
+    const reader = holderOf('reader');
+    granted(reserve(ctx, reader, req({ pools: [ESTATE] }), stageParent(reader)));
+    const m = holderOf('mutator');
+    const before = journal.view.highWater();
+    assert.deepEqual((reserve(ctx, m, whole({ cpu: 1 }), stageParent(m)) as Refused).busy, [poolInstance(ESTATE, 1)], 'busy names the held instance only');
+    assert.equal(journal.view.highWater(), before, 'nothing journaled: estate#2 and the token stay free');
+    transition(ctx, reader, [poolInstance(ESTATE, 1)]);
+
+    const got = granted(reserve(ctx, m, whole({ cpu: 1 }), stageParent(m)));
+    assert.deepEqual(got.resources, [poolInstance(ESTATE, 1), poolInstance(ESTATE, 2), cpuToken(1)]);
+    assert.deepEqual([...got.recipes.keys()], [poolInstance(ESTATE, 1), poolInstance(ESTATE, 2)], 'a teardown recipe per instance');
+    assert.deepEqual([...got.recipes.values()].map((x) => x.teardown.env['RESOURCE_INSTANCE_ESTATE']), ['1', '2'], 'each bound to its own instance');
+    assert.deepEqual(instanceEnv(got.resources), {}, 'the mutator\'s workloads bind no one instance');
+    assert.deepEqual(await probe(ctx, got, stageParent(m)), { kind: 'clear' });
+    const probes = readFileSync(join(r.stateDir, 'calls.log'), 'utf8').split('\n').filter((l) => l.startsWith('probe'));
+    assert.deepEqual(probes, [`probe ${ESTATE}#1 ${r.arc}/mutator`, `probe ${ESTATE}#2 ${r.arc}/mutator`]);
+
+    const late = holderOf('late');
+    assert.deepEqual((reserve(ctx, late, req({ pools: [ESTATE] }), stageParent(late)) as Refused).busy, [poolInstance(ESTATE, 1), poolInstance(ESTATE, 2)], 'a reader waits for the mutator');
+    const other = holderOf('other');
+    assert.equal(reserve(ctx, other, whole(), stageParent(other)).state, 'refused', 'and so does another mutator');
+    transition(ctx, m, got.resources);
+    assert.deepEqual(granted(reserve(ctx, late, req({ pools: [ESTATE] }), stageParent(late))).resources, [poolInstance(ESTATE, 1)]);
+    assert.ok(overlaps(whole(), req({ pools: [ESTATE] })) && !overlaps(whole(), req({ named: [DB] })));
+    journal.close();
+  });
+
+  it('a pool taken whole is environment-blocked while any instance is dirty; a reader only while every one is', T, async () => {
+    const r = newRun();
+    const { ctx, journal } = openPoolRun(r);
+    const u1 = holderOf('u1');
+    const held = run(ctx, granted(reserve(ctx, u1, req({ pools: [ESTATE] }), stageParent(u1))), stageParent(u1));
+    writeFileSync(join(r.stateDir, `${ESTATE}.teardown-fails-once`), '');
+    assert.equal((await cleanup(ctx, held, stageParent(u1))).kind, 'cleanup-failed');
+    const table = resourceTable(journal.view);
+    assert.equal(entryOf(table, poolInstance(ESTATE, 1)).status.state, 'cleanup-failed');
+    assert.equal(envBlocked(table, ctx.plan(), whole()), true);
+    assert.equal(envBlocked(table, ctx.plan(), req({ pools: [ESTATE] })), false);
+    journal.close();
+  });
+
+  it('`exclusive` names pools among the lane\'s own resources; one that is not a declared pool is a plan-invalid row', () => {
+    const r = newRun();
+    const lane = (id: string, resources: readonly string[], exclusive?: readonly string[]) => ({
+      id, argv: ['true'], cwd: '.', env: { set: {}, pass: [] }, expectedExit: 0, cadence: 'unit', resources, evidenceGlobs: [], ...(exclusive === undefined ? {} : { exclusive }),
+    });
+    assert.deepEqual(laneDef(lane('l', [ESTATE, DB], [ESTATE]), 'lane').exclusive, [ESTATE]);
+    assert.throws(() => laneDef(lane('l', [DB], [ESTATE]), 'lane'), SchemaError, 'not a resource of the lane');
+    assert.throws(() => laneDef(lane('l', [ESTATE], []), 'lane'), SchemaError, 'non-empty when present');
+    const plan = poolPlanFor(r, {
+      suite: { lanes: [{ ...lane('suite', [DB], [DB]), cadence: 'candidate' }] },
+      units: [{ id: 'u1', spec: 'u1.json', risk: 'low', systems: [systemName('app')], resources: [] }],
+    });
+    const specs = new Map([[unitId('u1'), { lanes: [{ ...laneDef(lane('ok', [ESTATE], [ESTATE]), 'lane'), state: 'active' }] } as unknown as SpecM1]]);
+    assert.deepEqual(exclusiveProblems(plan, specs).map((x) => [x.problem.type, x.problem.field]), [['schema', 'plan.suite.lanes.suite.exclusive']]);
   });
 });
 

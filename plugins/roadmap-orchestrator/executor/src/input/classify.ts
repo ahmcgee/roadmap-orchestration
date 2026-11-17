@@ -33,7 +33,7 @@ import { isAncestor } from '../git/ff.ts';
 import { unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { environmentState } from '../resources/environments.ts';
-import { cpuCapacity,overCapacity } from '../resources/pool.ts';
+import { cpuCapacity,exclusiveProblems,overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
 import { type ResolvedRouting,unsupportedSeats } from '../routing/layers.ts';
 import { RISK_TIERS,type RiskTier,UNIT_ROLES } from '../routing/types.ts';
@@ -699,7 +699,7 @@ export function classify(input: ClassifyInput): Classified {
   if (changes.some((c) => c.type === 'resource' && c.edit !== 'added')) for (const u of plan.units) scoped.add(u.id);
 
   // Capacity: no request above its pool's size.
-  for (const row of overCapacity(plan, { cpu: cpuCapacity(plan) }, specs)) reasons.push(canonicalJson(row));
+  for (const row of [...overCapacity(plan, { cpu: cpuCapacity(plan) }, specs), ...exclusiveProblems(plan, specs)]) reasons.push(canonicalJson(row));
 
   // Suite lanes.
   if (!same(cur.suite, plan.suite)) {

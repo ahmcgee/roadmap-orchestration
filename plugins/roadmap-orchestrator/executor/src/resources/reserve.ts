@@ -60,7 +60,7 @@ import type { PlanM1 } from '../input/plan.ts';
 import { type ProcContext, killWorkload } from '../pipeline/invoke.ts';
 import { type ResidueRecipe, appendFailedCleanupResidues } from '../recover/residue.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
-import { allocate, instanceEnv } from './pool.ts';
+import { allocate, instanceBinding, instanceEnv } from './pool.ts';
 import { type TeardownRun, instancesOf, resolveCommand, resourceDecl, stageRecipes, teardown } from './teardown.ts';
 
 export type StageHolder = Extract<Holder, { type: 'stage' }>;
@@ -149,7 +149,7 @@ export function holderRecipes(
       return new Map();
     case 'job': {
       const label = jobOwnerLabel(plan.arc, holder.job);
-      return new Map(instancesOf(plan, resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
+      return new Map(instancesOf(plan, resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instanceBinding(instances, r)), label }]));
     }
   }
 }

@@ -16,7 +16,7 @@ import type { Parent } from '../core/events.ts';
 import type { ResourceInstance, UnitId } from '../core/ids.ts';
 import type { NeedsUserContent, NeedsUserSubject } from '../core/records.ts';
 import { PROBE_EXIT } from '../input/plan.ts';
-import { instanceEnv } from './pool.ts';
+import { instanceBinding, instanceEnv } from './pool.ts';
 import { type AcquiringHolder, type Reservation, type ResourceContext, holderStage, jobOwnerLabel } from './reserve.ts';
 import { type CommandRun, ownerLabel, resolveCommand, resourceDecl, runResourceCommand, teardown } from './teardown.ts';
 
@@ -35,7 +35,7 @@ export async function probe(
   const { unit } = owner;
   const instances = instanceEnv(r.resources);
   for (const [resource, recipe] of r.recipes) {
-    const command = resolveCommand(ctx.repo, resourceDecl(ctx.plan(), resource).probe, owner.label, instances);
+    const command = resolveCommand(ctx.repo, resourceDecl(ctx.plan(), resource).probe, owner.label, instanceBinding(instances, resource));
     const first = await runResourceCommand(ctx, 'probe', unit, resource, command, parent);
     if (first.exitCode === PROBE_EXIT.free) continue;
     if (first.exitCode !== PROBE_EXIT.ownLabel) return parked(owner, resource, first, 'at the first probe');

@@ -1381,7 +1381,9 @@ const resR: Read<ResourceName> = (v, p) => resourceName(v, p);
 export const resourceRequest: Read<ResourceRequest> = object((f) => {
   const basis = f.optional('cpuBasis', cpuBasis);
   const fastSuite = f.optional('fastSuite', literal(true));
-  return { named: f.get('named', arrayOf(resR)), pools: f.get('pools', arrayOf(resR)), cpu: f.get('cpu', nat), publication: f.get('publication', bool), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(fastSuite === undefined ? {} : { fastSuite }) };
+  // dev.82 (E4): additive; absent on lines written before it (none taken whole).
+  const exclusive = f.optional('exclusive', arrayOf(resR, { nonEmpty: true }));
+  return { named: f.get('named', arrayOf(resR)), pools: f.get('pools', arrayOf(resR)), cpu: f.get('cpu', nat), publication: f.get('publication', bool), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(fastSuite === undefined ? {} : { fastSuite }), ...(exclusive === undefined ? {} : { exclusive }) };
 });
 const instR: Read<ResourceInstance> = (v, p) => resourceInstance(v, p);
 const unitResR: Read<ResourceUnit> = (v, p) => resourceUnit(v, p);

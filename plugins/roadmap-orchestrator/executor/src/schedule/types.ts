@@ -37,7 +37,8 @@ export const CPU_COST = { judgment: 1, build: 4, lane: { build: 2, unit: 4, cand
 }>;
 
 /**
- * What one reservation asks for, all-or-none: named resources, one instance per pool request, `@cpu` tokens
+ * What one reservation asks for, all-or-none: named resources, one instance per pool request (every instance of an
+ * `exclusive` one), `@cpu` tokens
  * and `integration-slot` for a publication. Its units are taken in lock order.
  */
 export type ResourceRequest = Readonly<{
@@ -52,6 +53,11 @@ export type ResourceRequest = Readonly<{
    * token (src/pipeline/lanes.ts `laneRequest`), so at most `plan.capacity.fastSuites` of them run at once. Absent: none.
    */
   fastSuite?: true;
+  /**
+   * dev.82 (E4): pools of `pools` this request takes whole, every instance or none (a lane's `exclusive`: a mutator of a
+   * shared estate). Absent: none.
+   */
+  exclusive?: readonly ResourceName[];
 }>;
 
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */

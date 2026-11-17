@@ -316,7 +316,8 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
 }
 
 /**
- * A lane's resources, explicit/inherited environments and calibrated `@cpu` tokens; null when nothing. dev.81 (C4):
+ * A lane's resources (dev.82, E4: its `exclusive` pools whole), explicit/inherited environments and calibrated `@cpu`
+ * tokens; null when nothing. dev.81 (C4):
  * `fastSuite`, a lanes-stage suite lane (the fast suite or its base check, `runLaneSeries`), which also takes one
  * `@fast-suite` token, so the plan's `capacity.fastSuites` caps how many run at once (a candidate's suite is not one).
  */
@@ -324,8 +325,8 @@ export function laneRequest(ctx: ResourceContext, lane: LaneDef, fastSuite = fal
   const basis = cpuCost(ctx, laneCpuKey(lane), CPU_COST.lane[lane.cadence], lane.cpu);
   const cpu = laneCpu(lane, basis);
   const names = lane.environment === undefined ? lane.resources : [...lane.resources, lane.environment];
-  if (fastSuite) return { ...requestOf(ctx.plan(), names, cpu, basis), fastSuite: true };
-  return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu, basis);
+  if (fastSuite) return { ...requestOf(ctx.plan(), names, cpu, basis, lane.exclusive), fastSuite: true };
+  return names.length === 0 && cpu === 0 ? null : requestOf(ctx.plan(), names, cpu, basis, lane.exclusive);
 }
 
 /**

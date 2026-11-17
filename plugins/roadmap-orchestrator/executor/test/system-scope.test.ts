@@ -108,6 +108,26 @@ test('system overlap is advisory, including when units share an entire system', 
 });
 
 
+test('shared-estate-mutation (dev.82 E4): a pool the lanes of two units name, one on a persistent system, none holding it exclusive, is advisory', async () => {
+  type Json = Record<string, unknown>;
+  const arc = await corpusArc({ config: { chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['src/**'], traits: ['persistent'] }, tests: { paths: ['test/**'] } } } } });
+  const tool = { argv: ['true'], cwd: '.', env: { set: {}, pass: [] } };
+  const spec = JSON.parse(readFileSync(join(arc.planDir, 'u1.json'), 'utf8')) as Json & { lanes: Json[] };
+  const onEstate = (unit: string, exclusive: boolean): string => JSON.stringify({
+    ...spec, unit, lanes: spec.lanes.map((l) => ({ ...l, resources: ['estate'], ...(exclusive ? { exclusive: ['estate'] } : {}) })),
+  });
+  writeFileSync(join(arc.planDir, 'u1.json'), onEstate('u1', false));
+  writeFileSync(join(arc.planDir, 'u2.json'), onEstate('u2', false));
+  editPlan(arc, (p) => ({
+    ...p, resources: [{ name: 'estate', pool: { size: 2 }, probe: tool, teardown: tool }],
+    units: [...p['units'] as object[], { id: 'u2', spec: 'u2.json', risk: 'low', systems: ['tests'], resources: [] }],
+  }));
+  const shared = async () => (await check(arc)).advisories.filter((a) => a.kind === 'shared-estate-mutation');
+  assert.deepEqual(await shared(), [{ kind: 'shared-estate-mutation', pool: 'estate', units: ['u1', 'u2'], mutators: ['u1'] }]);
+  writeFileSync(join(arc.planDir, 'u1.json'), onEstate('u1', true));
+  assert.deepEqual(await shared(), [], 'the persistent unit\'s lane holds the pool whole');
+});
+
 test('phase0 refuses an undeclared obligation mapping.systems entry', async () => {
   const arc = await corpusArc();
   const path = join(arc.planDir, 'obligations.json');
