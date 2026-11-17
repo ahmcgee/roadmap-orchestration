@@ -19,32 +19,34 @@
 //
 //   acks         actual subject closures recorded from needs-user-acked facts, including command-driven closure
 //   runOnly      before `start`, the driver creates the run dir and queues `run-only parse tidy`: `report` never
-//                starts before the regression's audit (R) or the bundle's drift audit (P)
+//                starts before the first audit (R: inside it, at the barrier; L: after the repair is dispatched)
+//   audit        once tidy published and no audit started: `roadmap audit` (the first audit, A1, is requested)
 //   branch       R once tidy published S and the first audit of S waits at the money barrier, or I-2's witness ran on S
 //                not held; L once it ran on S held (tidy published, the regression latent: the lenses find what the
-//                witness cannot see, a checkpoint repair follows, paid run 9); P once a bundle revision cuts,
+//                witness cannot see, a root repair follows, paid run 9); P once a bundle revision cuts,
 //                respecifies or re-enters tidy before it published
 //   barrier      R only: once the first audit to see the regression waits at the money barrier (barrier.ts writes
-//                `barriers/money.reached` with its job id) and it is the cadence audit of tidy's publication S:
+//                `barriers/money.reached` with its job id), the requested audit of tidy's publication S:
 //                `run-only parse report tidy`, so `report` merges at S′ while A1 audits S
 //   release      once `report` is merged: release the barrier. A1 then opens its P1 over I-2 and re-witnesses it on S′
-//   staleApply   once the first `checkpoint-inputs` is in the log, whatever its trigger (an audit, or a design park):
-//                the architect's edit of the plan's `direction` (setup.ts DIRECTION_EDITED) by `roadmap apply`, so
-//                that checkpoint's bundle is stale whole
-//   staleApplied once that apply's receipt is `applied`; under --fake it then releases the fake checkpoint call held at
-//                `fake/ckpt-1.hold` (a real call takes longer than the apply; if not, the run fails, naming it)
-//   added        G18: every unit a bundle revision adds (read from its `plan-applied{source: bundle}` change)
-//   admit        once an audit started after the first bundle revision (the drift audit): `run-only` every plan unit
-//                not cut or superseded and every added unit (re-issued as more are added), so they merge after the
-//                drift audit's capture
-//   unlimited    once every added unit is merged: `run-only --clear`
+//   staleApply   once the first audit ended, and, when `report` has merged (R: inside that audit, so the arc is in the
+//                endgame), once the endgame episode opened (`endgame-opened`, the architect's handover): the
+//                architect's root repair by `roadmap apply`, adding the repair unit (setup.ts REPAIR_UNIT) and editing
+//                the plan's `direction` (setup.ts DIRECTION_EDITED). Waiting for the handover makes R's order
+//                deterministic: the endgame's final audit runs with the P1 active, the repair is admitted in the
+//                episode and runs, and the final audit runs again on the head it publishes
+//   staleApplied once that apply's receipt is `applied` (any other receipt fails the run)
+//   added        every unit a revision adds (read from its `plan-applied` change)
+//   admit        once a revision added units: `run-only` the plan units allowed so far (all once the barrier fired, else `parse`
+//                and `tidy`) and the added units. In L `report` stays out until the repair is dispatched: a repair still
+//                undispatched when the last planned unit merges is held by the endgame (by design), which would make
+//                the audits the story plays depend on timing
+//   unlimited    once units were added and each is dispatched: `run-only --clear`
 //
 // The run is stopped as `device-failed` (the reason in `devices.failed`, naming the observed job, trigger, outcome or
-// item) only when it is off the story in any branch: the first checkpoint decides anything but `rejected{stale}`
-// or applies its bundle; a checkpoint disposes of nothing before any bundle applied (a no-op, or a request with
-// nothing to apply); an `owner-request` opens (an owner-only act, A16, which the driver never answers); in branch R,
-// the barrier's audit is not the cadence audit of S, or ends without a witness P1 over I-2; the stale apply is
-// rejected. A stall ends at the hard timeout. Finding ids are never assumed: the P1 is found by its content.
+// item) only when it is off the story: in branch R, the barrier's audit ends without a witness P1 over I-2; the root
+// repair apply is not applied. A stall ends at the hard timeout. Finding ids are never assumed: the P1 is found by its
+// content.
 // As in M1 and M2, a run parked on a blocking needs-user is stopped (`parked-stop`), and the hard timeout stops,
 // then SIGKILLs. The driver refuses a fixture dir that already holds a report or a run dir: a fixture is set up and
 // run once.
@@ -305,6 +307,9 @@ function branchOf(l: Layout, events: readonly Event[]): Readonly<{ branch: Story
   return null;
 }
 
+/** The plan units the driver's run-only allows so far: all of them once the barrier fired (R), else FIRST. */
+const allowed = (d: Devices): readonly string[] => (d.barrier !== null ? UNITS : FIRST);
+
 /** Record subject closures caused by successful driver commands as well as explicit acks. */
 function recordClosures(l: Layout, d: Devices, events: readonly Event[]): void {
   for (const f of factsOf(events, 'needs-user-acked')) {
@@ -330,17 +335,19 @@ function fire(p: Poll): string | null {
  if(d.barrier===null&&existsSync(reached)){const job=readFileSync(reached,'utf8').trim();d.barrier={at:now(),audit:job,runOnly:submitted(cli(c,['run-only',...UNITS,...run]))};}
  if(d.barrier!==null&&d.release===null&&merged(s,'report')){writeFileSync(barrierFile(l,'release'),'');d.release={at:now()};}
  const ended=factsOf(events,'audit-ended')[0];
- if(ended!==undefined&&d.staleApply===null){
+ // R: report merged inside audit-1, so its end finds the arc in the endgame; the architect admits the repair on the handover.
+ const handover=!merged(s,'report')||factsOf(events,'endgame-opened').length>0;
+ if(ended!==undefined&&handover&&d.staleApply===null){
   const out=join(l.fake,'repair-export');const exported=JSON.parse(cli(c,['inputs','export','--out',out,...run]));const file=join(out,'plan.json');const plan=JSON.parse(readFileSync(file,'utf8'));
   plan.units.push({...REPAIR_UNIT,spec:'fix-rounding.json',review:'always',resources:[]});plan.direction=DIRECTION_EDITED;
   writeFileSync(join(out,'fix-rounding.json'),repairSpecText());writeFileSync(file,JSON.stringify(plan));
   d.staleApply={command:submitted(cli(c,['apply','--from',out,'--rev',String(exported.planRev),'--reason','Admit the repair of the campaign finding',...run])),checkpoint:ended.job,trigger:'campaign audit',seq:ended.seq};
-  const units=[...UNITS,REPAIR_UNIT.id];d.admit={runOnly:submitted(cli(c,['run-only',...units,...run])),audit:ended.job,units};
  }
  if(d.staleApply!==null&&d.staleApplied===null){const receipt=terminalReceipt(absPath(l.runDir),commandId(d.staleApply.command));if(receipt!==null){if(receipt.state!=='applied')return 'Root repair apply was '+JSON.stringify(receipt);d.staleApplied={at:now()};}}
  for(const r of factsOf(events,'plan-applied'))for(const x of r.changes)if(x.type==='unit-added'&&!d.added.some(a=>a.unit===x.unit))d.added.push({unit:x.unit,job:ended?.job??'root',rev:r.rev,seq:r.seq});
- if(d.added.length>0&&d.admit===null){const units=[...UNITS,...d.added.map(a=>a.unit)];d.admit={runOnly:submitted(cli(c,['run-only',...units,...run])),audit:ended!.job,units};}
- if(d.admit!==null&&d.unlimited===null&&d.added.every(a=>merged(s,a.unit)))d.unlimited=submitted(cli(c,['run-only','--clear',...run]));
+ if(d.added.length>0&&d.admit===null){const units=[...allowed(d),...d.added.map(a=>a.unit)];d.admit={runOnly:submitted(cli(c,['run-only',...units,...run])),audit:ended!.job,units};}
+ const dispatched=new Set(factsOf(events,'dispatch').map(f=>f.record.unit as string));
+ if(d.admit!==null&&d.unlimited===null&&d.added.length>0&&d.added.every(a=>dispatched.has(a.unit)))d.unlimited=submitted(cli(c,['run-only','--clear',...run]));
  return offStory(p);
 }
 
