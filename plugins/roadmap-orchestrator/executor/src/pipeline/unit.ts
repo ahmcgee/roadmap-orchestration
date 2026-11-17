@@ -110,10 +110,10 @@ witnessCheckoutFixRound,witnessFixRound,
 
 
 import {
-type BuildRun,type StageDone,at,build,buildRead,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
+type BuildRun,type StageDone,at,build,buildRead,diagnose,evidence,failedFacts,fastSuiteRoot,keptSpecPath,laneGlobs,lanes,loadUnitSpec,
 preBuild,quiesce,readDecisions,record,recordedCall,releaseJudgment,salvage,salvageRejections,teardown
 } from './stages.ts';
-import { markers,runReview } from './surface.ts';
+import { diagnosisOutcome,markers,runReview } from './surface.ts';
 import { type Next,type Target,decidedBy } from './transitions.ts';
 import { requiredAt } from './witnesscheck.ts';
 
@@ -200,6 +200,10 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
         + `(a green gate to the candidate); \`roadmap steer ${unit.id} --brief <file> --budget <min>\` steers it again.`
     : reason === 'rerun-red'
       ? rerunRedRecommendation(ctx, unit.id)
+    : reason === 'diagnosed-external'
+      ? `Check the cause the diagnosis names against its evidence and fix it where it lies (the base, or the lanes' environment and the data they run against). `
+        + `Then \`roadmap resume ${unit.id}\` runs the build's round the diagnosis held, uncharged, with the diagnosis brief as its note; if the cause is the unit's after all, `
+        + `resume runs that round now, or \`roadmap steer ${unit.id} --brief <file> --budget <min>\` directs it.`
     : reason === 'routing-changed'
       ? routingChangedRecommendation(unit.id, dispatchOf(ctx.journal.view, unit.id).riskFloor)
     : reason === 'chargeable-bound'
@@ -224,12 +228,20 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
       ...(faulted === null ? [] : [`The executor threw: ${faulted.stack}`]),
       ...(f.detail?.kind === 'candidate-red' ? [f.detail.summary] : []),
       ...(f.stage === 'lanes' && faulted === null ? [failuresText(laneFailures(ctx, unit))] : []),
+      ...(reason === 'diagnosed-external' ? [diagnosisText(ctx, unit.id)] : []),
     ]
       .filter((x) => x !== '').join(' '),
     recommendation: f.detail?.kind === 'candidate-red' ? `${recommendation} ${candidateReentryChange(f.detail)}` : `${recommendation}${offer}`,
     options: [],
     evidence: haltEvidence(ctx, unit, f),
   };
+}
+
+/** dev.82 (E2): what a `diagnosed-external` park's diagnosis said: its cause, the evidence the cause rests on, and its brief. */
+function diagnosisText(ctx: StageContext, unit: UnitId): string {
+  const review = ctx.journal.view.surfaceFacts().findLast((f) => f.kind === 'review-completed' && f.unit === unit && f.mode === 'diagnosis');
+  if (review?.kind !== 'review-completed' || review.cause === undefined || review.note === null) throw new Error(`unit ${unit} parked diagnosed-external without an answered diagnosis`);
+  return `The diagnosis (${review.inv}) puts the cause in the ${review.cause}: ${review.items.flatMap((i) => i.evidence).join('; ')}. Its brief: ${steerBrief(ctx.runDir, review.note)}`;
 }
 
 /** dev.59: what a `rerun-red` park leaves the root: the rerun it ordered, and what `resume` restores. */
@@ -477,7 +489,7 @@ function withReverted(ctx: StageContext, unit: PlanUnit, round: DecidedRound): D
 /** `of`, or the continue of the build attempt an interruption held since (a hold is only ever recorded from a call's result). */
 function continued(ctx: StageContext, unit: PlanUnit, of: DecidedRound): RoundInput {
   const held = ctx.journal.view.unit(unit.id).interrupted;
-  // dev.70: a pause that cut the build's diagnosis short (its pre-build attempt, stages.ts `build`) interrupted no build.
+  // dev.70: a pause that cut the build's diagnosis short (its pre-build attempt, stages.ts `diagnose`) interrupted no build.
   if (held === null || held.stage === 'pre-build') return of;
   const called = recordedCall(ctx, stageParent(held));
   if (held.stage !== 'build' || called === null || called.kind !== 'result') throw new Error(`unit ${unit.id}: ${held.stage} attempt ${held.attempt} was interrupted before a build, or without a call result`);
@@ -497,7 +509,17 @@ const entryTarget = (entry: EntryPoint): Target => (entry.kind === 'steer' ? { s
  */
 async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): Promise<StageDone<OutcomeStage> | Cancelled> {
   if (entry.kind === 'merge-in' || entry.kind === 'rerun') return lanes(ctx, unit, unitTip(ctx, unit.id));
-  return build(ctx, unit, continued(ctx, unit, { kind: 'steer', brief: steerBrief(ctx.runDir, entry.brief), budgetMin: entry.budgetMin }));
+  return diagnosedBuild(ctx, unit, continued(ctx, unit, { kind: 'steer', brief: steerBrief(ctx.runDir, entry.brief), budgetMin: entry.budgetMin }));
+}
+
+/**
+ * A build's step: its diagnosis when one is due (stages.ts `diagnose`), then the build with `input`, read before the
+ * diagnosis, which decides nothing. dev.82 (E2): a diagnosis that parks (`diagnosed-external`) or is cut short ends the step.
+ */
+async function diagnosedBuild(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<StageDone<'pre-build' | 'build'> | Cancelled> {
+  const diagnosis = await diagnose(ctx, unit);
+  if (diagnosis !== null && (isCancelled(diagnosis) || diagnosis.outcome.kind !== 'diagnosed')) return diagnosis;
+  return build(ctx, unit, input);
 }
 
 /** Runs the stage `target` names, from inputs read back from the journal. */
@@ -511,7 +533,7 @@ async function runStage(ctx: StageContext, unit: PlanUnit, target: Target, f: St
     case 'pre-build':
       return preBuild(ctx, unit);
     case 'build':
-      return build(ctx, unit, roundInput(ctx, unit, target.round, f));
+      return diagnosedBuild(ctx, unit, roundInput(ctx, unit, target.round, f));
     case 'quiesce':
       return quiesce(ctx, unit.id, buildRunOf(ctx, unit));
     case 'evidence':
@@ -596,10 +618,10 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<OutcomeS
  * salvaged, the plan's recovery table). Any other lost call, or none, returns null: the stage runs again as
  * a new, uncharged attempt.
  *
- * dev.70: an open pre-build attempt of a unit whose next stage is a build is that build's M4 diagnosis (stages.ts `build`
+ * dev.70: an open pre-build attempt of a unit whose next stage is a build is that build's M4 diagnosis (stages.ts `diagnose`
  * opens it inside the build's step, under a decided round or a steer entry alike). Its call is read as the live build
  * reads it (`runReview`, which records the review once) and the attempt closes `diagnosed`, deciding nothing: the entry or
- * decision that led to the build still does. An arc cut short on 1.0.0-dev.69 or earlier is adopted the same way; there the
+ * decision that led to the build still does. dev.82 (E2): or `diagnosed-external`, as live (surface.ts `diagnosisOutcome`). An arc cut short on 1.0.0-dev.69 or earlier is adopted the same way; there the
  * live build recorded `approve`, which the fold refuses under a steer entry (the field crash of 2026-11-12).
  * Any other open attempt at a stage that is not the unit's next is a state no stage produces: it throws, and the caller
  * parks the unit (`executor-fault`).
@@ -620,7 +642,7 @@ async function consumeRecorded(ctx: StageContext, unit: PlanUnit, f: StageOutcom
   if (open.stage === 'pre-build' && target.stage === 'build') {
     await runReview(ctx, unit, parent, 'diagnosis');
     await releaseJudgment(ctx, parent);
-    return record(ctx, at(parent, 'pre-build'), 'diagnosed');
+    return record(ctx, at(parent, 'pre-build'), diagnosisOutcome(ctx.journal.view, unit.id));
   }
   if (target.stage !== open.stage) throw new Error(`unit ${unit.id}: the open attempt ${open.attempt} is at ${open.stage}, but the unit's next stage is ${target.stage}`);
   switch (target.stage) {
@@ -705,7 +727,7 @@ async function stepOnce(ctx: StageContext, unit: PlanUnit): Promise<Step> {
   if (f === null) {
     const first = nextStage(u, specFacts(ctx)(unit).reproduces, specFacts(ctx)(unit).review);
     if (first?.kind !== 'admission') throw new Error(`unit ${unit.id}: no first stage before a decision`);
-    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await build(ctx, unit, freshRound(ctx, unit.id)) : await preBuild(ctx, unit));
+    return after(ctx, unit, first.stage === 'prepare' ? await prepare(ctx, unit) : first.stage === 'reproduce' ? await reproduce(ctx, unit) : first.stage === 'build' ? await diagnosedBuild(ctx, unit, freshRound(ctx, unit.id)) : await preBuild(ctx, unit));
   }
   const halted = haltResult(ctx, unit);
   if (halted !== null) return halted;

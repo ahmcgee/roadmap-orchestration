@@ -469,9 +469,11 @@ export const STAGE_OUTCOME_KINDS = {
   // pre-build; `not-reproduced` dismisses the finding and parks; `inapplicable` parks for the next audit.
   // `env-unavailable` (2026-10-29, additive) parks on the inferred environment, as lanes and candidate do.
   reproduce: ['checkout-residue', 'reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
-  // dev.70: `diagnosed` closes the pre-build attempt a build opens for its M4 diagnosis (src/pipeline/stages.ts `build`): an
+  // dev.70: `diagnosed` closes the pre-build attempt a build opens for its M4 diagnosis (src/pipeline/stages.ts `diagnose`): an
   // annotation, so it decides nothing and holds nothing (the unit's decision, interruption and entry stay as they were).
-  'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault', 'diagnosed'],
+  // dev.82 (E2): `diagnosed-external` closes it when the diagnosis put the cause outside the unit (`DiagnosisCause` base or
+  // environment): an uncharged operator env park, whose resume restores the decision before it (the build's round).
+  'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault', 'diagnosed', 'diagnosed-external'],
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
   // dev.82 (E5c): `window-spent`, a round the runner's deadline ended (not ruled starved): its work salvaged, uncharged.
   build: ['checkout-residue', 'spec-wrong',
@@ -808,9 +810,21 @@ export type CiFact =
   | Readonly<{ kind: 'batch-reopened'; job: JobId; unit: UnitId; obligation: ObligationId; culprit: Sha; brief: Sha256Hex }>;
 
 export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
+/**
+ * dev.82 (E2): where a diagnosis puts a repeated failure's cause: the unit's own change, the base it builds on, the
+ * environment its lanes run against, or not known. `base` and `environment` park the unit uncharged (`diagnosed-external`).
+ */
+export const DIAGNOSIS_CAUSES = ['unit', 'base', 'environment', 'unknown'] as const;
+export type DiagnosisCause = (typeof DIAGNOSIS_CAUSES)[number];
+/** dev.82 (E2): a diagnosis cause outside the unit. */
+export const externalCause = (cause: DiagnosisCause): boolean => cause === 'base' || cause === 'environment';
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
-  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
+  /**
+   * dev.82 (E2): `cause`, a diagnosis's answered cause (on a diagnosis only; absent when it gave no usable answer, and on
+   * every diagnosis before dev.82).
+   */
+  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null; cause?: DiagnosisCause }>;
 /** Background publication to origin; successful outcomes explicitly settle the named notices (dev.44). */
 export type IntegrationPushFact = Readonly<{
   kind: 'integration-push'; branch: BranchName; head: Sha;
@@ -2269,7 +2283,13 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
   divergence: object((f): Fact => ({ kind: f.get('kind', literal('divergence')), id: f.get('id', (v, p): DivergenceId => divergenceId(v, p)), index: f.get('index', nat), ...divergenceDraftFields(f) })),
   'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
-  'review-completed': object((f): Fact => ({ kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) })),
+  'review-completed': object((f): Fact => {
+    const out = { kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) };
+    // dev.82 (E2): only a diagnosis answers a cause.
+    const cause = f.optional('cause', oneOf(DIAGNOSIS_CAUSES));
+    if (cause !== undefined && out.mode !== 'diagnosis') throw new SchemaError(`${f.path}.cause`, 'absent outside a diagnosis', cause);
+    return cause === undefined ? out : { ...out, cause };
+  }),
   'finding-dismissed': object((f): Fact => ({ kind: f.get('kind', literal('finding-dismissed')), id: f.get('id', findingR), command: f.get('command', cmdR), counterEvidence: f.get('counterEvidence', nonBlank), by: f.get('by', object((g) => ({ role: g.get('role', literal('root')), routingRev: g.get('routingRev', (v, p) => routingRev(v, p)) }))) })),
   noted: object((f): Fact => ({ kind: f.get('kind', literal('noted')), unit: f.get('unit', unitR), command: f.get('command', cmdR), brief: f.get('brief', sha256R) })),
   steered: object((f): Fact => ({
