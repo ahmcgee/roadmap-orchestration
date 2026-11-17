@@ -9,7 +9,7 @@ import { unitId } from '../src/core/ids.ts';
 // the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
 // The steer round is a fresh session, so it gets the handover (src/pipeline/handover.ts).
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
-// steer.class-write-back, steer.class-architect-edit, steer.crash-cells.
+// steer.class-write-back, steer.class-architect-edit, steer.crash-cells, steer.window-spent (dev.82 E5c).
 import assert from 'node:assert/strict';
 import { readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
