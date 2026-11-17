@@ -1,21 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1560" viewBox="0 0 1920 1560" role="img" aria-labelledby="title desc">
-<title id="title">Detailed arc process in BPMN notation</title><desc id="desc">Three pools: owner, root architect and executor. The owner confirms the vision, answers owner-only questions and acknowledges the brief. The architect authors the Phase 0 pack, supervises through a leased watch and closes out. The executor runs each ready unit through pre-build review, build, certification, gate and candidate publication, with fix rounds and diagnosis, then judges milestones and audits the campaign. Certification sends a lanes red or an environment divergence to a fix round, a deflake-held unit back to prepare, and a smoke whose repair another unit delivered to the root as a plan-defect park. An escalation revise with new findings gets one uncharged fix round. Each fast-forward requests a push of the origin CI ref, which goes once the last pushed head has settled. Rules and limits are in docs/how-an-arc-runs.md.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="2720" height="1560" viewBox="0 0 2720 1560" role="img" aria-labelledby="title desc">
+<title id="title">Detailed arc process in BPMN notation</title><desc id="desc">Three pools: owner, root architect and executor. The owner confirms the vision, answers owner-only questions and acknowledges the brief. The architect authors the Phase 0 pack, supervises through a leased watch, fixes the endgame by hand and closes out. The executor runs each ready unit through pre-build review, build, certification, gate and candidate publication, with fix rounds and diagnosis (an external cause parks the unit until resume), then judges milestones and audits the campaign. Once every planned unit is retired, cut or superseded and every milestone checkpointed, the endgame sub-process runs: settling raises no new unit, holds undispatched finding-raised units and ends with the final audit; an empty required worklist goes straight to close-out, otherwise the executor opens the endgame branch and hands over, serves the architect's land, run and review requests as jobs, and closes with an independent review, the batch witness and the final audit, returning to open on a P1. A planned unit added by revision returns the arc to the body. Certification sends a lanes red or an environment divergence to a fix round, a deflake-held unit back to prepare, and a smoke whose repair another unit delivered to the root as a plan-defect park. An escalation revise with new findings gets one uncharged fix round. Each fast-forward requests a push of the origin CI ref, which goes once the last pushed head has settled. Rules and limits are in docs/how-an-arc-runs.md.</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 1 1 L 9 5 L 1 9" fill="none" stroke="#334155" stroke-width="1.6"/></marker></defs><style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b45} .title{font-size:30px;font-weight:700}.sub{font-size:17px;fill:#475569}.label{font-size:16px}.small{font-size:14px;fill:#475569}.task{stroke:#476581;stroke-width:1.6}.edge{fill:none;stroke:#334155;stroke-width:1.8;marker-end:url(#arrow)}.msg{stroke-dasharray:7 5}.pool{fill:#fff;stroke:#94a3b8;stroke-width:1.3}</style>
-<rect width="1920" height="1560" fill="#fff"/>
+<rect width="2720" height="1560" fill="#fff"/>
 <text x="60" y="52" class="title" text-anchor="start"><tspan x="60" dy="0">Command-center arc · detailed process</tspan></text>
 <text x="60" y="86" class="sub" text-anchor="start"><tspan x="60" dy="0">BPMN: circles = events · rounded boxes = tasks · diamonds = gateways · dashed arrows = messages</tspan></text>
-<rect x="35" y="120" width="1850" height="130" class="pool"/><path d="M93 120V250" stroke="#94a3b8"/>
+<rect x="35" y="120" width="2650" height="130" class="pool"/><path d="M93 120V250" stroke="#94a3b8"/>
 <text transform="translate(69 185.0) rotate(-90)" text-anchor="middle" class="label">Owner</text>
-<rect x="35" y="280" width="1850" height="230" class="pool"/><path d="M93 280V510" stroke="#94a3b8"/>
+<rect x="35" y="280" width="2650" height="230" class="pool"/><path d="M93 280V510" stroke="#94a3b8"/>
 <text transform="translate(69 395.0) rotate(-90)" text-anchor="middle" class="label">Root architect</text>
-<rect x="35" y="560" width="1850" height="970" class="pool"/><path d="M93 560V1530" stroke="#94a3b8"/>
+<rect x="35" y="560" width="2650" height="970" class="pool"/><path d="M93 560V1530" stroke="#94a3b8"/>
 <text transform="translate(69 1065.0) rotate(-90)" text-anchor="middle" class="label">Executor</text>
 <rect x="170" y="143" width="290" height="80" rx="10" fill="#fff6de" class="task"/>
 <text x="315.0" y="176.0" class="label" text-anchor="middle"><tspan x="315.0" dy="0">Confirm vision / world</tspan><tspan x="315.0" dy="24">Set slice and chain bound</tspan></text>
 <rect x="1100" y="143" width="300" height="80" rx="10" fill="#fff6de" class="task"/>
 <text x="1250.0" y="176.0" class="label" text-anchor="middle"><tspan x="1250.0" dy="0">Decide owner-only questions</tspan><tspan x="1250.0" dy="24">Confirm target changes</tspan></text>
-<rect x="1550" y="143" width="280" height="80" rx="10" fill="#fff6de" class="task"/>
-<text x="1690.0" y="176.0" class="label" text-anchor="middle"><tspan x="1690.0" dy="0">Acknowledge brief</tspan><tspan x="1690.0" dy="24">Authorize further arcs</tspan></text>
+<rect x="2335" y="143" width="280" height="80" rx="10" fill="#fff6de" class="task"/>
+<text x="2475.0" y="176.0" class="label" text-anchor="middle"><tspan x="2475.0" dy="0">Acknowledge brief</tspan><tspan x="2475.0" dy="24">Authorize further arcs</tspan></text>
 <circle cx="130" cy="370" r="18" fill="#fff" stroke="#334155" stroke-width="1.8"/>
 <rect x="190" y="320" width="290" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="335.0" y="339.0" class="label" text-anchor="middle"><tspan x="335.0" dy="0">Author Phase-0 pack</tspan><tspan x="335.0" dy="24">Pin; specs; proof / census</tspan><tspan x="335.0" dy="24">K-n curation + source files</tspan><tspan x="335.0" dy="24">Debt: B-n → C-n → K-n</tspan></text>
@@ -25,9 +25,11 @@
 <text x="745.0" y="339" class="small" text-anchor="middle"><tspan x="745.0" dy="0">Start; wait for pack review end</tspan><tspan x="745.0" dy="21">Unit blocker: unit + dependents</tspan><tspan x="745.0" dy="21">Other blocker: arc-wide hold</tspan><tspan x="745.0" dy="21">Fix pack or ack item</tspan></text>
 <rect x="990" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1140.0" y="351.0" class="label" text-anchor="middle"><tspan x="1140.0" dy="0">Inspect subject and evidence</tspan><tspan x="1140.0" dy="24">Export → edit → apply --resolves</tspan><tspan x="1140.0" dy="24">Answering apply --resolves / ack</tspan></text>
-<rect x="1480" y="320" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="1630.0" y="351.0" class="label" text-anchor="middle"><tspan x="1630.0" dy="0">Present brief and demo</tspan><tspan x="1630.0" dy="24">Prepare stacked PR</tspan><tspan x="1630.0" dy="24">Check next-start bound</tspan></text>
-<circle cx="1820" cy="370" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
+<rect x="1925" y="320" width="355" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2102.5" y="339" class="small" text-anchor="middle"><tspan x="2102.5" dy="0">Endgame item: fix by hand</tspan><tspan x="2102.5" dy="21">in the endgame worktree</tspan><tspan x="2102.5" dy="21">Record roadmap endgame fix</tspan><tspan x="2102.5" dy="21">Ask run / land / checkpoint / review</tspan></text>
+<rect x="2330" y="320" width="290" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2475.0" y="351.0" class="label" text-anchor="middle"><tspan x="2475.0" dy="0">Present brief and demo</tspan><tspan x="2475.0" dy="24">Prepare stacked PR</tspan><tspan x="2475.0" dy="24">Check next-start bound</tspan></text>
+<circle cx="2655" cy="370" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
 <polyline points="148,370 190,370" class="edge"/>
 <polyline points="480,370 512,370" class="edge"/>
 <polyline points="568,370 615,370" class="edge"/>
@@ -40,14 +42,15 @@
 <text x="1380" y="316" class="small" text-anchor="middle"><tspan x="1380" dy="0">apply --resolves / named ack</tspan></text>
 <path d="M1400 342L1428 370L1400 398L1372 370Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="1400" y="376" class="label" text-anchor="middle"><tspan x="1400" dy="0">×</tspan></text>
-<polyline points="1428,370 1480,370" class="edge"/>
-<polyline points="1780,370 1802,370" class="edge"/>
+<polyline points="1428,370 1925,370" class="edge"/>
+<polyline points="2280,370 2330,370" class="edge"/>
+<polyline points="2620,370 2637,370" class="edge"/>
 <polyline points="315,223 315,320" class="edge msg"/>
 <polyline points="1140,320 1140,250" class="edge msg"/>
 <polyline points="1250,223 1250,320" class="edge msg"/>
-<polyline points="1630,320 1630,223" class="edge msg"/>
+<polyline points="2475,320 2475,223" class="edge msg"/>
 <text x="1520" y="468" class="small" text-anchor="middle"><tspan x="1520" dy="0">Another slice only within acknowledged bound; otherwise wait.</tspan></text>
-<polyline points="1630,420 1630,495 335,495 335,420" class="edge"/>
+<polyline points="2475,420 2475,495 335,495 335,420" class="edge"/>
 <text x="1160" y="486" class="small" text-anchor="middle"><tspan x="1160" dy="0">next arc</tspan></text>
 <path d="M93 1030H1885" stroke="#94a3b8"/>
 <text x="115" y="590" class="sub" text-anchor="start"><tspan x="115" dy="0">Unit pipeline (multi-instance subprocess over ready DAG units)</tspan></text>
@@ -95,7 +98,7 @@
 <rect x="1050" y="850" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="1200.0" y="869" class="label" text-anchor="middle"><tspan x="1200.0" dy="0">Fix round with evidence</tspan><tspan x="1200.0" dy="23">Lane red / base comparison</tspan><tspan x="1200.0" dy="23">Findings, notes, cap state</tspan><tspan x="1200.0" dy="23">Escalation revise-new: uncharged</tspan></text>
 <rect x="650" y="850" width="280" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="790.0" y="881.0" class="label" text-anchor="middle"><tspan x="790.0" dy="0">M4 diagnosis at 8 / 20</tspan><tspan x="790.0" dy="24">Keep note; builder fallback</tspan><tspan x="790.0" dy="24">Hard park at 16 / 40</tspan></text>
+<text x="790.0" y="869" class="label" text-anchor="middle"><tspan x="790.0" dy="0">M4 diagnosis at 8 / 20</tspan><tspan x="790.0" dy="23">Keep note; builder fallback</tspan><tspan x="790.0" dy="23">External: park until resume</tspan><tspan x="790.0" dy="23">Hard park at 16 / 40</tspan></text>
 <rect x="200" y="850" width="280" height="100" rx="10" fill="#f3f8f4" class="task"/>
 <text x="340.0" y="893.0" class="label" text-anchor="middle"><tspan x="340.0" dy="0">Spike report retirement</tspan><tspan x="340.0" dy="24">No product merge</tspan></text>
 <polyline points="1782,680 1782,805 1200,805 1200,850" class="edge"/>
@@ -123,12 +126,11 @@
 <text x="1132.5" y="1146.0" class="label" text-anchor="middle"><tspan x="1132.5" dy="0">Whole-campaign audit</tspan><tspan x="1132.5" dy="24">Milestone / request / final</tspan><tspan x="1132.5" dy="24">Invariants + vacuity + interaction</tspan></text>
 <path d="M1340 1137L1368 1165L1340 1193L1312 1165Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="1340" y="1171" class="label" text-anchor="middle"><tspan x="1340" dy="0">×</tspan></text>
-<rect x="1430" y="1115" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
-<text x="1580.0" y="1146.0" class="label" text-anchor="middle"><tspan x="1580.0" dy="0">Final witnesses / batch lanes</tspan><tspan x="1580.0" dy="24">Close-out docs and snapshot</tspan><tspan x="1580.0" dy="24">Complete active or sealed</tspan></text>
-<circle cx="1815" cy="1165" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
+<circle cx="1440" cy="1165" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
+<text x="1440" y="1207" class="small" text-anchor="middle"><tspan x="1440" dy="0">checkpoint done</tspan></text>
 <rect x="1460" y="1350" width="325" height="120" rx="10" fill="#f3f8f4" class="task"/>
 <text x="1622.5" y="1372" class="small" text-anchor="middle"><tspan x="1622.5" dy="0">Push latest head to the origin CI ref</tspan><tspan x="1622.5" dy="20">User env · ≤ 5 min · lease + ancestry</tspan><tspan x="1622.5" dy="20">Never main · no overwrite on divergence</tspan><tspan x="1622.5" dy="20">Failure notice; execution continues</tspan><tspan x="1622.5" dy="20">Startup retries; success settles by id</tspan></text>
-<polyline points="1730,1200 1765,1200 1765,1262" class="edge msg"/>
+<polyline points="1765,950 1765,1262" class="edge msg"/>
 <path d="M1765 1262L1793 1290L1765 1318L1737 1290Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
 <text x="1765" y="1296" class="label" text-anchor="middle"><tspan x="1765" dy="0">×</tspan></text>
 <text x="1727" y="1278" class="small" text-anchor="end"><tspan x="1727" dy="0">after any ff: last pushed head settled?</tspan><tspan x="1727" dy="18">no: latest head waits</tspan></text>
@@ -141,9 +143,8 @@
 <polyline points="903,1165 990,1165" class="edge"/>
 <text x="945" y="1143" class="small" text-anchor="middle"><tspan x="945" dy="0">settled</tspan></text>
 <polyline points="1275,1165 1312,1165" class="edge"/>
-<polyline points="1368,1165 1430,1165" class="edge"/>
-<text x="1398" y="1144" class="small" text-anchor="middle"><tspan x="1398" dy="0">final</tspan></text>
-<polyline points="1730,1165 1797,1165" class="edge"/>
+<polyline points="1368,1165 1422,1165" class="edge"/>
+<text x="1394" y="1150" class="small" text-anchor="middle"><tspan x="1394" dy="0">done</tspan></text>
 <rect x="530" y="1350" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
 <text x="680.0" y="1381.0" class="label" text-anchor="middle"><tspan x="680.0" dy="0">Repair / proposed polish</tspan><tspan x="680.0" dy="24">Gated unit execution</tspan><tspan x="680.0" dy="24">Merge and re-walk as needed</tspan></text>
 <rect x="990" y="1350" width="300" height="100" rx="10" fill="#f0f7ff" class="task"/>
@@ -159,5 +160,55 @@
 <polyline points="1140,1350 1140,1275 1132,1275 1132,1215" class="edge"/>
 <text x="1180" y="1265" class="small" text-anchor="middle"><tspan x="1180" dy="0">audit again if owed</tspan></text>
 <polyline points="1140,1450 1140,1515 1835,1515 1835,535 1290,535 1290,400" class="edge msg"/>
-<polyline points="1815,1147 1855,1147 1855,535 1740,535 1740,420" class="edge msg"/>
+<!-- endgame sub-process -->
+<text x="1985" y="590" class="sub" text-anchor="start"><tspan x="1985" dy="0">Endgame</tspan></text>
+<rect x="1915" y="610" width="385" height="890" rx="10" fill="none" stroke="#94a3b8"/>
+<circle cx="2010" cy="655" r="18" fill="#fff" stroke="#334155" stroke-width="1.8"/>
+<text x="2036" y="651" class="small" text-anchor="start"><tspan x="2036" dy="0">planned units done</tspan></text>
+<text x="2036" y="669" class="small" text-anchor="start"><tspan x="2036" dy="0">milestones checkpointed</tspan></text>
+<polyline points="2010,673 2010,700" class="edge"/>
+<rect x="1980" y="700" width="270" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2115.0" y="719" class="label" text-anchor="middle"><tspan x="2115.0" dy="0">Settling: no new unit</tspan><tspan x="2115.0" dy="23">Hold unstarted finding-raised</tspan><tspan x="2115.0" dy="23">Running units, walks finish</tspan><tspan x="2115.0" dy="23">Then the final audit</tspan></text>
+<polyline points="2115,800 2115,822" class="edge"/>
+<path d="M2115 822L2143 850L2115 878L2087 850Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
+<text x="2115" y="856" class="label" text-anchor="middle"><tspan x="2115" dy="0">×</tspan></text>
+<polyline points="2143,850 2330,850" class="edge"/>
+<text x="2236" y="840" class="small" text-anchor="middle"><tspan x="2236" dy="0">worklist empty</tspan></text>
+<text x="2105" y="893" class="small" text-anchor="end"><tspan x="2105" dy="0">required entries</tspan></text>
+<polyline points="2115,878 2115,900" class="edge"/>
+<rect x="1980" y="900" width="270" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2115.0" y="919" class="label" text-anchor="middle"><tspan x="2115.0" dy="0">Open the episode</tspan><tspan x="2115.0" dy="23">Branch + worktree at tip</tspan><tspan x="2115.0" dy="23">Write the handover</tspan><tspan x="2115.0" dy="23">Raise endgame item</tspan></text>
+<polyline points="2115,1000 2115,1040" class="edge"/>
+<rect x="1980" y="1040" width="270" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2115.0" y="1059" class="label" text-anchor="middle"><tspan x="2115.0" dy="0">Serve requests as jobs</tspan><tspan x="2115.0" dy="23">Land: test head, ff green</tspan><tspan x="2115.0" dy="23">Red moves nothing</tspan><tspan x="2115.0" dy="23">Run lanes; review</tspan></text>
+<polyline points="2115,1140 2115,1172" class="edge"/>
+<path d="M2115 1172L2143 1200L2115 1228L2087 1200Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
+<text x="2115" y="1206" class="label" text-anchor="middle"><tspan x="2115" dy="0">×</tspan></text>
+<polyline points="2143,1200 2268,1200 2268,1090 2250,1090" class="edge"/>
+<text x="2200" y="1190" class="small" text-anchor="middle"><tspan x="2200" dy="0">not yet</tspan></text>
+<text x="2105" y="1244" class="small" text-anchor="end"><tspan x="2105" dy="0">landed, worklist empty</tspan></text>
+<polyline points="2115,1228 2115,1260" class="edge"/>
+<rect x="1980" y="1260" width="270" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2115.0" y="1279" class="label" text-anchor="middle"><tspan x="2115.0" dy="0">Closing</tspan><tspan x="2115.0" dy="23">Review base..head</tspan><tspan x="2115.0" dy="23">Batch witness at head</tspan><tspan x="2115.0" dy="23">Final audit on new head</tspan></text>
+<polyline points="2115,1360 2115,1382" class="edge"/>
+<path d="M2115 1382L2143 1410L2115 1438L2087 1410Z" fill="#fff" stroke="#476581" stroke-width="1.8"/>
+<text x="2115" y="1416" class="label" text-anchor="middle"><tspan x="2115" dy="0">×</tspan></text>
+<polyline points="2143,1410 2284,1410 2284,950 2250,950" class="edge"/>
+<text x="2210" y="1400" class="small" text-anchor="middle"><tspan x="2210" dy="0">P1</tspan></text>
+<polyline points="2115,1438 2115,1478 2475,1478 2475,900" class="edge"/>
+<text x="2127" y="1470" class="small" text-anchor="start"><tspan x="2127" dy="0">clean</tspan></text>
+<polyline points="1980,950 1965,950 1965,420" class="edge msg"/>
+<polyline points="1945,420 1945,1090 1980,1090" class="edge msg"/>
+<text x="1975" y="462" class="small" text-anchor="start"><tspan x="1975" dy="0">endgame item ↑ · fix, requests ↓</tspan></text>
+<circle cx="1915" cy="1440" r="14" fill="#fff" stroke="#334155" stroke-width="1.6"/><circle cx="1915" cy="1440" r="10.5" fill="none" stroke="#334155" stroke-width="1.2"/>
+<polyline points="1901,1440 1884,1440" class="edge"/>
+<circle cx="1868" cy="1440" r="14" fill="#fff" stroke="#334155" stroke-width="1.6"/><circle cx="1868" cy="1440" r="10.5" fill="none" stroke="#334155" stroke-width="1.2"/><path d="M1862 1436h6v-4l7 8-7 8v-4h-6z" fill="#334155"/>
+<text x="1937" y="1436" class="small" text-anchor="start"><tspan x="1937" dy="0">planned unit added:</tspan></text>
+<text x="1937" y="1454" class="small" text-anchor="start"><tspan x="1937" dy="0">back to the body</tspan></text>
+<!-- close-out -->
+<rect x="2330" y="800" width="290" height="100" rx="10" fill="#f0f7ff" class="task"/>
+<text x="2475.0" y="831" class="label" text-anchor="middle"><tspan x="2475.0" dy="0">Final witnesses / batch lanes</tspan><tspan x="2475.0" dy="24">Close-out docs and snapshot</tspan><tspan x="2475.0" dy="24">Complete active or sealed</tspan></text>
+<circle cx="2655" cy="850" r="18" fill="#fff" stroke="#334155" stroke-width="4"/>
+<polyline points="2620,850 2637,850" class="edge"/>
+<polyline points="2655,832 2655,535 2580,535 2580,420" class="edge msg"/>
 </svg>

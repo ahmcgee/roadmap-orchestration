@@ -115,6 +115,12 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
 //                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge
+//
+// dev.82 (src/status/endgame.ts; every arc):
+//   phase         the body (planned units open, milestones awaiting their checkpoint), the endgame's step with its
+//                 worklist counts and handover, or closed out; also in `status --summary`
+//   endgame       null before the first episode: the endgame branch, the worklist, the four exit conditions, the audited
+//                 range, the units taken over and every episode's fixes, landings, reviews and jobs
 import { existsSync,statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
