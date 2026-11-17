@@ -50,7 +50,8 @@ import { laneEvidenceGlobs,transientViolations } from '../../src/git/transient.t
 //   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
-// reproduction, batch repair, owner-request, draining, real go, literal partial bundle. The paid
+// reproduction, batch repair, owner-request, real go, literal partial bundle (dev.82 removed `close-admissions`, and with
+// it the draining branch: the endgame replaces it). The paid
 // run takes none of them (the fake story takes the literal partial bundle); each has a fake integrated test.
 import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';
 import { basename,join,relative,resolve } from 'node:path';
@@ -83,7 +84,7 @@ export type CheckResult = Readonly<{ pass: boolean; branch: StoryBranch | null; 
 
 /** What the paid run leaves untaken (plan "Fixture evals/m3/", not exercised), in the order the report lists them. */
 export const BRANCHES = [
-  'rule', 'reverse', 'steer', 'merge-in', 'reproduction', 'batch repair', 'owner-request', 'draining', 'real go', 'literal partial bundle',
+  'rule', 'reverse', 'steer', 'merge-in', 'reproduction', 'batch repair', 'owner-request', 'real go', 'literal partial bundle',
 ] as const;
 export type Branch = (typeof BRANCHES)[number];
 
@@ -709,7 +710,6 @@ function exercised(run: Run): ReadonlySet<Branch> {
   if (factsOf(run, 'stage-outcome').some((f) => f.stage === 'reproduce')) out.add('reproduction');
   if (run.events.some((e) => e.type === 'intent' && e.kind === 'candidate.merge' && e.expect.batch !== undefined)) out.add('batch repair');
   if (items(run, 'owner-request').length > 0) out.add('owner-request');
-  if (factsOf(run, 'admissions-closed').length > 0) out.add('draining');
   const goLanes = new Set(run.obligations.lanes.filter((l) => l.reporter === 'go-test-json').map((l) => l.id as string));
   if (factsOf(run, 'witnessed').some((f) => goLanes.has(f.lane))) out.add('real go');
 

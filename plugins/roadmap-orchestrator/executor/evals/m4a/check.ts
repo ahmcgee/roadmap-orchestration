@@ -541,7 +541,8 @@ function pressureRecorded(run: Run): Verdict {
 /** The closed lever list of an operator-log entry (SKILL.md "Supervising the executor"). */
 export const LEVERS = [
   'pause', 'resume', 'resume --backend', 'ack', 'apply', 'note', 'witness', 'dismiss', 'steer', 'reverse',
-  'sweep', 'resolve-edge', 'run-only', 'merge-in', 'audit', 'close-admissions', 'stop', 'start', 'resume-arc',
+  'sweep', 'resolve-edge', 'run-only', 'merge-in', 'audit', 'endgame fix', 'endgame land', 'endgame run', 'endgame checkpoint',
+  'endgame review', 'stop', 'start', 'resume-arc',
   'gc', 'inputs export', 'demo up', 'demo down', 'demo hold', 'demo release', 'withdraw', 'push',
 ] as const;
 const ENTRY_FIELDS = ['symptom', 'evidence', 'outcome', 'executor change'] as const;

@@ -22,8 +22,9 @@
 //
 // The early stop. M5 grades dev.13's evidence, not convergence (m1's job; run 5, 2026-10-20, spent 85 minutes of audit
 // tail after its last walk and demo). Every owner poll while a turn runs, at every turn end and every ANSWER_POLL_MS (or
-// watch event) of a wait, the driver evaluates log.ts's stop rule (`evidenceComplete`) over the run dir of the arc under
-// test (the fail-fast's arc). Once it holds, the turn is killed (or the wait ends), the run ends `evidence-complete` with
+// watch event) of a wait, the driver evaluates log.ts's stop rule (`evidenceComplete`, and since dev.82 `endgameSettled`:
+// the endgame entered and the arc completed, so check.ts can grade the endgame's closing step) over the run dir of the
+// arc under test (the fail-fast's arc). Once it holds, the turn is killed (or the wait ends), the run ends `evidence-complete` with
 // the moment and the rule's detail in `report.evidence`, and the end-of-run steps below stop the held arc.
 //
 // The demo (agent G's `status.demo`, SCHEMAS.md "The demo"). Every owner poll and at the session's end, before the held
@@ -62,7 +63,7 @@ import {
 import { exportCosts, repositoryPaths, scanTranscript } from '../m4a/transcript.ts';
 import { json } from '../m4a/setup.ts';
 import { DESIGN_SKILL, type Layout, SESSION_END, STOP_REASONS, type StopReason, layout } from './layout.ts';
-import { type Evidence, evidenceComplete, readArcLog, repairsOf } from './log.ts';
+import { type Evidence, endgameSettled, evidenceComplete, readArcLog, repairsOf } from './log.ts';
 import { planShape } from './shape.ts';
 
 export const REPORT_SCHEMA = 'roadmap/m5-report';
@@ -291,7 +292,9 @@ export async function drive(dir: string, profile: ProfileName): Promise<Report> 
     const a = readArcLog(runDir(gitCommonDir(absPath(l.product)), arcId(first.arc)), arcId(first.arc));
     const e: Evidence | null = a === null ? null : evidenceComplete(a.log, a.plan, repairsOf(a));
     if (e === null || !e.complete) return false;
-    evidence = { at: new Date().toISOString(), arc: first.arc, detail: e.detail };
+    const g = endgameSettled(a!.log);
+    if (!g.complete) return false;
+    evidence = { at: new Date().toISOString(), arc: first.arc, detail: `${e.detail}; ${g.detail}` };
     return true;
   };
   let shapeChecked = false;
