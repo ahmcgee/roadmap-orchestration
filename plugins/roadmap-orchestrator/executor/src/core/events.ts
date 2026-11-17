@@ -1024,6 +1024,11 @@ export type AuditInputs = Readonly<{
    * (src/holistic/lensdiff.ts). Captured on every schema-2 audit.
    */
   diffBudget: number;
+  /**
+   * dev.82: each lens reads from the arc's base (a pending `audit --whole` request), not from its coverage watermark.
+   * Absent (audits started before it, and every other audit): from the watermark.
+   */
+  whole?: true;
 }>;
 
 /** One lens's covered range: `from` its watermark before, `to` how far its reported chunks reached (at most the audited SHA). */
@@ -1086,7 +1091,8 @@ export type HolisticFact =
     kind: 'lanes-rerun'; unit: UnitId; command: CommandId; attempt: number; lane: LaneId; at: Sha; cause: RerunCause; evidence: string;
     by: Readonly<{ role: 'root'; routingRev: RoutingRev }>;
   }>
-  | Readonly<{ kind: 'audit-requested'; command: CommandId }>
+  /** dev.82: `whole`, the root's `audit --whole` (absent: false). */
+  | Readonly<{ kind: 'audit-requested'; command: CommandId; whole?: true }>
   | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
@@ -2308,6 +2314,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
   'audit-started': object((f): Fact => {
     const diffBudget = f.get('diffBudget', positive);
+    const whole = f.optional('whole', literal(true));
     return {
       kind: f.get('kind', literal('audit-started')),
       job: f.get('job', auditJobR),
@@ -2323,6 +2330,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       priorFindings: f.get('priorFindings', findingSet),
       highWater: f.get('highWater', positive),
       diffBudget,
+      ...(whole === undefined ? {} : { whole }),
     };
   }),
   'audit-ended': object((f): Fact => {
@@ -2364,7 +2372,10 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     lane: f.get('lane', (v, p) => laneId(v, p)), at: f.get('at', shaR), cause: f.get('cause', oneOf(RERUN_CAUSES)), evidence: f.get('evidence', nonBlank),
     by: f.get('by', object((g) => ({ role: g.get('role', literal('root')), routingRev: g.get('routingRev', (v, p) => routingRev(v, p)) }))),
   })),
-  'audit-requested': object((f): Fact => ({ kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR) })),
+  'audit-requested': object((f): Fact => {
+    const whole = f.optional('whole', literal(true));
+    return { kind: f.get('kind', literal('audit-requested')), command: f.get('command', cmdR), ...(whole === undefined ? {} : { whole }) };
+  }),
   'admissions-closed': object((f): Fact => ({ kind: f.get('kind', literal('admissions-closed')), command: f.get('command', cmdR) })),
   'docs-published': object((f): Fact => ({ kind: f.get('kind', literal('docs-published')), pub: f.get('pub', docsJobR), source: f.get('source', literal('close-out')), commit: f.get('commit', shaR) })),
   'arc-completed': object((f): Fact => ({

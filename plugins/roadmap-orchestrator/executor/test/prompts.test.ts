@@ -182,13 +182,13 @@ type TestInputs = RoleInputs & {gate: GateInputs; lens: LensInputs; walkthrough:
 const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], TestInputs[R]] } = {
   campaignAudit: [
     {method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false},
-      vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
+      vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, base: SHA_A, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')],
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
     },
     {method: {traits: ['persistent'], markers: ['M2'], unitKind: 'campaign', expensiveLanes: true, ui: true},
       vision: vision(2, 'VISION-B'),  obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
-        audited: SHA_A,
+        audited: SHA_A, base: SHA_B,
         diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
@@ -280,13 +280,13 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
   ],
   lens: [
     {
-      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
+      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, base: SHA_A, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
-        audited: SHA_A,
+        audited: SHA_A, base: SHA_B,
         diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],

@@ -287,7 +287,7 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'rerun':
       return rerun(ctx, command.id, body);
     case 'audit':
-      return requestAudit(ctx, command.id);
+      return requestAudit(ctx, command.id, body.whole === true);
     case 'close-admissions':
       // dev.82: removed; an earlier release's queued command file still reads, and is refused.
       return { kind: 'rejected', reason: 'close-admissions was removed in 1.0.0-dev.82: the endgame replaces it (src/endgame/phase.ts)' };

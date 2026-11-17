@@ -37,8 +37,11 @@ export function processClock(view: JournalView, now: () => number = Date.now): C
   };
 }
 
-/** What an audit started now records: its coalesced triggers, the lenses they call for (ascending), its generation. */
-export type AuditPlan = Readonly<{ triggers: readonly AuditTrigger[]; lenses: readonly LensKind[]; generation: number }>;
+/**
+ * What an audit started now records: its coalesced triggers, the lenses they call for (ascending), its generation, and
+ * `whole`: a request pending since the last completed audit asked for the whole range (`audit --whole`).
+ */
+export type AuditPlan = Readonly<{ triggers: readonly AuditTrigger[]; lenses: readonly LensKind[]; generation: number; whole: boolean }>;
 
 /** The cadence now: the base, the owed triggers (as an audit would record them), whether one is due, and whether one is due. */
 export type Cadence = Readonly<{
@@ -67,11 +70,12 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   const audited = auditedMilestones(fold);
   const milestone = (ctx.plan().milestones ?? []).find((m) => milestoneReached(view, ctx.plan(), m) && !audited.has(m.id));
   const latest = fold.audits.at(-1);
-  const requested = fold.auditRequests.find((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
+  const pending = fold.auditRequests.filter((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
+  const requested = pending[0];
   const endgame = phaseKind(view, ctx.plan(), repairsReader(ctx)).kind === 'endgame' && runningUnits(view, ctx.plan()).length === 0;
   const final = endgame && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
   const owed: AuditTrigger[] = milestone !== undefined ? [{type: 'milestone', milestone: milestone.id}] : requested !== undefined ? [{type: 'requested', command: requested.command}] : final ? [{type: 'final'}] : [];
   const retryReady = latest?.ended?.outcome !== 'abandoned' || (requested?.seq ?? 0) > latest.started.seq || clock(latest.started.seq) >= AUDIT_RETRY_MIN;
   const due = owed.length > 0 && retryReady && !fold.audits.some((a) => a.ended === null);
-  return {base, head, owed, due, plan: due ? {triggers: owed, lenses: ['invariants'], generation: Math.max(0, ...fold.audits.map((a) => a.started.generation)) + 1} : null};
+  return {base, head, owed, due, plan: due ? {triggers: owed, lenses: ['invariants'], generation: Math.max(0, ...fold.audits.map((a) => a.started.generation)) + 1, whole: pending.some((q) => q.whole === true)} : null};
 }

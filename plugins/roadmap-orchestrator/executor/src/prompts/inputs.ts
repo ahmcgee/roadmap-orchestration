@@ -442,9 +442,10 @@ export type LensInputs = Readonly<{
   /**
    * The range this call reviews: from the lens's watermark to `diff.to`, the audited SHA or, for an outstanding range
    * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment
-   * (src/git/boundeddiff.ts).
+   * (src/git/boundeddiff.ts). dev.82: `base`, the arc's coverage base; a range from a later watermark is the part no
+   * completed pass covered (base→`diff.from` was), and the call answers for it alone, reading the rest for context.
    */
-  range: Readonly<{ audited: Sha; diff: BoundedDiff }>;
+  range: Readonly<{ audited: Sha; base: Sha; diff: BoundedDiff }>;
   /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one), bounded together. */
   owners: readonly Readonly<{ unit: UnitId; head: Sha; diff: BoundedDiff }>[];
   priorFindings: readonly FindingView[];

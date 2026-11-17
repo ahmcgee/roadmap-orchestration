@@ -42,9 +42,9 @@ const head = (repo: string): Sha => sha(git(repo, 'rev-parse', 'main'));
 const treeOf = (repo: string, commit: string): string => git(repo, 'rev-parse', `${commit}^{tree}`);
 let commands = 0;
 /** An `audit-requested` fact, as the `audit` command (B7) writes it. */
-function requestAudit(r: ArcRun, lenses: readonly Lens[] | null = null): CommandId {
+function requestAudit(r: ArcRun, lenses: readonly Lens[] | null = null, whole = false): CommandId {
   const command = commandId(`cmd-${(++commands).toString(16).padStart(16, 'b')}`);
-  r.journal.fact({ kind: 'audit-requested', command });
+  r.journal.fact({ kind: 'audit-requested', command, ...(whole ? { whole: true } : {}) });
   return command;
 }
 const started = (r: ArcRun) => factsOf(r).flatMap((f) => (f.kind === 'audit-started' ? [f] : []));
@@ -184,13 +184,49 @@ describe('the audit job', () => {
       assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'publications do not trigger rolling audits');
       requestAudit(r);
       assert.equal((await runAudit(ctx)).kind, 'ended');
-      assert.deepEqual(ended(r)[1]!.covered, [{lens: 'invariants', from: S, to: S2}]);
+      assert.deepEqual(ended(r)[1]!.covered, [{lens: 'invariants', from: S1, to: S2}], 'dev.82: the second audit covers only what the first left');
+      const calls = auditCalls(r, 'audit-2');
+      assert.equal(calls.length, 1);
+      assert.ok(calls[0]!.stdin.includes(rangeTag(S1, S2, S2)), 'its lens call is attached S1→S2 alone');
+      assert.ok(calls[0]!.stdin.includes(`<covered_before from="${S}" to="${S1}"/>`), 'and told what earlier passes covered');
+      assert.ok(!auditCalls(r, 'audit-1')[0]!.stdin.includes('<covered_before'), 'a first pass reads from the base');
     } finally {
       r.journal.close();
     }
   });
 
-  test('audit.race-merge-during-audit: a merge landing while the audit runs stays outstanding (coverage stops at the audited SHA); the P1 it opened is re-witnessed on the new head', T, async () => {
+  test('audit.incremental-whole (dev.82): `audit --whole` reads the whole range again; a later request with nothing new past the watermark asks no lens', T, async () => {
+    const { d } = auditArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')],
+      units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      const S = head(d.repo);
+      assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
+      requestAudit(r);
+      assert.equal((await runAudit(ctx)).kind, 'ended');
+      assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
+      const S2 = head(d.repo);
+      requestAudit(r, null, true);
+      assert.equal(cadence(ctx, ctx.clock)!.plan?.whole, true);
+      assert.equal((await runAudit(ctx)).kind, 'ended');
+      assert.equal(started(r)[1]!.whole, true, 'the capture records the opt-in');
+      assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S, to: S2 }]);
+      assert.ok(auditCalls(r, 'audit-2')[0]!.stdin.includes(rangeTag(S, S2, S2)), 'the whole range is attached');
+      requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+      assert.equal(auditCalls(r, 'audit-3').length, 0, 'nothing past the watermark: no lens call');
+      assert.deepEqual(ended(r)[2]!.covered, []);
+      assert.deepEqual(watermarks(ctx, L2), [['invariants', S2, false]]);
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('audit.race-merge-during-audit:a merge landing while the audit runs stays outstanding (coverage stops at the audited SHA); the P1 it opened is re-witnessed on the new head', T, async () => {
     // I-2 (on its own lane) is broken everywhere; u1 and u2 select I-1 alone, so their candidates never run its lane.
     const { d } = auditArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), barrierLens('audit-1', 'invariants')],
@@ -262,7 +298,8 @@ describe('the audit job', () => {
     const { ctx, w } = auditContext(r);
     const stop = ticking(w);
     try {
-      const asked = requestAudit(r);
+      // dev.82: the docs edge covers what the ruling published, so only `--whole` has the lens read it.
+      const asked = requestAudit(r, null, true);
       const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', API_OP), true));
       await reached(barrier, 'lane', 120_000);
       const audit = runAudit(ctx);
@@ -312,7 +349,7 @@ describe('coverage', () => {
       release(d.scenarioDir, 'lens');
       const out = await audit;
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from: base.head, to: S1}]);
+      assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from: D1, to: S1}], 'dev.82: from the watermark the docs edge set');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', D2, false]], 'the gap closed: the kept edge applies');
     } finally {
       stop();
@@ -390,6 +427,7 @@ describe('coverage', () => {
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
       assert.equal(started(r)[1]!.visionSha256, base.visionSha256);
       assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S, to: S2 }], 'the vision lens covers everything up to S2, S1→S2 included');
+      assert.ok(auditCalls(r, 'audit-2')[0]!.stdin.includes(rangeTag(S, S2, S2)), 'after a vision change the lens reads the whole range');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S2, false]], 'the campaign audit covers the range under the new vision');
     } finally {
       stop();
@@ -694,7 +732,7 @@ test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in
       assert.ok(calls[1]!.stdin.includes(rangeTag(S1, S2, S2)) && !calls[1]!.stdin.includes('bigone000100'), 'chunk 2: from where chunk 1 ended');
       for (const c of calls) assert.doesNotMatch(c.stdin, /<not_inlined>/, 'each chunk attaches whole');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true]]);
-      assert.deepEqual(cadence(ctx, () => AUDIT_RETRY_MIN)!.plan, { triggers: [{ type: 'final' }], lenses: ['invariants'], generation: 2 }, 'the final audit runs the partly covered lens alone');
+      assert.deepEqual(cadence(ctx, () => AUDIT_RETRY_MIN)!.plan, { triggers: [{ type: 'final' }], lenses: ['invariants'], generation: 2, whole: false }, 'the final audit runs the partly covered lens alone');
       const again = await runAudit({ ...ctx, clock: () => AUDIT_RETRY_MIN });
       assert.ok(again.kind === 'ended' && again.outcome === 'completed', JSON.stringify(again));
       assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S1, to: S2 }]);

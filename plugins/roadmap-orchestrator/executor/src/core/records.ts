@@ -1654,8 +1654,11 @@ export type CommandBody =
    * (`RERUN_CAUSES`). Scope {u}.
    */
   | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string }>
-  /** Request a fresh whole-campaign audit. */
-  | Readonly<{ type: 'audit' }>
+  /**
+   * `roadmap audit [--whole]`: request a campaign audit. dev.82: it reads what no completed pass covered under the vision in
+   * force; `whole` (absent on commands written before it: false) reads the whole range from the arc's base again.
+   */
+  | Readonly<{ type: 'audit'; whole?: true }>
   /**
    * `roadmap close-admissions` (M3), removed in dev.82 (the endgame replaces it): kept so an earlier release's command file still
    * reads; applying one is rejected (src/commands/apply.ts). Scope ∅.
@@ -1806,9 +1809,10 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('rerun')), unit: f.get('unit', unit), attempt: f.get('attempt', positive), lane: f.get('lane', (v, p) => laneId(v, p)),
     cause: f.get('cause', oneOf(RERUN_CAUSES)), evidence: f.get('evidence', nonBlank),
   })),
-  audit: object((f): CommandBody => ({
-    type: f.get('type', literal('audit')),
-  })),
+  audit: object((f): CommandBody => {
+    const whole = f.optional('whole', literal(true));
+    return { type: f.get('type', literal('audit')), ...(whole === undefined ? {} : { whole }) };
+  }),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
   withdraw: object((f): CommandBody => ({ type: f.get('type', literal('withdraw')), command: f.get('command', cmdId) })),

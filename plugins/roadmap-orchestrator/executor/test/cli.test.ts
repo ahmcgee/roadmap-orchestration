@@ -194,7 +194,8 @@ describe('cli: M3 forms', () => {
       command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: 'summit', resume: true, run: HOST,
     });
     assert.deepEqual(parseCommand(['merge-in', 'u1']), { command: 'merge-in', unit: 'u1', run: HOST });
-    assert.deepEqual(parseCommand(['audit']), { command: 'audit', run: HOST });
+    assert.deepEqual(parseCommand(['audit']), { command: 'audit', whole: false, run: HOST });
+    assert.deepEqual(parseCommand(['audit', '--whole']), { command: 'audit', whole: true, run: HOST });
     assert.throws(() => parseCommand(['audit', '--lens', 'vision,drift,vision']), /lens/);
     assert.throws(() => parseCommand(['close-admissions', ...EXPLICIT]), /unknown command "close-admissions"/);
     assert.deepEqual(parseCommand(['gc', '--repo', '/r']), { command: 'gc', repo: '/r', keep: null, dryRun: false });
@@ -233,6 +234,7 @@ describe('cli: M3 forms', () => {
       [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
       [['rerun', 'u1/lanes#7/mul', '--cause', 'infra', '--evidence', 'runner disk full 10:02'], { type: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'infra', evidence: 'runner disk full 10:02' }],
       [['audit'], { type: 'audit' }],
+      [['audit', '--whole'], { type: 'audit', whole: true }],
       [['withdraw', 'cmd-0123456789abcdef'], { type: 'withdraw', command: 'cmd-0123456789abcdef' }],
       [['push'], { type: 'push' }],
       [['endgame', 'fix', '--closes', 'F-1,I-2,u1', '--commit', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--note', 'rounds half-even'], { type: 'endgame', act: { type: 'fix', closes: ['F-1', 'I-2', 'u1'], commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', note: 'rounds half-even' } }],

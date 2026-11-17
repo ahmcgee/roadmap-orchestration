@@ -172,7 +172,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'endgame', act: { ...act, commit } });
     }
     case 'audit':
-      return submit(command.run, hostDir, { type: 'audit' });
+      return submit(command.run, hostDir, { type: 'audit', ...(command.whole ? { whole: true } : {}) });
     // dev.81 (C3a): take back a pending mutation.
     case 'withdraw':
       return submit(command.run, hostDir, { type: 'withdraw', command: command.target });

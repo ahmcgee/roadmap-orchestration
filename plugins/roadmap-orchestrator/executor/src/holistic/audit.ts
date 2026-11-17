@@ -44,7 +44,7 @@ import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 
 import { type Clock,cadence,integrationHeadNow } from './cadence.ts';
-import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
+import { type CoverageBase,coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
 import { externalAttestation,externalVerdict } from './external.ts';
 import { type FindingDraft,admitMutant,isActive,openFinding,witnessFindingDraft } from './findings.ts';
 import { chunkEnd,LENS_DIFF_BUDGET } from './lensdiff.ts';
@@ -184,6 +184,7 @@ function capture(ctx: AuditContext): Started | null {
     priorFindings: canonicalIds(view.holistic().findings.map((f) => f.id)),
     highWater: view.highWater(),
     diffBudget: LENS_DIFF_BUDGET,
+    ...(c.plan.whole ? { whole: true as const } : {}),
   };
   const seq = ctx.journal.fact({ kind: 'audit-started', ...inputs });
   return { ...inputs, seq };
@@ -217,7 +218,7 @@ const lensDiffDir = (ctx: StageContext, job: JobId, attempt: number): AbsPath =>
  * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs), their
  * unshown files written under `diffDir`.
  */
-function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): import('../prompts/inputs.ts').RoleInputs['campaignAudit'] {
+function lensInputs(ctx: StageContext, s: Started, r: Recorded, base: CoverageBase, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): import('../prompts/inputs.ts').RoleInputs['campaignAudit'] {
   const sha = s.integrationSha;
   const budget = budgetOf(s);
   const share = Math.floor(budget / Math.max(1, s.owners.length));
@@ -226,7 +227,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     vision: visionInputOf(r.vision, r.advances),
     method: {traits: [...new Set(Object.values(mapInForce(ctx.journal.view)?.systems ?? {}).flatMap((x) => x.traits))], markers: ctx.plan().units.some((unit) => proofNotLocal(ctx, unit)) ? ['M2'] : [], unitKind: 'campaign', ui: hasMilestones(ctx.plan()), expensiveLanes: ctx.plan().suite.lanes.some((l) => (l as {cost?: string}).cost === 'expensive')},
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
-    range: { audited: sha, diff: attach(chunk.from, chunk.to, budget, 'range') },
+    range: { audited: sha, base: base.head, diff: attach(chunk.from, chunk.to, budget, 'range') },
     owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: attach(diffBase(ctx.repo, sha, o.head), o.head, share, `owner-${o.unit}`) })),
     priorFindings: findingViews(ctx.journal.view.holistic().findings, s.priorFindings),
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
@@ -444,7 +445,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       }
       if (repair !== null && repair.turn.cwd !== checkout) throw new Error(`${job}: a refused lens call ran in ${repair.turn.cwd}, not the audit's checkout ${checkout}`);
       const diffDir = lensDiffDir(ctx, job, attempt);
-      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, diffDir);
+      const inputs = lensInputs(ctx, s, r, base, chunk, checkout, diffDir);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
         job, role: 'campaignAudit', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
@@ -497,11 +498,17 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const heads = new Set(publishedHeads(ctx.journal.view).map((h) => h.head));
   /** How far each lens's reported chunks reach. */
   const reached = new Map<LensKind, Sha>();
-  const previous = ctx.journal.view.holistic().audits.filter((a) => a.started.seq < s.seq).at(-1);
-  const rangeFrom = (lens: LensKind): Sha => previous?.ended?.outcome === 'abandoned' ? lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark : base.head;
+  // dev.82: incremental. A lens reads from its watermark at the capture (what no completed pass under the vision in force
+  // covered: an abandoned pass's reported chunks included, so it resumes where it stopped), or from the arc's base for an
+  // `audit --whole` request. A lens whose watermark already is the audited SHA past the base has nothing to read: no call.
+  const rangeFrom = (lens: LensKind): Sha => s.whole === true ? base.head : lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
   let further = 0;
   for (const [i, lens] of order.entries()) {
     let from = rangeFrom(lens);
+    if (from === s.integrationSha && from !== base.head) {
+      covered.push(lens);
+      continue;
+    }
     let attempt = i + 1;
     let read: LensRead;
     for (;;) {

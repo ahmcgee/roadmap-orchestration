@@ -69,8 +69,8 @@ export type Command =
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
   /** dev.59: the lanes of `unit` again at the commit lanes#`attempt` ran on, its red on `lane` waived for `cause`. */
   | Readonly<{ command: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string; run: RunLocator }>
-  /** Request a fresh whole-campaign audit. */
-  | Readonly<{ command: 'audit'; run: RunLocator }>
+  /** Request a campaign audit; `whole` (`--whole`, dev.82) reads the whole range from the arc's base again. */
+  | Readonly<{ command: 'audit'; whole: boolean; run: RunLocator }>
   /** dev.81 (C3a): take back pending mutation `target` (a queued apply, say) before it applies. */
   | Readonly<{ command: 'withdraw'; target: CommandId; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
@@ -363,9 +363,9 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, unit: ref.unit, attempt: ref.attempt, lane: ref.lane, cause, evidence, run: locator(p, command) };
     }
     case 'audit': {
-      const p = parseRest(rest, LOCATOR, command);
+      const p = parseRest(rest, { ...LOCATOR, whole: 'switch' }, command);
       positionals(p, command, 0);
-      return { command, run: locator(p, command) };
+      return { command, whole: p.flags.has('whole'), run: locator(p, command) };
     }
     case 'withdraw': {
       const p = parseRest(rest, LOCATOR, command);
