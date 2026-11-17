@@ -1803,3 +1803,27 @@ The field figure was atlas2 m6: 11.63 MB, of which work rows were 6.09 MB (13,99
 1.16 MB and two receipts' `verified` 2.42 MB. The fixture measurement (real-shape fixture, 81 KB, 33.7% work) did not
 reproduce it. `test/status-wire.test.ts` checks that a retired unit's printed bytes stay flat as its runs grow. The summary
 is unchanged.
+
+### dev.82 E3: arc witness lanes at batch cadence
+
+- `KIND_CADENCES.arc` gains `batch`. `deferredLane(l)` (`src/holistic/types.ts`): `witnessClass: 'external'` or cadence
+  `batch`. A deferred lane's rows leave a unit's required witnesses (`requiredWitnesses`); its obligations leave the
+  held-claims grade of a candidate or a batch (`gradeTree`) and a docs publication's brake; `Claims.lanes` and a docs
+  publication's witness lanes never include one. The baseline, cadence audits and the close-out still run a batch lane.
+- Plan: `holistic.batchEvery?: number` (positive; absent: 5, `DEFAULT_BATCH_EVERY`).
+- Job kind `witness` (`witness-<n>`), the batch witness (`src/pipeline/batchlanes.ts`). Due when a batch arc lane has
+  `batchEvery` publications (`publishedHeads`) after the head of the last `batch-witness-started` naming it (none: every
+  publication), or on request at the endgame's closing step (`batchWitnessDue(ctx, 'closing')`: the lanes with an
+  obligation unobserved on the head's tree); `runBatchWitness` runs it.
+- Fact `batch-witness-started{job, head, lanes}` (lanes non-empty, ascending) opens the job (`nextJobId('witness')`; a
+  second open one fails the fold). Fact `batch-witness-ended{job}` closes it. A started job without its end is due again
+  as itself.
+- Grading on `head`: a future obligation every deliverer of which is retired with its merge in `head` (`latchingUnit`)
+  latches when held (`obligation-latched` with `head`'s tree); a must-hold or latched one not held, or a delivered
+  future one not held, is red. A red one is bisected over the first publication's `old`, then the published heads up to
+  `head`; each probe runs the lane alone under the job (`witness-<n>.probe-<k>` checkouts, reuse on).
+- Fact `batch-reopened{job, unit, obligation, culprit: Sha, brief: Sha256Hex}`: the culprit's publishers include a member
+  of a retired deliverer's lineage. The fold reopens `unit` as `external-reopened` does (status `active`, stage
+  `pre-build`, nothing charged) and records the brief as a note (`JournalView.notes` entries' `command` is
+  `CommandId | JobId`). Otherwise code opens a `witness` P1 (`source: {type: 'job', job}`) naming the culprit.
+- Phase 0 advisory `consider-batch{lane, resources}`: a candidate-cadence, non-external arc lane with resources.
