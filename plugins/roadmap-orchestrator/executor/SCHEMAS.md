@@ -2028,3 +2028,29 @@ Closing: `closingSettled` holds when no endgame job runs, no review is due (`rev
 its base and no review of the episode reached a head holding it) and no closing batch witness is due
 (`batchWitnessDue(ctx, 'closing')`, which the scheduler then runs). A P1 the review or the final audit opens is a required
 entry, so the step returns to `open`. Only P1s hold; there is no review round limit.
+
+### dev.82 surfaces: status `phase` and `endgame`, the console and the TUI
+
+Read-time only; no record change (`src/status/endgame.ts`, read through the scheduler's read-only contexts).
+
+- `Status.phase: PhaseView`, also in `status --summary` as `phase`: `{kind: 'body', planned: UnitId[], milestones:
+  MilestoneId[]}` (the planned units still open and the milestones awaiting their checkpoint), `{kind: 'endgame', step,
+  episode, required, optional, handover: AbsPath | null}` (the worklist's counts; the handover once opened) or `{kind:
+  'closed-out'}` (an active `arc-completed`). Without the holistic layer an arc stays in the body until it completes.
+- `Status.endgame: EndgameView | null` (null before the first episode): `{branch, worktree, tip, landed, worklist, exit,
+  audited, units, episodes}`. `exit` (null unless an opened episode is open) is `{worklist, review, audit, obligations}`:
+  no required entry; no review owed (`reviewDue`); the branch landed and the invariants coverage reached the head; the
+  branch landed, obligations discharged on the head and no closing batch witness owed. `audited` is the invariants lens's
+  `{from: coverage base, to: watermark}`. `units` are `{unit, relation: handed-over | released | closed, command, commit}`:
+  held now (`endgameHeld`), sent back by `resume`, or closed by a fix (the latest fix naming it wins). `episodes` mirror
+  `EndgameEpisode` with each fix's `landed` (a landing's head holds its commit), the jobs' requests and outcomes, and
+  `opened.item` (the `endgame` item's id and recommendation) and `opened.sizeGuard` (the handover, matching its hash,
+  lists more than `ENDGAME_BY_HAND` required entries).
+- Console (`CONSOLE_UI_SCHEMA` unchanged): `ShellView.phase` (`ShellPhase`, with `episodes`); `GraphView.units[].endgame`
+  (`{relation, command, commit} | null`); a handed-over unit's signal is `pending` and the shell counts it as
+  `handed-over`; `OutsideGroup` gains kind `endgame` (id `endgame`, last), which takes every unit `Status.endgame.units`
+  names, or whose lineage root it names. A new view `endgame` (route `/arcs/<arc>/endgame`, `ViewVersions.endgame`,
+  `EndgameView`): the exit checklist, the worklist (required, optional, then entries the open episode's fixes closed),
+  the current episode (the open one, else the latest) and the earlier ones, newest first. The handover text is read from
+  the run dir and shown only when its bytes match `handoverSha256` (first 64 KiB).
+- TUI: the supervision line's `PHASE` names `body`, `endgame <step> (<n> required)` or `closed out`.

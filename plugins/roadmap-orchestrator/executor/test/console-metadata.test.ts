@@ -54,7 +54,7 @@ test('SSE registers an atomic metadata watermark with no snapshot/model read and
   assert.equal(value.protocol,CONSOLE_PROTOCOL); assert.equal(value.instance,s.instance); assert.equal(value.repoId,s.repoId);
   assert.equal(value.arc,f.arc); assert.equal(value.selected,f.arc); assert.equal(value.uiSchema,CONSOLE_UI_SCHEMA); assert.ok(value.highWater>0);
   assert.equal('data' in value,false); assert.equal('events' in value,false);
-  assert.deepEqual(Object.keys(value.viewVersions).sort(),['activity','attention','effort','graph','holistic','resources','shell','timeline']);
+  assert.deepEqual(Object.keys(value.viewVersions).sort(),['activity','attention','effort','endgame','graph','holistic','resources','shell','timeline']);
   assert.equal(messages.some(m => m.kind==='read' && m.path[2]==='snapshot'),false);
   assert.ok(messages.some(m=>m.kind==='subscribe'));
   const metadata = await preparedRead(`${s.url}/api/${CONSOLE_PROTOCOL}`,CONSOLE_PROTOCOL,`/arcs/${f.arc}/metadata`) as Metadata;

@@ -123,6 +123,8 @@ describe('status.subset', () => {
       demo: null,
       milestones: [],
       waiting: { unmeasuredReservations: 0, byUnitStage: [], byJobStage: [] },
+      phase: { kind: 'body', planned: [], milestones: [] },
+      endgame: null,
     });
   });
 
@@ -130,9 +132,11 @@ describe('status.subset', () => {
     const s = after_;
     assert.deepEqual(Object.keys(s).sort(), [
       'answers', 'arc', 'audit', 'census', 'chain', 'commands', 'completion', 'corpus', 'debt', 'decisionsSince', 'deferred', 'demo',
-      'divergences', 'edges', 'findings', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
-      'packReview', 'parkedBackends', 'plan', 'pushes', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waiting', 'waived',
+      'divergences', 'edges', 'endgame', 'findings', 'holds', 'holistic', 'host', 'knownDefects', 'milestones', 'needsUser', 'notYetTrue', 'nowTrue',
+      'packReview', 'parkedBackends', 'phase', 'plan', 'pushes', 'rejection', 'routing', 'run', 'runOnly', 'spend', 'supervision', 'target', 'timings', 'units', 'vision', 'waiting', 'waived',
     ]);
+    assert.deepEqual(s.phase, { kind: 'closed-out' }, 'a completed arc is closed out');
+    assert.equal(s.endgame, null, 'an arc without the holistic layer records no episode');
     assert.equal(s.plan?.rev, 1, 'the first start put plan.json in force as revision 1');
     assert.equal(s.plan?.planSha256, fileSha256(absPath(r.planPath)));
     assert.equal(s.run.state, 'complete');

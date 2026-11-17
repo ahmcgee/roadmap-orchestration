@@ -128,7 +128,8 @@ files during salvage, transient validation and recovery. Evidence patterns canno
 of a unit's systems. Unmapped paths select checks conservatively.
 
 Resources have probe/teardown commands and optional pools. Probe exit 0 means free, 10 this label, 11 foreign/unlabelled;
-other exits are faults. Pools lease one instance by resource name. Labels identify the workload. Startup refuses every foreign undispositioned residue until cleaned or isolated;
+other exits are faults. Pools lease one instance by resource name; a lane that mutates a shared pool holds it whole (`exclusive`), every
+instance or none. Labels identify the workload. Startup refuses every foreign undispositioned residue until cleaned or isolated;
 a readable own-arc journal permits recovery of its residues, with the dirty instances withheld meanwhile. Environment declarations can power resources and have lazy up/down plus idle lifetime; plain
 probed environments have no executor-managed power lifecycle. Resource teardown and workload quiescence precede release.
 New resources for a spike cannot be admitted mid-arc without owner resolution.
@@ -189,8 +190,9 @@ Steer accepts any unfinished unit, cancelling/quiescing active work, saving its 
 round with explicit editing budget. A green result parks for root review unless resume is requested. Optional class
 changes are routing revisions. Note keeps a brief for the next build round without cancellation. Witness records an
 explicit pass/fail attestation for an external-class obligation at the submitted integration head. Changed evidence or
-head refuses; failure reopens the delivering lineage. Resolve-edge, run-only, merge-in, audit and close-admissions handle
-readiness and lifecycle. Pause/resume/stop/sweep control execution without rewriting its state by hand.
+head refuses; failure reopens the delivering lineage. Resolve-edge, run-only, merge-in and audit handle readiness and
+lifecycle. The endgame family (`endgame fix|run|land|checkpoint|review`) records the architect's hand-made fixes and asks
+the executor to test, land and review them (§2.10). Pause/resume/stop/sweep control execution without rewriting its state by hand.
 
 Needs-user items are durable and have unit/arc/host subjects. Successful actions close the subjects they resolve. Ack
 is permitted when options are offered or the item is a pack-review; any supplied choice must be offered. It is not a generic dismissal
@@ -379,7 +381,14 @@ uncharged; no side effect precedes its intent. Snapshot publication/retirement f
 
 ### 2.10 Completion
 
-Running arcs can be paused, parked or draining. Close admissions stops expansion while existing work settles. Completion
+Running arcs can be paused, parked or draining for a stop. An arc's phase is part of completion, computed from the plan
+in force and the log rather than stored. The body runs while a planned unit is open or a milestone lacks its checkpoint.
+After it comes the endgame, where the executor raises no new unit (no deflake mint, no polish admission, finding-raised
+units not yet dispatched held at admission) and the architect finishes what findings raised by hand on one endgame
+branch. The executor lands that branch as a tested publication through the integration slot, since the integration ref
+stays executor-owned. An independent review covers the endgame's range, and the final audit covers the landed head. A
+revision that adds a planned unit returns the arc to the body. An episode opens only with a non-empty required worklist;
+a P1 from the review or the audit returns it from closing to open, with no round limit. Completion
 requires terminal units, settled milestones and final campaign coverage, required witnesses/batch lanes and close-out
 publications. Arc-completed binds plan revision, integration head and high-water; later legitimate revision can reopen
 an active completion. Sealed snapshots remain verified historical evidence. No outstanding P1 is quietly released.
@@ -421,7 +430,7 @@ Backend outages come from structured CLI error results (`turn.failed`/error even
 output. Build/gate context-exceeded is uncharged operator-env work with prompt-size evidence. Codex receives the prompt on stdin,
 uses `-C`, `--json`, `-o` and strict output schema, and runs danger-full-access inside the devcontainer. Resume is allowed
 only with matching cwd/session; a session collision gets one retry as a new invocation of the same session/deadline after five seconds. These are adapter facts, not alternative
-planning authority. Debt never mints a unit while admissions are draining; new work requires a later deliberate slice.
+planning authority. Debt never mints a unit in the endgame; new work requires a later deliberate slice.
 
 ## 3. Routing and cost
 
@@ -453,7 +462,7 @@ assertions, and fake fixtures do not demonstrate week-long behavior.
 
 Supervision uses actionable watch with a fixed 30-minute heartbeat. On each wake the root posts at most three lines,
 reads status and the cited evidence, takes a supported lever if needed, then waits. Log every self-initiated intervention
-and every arc-wide pause/resume/backend-resume/stop/close-admissions in the append-only external operator log. The root
+and every arc-wide pause/resume/backend-resume/stop in the append-only external operator log. The root
 never patches the plugin or run directory; on supervisor crash-limit it reports stderr/stack evidence to the owner.
 Clocks/time zones are spec/testing guidance, not an executor mechanism that rewrites product clocks.
 
