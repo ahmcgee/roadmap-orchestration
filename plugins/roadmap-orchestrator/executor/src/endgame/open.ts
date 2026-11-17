@@ -5,13 +5,14 @@
 //   a required worklist): the branch `roadmap/<arc>/endgame` and its worktree `<worktreeRoot>/<arc>/endgame` at the
 //   integration tip (journaled `worktree.create`; an earlier episode's branch and worktree are kept), the handover
 //   (src/endgame/handover.ts) kept at `<runDir>/endgame/handover-<episode>.md` by hash, then `endgame-opened{episode,
-//   base, handoverSha256}`. With an empty required worklist the episode never opens: the close-out settlement and the
-//   completion predicate finish the arc as before.
-// - **The item**: one non-blocking `endgame` item per opened episode (subject the arc), raised after the fact and again
+//   base, handoverSha256}`. With an empty required worklist the episode opens only to review a landing no review reached
+//   (`unreviewedLandings`: one of an episode a planned unit reversed), and raises no item; with neither it never opens,
+//   and the close-out settlement and the completion predicate finish the arc as before.
+// - **The item**: one non-blocking `endgame` item per opened episode with required entries (subject the arc), raised after the fact and again
 //   on a later tick if a crash fell between (`raiseEndgameItem`). Its recommendation carries the size guard: more than
 //   ENDGAME_BY_HAND required entries names the remaining units and suggests `resume <unit>` or a repair unit by apply (advisory).
 // - **Closing** (`stepOf`): the required worklist empty and the endgame branch landed (its tip an ancestor of the integration head). What the closing
-//   step runs before the arc completes (the review job over `base..head`, the batch witness at the head) is
+//   step runs before the arc completes (the review job over `reviewRange`, the batch witness at the head) is
 //   `closingSettled`'s; the scheduler runs them as the endgame's jobs (src/endgame/jobs.ts).
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -27,6 +28,7 @@ import { refTarget } from '../git/git.ts';
 import { auditPending } from '../holistic/audit.ts';
 import { batchWitnessDue } from '../pipeline/batchlanes.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
+import { publishedHeads } from '../holistic/coverage.ts';
 import type { ArcLaneDef } from '../holistic/types.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
 import type { StageContext } from '../pipeline/dispatch.ts';
@@ -78,19 +80,46 @@ export function endgameNow(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null
   };
 }
 
+type ReviewCtx = Pick<StageContext, 'journal' | 'repo' | 'plan'>;
+type Landing = EndgameEpisode['landings'][number];
+
+/** Whether a review of any episode reached a head holding `commit`. */
+const reviewed = (ctx: ReviewCtx, commit: Sha): boolean =>
+  ctx.journal.view.holistic().endgame.some((e) => e.reviews.some((r) => isAncestor(ctx.repo, commit, r.to)));
+
+/**
+ * Every episode's landings no review reached (no review of any episode reached a head holding the landing's head), in log
+ * order. A review runs over `reviewRange`, which starts at the earliest of these, so one reaching a landing covers it.
+ */
+export function unreviewedLandings(ctx: ReviewCtx): readonly Landing[] {
+  return ctx.journal.view.holistic().endgame.flatMap((e) => e.landings).filter((l) => !reviewed(ctx, l.head));
+}
+
 /**
  * WS-5: whether `episode` owes an independent review: the endgame branch holds commits of its own (its tip is not the
- * episode's base), or one of its landings published some, and none of its reviews reached a head holding that tip or that
- * landing (each review covers `base..head`, so one that holds a commit covers every endgame commit before it; the
- * executor's own later publications, a close-out say, owe none). A landed episode owes one even when its branch was reset
- * to its base afterwards. An episode whose worklist emptied without a commit (a dismissal, a re-entered unit merging) owes
- * none.
+ * episode's base) no review reached, or a landing of this or an earlier episode (one a planned unit reversed) published
+ * some no review reached (the executor's own later publications, a close-out say, owe none). A landed episode owes one
+ * even when its branch was reset to its base afterwards. An episode whose worklist emptied without a commit (a dismissal,
+ * a re-entered unit merging) owes none, unless an earlier episode's landing is unreviewed.
  */
-export function reviewDue(ctx: Pick<StageContext, 'repo' | 'plan'>, episode: EndgameEpisode): boolean {
+export function reviewDue(ctx: ReviewCtx, episode: EndgameEpisode): boolean {
   const tip = refTarget(ctx.repo, endgameBranch(ctx.plan().arc));
   if (tip === null) throw new Error(`endgame episode ${episode.episode} opened, but ${endgameBranch(ctx.plan().arc)} does not exist`);
-  const reviewed = (commit: Sha): boolean => episode.reviews.some((r) => isAncestor(ctx.repo, commit, r.to));
-  return (tip !== episode.opened?.base && !reviewed(tip)) || episode.landings.some((l) => !reviewed(l.head));
+  return (tip !== episode.opened?.base && !reviewed(ctx, tip)) || unreviewedLandings(ctx).length > 0;
+}
+
+/**
+ * The range the review owed in opened `episode` covers, `from..` the integration head: from the earliest landing of an
+ * earlier episode no review reached (its `old`), else from the episode's base; `since`, the seq after which its
+ * publications fall (that landing's own included).
+ */
+export function reviewRange(ctx: ReviewCtx, episode: EndgameEpisode): Readonly<{ from: Sha; since: number }> {
+  if (episode.opened === null) throw new Error(`the review range of endgame episode ${episode.episode}, which has not opened`);
+  const earlier = unreviewedLandings(ctx).find((l) => !episode.landings.some((own) => own.job === l.job));
+  if (earlier === undefined) return { from: episode.opened.base, since: episode.opened.seq };
+  const pub = publishedHeads(ctx.journal.view).find((h) => h.subject === 'endgame' && h.pub === earlier.job);
+  if (pub === undefined) throw new Error(`endgame landing ${earlier.job} recorded, but no endgame publication of it`);
+  return { from: earlier.old, since: pub.seq - 1 };
 }
 
 /**
@@ -106,26 +135,27 @@ export function closingSettled(ctx: StageContext, episode: EndgameEpisode): bool
 
 /**
  * The `endgame-open` completion clause: an episode not yet settled. One not opened holds completion while its required
- * worklist is non-empty (the open step is then due, and no other clause reads an active P1 over no obligation); an
- * opened one while its step is `open`, or `closing` with `closingSettled` false.
+ * worklist is non-empty or a landing no review reached exists (the open step is then due, and no other clause reads an
+ * active P1 over no obligation or an unreviewed landing); an opened one while its step is `open`, or `closing` with
+ * `closingSettled` false.
  */
 export function endgameOpen(ctx: StageContext, laneEnv: (lane: ArcLaneDef) => EnvId | null): boolean {
   const now = endgameNow(ctx, laneEnv);
   if (now.phase.kind !== 'endgame' || now.episode === null) return false;
-  if (now.episode.opened === null) return now.worklist.required.length > 0;
+  if (now.episode.opened === null) return now.worklist.required.length > 0 || unreviewedLandings(ctx).length > 0;
   return now.phase.step === 'open' || !closingSettled(ctx, now.episode);
 }
 
 /**
  * Whether the open step is due: an open episode not opened, nothing running, no walk or audit due or running (the settling
- * step's order: walks, then the final audit), and a required worklist.
+ * step's order: walks, then the final audit), and a required worklist or a landing no review reached.
  */
 export function openDue(ctx: StageContext & Parameters<typeof auditPending>[0], laneEnv: (lane: ArcLaneDef) => EnvId | null): boolean {
   const view = ctx.journal.view;
   const episode = openEpisode(view);
   if (episode === null || episode.opened !== null) return false;
   if (runningUnits(view, ctx.plan()).length > 0 || walkPending(ctx) || auditPending(ctx)) return false;
-  return endgameNow(ctx, laneEnv).worklist.required.length > 0;
+  return endgameNow(ctx, laneEnv).worklist.required.length > 0 || unreviewedLandings(ctx).length > 0;
 }
 
 /** The open step (see the header): branch and worktree, the handover, `endgame-opened`, then the item. */
@@ -172,13 +202,14 @@ const describe = (e: WorklistEntry): string => {
   }
 };
 
-/** The open episode's item, once it opened and none was raised since (each tick; see the header). */
+/** The open episode's item, once it opened with required entries and none was raised since (each tick; see the header). */
 export function raiseEndgameItem(ctx: Pick<StageContext, 'journal' | 'runDir' | 'repo' | 'plan' | 'planDir'>, laneEnv: (lane: ArcLaneDef) => EnvId | null): void {
   const view = ctx.journal.view;
   const episode = openEpisode(view);
   if (episode === null || episode.opened === null || itemRaised(view, ctx.runDir, episode.opened.seq)) return;
   const plan = ctx.plan();
   const { required, optional } = endgameNow(ctx, laneEnv).worklist;
+  if (required.length === 0) return;
   const units = required.flatMap((e) => (e.type === 'unit' ? [e.unit] : []));
   const guard = required.length <= ENDGAME_BY_HAND ? '' : ` ${required.length} required entries are more than ${ENDGAME_BY_HAND} to finish by hand: take the largest back into the pipeline${units.length > 0 ? ` (\`roadmap resume <unit>\` for a held unit: ${units.join(', ')})` : ''}, or admit a repair unit with \`roadmap apply\`.`;
   raiseNeedsUser(ctx.journal, ctx.runDir, {

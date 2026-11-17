@@ -2,21 +2,26 @@
 // and resolves its finding once landed; a unit a fix closes is cut; a landing of a non-descendant is refused; a red landing
 // moves nothing; `resume <unit>` releases a unit the endgame holds; and a P1 the closing step's review opens returns the
 // step to `open`. WS-7, the exit rules: an entered episode not yet opened holds completion while its required worklist is
-// non-empty; a landed episode owes its review even after its branch was reset to its base. The arc is
+// non-empty; a landed episode owes its review even after its branch was reset to its base; a landing of an episode a
+// planned unit reversed is reviewed in the next one, from that landing, which opens for it even with nothing required. The arc is
 // test/fixtures/endgame-arc.ts `endgameArc`: episode 1 open with r1 held and F-1 a P1.
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
-import { INTEGRATION_SLOT } from '../src/core/ids.ts';
+import { INTEGRATION_SLOT, jobId } from '../src/core/ids.ts';
 import { endgameJobDue, runEndgameJob } from '../src/endgame/jobs.ts';
 import { closingSettled, endgameNow, endgameOpen, openEndgame, repairsReader, reviewDue } from '../src/endgame/open.ts';
 import { endgameHeld, openEpisode } from '../src/endgame/phase.ts';
 import { publishedHeads } from '../src/holistic/coverage.ts';
+import { openFinding } from '../src/holistic/findings.ts';
 import { requirePlanInForce } from '../src/input/inforce.ts';
+import { readNeedsUser } from '../src/needsuser.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
 import { completionBlockers } from '../src/schedule/scheduler.ts';
 import { F1, R1, endgame, endgameArc, fixAndLand, head, runDue } from './fixtures/endgame-arc.ts';
+import { addUnit } from './fixtures/sched-m3-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { type ArcRun, appendSteps } from './fixtures/unit-common.ts';
+import { type ArcRun, appendSteps, applyBody } from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
@@ -201,4 +206,74 @@ describe('the endgame commands (dev.82, WS-5)', () => {
       e.r.journal.close();
     }
   });
+
+  test('endgame.review-carries-reversed-landing: a landing of an episode a planned unit reversed is reviewed in the next episode, from that landing', T, async () => {
+    const e = await endgameArc();
+    try {
+      const base1 = episodeOf(e.r).opened!.base;
+      const fix = await fixAndLand(e);
+      openFinding(e.r.journal, {
+        lens: 'drift', severity: 'P1', obligation: null, visionClauses: [], claim: 'sub() drops the borrow', cause: 'borrow', evidence: [{ path: 'src/add.js', blob: null }],
+        mutant: null, source: { type: 'job', job: jobId('audit', 2) }, gateHadPassed: true,
+      });
+      await reverseAndReenter(e);
+      assert.deepEqual(endgameNow(e.h.audit, e.h.laneEnv).worklist.required.map((x) => x.type), ['finding'], 'the new P1 opens episode 2');
+      await openEndgame(e.h.audit, e.h.laneEnv);
+      assert.equal(episodeOf(e.r).opened!.base, fix, 'episode 2 starts from the kept branch, past episode 1\'s landing');
+      assert.equal(reviewDue(e.h.audit, episodeOf(e.r)), true, 'episode 1\'s landing had no review');
+      assert.equal((await e.command(endgame({ type: 'review' }))).state, 'applied');
+      appendSteps(e.d, [{
+        as: 'claude', expect: { stdinContains: ['<mode>endgame</mode>', base1] },
+        acts: [{ type: 'emit', value: { findings: [], reasons: ['Read the range.'] } }],
+      }]);
+      await runDue(e);
+      const [review] = episodeOf(e.r).reviews;
+      assert.deepEqual([review!.from, review!.to], [base1, head(e.d)], 'the range starts at the unreviewed landing');
+      assert.equal(reviewDue(e.h.audit, episodeOf(e.r)), false);
+    } finally {
+      e.r.journal.close();
+    }
+  });
+
+  test('endgame.reversed-landing-opens: an entered episode with an empty required worklist still opens while an earlier episode\'s landing is unreviewed, and owes that review', T, async () => {
+    const e = await endgameArc();
+    try {
+      const base1 = episodeOf(e.r).opened!.base;
+      await fixAndLand(e);
+      await reverseAndReenter(e);
+      assert.deepEqual(endgameNow(e.h.audit, e.h.laneEnv).worklist.required, []);
+      assert.equal(episodeOf(e.r).opened, null);
+      assert.equal(endgameOpen(e.h.audit, e.h.laneEnv), true, 'the unreviewed landing holds completion');
+      await openEndgame(e.h.audit, e.h.laneEnv);
+      const p = endgameNow(e.h.audit, e.h.laneEnv).phase;
+      assert.equal(p.kind === 'endgame' ? p.step : 'body', 'closing', 'nothing required, nothing unlanded');
+      assert.equal(e.r.journal.view.opsOf('needsuser.raise').filter((i) => readNeedsUser(e.r.ctx.runDir, i.expect.id)?.reason === 'endgame').length, 1, 'no item for an episode with nothing to do by hand');
+      assert.deepEqual(endgameJobDue(e.h.audit, e.h.laneEnv)?.request, { type: 'review' }, 'the closing step\'s review is due');
+      appendSteps(e.d, [{
+        as: 'claude', expect: { stdinContains: ['<mode>endgame</mode>', base1] },
+        acts: [{ type: 'emit', value: { findings: [], reasons: ['Read the range.'] } }],
+      }]);
+      await runDue(e);
+      const [review] = episodeOf(e.r).reviews;
+      assert.deepEqual([review!.from, review!.to], [base1, head(e.d)]);
+      assert.equal(reviewDue(e.h.audit, episodeOf(e.r)), false);
+    } finally {
+      e.r.journal.close();
+    }
+  });
 });
+
+/** A planned unit added and cut again (r1, which the fix cut, cut on disk too): episode 1 is left (`planned-unit`) and episode 2 entered, not opened. */
+async function reverseAndReenter(e: Awaited<ReturnType<typeof endgameArc>>): Promise<void> {
+  const setCut = async (cut: Readonly<{ reason: string }> | undefined): Promise<void> => {
+    const plan = JSON.parse(readFileSync(e.d.planPath, 'utf8')) as { units: Record<string, unknown>[] };
+    writeFileSync(e.d.planPath, JSON.stringify({ ...plan, units: plan.units.map((u) => (u['id'] === 'p2' ? { ...u, cut } : u['id'] === 'r1' ? { ...u, cut: { reason: 'closed by the endgame fix' } } : u)) }));
+    const receipt = await e.command(applyBody(e.d));
+    assert.equal(receipt.state, 'applied', JSON.stringify(receipt));
+  };
+  addUnit(e.d, 'p2');
+  await setCut(undefined);
+  e.r.journal.fact({ kind: 'endgame-left', episode: 1, cause: 'planned-unit' });
+  await setCut({ reason: 'not needed after all' });
+  e.r.journal.fact({ kind: 'endgame-entered', episode: 2, planRev: e.r.journal.view.planApplied()!.rev });
+}

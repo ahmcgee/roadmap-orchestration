@@ -351,7 +351,9 @@ with is planned work whatever it repairs. A milestone has had its checkpoint whe
 the executor creates branch `roadmap/<arc>/endgame` and worktree `<worktreeRoot>/<arc>/endgame` at the integration
 tip. It writes the handover `<runDir>/endgame/handover-<episode>.md` and raises one non-blocking `endgame` item with
 the handover as its evidence. An earlier episode's branch and worktree are kept. With an empty required worklist the
-episode never opens, and the arc closes out as it always did.
+episode opens only when an earlier episode, reversed by a planned unit, landed commits no review covered: it raises no
+item and goes straight to closing, which runs that review. Otherwise it never opens, and the arc closes out as it
+always did.
 
 - The handover lists the branch, its base and worktree; each worklist entry with its evidence paths; each remaining
   unit's spec path and rev, branch tip, dirty paths and last decided outcome; the audited range; and the environments
@@ -388,8 +390,9 @@ integration ref and stops the arc on any move it did not make, and audit coverag
   blocking `foreign-ref-move` item.
 
 **Review.** No gate saw the hand-made work, so it gets one independent review: a fresh verifier session at its high
-seat, never the architect's session. It reads the episode's range `base..head` at the integration head, the recorded
-fixes and the publications in the range (unit and batch publications marked already gated). Its findings open with
+seat, never the architect's session. It reads a range ending at the integration head and starting at the episode's
+base, or at the earliest landing no review covered when an earlier, reversed episode left one, so every landed endgame
+commit gets a review. It also reads the recorded fixes and the publications in the range (unit and batch publications marked already gated). Its findings open with
 lens `endgame-review`. The closing step runs it by itself. No review is owed when the endgame branch has no commits of
 its own. While the verifier's backend is parked none starts, and a review with no verdict takes the retryable-park
 backoff.

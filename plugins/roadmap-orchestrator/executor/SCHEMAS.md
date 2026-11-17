@@ -1944,8 +1944,8 @@ the holistic job `holistic:endgame` creates branch `roadmap/<arc>/endgame` and w
 at the integration tip (`worktree.create`, parent `arc`, key `worktree:endgame`; an existing one is kept). It writes
 `<runDir>/endgame/handover-<episode>.md`, records `endgame-opened` with its hash, and raises one non-blocking `endgame`
 item (subject the arc, evidence the handover). Past `ENDGAME_BY_HAND = 10` required entries, the recommendation suggests
-`resume <unit>` or a repair unit by apply. With an empty required worklist the episode never opens. Unit id `endgame` is
-reserved.
+`resume <unit>` or a repair unit by apply. With an empty required worklist the episode never opens, unless a landing no
+review reached exists (see "dev.82 review range" below). Unit id `endgame` is reserved.
 
 The worklist is derived (`src/endgame/worklist.ts`). Required entries: active P1 findings, active findings over an
 obligation, non-exempt obligations observed not held on the integration head, and finding-raised units not settled.
@@ -2018,7 +2018,8 @@ retryable-park backoff.
   seats), in `<worktreeRoot>/<arc>/<job>.review` at the integration head, evidence in the job's dir. It answers
   `ENDGAME_REVIEW_SCHEMA` `{findings: {severity: P1|P2|P3, text, path: string|null, evidence: string[] (≥1)}[], reasons:
   string[] (≥1)}`, with one repair turn. Each finding opens as lens `endgame-review` (`FINDING_LENSES`, additive; only
-  from an `endgame-<n>` job) over no obligation, then `endgame-reviewed{job, from: base, to: head, findings}`.
+  from an `endgame-<n>` job) over no obligation, then `endgame-reviewed{job, from, to: head, findings}` (`from`: the
+  episode's base, or see "dev.82 review range").
 - **Run**: the named lanes as a journey series at the endgame head in `<job>.run-<n>`, observations reused by a later landing.
 
 Findings: `FindingTo` gains `{state: 'owned' | 'fixed-on-branch', endgame: CommandId}` (an owner of either a `unit` or an
@@ -2070,3 +2071,14 @@ Read-time only; no record change (`src/status/endgame.ts`, read through the sche
   job whose landing holds the slot (`Holder{type: 'endgame'}`) is shared state: its fault crashes the executor.
 - `endgame-open` also holds an entered, unopened episode with required entries; `reviewDue` also owes a review for a
   landing no review reached (see above).
+
+### dev.82 review range
+
+No record change. A landing is unreviewed (`unreviewedLandings`, `src/endgame/open.ts`) while no review of any episode
+reached a head holding its head. The review owed in an episode runs over `reviewRange`: from the `old` of the earliest
+unreviewed landing of an earlier episode (one a planned unit reversed), else from the episode's base, to the integration
+head; its brief's publications are those from that landing's publication on (else after `endgame-opened`).
+`endgame-reviewed.from` records that start. `reviewDue` holds while the branch tip is not the base and unreviewed, or
+any landing is unreviewed. An entered episode with an empty required worklist opens while an unreviewed landing exists
+(`openDue`, and `endgame-open` holds completion meanwhile), raises no `endgame` item while its required worklist is
+empty, and is at once `closing`, so the closing step's review covers that landing.

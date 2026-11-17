@@ -387,7 +387,8 @@ After it comes the endgame, where the executor raises no new unit (no deflake mi
 units not yet dispatched held at admission) and the architect finishes what findings raised by hand on one endgame
 branch. The executor lands that branch as a tested publication through the integration slot, since the integration ref
 stays executor-owned. An independent review covers the endgame's range, and the final audit covers the landed head. A
-revision that adds a planned unit returns the arc to the body. An episode opens only with a non-empty required worklist;
+revision that adds a planned unit returns the arc to the body. An episode opens only with a non-empty required worklist, or to review landings of an earlier, reversed episode that no
+review covered;
 a P1 from the review or the audit returns it from closing to open, with no round limit. Completion
 requires terminal units, settled milestones and final campaign coverage, required witnesses/batch lanes and close-out
 publications. Arc-completed binds plan revision, integration head and high-water; later legitimate revision can reopen

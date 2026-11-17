@@ -39,7 +39,7 @@ export type PhaseView =
 export type EndgameExit = Readonly<{
   /** No required worklist entry remains. */
   worklist: boolean;
-  /** No independent review is owed (`reviewDue`): one covers the endgame branch's commits, or it has none. */
+  /** No independent review is owed (`reviewDue`): one covers the endgame branch's commits and every episode's landings, or there are none. */
   review: boolean;
   /** The endgame branch landed and the final audit's invariants coverage reached the integration head. */
   audit: boolean;
@@ -54,7 +54,7 @@ export type EpisodeView = Readonly<{
   episode: number;
   planRev: PlanRev;
   enteredSeq: number;
-  /** Null until it opened (an episode with an empty required worklist never opens). */
+  /** Null until it opened (an episode with an empty required worklist opens only for an unreviewed earlier landing). */
   opened: Readonly<{
     seq: number; base: Sha; handover: AbsPath; handoverSha256: Sha256Hex;
     /** The `endgame` item and its recommendation (null if it was not raised yet); `sizeGuard`: the handover's required entries were more than ENDGAME_BY_HAND. */

@@ -5,8 +5,10 @@
 //
 //   1. A detached checkout `<worktreeRoot>/<arc>/<job>.review` of the integration head, made fresh (a restarted job's
 //      leftover removed first) unless its call is already recorded.
-//   2. The brief: the episode's range `base..head` as a bounded diff, the episode's recorded fixes, the publications since it
-//      opened (a unit's or a batch's marked already gated), the active findings, the vision.
+//   2. The brief: the review's range (src/endgame/open.ts `reviewRange`: from the episode's base, or from the earliest
+//      landing of an earlier, reversed episode no review reached, to the integration head) as a bounded diff, the
+//      episode's recorded fixes, the publications in the range (a unit's or a batch's marked already gated), the active
+//      findings, the vision.
 //   3. One acting-judge call (the recorded one is consumed by a resumed job), answering ENDGAME_REVIEW_SCHEMA; a refused
 //      answer takes the one judgment repair turn.
 //   4. Answered: each finding opened (`openFinding`) as an `endgame-review` finding of its severity over no obligation, from
@@ -38,6 +40,7 @@ import { promptFor, renderPrompt } from '../prompts/index.ts';
 import type { EndgameReviewBrief } from '../prompts/inputs.ts';
 import { ENDGAME_REVIEW_SCHEMA, type EndgameReviewOutput, validateEndgameReviewOutput } from '../prompts/schemas.ts';
 import { worktreeCreateOp } from '../recover/ops.ts';
+import { reviewRange } from './open.ts';
 
 /** How long the review session may run. */
 export const ENDGAME_REVIEW_MIN = 60;
@@ -71,10 +74,9 @@ function readReview(ctx: StageContext, job: JobId, called: BackendCallOutcome): 
   }
 }
 
-/** The brief of the review of `episode`'s range `from..to` (see the header). */
-function briefOf(ctx: StageContext, episode: EndgameEpisode, from: Sha, to: Sha, checkout: AbsPath, evidenceDir: AbsPath): EndgameReviewBrief {
+/** The brief of the review of `episode`'s range `from..to`, its publications those after `since` (see the header). */
+function briefOf(ctx: StageContext, episode: EndgameEpisode, from: Sha, since: number, to: Sha, checkout: AbsPath, evidenceDir: AbsPath): EndgameReviewBrief {
   const view = ctx.journal.view;
-  const opened = episode.opened!;
   return {
     vision: visionInput(ctx),
     range: { from, to },
@@ -82,7 +84,7 @@ function briefOf(ctx: StageContext, episode: EndgameEpisode, from: Sha, to: Sha,
       budget: GATE_DIFF_BUDGET, derived: [...new Set(derivedOf(ctx.plan()).flatMap((d) => d.outputs))].sort(), removes: null, dir: absPath(join(evidenceDir, 'diff')),
     }),
     fixes: episode.fixes.map((f) => ({ command: f.command, closes: f.closes, commit: f.commit, note: f.note })),
-    publications: publishedHeads(view).filter((h) => h.seq > opened.seq).map((h) => ({
+    publications: publishedHeads(view).filter((h) => h.seq > since).map((h) => ({
       head: h.head, what: h.subject === 'unit' ? `unit publication (${h.op})` : `${h.subject} ${h.pub}`, gated: h.subject === 'unit' || h.subject === 'batch',
     })),
     findings: view.holistic().findings.filter(isActive).map((f) => `${f.id} ${f.severity} ${f.lens} (${f.state}): ${f.claim}`),
@@ -93,7 +95,7 @@ function briefOf(ctx: StageContext, episode: EndgameEpisode, from: Sha, to: Sha,
 /** The review of `episode` by `job` (see the header): reviewed (its findings recorded) or no verdict. */
 export async function runEndgameReview(ctx: StageContext, job: JobId, episode: EndgameEpisode): Promise<Readonly<{ kind: 'reviewed'; findings: readonly FindingId[] }> | Readonly<{ kind: 'no-verdict'; detail: string }>> {
   if (episode.opened === null) throw new Error(`${job}: a review of endgame episode ${episode.episode}, which has not opened`);
-  const from = episode.opened.base;
+  const { from, since } = reviewRange(ctx, episode);
   const to = integrationHeadNow(ctx);
   const parent = { type: 'job', job } as const;
   const checkout = checkoutOf(ctx, job);
@@ -115,7 +117,7 @@ export async function runEndgameReview(ctx: StageContext, job: JobId, episode: E
       called = await callActingJudge(ctx, {
         job, role: 'verifier', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [evidenceDir], mcpConfig: null, deadlineAt: inMs(ENDGAME_REVIEW_MIN * 60_000),
         ...(repair === null || turn === null
-          ? { ...renderPrompt(prompt, { mode: 'endgame', brief: briefOf(ctx, episode, from, to, checkout, evidenceDir) }), schema: ENDGAME_REVIEW_SCHEMA, session: freshJudgmentSession() }
+          ? { ...renderPrompt(prompt, { mode: 'endgame', brief: briefOf(ctx, episode, from, since, to, checkout, evidenceDir) }), schema: ENDGAME_REVIEW_SCHEMA, session: freshJudgmentSession() }
           : { prompt: null, rendered: judgmentRepairDirective(repair.reasons), schema: turn.schema, session: turn.session }),
       });
     }
