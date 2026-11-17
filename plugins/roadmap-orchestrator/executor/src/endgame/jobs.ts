@@ -22,7 +22,7 @@ import type { ArcLaneDef } from '../holistic/types.ts';
 import { raiseNeedsUser } from '../needsuser.ts';
 import { jobSeat } from '../pipeline/dispatch.ts';
 import { type LandingContext, type LandingOutcome, finishLanding, heldLanding, landEndgame } from '../pipeline/integrate.ts';
-import { arcJourneyLane, journeyRed, nextJobCheckout, removeJobCheckouts, runJourneySeries, suiteJourneyLane } from '../pipeline/lanes.ts';
+import { arcJourneyLane, jobSeriesCheckout, journeyRed, removeJobCheckouts, runJourneySeries, suiteJourneyLane } from '../pipeline/lanes.ts';
 import { endDetail } from '../pipeline/publish.ts';
 import { holisticInForce } from '../pipeline/stages.ts';
 import { endgameBranch, endgameNow, reviewDue } from './open.ts';
@@ -134,7 +134,7 @@ export async function runEndgameJob(ctx: LandingContext, due: EndgameJobDue): Pr
       // A resumed run removes what the cut-short one left and runs in a fresh checkout.
       await removeJobCheckouts(ctx, job);
       const series = await runJourneySeries(ctx, { type: 'job', job, acquireFirst: ctx.acquireFirst }, due.request.lanes.map(lane), {
-        path: nextJobCheckout(ctx, job, 'run'), checkout: { type: 'detached', at },
+        path: jobSeriesCheckout(ctx, job, 'run'), checkout: { type: 'detached', at },
       }, { reuse: true, stop: () => false });
       if (series.end.kind !== 'ran') return end('no-verdict', `a lane gave no verdict (${endDetail(series.end)})`);
       return end('ran', `at ${at}: ${series.runs.map((r) => `${r.lane} ${journeyRed(r) ? 'red' : 'green'}`).join(', ')}`);
