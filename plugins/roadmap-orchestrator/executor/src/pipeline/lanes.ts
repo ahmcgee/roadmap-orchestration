@@ -838,7 +838,8 @@ export function passedOnInput(ctx: StageContext, lane: LaneDef, now: LaneNow): b
  * The unit's earlier red this red run of lane `lane` repeats (F2, R53), or null: the latest earlier red execution
  * of the lane, with no pass of it since, certified, confirmed and not flaky (its persisted class a diagnostic whose rerun stayed
  * red, or itself a repeat), with the same failure signature, and its spawn's lane rev and environment equal to `now`'s.
- * The caller passes only a specific signature, and only in the unit's own series; the host's state is `classifyRed`'s.
+ * The caller passes only a specific signature, and a suite lane's only from the lanes stage's fast suite at the salvage SHA; the
+ * host's state is `classifyRed`'s.
  * dev.82 (E2): a lanes-stage suite lane repeats as a spec lane does, and a repeat makes the unit's diagnosis due
  * (surface.ts `diagnosisSources`).
  */
@@ -1062,9 +1063,9 @@ export async function runLaneSeries(
 
   // dev.81 (C4): a lanes-stage suite series' runs each take a `@fast-suite` token (`laneRequest`).
   const fastSuite = set === 'suite' && parent.stage === 'lanes';
-  // dev.82 (E2): the unit's own series, whose reds may repeat its earlier ones: a spec series, or the lanes stage's fast suite at
-  // the salvage SHA (not its diff-base series, nor a candidate's).
-  const unitSeries = (set === 'spec' || fastSuite) && root === unitSeriesRoot(ctx.runDir, parent, set);
+  // The series whose reds may repeat the unit's earlier ones: a spec series (as before dev.82), or (dev.82, E2) the lanes
+  // stage's fast suite at the salvage SHA (not its diff-base series, nor a candidate's).
+  const unitSeries = set === 'spec' || (fastSuite && root === unitSeriesRoot(ctx.runDir, parent, set));
   const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null, verifyRuns: number | null = null): Promise<Attempt> => {
     const request = laneRequest(ctx, lane, fastSuite);
     const environments: ResourceName[] = [];
