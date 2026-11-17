@@ -68,6 +68,8 @@ function viewOf(o: Readonly<{
     holistic: () => ({
       findings: (o.findings ?? []).map((f) => ({ lens: 'walkthrough', severity: 'P1', state: 'open', ...f })),
       checkpoints: (o.checkpoints ?? []).map((c) => ({ inputs: { seq: c.seq, findings: c.findings, visionSha256: c.vision ?? VISION_IN_FORCE }, decided: { kind: 'no-op' } })),
+      // dev.82 (WS-5): no endgame episode, so no checkpoint request (src/walk/milestones.ts `checkpointAsked`).
+      endgame: [],
     }),
     planApplied: () => ({ visionSha256: VISION_IN_FORCE }),
     rewalkSeq: (m: string) => o.rewalks?.[m] ?? 0,
