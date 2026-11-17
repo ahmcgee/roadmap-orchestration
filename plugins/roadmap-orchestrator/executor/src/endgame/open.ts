@@ -15,7 +15,7 @@
 //   `closingSettled`'s; the scheduler runs them as the endgame's jobs (src/endgame/jobs.ts).
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ArcId, EnvId, ObligationId, Sha256Hex } from '../core/ids.ts';
+import type { ArcId, EnvId, ObligationId, Sha, Sha256Hex } from '../core/ids.ts';
 import { parseOpId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
@@ -80,14 +80,17 @@ export function endgameNow(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null
 
 /**
  * WS-5: whether `episode` owes an independent review: the endgame branch holds commits of its own (its tip is not the
- * episode's base) and none of its reviews reached a head holding that tip (each review covers `base..head`, so one that
- * holds the tip covers every endgame commit; the executor's own later publications, a close-out say, owe none). An episode
- * whose worklist emptied without a commit (a dismissal, a re-entered unit merging) owes none.
+ * episode's base), or one of its landings published some, and none of its reviews reached a head holding that tip or that
+ * landing (each review covers `base..head`, so one that holds a commit covers every endgame commit before it; the
+ * executor's own later publications, a close-out say, owe none). A landed episode owes one even when its branch was reset
+ * to its base afterwards. An episode whose worklist emptied without a commit (a dismissal, a re-entered unit merging) owes
+ * none.
  */
 export function reviewDue(ctx: Pick<StageContext, 'repo' | 'plan'>, episode: EndgameEpisode): boolean {
   const tip = refTarget(ctx.repo, endgameBranch(ctx.plan().arc));
   if (tip === null) throw new Error(`endgame episode ${episode.episode} opened, but ${endgameBranch(ctx.plan().arc)} does not exist`);
-  return tip !== episode.opened?.base && !episode.reviews.some((r) => isAncestor(ctx.repo, tip, r.to));
+  const reviewed = (commit: Sha): boolean => episode.reviews.some((r) => isAncestor(ctx.repo, commit, r.to));
+  return (tip !== episode.opened?.base && !reviewed(tip)) || episode.landings.some((l) => !reviewed(l.head));
 }
 
 /**
@@ -102,12 +105,14 @@ export function closingSettled(ctx: StageContext, episode: EndgameEpisode): bool
 }
 
 /**
- * The `endgame-open` completion clause: an opened episode not yet settled (its step `open`, or `closing` with
- * `closingSettled` false).
+ * The `endgame-open` completion clause: an episode not yet settled. One not opened holds completion while its required
+ * worklist is non-empty (the open step is then due, and no other clause reads an active P1 over no obligation); an
+ * opened one while its step is `open`, or `closing` with `closingSettled` false.
  */
 export function endgameOpen(ctx: StageContext, laneEnv: (lane: ArcLaneDef) => EnvId | null): boolean {
   const now = endgameNow(ctx, laneEnv);
-  if (now.phase.kind !== 'endgame' || now.episode === null || now.episode.opened === null) return false;
+  if (now.phase.kind !== 'endgame' || now.episode === null) return false;
+  if (now.episode.opened === null) return now.worklist.required.length > 0;
   return now.phase.step === 'open' || !closingSettled(ctx, now.episode);
 }
 

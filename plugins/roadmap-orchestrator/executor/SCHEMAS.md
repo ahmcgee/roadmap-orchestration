@@ -1033,7 +1033,8 @@ The journal plus runner CPU records rebuild observations after restart (`src/res
 op makes a fault fatal; so does a throw outside a supported task wrapper or a failed settlement. Unit-confined faults
 run `settleFaulted`: kill/quiesce invocations, reconcile own ops, abort a repeated faulty act, clean reservations, then
 record uncharged operator-env `executor-fault` with stack. Resume re-enters the stage; restart replays the park.
-Only audit/walk/baseline jobs have job containment; their non-blocking item holds that track until arc resume closes it.
+Only audit/walk/baseline jobs (dev.82: and the batch witness and endgame jobs) have job containment; their non-blocking
+item holds that track until arc resume closes it.
 Shared-state faults go through supervisor recovery, bounded at three crashes/hour.
 
 ## Finding record
@@ -1949,8 +1950,9 @@ reserved.
 The worklist is derived (`src/endgame/worklist.ts`). Required entries: active P1 findings, active findings over an
 obligation, non-exempt obligations observed not held on the integration head, and finding-raised units not settled.
 Optional entries: the other active findings and the polish proposals refused since the episode entered. Completion gains
-`endgame-open` before `generation-not-quiescent`: an opened episode at step `open` (required entries, or the endgame
-branch holds work the integration head does not: its tip is no ancestor of the head), or at `closing` with `closingSettled` false.
+`endgame-open` before `generation-not-quiescent`: an entered episode not yet opened with required entries (WS-7), an
+opened episode at step `open` (required entries, or the endgame branch holds work the integration head does not: its tip
+is no ancestor of the head), or at `closing` with `closingSettled` false.
 
 `close-admissions` is removed. Its CLI form is gone. An earlier release's command file still reads and is rejected. An
 `admissions-closed` fact still reads, with a `ROADMAP_UPGRADE` warning, and has no effect. `HolisticFold.draining` and
@@ -2001,9 +2003,10 @@ retryable-park backoff.
 - **Landing** (`src/pipeline/integrate.ts` `landEndgame`): holder `Holder{type: 'endgame', job}` (additive; a first holder
   served before every unit, slot alone, parent `job{job}`), candidate the endgame head itself (no merge), refused when it is
   not a strict descendant of the tip before or after the slot wait. Lanes under `job{job}` in
-  `<worktreeRoot>/<arc>/<job>.candidate`: the plan's suite lanes the head's diff on the tip selects, and the arc lanes of
+  `<worktreeRoot>/<arc>/<job>.head-<n>` (`jobSeriesCheckout`, one per attempt): the plan's suite lanes the head's diff
+  on the tip selects, and the arc lanes of
   every active non-exempt obligation (never a deferred lane), graded as a batch (the brake, the episode's fixes not held by
-  the tip as repairs); not clean, the tip alone in `<job>.base`. Red moves nothing (`detail` names the lanes and
+  the tip as repairs); not clean, the tip alone in `<job>.tip-<n>`. Red moves nothing (`detail` names the lanes and
   obligations, and whether the tip alone is red too). Green: `integration.ff` with `FfSubject{type: 'endgame', job}`
   (`publicationProblem`: the new head strictly descends from the old; never redone by recovery), then `finishLanding`:
   `endgame-landed`, the findings' moves, the snapshot (parent the job), the slot released. Recovery keeps a published
@@ -2016,7 +2019,7 @@ retryable-park backoff.
   `ENDGAME_REVIEW_SCHEMA` `{findings: {severity: P1|P2|P3, text, path: string|null, evidence: string[] (≥1)}[], reasons:
   string[] (≥1)}`, with one repair turn. Each finding opens as lens `endgame-review` (`FINDING_LENSES`, additive; only
   from an `endgame-<n>` job) over no obligation, then `endgame-reviewed{job, from: base, to: head, findings}`.
-- **Run**: the named lanes as a journey series at the endgame head in `<job>.run`, observations reused by a later landing.
+- **Run**: the named lanes as a journey series at the endgame head in `<job>.run-<n>`, observations reused by a later landing.
 
 Findings: `FindingTo` gains `{state: 'owned' | 'fixed-on-branch', endgame: CommandId}` (an owner of either a `unit` or an
 `endgame` fix, never both). `ownershipMoves` reads the fixes (`src/endgame/fixes.ts`): a unit's publication resolves
@@ -2025,7 +2028,8 @@ unlanded fix fixes on the endgame branch. A fix closes a finding it names, and a
 names, recorded after the finding opened. `FindingState.owner` is null for an endgame owner.
 
 Closing: `closingSettled` holds when no endgame job runs, no review is due (`reviewDue`: the endgame branch's tip is not
-its base and no review of the episode reached a head holding it) and no closing batch witness is due
+its base and no review of the episode reached a head holding it, or a landing's head no review reached) and no closing
+batch witness is due
 (`batchWitnessDue(ctx, 'closing')`, which the scheduler then runs). A P1 the review or the final audit opens is a required
 entry, so the step returns to `open`. Only P1s hold; there is no review round limit.
 
@@ -2054,3 +2058,15 @@ Read-time only; no record change (`src/status/endgame.ts`, read through the sche
   the current episode (the open one, else the latest) and the earlier ones, newest first. The handover text is read from
   the run dir and shown only when its bytes match `handoverSha256` (first 64 KiB).
 - TUI: the supervision line's `PHASE` names `body`, `endgame <step> (<n> required)` or `closed out`.
+
+### dev.82 E1 hardening: landing recovery, fault containment, exit rules
+
+- A landing recovery abandoned (its ff unpublished) is not refused or re-requested: its `endgame-<n>` job is still running
+  in the episode, so it resumes as the same job and lands again, each attempt in fresh checkouts (`<job>.head-<n>`,
+  `<job>.tip-<n>`: a series never certifies one checkout path twice). A resumed run removes the cut-short run's checkout
+  and runs in `<job>.run-<n>`. A job resumed after `endgame-landed` whose landing still holds the slot runs
+  `finishLanding` (snapshot, release) before it ends.
+- `JOB_FAULT_TRACKS` gains `holistic:witness` (kinds `witness`) and `holistic:endgame-job` (kinds `endgame`). An endgame
+  job whose landing holds the slot (`Holder{type: 'endgame'}`) is shared state: its fault crashes the executor.
+- `endgame-open` also holds an entered, unopened episode with required entries; `reviewDue` also owes a review for a
+  landing no review reached (see above).

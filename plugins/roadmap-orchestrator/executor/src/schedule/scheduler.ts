@@ -40,9 +40,9 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 //
 // Faults (1.0.0-dev.17, src/schedule/fault.ts): a task's throw is classified by what the task holds, read from the log.
 // Confined to the unit's own state, it parks the unit `executor-fault` at its stage (`faultUnit`) and the arc goes on; an
-// audit, walk, checkpoint or baseline job's ends the job faulted (`faultJob`), and the holistic track waits until its
-// item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any other job's,
-// or the loop's own throw crashes the run.
+// audit, walk, baseline, batch witness or endgame job's ends the job faulted (`faultJob`), and the holistic track waits
+// until its item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any
+// other job's, or the loop's own throw crashes the run.
 //
 // Start and restart (G2): settle interrupted pack reviews and milestone walks, finish a published repair batch
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is

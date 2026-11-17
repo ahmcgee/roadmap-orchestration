@@ -13,7 +13,8 @@ import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 // deflake.verification-budget (runs × the lane's measured median against the verification budget),
 // deflake.verification-budget-repair (an approve over it repaired through the pre-build's repair turn), deflake.verify-runs (a
 // deflake unit's verification runs its lane that many times, every run passing), deflake.stochastic (a k-of-n lane never
-// flakes), and the deflake revision's crash cells (deflake.crash.<label>).
+// flakes), the deflake revision's crash cells (deflake.crash.<label>), and deflake.endgame-none (dev.82: in the endgame the
+// ledger's ask mints nothing).
 import assert from 'node:assert/strict';
 import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,7 +22,11 @@ import { describe, test } from 'node:test';
 import type { DesignRecord } from '../src/core/design.ts';
 import type { JsonValue } from '../src/core/json.ts';
 import type { Fact, StageOutcomeFact } from '../src/core/events.ts';
+import { type InvocationId, laneId, opKey, sha, sha256, unitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
+import { phaseKind } from '../src/endgame/phase.ts';
+import { repairsReader } from '../src/endgame/open.ts';
+import { laneRevOf } from '../src/holistic/types.ts';
 import { absPath } from '../src/core/values.ts';
 import { requirePlanInForce } from '../src/input/inforce.ts';
 import { type PlanM1, milestonesOfUnit } from '../src/input/plan.ts';
@@ -40,12 +45,13 @@ import { admitter, rankOf } from '../src/schedule/ready.ts';
 import { type Admission, compareRank } from '../src/schedule/types.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
-import { tmpDir } from './helpers/repo.ts';
+import { git, tmpDir } from './helpers/repo.ts';
 import type { Step } from './helpers/scenario.ts';
 import { deflakeContext, flakyLane, freshMarker, reflake, unitInForce } from './fixtures/deflake-common.ts';
 import { SCENARIO_TIMEOUT_MS, U1 as STAGE_U1, keptSpec, planCheckStep, setupUnit, started } from './fixtures/stage-common.ts';
 import { type ArcDescriptor, type ArcRun, MUL_LANE, SUITE_LANE, UNIT_SCOPE, appendSteps, codexStep, contextFor, gateStep, mulBuild, outcomes, setupArc, stepUntil } from './fixtures/unit-common.ts';
 import { DEFLAKE_REVISION, crashCells } from './matrix.ts';
+import { endgameArc, head } from './fixtures/endgame-arc.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS * 4 };
 
@@ -531,4 +537,34 @@ test('split.deflake-refused: root apply cannot split an executor-minted deflake 
     assert.equal(unitInForce(r, 'deflake-1').cut, undefined);
     assert.ok(!planOf(r).units.some((u) => u.id === 'deflake-child-1'));
   } finally {r.journal.close();}
+});
+
+test('deflake.endgame-none: in the endgame (dev.82) a flake the ledger asks a deflake unit for mints none; the job has nothing to do', T, async () => {
+  const e = await endgameArc();
+  const { r, h } = e;
+  try {
+    const plan = () => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
+    assert.equal(phaseKind(r.journal.view, plan(), repairsReader(h.audit)).kind, 'endgame');
+    // A flake of the suite lane on the tip, as a series records it: a red journey run, then its green rerun.
+    const lane = plan().suite.lanes.find((l) => l.id === 'suite')!;
+    const journeyRun = (n: number): InvocationId => {
+      const { op, inv } = r.journal.begin({
+        kind: 'proc.spawn', key: opKey(`journey:${n}`), parent: { type: 'arc' }, deadlineAt: null,
+        body: () => ({ expect: { subject: { purpose: 'journey', lane: lane.id, laneRev: laneRevOf(lane), at: head(e.d), owner: { type: 'unit', unit: unitId('r1') } }, launchSha256: sha256('d'.repeat(64)) }, post: null }),
+      });
+      r.journal.done(op, 'proc.spawn', { kind: 'lost', treeEffects: false }, 'reconciled');
+      return inv;
+    };
+    r.journal.fact({
+      kind: 'flake-observed', owner: { type: 'unit', unit: unitId('r1') }, lane: laneId('suite'), set: 'suite', on: 'tip', forgiven: true,
+      event: { tree: sha(git(e.d.repo, 'rev-parse', 'main^{tree}')), env: null, failing: [], red: journeyRun(1), green: journeyRun(2) },
+    });
+    assert.deepEqual(deflakeDue(r.journal.view, plan()).mint.map((g) => g.lane), ['suite'], 'the ledger asks a deflake unit for the lane');
+    assert.equal(deflakeJobPending(h.revision), false, 'the endgame mints none');
+    assert.deepEqual(await applyDeflake(h.revision), { kind: 'none' });
+    assert.deepEqual(plan().units.filter((u) => u.origin === 'deflake'), [], 'no deflake unit');
+    assert.deepEqual(facts(r).filter((f) => f.kind === 'plan-applied' && f.source.type === 'deflake'), []);
+  } finally {
+    r.journal.close();
+  }
 });
