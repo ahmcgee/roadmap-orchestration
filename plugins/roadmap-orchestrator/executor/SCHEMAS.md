@@ -1825,8 +1825,9 @@ reservation stays held and what the round left is salvaged, verified and gated l
 All additive; no table, fold or residue change.
 
 - `LaneDef.exclusive?: ResourceName[]` (suite, spec and arc lanes): non-empty, unique, each among the lane's own
-  `resources`, else the lane reader refuses it. Each must be a declared pool, else plan load and apply refuse it as
-  `plan-invalid{schema}` at `<where>.lanes.<lane>.exclusive` (`src/resources/pool.ts` `exclusiveProblems`).
+  `resources`, else the lane reader refuses it. Each must be a declared pool: plan load and apply refuse a suite or spec
+  lane's that is not as `plan-invalid{schema}` at `<where>.lanes.<lane>.exclusive` (`src/resources/pool.ts`
+  `exclusiveProblems`). Arc lanes' resources are not checked at plan load (as before), so `requestOf` fails loud on one.
 - `ResourceRequest.exclusive?: ResourceName[]` (sorted, a subset of `pools`; `laneRequest` carries the lane's). The
   `resourceRequest` reader accepts it (absent on lines written before dev.82). `allocate` grants every instance of such a
   pool or none; busy names the held instances. Readers still take one instance each, so the pool's size caps them, and a
