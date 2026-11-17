@@ -24,11 +24,18 @@ const scope = object({basis: oneOf('current', 'recorded-arc'), from: nullable(da
 const base = {uiSchema: oneOf(CONSOLE_UI_SCHEMA), viewVersion: (v: unknown) => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v), scope};
 const detail = object({type: oneOf('unit', 'invocation', 'request', 'event', 'resource'), id: str});
 const preview = object({text: str, truncated: bool, detail});
+const endgameStep = oneOf('settling', 'open', 'closing');
+const shellPhaseShape: Check = v => [
+  object({kind: oneOf('body'), planned: nat, milestones: nat, episodes: nat}),
+  object({kind: oneOf('endgame'), step: endgameStep, episode: nat, required: nat, optional: nat, episodes: nat}),
+  object({kind: oneOf('closed-out'), episodes: nat}),
+].some(check => check(v));
 export const shellShape = object({...base,
   identity: object({arc: str, direction: nullable(object({text: str, truncated: bool}))}), lifecycle: object({state: str, startedAt: nullable(date), endedAt: nullable(date)}),
   progress: object({total: nat, countsByState: dictionary(nat), merged: nat, withdrawn: nat}),
   spend: object({costUsd: num, estimatedCalls: nat, unavailableCalls: nat}),
   attention: object({total: nat, blocking: nat, informational: nat}), availableRange: object({from: nullable(date), to: nullable(date)}),
+  phase: v => shellPhaseShape(v),
 });
 const edge: Check = v => [
   object({kind: oneOf('after'), source: str, target: str, on: str, met: bool}),
@@ -38,13 +45,14 @@ const edge: Check = v => [
 ].some(check => check(v));
 export const graphShape = object({...base,
   units: array(object({id: str, title: str, titleTruncated: bool, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), state: str, stage: str, stageFinished: bool, systems: array(str), lineageRef: nullable(str),
-    origin: oneOf('planned', 'repair', 'polish', 'deflake'), supersededBy: nullable(str), carriedBy: array(str)})),
+    origin: oneOf('planned', 'repair', 'polish', 'deflake'), supersededBy: nullable(str), carriedBy: array(str),
+    endgame: nullable(object({relation: oneOf('handed-over', 'released', 'closed'), command: nullable(str), commit: nullable(str)}))})),
   milestones: array(object({id: str, state: str, passed: bool, memberIds: array(str), total: nat, merged: nat, withdrawn: nat, signal: oneOf('passed', 'active', 'held', 'pending', 'failed', 'withdrawn'), reason: nullable(str), costUsd: num}, {name: str})),
   noMilestone: object({ids: array(str), total: nat, merged: nat, withdrawn: nat}),
   groups: array(v => [
     object({kind: oneOf('design', 'milestone-repair', 'polish'), id: str, label: str, ids: array(str), milestone: str}),
     object({kind: oneOf('audit'), id: str, label: str, ids: array(str), job: str}),
-    object({kind: oneOf('hardening', 'deflake'), id: str, label: str, ids: array(str)}),
+    object({kind: oneOf('hardening', 'deflake', 'endgame'), id: str, label: str, ids: array(str)}),
   ].some(check => check(v))),
   edges: array(edge), focus: object({activeIds: array(str), firstUncleared: nullable(str)}),
 });
@@ -68,7 +76,7 @@ export const invocationShape=object({...base,invocation,actor:object({role:str,b
 export const unitShape=object({...base,unit,systems:array(str),supersededBy:nullable(str),carries:nullable(object({unit:str,tip:str})),carriedBy:array(str),coverage:object({money:coverageMoney,execution:coverageTime,waiting:coverageTime}),currentBlockers:nullable(object({dependencies:array(str),milestones:array(str),contingentEdges:array(str),resources:nullable(object({named:array(str),pools:array(str),cpu:num,publication:bool})),environmentBlocked:bool,pressureBlocked:nullable(bool),tokenWaitMs:nullable(num),admission:array(object({kind:str,references:array(object({field:str,id:str})),scope:nullable(str),parkClass:nullable(str),reason:nullable(str),decision:nullable(str),probe:nullable(object({kind:str,id:nullable(str)}))})),drainCommands:array(str)})),feeds:array(gate),waits:array(gate),depends:page(related),usedBy:page(related),journey:page(step),invocations:page(invocation),acceptance:page(str),waiting:page(object({at:date,stage:str,totalMs:num,reasons:array(object({reason:str,ms:num}))})),checks:page(object({id:str,outcome:str})),requests:page(object({id:str,summary:str,recommendation:str})),intent:text},expansions);
 export const milestoneShape=object({...base,id:str,name:nullable(str),state:str,passed:bool,total:nat,merged:nat,withdrawn:nat,reason:nullable(str),costUsd:num,members:page(related),intent:text},expansions);
 export const pulseShape=object({arc:str,asOfAgeMs:nat,behind:bool});
-export const metadataShape=object({protocol:str,instance:str,repoId:str,arc:str,epoch:str,highWater:nat,revision:nat,observedAt:date,checkedAt:date,uiSchema:oneOf(CONSOLE_UI_SCHEMA),selected:nullable(str),lastEventAt:nullable(date),viewVersions:object(Object.fromEntries(['shell','graph','timeline','activity','holistic','effort','resources','attention'].map(k=>[k,base.viewVersion])))},{kind:str});
+export const metadataShape=object({protocol:str,instance:str,repoId:str,arc:str,epoch:str,highWater:nat,revision:nat,observedAt:date,checkedAt:date,uiSchema:oneOf(CONSOLE_UI_SCHEMA),selected:nullable(str),lastEventAt:nullable(date),viewVersions:object(Object.fromEntries(['shell','graph','timeline','activity','holistic','effort','resources','attention','endgame'].map(k=>[k,base.viewVersion])))},{kind:str});
 
 const actor=object({role:nullable(str),backend:nullable(str),model:nullable(str)});
 const activitySubject:Check=v=>subject(v)||object({type:oneOf('host','findings','request'),id:nullable(str),title:str})(v);
@@ -141,3 +149,23 @@ export const resourceReasonsShape=object({...base,filters:resourceFilters,bounds
 
 export const resourcesShape:Check=v=>resourcesBase(v)&&((v as any).rows as unknown[]).every((r:unknown)=>((v as any).section==='schedule'?resourceBooking:(v as any).section==='cpu'?resourceCpu:(v as any).section==='waiting'?resourceWait:resourceNowRow)(r));
 export const resourceDetailShape:Check=v=>resourceDetailBase(v)&&((v as any).rows as unknown[]).every((r:unknown)=>((v as any).evidence==='ownership'?resourceBooking:(v as any).evidence==='calls'?resourceCall:resourceWait)(r));
+
+// dev.82: the Endgame view.
+const endgameRef = object({id: str, detail: nullable(detail)});
+const endgameEpisode = object({
+  episode: nat, planRev: nat, enteredAt: nullable(date), state: oneOf('open', 'reversed', 'complete'), leftAt: nullable(date),
+  opened: nullable(object({at: nullable(date), base: str, handover: object({text: nullable(str), truncated: bool}), advisory: nullable(str), sizeGuard: bool})),
+  fixes: array(object({command: str, at: nullable(date), commit: str, closes: array(endgameRef), note: str, landed: bool})),
+  landings: array(object({job: str, at: nullable(date), old: str, head: str, lanes: array(str)})),
+  reviews: array(object({job: str, at: nullable(date), from: str, to: str, findings: array(object({id: str, detail: nullable(detail), severity: nullable(str), claim: str}))})),
+  jobs: array(object({job: str, request: str, command: nullable(str), startedAt: nullable(date), outcome: nullable(str), detail: nullable(str)})),
+  released: array(endgameRef),
+});
+export const endgameShape = object({...base,
+  phase: shellPhaseShape, branch: nullable(str), tip: nullable(str), landed: bool,
+  exit: nullable(array(object({key: oneOf('worklist', 'review', 'audit', 'obligations'), label: str, met: bool}))),
+  worklist: array(object({kind: oneOf('finding', 'obligation', 'unit', 'polish-refused'), id: str, required: bool, closed: bool, text: str, severity: nullable(str), detail: nullable(detail),
+    fixes: array(object({command: str, commit: str, landed: bool}))})),
+  audited: nullable(object({from: str, to: str})),
+  current: nullable(endgameEpisode), history: array(endgameEpisode),
+});

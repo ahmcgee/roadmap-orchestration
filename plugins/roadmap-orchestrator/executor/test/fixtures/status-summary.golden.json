@@ -4,6 +4,7 @@
   "state": "no-owner",
   "stop": null,
   "planRev": 1,
+  "phase": { "kind": "body", "planned": ["u1"], "milestones": [] },
   "progress": {
     "total": 1,
     "merged": 0,

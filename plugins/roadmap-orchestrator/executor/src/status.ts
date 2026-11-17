@@ -174,6 +174,7 @@ import { arcDebtLedger } from './pipeline/publish.ts';
 import { repairUnits,specFacts } from './pipeline/reproduce.ts';
 import { repairsReader } from './endgame/open.ts';
 import { endgameHeld } from './endgame/phase.ts';
+import { type EndgameView,type PhaseView,endgameOf,phaseOf } from './status/endgame.ts';
 import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
 import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
 import { cpuCapacity,fastSuiteCapacity,isDirty,poolUnits } from './resources/pool.ts';
@@ -585,6 +586,10 @@ export type Status = Readonly<{
   milestones: readonly MilestoneView[];
   /** dev.81 (A3): the CI ref (src/forge/ciref.ts); null before a start recorded a plan. */
   pushes: PushesView | null;
+  /** dev.82: where the arc is: the body, the endgame's step with its worklist counts and handover, or closed out (src/status/endgame.ts). */
+  phase: PhaseView;
+  /** dev.82: the endgame's branch, worklist, exit conditions, units taken over and episodes; null before the arc's first episode. */
+  endgame: EndgameView | null;
 }>;
 
 /**
@@ -1700,7 +1705,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
 }
 
 /** The common projection consumed by summary; execution detail is layered on only for full status. */
-export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones' | 'waiting'> & Readonly<{
+export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones' | 'waiting' | 'phase'> & Readonly<{
   units: readonly UnitCore[];
   spend: Pick<Status['spend'], 'byRole' | 'bySmoke'>;
 }>;
@@ -1725,6 +1730,10 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   const repairs = start === null || plan === null ? [] : repairUnits({
     journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
   });
+  const contexts = start === null || inForce === null ? null : readOnlyContexts({
+    view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
+    routingBase: routingBaseOf(inForce.fact.routingProvenance),
+  });
 
   const core: StatusCore = {
     arc, supervision: supervision(runDir), waiting: d.passes.waiting,
@@ -1735,8 +1744,9 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
     completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.map((c) => c.id) }),
     demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
     milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairs),
+    phase: phaseOf(contexts, view),
   };
-  return { core, d, meter, commands, on, revision, head, obligations, t, repairs, plan, now };
+  return { core, d, meter, commands, on, revision, head, obligations, t, repairs, plan, now, contexts };
 }
 
 export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot) {
@@ -1751,7 +1761,7 @@ export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapsh
 
 function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Derived, captured?: ReturnType<typeof readCore>): Status {
   const x = captured ?? readCore(runDir, arc, hostDir, derived);
-  const { core, d, meter, commands, on, revision, head, obligations, repairs, plan, now } = x;
+  const { core, d, meter, commands, on, revision, head, obligations, repairs, plan, now, contexts } = x;
   const { view, events, start, inForce } = d;
   const t = x.t.withHistory();
   const fold = view.holistic();
@@ -1837,6 +1847,8 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     milestones: core.milestones,
     waiting: core.waiting,
     pushes: plan === null || start === null ? null : pushesOf(view, start.record.repo, plan, now),
+    phase: core.phase,
+    endgame: contexts === null ? null : endgameOf(contexts),
   };
 }
 

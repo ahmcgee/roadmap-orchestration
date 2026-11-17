@@ -3,7 +3,7 @@
 import type { OutsideGroup } from './milestones.ts';
 export type { OutsideGroup };
 export const CONSOLE_UI_SCHEMA = 2;
-export type ViewVersions = Record<'shell' | 'graph' | 'timeline' | 'activity' | 'holistic' | 'effort' | 'resources' | 'attention', string>;
+export type ViewVersions = Record<'shell' | 'graph' | 'timeline' | 'activity' | 'holistic' | 'effort' | 'resources' | 'attention' | 'endgame', string>;
 /** `lastEventAt`: the time of the journal's last event at this position (null for an empty journal). It moves with every event,
  * so it rides on the notice rather than in any view's version. */
 export type Metadata = Omit<ViewEnvelope<never>, 'data'> & {uiSchema: number; selected: string | null; lastEventAt: string | null; viewVersions: ViewVersions};
@@ -24,7 +24,15 @@ export type ShellView = View & {
   attention: {total: number; blocking: number; informational: number};
   /** The arc's recorded start and end (null while it runs); the last event's time is the notice's `lastEventAt`. */
   availableRange: {from: string | null; to: string | null};
+  /** dev.82: where the arc is (status `phase`): in the body, the planned units still open and the milestones awaiting their
+   * checkpoint; in the endgame, its step and worklist counts; `episodes`: how many were recorded (the Endgame view exists
+   * once one was). */
+  phase: ShellPhase;
 };
+export type ShellPhase =
+  | {kind: 'body'; planned: number; milestones: number; episodes: number}
+  | {kind: 'endgame'; step: 'settling' | 'open' | 'closing'; episode: number; required: number; optional: number; episodes: number}
+  | {kind: 'closed-out'; episodes: number};
 export type GraphEdge =
   | {kind: 'after'; source: string; target: string; on: string; met: boolean}
   | {kind: 'milestone'; source: string; target: string; passed: boolean}
@@ -34,7 +42,10 @@ export type GraphView = View & {
   /** dev.81: `origin` the plan's (D1); `supersededBy` and `carriedBy` the status line's, what a hidden withdrawn unit's
    * edges are re-pointed to and a shown one is placed beside (D2). */
   units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; stageFinished: boolean; systems: string[]; lineageRef: string | null;
-    origin: 'planned' | 'repair' | 'polish' | 'deflake'; supersededBy: string | null; carriedBy: string[]}[];
+    origin: 'planned' | 'repair' | 'polish' | 'deflake'; supersededBy: string | null; carriedBy: string[];
+    /** dev.82: what the endgame did with it (status `endgame.units`): held at admission and handed over to the architect,
+     * sent back in by `resume`, or closed by a fix (its command and commit); null when the endgame never took it over. */
+    endgame: GraphEndgame | null}[];
   /** `signal`: running only while its walkthrough runs or is due on a live arc; a stopped arc runs nothing.
    * Counts and reasons come from console/milestones.ts, the one membership source: `memberIds` every member, `total` the live ones
    * (superseded and cut members are withdrawn, `withdrawn` of them), `merged` the live ones merged. `costUsd`: status summary spend (its units, their re-entries and its walkthroughs). */
@@ -45,6 +56,34 @@ export type GraphView = View & {
   groups: OutsideGroup[];
   edges: GraphEdge[];
   focus: {activeIds: string[]; firstUncleared: string | null};
+};
+export type GraphEndgame = {relation: 'handed-over' | 'released' | 'closed'; command: string | null; commit: string | null};
+/** dev.82: one worklist entry. `fixes`: the open episode's fixes naming it (landed or not); `closed`: no longer on the
+ * worklist, closed by those fixes. `detail`: the entry's page (a unit's drawer, a finding's opening event), or none. */
+export type EndgameEntry = {kind: 'finding' | 'obligation' | 'unit' | 'polish-refused'; id: string; required: boolean; closed: boolean; text: string;
+  severity: string | null; detail: DetailRef | null; fixes: {command: string; commit: string; landed: boolean}[]};
+export type EndgameRef = {id: string; detail: DetailRef | null};
+export type EndgameEpisodeView = {
+  episode: number; planRev: number; enteredAt: string | null;
+  /** `open` while not left; `reversed` when a planned unit returned the arc to the body; `complete` when the arc completed in it. */
+  state: 'open' | 'reversed' | 'complete'; leftAt: string | null;
+  opened: {at: string | null; base: string; handover: {text: string | null; truncated: boolean}; advisory: string | null; sizeGuard: boolean} | null;
+  fixes: {command: string; at: string | null; commit: string; closes: EndgameRef[]; note: string; landed: boolean}[];
+  landings: {job: string; at: string | null; old: string; head: string; lanes: string[]}[];
+  reviews: {job: string; at: string | null; from: string; to: string; findings: (EndgameRef & {severity: string | null; claim: string})[]}[];
+  jobs: {job: string; request: string; command: string | null; startedAt: string | null; outcome: string | null; detail: string | null}[];
+  released: EndgameRef[];
+};
+/** dev.82: the Endgame view: the phase, the endgame branch and its range, the exit checklist (null unless an opened episode
+ * is open), the worklist, the audited range, the current episode (the open one, else the latest) and the earlier ones. */
+export type EndgameView = View & {
+  phase: ShellPhase;
+  branch: string | null; tip: string | null; landed: boolean;
+  exit: {key: 'worklist' | 'review' | 'audit' | 'obligations'; label: string; met: boolean}[] | null;
+  worklist: EndgameEntry[];
+  audited: {from: string; to: string} | null;
+  current: EndgameEpisodeView | null;
+  history: EndgameEpisodeView[];
 };
 export type Subject = {type: 'unit' | 'arc' | 'job'; id: string; title: string};
 export type Money = {costUsd: number | null; recorded: number; estimated: number; unavailable: number};

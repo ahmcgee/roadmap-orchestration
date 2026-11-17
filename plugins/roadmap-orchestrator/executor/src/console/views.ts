@@ -5,7 +5,8 @@ import { unitSignal } from './signals.ts';
 import { identityIndex, stageFinished } from './indexes.ts';
 import { arcTerminal, tokensFor } from './tokens.ts';
 import { milestoneMembership, milestoneReason, milestoneSignal, outsideGroups } from './milestones.ts';
-import { CONSOLE_UI_SCHEMA, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
+import { endgameView, shellPhase } from './endgame.ts';
+import { CONSOLE_UI_SCHEMA, type EndgameView, type GraphView, type ShellView, type Scope, type View, type Preview, type DetailRef } from './view-protocol.ts';
 
 export function preview(text: string, detail: DetailRef, limit = 240): Preview {
   return {text: text.length > limit ? text.slice(0, limit) : text, truncated: text.length > limit, detail};
@@ -29,16 +30,19 @@ export function shellView(e: Envelope): ShellView {
     spend: {costUsd: e.data.summary.spend.costUsd, estimatedCalls: e.data.summary.spend.estimatedCalls, unavailableCalls: e.data.summary.spend.unavailableCalls},
     attention: {total: e.data.requests.length, blocking, informational: e.data.requests.length - blocking},
     availableRange: {from: bounds.from, to: bounds.to},
+    phase: shellPhase(e),
   }, {basis: 'current', ...bounds});
 }
 export function graphView(e: Envelope): GraphView {
   const s = e.data.display.status, identities = identityIndex(e), steps = tokensFor(e.data).stages.byUnit;
+  const endgameOf = new Map((s.endgame?.units ?? []).map(u => [String(u.unit), {relation: u.relation, command: u.command === null ? null : String(u.command), commit: u.commit}]));
   const units: GraphView['units'] = s.units.map(u => {
     const identity = identities.get(u.unit)!;
     return {id: String(u.unit), title: identity.title.slice(0, 96), titleTruncated: identity.title.length > 96,
-      signal: unitSignal(u.state),
+      // dev.82: a unit held for the endgame is handed over to the architect, not stalled.
+      signal: endgameOf.get(String(u.unit))?.relation === 'handed-over' ? 'pending' : unitSignal(u.state),
       state: u.state, stage: u.stage, stageFinished: stageFinished(steps.get(u.unit), u.stage), systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null,
-      origin: u.origin, supersededBy: u.supersededBy === null ? null : String(u.supersededBy), carriedBy: u.carriedBy.map(String)};
+      origin: u.origin, supersededBy: u.supersededBy === null ? null : String(u.supersededBy), carriedBy: u.carriedBy.map(String), endgame: endgameOf.get(String(u.unit)) ?? null};
   });
   const states = new Map(s.milestones.map(m => [String(m.id), m])), membership = milestoneMembership(e);
   const milestones: GraphView['milestones'] = (e.data.plan?.milestones ?? []).map(m => {
@@ -60,8 +64,10 @@ export function graphView(e: Envelope): GraphView {
 export class ConsoleViews {
   #shell = new Map<string, ShellView>();
   #graph = new Map<string, GraphView>();
+  #endgame = new Map<string, EndgameView>();
   shell(e: Envelope) { return this.#read(this.#shell, e, shellView); }
   graph(e: Envelope) { return this.#read(this.#graph, e, graphView); }
+  endgame(e: Envelope) { return this.#read(this.#endgame, e, endgameView); }
   #read<T>(cache: Map<string, T>, e: Envelope, build: (e: Envelope) => T): T {
     const key = captureKey(e);
     let value = cache.get(key);

@@ -95,7 +95,7 @@ function admissionOf(params: Record<string, string>): Admission {
 function arcOf(path: string[], params: Record<string, string>): string {
   const [runs, arc, section] = path;
   if (runs !== 'arcs' || !arc) throw new ConsoleError('not-found', 'unknown console route');
-  if (path.length === 3 && (section === 'shell' || section === 'graph' || section === 'metadata')) {
+  if (path.length === 3 && (section === 'shell' || section === 'graph' || section === 'endgame' || section === 'metadata')) {
     for (const key of Object.keys(params)) if (!['epoch', 'revision', 'minHighWater'].includes(key)) throw new ConsoleError('invalid', 'unknown view query parameter');
   }
   if (section === 'snapshot' || section === 'activity-legacy') throw new ConsoleError('not-found', 'unknown console route');
@@ -141,8 +141,8 @@ function warm(): void {
 }
 function build(path: string[], params: Record<string, string>, e: Envelope) {
   const [, , section, id, file] = path;
-  if (path.length === 3 && (section === 'shell' || section === 'graph')) {
-    return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : views.graph(e)}, section, e);
+  if (path.length === 3 && (section === 'shell' || section === 'graph' || section === 'endgame')) {
+    return validateViewEnvelope({...e, data: section === 'shell' ? views.shell(e) : section === 'graph' ? views.graph(e) : views.endgame(e)}, section, e);
   }
   if (path.length === 3 && section === 'metadata') return notice(e);
   if (section === 'resources' && path.length === 5 && id === 'details' && file?.startsWith('effort-')) {
