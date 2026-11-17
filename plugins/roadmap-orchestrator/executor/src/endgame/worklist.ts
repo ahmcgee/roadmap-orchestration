@@ -38,7 +38,7 @@ export function worklist(view: JournalView, plan: PlanM1, repairsOf: RepairsOf, 
   }
   for (const obligation of notHeld) required.push({ type: 'obligation', obligation });
   for (const u of plan.units) {
-    if (!TERMINAL.includes(view.unit(u.id).status) && findingRaised(u, repairsOf(u))) required.push({ type: 'unit', unit: u.id });
+    if (!TERMINAL.includes(view.unit(u.id).status) && findingRaised(view, u, repairsOf(u))) required.push({ type: 'unit', unit: u.id });
   }
   if (episode !== null) {
     for (const { seq, fact } of view.walkFacts()) {

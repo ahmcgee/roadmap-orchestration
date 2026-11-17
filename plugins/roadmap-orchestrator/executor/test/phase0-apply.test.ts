@@ -273,7 +273,7 @@ describe('re-pin (the corpus edit class)', () => {
 });
 
 describe('Phase-0 record edits and the census', () => {
-  it('classify.phase0-edit: a record edit is exactly {phase0}, touching no unit; a new promote while draining is refused', T, async () => {
+  it('classify.phase0-edit: a record edit is exactly {phase0}, touching no unit; a new promote after an earlier release\'s admissions-closed is no longer refused (dev.82)', T, async () => {
     const { a, j } = await arcInForce();
     try {
       editPhase0(a, (r) => ({ ...r, curation: [{ tier: 'structural', what: 'merged two restatements', files: ['0010_Overview.md'], rules: ['T-1'] }] }));
@@ -290,9 +290,7 @@ describe('Phase-0 record edits and the census', () => {
       const verdict = classify({
         runDir, view: j.view, inForce: now, revision: revisionInForce(runDir, now), next: filesOf(a), residues: [], routing: BASE, proposer: { type: 'apply' },
       });
-      assert.equal(verdict.kind, 'rejected');
-      if (verdict.kind !== 'rejected') return;
-      assert.ok(verdict.reasons.some((r) => r.includes('draining') && r.includes('B-1')), JSON.stringify(verdict.reasons));
+      assert.equal(verdict.kind, 'accepted', JSON.stringify(verdict));
     } finally {
       j.close();
     }

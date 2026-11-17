@@ -70,7 +70,8 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // due or running; the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
 // applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
 // while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
-// `processClock`). A job that waits on a condition a command changes (skipped for a
+// `processClock`); dev.82, the endgame's open step (`openEndgame`, src/endgame/open.ts) once its episode settled with a
+// required worklist. Before the holistic jobs, each tick writes the endgame episode's edge (`endgameEdge`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
 // lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
 // minutes) and, once its episode is PARK_ESCALATE_MS old, raises one non-blocking `park-escalated` parented by the job
@@ -112,7 +113,8 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // no blocking needs-user, no pending command; no close-out). A holistic arc ends
 // `complete` when every unit is merged, cut or
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
-// no outstanding audit range or owed trigger; the latest generation
+// no outstanding audit range or owed trigger; no milestone walk pending; no opened endgame episode unsettled (dev.82,
+// `endgame-open`); the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
 // change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
 // the close-out settlement runs first (src/holistic/closeout.ts `settleCloseOut`: P2 finding debt and P3 releases). The close-out (A8, `publishCloseOut`) runs once all but

@@ -30,6 +30,9 @@
 // M4b rev 3 (RC-11): a unit whose run was starved, or red under host pressure with its rerun pending, stays active and
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
+//
+// dev.82: in the endgame, a finding-raised unit with no dispatch record waits under `endgame` (the caller's held set,
+// `AdmitInput.endgame`, src/endgame/phase.ts `endgameHeld`): it is the architect's worklist entry.
 import { JUDGMENT_STAGES,type JudgmentStage,type OutcomeStage,type ProbeTarget } from '../core/events.ts';
 import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';

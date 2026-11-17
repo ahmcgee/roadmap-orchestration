@@ -101,17 +101,22 @@ function refuses(records: readonly LogRecord[], seq: number, detail: RegExp): vo
 const NONE = (): readonly never[] => [];
 
 describe('endgame: the finding-raised predicate', () => {
-  it('a planned unit with no repairs is not; another origin, or a spec that repairs, is', () => {
-    assert.equal(findingRaised(unit(U1), []), false);
-    assert.equal(findingRaised(unit(U1, { origin: 'planned' }), []), false);
-    assert.equal(findingRaised(unit(U1), [findingId('F-1')]), true);
-    for (const origin of ['repair', 'polish', 'deflake'] as const) assert.equal(findingRaised(unit(R1, { origin }), []), true, origin);
+  it('a unit added after the first revision is, by an origin other than planned or a spec that repairs; one the arc started with never is', () => {
+    const log = new Log([U1]);
+    log.plan([U1, U2, R1], [{ type: 'unit-added', unit: U2 }, { type: 'unit-added', unit: R1 }]);
+    const view = log.view();
+    assert.equal(findingRaised(view, unit(U2), []), false);
+    assert.equal(findingRaised(view, unit(U2, { origin: 'planned' }), []), false);
+    assert.equal(findingRaised(view, unit(U2), [findingId('F-1')]), true);
+    for (const origin of ['repair', 'polish', 'deflake'] as const) assert.equal(findingRaised(view, unit(R1, { origin }), []), true, origin);
+    assert.equal(findingRaised(view, unit(U1, { origin: 'repair' }), [findingId('F-1')]), false, 'in the first revision: planned work');
   });
 });
 
 describe('endgame: the phase predicate', () => {
   it('a planned unit open is the body; every planned unit settled enters the endgame, finding-raised units open or not', () => {
-    const log = new Log([U1, R1]);
+    const log = new Log([U1]);
+    log.plan([U1, R1], [{ type: 'unit-added', unit: R1 }]);
     const plan = planOf([unit(U1), unit(R1, { origin: 'repair' })]);
     assert.deepEqual(phaseKind(log.view(), plan, NONE), { kind: 'body', planned: [U1], milestones: [] });
     log.merge(U1);
@@ -120,12 +125,14 @@ describe('endgame: the phase predicate', () => {
     assert.deepEqual(phaseKind(log.view(), plan, NONE), { kind: 'endgame' });
   });
 
-  it('a planned unit whose spec repairs something is finding-raised; a cut planned unit is settled', () => {
-    const log = new Log([U1, U2]);
-    log.plan([U1, U2], [{ type: 'unit-cut', unit: U2 }]);
+  it('a later planned unit whose spec repairs something is finding-raised; an arc planned as repairs starts in the body', () => {
+    const log = new Log([U1]);
+    log.plan([U1, U2], [{ type: 'unit-added', unit: U2 }]);
+    log.merge(U1);
     const plan = planOf([unit(U1), unit(U2)]);
-    assert.deepEqual(phaseKind(log.view(), plan, NONE), { kind: 'body', planned: [U1], milestones: [] });
-    assert.deepEqual(phaseKind(log.view(), plan, (u) => (u.id === U1 ? [obligationId('I-1')] : [])), { kind: 'endgame' });
+    assert.deepEqual(phaseKind(log.view(), plan, NONE), { kind: 'body', planned: [U2], milestones: [] });
+    assert.deepEqual(phaseKind(log.view(), plan, (u) => (u.id === U2 ? [obligationId('I-1')] : [])), { kind: 'endgame' });
+    assert.deepEqual(phaseKind(new Log([R1]).view(), planOf([unit(R1, { origin: 'repair' })]), () => [findingId('F-1')]), { kind: 'body', planned: [R1], milestones: [] });
   });
 
   it('a milestone lacks its checkpoint until a walk of it ended as a round and its milestone audit completed', () => {
@@ -168,13 +175,18 @@ describe('endgame: the phase predicate', () => {
 });
 
 describe('endgame: held and running units, the step', () => {
-  it('the endgame holds active finding-raised units with no dispatch record; the body holds none', () => {
-    const log = new Log([U1, R1, R2]);
+  it('the endgame holds active finding-raised units the entry found with no dispatch record; the body holds none; one admitted later runs', () => {
+    const log = new Log([U1]);
+    log.plan([U1, R1, R2], [{ type: 'unit-added', unit: R1 }, { type: 'unit-added', unit: R2 }]);
     const plan = planOf([unit(U1), unit(R1, { origin: 'repair' }), unit(R2, { origin: 'polish' })]);
     log.add(dispatch(R1));
     assert.deepEqual([...endgameHeld(log.view(), plan, NONE)], [], 'body');
     log.merge(U1);
     assert.deepEqual([...endgameHeld(log.view(), plan, NONE)], [R2], 'r1 was dispatched: it finishes');
+    log.add(fact({ kind: 'endgame-entered', episode: 1, planRev: 2 }));
+    const R3 = unitId('r3');
+    log.plan([U1, R1, R2, R3], [{ type: 'unit-added', unit: R3 }]);
+    assert.deepEqual([...endgameHeld(log.view(), planOf([...plan.units, unit(R3, { origin: 'repair' })]), NONE)], [R2], 'r3, admitted in the episode, runs');
   });
 
   it('a running unit is active and dispatched with every unmerged dependency running; one behind a held unit is not', () => {
@@ -186,7 +198,7 @@ describe('endgame: held and running units, the step', () => {
     assert.deepEqual(runningUnits(log.view(), planOf([unit(U1), unit(R1, { after: [U1] }), unit(R2)])), [R1], 'a merged dependency');
   });
 
-  it('settling until opened; open while required entries remain or the branch is not the head; closing once both hold', () => {
+  it('settling until opened; open while required entries remain or the branch is unlanded; closing once neither holds', () => {
     const log = new Log([U1]);
     log.merge(U1);
     log.add(fact({ kind: 'endgame-entered', episode: 1, planRev: 1 }));

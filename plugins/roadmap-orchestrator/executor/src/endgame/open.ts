@@ -10,7 +10,7 @@
 // - **The item**: one non-blocking `endgame` item per opened episode (subject the arc), raised after the fact and again
 //   on a later tick if a crash fell between (`raiseEndgameItem`). Its recommendation carries the size guard: more than
 //   ENDGAME_BY_HAND required entries names the remaining units and suggests `resume <unit>` or a repair unit by apply (advisory).
-// - **Closing** (`stepOf`): the required worklist empty and the endgame branch at the integration head. What the closing
+// - **Closing** (`stepOf`): the required worklist empty and the endgame branch landed (its tip an ancestor of the integration head). What the closing
 //   step runs before the arc completes (the review job over `base..head`, landings) is `closingSettled`'s.
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -21,6 +21,7 @@ import { durableMkdir, durableWrite } from '../core/fsx.ts';
 import { specRepairs } from '../core/records.ts';
 import type { EndgameEpisode } from '../core/state.ts';
 import { type AbsPath, type RefName, absPath, refName } from '../core/values.ts';
+import { isAncestor } from '../git/ff.ts';
 import { refTarget } from '../git/git.ts';
 import { auditPending } from '../holistic/audit.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
@@ -67,9 +68,10 @@ export function endgameNow(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null
   const notHeld: ObligationId[] = [];
   for (const v of obligationVerdicts(ctx, head, laneEnv)) if (v.verdict === 'not-held') notHeld.push(v.obligation);
   const list = worklist(view, plan, repairsOf, notHeld, episode);
-  const tipAtHead = episode !== null && episode.opened !== null && refTarget(ctx.repo, endgameBranch(plan.arc)) === head;
+  const tip = episode !== null && episode.opened !== null ? refTarget(ctx.repo, endgameBranch(plan.arc)) : null;
+  const landed = tip !== null && isAncestor(ctx.repo, tip, head);
   return {
-    phase: { kind: 'endgame', step: stepOf(episode, list.required.length, tipAtHead), episode: episode?.episode ?? view.holistic().endgame.length + 1 },
+    phase: { kind: 'endgame', step: stepOf(episode, list.required.length, landed), episode: episode?.episode ?? view.holistic().endgame.length + 1 },
     worklist: list, episode,
   };
 }
