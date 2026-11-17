@@ -724,7 +724,8 @@ export class Fold implements JournalView {
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #surfaceFacts: import('./events.ts').SurfaceFact[] = [];
-  readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
+  /** `command`: the note's command, or (dev.82) the batch witness job whose `batch-reopened` carries the brief. */
+  readonly #noted: Readonly<{unit: UnitId; command: CommandId | JobId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
   readonly #lanesReruns: (Omit<FactOf<'lanes-rerun'>, 'kind'> & Seq)[] = [];
@@ -1038,6 +1039,31 @@ export class Fold implements JournalView {
         this.#ciFacts.push(f);
         const u = this.#units.get(f.unit);
         if (u === undefined) return fail(`external witness reopens unknown unit ${f.unit}`);
+        this.#setUnitState(u, { ...u.state, status: 'active', stage: 'pre-build', decided: null, approval: null, open: null, park: null, entry: null, rerun: null });
+        this.#completion = null;
+        return;
+      }
+      case 'batch-witness-started':
+        if (this.#ciFacts.some((g) => g.kind === 'batch-witness-started' && !this.#ciFacts.some((e) => e.kind === 'batch-witness-ended' && e.job === g.job))) {
+          return fail(`batch witness ${f.job} started while another is open`);
+        }
+        this.#openJob(f.job, fail);
+        this.#ciFacts.push(f);
+        return;
+      case 'batch-witness-ended':
+        if (!this.#ciFacts.some((g) => g.kind === 'batch-witness-started' && g.job === f.job) || this.#ciFacts.some((g) => g.kind === 'batch-witness-ended' && g.job === f.job)) {
+          return fail(`batch witness ${f.job} ended, but it is not open`);
+        }
+        this.#ciFacts.push(f);
+        return;
+      case 'batch-reopened': {
+        if (!this.#ciFacts.some((g) => g.kind === 'batch-witness-started' && g.job === f.job) || this.#ciFacts.some((g) => g.kind === 'batch-witness-ended' && g.job === f.job)) {
+          return fail(`batch witness ${f.job} reopens ${f.unit}, but it is not open`);
+        }
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`batch witness reopens unknown unit ${f.unit}`);
+        this.#noted.push({ unit: f.unit, command: f.job, brief: f.brief, seq: at.seq });
         this.#setUnitState(u, { ...u.state, status: 'active', stage: 'pre-build', decided: null, approval: null, open: null, park: null, entry: null, rerun: null });
         this.#completion = null;
         return;
@@ -2214,7 +2240,7 @@ export class Fold implements JournalView {
   }
 
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[] { return this.#surfaceFacts; }
-  notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
+  notes(unit: UnitId): readonly Readonly<{command: CommandId | JobId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {
     const starts = this.#units.get(unit)?.starts ?? new Map<string, number>();
     const current = starts.get(`build#${attempt}`) ?? this.#lastSeq + 1;

@@ -794,7 +794,18 @@ export type CiFact =
    */
   | Readonly<{ kind: 'lane-base-compared'; unit: UnitId; attempt: number; lane: LaneId; base: Sha; evidence: AbsPath; result: 'pass' | 'fail'; fresh?: true }>
   /** dev.81 (A3): `roadmap push`: the last pushed head counts as settled, so the CI ref advances to the wanted head now. */
-  | Readonly<{ kind: 'push-requested'; command: CommandId }>;
+  | Readonly<{ kind: 'push-requested'; command: CommandId }>
+  /**
+   * dev.82 (E3): the batch witness `job` (`witness-<n>`, src/pipeline/batchlanes.ts) opens over the integration head `head`
+   * for its batch arc lanes `lanes` (ascending), and ends once every red obligation is attributed.
+   */
+  | Readonly<{ kind: 'batch-witness-started'; job: JobId; head: Sha; lanes: readonly LaneId[] }>
+  | Readonly<{ kind: 'batch-witness-ended'; job: JobId }>
+  /**
+   * dev.82 (E3): the batch witness `job` bisected `obligation`'s red to the publication `culprit`, whose unit is a deliverer
+   * of it: `unit`, its lineage head, reopens (uncharged, as `external-reopened` does) with the kept brief `brief`.
+   */
+  | Readonly<{ kind: 'batch-reopened'; job: JobId; unit: UnitId; obligation: ObligationId; culprit: Sha; brief: Sha256Hex }>;
 
 export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
 export type SurfaceFact =
@@ -1427,6 +1438,7 @@ const lockOrder: Read<readonly ResourceUnit[]> = (value, path) => {
 const jobR: Read<JobId> = (v, p) => jobIdOf(v, p);
 const docsJobR: Read<JobId> = (v, p) => jobIdOfKind('docs')(v, p);
 const batchJobR: Read<JobId> = (v, p) => jobIdOfKind('batch')(v, p);
+const witnessJobR: Read<JobId> = (v, p) => jobIdOfKind('witness')(v, p);
 const findingR: Read<FindingId> = (v, p) => findingId(v, p);
 const obligationR: Read<ObligationId> = (v, p) => obligationId(v, p);
 const laneR: Read<LaneId> = (v, p) => laneId(v, p);
@@ -2032,6 +2044,12 @@ const M4A_FACT_READERS: { readonly [K in M4aFactKind | CiFact['kind']]: Read<Fac
   'external-witness': object((f): Fact => ({ kind: f.get('kind', literal('external-witness')), command: f.get('command', cmdR), obligation: f.get('obligation', obligationR), obligationRev: f.get('obligationRev', positive), laneRev: f.get('laneRev', laneRevR), inputSha: f.get('inputSha', shaR), head: f.get('head', shaR), result: f.get('result', oneOf(['pass', 'fail'] as const)), evidence: f.get('evidence', str), evidenceSha256: f.get('evidenceSha256', nullable(sha256R)), ...(() => { const since = f.optional('since', nullable(shaR)); return since === undefined ? {} : { since }; })() })),
   'push-requested': object((f): Fact => ({ kind: f.get('kind', literal('push-requested')), command: f.get('command', cmdR) })),
   'external-reopened': object((f): Fact => ({ kind: f.get('kind', literal('external-reopened')), command: f.get('command', cmdR), unit: f.get('unit', unitR) })),
+  'batch-witness-started': object((f): Fact => ({ kind: f.get('kind', literal('batch-witness-started')), job: f.get('job', witnessJobR), head: f.get('head', shaR), lanes: f.get('lanes', arrayOf(laneR, { nonEmpty: true })) })),
+  'batch-witness-ended': object((f): Fact => ({ kind: f.get('kind', literal('batch-witness-ended')), job: f.get('job', witnessJobR) })),
+  'batch-reopened': object((f): Fact => ({
+    kind: f.get('kind', literal('batch-reopened')), job: f.get('job', witnessJobR), unit: f.get('unit', unitR), obligation: f.get('obligation', obligationR),
+    culprit: f.get('culprit', shaR), brief: f.get('brief', sha256R),
+  })),
   'spike-completed': object((f): Fact => ({ kind: f.get('kind', literal('spike-completed')), unit: f.get('unit', unitR) })),
   'attempt-marker': object((f): Fact => ({ kind: f.get('kind', literal('attempt-marker')), unit: f.get('unit', unitR), marker: f.get('marker', literal('M4')), builds: f.get('builds', nat), judged: f.get('judged', nat) })),
   'attempt-capped': object((f): Fact => ({ kind: f.get('kind', literal('attempt-capped')), unit: f.get('unit', unitR), builds: f.get('builds', nat), judged: f.get('judged', nat) })),

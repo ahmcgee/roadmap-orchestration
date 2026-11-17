@@ -161,6 +161,7 @@ import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,r
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
 import { baselineDue,localLanes,runBaseline } from '../pipeline/baseline.ts';
+import { batchWitnessDue,runBatchWitness } from '../pipeline/batchlanes.ts';
 import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/deflakemint.ts';
 import { type StageContext,runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
@@ -1174,6 +1175,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
     if (due('holistic') && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
+      const witness = batchWitnessDue(h.audit, 'merges');
       if (packReviewPending(h.revision)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.revision)).kind === 'ended' ? PROGRESS : WAIT));
       } else if (job !== null) {
@@ -1194,6 +1196,11 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         trackRetrying('holistic:compare', 'holistic', async () => {
           const out = await runCompare(h.revision);
           return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
+        });
+      } else if (witness !== null) {
+        trackRetrying('holistic:witness', 'holistic', async () => {
+          const out = await runBatchWitness(h.audit, witness);
+          return out.kind === 'no-verdict' ? { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) } : PROGRESS;
         });
       } else if (auditPending(h.audit)) {
         trackRetrying('holistic:audit', 'holistic', async () => {

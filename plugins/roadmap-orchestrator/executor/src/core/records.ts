@@ -910,14 +910,14 @@ export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: re
  * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
  * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
  * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build`,
- * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
- * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
+ * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check), `candidate` or (dev.82) `batch` (proof after
+ * merge at the batch witness, src/pipeline/batchlanes.ts); a suite lane any (`batch` only in a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
  */
 export type LaneKind = 'spec' | 'suite' | 'arc';
 export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
 export type LaneCadence = (typeof LANE_CADENCES)[number];
 /** The cadences each kind of lane may declare. */
-export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit', 'candidate'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
+export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit', 'candidate'], suite: LANE_CADENCES, arc: ['build', 'candidate', 'batch'] };
 /** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
 export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
 

@@ -151,7 +151,16 @@ export type Holistic = Readonly<{
   advances: readonly VisionClauseId[];
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
+  /**
+   * dev.82 (E3): the batch witness's merge count: a `batch` arc lane runs once this many publications landed since its last
+   * observation (src/pipeline/batchlanes.ts `batchWitnessDue`); absent: `DEFAULT_BATCH_EVERY`.
+   */
+  batchEvery?: number;
 }>;
+/** dev.82 (E3): the default `holistic.batchEvery`. */
+export const DEFAULT_BATCH_EVERY = 5;
+/** The batch witness's merge count in force. */
+export const batchEveryOf = (plan: PlanM1): number => plan.holistic?.batchEvery ?? DEFAULT_BATCH_EVERY;
 /** An `architecture-doc` plan's holistic block: the vision file (`roadmap/vision-m3`), relative to the plan's directory. */
 export type HolisticDoc = Holistic & Readonly<{ vision: PlanPath }>;
 
@@ -488,10 +497,11 @@ const holisticOf = (withVision: boolean): Read<Holistic | HolisticDoc> => object
     throw new SchemaError(`${f.path}.vision`, withVision ? 'the vision file (an architecture-doc plan)' : 'absent (a corpus plan\'s vision is <repo>/.roadmap/vision.json)', vision);
   }
   const obligations = f.optional('obligations', (v, p) => planPath(v, p));
+  const batchEvery = f.optional('batchEvery', positive);
   return {
     ...(vision === undefined ? {} : { vision }),
     advances: f.get('advances', idList((v, p) => visionClauseId(v, p), { nonEmpty: true })),
-    ...(obligations === undefined ? {} : { obligations }) };
+    ...(obligations === undefined ? {} : { obligations }), ...(batchEvery === undefined ? {} : { batchEvery }) };
 });
 
 /** A unit's bounds: the built-in ones, then the plan's `limits`, then the unit's own (M3). */
