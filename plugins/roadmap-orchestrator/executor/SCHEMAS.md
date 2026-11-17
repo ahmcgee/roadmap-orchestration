@@ -1803,3 +1803,19 @@ The field figure was atlas2 m6: 11.63 MB, of which work rows were 6.09 MB (13,99
 1.16 MB and two receipts' `verified` 2.42 MB. The fixture measurement (real-shape fixture, 81 KB, 33.7% work) did not
 reproduce it. `test/status-wire.test.ts` checks that a retired unit's printed bytes stay flat as its runs grow. The summary
 is unchanged.
+
+### dev.82 E5b: co-repairers joined through `after`
+
+No record change. Two live direct repairers of one finding (specs naming the same `F-n` in `repairs`; neither cut,
+terminal nor published) where one depends on the other through `after` (transitively over the effective graph, through
+units still open) never batch: R7 holds the dependency at its candidate until the dependent waits there too, and the
+dependent waits on its merge (`src/schedule/graph.ts` `joinedCoRepairers`). The classifier refuses such a revision
+(reason `co-repairer-after: …`, naming the finding and the dependency path). An adopted plan holding a pair raises one
+blocking arc `plan-defect` item at scheduler start, once while open (temporary scaffolding).
+
+### dev.82 E5c: `window-spent`
+
+`STAGE_OUTCOME_KINDS.build` gains `window-spent` (additive). A build call that ended `process-fault` with exit.json
+`cause: 'deadline'`, and that no pressure ruling called starved, records `window-spent` instead of `process-fault`, for
+every round kind (fresh, fix, resume, resolve, steer). Row `go(at('quiesce'))`, uncharged, as `lost-tree-effects`: the
+reservation stays held and what the round left is salvaged, verified and gated like a report.
