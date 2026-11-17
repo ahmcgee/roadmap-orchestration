@@ -431,6 +431,27 @@ export function validateDiagnosisOutput(value: unknown): DiagnosisOutput {
   return diagnosisOutput(value, 'diagnosis');
 }
 
+/**
+ * dev.82 (WS-5): the verifier's endgame review answer (src/endgame/review.ts): its findings, each opened as an
+ * `endgame-review` finding of its severity (only a P1 holds the arc), with the paths, lines and experiments it rests on
+ * (at least one), and its reasons.
+ */
+export type EndgameReviewFinding = Readonly<{ severity: FindingSeverity; text: string; path: string | null; evidence: readonly string[] }>;
+export type EndgameReviewOutput = Readonly<{ findings: readonly EndgameReviewFinding[]; reasons: readonly string[] }>;
+export const ENDGAME_REVIEW_SCHEMA: Schema = sObj({
+  findings: sArr(sObj({ severity: sEnum(LENS_SEVERITIES), text: S_STR, path: sNullable(S_STR), evidence: sArr(S_STR, 1) })),
+  reasons: sArr(S_STR, 1),
+});
+const endgameReviewOutput: Read<EndgameReviewOutput> = object((f) => ({
+  findings: f.get('findings', arrayOf(object((g) => ({
+    severity: g.get('severity', oneOf(LENS_SEVERITIES)), text: g.get('text', nonBlank), path: g.get('path', nullable(str)), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })),
+  })))),
+  reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+}));
+export function validateEndgameReviewOutput(value: unknown): EndgameReviewOutput {
+  return endgameReviewOutput(value, 'endgame review');
+}
+
 /** How a cluster map covers a diff's paths: the paths no cluster matches, and those more than one does (with their ids). */
 export type ClusterCoverage = Readonly<{ uncovered: readonly RepoPath[]; duplicated: readonly Readonly<{ path: RepoPath; clusters: readonly string[] }>[] }>;
 

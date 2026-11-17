@@ -20,7 +20,8 @@ import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
 import { type CommandBody,type RevisionManifest,type RunStart,runStart } from '../core/records.ts';
 import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
-import { catFileType,revParse } from '../git/git.ts';
+import { catFileType,refTarget,revParse } from '../git/git.ts';
+import { endgameBranch } from '../endgame/open.ts';
 import { branchRef } from '../core/values.ts';
 import { ciRefOf } from '../forge/ciref.ts';
 import { requirePlanInForce } from '../input/inforce.ts';
@@ -160,6 +161,16 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'demo', act: command.act });
     case 'push':
       return submit(command.run, hostDir, { type: 'push' });
+    // dev.82 (WS-5): a fix without --commit records the endgame branch's head as it stands now.
+    case 'endgame': {
+      const { act } = command;
+      if (act.type !== 'fix') return submit(command.run, hostDir, { type: 'endgame', act });
+      const run = locate(command.run, hostDir);
+      const branch = endgameBranch(run.arc);
+      const commit = act.commit ?? refTarget(startOf(run).repo, branch);
+      if (commit === null) throw new CliError(`endgame fix: ${branch} does not exist (no endgame episode opened yet); give --commit <sha>`);
+      return submit(command.run, hostDir, { type: 'endgame', act: { ...act, commit } });
+    }
     case 'audit':
       return submit(command.run, hostDir, { type: 'audit' });
     // dev.81 (C3a): take back a pending mutation.

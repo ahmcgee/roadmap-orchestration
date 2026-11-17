@@ -11,7 +11,8 @@
 //   on a later tick if a crash fell between (`raiseEndgameItem`). Its recommendation carries the size guard: more than
 //   ENDGAME_BY_HAND required entries names the remaining units and suggests `resume <unit>` or a repair unit by apply (advisory).
 // - **Closing** (`stepOf`): the required worklist empty and the endgame branch landed (its tip an ancestor of the integration head). What the closing
-//   step runs before the arc completes (the review job over `base..head`, landings) is `closingSettled`'s.
+//   step runs before the arc completes (the review job over `base..head`, the batch witness at the head) is
+//   `closingSettled`'s; the scheduler runs them as the endgame's jobs (src/endgame/jobs.ts).
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ArcId, EnvId, ObligationId, Sha256Hex } from '../core/ids.ts';
@@ -24,6 +25,7 @@ import { type AbsPath, type RefName, absPath, refName } from '../core/values.ts'
 import { isAncestor } from '../git/ff.ts';
 import { refTarget } from '../git/git.ts';
 import { auditPending } from '../holistic/audit.ts';
+import { batchWitnessDue } from '../pipeline/batchlanes.ts';
 import { integrationHeadNow } from '../holistic/cadence.ts';
 import type { ArcLaneDef } from '../holistic/types.ts';
 import { raiseNeedsUser, readNeedsUser } from '../needsuser.ts';
@@ -77,18 +79,32 @@ export function endgameNow(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null
 }
 
 /**
- * Whether the closing step has run everything it owes before the arc may complete. Nothing yet: the closing step's
- * review job and landings are added here.
+ * WS-5: whether `episode` owes an independent review: none of its reviews reached a head holding the endgame branch's tip
+ * (each review covers `base..head`, so one that holds the tip covers every endgame commit; the executor's own later
+ * publications, a close-out say, owe none).
  */
-export function closingSettled(_ctx: Ctx, _episode: EndgameEpisode): boolean {
-  return true;
+export function reviewDue(ctx: Pick<StageContext, 'repo' | 'plan'>, episode: EndgameEpisode): boolean {
+  const tip = refTarget(ctx.repo, endgameBranch(ctx.plan().arc));
+  if (tip === null) throw new Error(`endgame episode ${episode.episode} opened, but ${endgameBranch(ctx.plan().arc)} does not exist`);
+  return !episode.reviews.some((r) => isAncestor(ctx.repo, tip, r.to));
+}
+
+/**
+ * Whether the closing step has run everything it owes before the arc may complete (WS-5): no endgame job running, the
+ * independent review over the endgame's range (`reviewDue`) and the batch witness at the head (`batchWitnessDue(ctx,
+ * 'closing')`: the batch arc lanes' obligations witnessed on the final tip). The final audit's coverage of the head and the
+ * obligations held there are completion clauses of their own (src/schedule/scheduler.ts), and a P1 the review or the audit
+ * opens is a required worklist entry, which returns the step to `open`.
+ */
+export function closingSettled(ctx: StageContext, episode: EndgameEpisode): boolean {
+  return episode.jobs.every((j) => j.ended !== null) && !reviewDue(ctx, episode) && batchWitnessDue(ctx, 'closing') === null;
 }
 
 /**
  * The `endgame-open` completion clause: an opened episode not yet settled (its step `open`, or `closing` with
  * `closingSettled` false).
  */
-export function endgameOpen(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null): boolean {
+export function endgameOpen(ctx: StageContext, laneEnv: (lane: ArcLaneDef) => EnvId | null): boolean {
   const now = endgameNow(ctx, laneEnv);
   if (now.phase.kind !== 'endgame' || now.episode === null || now.episode.opened === null) return false;
   return now.phase.step === 'open' || !closingSettled(ctx, now.episode);

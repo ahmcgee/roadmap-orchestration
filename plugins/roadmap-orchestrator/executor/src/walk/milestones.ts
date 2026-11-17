@@ -21,6 +21,8 @@
 //   landed (merged) and k < `walkRounds`; otherwise the milestone settles. A milestone settles at most once: no fact
 //   records it; `settledMilestones` is the demo's hook (agent G promotes on it). Every severity gets an immediate
 //   checkpoint and holds the round open until weighed (owner ruling 2026-10-24); only a P1 holds the milestone node.
+//   dev.82 (WS-5): `roadmap endgame checkpoint <m>` after the last round's walk makes one more round's walk due (once
+//   no round is open), whatever `walkRounds` allows: the architect's checkpoint of the integration head after a landing.
 // - **The node** (src/walk/node.ts) passes when a walk ends `reported` and the milestone has no active walkthrough P1
 //   (`milestone-passed`, written by the walk job, src/walk/walk.ts).
 // - **Escalation** (`finding-p1-escalated`, blocking, raised once per walk job): a walkthrough P1 of the walk still open
@@ -185,7 +187,15 @@ export function milestoneProgress(view: JournalView, plan: PlanM1, m: Milestone,
   if (last.ended!.outcome === 'bring-up-failed' && since > last.ended!.seq) return braked(walks, last.round, since);
   const r = roundOf(view, plan, last, repairs);
   if (r.pending !== null || r.inFlight.length > 0) return { kind: 'round-open', round: r };
+  // dev.82 (WS-5): `roadmap endgame checkpoint <m>` since the last round's walk: one more round, whatever rounds remain.
+  const asked = checkpointAsked(view, m.id);
+  if (asked > last.seq) return braked(walks, last.round + 1, Math.max(asked, since));
   return r.landed.length > 0 && last.round < walkRoundsOf(plan) ? braked(walks, last.round + 1, Math.max(last.seq, since)) : { kind: 'settled', last };
+}
+
+/** dev.82 (WS-5): the seq of the latest endgame checkpoint request of `milestone` (`endgame-requested{checkpoint}`), 0 before one. */
+export function checkpointAsked(view: JournalView, milestone: MilestoneId): number {
+  return Math.max(0, ...view.holistic().endgame.flatMap((e) => e.requests.flatMap((q) => (q.request.type === 'checkpoint' && q.request.milestone === milestone ? [q.seq] : []))));
 }
 
 /**

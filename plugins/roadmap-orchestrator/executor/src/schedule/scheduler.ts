@@ -71,7 +71,9 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
 // while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
 // `processClock`); dev.82, the endgame's open step (`openEndgame`, src/endgame/open.ts) once its episode settled with a
-// required worklist. Before the holistic jobs, each tick writes the endgame episode's edge (`endgameEdge`). A job that waits on a condition a command changes (skipped for a
+// required worklist; dev.82 (WS-5), an endgame job (`runEndgameJob`, src/endgame/jobs.ts: a landing, review or lane run
+// requested by an endgame command, or the closing step's review) before the batch witness, which the closing step also
+// asks for. Before the holistic jobs, each tick writes the endgame episode's edge (`endgameEdge`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
 // lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
 // minutes) and, once its episode is PARK_ESCALATE_MS old, raises one non-blocking `park-escalated` parented by the job
@@ -124,7 +126,8 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import { cpuBasis } from '../core/cpu.ts';
 import { orderingOf,wakeOrdering } from '../park/ordering.ts';
-import { endgameOpen,openDue,openEndgame,raiseEndgameItem,repairsReader } from '../endgame/open.ts';
+import { endgameJobDue,runEndgameJob } from '../endgame/jobs.ts';
+import { endgameNow,endgameOpen,openDue,openEndgame,raiseEndgameItem,repairsReader } from '../endgame/open.ts';
 import { endgameHeld,openEpisode,phaseKind } from '../endgame/phase.ts';
 
 import { dirname,join } from 'node:path';
@@ -1199,7 +1202,8 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const applied = v.planApplied();
       if (applied === null) throw new Error('the endgame entered with no plan in force');
       journal.fact({ kind: 'endgame-entered', episode: v.holistic().endgame.length + 1, planRev: applied.rev });
-    } else if (kind === 'body' && open !== null) {
+    } else if (kind === 'body' && open !== null && open.jobs.every((j) => j.ended !== null)) {
+      // WS-5: an episode is left between its jobs, never under one.
       journal.fact({ kind: 'endgame-left', episode: open.episode, cause: 'planned-unit' });
     }
   };
@@ -1214,7 +1218,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
     if (due('holistic') && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
-      const witness = batchWitnessDue(h.audit, 'merges');
+      const endgameJob = endgameJobDue(h.audit, h.laneEnv);
+      // dev.82 (WS-5): the endgame's closing step also runs the batch arc lanes whose obligations are unobserved on the head.
+      const closing = (): boolean => { const p = endgameNow(h.audit, h.laneEnv).phase; return p.kind === 'endgame' && p.step === 'closing'; };
+      const witness = batchWitnessDue(h.audit, 'merges') ?? (closing() ? batchWitnessDue(h.audit, 'closing') : null);
       if (packReviewPending(h.revision)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.revision)).kind === 'ended' ? PROGRESS : WAIT));
       } else if (job !== null) {
@@ -1235,6 +1242,12 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
         trackRetrying('holistic:compare', 'holistic', async () => {
           const out = await runCompare(h.revision);
           return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
+        });
+      } else if (endgameJob !== null) {
+        // dev.82 (WS-5): an endgame request (land, review, run) or the closing step's review (src/endgame/jobs.ts).
+        trackRetrying('holistic:endgame-job', 'holistic', async () => {
+          const out = await runEndgameJob(h.audit, endgameJob);
+          return out.kind === 'no-verdict' ? { kind: 'no-verdict', job: out.job, detail: out.detail } : PROGRESS;
         });
       } else if (witness !== null) {
         trackRetrying('holistic:witness', 'holistic', async () => {

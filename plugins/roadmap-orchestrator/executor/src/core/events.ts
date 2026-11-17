@@ -31,7 +31,7 @@ COMMAND_VERDICTS,DEMO_ACTS,LENS_KIND_NAMES,RERUN_CAUSES,
 approvalFingerprint,
 classUsages,
 containmentMode,
-dispatchRecord,killReason,knownDefectMatch,
+dispatchRecord,type EndgameRef,type EndgameRequest,endgameRef,endgameRequest,killReason,knownDefectMatch,
 manifestSpecs,
 optionId,pauseTarget,
 resumeTarget,revisionInputs,specPatch,stage,
@@ -1120,16 +1120,6 @@ export type EndgameFact =
   | Readonly<{ kind: 'endgame-job-started'; job: JobId; command: CommandId | null; request: EndgameJobRequest }>
   | Readonly<{ kind: 'endgame-job-ended'; job: JobId; outcome: EndgameJobOutcome; detail: string }>;
 
-/**
- * dev.82 (WS-5): what an endgame command asks of the scheduler: land the endgame head, review the endgame's range now, run
- * lanes at the endgame head, or one more walk round of a milestone at the integration head (served by the walk itself,
- * src/walk/milestones.ts: no endgame job).
- */
-export type EndgameRequest =
-  | Readonly<{ type: 'land' }>
-  | Readonly<{ type: 'review' }>
-  | Readonly<{ type: 'run'; lanes: readonly LaneId[] }>
-  | Readonly<{ type: 'checkpoint'; milestone: MilestoneId }>;
 /** The requests an endgame job serves (a checkpoint is the walk's). */
 export type EndgameJobRequest = Exclude<EndgameRequest, Readonly<{ type: 'checkpoint' }>>;
 /**
@@ -1140,8 +1130,7 @@ export type EndgameJobRequest = Exclude<EndgameRequest, Readonly<{ type: 'checkp
 export const ENDGAME_JOB_OUTCOMES = ['landed', 'refused', 'red', 'no-verdict', 'reviewed', 'ran'] as const;
 export type EndgameJobOutcome = (typeof ENDGAME_JOB_OUTCOMES)[number];
 
-/** What an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
-export type EndgameRef = FindingId | ObligationId | UnitId;
+export type { EndgameRef, EndgameRequest } from './records.ts';
 export const ENDGAME_LEFT_CAUSES = ['planned-unit', 'complete'] as const;
 export type EndgameLeftCause = (typeof ENDGAME_LEFT_CAUSES)[number];
 
@@ -1521,16 +1510,8 @@ const obligationR: Read<ObligationId> = (v, p) => obligationId(v, p);
 const laneR: Read<LaneId> = (v, p) => laneId(v, p);
 const laneRevR: Read<LaneRev> = (v, p) => laneRev(v, p);
 const planRevR: Read<PlanRev> = (v, p) => planRev(v, p);
-/** dev.82: an endgame fix's target: `F-<n>` a finding, `I-<n>` an obligation, anything else a unit. */
-const endgameRefR: Read<EndgameRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : typeof v === 'string' && v.startsWith('I-') ? obligationId(v, p) : unitId(v, p));
+const endgameRefR: Read<EndgameRef> = endgameRef;
 const revisionBaseR: Read<RevisionBase> = (v, p) => (v === 0 ? 0 : planRev(v, p));
-/** dev.82 (WS-5): an endgame request (`EndgameRequest`); a run's lanes ascending. */
-export const endgameRequest: Read<EndgameRequest> = tagged('type', {
-  land: object((f): EndgameRequest => ({ type: f.get('type', literal('land')) })),
-  review: object((f): EndgameRequest => ({ type: f.get('type', literal('review')) })),
-  run: object((f): EndgameRequest => ({ type: f.get('type', literal('run')), lanes: f.get('lanes', sortedBy(laneR, (l) => l, { nonEmpty: true })) })),
-  checkpoint: object((f): EndgameRequest => ({ type: f.get('type', literal('checkpoint')), milestone: f.get('milestone', (v, p): MilestoneId => milestoneId(v, p)) })),
-});
 
 const holder: Read<Holder> = tagged('type', {
   stage: object((f): Holder => ({ type: f.get('type', literal('stage')), unit: f.get('unit', unitR), stage: f.get('stage', stage), attempt: f.get('attempt', positive) })),
