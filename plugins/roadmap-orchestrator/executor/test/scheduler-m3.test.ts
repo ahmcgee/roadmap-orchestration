@@ -6,11 +6,13 @@ import { cadence } from '../src/holistic/cadence.ts';
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.declined-request-quiescent,
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.co-repairer-after and classify.co-repairer-after (dev.82
+// E5b), sched.declined-request-quiescent,
 // sched.close-out-declines-request (run 10), complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
 // sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
 // and item rules (commands.audit, needsuser.m3-blocking).
 import assert from 'node:assert/strict';
+import { readFileSync,writeFileSync } from 'node:fs';
 import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand } from '../src/commands/apply.ts';
@@ -448,6 +450,70 @@ describe('repair batches in the scheduler (R7)', () => {
       for (const f of ['F-1', 'F-2']) assert.equal(view().holistic().findings.find((x) => x.id === f)!.state, 'resolved', f);
     } finally {
       await stopAndClose(r, s);
+    }
+  });
+
+  test('sched.co-repairer-after (dev.82 E5b): two repairs of one finding joined through `after` would deadlock (the dependency held at its candidate for the dependent, the dependent waiting on its merge); an adopted plan raises one blocking arc plan-defect naming both and the edge, and nothing is admitted', T, async () => {
+    const { d } = holisticArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/'))],
+      units: [
+        { id: 'u1', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'] },
+        { id: 'u2', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'], after: ['u1'], lanes: [{ id: 'div', argv: ['node', '--test', 'test/div.test.js'] }] },
+      ],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
+      mapping: [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'lib', obligations: ['I-2'] }],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      beforeStart: openBefore(witnessDraft('I-2')),
+    });
+    const r = contextFor(d);
+    const s = startHolistic(r);
+    try {
+      const view = () => r.journal.view;
+      const approved = (): boolean => view().unit(unitId('u1')).decided?.outcome === 'approve';
+      await until(() => itemOf(r, 'plan-defect') !== null || approved(), WAIT_MS, 'the plan-defect item, or u1 approved into the deadlock');
+      const id = itemOf(r, 'plan-defect');
+      assert.notEqual(id, null, 'u1 reached its candidate held for u2, which waits on u1: no item');
+      const item = readNeedsUser(r.ctx.runDir, id!)!;
+      assert.deepEqual([item.blocking, item.subject], [true, { type: 'arc' }]);
+      assert.match(item.summary, /\bF-1\b/);
+      assert.match(item.summary, /\bu2\b.*\bu1\b/);
+      assert.equal(view().needsUser().filter((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === 'plan-defect').length, 1, 'raised once');
+      assert.equal(approved(), false, 'nothing admitted while it is open');
+    } finally {
+      await stopAndClose(r, s);
+    }
+  });
+
+  test('classify.co-repairer-after (dev.82 E5b): an apply joining two direct repairers of one finding through `after` (here through a third unit) is refused, naming the finding and the path; dropping the edge applies', T, async () => {
+    const { d } = holisticArc({
+      steps: [],
+      units: [
+        { id: 'u1', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'] },
+        { id: 'u2', obligations: ['I-1'] },
+        { id: 'u3', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'] },
+      ],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
+      mapping: [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'lib', obligations: ['I-2'] }],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      beforeStart: openBefore(witnessDraft('I-2')),
+    });
+    const r = contextFor(d);
+    try {
+      syncInputs(r);
+      const edit = (after: Readonly<Record<string, readonly string[]>>): void => {
+        const p = JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: { id: string; after?: readonly string[] }[] };
+        writeFileSync(d.planPath, JSON.stringify({ ...p, units: p.units.map((u) => ({ ...u, after: after[u.id] ?? [] })) }));
+      };
+      const apply = () => applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
+      edit({ u3: ['u2'], u2: ['u1'] });
+      const refused = await apply();
+      assert.equal(refused.kind, 'rejected', JSON.stringify(refused));
+      assert.match(refused.kind === 'rejected' ? refused.reason : '', /co-repairer-after: .*F-1.*\(u3 → u2 → u1\)/);
+      edit({ u3: ['u2'] });
+      const out = await apply();
+      assert.equal(out.kind, 'applied', JSON.stringify(out));
+    } finally {
+      r.journal.close();
     }
   });
 

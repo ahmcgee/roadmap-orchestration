@@ -135,7 +135,7 @@ type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId
 invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId,
 } from '../core/ids.ts';
 import type { Containment,Journal,JournalView } from '../core/interfaces.ts';
-import { type CommandFile,type NeedsUserContent,STAGES,type Stage } from '../core/records.ts';
+import { type CommandFile,type NeedsUserContent,STAGES,type Stage,specRepairs } from '../core/records.ts';
 import { type Read,arrayOf,bool,literal,nat,object,oneOf,positive,tagged,version } from '../core/validate.ts';
 import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
@@ -181,7 +181,7 @@ import { applyPolish,polishDue } from '../walk/polish.ts';
 import { raiseWalkItems,runWalk,settleWalks,walkPending } from '../walk/walk.ts';
 import type { Arbiter,FirstHolder } from './arbiter.ts';
 import { faultJob,faultUnit,jobFaultOpen } from './fault.ts';
-import { holdCycle } from './graph.ts';
+import { coRepairText,holdCycle,joinedCoRepairers } from './graph.ts';
 import { admitter,findingBlock,nextStage,rankOf,readyDecisions } from './ready.ts';
 import { ADMISSION_STAGES,type AdmissionConstraint,type AdmissionStage,type CommandScope,PARK_ESCALATE_MS,PROBE_BACKOFF_MIN,type ResourceRequest,type TaskState } from './types.ts';
 
@@ -753,6 +753,19 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       recommendation: `Export the inputs and ${ALL_WITHDRAWN_WAYS_OUT}; apply it with --resolves naming this item.`, options: [], evidence: [],
     }, { type: 'arc' });
     process.emitWarning(`milestone ${milestone} adopted with no live member, raised as a blocking plan-defect`, { code: 'ROADMAP_UPGRADE' });
+  }
+  // dev.82 adoption (E5b; temporary scaffolding): co-repairers joined through `after` never batch, and the classifier now
+  // refuses them; an adopted plan holding them is the root's blocking item, once while open.
+  const joined = holistic() ? joinedCoRepairers(view(), plan().units, (u) => specRepairs(loadUnitSpec(x.stage, u).spec)) : [];
+  if (joined.length > 0) {
+    const summary = `${joined.map(coRepairText).join('. ')}.`;
+    if (!openBlocking(view()).some((id) => readNeedsUser(runDir, id)?.summary === summary)) {
+      raiseNeedsUser(journal, runDir, {
+        blocking: true, subject: { type: 'arc' }, reason: 'plan-defect', summary,
+        recommendation: 'Export the inputs, drop each `after` edge named (or fold the two repairs into one unit) and apply the corrected revision with --resolves naming this item.', options: [], evidence: [],
+      }, { type: 'arc' });
+    }
+    process.emitWarning('co-repairers joined through `after` adopted, raised as a blocking plan-defect', { code: 'ROADMAP_UPGRADE' });
   }
 
   const tasks = new Map<UnitId, Task>();
