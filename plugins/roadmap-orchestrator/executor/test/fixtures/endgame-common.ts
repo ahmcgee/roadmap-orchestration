@@ -62,8 +62,8 @@ export function endgameRun(d: ArcDescriptor): EndgameRun {
   return { d, r, h, worktree, commands: w.commands, commit, command };
 }
 
-/** Lays out the endgame arc (see the header) and opens its episode 1. */
-export async function endgameArc(): Promise<EndgameRun> {
+/** Lays out the endgame arc (see the header) and enters its episode 1, then opens it unless `open` is false. */
+export async function endgameArc(open = true): Promise<EndgameRun> {
   const d = completingArc();
   const e = endgameRun(d);
   const { r, h } = e;
@@ -82,7 +82,7 @@ export async function endgameArc(): Promise<EndgameRun> {
   const inForce = () => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
   assert.deepEqual([...endgameHeld(r.journal.view, inForce(), repairsReader(h.audit))], [R1], 'r1 is held before the entry');
   r.journal.fact({ kind: 'endgame-entered', episode: 1, planRev: r.journal.view.planApplied()!.rev });
-  await openEndgame(h.audit, h.laneEnv);
+  if (open) await openEndgame(h.audit, h.laneEnv);
   return e;
 }
 

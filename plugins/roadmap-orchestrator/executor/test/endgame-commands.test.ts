@@ -1,16 +1,19 @@
 // dev.82 (WS-5): the endgame commands over a real arc (real git, real lanes, the fake Claude for the review): a fix records
 // and resolves its finding once landed; a unit a fix closes is cut; a landing of a non-descendant is refused; a red landing
 // moves nothing; `resume <unit>` releases a unit the endgame holds; and a P1 the closing step's review opens returns the
-// step to `open`. The arc is test/fixtures/endgame-common.ts `endgameArc`: episode 1 open with r1 held and F-1 a P1.
+// step to `open`. WS-7, the exit rules: an entered episode not yet opened holds completion while its required worklist is
+// non-empty; a landed episode owes its review even after its branch was reset to its base. The arc is
+// test/fixtures/endgame-common.ts `endgameArc`: episode 1 open with r1 held and F-1 a P1.
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { INTEGRATION_SLOT, type Sha } from '../src/core/ids.ts';
 import { endgameJobDue, runEndgameJob } from '../src/endgame/jobs.ts';
-import { closingSettled, endgameNow, endgameOpen, repairsReader, reviewDue } from '../src/endgame/open.ts';
+import { closingSettled, endgameNow, endgameOpen, openEndgame, repairsReader, reviewDue } from '../src/endgame/open.ts';
 import { endgameHeld, openEpisode } from '../src/endgame/phase.ts';
 import { publishedHeads } from '../src/holistic/coverage.ts';
 import { requirePlanInForce } from '../src/input/inforce.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { completionBlockers } from '../src/schedule/scheduler.ts';
 import { type EndgameRun, F1, R1, endgame, endgameArc, head, runDue } from './fixtures/endgame-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
 import { type ArcRun, appendSteps } from './fixtures/unit-common.ts';
@@ -172,6 +175,37 @@ describe('the endgame commands (dev.82, WS-5)', () => {
       assert.equal(step(), 'open', 'the P1 is a required entry: the step is open again');
       assert.deepEqual(now().worklist.required.map((x) => (x.type === 'finding' ? x.finding : x.type)), [opened.id]);
       assert.equal(endgameOpen(e.h.audit, e.h.laneEnv), true);
+    } finally {
+      e.r.journal.close();
+    }
+  });
+
+  test('endgame.settling-holds: an entered episode not yet opened holds completion (`endgame-open`) while its required worklist is non-empty', T, async () => {
+    const e = await endgameArc(false);
+    try {
+      assert.equal(episodeOf(e.r).opened, null, 'entered, not opened');
+      assert.deepEqual(endgameNow(e.h.audit, e.h.laneEnv).worklist.required.map((x) => x.type), ['finding', 'unit']);
+      assert.equal(endgameOpen(e.h.audit, e.h.laneEnv), true, 'the required worklist holds completion before the open step');
+      assert.ok(completionBlockers(e.h, { blocking: 0, pending: 0 }).includes('endgame-open'));
+      await openEndgame(e.h.audit, e.h.laneEnv);
+      assert.equal(endgameOpen(e.h.audit, e.h.laneEnv), true, 'and after it');
+    } finally {
+      e.r.journal.close();
+    }
+  });
+
+  test('endgame.review-after-reset: a landed episode owes its independent review even when the endgame branch is reset to its base afterwards', T, async () => {
+    const e = await endgameArc();
+    try {
+      const base = episodeOf(e.r).opened!.base;
+      await fixAndLand(e);
+      git(e.worktree, 'reset', '-q', '--hard', base);
+      const p = endgameNow(e.h.audit, e.h.laneEnv).phase;
+      assert.equal(p.kind === 'endgame' ? p.step : 'body', 'closing', 'nothing required, nothing unlanded');
+      assert.equal(reviewDue(e.h.audit, episodeOf(e.r)), true, 'the landed commits have had no review');
+      assert.equal(closingSettled(e.h.audit, episodeOf(e.r)), false);
+      assert.equal(endgameOpen(e.h.audit, e.h.laneEnv), true);
+      assert.deepEqual(endgameJobDue(e.h.audit, e.h.laneEnv)?.request, { type: 'review' }, 'the closing step\'s review is due');
     } finally {
       e.r.journal.close();
     }
