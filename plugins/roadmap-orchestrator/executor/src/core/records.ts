@@ -989,6 +989,12 @@ export type LaneDef = Readonly<{
    * docs-only change never carries its earlier pass over: it runs again (src/pipeline/docsonly.ts). Absent: it does not.
    */
   readsComments?: true;
+  /**
+   * dev.82 (E4): pools among `resources` the lane holds whole, every instance or none (src/resources/pool.ts): it mutates a
+   * shared estate, so it runs alone against the pool's readers (one instance each) and other mutators. Non-empty and unique
+   * when present; each a declared pool (`exclusiveProblems`). Absent: none.
+   */
+  exclusive?: readonly ResourceName[];
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -1044,7 +1050,13 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const noRerunPatterns = f.optional('noRerunPatterns', arrayOf(str, { nonEmpty: true }));
   const environment = f.optional('environment', resource);
   const readsComments = f.optional('readsComments', literal(true));
+  const exclusive = f.optional('exclusive', arrayOf(resource, { nonEmpty: true }));
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
+  if (exclusive !== undefined) {
+    assertUnique(exclusive, (r) => r, `${f.path}.exclusive`);
+    const unleased = exclusive.filter((r) => !out.resources.includes(r));
+    if (unleased.length > 0) throw new SchemaError(`${f.path}.exclusive`, 'resources of this lane', unleased);
+  }
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
   if (testArgv !== undefined && testArgv.filter((a) => a === TEST_FILES_TOKEN).length !== 1) {
     throw new SchemaError(`${f.path}.testArgv`, `one element exactly ${TEST_FILES_TOKEN}`, testArgv);
@@ -1064,6 +1076,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
     ...(noRerunPatterns === undefined ? {} : { noRerunPatterns }),
+    ...(exclusive === undefined ? {} : { exclusive }),
   };
 }
 /** A lane declared as `kind` (see `laneFields`). */

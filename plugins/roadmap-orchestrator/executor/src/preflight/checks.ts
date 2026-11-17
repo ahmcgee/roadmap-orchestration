@@ -76,7 +76,7 @@ recordPlan,revisionInForce,specBytesOf,specShaInForce
 import { CORPUS_VISION_FILE,type PlanM1,type PlanUnit,hasMilestones,parsePlan,reservedUnitIdReason,visionFile } from '../input/plan.ts';
 import { FRESH_START,RESTART,holisticNeedsCorpus,phase0InputOf,phase0Rows } from '../phase0/rows.ts';
 import { unitBranchPrefix } from '../pipeline/dispatch.ts';
-import { cpuCapacity,overCapacity } from '../resources/pool.ts';
+import { cpuCapacity,exclusiveProblems,overCapacity } from '../resources/pool.ts';
 import {
 type RepoConfig,type ResolvedRouting,arcScopeOf,provenanceStack,
 parseRepoConfig,
@@ -268,7 +268,7 @@ export const planInvalidCheck: StartupCheck<'plan-invalid'> = {
       unknown(unit.id, null, spec.resources);
       for (const lane of spec.lanes) unknown(unit.id, lane, lane.resources);
     }
-    out.push(...overCapacity(plan, { cpu: cpuCapacity(plan) }, specsLoaded));
+    out.push(...overCapacity(plan, { cpu: cpuCapacity(plan) }, specsLoaded), ...exclusiveProblems(plan, specsLoaded));
     return out;
   },
 };

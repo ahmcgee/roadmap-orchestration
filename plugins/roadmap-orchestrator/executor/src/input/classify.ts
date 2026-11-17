@@ -33,11 +33,11 @@ import { isAncestor } from '../git/ff.ts';
 import { unitBranch } from '../pipeline/dispatch.ts';
 import { decidedBy } from '../pipeline/transitions.ts';
 import { environmentState } from '../resources/environments.ts';
-import { cpuCapacity,overCapacity } from '../resources/pool.ts';
+import { cpuCapacity,exclusiveProblems,overCapacity } from '../resources/pool.ts';
 import { resourceTable } from '../resources/reserve.ts';
 import { type ResolvedRouting,unsupportedSeats } from '../routing/layers.ts';
 import { RISK_TIERS,type RiskTier,UNIT_ROLES } from '../routing/types.ts';
-import { effectiveGraph,findCycle } from '../schedule/graph.ts';
+import { coRepairText,effectiveGraph,findCycle,joinedCoRepairers } from '../schedule/graph.ts';
 import type { CommandScope,ScopeOf } from '../schedule/types.ts';
 import { type Ruling,parseRulings } from '../spec/rulings.ts';
 import { SpecFileError,bytesSha256,evidenceScopeConflicts,parseSpec } from '../spec/spec.ts';
@@ -598,7 +598,13 @@ export function classify(input: ClassifyInput): Classified {
   if (chains.length === 0) {
     const cycle = findCycle(effectiveGraph(plan.units));
     if (cycle !== null) reasons.push(`the unit graph has a cycle once each re-entered unit stands for its lineage's head: ${cycle.join(' → ')}`);
-    else knownDefectRows(view, cur, plan, specs, cutNow, changes, reasons);
+    else {
+      knownDefectRows(view, cur, plan, specs, cutNow, changes, reasons);
+      // dev.82 (E5b): two direct repairers of one finding joined through `after` never batch (src/schedule/graph.ts).
+      for (const e of joinedCoRepairers(view, plan.units, (u) => { const s = specs.get(u.id); return s === undefined ? [] : specRepairs(s); })) {
+        reasons.push(`co-repairer-after: ${coRepairText(e)}; drop the edge, or fold the two into one unit`);
+      }
+    }
   }
   if (!same(derivedOf(cur), derivedOf(plan))) changes.push({ type: 'derived' });
 
@@ -693,7 +699,7 @@ export function classify(input: ClassifyInput): Classified {
   if (changes.some((c) => c.type === 'resource' && c.edit !== 'added')) for (const u of plan.units) scoped.add(u.id);
 
   // Capacity: no request above its pool's size.
-  for (const row of overCapacity(plan, { cpu: cpuCapacity(plan) }, specs)) reasons.push(canonicalJson(row));
+  for (const row of [...overCapacity(plan, { cpu: cpuCapacity(plan) }, specs), ...exclusiveProblems(plan, specs)]) reasons.push(canonicalJson(row));
 
   // Suite lanes.
   if (!same(cur.suite, plan.suite)) {

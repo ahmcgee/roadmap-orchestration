@@ -833,6 +833,12 @@ export async function buildRead(
     return { ...record(ctx, parent, 'lost-tree-effects'), run };
   }
   const v = verdictOf(ctx, parent, called);
+  // dev.82 (E5c): the runner's deadline ended the round and no pressure ruling called it starved (`verdictOf` reads that
+  // first): what it left is salvaged and verified like a report's, uncharged (`window-spent`).
+  if (v.kind === 'process-fault' && called.kind === 'result' && spentWindow(called)) {
+    const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
+    return { ...record(ctx, parent, 'window-spent'), run };
+  }
   let malformed = false;
   if (v.kind === 'success') {
     try {
@@ -868,6 +874,13 @@ export async function buildRead(
   // Lost again after its retry, with no effect on the tree.
   if (called.kind === 'lost') return failed(record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [], environment: null }));
   return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v, called));
+}
+
+/** dev.82 (E5c): whether a closed call's runner ended it at its deadline (exit.json `cause`). */
+function spentWindow(called: Extract<BackendCallOutcome, { kind: 'result' }>): boolean {
+  const exit = runnerFiles(called.invDir, called.inv).read('exit.json');
+  if (exit === null) throw new Error(`${called.inv}: a closed build call without exit.json`);
+  return exit.cause === 'deadline';
 }
 
 /** The unit's latest merge-in: the conflicted one a resolve round resolves. */

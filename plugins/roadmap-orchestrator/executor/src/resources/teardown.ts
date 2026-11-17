@@ -17,7 +17,7 @@ import { type AbsPath, absPath, isoTimeOf } from '../core/values.ts';
 import { type PlanM1, type ResourceDecl, type ToolCommand, environmentOf } from '../input/plan.ts';
 import { type ProcContext, invocationDir, invoke } from '../pipeline/invoke.ts';
 import type { ResidueRecipe } from '../recover/residue.ts';
-import { declOf, instanceEnv } from './pool.ts';
+import { declOf, instanceBinding, instanceEnv } from './pool.ts';
 
 /** The variable a probe or teardown reads its owner label from. Not ROADMAP_*: those are the runner's. */
 export const OWNER_ENV = 'RESOURCE_OWNER';
@@ -99,7 +99,7 @@ export function stageRecipes(
   instances: Readonly<Record<string, string>> = instanceEnv(resources),
 ): ReadonlyMap<ResourceInstance, ResidueRecipe> {
   const label = ownerLabel(plan.arc, unit);
-  return new Map(instancesOf(plan, resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instances), label }]));
+  return new Map(instancesOf(plan, resources).map((r) => [r, { teardown: resolveCommand(repo, resourceDecl(plan, r).teardown, label, instanceBinding(instances, r)), label }]));
 }
 
 /** How a declared command ended: its exit code and verdict against exit 0, or lost with its runner. */

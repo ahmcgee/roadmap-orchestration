@@ -1803,3 +1803,40 @@ The field figure was atlas2 m6: 11.63 MB, of which work rows were 6.09 MB (13,99
 1.16 MB and two receipts' `verified` 2.42 MB. The fixture measurement (real-shape fixture, 81 KB, 33.7% work) did not
 reproduce it. `test/status-wire.test.ts` checks that a retired unit's printed bytes stay flat as its runs grow. The summary
 is unchanged.
+
+### dev.82 E5b: co-repairers joined through `after`
+
+No record change. Two live direct repairers of one finding (specs naming the same `F-n` in `repairs`; neither cut,
+terminal nor published) where one depends on the other through `after` (transitively over the effective graph, through
+units still open) never batch: R7 holds the dependency at its candidate until the dependent waits there too, and the
+dependent waits on its merge (`src/schedule/graph.ts` `joinedCoRepairers`). The classifier refuses such a revision
+(reason `co-repairer-after: …`, naming the finding and the dependency path). An adopted plan holding a pair raises one
+blocking arc `plan-defect` item at scheduler start, once while open (temporary scaffolding).
+
+### dev.82 E5c: `window-spent`
+
+`STAGE_OUTCOME_KINDS.build` gains `window-spent` (additive). A build call that ended `process-fault` with exit.json
+`cause: 'deadline'`, and that no pressure ruling called starved, records `window-spent` instead of `process-fault`, for
+every round kind (fresh, fix, resume, resolve, steer). Row `go(at('quiesce'))`, uncharged, as `lost-tree-effects`: the
+reservation stays held and what the round left is salvaged, verified and gated like a report.
+
+### dev.82 E4: pools held whole (`exclusive`)
+
+All additive; no table, fold or residue change.
+
+- `LaneDef.exclusive?: ResourceName[]` (suite, spec and arc lanes): non-empty, unique, each among the lane's own
+  `resources`, else the lane reader refuses it. Each must be a declared pool: plan load and apply refuse a suite or spec
+  lane's that is not as `plan-invalid{schema}` at `<where>.lanes.<lane>.exclusive` (`src/resources/pool.ts`
+  `exclusiveProblems`). Arc lanes' resources are not checked at plan load (as before), so `requestOf` fails loud on one.
+- `ResourceRequest.exclusive?: ResourceName[]` (sorted, a subset of `pools`; `laneRequest` carries the lane's). The
+  `resourceRequest` reader accepts it (absent on lines written before dev.82). `allocate` grants every instance of such a
+  pool or none; busy names the held instances. Readers still take one instance each, so the pool's size caps them, and a
+  mutator serialises against every reader and every other mutator. `envBlocked`: a pool taken whole is environment-blocked
+  while any of its instances is dirty. `overlaps` is unchanged, so a waiting mutator is never overtaken by a lower-ranked
+  reader of its pool.
+- Instance binding: `instanceEnv` binds `RESOURCE_INSTANCE_<POOL>` only for a pool held by one instance; a holder of a
+  whole pool's workloads get no binding for it. Probes and teardowns run per instance held, each bound to its own instance
+  (`instanceBinding`), and each instance's residue recipe records that binding.
+- Phase 0 advisory `shared-estate-mutation{pool, units, mutators}`: a declared pool the active spec lanes of two or more
+  live, unsettled units name, at least one of them (`mutators`) on a system with the `persistent` trait, and no lane naming
+  it holds it `exclusive`. Needs the repo config's systems map.

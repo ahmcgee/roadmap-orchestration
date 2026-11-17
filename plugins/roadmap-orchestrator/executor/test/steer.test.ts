@@ -9,7 +9,7 @@ import { unitId } from '../src/core/ids.ts';
 // the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
 // The steer round is a fresh session, so it gets the handover (src/pipeline/handover.ts).
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
-// steer.class-write-back, steer.class-architect-edit, steer.crash-cells.
+// steer.class-write-back, steer.class-architect-edit, steer.crash-cells, steer.window-spent (dev.82 E5c).
 import assert from 'node:assert/strict';
 import { readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -267,6 +267,27 @@ describe('steer.resume-vs-park', () => {
       r.journal.close();
     }
   });
+});
+
+test('steer.window-spent (dev.82 E5c): a steer round its budget runs out on is `window-spent`, uncharged: what it left in the worktree is salvaged, verified and gated like a report, and the pass goes on', T, async () => {
+  const comment = { 'src/mul.js': `// mul: kept as it is.\n${MUL['src/mul.js']}` };
+  const d = setupArc({ steps: [...TO_PARK, codexSteer([{ type: 'dirty', files: comment }, { type: 'hang', ms: 3 * MIN_MS }]), gateStep({ decision: 'approve' })] });
+  const r = contextFor(d);
+  try {
+    await parkU1(r);
+    const before = charged(r);
+    assert.equal((await command(r, steerBody({ budgetMin: 1, resume: true }))).outcome.kind, 'applied');
+    assert.deepEqual(await runUnit(r.ctx, r.unit('u1'), live()), { kind: 'merged' });
+    assert.deepEqual(outcomes(d), [
+      ...STRAIGHT_TO_GATE, 'gate:escalate', 'gate:escalate', 'build:window-spent', ...PASS_TO_LANES.slice(1), 'lanes:green', 'gate:approve',
+      'candidate:green', 'ff:published', 'snapshot:published',
+    ]);
+    assert.deepEqual(charged(r), before, 'the spent window charges nothing');
+    assert.equal(git(d.repo, 'show', 'main:src/mul.js'), comment['src/mul.js'].trimEnd(), 'the round\'s uncommitted work was salvaged and published');
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
+  } finally {
+    r.journal.close();
+  }
 });
 
 test('steer.never-judge: the gate after a steer round is a fresh judgment session whose id is new, not the steer round\'s implementer session', T, async () => {
