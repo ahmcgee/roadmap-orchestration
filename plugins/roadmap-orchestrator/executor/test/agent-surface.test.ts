@@ -4,6 +4,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { claudeBuilderRouting } from '../src/routing/eligibility.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { cadence } from '../src/holistic/cadence.ts';
+import { laneEnvId } from '../src/pipeline/lanes.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { walkArc,walkContext,walkStep,walkAnswer } from './fixtures/walk-common.ts';
 import { unitSteps,moduleFiles } from './fixtures/audit-common.ts';
@@ -244,9 +245,9 @@ test('surface.milestone: one combined experience verdict and one campaign audit,
   const {ctx, w} = walkContext(r);
   const tick = setInterval(() => w.arbiter.wake(), 50);
   try {
-    assert.equal(cadence(ctx, () => 0)?.due, false);
+    assert.equal(cadence(ctx, () => 0, (lane) => laneEnvId(ctx, lane))?.due, false);
     await runUnit(w.stage, r.unit('u1'), admitAll);
-    assert.ok(cadence(ctx, () => 0)?.owed.some((t) => t.type === 'milestone'));
+    assert.ok(cadence(ctx, () => 0, (lane) => laneEnvId(ctx, lane))?.owed.some((t) => t.type === 'milestone'));
     assert.equal((await runWalk(ctx)).kind, 'ended');
     const before = r.journal.view.planApplied()!.rev;
     const audit = await runAudit({...ctx, clock: () => 0});

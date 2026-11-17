@@ -413,7 +413,7 @@ const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligation
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
   'units-open', 'blocking-items', 'pending-commands', 'residues', 'baseline-owed', 'audit-pending', 'coverage-outstanding', 'audit-owed',
-  'walk-pending', 'endgame-open', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+  'audit-at-closing', 'walk-pending', 'endgame-open', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
 ] as const;
 export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
@@ -556,11 +556,14 @@ function* failingClauses(h: HolisticContexts, input: Readonly<{ blocking: number
   if (view.residues().length > 0) yield 'residues';
   if (!fold.on || holistic === undefined) return;
   if (baselineOwed(ctx) !== null) yield 'baseline-owed';
-  if (auditPending(ctx)) yield 'audit-pending';
-  const c = cadence(ctx, ctx.clock);
+  if (auditPending(ctx, h.laneEnv)) yield 'audit-pending';
+  const c = cadence(ctx, ctx.clock, h.laneEnv);
   if (c === null) throw new Error('a holistic arc without a cadence');
-  if (coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) yield 'coverage-outstanding';
+  // dev.82: in the endgame's `open` step the final audit waits for `closing` (src/holistic/cadence.ts `deferred`): the
+  // outstanding coverage reads `audit-at-closing`, so nothing reads as stuck.
+  if (!c.deferred && coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) yield 'coverage-outstanding';
   if (c.owed.length > 0) yield 'audit-owed';
+  if (c.deferred) yield 'audit-at-closing';
   // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
   if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) yield 'walk-pending';
   // dev.82: an opened endgame episode not settled (src/endgame/open.ts `endgameOpen`).
@@ -1254,7 +1257,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           const out = await runBatchWitness(h.audit, witness);
           return out.kind === 'no-verdict' ? { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) } : PROGRESS;
         });
-      } else if (auditPending(h.audit)) {
+      } else if (auditPending(h.audit, h.laneEnv)) {
         trackRetrying('holistic:audit', 'holistic', async () => {
           const out = await runAudit(h.audit);
           if (out.kind === 'incomplete') return { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) };

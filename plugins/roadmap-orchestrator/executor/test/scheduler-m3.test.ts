@@ -573,7 +573,7 @@ describe('the endgame (dev.82, src/endgame/)', () => {
     try {
       await runUnit(r.ctx, r.unit('u1'), admitAll);
       openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: obligationId('I-1'), visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [{path: 'src/mul.js', blob: null}], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: true});
-      assert.equal(cadence(r.ctx, () => 0)?.due, true, 'an active P1 is a worklist entry: it does not hold the final audit');
+      assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true, 'an active P1 is a worklist entry: it does not hold the final audit');
       const s = startHolistic(r);
       await until(() => itemOf(r, 'endgame') !== null, WAIT_MS, 'the endgame item');
       const [audit] = factsOf(r, 'audit-started');
@@ -736,10 +736,10 @@ test('root dismissal unblocks the close-out publication and completion (dev.82: 
   try {
     await runUnit(r.ctx, r.unit('u1'), admitAll);
     openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: obligationId('I-1'), visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [{path: 'src/mul.js', blob: null}], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: true});
-    assert.equal(cadence(r.ctx, () => 0)?.due, true, 'dev.82: in the endgame an active P1 is a worklist entry and does not hold the final audit');
+    assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true, 'dev.82: in the endgame an active P1 is a worklist entry and does not hold the final audit');
     const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 't1 passes on integration; src/mul.js retains multiplication'});
     assert.equal((await applyCommand(commandContextFor(r), cmd)).kind, 'applied');
-    assert.equal(cadence(r.ctx, () => 0)?.due, true);
+    assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true);
     await runToComplete(r);
     assert.equal(r.journal.view.holistic().completion?.active, true);
     assert.equal(factsOf(r, 'docs-published').filter((p) => p.source === 'close-out').length, 1);

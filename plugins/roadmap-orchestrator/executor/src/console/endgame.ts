@@ -79,7 +79,7 @@ export function endgameView(e: Envelope): EndgameView {
     exit: exit === null ? null : [
       {key: 'worklist', label: 'Required worklist empty', met: exit.worklist},
       {key: 'review', label: 'Independent review covers the endgame range', met: exit.review},
-      {key: 'audit', label: 'Audit covers the endgame range', met: exit.audit},
+      {key: 'audit', label: exit.auditAtClosing ? 'Audit covers the endgame range (it runs once the worklist is empty and the branch landed)' : 'Audit covers the endgame range', met: exit.audit},
       {key: 'obligations', label: 'Obligations witnessed at the final tip', met: exit.obligations},
     ],
     worklist, audited: g?.audited ?? null,

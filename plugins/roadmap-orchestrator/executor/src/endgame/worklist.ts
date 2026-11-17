@@ -27,6 +27,12 @@ export const EMPTY_WORKLIST: Worklist = { required: [], optional: [] };
 
 const TERMINAL: readonly string[] = ['retired', 'cut', 'superseded'];
 
+/**
+ * The required line for a finding: P1, or over an obligation. dev.82: a final audit raises no owner request about a finding
+ * below it (src/holistic/audit.ts); the close-out settlement settles those.
+ */
+export const requiredFinding = (f: Readonly<{ severity: FindingSeverity; obligation: ObligationId | null }>): boolean => f.severity === 'P1' || f.obligation !== null;
+
 /** The worklist now (see the header): findings in id order, then obligations as given, units in plan order, refusals in log order. */
 export function worklist(view: JournalView, plan: PlanM1, repairsOf: RepairsOf, notHeld: readonly ObligationId[], episode: EndgameEpisode | null): Worklist {
   const required: WorklistEntry[] = [];
@@ -34,7 +40,7 @@ export function worklist(view: JournalView, plan: PlanM1, repairsOf: RepairsOf, 
   for (const f of view.holistic().findings) {
     if (!isActive(f)) continue;
     const entry: WorklistEntry = { type: 'finding', finding: f.id, severity: f.severity, obligation: f.obligation, evidence: f.evidence.map((e) => e.path) };
-    (f.severity === 'P1' || f.obligation !== null ? required : optional).push(entry);
+    (requiredFinding(f) ? required : optional).push(entry);
   }
   for (const obligation of notHeld) required.push({ type: 'obligation', obligation });
   for (const u of plan.units) {

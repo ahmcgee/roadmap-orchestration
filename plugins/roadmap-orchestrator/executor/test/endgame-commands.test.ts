@@ -12,11 +12,14 @@ import { INTEGRATION_SLOT, jobId } from '../src/core/ids.ts';
 import { endgameJobDue, runEndgameJob } from '../src/endgame/jobs.ts';
 import { closingSettled, endgameNow, endgameOpen, openEndgame, repairsReader, reviewDue } from '../src/endgame/open.ts';
 import { endgameHeld, openEpisode } from '../src/endgame/phase.ts';
+import { auditPending } from '../src/holistic/audit.ts';
+import { cadence } from '../src/holistic/cadence.ts';
 import { publishedHeads } from '../src/holistic/coverage.ts';
 import { openFinding } from '../src/holistic/findings.ts';
 import { requirePlanInForce } from '../src/input/inforce.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { endgameOf } from '../src/status/endgame.ts';
 import { completionBlockers } from '../src/schedule/scheduler.ts';
 import { F1, R1, endgame, endgameArc, fixAndLand, head, runDue } from './fixtures/endgame-arc.ts';
 import { addUnit } from './fixtures/sched-m3-common.ts';
@@ -176,7 +179,37 @@ describe('the endgame commands (dev.82, WS-5)', () => {
     }
   });
 
-  test('endgame.settling-holds: an entered episode not yet opened holds completion (`endgame-open`) while its required worklist is non-empty', T, async () => {
+  test('endgame.audit-at-closing: in the open step a landing arms no final audit and the unmet clauses say it runs at closing; at closing the final audit is due', T, async () => {
+    const e = await endgameArc();
+    try {
+      const c = () => cadence(e.h.audit, e.h.audit.clock, e.h.laneEnv)!;
+      const blockers = () => completionBlockers(e.h, { blocking: 0, pending: 0 });
+      const step = (): string => { const p = endgameNow(e.h.audit, e.h.laneEnv).phase; return p.kind === 'endgame' ? p.step : 'body'; };
+      assert.equal(step(), 'open');
+      assert.deepEqual([c().owed, c().deferred, auditPending(e.h.audit, e.h.laneEnv)], [[], true, false], 'no completed audit, but the step is open: deferred');
+      assert.ok(blockers().includes('audit-at-closing') && !blockers().includes('audit-owed'), blockers().join(', '));
+      assert.equal(endgameOf(e.h)!.exit!.auditAtClosing, true);
+      // A landing that leaves r1 required moves the head: still open, still deferred.
+      const fix = e.commit({ 'src/carry.js': 'export const carry = (a, b) => a + b;\n' }, 'keep the carry');
+      assert.equal((await e.command(endgame({ type: 'fix', closes: [F1], commit: fix, note: 'add() keeps the carry' }))).state, 'applied');
+      assert.equal((await e.command(endgame({ type: 'land' }))).state, 'applied');
+      await runDue(e);
+      assert.equal(head(e.d), fix);
+      assert.equal(step(), 'open', 'r1 is still required');
+      assert.deepEqual([c().owed, c().deferred], [[], true], 'the landing armed nothing');
+      assert.ok(blockers().includes('audit-at-closing') && !blockers().includes('coverage-outstanding'), blockers().join(', '));
+      // r1 closed by a fix on the landed head: the step is closing and the final audit is due.
+      assert.equal((await e.command(endgame({ type: 'fix', closes: [R1], commit: fix, note: 'r1 is done by hand' }))).state, 'applied');
+      assert.equal(step(), 'closing');
+      assert.deepEqual([c().owed, c().deferred, c().due], [[{ type: 'final' }], false, true]);
+      assert.ok(!blockers().includes('audit-at-closing') && blockers().includes('audit-pending'), blockers().join(', '));
+      assert.equal(endgameOf(e.h)!.exit!.auditAtClosing, false);
+    } finally {
+      e.r.journal.close();
+    }
+  });
+
+  test('endgame.settling-holds:an entered episode not yet opened holds completion (`endgame-open`) while its required worklist is non-empty', T, async () => {
     const e = await endgameArc(false);
     try {
       assert.equal(episodeOf(e.r).opened, null, 'entered, not opened');

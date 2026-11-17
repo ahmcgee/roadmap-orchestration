@@ -23,7 +23,7 @@ import { ENDGAME_BY_HAND, endgameBranch, endgameNow, endgameWorktree, handoverPa
 import type { Worklist } from '../endgame/worklist.ts';
 import { isAncestor } from '../git/ff.ts';
 import { refTarget } from '../git/git.ts';
-import { integrationHeadNow } from '../holistic/cadence.ts';
+import { cadence, integrationHeadNow } from '../holistic/cadence.ts';
 import { coverageBase, coverageOf } from '../holistic/coverage.ts';
 import { readNeedsUser } from '../needsuser.ts';
 import { batchWitnessDue } from '../pipeline/batchlanes.ts';
@@ -43,6 +43,8 @@ export type EndgameExit = Readonly<{
   review: boolean;
   /** The endgame branch landed and the final audit's invariants coverage reached the integration head. */
   audit: boolean;
+  /** dev.82: the final audit is owed but waits for the `closing` step (src/holistic/cadence.ts `deferred`). */
+  auditAtClosing: boolean;
   /** The endgame branch landed, every obligation holds on the head, and no closing batch witness is owed. */
   obligations: boolean;
 }>;
@@ -159,6 +161,7 @@ export function endgameOf(h: HolisticContexts): EndgameView | null {
     worklist: now.worklist.required.length === 0,
     review: !reviewDue(ctx, open),
     audit: landed && invariants !== null && !invariants.outstanding,
+    auditAtClosing: cadence(ctx, ctx.clock, h.laneEnv)?.deferred ?? false,
     obligations: landed && obligationsOn(ctx, head, h.laneEnv) === 'discharged' && batchWitnessDue(ctx, 'closing') === null,
   };
   const units: EndgameUnit[] = [];

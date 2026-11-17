@@ -12,6 +12,7 @@ import { absPath,branchName,isoTimeOf } from '../src/core/values.ts';
 import { MUTANT_PATCH_INPUT } from '../src/git/mutant.ts';
 import { type AuditContext,runAudit } from '../src/holistic/audit.ts';
 import { type Cadence,AUDIT_RETRY_MIN,cadence } from '../src/holistic/cadence.ts';
+import { laneEnvId } from '../src/pipeline/lanes.ts';
 import { coverageBase,coverageOf,lensCoverage } from '../src/holistic/coverage.ts';
 import { LENS_DIFF_BUDGET } from '../src/holistic/lensdiff.ts';
 import { findingKey } from '../src/holistic/types.ts';
@@ -181,7 +182,7 @@ describe('the audit job', () => {
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
       assert.deepEqual(watermarks(ctx, ['invariants']), [['invariants', S1, true]], 'the merge after the audit is outstanding');
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), [], 'publications do not trigger rolling audits');
+      assert.deepEqual(owed(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))), [], 'publications do not trigger rolling audits');
       requestAudit(r);
       assert.equal((await runAudit(ctx)).kind, 'ended');
       assert.deepEqual(ended(r)[1]!.covered, [{lens: 'invariants', from: S1, to: S2}], 'dev.82: the second audit covers only what the first left');
@@ -210,7 +211,7 @@ describe('the audit job', () => {
       assert.deepEqual(await runUnit(ctx, r.unit('u2'), admitAll), { kind: 'merged' });
       const S2 = head(d.repo);
       requestAudit(r, null, true);
-      assert.equal(cadence(ctx, ctx.clock)!.plan?.whole, true);
+      assert.equal(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))!.plan?.whole, true);
       assert.equal((await runAudit(ctx)).kind, 'ended');
       assert.equal(started(r)[1]!.whole, true, 'the capture records the opt-in');
       assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S, to: S2 }]);
@@ -257,7 +258,7 @@ describe('the audit job', () => {
       assert.deepEqual(factsOf(r).flatMap((f) => (f.kind === 'witnessed' && f.for.type === 'job' ? [[f.lane, f.treeSha]] : [])),
         [['other', treeOf(d.repo, S1)], ['other', treeOf(d.repo, S2)]], 'I-1\'s lane reused from u1\'s candidate; then the P1\'s lane alone, on the new head');
       assert.deepEqual(watermarks(ctx, ['invariants']), [['invariants', S1, true]]);
-      assert.deepEqual(owed(cadence(ctx, ctx.clock)), []);
+      assert.deepEqual(owed(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))), []);
       assert.deepEqual(r.journal.view.openIntents(), []);
     } finally {
       stop();
@@ -285,7 +286,36 @@ describe('the audit job', () => {
       const later = await runAudit({ ...ctx, clock: () => 400 });
       assert.deepEqual(later, { kind: 'skipped', reason: 'backend-parked', owed: null });
       assert.equal(started(r).length, 1, 'no second audit started');
-      assert.deepEqual(cadence(ctx, () => 400)!.plan?.triggers, [{ type: 'requested', command: asked }], 'the request stays owed; no publication since the audit start, so no wall-clock trigger');
+      assert.deepEqual(cadence(ctx, () => 400, (lane) => laneEnvId(ctx, lane))!.plan?.triggers, [{ type: 'requested', command: asked }], 'the request stays owed; no publication since the audit start, so no wall-clock trigger');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('audit.park-resume-due (dev.82): an audit abandoned because its lens backend parked is due again as soon as the backend is resumed; another abandonment keeps the wait', T, async () => {
+    const { d } = auditArc({
+      steps: [
+        { as: 'claude', unit: 'audit-1', lens: 'invariants', expect: {}, acts: [{ type: 'usageLimit' }] },
+        { as: 'claude', unit: 'audit-2', expect: {}, acts: [{ type: 'exit', code: 1 }] },
+      ],
+      units: [{ id: 'u1' }], ...I1, mapping: [],
+    });
+    const r = contextFor(d);
+    const { ctx } = auditContext(r);
+    try {
+      const asked = requestAudit(r);
+      const out = await runAudit(ctx);
+      assert.ok(out.kind === 'ended' && out.outcome === 'abandoned', JSON.stringify(out));
+      assert.equal(ended(r)[0]!.parked, 'claude', 'the end records the park that abandoned it');
+      assert.equal(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))!.due, false, 'parked: not due');
+      r.journal.fact({ kind: 'resumed', command: commandId('cmd-00000000000000ee'), target: { type: 'backend', backend: 'claude' } });
+      assert.deepEqual(r.journal.view.parkedBackends(), []);
+      assert.deepEqual(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))!.plan?.triggers, [{ type: 'requested', command: asked }], 'resumed: due at once, no retry wait');
+      const again = await runAudit(ctx);
+      assert.ok(again.kind === 'ended' && again.outcome === 'abandoned', JSON.stringify(again));
+      assert.equal(ended(r)[1]!.parked, undefined, 'a failed lens call parks nothing');
+      assert.equal(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))!.due, false, 'a failure keeps the retry wait');
+      assert.equal(cadence(ctx, () => AUDIT_RETRY_MIN, (lane) => laneEnvId(ctx, lane))!.due, true);
     } finally {
       r.journal.close();
     }
@@ -335,7 +365,7 @@ describe('coverage', () => {
       await rule(w, r, 'C-2');
       const D1 = head(d.repo);
       assert.deepEqual(watermarks(ctx, L2), [['invariants', D1, false]], 'the edge S→D1 is contiguous: both lenses reach D1');
-      assert.equal(cadence(ctx, ctx.clock)!.plan, null, 'ledger edits do not start rolling audits');
+      assert.equal(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))!.plan, null, 'ledger edits do not start rolling audits');
       assert.deepEqual(await runUnit(ctx, r.unit('u1'), admitAll), { kind: 'merged' });
       const S1 = head(d.repo);
       requestAudit(r);
@@ -419,9 +449,9 @@ describe('coverage', () => {
       assert.deepEqual(lensCoverage(r.journal.view.holistic(), base, 'invariants').followed, [], 'audit-1\'s range was recorded under the old vision');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S, true]], 'every lens\'s coverage is cleared back to the arc\'s base');
       const rev = r.journal.view.planApplied()!.rev;
-      assert.equal(cadence(ctx, ctx.clock)!.plan, null, 'u3 remains and audit-1 just started: the drift is throttled');
+      assert.equal(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))!.plan, null, 'u3 remains and audit-1 just started: the drift is throttled');
       const settled = { ...ctx, clock: () => AUDIT_RETRY_MIN };
-      assert.equal(cadence(settled, settled.clock)!.plan, null);
+      assert.equal(cadence(settled, settled.clock, (lane) => laneEnvId(settled, lane))!.plan, null);
       requestAudit(r);
       const out = await runAudit(settled);
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
@@ -732,13 +762,13 @@ test('audit.range-chunked: a range over the budget is reviewed chunk by chunk in
       assert.ok(calls[1]!.stdin.includes(rangeTag(S1, S2, S2)) && !calls[1]!.stdin.includes('bigone000100'), 'chunk 2: from where chunk 1 ended');
       for (const c of calls) assert.doesNotMatch(c.stdin, /<not_inlined>/, 'each chunk attaches whole');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S1, true]]);
-      assert.deepEqual(cadence(ctx, () => AUDIT_RETRY_MIN)!.plan, { triggers: [{ type: 'final' }], lenses: ['invariants'], generation: 2, whole: false }, 'the final audit runs the partly covered lens alone');
+      assert.deepEqual(cadence(ctx, () => AUDIT_RETRY_MIN, (lane) => laneEnvId(ctx, lane))!.plan, { triggers: [{ type: 'final' }], lenses: ['invariants'], generation: 2, whole: false }, 'the final audit runs the partly covered lens alone');
       const again = await runAudit({ ...ctx, clock: () => AUDIT_RETRY_MIN });
       assert.ok(again.kind === 'ended' && again.outcome === 'completed', JSON.stringify(again));
       assert.deepEqual(ended(r)[1]!.covered, [{ lens: 'invariants', from: S1, to: S2 }]);
       assert.ok(lensCalls(r)[2]!.stdin.includes(rangeTag(S1, S2, S2)));
       assert.deepEqual(watermarks(ctx, L2), [['invariants', S2, false]]);
-      assert.deepEqual(owed(cadence(ctx, () => AUDIT_RETRY_MIN)), [], 'nothing outstanding: the arc converges');
+      assert.deepEqual(owed(cadence(ctx, () => AUDIT_RETRY_MIN, (lane) => laneEnvId(ctx, lane))), [], 'nothing outstanding: the arc converges');
     } finally {
       r.journal.close();
     }

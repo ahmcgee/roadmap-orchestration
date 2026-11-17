@@ -154,7 +154,7 @@ export function openDue(ctx: StageContext & Parameters<typeof auditPending>[0], 
   const view = ctx.journal.view;
   const episode = openEpisode(view);
   if (episode === null || episode.opened !== null) return false;
-  if (runningUnits(view, ctx.plan()).length > 0 || walkPending(ctx) || auditPending(ctx)) return false;
+  if (runningUnits(view, ctx.plan()).length > 0 || walkPending(ctx) || auditPending(ctx, laneEnv)) return false;
   return endgameNow(ctx, laneEnv).worklist.required.length > 0 || unreviewedLandings(ctx).length > 0;
 }
 

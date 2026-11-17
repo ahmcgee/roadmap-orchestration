@@ -218,8 +218,19 @@ journeys and judges polish comparisons.
 - Copy, visuals, diagnostics and stale docs against a correct interface **deviate**.
 - Sanctioned choices are not findings.
 
-**Campaign audits.** Fresh whole-range campaign audits run at milestones, on request and at the final boundary,
-judging invariants, vacuity, interactions and document drift together.
+**Campaign audits.** Fresh campaign audits run at milestones, on request and at the final boundary, judging
+invariants, vacuity, interactions and document drift together.
+
+- Each audit reads only what no completed audit covered under the vision in force: from its coverage watermark to the
+  integration head, so each published commit is read once. The lens works in a checkout of the head and reads earlier
+  code there for context. The whole range from the arc's base is read by the first audit, after a vision change, and
+  on `roadmap audit --whole`. An audit with nothing new to read asks no lens.
+- An audit abandoned by a failure is retried after six hours, or at once for a new request. One abandoned because its
+  backend parked (a usage limit) is due again as soon as `roadmap resume --backend` clears the park.
+- Each root request an audit raises is one blocking `owner-request` item. A later audit asking the same thing (the
+  same finding to dismiss, or the same summary) raises nothing new, whether the first item is open or answered. A
+  final audit raises no request about a finding below the endgame's required line (not P1, over no obligation): the
+  close-out settles those.
 
 - Audits report findings and root requests. The architect changes the plan and alone authorizes obligation
   dispositions.
@@ -338,7 +349,11 @@ with is planned work whatever it repairs. A milestone has had its checkpoint whe
 - Dispatched units finish normally, and parked units stay parked. A unit admitted during the episode, by the
   architect's apply or a checkpoint's, runs.
 - Once no unit runs, outstanding walks run, then the final audit. In the endgame the final audit does not wait for
-  active P1s to clear, because they are worklist entries now.
+  active P1s to clear, because they are worklist entries now. This settling audit completes the worklist.
+- While the episode is open, landings and repair merges arm no audit: the final audit runs again at closing, or when
+  the root asks with `roadmap audit`. Completion then lists `audit-at-closing` instead of outstanding coverage, and the
+  exit checklist's audit line says it runs once the worklist is empty and the branch landed. A typical endgame audits
+  twice: once while settling and once at closing, plus once per further closing a P1 sends back to open.
 
 **The worklist** is derived from the log and the plan, never stored.
 
@@ -371,7 +386,7 @@ always did.
 | `roadmap endgame checkpoint <milestone>` | Makes one more walk round of an already walked milestone due at the integration head, whatever `walkRounds` allows. |
 | `roadmap endgame review` | Asks for the review of the episode's range now. |
 | `roadmap resume <unit>` | Releases a unit the endgame holds at admission. |
-| `roadmap audit` | A campaign audit now, as in the body. |
+| `roadmap audit [--whole]` | A campaign audit now, as in the body; the only way to audit while the step is open. |
 
 `land`, `run` and `review` are requests. The scheduler serves them in log order as jobs `endgame-<n>`, one at a time,
 and a job a restart cut short resumes as itself. A checkpoint is not a job: it only makes a walk round due.
@@ -403,7 +418,7 @@ backoff.
 - the required worklist is empty;
 - the endgame branch is landed;
 - a review covers the range up to a head holding the endgame tip;
-- the final audit covers the integration head (a landing moves the head past the audit's watermark, so it runs again);
+- the final audit covers the integration head (it runs at closing over what the landings added since its watermark);
 - the obligations hold at the final tip, with the batch witness run for every batch arc lane whose obligation is
   unobserved on the head's tree.
 

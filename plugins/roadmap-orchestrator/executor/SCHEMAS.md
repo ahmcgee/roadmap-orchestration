@@ -2082,3 +2082,39 @@ head; its brief's publications are those from that landing's publication on (els
 any landing is unreviewed. An entered episode with an empty required worklist opens while an unreviewed landing exists
 (`openDue`, and `endgame-open` holds completion meanwhile), raises no `endgame` item while its required worklist is
 empty, and is at once `closing`, so the closing step's review covers that landing.
+
+### dev.82 final audit
+
+Additive records, read-time defaults; `SCHEMA_VERSION` unchanged.
+
+- **Incremental audits.** Every trigger (milestone, requested, final) reads per lens from its coverage watermark at the
+  audit's capture (`lensCoverage(fold, base, lens, started.seq)`: what no completed pass under the vision in force
+  covered, an abandoned pass's reported chunks and docs edges included) to the audited SHA, chunked as before. This is
+  the abandoned-audit resume, now the one rule. The whole range from the coverage base is read only when nothing under
+  the vision in force was covered (a first audit, or after a vision change resets the watermark), or on an explicit
+  `roadmap audit --whole`. A lens whose watermark already is the audited SHA past the base is not asked (no call, no
+  covered range; the audit still completes). `audit-ended.covered` ranges then chain watermark to watermark, which
+  `lensCoverage` follows unchanged.
+- `CommandBody` `{type: 'audit', whole?: true}` (absent: false); fact `audit-requested{command, whole?: true}`;
+  `AuditInputs.whole?: true` on `audit-started`: a request pending since the last completed audit asked for the whole
+  range (`AuditPlan.whole`). A `--whole` pass abandoned is retried whole.
+- Lens input `range` gains `base: Sha` (the coverage base). The campaignAudit prompt renders
+  `<covered_before from="<base>" to="<range from>"/>` after `<audited_range>` when the range starts past the base; the
+  system text says the call answers for the audited range and reads earlier code in the checkout for context only.
+- **The endgame's final audit.** `cadence` takes the arc lanes' environment (`laneEnv`, as `HolisticContexts.laneEnv`;
+  `auditPending` too). `Cadence.deferred`: the final audit would be owed (endgame, nothing running, no completed audit
+  under the vision or the invariants watermark behind the head) but the open episode has opened and its step is `open`;
+  `final` is then not owed. So the endgame audits once while settling and again at `closing` (or on `roadmap audit`).
+  The step reaches `closing` on the worklist and the landing alone, never on audit coverage.
+- `COMPLETION_BLOCKERS` gains `audit-at-closing` after `audit-owed`: yielded while `deferred`, in place of
+  `coverage-outstanding`. `EndgameExit.auditAtClosing: boolean` (status), and the console's exit-checklist audit label
+  says it runs once the worklist is empty and the branch landed.
+- `audit-ended.parked?: Backend` (only on `abandoned`): the lens backend whose park abandoned the audit. Such an audit
+  is due again as soon as that backend is not parked (`resume --backend` or a passing probe), without
+  `AUDIT_RETRY_MIN`; any other abandonment keeps the wait. Absent on audits ended before dev.82: the wait applies.
+- **Owner requests across passes.** An audit raises no `owner-request` item for a request any audit job's earlier
+  item already carries, open or acknowledged: a dismissal request by its finding id (stable across passes), any other
+  by its exact summary. The per-request item stays (one per request, acknowledged on its own).
+- **Severity floor.** At an audit with a `final` trigger, a request to dismiss a finding below the endgame worklist's
+  required line (`requiredFinding`: not P1 and over no obligation) raises nothing; the close-out settlement settles such
+  findings (a `corpus` arc banks P2 as debt and releases P3; any arc completes with them open, as they hold nothing).

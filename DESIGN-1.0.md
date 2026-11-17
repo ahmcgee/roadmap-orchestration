@@ -283,7 +283,13 @@ when they affect this arc.
 
 At reached milestones, on root request and over the final outstanding range, one fresh campaignAudit role reviews
 invariants, vacuity, cross-unit interaction and document drift. It reports findings and root requests only. Bounded diff
-chunks, kept inputs, partial coverage and abandoned-job backoff make large-range review recoverable. Internal coverage
+chunks, kept inputs, partial coverage and abandoned-job backoff make large-range review recoverable. Audits are
+incremental (dev.82): each reads only what no completed audit covered under the vision in force, from its coverage
+watermark to the head, so audit work is linear in the arc's diff; the whole range is read only by a first audit, after
+a vision change, or on an explicit `roadmap audit --whole`. In the endgame the final audit runs once while settling and
+again at closing, never on the open step's landings; one abandoned by a backend park is due again once the park clears.
+An audit raises an owner request once across all passes, and a final audit none about a finding below the endgame's
+required line. Internal coverage
 and finding classifications retain lens names; these do not select multiple seats or configurable rolling audits.
 
 Findings have stable identity, severity P1/P2/P3, evidence and optional obligation/vision attribution. Vacuity evidence

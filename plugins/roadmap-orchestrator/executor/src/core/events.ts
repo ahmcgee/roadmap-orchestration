@@ -1071,6 +1071,8 @@ export type HolisticFact =
   | Readonly<{
     kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned';
     refused: readonly LensRefusal[];
+    /** dev.82: an `abandoned` audit's lens backend whose park abandoned it (absent: another cause, or written before dev.82). */
+    parked?: Backend;
   }>
   /** A later passing baseline settles exactly the named baseline items. */
   | Readonly<{ kind: 'baseline-held'; job: JobId; items: readonly NeedsUserId[] }>
@@ -2345,7 +2347,9 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     const refused = f.get('refused', arrayOf(object((g): LensRefusal => ({
       lens: g.get('lens', lensR), attempt: g.get('attempt', positive), claim: g.get('claim', str), cause: g.get('cause', str), reason: g.get('reason', str),
     }))));
-    return { ...out, refused };
+    const parked = f.optional('parked', backend);
+    if (parked !== undefined && out.outcome !== 'abandoned') throw new SchemaError(`${f.path}.parked`, 'absent on a completed audit', parked);
+    return { ...out, refused, ...(parked === undefined ? {} : { parked }) };
   }),
   'baseline-held': object((f): Fact => ({ kind: f.get('kind', literal('baseline-held')), job: f.get('job', jobIdOfKind('baseline')), items: f.get('items', sortedBy((v, p) => needsUserId(v, p), (id) => id, { nonEmpty: true })) })),
   'docs-covered': object((f): Fact => ({ kind: f.get('kind', literal('docs-covered')), pub: f.get('pub', docsJobR), from: f.get('from', shaR), to: f.get('to', shaR) })),
