@@ -4,15 +4,18 @@
 // the CAS; `ff.act-end`, after it) and after `endgame-landed` (`snapshot.act-end`, in `finishLanding`). The recovery engine
 // (src/recover/resource.ts, src/recover/ff.ts) then abandons a landing whose ff did not publish (nothing moves, the slot is
 // released) or leaves a published one holding the slot; the endgame job, still running in the episode, resumes as the same
-// job and lands or finishes. Named tests: endgame.land-crash.<label>.
+// job and lands or finishes. Named tests: endgame.land-crash.<label>, and endgame.fault-contained (the endgame and batch
+// witness jobs are on src/schedule/fault.ts `JOB_FAULT_TRACKS`; a landing holding the slot is shared state).
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { IntentOf } from '../src/core/events.ts';
-import { INTEGRATION_SLOT, type Sha } from '../src/core/ids.ts';
+import { INTEGRATION_SLOT, type Sha, jobId } from '../src/core/ids.ts';
 import { endgameJobDue } from '../src/endgame/jobs.ts';
 import { openEpisode } from '../src/endgame/phase.ts';
+import { readNeedsUser } from '../src/needsuser.ts';
 import { recover } from '../src/recover/recover.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
+import { faultJob, jobFaultOpen } from '../src/schedule/fault.ts';
 import { type EndgameRun, F1, R1, endgame, endgameArc, endgameRun, head, runDue } from './fixtures/endgame-common.ts';
 import { closedAs } from './fixtures/publish-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
@@ -108,4 +111,26 @@ describe('an interrupted endgame landing (dev.82)', () => {
       }
     });
   }
+});
+
+describe('endgame job faults (dev.82)', () => {
+  test('endgame.fault-contained: a throw in an endgame or batch witness job holding only its own state ends it faulted (a non-blocking executor-fault item the holistic track waits on); one whose landing holds the slot crashes', T, async () => {
+    const e = await endgameArc();
+    try {
+      const items = () => e.r.journal.view.opsOf('needsuser.raise').map((i) => readNeedsUser(e.r.ctx.runDir, i.expect.id)!).filter((x) => x.reason === 'executor-fault');
+      assert.equal(await faultJob(e.h.audit, 'holistic:endgame-job', new Error('a review threw')), true, 'an endgame job holding nothing shared is contained');
+      assert.equal(await faultJob(e.h.audit, 'holistic:witness', new Error('a batch witness threw')), true, 'so is a batch witness job');
+      assert.deepEqual(items().map((x) => [x.blocking, x.subject]), [[false, { type: 'arc' }], [false, { type: 'arc' }]]);
+      assert.equal(jobFaultOpen(e.r.journal.view, e.r.ctx.runDir), true, 'the holistic track waits for the item');
+
+      // A landing takes the integration slot: a throw then is shared state's, and crashes the executor.
+      const grant = await e.h.audit.acquireFirst({ named: [], pools: [], cpu: 0, publication: true }, { type: 'endgame', job: jobId('endgame', 1) }, new AbortController().signal);
+      assert.equal(grant.kind, 'granted');
+      assert.equal(await faultJob(e.h.audit, 'holistic:endgame-job', new Error('a landing threw')), false, 'a landing holding the slot is not contained');
+      assert.equal(await faultJob(e.h.audit, 'holistic:witness', new Error('a batch witness threw')), true, 'another job\'s landing is not the witness job\'s state');
+      assert.equal(items().length, 3, 'no item for the uncontained fault');
+    } finally {
+      e.r.journal.close();
+    }
+  });
 });
