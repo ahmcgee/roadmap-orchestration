@@ -184,5 +184,5 @@ export function resourceNow(e: Envelope): import('./view-protocol.ts').ResourceN
     cpuReservation: cpu ? {used: cpu.used, capacity: cpu.size} : null};
 }
 function holderLabel(h: import('../core/events.ts').Holder): string {
-  return 'unit' in h ? h.unit : h.type === 'job' ? h.job : h.type === 'docs' ? h.pub : h.type === 'sweep' ? h.command : `${h.finding}:${h.attempt}`;
+  return 'unit' in h ? h.unit : h.type === 'job' ? h.job : h.type === 'docs' ? h.pub : h.type === 'sweep' ? h.command : h.type === 'endgame' ? h.job : `${h.finding}:${h.attempt}`;
 }

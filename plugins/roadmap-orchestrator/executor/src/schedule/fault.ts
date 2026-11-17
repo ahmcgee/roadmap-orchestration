@@ -91,7 +91,7 @@ function sharedHeld(view: JournalView, scope: FaultScope): string | null {
     if (status.state === 'free' || status.state === 'cleanup-failed') continue;
     const h = status.holder;
     if (scope.type === 'unit' && h.type === 'publication' && h.unit === scope.unit) return `its publication holds ${resource}`;
-    if (scope.type === 'job' && scope.kinds.includes('ckpt') && (h.type === 'docs' || h.type === 'batch')) return `a ${h.type} publication holds ${resource}`;
+    if (scope.type === 'job' && scope.kinds.includes('ckpt') && (h.type === 'docs' || h.type === 'batch' || h.type === 'endgame')) return `a ${h.type} publication holds ${resource}`;
   }
   return null;
 }

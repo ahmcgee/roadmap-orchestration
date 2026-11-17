@@ -72,6 +72,11 @@ export type SeatRef = { [R in Role]: Readonly<{ role: R; tier: SeatOf<R> }> }[Ro
 export type UnitSeatRef = Extract<SeatRef, Readonly<{ role: UnitRole }>>;
 /** An arc role's seat: pack review, experience verdict or campaign audit. */
 export type ArcSeatRef = Extract<SeatRef, Readonly<{ role: ArcRole }>>;
+/**
+ * dev.82: the seat of a job's call: an arc role's, or the verifier's `high` seat for the endgame review (a verifier session
+ * a job runs outside any unit, src/endgame/review.ts).
+ */
+export type JobSeatRef = ArcSeatRef | Readonly<{ role: 'verifier'; tier: 'high' }>;
 /** Every seat, role by role in `ROLES` order, each role's tiers in seat order. */
 export const SEAT_REFS: readonly SeatRef[] = ROLES.flatMap((r) => SEATS[r].map((tier) => ({ role: r, tier }) as SeatRef));
 
@@ -173,6 +178,12 @@ export function unitSeatFields(f: Fields): UnitSeatRef {
 /** `seatFields` limited to the arc roles (M3): a job's call sits only on an arc role's `arc` seat. */
 export function arcSeatFields(f: Fields): ArcSeatRef {
   return { role: f.get('role', oneOf(ARC_ROLES)), tier: f.get('tier', oneOf(ARC_SEATS)) };
+}
+
+/** A job call's seat (`JobSeatRef`): an arc role's `arc` seat, or (dev.82) the verifier's `high` for the endgame review. */
+export function jobSeatFields(f: Fields): JobSeatRef {
+  const r = f.get('role', oneOf([...ARC_ROLES, 'verifier'] as const));
+  return r === 'verifier' ? { role: r, tier: f.get('tier', literal('high')) } : { role: r, tier: f.get('tier', oneOf(ARC_SEATS)) };
 }
 
 export const triple: Read<Triple> = (value, path) => {

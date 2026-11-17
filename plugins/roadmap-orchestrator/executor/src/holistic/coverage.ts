@@ -21,7 +21,9 @@
 //
 // The integration history is read from the published `integration.ff`s: a docs publication's at its intent's seq (it
 // publishes inside its revision, under the fence), a unit's or a batch's at its done's seq (`publications()`; the slot
-// serialises them, so their done order is their op order).
+// serialises them, so their done order is their op order); dev.82 (WS-5), an endgame landing's at its intent's seq, as a
+// docs publication's (it publishes no unit, so `publications()` has no done seq for it; its slot holds every other
+// publication off between the two).
 import type { OpId, Sha, Sha256Hex, JobId } from '../core/ids.ts';
 import { parseOpId } from '../core/ids.ts';
 import type { IntentOf } from '../core/events.ts';
@@ -33,7 +35,8 @@ import type { RevisionPayload } from '../core/events.ts';
 import type { LensKind } from './types.ts';
 
 /** One published `integration.ff`: where the integration head moved, and when (the seq it counts at). */
-export type PublishedHead = Readonly<{ seq: number; op: OpId; old: Sha; head: Sha; subject: 'unit' | 'batch' | 'docs'; pub: JobId | null }>;
+/** `pub`: the docs publication's, the batch's or (dev.82) the endgame landing's job; null for a unit's. */
+export type PublishedHead = Readonly<{ seq: number; op: OpId; old: Sha; head: Sha; subject: 'unit' | 'batch' | 'docs' | 'endgame'; pub: JobId | null }>;
 
 // Observers and the scheduler ask repeatedly without an append. A view's high-water changes on
 // every append, including a completion of an already open ff or revision.
@@ -52,6 +55,10 @@ export function publishedHeads(view: JournalView): readonly PublishedHead[] {
     const { subject } = ff.expect;
     if (subject?.type === 'docs') {
       out.push({ seq: parseOpId(ff.op).seq, op: ff.op, old: ff.expect.old, head: ff.expect.new, subject: 'docs', pub: subject.pub });
+      continue;
+    }
+    if (subject?.type === 'endgame') {
+      out.push({ seq: parseOpId(ff.op).seq, op: ff.op, old: ff.expect.old, head: ff.expect.new, subject: 'endgame', pub: subject.job });
       continue;
     }
     // An ff under no stage and no batch publishes nothing the arc counts (the git primitives' own tests).

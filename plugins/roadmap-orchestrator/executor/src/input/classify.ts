@@ -5,7 +5,7 @@ import { referenceCommit } from '../phase0/rows.ts';
 // Root applies authorize weakenings with their reason; automatic revisions retain the frozen contract gate.
 import type { IntentOf,PlanChange } from '../core/events.ts';
 import { PLAN_FIELDS,specReopenable } from '../core/events.ts';
-import { type JobId,type ObligationId,type ResourceName,type ResourceUnit,type Sha256Hex,type UnitId,compareIds,parseResourceUnit } from '../core/ids.ts';
+import { type CommandId,type JobId,type ObligationId,type ResourceName,type ResourceUnit,type Sha256Hex,type UnitId,compareIds,parseResourceUnit } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson } from '../core/json.ts';
 import { readJournal } from '../core/log.ts';
@@ -13,7 +13,7 @@ import {
 BOUND_FIELDS,
 type Bounds,
 type ResidueKey,type RevisionManifest,type SpecM1,
-specObligations,specRepairs,specWitnesses
+endgameUnits,specObligations,specRepairs,specWitnesses
 } from '../core/records.ts';
 import { type UnitState,maxTier,openAttempt } from '../core/state.ts';
 import { SchemaError } from '../core/validate.ts';
@@ -58,7 +58,9 @@ export type Proposer =
   /** dev.13 (agent D): the cut of polish unit `unit` its compare judged `drop` (src/walk/compare.ts): it only cuts that unit. */
   | Readonly<{ type: 'compare'; unit: UnitId }>
   /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
-  | Readonly<{ type: 'deflake' }>;
+  | Readonly<{ type: 'deflake' }>
+  /** dev.82 (WS-5): the cut of `units`, which endgame fix `command` closes (src/commands/endgame.ts): it only cuts them. */
+  | Readonly<{ type: 'endgame'; command: CommandId; units: readonly UnitId[] }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
 export type NextInputs = Readonly<{
@@ -521,7 +523,8 @@ export function classify(input: ClassifyInput): Classified {
       cutNow.add(unit.id);
       const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit)
         : cutRefusal(view, unit.id);
-      const authorization = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'compare' ? null : 'cut needs apply --reason';
+      // dev.82 (WS-5): an endgame fix is the architect's recorded reason for the units it closes.
+      const authorization = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'compare' || (proposer.type === 'endgame' && proposer.units.includes(unit.id)) ? null : 'cut needs apply --reason';
       if (refusal !== null) reasons.push(refusal);
       if (authorization !== null) reasons.push(authorization);
       if (refusal === null && authorization === null) {
@@ -963,6 +966,7 @@ function droppedCutRefusal(view: JournalView, unit: PlanUnit): string | null {
  *   carries, the proposal is of the unit's milestone, and the unit is the proposal's own (its id and scope).
  * - The polish revision (`walk{job}`) only adds such units: any other change is refused.
  * - The compare's cut (`compare{unit}`) only cuts that unit (`droppedCutRefusal` holds the rest).
+ * - dev.82 (WS-5): the endgame fix's cut (`endgame{command, units}`) only cuts the units the fix closes.
  */
 function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
   const curIds = new Set(cur.units.map((u) => u.id));
@@ -987,6 +991,10 @@ function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Prop
   if (proposer.type === 'compare') {
     const other = changes.filter((c) => !(c.type === 'unit-cut' && c.unit === proposer.unit));
     if (other.length > 0) reasons.push(`the compare's cut of ${proposer.unit} only cuts it; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
+  }
+  if (proposer.type === 'endgame') {
+    const other = changes.filter((c) => !(c.type === 'unit-cut' && proposer.units.includes(c.unit)));
+    if (other.length > 0) reasons.push(`the cut of what endgame fix ${proposer.command} closes only cuts ${proposer.units.join(', ')}; it also changes ${other.map((c) => canonicalJson(c)).join(', ')}`);
   }
 }
 
@@ -1403,6 +1411,11 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'merge-in':
       case 'rerun':
         return unitsScope([body.unit]);
+      // dev.82 (WS-5): an endgame fix cuts the units it closes; every other endgame act is a request.
+      case 'endgame': {
+        const units = body.act.type === 'fix' ? endgameUnits(body.act.closes) : [];
+        return units.length === 0 ? NONE : unitsScope(units);
+      }
       case 'apply': {
         const inForce = planInForce(sc.runDir, view);
         if (inForce === null) return NONE;

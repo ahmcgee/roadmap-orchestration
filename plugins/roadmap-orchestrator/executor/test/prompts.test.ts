@@ -14,8 +14,8 @@ import { type ObligationDef } from '../src/holistic/types.ts';
 import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
 import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor as livePromptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
 import { resourceUnit } from '../src/core/ids.ts';
-import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,type DiagnosisEvidence,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
-import { BUILD_SCHEMA, EXPERIENCE_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, DIAGNOSIS_SCHEMA, validateBuildOutput, validateDiagnosisOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
+import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,type DiagnosisEvidence,type EndgameReviewBrief,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
+import { BUILD_SCHEMA, EXPERIENCE_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, DIAGNOSIS_SCHEMA, ENDGAME_REVIEW_SCHEMA, validateBuildOutput, validateDiagnosisOutput, validateEndgameReviewOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES,MODEL_IDS,PROFILES,ROLES,type Role,WALK_ROLES,atSeat } from '../src/routing/types.ts';
 
@@ -507,7 +507,34 @@ describe('prompts', () => {
     assert.throws(() => promptFor('build', 'claude-haiku-5-5'), (e: unknown) => e instanceof UnsupportedPromptError && /economy, is judgment-only/.test(e.message));
   });
 
-  it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const brief = {...SAMPLES.verifier[0].brief, history: [], vision: null}; const text = mod.render(mode === 'diagnosis' ? {mode, brief: {...brief, evidence: DIAGNOSIS_EVIDENCE}} : {mode, brief}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
+  it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const pre = SAMPLES.verifier[0]; if (pre.mode !== 'pre-build') throw new Error('the first verifier sample is pre-build'); const brief = {...pre.brief, history: [], vision: null}; const text = mod.render(mode === 'diagnosis' ? {mode, brief: {...brief, evidence: DIAGNOSIS_EVIDENCE}} : {mode, brief}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
+
+  it('dev.82 (WS-5): the endgame review renders every input, only in endgame mode, and answers its own strict schema', () => {
+    const brief: EndgameReviewBrief = {
+      vision: null, range: { from: sha('a'.repeat(40)), to: sha('b'.repeat(40)) }, diff: shown(sha('a'.repeat(40)), sha('b'.repeat(40)), 'EG-DIFF-LINE'),
+      fixes: [{ command: 'cmd-00000000000000e1', closes: ['F-7'], commit: sha('c'.repeat(40)), note: 'EG-FIX-NOTE' }],
+      publications: [{ head: sha('d'.repeat(40)), what: 'EG-PUBLISHED-UNIT', gated: true }],
+      findings: ['EG-ACTIVE-FINDING'], checkout: absPath('/wt/arc/EG-CHECKOUT'), evidenceDir: absPath('/run/evidence/jobs/EG-EVIDENCE'),
+    };
+    const values = ['a'.repeat(40), 'b'.repeat(40), 'EG-DIFF-LINE', 'cmd-00000000000000e1', 'F-7', 'c'.repeat(40), 'EG-FIX-NOTE', 'd'.repeat(40), 'EG-PUBLISHED-UNIT', 'EG-ACTIVE-FINDING', '/wt/arc/EG-CHECKOUT', '/run/evidence/jobs/EG-EVIDENCE'];
+    for (const model of MODEL_IDS) {
+      if (support('verifier', model).type === 'unsupported') continue;
+      const mod = promptFor('verifier', model);
+      const text = mod.render({ mode: 'endgame', brief });
+      assert.ok(text.includes('<mode>endgame</mode>'), model);
+      for (const v of values) assert.ok(text.includes(v), `verifier/${model}: endgame renders ${v}`);
+      for (const v of ['EG-FIX-NOTE', 'EG-PUBLISHED-UNIT']) assert.ok(!mod.render(SAMPLES.verifier[0]).includes(v), `verifier/${model}: pre-build renders no endgame input`);
+      assert.ok(!mod.system.includes('endgame'), `verifier/${model}: the system text the gate shares is unchanged`);
+    }
+    assertStrict(ENDGAME_REVIEW_SCHEMA, 'endgame');
+    const answer = { findings: [{ severity: 'P1', text: 'The fix rounds half-up.', path: 'src/round.js', evidence: ['src/round.js:4'] }], reasons: ['Read the range.'] };
+    assert.ok(conforms(ENDGAME_REVIEW_SCHEMA, answer));
+    assert.deepEqual(validateEndgameReviewOutput(answer), answer);
+    assert.deepEqual(validateEndgameReviewOutput({ findings: [], reasons: ['sound'] }).findings, []);
+    assert.throws(() => validateEndgameReviewOutput({ ...answer, findings: [{ ...answer.findings[0], evidence: [] }] }), SchemaError, 'a finding cites evidence');
+    assert.throws(() => validateEndgameReviewOutput({ ...answer, findings: [{ ...answer.findings[0], severity: 'blocking' }] }), SchemaError);
+    assert.throws(() => validateEndgameReviewOutput({ ...answer, reasons: [] }), SchemaError);
+  });
 
   it('dev.82 (E2): a diagnosis renders every evidence input, only in diagnosis mode, and answers its own strict schema', () => {
     const values = ['repeat-red:EV-LANE', 'ev-lane', 'EV-SIGNATURE-LINE', 'EV-EXCERPT-LINE', 'ev-base-lane', 'e'.repeat(40), '/run/evidence/EV-BASE-DIR', 'EV-TRIPPED-TARGET', 'EV-RETRYABLE-PARK', 'EV-HOST-SIGNATURE', 'EV-KNOWN-DEFECT', 'EV-FLAKY-KEY'];

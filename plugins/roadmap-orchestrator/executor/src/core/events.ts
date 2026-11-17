@@ -31,7 +31,7 @@ COMMAND_VERDICTS,DEMO_ACTS,LENS_KIND_NAMES,RERUN_CAUSES,
 approvalFingerprint,
 classUsages,
 containmentMode,
-dispatchRecord,killReason,knownDefectMatch,
+dispatchRecord,type EndgameRef,type EndgameRequest,endgameRef,endgameRequest,killReason,knownDefectMatch,
 manifestSpecs,
 optionId,pauseTarget,
 resumeTarget,revisionInputs,specPatch,stage,
@@ -43,7 +43,7 @@ usageUnavailableReason,
 import { type AuditTrigger,type DivergenceDraft,type FindingEvidence,type FindingLens,type FindingSeverity,type FindingSource,type FindingTo,type MutantRef,type ObligationDisposition,type PackDisposition,type PackFinding,type PlanDefect,type WitnessPurpose,FINDING_LENSES,FINDING_SEVERITIES,OBLIGATION_DISPOSITIONS,WITNESS_PURPOSES,auditTrigger,divergenceDraft,divergenceDraftFields,findingEvidence,findingSource,findingTo,mutantRef,packDisposition,packFinding,planDefect } from '../holistic/types.ts';
 import { type SystemsMap,systemsMap } from '../input/systems.ts';
 import {
-type ArcSeatRef,type Backend,type RoutingProvenance,type SeatRef,type UnitSeatRef,arcSeatFields,backend,routingProvenance,seatFields,unitSeatFields
+type Backend,type JobSeatRef,type RoutingProvenance,type SeatRef,type UnitSeatRef,backend,jobSeatFields,routingProvenance,seatFields,unitSeatFields
 } from '../routing/types.ts';
 import { type FlakyEvent,flakyEvent } from './flaky.ts';
 import { type ReviewFindingId,reviewFindingId } from './ids.ts';
@@ -115,7 +115,9 @@ export type Holder =
   /** M3 (R7, G5, H4): a repair batch's `integration-slot` holder, per finding and candidate attempt. */
   | Readonly<{ type: 'batch'; finding: FindingId; attempt: number }>
   /** M3 (G4): a durable job's lanes (audit, baseline, docs and batch lanes); a failed cleanup leaves a job-owned residue. */
-  | Readonly<{ type: 'job'; job: JobId }>;
+  | Readonly<{ type: 'job'; job: JobId }>
+  /** dev.82: an endgame landing's `integration-slot` holder, `job` its `endgame-<n>` (src/pipeline/integrate.ts `landEndgame`). */
+  | Readonly<{ type: 'endgame'; job: JobId }>;
 /** The holders that may take `reclaim`: a sweep, a probe reclaiming the arc's own residue, or a job re-running its lane over its own residue (G4). */
 export const RECLAIM_HOLDERS = ['sweep', 'retry', 'job'] as const satisfies readonly Holder['type'][];
 /** The holders whose failed cleanup records residues (their owner: the unit, or the job). */
@@ -132,6 +134,7 @@ export function holderUnit(h: Holder): UnitId | null {
     case 'docs':
     case 'batch':
     case 'job':
+    case 'endgame':
       return null;
   }
 }
@@ -183,7 +186,8 @@ export type Dev6MutantSubject = Readonly<{ purpose: 'mutant'; finding: FindingId
  */
 export type SpawnSubject =
   | (Readonly<{ purpose: 'backend'; prompt?: PromptSize; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
-  | (Readonly<{ purpose: 'arc-backend'; prompt?: PromptSize; routingRev: RoutingRev; job: JobId; attempt: number }> & ArcSeatRef)
+  /** dev.82: on the verifier's `high` seat for the endgame review (`JobSeatRef`). */
+  | (Readonly<{ purpose: 'arc-backend'; prompt?: PromptSize; routingRev: RoutingRev; job: JobId; attempt: number }> & JobSeatRef)
   /** dev.17: `identity` on a suite lane's journey (a batch point's, a publication's), so a batch point finds its clean passes. */
   | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev; identity?: LaneIdentity }>
   | MutantSubject
@@ -312,8 +316,11 @@ export type BatchCandidate = Readonly<{
   chain: readonly Readonly<{ commit: Sha; parents: readonly [Sha, Sha] }>[];
 }>;
 
-/** What an `ff` publishes besides a unit (M3): a docs publication, or a repair batch (every member's fingerprint re-checked). */
-export type FfSubject = Readonly<{ type: 'docs'; pub: JobId }> | Readonly<{ type: 'batch'; job: JobId }>;
+/**
+ * What an `ff` publishes besides a unit (M3): a docs publication, or a repair batch (every member's fingerprint re-checked);
+ * dev.82: the endgame branch's head, landed by `job` (`endgame-<n>`), a descendant of the tip it moves from.
+ */
+export type FfSubject = Readonly<{ type: 'docs'; pub: JobId }> | Readonly<{ type: 'batch'; job: JobId }> | Readonly<{ type: 'endgame'; job: JobId }>;
 /**
  * A unit's `ff` carries its approval fingerprint and no subject (the M2 shape); a docs or batch `ff`
  * carries its subject and no fingerprint.
@@ -339,6 +346,8 @@ export type RevisionSource =
   | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
   /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
   | Readonly<{ type: 'deflake' }>
+  /** dev.82: the cut of the units endgame fix `command` closes (src/commands/endgame.ts): it only cuts them. */
+  | Readonly<{ type: 'endgame'; command: CommandId }>
   /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
 ;
 
@@ -445,8 +454,8 @@ export type AbortRecord = Readonly<{ type: 'abort'; op: OpId; reason: Readonly<{
 export type MeterSubject =
   | (Readonly<{ type: 'seat'; unit: UnitId; attempt: number }> & UnitSeatRef)
   | Readonly<{ type: 'smoke'; backend: Backend }>
-  /** M3: a job's lens or checkpoint call, charged to the arc seat of its role. */
-  | (Readonly<{ type: 'job'; job: JobId; attempt: number }> & ArcSeatRef);
+  /** M3: a job's lens or checkpoint call, charged to the arc seat of its role (dev.82: the endgame review's, the verifier's `high`). */
+  | (Readonly<{ type: 'job'; job: JobId; attempt: number }> & JobSeatRef);
 
 // ---------------------------------------------------------------------------------------------------
 // Stage outcomes: the vocabulary of the `stage-outcome` fact. The transition table itself (what each
@@ -1096,10 +1105,32 @@ export type EndgameFact =
   | Readonly<{ kind: 'endgame-fix'; command: CommandId; closes: readonly EndgameRef[]; commit: Sha; note: string }>
   | Readonly<{ kind: 'endgame-landed'; job: JobId; old: Sha; head: Sha }>
   | Readonly<{ kind: 'endgame-reviewed'; job: JobId; from: Sha; to: Sha; findings: readonly FindingId[] }>
-  | Readonly<{ kind: 'endgame-left'; episode: number; cause: EndgameLeftCause }>;
+  | Readonly<{ kind: 'endgame-left'; episode: number; cause: EndgameLeftCause }>
+  /**
+   * dev.82 (WS-5): `roadmap resume <unit>` of a unit the endgame holds at admission: it goes back into the pipeline (any
+   * open episode, opened or still settling).
+   */
+  | Readonly<{ kind: 'endgame-released'; unit: UnitId; command: CommandId }>
+  /** dev.82 (WS-5): `roadmap endgame land|review|run|checkpoint`, recorded for the scheduler to serve (src/endgame/jobs.ts). */
+  | Readonly<{ kind: 'endgame-requested'; command: CommandId; request: EndgameRequest }>
+  /**
+   * dev.82 (WS-5): an endgame job `job` (`endgame-<n>`) serving `command`'s request (null: the closing step's own review),
+   * and its end. A started job without its end resumes as the same job.
+   */
+  | Readonly<{ kind: 'endgame-job-started'; job: JobId; command: CommandId | null; request: EndgameJobRequest }>
+  | Readonly<{ kind: 'endgame-job-ended'; job: JobId; outcome: EndgameJobOutcome; detail: string }>;
 
-/** What an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
-export type EndgameRef = FindingId | ObligationId | UnitId;
+/** The requests an endgame job serves (a checkpoint is the walk's). */
+export type EndgameJobRequest = Exclude<EndgameRequest, Readonly<{ type: 'checkpoint' }>>;
+/**
+ * How an endgame job ended: a landing `landed` (`endgame-landed` written), `refused` (not a descendant of the integration
+ * tip, nothing to land, or the tip moved under it), `red` (a lane or obligation red: nothing moved), or `no-verdict` (a
+ * lane gave none); a review `reviewed` (`endgame-reviewed` written) or `no-verdict` (no usable answer); a lane run `ran`.
+ */
+export const ENDGAME_JOB_OUTCOMES = ['landed', 'refused', 'red', 'no-verdict', 'reviewed', 'ran'] as const;
+export type EndgameJobOutcome = (typeof ENDGAME_JOB_OUTCOMES)[number];
+
+export type { EndgameRef, EndgameRequest } from './records.ts';
 export const ENDGAME_LEFT_CAUSES = ['planned-unit', 'complete'] as const;
 export type EndgameLeftCause = (typeof ENDGAME_LEFT_CAUSES)[number];
 
@@ -1472,14 +1503,14 @@ const lockOrder: Read<readonly ResourceUnit[]> = (value, path) => {
 const jobR: Read<JobId> = (v, p) => jobIdOf(v, p);
 const docsJobR: Read<JobId> = (v, p) => jobIdOfKind('docs')(v, p);
 const batchJobR: Read<JobId> = (v, p) => jobIdOfKind('batch')(v, p);
+const endgameJobR: Read<JobId> = (v, p) => jobIdOfKind('endgame')(v, p);
 const witnessJobR: Read<JobId> = (v, p) => jobIdOfKind('witness')(v, p);
 const findingR: Read<FindingId> = (v, p) => findingId(v, p);
 const obligationR: Read<ObligationId> = (v, p) => obligationId(v, p);
 const laneR: Read<LaneId> = (v, p) => laneId(v, p);
 const laneRevR: Read<LaneRev> = (v, p) => laneRev(v, p);
 const planRevR: Read<PlanRev> = (v, p) => planRev(v, p);
-/** dev.82: an endgame fix's target: `F-<n>` a finding, `I-<n>` an obligation, anything else a unit. */
-const endgameRefR: Read<EndgameRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : typeof v === 'string' && v.startsWith('I-') ? obligationId(v, p) : unitId(v, p));
+const endgameRefR: Read<EndgameRef> = endgameRef;
 const revisionBaseR: Read<RevisionBase> = (v, p) => (v === 0 ? 0 : planRev(v, p));
 
 const holder: Read<Holder> = tagged('type', {
@@ -1490,6 +1521,7 @@ const holder: Read<Holder> = tagged('type', {
   docs: object((f): Holder => ({ type: f.get('type', literal('docs')), pub: f.get('pub', docsJobR) })),
   batch: object((f): Holder => ({ type: f.get('type', literal('batch')), finding: f.get('finding', findingR), attempt: f.get('attempt', positive) })),
   job: object((f): Holder => ({ type: f.get('type', literal('job')), job: f.get('job', jobR) })),
+  endgame: object((f): Holder => ({ type: f.get('type', literal('endgame')), job: f.get('job', endgameJobR) })),
 });
 
 const laneOwner: Read<LaneOwner> = tagged('type', {
@@ -1505,6 +1537,7 @@ const revisionSource: Read<RevisionSource> = tagged('type', {
   compare: object((f): RevisionSource => ({ type: f.get('type', literal('compare')), unit: f.get('unit', unitR) })),
   split: object((f): RevisionSource => ({ type: f.get('type', literal('split')), unit: f.get('unit', unitR), inv: f.get('inv', invR) })),
   deflake: object((f): RevisionSource => ({ type: f.get('type', literal('deflake')) })),
+  endgame: object((f): RevisionSource => ({ type: f.get('type', literal('endgame')), command: f.get('command', cmdR) })),
 });
 
 const resourceEdge: Read<ResourceEdge> = tagged('type', {
@@ -1537,7 +1570,7 @@ const spawnSubject: Read<SpawnSubject> = tagged('purpose', {
     unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
   })),
   'arc-backend': object((f): SpawnSubject => ({
-    purpose: f.get('purpose', literal('arc-backend')), ...promptField(f), ...arcSeatFields(f), routingRev: f.get('routingRev', revR),
+    purpose: f.get('purpose', literal('arc-backend')), ...promptField(f), ...jobSeatFields(f), routingRev: f.get('routingRev', revR),
     job: f.get('job', jobR), attempt: f.get('attempt', positive),
   })),
   journey: object((f): SpawnSubject => {
@@ -1873,6 +1906,7 @@ function assertUniqueUnits(units: readonly UnitId[], path: string): void {
 const ffSubject: Read<FfSubject> = tagged('type', {
   docs: object((f): FfSubject => ({ type: f.get('type', literal('docs')), pub: f.get('pub', docsJobR) })),
   batch: object((f): FfSubject => ({ type: f.get('type', literal('batch')), job: f.get('job', batchJobR) })),
+  endgame: object((f): FfSubject => ({ type: f.get('type', literal('endgame')), job: f.get('job', endgameJobR) })),
 });
 
 const parent: Read<Parent> = tagged('type', {
@@ -1889,7 +1923,7 @@ const meterSubject: Read<MeterSubject> = tagged('type', {
     type: f.get('type', literal('seat')), ...unitSeatFields(f), unit: f.get('unit', unitR), attempt: f.get('attempt', positive),
   })),
   smoke: object((f): MeterSubject => ({ type: f.get('type', literal('smoke')), backend: f.get('backend', backend) })),
-  job: object((f): MeterSubject => ({ type: f.get('type', literal('job')), ...arcSeatFields(f), job: f.get('job', jobR), attempt: f.get('attempt', positive) })),
+  job: object((f): MeterSubject => ({ type: f.get('type', literal('job')), ...jobSeatFields(f), job: f.get('job', jobR), attempt: f.get('attempt', positive) })),
 });
 
 const planChange: Read<PlanChange> = tagged('type', {
@@ -2265,6 +2299,10 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       throw new SchemaError(`${f.path}.lane`, 'absent (only a batch lane red names one: a walk job\'s walkthrough P1, an audit job\'s witness P1)', lane);
     }
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
+    // dev.82 (WS-5): the endgame review's findings come from its endgame job.
+    if ((out.lens === 'endgame-review') !== (out.source.type === 'job' && parseJobId(out.source.job).kind === 'endgame')) {
+      throw new SchemaError(`${f.path}.source`, out.lens === 'endgame-review' ? 'the endgame-<n> review job' : 'not an endgame job (it opens only endgame-review findings)', out.source);
+    }
     return { ...out, ...(milestone === undefined ? {} : { milestone }), ...(cause === undefined ? {} : { cause }), ...(lane === undefined ? {} : { lane }) };
   }),
   'finding-transition': object((f): Fact => ({ kind: f.get('kind', literal('finding-transition')), id: f.get('id', findingR), to: f.get('to', findingTo) })),
@@ -2341,11 +2379,21 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     kind: f.get('kind', literal('endgame-fix')), command: f.get('command', cmdR), closes: f.get('closes', arrayOf(endgameRefR, { nonEmpty: true })),
     commit: f.get('commit', shaR), note: f.get('note', nonBlank),
   })),
-  'endgame-landed': object((f): Fact => ({ kind: f.get('kind', literal('endgame-landed')), job: f.get('job', jobR), old: f.get('old', shaR), head: f.get('head', shaR) })),
+  'endgame-landed': object((f): Fact => ({ kind: f.get('kind', literal('endgame-landed')), job: f.get('job', endgameJobR), old: f.get('old', shaR), head: f.get('head', shaR) })),
   'endgame-reviewed': object((f): Fact => ({
-    kind: f.get('kind', literal('endgame-reviewed')), job: f.get('job', jobR), from: f.get('from', shaR), to: f.get('to', shaR), findings: f.get('findings', arrayOf(findingR)),
+    kind: f.get('kind', literal('endgame-reviewed')), job: f.get('job', endgameJobR), from: f.get('from', shaR), to: f.get('to', shaR), findings: f.get('findings', arrayOf(findingR)),
   })),
   'endgame-left': object((f): Fact => ({ kind: f.get('kind', literal('endgame-left')), episode: f.get('episode', positive), cause: f.get('cause', oneOf(ENDGAME_LEFT_CAUSES)) })),
+  'endgame-released': object((f): Fact => ({ kind: f.get('kind', literal('endgame-released')), unit: f.get('unit', unitR), command: f.get('command', cmdR) })),
+  'endgame-requested': object((f): Fact => ({ kind: f.get('kind', literal('endgame-requested')), command: f.get('command', cmdR), request: f.get('request', endgameRequest) })),
+  'endgame-job-started': object((f): Fact => {
+    const request = f.get('request', endgameRequest);
+    if (request.type === 'checkpoint') throw new SchemaError(`${f.path}.request`, 'a land, review or run request (a checkpoint is the walk\'s)', request);
+    return { kind: f.get('kind', literal('endgame-job-started')), job: f.get('job', endgameJobR), command: f.get('command', nullable(cmdR)), request };
+  }),
+  'endgame-job-ended': object((f): Fact => ({
+    kind: f.get('kind', literal('endgame-job-ended')), job: f.get('job', endgameJobR), outcome: f.get('outcome', oneOf(ENDGAME_JOB_OUTCOMES)), detail: f.get('detail', str),
+  })),
 };
 
 export const fact: Read<Fact> = tagged('kind', {

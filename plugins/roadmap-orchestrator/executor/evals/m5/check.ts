@@ -168,7 +168,7 @@ type Repair = Readonly<{ kind: 'resolved'; seq: number; unit: string; pub: numbe
 function repairOf(f: FindingLog, log: M5Log): Repair {
   const resolved = f.transitions.findLast((t) => t.to.state === 'resolved');
   const fixed = f.transitions.filter((t) => resolved === undefined || t.seq < resolved.seq).findLast((t) => t.to.state === 'fixed-on-branch');
-  const unit = fixed !== undefined && fixed.to.state === 'fixed-on-branch' ? fixed.to.unit : null;
+  const unit = fixed !== undefined && fixed.to.state === 'fixed-on-branch' && 'unit' in fixed.to ? fixed.to.unit : null;
   const pub = unit === null ? undefined : log.publications.find((p) => p.unit === unit && (resolved === undefined || p.seq < resolved.seq));
   if (resolved !== undefined && pub !== undefined) return { kind: 'resolved', seq: resolved.seq, unit: unit!, pub: pub.seq };
   return { kind: 'not', detail: `${f.id} (${f.claim}) is ${f.transitions.at(-1)?.to.state ?? 'open'}${unit === null ? '' : ` (fixed on ${unit}'s branch, ${pub === undefined ? 'unpublished' : 'published'})`}` };

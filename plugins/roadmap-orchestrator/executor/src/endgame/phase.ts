@@ -82,19 +82,22 @@ export function openEpisode(view: JournalView): EndgameEpisode | null {
 
 /**
  * The units the endgame holds at admission: in the endgame, each active finding-raised unit with no dispatch record that
- * was in the plan when the episode entered (it goes to the worklist; `resume <unit>` sends one back in). A unit added in
- * the episode (an architect's or a checkpoint's admit) is the way back into the pipeline and runs. Empty in the body.
+ * was in the plan when the episode entered (it goes to the worklist; `resume <unit>` sends one back in: its
+ * `endgame-released` in the open episode drops the hold). A unit added in the episode (an architect's or a checkpoint's
+ * admit) is the way back into the pipeline and runs. Empty in the body.
  */
 export function endgameHeld(view: JournalView, plan: PlanM1, repairsOf: RepairsOf): ReadonlySet<UnitId> {
   if (phaseKind(view, plan, repairsOf).kind !== 'endgame') return new Set();
   // Before the scheduler writes the episode's entry, every unit is one the entry will find.
-  const entered = openEpisode(view)?.seq ?? Number.POSITIVE_INFINITY;
+  const open = openEpisode(view);
+  const entered = open?.seq ?? Number.POSITIVE_INFINITY;
+  const released = new Set(open?.released.map((r) => r.unit) ?? []);
   const addedBefore = (u: PlanUnit): boolean => {
     const added = view.addedSeq(u.id);
     if (added === null) throw new Error(`unit ${u.id} is in the plan in force, but no plan-applied fact named it`);
     return added <= entered;
   };
-  return new Set(plan.units.filter((u) => view.unit(u.id).status === 'active' && view.dispatchOf(u.id) === null && addedBefore(u) && findingRaised(view, u, repairsOf(u))).map((u) => u.id));
+  return new Set(plan.units.filter((u) => view.unit(u.id).status === 'active' && view.dispatchOf(u.id) === null && !released.has(u.id) && addedBefore(u) && findingRaised(view, u, repairsOf(u))).map((u) => u.id));
 }
 
 /** The running units (see the header), in plan order. */

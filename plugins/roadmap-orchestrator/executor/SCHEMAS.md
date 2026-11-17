@@ -1955,3 +1955,76 @@ branch holds work the integration head does not: its tip is no ancestor of the h
 `close-admissions` is removed. Its CLI form is gone. An earlier release's command file still reads and is rejected. An
 `admissions-closed` fact still reads, with a `ROADMAP_UPGRADE` warning, and has no effect. `HolisticFold.draining` and
 the `new-finding-draining` raise are gone, but the reason still reads.
+
+### dev.82 E1 commands: fix, land, review, run, checkpoint, resume
+
+`CommandBody` gains `{type: 'endgame', act: EndgameAct}` (`src/commands/endgame.ts`; CLI `roadmap endgame
+fix|run|land|checkpoint|review`). `EndgameAct` is a fix `{type: 'fix', closes: EndgameRef[] (non-empty, unique), commit:
+Sha, note: string (non-blank)}` or an `EndgameRequest`: `{type: 'land'} | {type: 'review'} | {type: 'run', lanes: LaneId[]
+(ascending, non-empty)} | {type: 'checkpoint', milestone: MilestoneId}`. `EndgameRef` (`F-<n>`, `I-<n>`, else a unit id)
+and both readers live in `records.ts`; `events.ts` re-exports the types. The CLI resolves a fix's commit from the endgame
+branch's head when `--commit` is absent. Scope: a fix that closes units, those units; every other act ∅. Every act is
+rejected without an opened episode.
+
+- **fix**: the commit must be on `roadmap/<arc>/endgame` after the episode's base; each F-id an active finding, each I-id
+  an obligation in force, each unit in the plan and neither retired, cut nor superseded. A named unit's cut is evaluated
+  before the fact (proposer `{type: 'endgame', command, units}`, which only cuts those units and authorizes their cut), so
+  a unit that may not be cut rejects the command. Then `endgame-fix`, then the cut committed under the fence (source
+  `{type: 'endgame', command}`, `RevisionSource` additive; `status` reads it as the architect's command; cut reason
+  `closed by endgame fix <command>`), then the findings' moves. A re-run finds its fact and commits what is missing.
+- **requests**: `endgame-requested{command, request}`, once per command. `land` is rejected unless the endgame branch's
+  head strictly descends from the integration head; `run` unless every lane is a suite lane or an arc lane in force;
+  `checkpoint` unless the milestone is in the plan and a round of it was walked. A checkpoint request after a milestone's
+  last round makes one more round's walk due (`src/walk/milestones.ts` `checkpointAsked`), whatever `walkRounds` allows.
+- **resume <unit>** of a unit `endgameHeld` holds writes `endgame-released{unit, command}` (any open episode), and the hold
+  drops for it. Without an open episode yet it is rejected (the entry comes at the next tick).
+
+Facts (additive `EndgameFact`, folded into `EndgameEpisode.released | requests | jobs`):
+
+```ts
+| { kind: 'endgame-released'; unit: UnitId; command: CommandId }
+| { kind: 'endgame-requested'; command: CommandId; request: EndgameRequest }
+| { kind: 'endgame-job-started'; job: JobId /* endgame-<n> */; command: CommandId | null; request: land | review | run }
+| { kind: 'endgame-job-ended'; job: JobId; outcome: 'landed' | 'refused' | 'red' | 'no-verdict' | 'reviewed' | 'ran'; detail: string }
+```
+
+The fold refuses a second release of a unit in an episode, a request or a job before the episode opened, a command
+requested or served twice, a second job while one runs (job ids are the next `endgame-<n>`), an end of a job not
+running, and `endgame-left` while a job runs (the scheduler leaves an episode only between its jobs). `endgame-landed`
+and `endgame-reviewed` name the running job, an `endgame-<n>` (`JOB_KINDS` gains `endgame`).
+
+Jobs (`src/endgame/jobs.ts`), in the scheduler's holistic slot (track `holistic:endgame-job`, before the batch witness and
+the audit), one at a time: a started job without its end resumes as the same job; else the first unserved request; else,
+at the closing step, the review when `reviewDue`, unless the verifier's backend is parked. A no-verdict end takes the
+retryable-park backoff.
+
+- **Landing** (`src/pipeline/integrate.ts` `landEndgame`): holder `Holder{type: 'endgame', job}` (additive; a first holder
+  served before every unit, slot alone, parent `job{job}`), candidate the endgame head itself (no merge), refused when it is
+  not a strict descendant of the tip before or after the slot wait. Lanes under `job{job}` in
+  `<worktreeRoot>/<arc>/<job>.candidate`: the plan's suite lanes the head's diff on the tip selects, and the arc lanes of
+  every active non-exempt obligation (never a deferred lane), graded as a batch (the brake, the episode's fixes not held by
+  the tip as repairs); not clean, the tip alone in `<job>.base`. Red moves nothing (`detail` names the lanes and
+  obligations, and whether the tip alone is red too). Green: `integration.ff` with `FfSubject{type: 'endgame', job}`
+  (`publicationProblem`: the new head strictly descends from the old; never redone by recovery), then `finishLanding`:
+  `endgame-landed`, the findings' moves, the snapshot (parent the job), the slot released. Recovery keeps a published
+  endgame holder's slot for `finishLanding` and abandons any other. `PublishedHead.subject` gains `'endgame'` (counted at
+  its intent's seq, `pub` the job).
+- **Review** (`src/endgame/review.ts`): the verifier in `endgame` mode (`VerifierInputs` gains `{mode: 'endgame', brief:
+  EndgameReviewBrief}`) as an acting judge on the verifier's `high` seat under the arc's routing (`JobSeatRef`: the
+  `arc-backend` spawn subject and the `job` meter subject accept `{role: 'verifier', tier: 'high'}` beside the arc
+  seats), in `<worktreeRoot>/<arc>/<job>.review` at the integration head, evidence in the job's dir. It answers
+  `ENDGAME_REVIEW_SCHEMA` `{findings: {severity: P1|P2|P3, text, path: string|null, evidence: string[] (≥1)}[], reasons:
+  string[] (≥1)}`, with one repair turn. Each finding opens as lens `endgame-review` (`FINDING_LENSES`, additive; only
+  from an `endgame-<n>` job) over no obligation, then `endgame-reviewed{job, from: base, to: head, findings}`.
+- **Run**: the named lanes as a journey series at the endgame head in `<job>.run`, observations reused by a later landing.
+
+Findings: `FindingTo` gains `{state: 'owned' | 'fixed-on-branch', endgame: CommandId}` (an owner of either a `unit` or an
+`endgame` fix, never both). `ownershipMoves` reads the fixes (`src/endgame/fixes.ts`): a unit's publication resolves
+first, then a fix a landing holds (its commit an ancestor of a landing's head), then a live repairing unit owns, then an
+unlanded fix fixes on the endgame branch. A fix closes a finding it names, and a witness finding over an obligation it
+names, recorded after the finding opened. `FindingState.owner` is null for an endgame owner.
+
+Closing: `closingSettled` holds when no endgame job runs, no review is due (`reviewDue`: the endgame branch's tip is not
+its base and no review of the episode reached a head holding it) and no closing batch witness is due
+(`batchWitnessDue(ctx, 'closing')`, which the scheduler then runs). A P1 the review or the final audit opens is a required
+entry, so the step returns to `open`. Only P1s hold; there is no review round limit.

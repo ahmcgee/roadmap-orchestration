@@ -13,7 +13,7 @@ type ResourceInstance,
 type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
 commandId,divergenceId,edgeId,findingId,
 buildSessionNameOf,idsAscending,
-implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
+implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,type MilestoneId,milestoneId,needsUserId,
 obligationId,opIdOf,parseInvocationId,planRev,
 
 resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
@@ -1674,7 +1674,47 @@ export type CommandBody =
    */
   | Readonly<{ type: 'withdraw'; command: CommandId }>
   /** `roadmap push` (dev.81, A3): the last pushed CI head counts as settled, so the CI ref advances now. Control, scope ∅. */
-  | Readonly<{ type: 'push' }>;
+  | Readonly<{ type: 'push' }>
+  /**
+   * `roadmap endgame fix|run|land|checkpoint|review` (dev.82, WS-5; src/commands/endgame.ts): a recorded fix, or a request the
+   * scheduler serves (src/endgame/jobs.ts). Scope: a fix that closes units, those units; anything else ∅.
+   */
+  | Readonly<{ type: 'endgame'; act: EndgameAct }>;
+
+/** dev.82 (WS-5): what an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
+export type EndgameRef = FindingId | ObligationId | UnitId;
+export const endgameRef: Read<EndgameRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : typeof v === 'string' && v.startsWith('I-') ? obligationId(v, p) : unitId(v, p));
+/** The units among what an endgame fix closes. */
+export const endgameUnits = (closes: readonly EndgameRef[]): readonly UnitId[] => closes.filter((r): r is UnitId => !r.startsWith('F-') && !r.startsWith('I-'));
+/**
+ * dev.82 (WS-5): what an endgame command asks of the scheduler: land the endgame head, review the endgame's range now, run
+ * lanes (ascending) at the endgame head, or one more walk round of a milestone at the integration head (served by the walk
+ * itself, src/walk/milestones.ts: no endgame job).
+ */
+export type EndgameRequest =
+  | Readonly<{ type: 'land' }>
+  | Readonly<{ type: 'review' }>
+  | Readonly<{ type: 'run'; lanes: readonly LaneId[] }>
+  | Readonly<{ type: 'checkpoint'; milestone: MilestoneId }>;
+export const endgameRequest: Read<EndgameRequest> = tagged('type', {
+  land: object((f): EndgameRequest => ({ type: f.get('type', literal('land')) })),
+  review: object((f): EndgameRequest => ({ type: f.get('type', literal('review')) })),
+  run: object((f): EndgameRequest => ({ type: f.get('type', literal('run')), lanes: f.get('lanes', sortedBy((v, p) => laneId(v, p), (l) => l, { nonEmpty: true })) })),
+  checkpoint: object((f): EndgameRequest => ({ type: f.get('type', literal('checkpoint')), milestone: f.get('milestone', (v, p) => milestoneId(v, p)) })),
+});
+/**
+ * dev.82 (WS-5): an endgame command's act. A fix: what it `closes` (each once), its `commit` on the endgame branch after the
+ * episode's base (the CLI resolves the branch's head when `--commit` is absent), its one-line `note`.
+ */
+export type EndgameAct = Readonly<{ type: 'fix'; closes: readonly EndgameRef[]; commit: Sha; note: string }> | EndgameRequest;
+const endgameAct: Read<EndgameAct> = (value, path) => {
+  if (new Fields(value, path).get('type', str) !== 'fix') return endgameRequest(value, path);
+  return object((f): EndgameAct => {
+    const closes = f.get('closes', arrayOf(endgameRef, { nonEmpty: true }));
+    assertUnique(closes, (r) => r, `${f.path}.closes`);
+    return { type: f.get('type', literal('fix')), closes, commit: f.get('commit', (v, p) => sha(v, p)), note: f.get('note', nonBlank) };
+  })(value, path);
+};
 
 /** dev.59: why the root says a lanes red is not the tree's (`roadmap rerun --cause`): the estate it runs against, or the infrastructure. */
 export const RERUN_CAUSES = ['estate', 'infra'] as const;
@@ -1773,6 +1813,7 @@ export const commandBody: Read<CommandBody> = tagged('type', {
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
   withdraw: object((f): CommandBody => ({ type: f.get('type', literal('withdraw')), command: f.get('command', cmdId) })),
   push: object((f): CommandBody => ({ type: f.get('type', literal('push')) })),
+  endgame: object((f): CommandBody => ({ type: f.get('type', literal('endgame')), act: f.get('act', endgameAct) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({

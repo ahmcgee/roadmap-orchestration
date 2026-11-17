@@ -75,6 +75,7 @@ function ownerOf(ctx: ResourceContext, holder: AcquiringHolder): Owner {
       };
     case 'docs':
     case 'batch':
+    case 'endgame':
       throw new Error(`${JSON.stringify(holder)} holds integration-slot alone: it has nothing to probe`);
   }
 }

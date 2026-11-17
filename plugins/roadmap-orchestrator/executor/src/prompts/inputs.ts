@@ -577,7 +577,24 @@ export type DiagnosisEvidence = Readonly<{
 }>;
 /** dev.82 (E2): a diagnosis's brief: the review brief and the evidence block. */
 export type DiagnosisBrief = ReviewBrief & Readonly<{ evidence: DiagnosisEvidence }>;
-export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build'; brief: ReviewBrief}> | Readonly<{mode: 'diagnosis'; brief: DiagnosisBrief}>;
+/**
+ * dev.82 (WS-5): what the endgame review reads (src/endgame/review.ts). `range`: the endgame's own commits on the
+ * integration head, from the episode's base to the head, and `diff` that range bounded. `fixes`: the architect's recorded
+ * fixes (what each closes, its commit and note). `publications`: each head published in the range, a unit's or a batch's
+ * marked `gated` (its gate approved it), an endgame landing's or a docs publication's not. `findings`: the active findings,
+ * one line each. `checkout`: the detached checkout of the head the session works in; `evidenceDir` where it saves evidence.
+ */
+export type EndgameReviewBrief = Readonly<{
+  vision: VisionInput | null;
+  range: Readonly<{ from: Sha; to: Sha }>;
+  diff: BoundedDiff;
+  fixes: readonly Readonly<{ command: string; closes: readonly string[]; commit: Sha; note: string }>[];
+  publications: readonly Readonly<{ head: Sha; what: string; gated: boolean }>[];
+  findings: readonly string[];
+  checkout: AbsPath;
+  evidenceDir: AbsPath;
+}>;
+export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build'; brief: ReviewBrief}> | Readonly<{mode: 'diagnosis'; brief: DiagnosisBrief}> | Readonly<{mode: 'endgame'; brief: EndgameReviewBrief}>;
 
 export type ExperienceInputs = Readonly<{mode: 'walkthrough'; brief: WalkthroughInputs}> | Readonly<{mode: 'polish'; brief: PolishJudgeInputs}>;
 export type RoleInputs = {

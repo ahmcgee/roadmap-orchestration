@@ -13,10 +13,12 @@
 // M3 (A4): a docs publication's `ff` (subject `docs{pub}`, no fingerprint) moves integration from T to its
 // `docs.commit` commit, whose one parent is T (`publicationProblem`); `planDocsFf` plans it. M3 (B2): a repair batch's
 // `ff` (subject `batch{job}`) moves integration from T to the last merge of its chain (`planBatchFf`): its provenance is
-// a first-parent chain of two-parent merges from the new tip back to T, one per member.
+// a first-parent chain of two-parent merges from the new tip back to T, one per member. dev.82 (WS-5): an endgame landing's
+// `ff` (subject `endgame{job}`) moves integration from T to the endgame branch's head, a strict descendant of T
+// (`planEndgameFf`): the architect's commits on the endgame branch, tested as they stand (no merge is made).
 import { crashPoint } from '../core/crash.ts';
 import { type IntentOf, type OpExpect, type OpOutcome, parentUnit } from '../core/events.ts';
-import type { Sha } from '../core/ids.ts';
+import type { JobId, Sha } from '../core/ids.ts';
 import type { GitSteps, IntentBody } from '../core/interfaces.ts';
 import type { ApprovalFingerprint } from '../core/records.ts';
 import type { AbsPath, RefName } from '../core/values.ts';
@@ -61,7 +63,7 @@ export function provenanceProblem(repo: AbsPath, next: Sha, tip: Sha, unitCommit
 /**
  * The provenance an `ff` must carry, per what it publishes: a unit's merge [T, approved unit commit]; a docs
  * publication's commit, whose one parent is T; a batch's chain: at least two merges, each with two parents, whose first
- * parents lead from the new tip back to T.
+ * parents lead from the new tip back to T; (dev.82) an endgame landing's head: a strict descendant of T.
  */
 export function publicationProblem(repo: AbsPath, expect: OpExpect['integration.ff']): string | null {
   const { old, new: next } = expect;
@@ -80,6 +82,8 @@ export function publicationProblem(repo: AbsPath, expect: OpExpect['integration.
         at = parents[0]!;
       }
     }
+    case 'endgame':
+      return next !== old && isAncestor(repo, old, next) ? null : `${next}, landed by ${expect.subject.job}, does not descend from ${old}`;
   }
 }
 
@@ -173,6 +177,26 @@ export function planBatchFf(repo: AbsPath, integration: RefName, candidate: Inte
       return { kind: 'foreign-mover', ref: integration, expected: tip, observed: seen.observed };
     case 'published':
       throw new FfStateError(integration, `batch ${batch.job}'s candidate ${next} is already published (integration at ${seen.at})`);
+  }
+}
+
+/**
+ * dev.82 (WS-5): an endgame landing's `ff`: integration from T to `head`, the endgame branch's head its lanes tested, a
+ * strict descendant of T (the caller refuses anything else before testing). Integration advanced past T is `unpublished`
+ * (the landing is stale: the architect merges the new tip in), moved anywhere else `foreign-mover`.
+ */
+export function planEndgameFf(repo: AbsPath, integration: RefName, tip: Sha, head: Sha, job: JobId): FfDecision {
+  if (head === tip || !isAncestor(repo, tip, head)) throw new FfStateError(integration, `endgame head ${head} does not descend from ${tip}`);
+  const seen = observeIntegration(repo, integration, tip, head);
+  switch (seen.kind) {
+    case 'pending':
+      return { kind: 'ff', body: { expect: { ref: integration, old: tip, new: head, subject: { type: 'endgame', job } }, post: null } };
+    case 'advanced':
+      return { kind: 'unpublished', tip: seen.tip };
+    case 'foreign':
+      return { kind: 'foreign-mover', ref: integration, expected: tip, observed: seen.observed };
+    case 'published':
+      throw new FfStateError(integration, `endgame head ${head} is already published (integration at ${seen.at})`);
   }
 }
 
