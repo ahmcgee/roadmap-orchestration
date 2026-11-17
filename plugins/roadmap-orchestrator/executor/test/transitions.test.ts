@@ -113,6 +113,9 @@ const ROWS: readonly Row[] = [
   ['build', 'lost', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'park:build-lost', 'park', {}],
   ['build', 'lost-tree-effects', {}, 'quiesce', 'advance', {}],
   ['build', 'lost-tree-effects', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'quiesce', 'advance', {}],
+  // dev.82 (E5c): a round its window ran out on is salvaged and verified like a lost one with tree effects, uncharged.
+  ['build', 'window-spent', {}, 'quiesce', 'advance', {}],
+  ['build', 'window-spent', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'quiesce', 'advance', {}],
   ['build', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],
   ['build', 'cleanup-failed', {}, 'park:residue', 'park', {}],
   ['build', 'interrupted', {}, 'hold', 'hold', {}],

@@ -473,8 +473,10 @@ export const STAGE_OUTCOME_KINDS = {
   // annotation, so it decides nothing and holds nothing (the unit's decision, interruption and entry stay as they were).
   'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault', 'diagnosed'],
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
+  // dev.82 (E5c): `window-spent`, a round the runner's deadline ended (not ruled starved): its work salvaged, uncharged.
   build: ['checkout-residue', 'spec-wrong',
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
+    'window-spent',
   ],
   quiesce: ['empty', 'executor-fault'],
   evidence: ['captured', 'executor-fault'],
