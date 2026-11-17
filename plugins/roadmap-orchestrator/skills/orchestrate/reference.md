@@ -43,7 +43,6 @@ Exit codes: 0 success, 64 CLI/argument error, 73 live watcher contention, 75 liv
 | `roadmap rerun <unit>/lanes#<n>/<lane> --cause estate|infra --evidence <line> [--repo <path> --arc <arc>]` | Waive a lanes red whose cause is outside the tree. Name a red lane from `status.units[].failures` of the unit's latest lanes attempt, with nothing started since (else steer). The lanes run again at the same commit in a fresh checkout, every lane on its own argv, no build. The red's charge stands and the rerun charges nothing; its lanes count as a judged stage. A lane reruns once per head. Green goes on to the gate; a red rerun parks `rerun-red`. Never for a candidate red. |
 | `roadmap withdraw <command-id> [--repo <path> --arc <arc>]` | Control command: withdraw a queued command, writing its `rejected` receipt (reason `withdrawn by <id>`) and releasing any drain it held. Refused once the target has an applied or rejected receipt, once its apply began, or when the target is a control command. |
 | `roadmap audit [--repo <path> --arc <arc>]` | Request one whole-campaign audit. |
-| `roadmap close-admissions [--repo <path> --arc <arc>]` | Drain toward completion without new admissions. |
 | `roadmap demo up|down|hold|release [--repo <path> --arc <arc>]` | Start/stop demo or hold/release automatic promotion. |
 
 ### Host acts

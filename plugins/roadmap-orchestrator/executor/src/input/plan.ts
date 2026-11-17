@@ -780,8 +780,8 @@ const knownDefect: Read<KnownDefect> = object((f) => ({
  * their ids: this is never a schema rule.
  */
 export function reservedUnitIdReason(id: UnitId): string | null {
-  return /^batch-\d+$/.test(id) || id === 'jobs' || id === 'mutants'
-    ? `unit id ${id} is reserved (batch-<n>, jobs and mutants name repair batches and job or mutant evidence); choose another id`
+  return /^batch-\d+$/.test(id) || id === 'jobs' || id === 'mutants' || id === 'endgame'
+    ? `unit id ${id} is reserved (batch-<n>, jobs and mutants name repair batches and job or mutant evidence; dev.82: endgame names the endgame's branch and worktree); choose another id`
     : null;
 }
 

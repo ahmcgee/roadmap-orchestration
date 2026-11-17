@@ -1,8 +1,11 @@
-// Campaign audits run at reached milestones, on root request, and over the final outstanding range.
+// Campaign audits run at reached milestones, on root request, and over the final outstanding range. dev.82: the final audit
+// is the endgame's (src/endgame/phase.ts): owed once the arc is in the endgame and no unit runs, active P1s or not (they are
+// worklist entries), and again whenever the integration head moved past its watermark (a landing, a unit finishing).
 // One fresh campaign seat judges invariants, vacuity and cross-unit interactions together. An abandoned
 // audit retries after AUDIT_RETRY_MIN, or immediately for a new root request. No rolling lens, drift,
 // publication-count or wall-clock cadence remains. Clocks delay retries after restart, never fire early.
-import { isActive } from './findings.ts';
+import { auditedMilestones, phaseKind, runningUnits } from '../endgame/phase.ts';
+import { repairsReader } from '../endgame/open.ts';
 import { lensCoverage, coverageBase, type CoverageBase } from './coverage.ts';
 import { milestoneReached } from '../walk/milestones.ts';
 import type { AuditTrigger, LensKind } from './types.ts';
@@ -50,11 +53,6 @@ export type Cadence = Readonly<{
 /** The integration head now. */
 export const integrationHeadNow = (ctx: Pick<StageContext, 'repo' | 'plan'>): Sha => revParse(ctx.repo, branchRef(ctx.plan().integrationBranch));
 
-const TERMINAL = ['retired', 'cut', 'superseded'];
-
-/** Whether a unit of the plan in force can still publish. */
-export const workRemains = (ctx: Pick<StageContext, 'journal' | 'plan'>): boolean => ctx.plan().units.some((u) => !TERMINAL.includes(ctx.journal.view.unit(u.id).status));
-
 /** The latest audit whose outcome is `completed`, or null. */
 const lastCompleted = (audits: readonly AuditState[]): AuditState | null => audits.filter((a) => a.ended?.outcome === 'completed').at(-1) ?? null;
 
@@ -66,11 +64,12 @@ export function cadence(ctx: StageContext, clock: Clock): Cadence | null {
   if (base === null) return null;
   const head = integrationHeadNow(ctx);
   const fold = view.holistic();
-  const audited = new Set(fold.audits.filter((a) => a.ended?.outcome === 'completed').flatMap((a) => a.started.triggers.filter((t) => t.type === 'milestone').map((t) => t.type === 'milestone' ? t.milestone : '')));
+  const audited = auditedMilestones(fold);
   const milestone = (ctx.plan().milestones ?? []).find((m) => milestoneReached(view, ctx.plan(), m) && !audited.has(m.id));
   const latest = fold.audits.at(-1);
   const requested = fold.auditRequests.find((q) => q.seq > (lastCompleted(fold.audits)?.started.seq ?? 0));
-  const final = !workRemains(ctx) && !fold.findings.some(f => f.severity === 'P1' && isActive(f)) && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
+  const endgame = phaseKind(view, ctx.plan(), repairsReader(ctx)).kind === 'endgame' && runningUnits(view, ctx.plan()).length === 0;
+  const final = endgame && (!fold.audits.some((a) => a.ended?.outcome === 'completed' && a.started.visionSha256 === base.visionSha256) || lensCoverage(fold, base, 'invariants').watermark !== head);
   const owed: AuditTrigger[] = milestone !== undefined ? [{type: 'milestone', milestone: milestone.id}] : requested !== undefined ? [{type: 'requested', command: requested.command}] : final ? [{type: 'final'}] : [];
   const retryReady = latest?.ended?.outcome !== 'abandoned' || (requested?.seq ?? 0) > latest.started.seq || clock(latest.started.seq) >= AUDIT_RETRY_MIN;
   const due = owed.length > 0 && retryReady && !fold.audits.some((a) => a.ended === null);

@@ -30,6 +30,9 @@
 // M4b rev 3 (RC-11): a unit whose run was starved, or red under host pressure with its rerun pending, stays active and
 // re-runs its held stage once admitted; admission holds it under `host-pressure{inv}` until a scheduler tick since the
 // hold shows the host's cpu wait over a minute below `PRESSURE_SATURATED`, or `STARVED_HOLD_MS` pass (`pressureHoldWaits`, src/host/pressure.ts).
+//
+// dev.82: in the endgame, a finding-raised unit with no dispatch record waits under `endgame` (the caller's held set,
+// `AdmitInput.endgame`, src/endgame/phase.ts `endgameHeld`): it is the architect's worklist entry.
 import { JUDGMENT_STAGES,type JudgmentStage,type OutcomeStage,type ProbeTarget } from '../core/events.ts';
 import type { LaneId,ObligationId,UnitId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
@@ -153,7 +156,7 @@ export function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlyS
  * findings for their target scope; M4b rev 3 (RC-11): a host-pressure hold (`UnitState.pressureHold`) until `pressureHoldWaits` releases it.
  */
 export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
-  return ({ view, plan, unit, stage, blocking, drains, tripped, pressure }: AdmitInput): Admission => {
+  return ({ view, plan, unit, stage, blocking, drains, tripped, pressure, endgame }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
     const pack = packReviewHold(view, plan);
     // An ended fact can precede its item's raise (a crash boundary); the scheduler settles items before admission.
@@ -189,6 +192,7 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
+    if (endgame.has(unit.id)) c.push({ type: 'endgame' });
     for (const b of blocking) if (b.subject === 'host' || (b.subject === 'arc' && b.reason === 'plan-defect') || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };

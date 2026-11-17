@@ -183,7 +183,7 @@ describe('bin/roadmap', () => {
 });
 
 describe('cli: M3 forms', () => {
-  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, close-admissions, gc', () => {
+  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, gc; close-admissions is gone (dev.82: the endgame replaces it)', () => {
     assert.throws(() => parseCommand(['rule', 'rulings/C-7.json']), /unknown command/);
     assert.deepEqual(parseCommand(['note', 'u1', '--brief', 'b.md']), {command: 'note', unit: 'u1', brief: 'b.md', run: HOST});
     assert.deepEqual(parseCommand(['reverse', 'D-3', ...EXPLICIT]), { command: 'reverse', divergence: 'D-3', run: EXPLICIT_RUN });
@@ -196,7 +196,7 @@ describe('cli: M3 forms', () => {
     assert.deepEqual(parseCommand(['merge-in', 'u1']), { command: 'merge-in', unit: 'u1', run: HOST });
     assert.deepEqual(parseCommand(['audit']), { command: 'audit', run: HOST });
     assert.throws(() => parseCommand(['audit', '--lens', 'vision,drift,vision']), /lens/);
-    assert.deepEqual(parseCommand(['close-admissions', ...EXPLICIT]), { command: 'close-admissions', run: EXPLICIT_RUN });
+    assert.throws(() => parseCommand(['close-admissions', ...EXPLICIT]), /unknown command "close-admissions"/);
     assert.deepEqual(parseCommand(['gc', '--repo', '/r']), { command: 'gc', repo: '/r', keep: null, dryRun: false });
     assert.deepEqual(parseCommand(['gc', '--repo', '/r', '--keep', '3', '--dry-run']), { command: 'gc', repo: '/r', keep: 3, dryRun: true });
   });
@@ -214,7 +214,6 @@ describe('cli: M3 forms', () => {
     refuses(['merge-in'], /merge-in: <unit> is required/);
     refuses(['audit', '--lens', 'style'], /lens/);
     refuses(['audit', 'now'], /unexpected argument/);
-    refuses(['close-admissions', 'now'], /unexpected argument/);
     refuses(['gc'], /gc: --repo <path> is required/);
     refuses(['gc', '--repo', '/r', '--keep', '-1'], /needs a value|positive integer/);
     refuses(['gc', '--repo', '/r', '--arc', 'arc-1'], /unknown option --arc/);
@@ -234,7 +233,6 @@ describe('cli: M3 forms', () => {
       [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
       [['rerun', 'u1/lanes#7/mul', '--cause', 'infra', '--evidence', 'runner disk full 10:02'], { type: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'infra', evidence: 'runner disk full 10:02' }],
       [['audit'], { type: 'audit' }],
-      [['close-admissions'], { type: 'close-admissions' }],
       [['withdraw', 'cmd-0123456789abcdef'], { type: 'withdraw', command: 'cmd-0123456789abcdef' }],
       [['push'], { type: 'push' }],
     ];

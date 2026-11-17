@@ -59,7 +59,6 @@ import type { ResolvedRouting } from '../routing/layers.ts';
 import type { Backend } from '../routing/types.ts';
 import { parseRulings } from '../spec/rulings.ts';
 import { bytesSha256,parseSpec } from '../spec/spec.ts';
-import { closeAdmissions } from './admissions.ts';
 import { requestAudit } from './audit.ts';
 import { resolveEdge,runOnly } from './graph.ts';
 import { mergeIn } from './mergein.ts';
@@ -289,7 +288,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'audit':
       return requestAudit(ctx, command.id);
     case 'close-admissions':
-      return closeAdmissions(ctx, command.id);
+      // dev.82: removed; an earlier release's queued command file still reads, and is refused.
+      return { kind: 'rejected', reason: 'close-admissions was removed in 1.0.0-dev.82: the endgame replaces it (src/endgame/phase.ts)' };
     case 'demo':
       return actOnDemo(ctx, command.id, body.act);
     // dev.81 (C3a): take back a pending mutation (src/commands/withdraw.ts).

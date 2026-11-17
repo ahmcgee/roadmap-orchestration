@@ -80,7 +80,7 @@ const planOf = (r: ArcRun): PlanM1 => requirePlanInForce(r.ctx.runDir, r.journal
 function admission(r: ArcRun, id: string, stage: 'pre-build' | 'build' | 'prepare'): Admission {
   const { w } = deflakeContext(r);
   return admitter((u) => r.ctx.routing(u).table, specFacts(w.stage))({
-    view: r.journal.view, plan: planOf(r), unit: unitInForce(r, id), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 },
+    view: r.journal.view, plan: planOf(r), unit: unitInForce(r, id), stage, blocking: [], drains: [], tripped: [], endgame: new Set(), pressure: { ticks: [], nowMs: 0 },
   });
 }
 

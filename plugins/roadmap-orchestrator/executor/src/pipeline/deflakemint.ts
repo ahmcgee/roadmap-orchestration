@@ -12,7 +12,7 @@
 //      items), the outcomes it may reach, the flakes it fixes, and the earlier deflake units of its keys (a second deflake
 //      is told of the first). A lane no longer defined anywhere is never minted for (the job waits). The commit is `plan-applied{source:
 //      deflake}`, proposer `deflake` (src/input/classify.ts `deflakeRows`); a commit the arc moved under is retried at the
-//      next run. Not while the arc drains (admissions closed).
+//      next run. Not in the endgame (dev.82, src/endgame/phase.ts): the executor raises no new unit there.
 //      Its systems (`deflakeSystems`), the first available: lane systems, flaky test-file membership, owner unit
 //      systems, then every mapped system. Dependency closure participates. All-system deflakes are admitted normally;
 //      salvage and transient validation protect repository paths independently of the declared systems.
@@ -22,7 +22,9 @@
 // (deflake.ts `deflakeHold`).
 //
 // Crash labels: `deflake.after-recurring` (an item raised, the revision not yet), `deflake.after-revision`.
-import { join } from 'node:path';
+import { dirname,join } from 'node:path';
+import { repairsReader } from '../endgame/open.ts';
+import { phaseKind } from '../endgame/phase.ts';
 import { type FencedCommitContext,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { Parent } from '../core/events.ts';
@@ -58,14 +60,18 @@ function raisedFor(view: JournalView, runDir: AbsPath, reason: 'flake-recurring'
 const recurringRaised = (view: JournalView, runDir: AbsPath, r: Recurring): boolean =>
   raisedFor(view, runDir, 'flake-recurring', invocationDir(runDir, r.flake.fact.event.red));
 
-function due(ctx: Readonly<{ runDir: AbsPath; journal: Readonly<{ view: JournalView }> }>, plan: PlanM1): Readonly<{ mint: readonly MintGroup[]; recurring: readonly Recurring[] }> {
+type DueContext = Readonly<{ runDir: AbsPath; planFile: AbsPath; journal: Readonly<{ view: JournalView }> }>;
+
+/** What is due: no mint in the endgame (dev.82, src/endgame/phase.ts); recurring items not raised yet. */
+function due(ctx: DueContext, plan: PlanM1): Readonly<{ mint: readonly MintGroup[]; recurring: readonly Recurring[] }> {
   const view = ctx.journal.view;
   const d = deflakeDue(view, plan);
-  return { mint: view.holistic().draining === null ? d.mint : [], recurring: d.recurring.filter((r) => !recurringRaised(view, ctx.runDir, r)) };
+  const endgame = d.mint.length > 0 && phaseKind(view, plan, repairsReader({ ...ctx, planDir: absPath(dirname(ctx.planFile)) })).kind === 'endgame';
+  return { mint: endgame ? [] : d.mint, recurring: d.recurring.filter((r) => !recurringRaised(view, ctx.runDir, r)) };
 }
 
 /** Whether the deflake job has work (the scheduler's question). */
-export function deflakeJobPending(ctx: Readonly<{ runDir: AbsPath; journal: Readonly<{ view: JournalView }> }>): boolean {
+export function deflakeJobPending(ctx: DueContext): boolean {
   const d = due(ctx, requirePlanInForce(ctx.runDir, ctx.journal.view).plan);
   return d.mint.length > 0 || d.recurring.length > 0;
 }

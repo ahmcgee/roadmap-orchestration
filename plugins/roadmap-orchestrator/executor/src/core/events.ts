@@ -1081,7 +1081,27 @@ export type HolisticFact =
   | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
   /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
-  | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>;
+  | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>
+  | EndgameFact;
+
+/**
+ * dev.82 (src/endgame/phase.ts): the endgame's episodes. The phase is computed; only an episode's edges and acts are journaled.
+ * `entered` and `left` are written by the scheduler on the phase predicate's edge (`left{complete}` after `arc-completed`);
+ * `opened` once the episode settled with a required worklist (the endgame branch and worktree made, the handover kept by hash).
+ * `fix`, `landed` and `reviewed` are the architect's recorded fixes, the endgame head's landings and the review job's verdicts.
+ */
+export type EndgameFact =
+  | Readonly<{ kind: 'endgame-entered'; episode: number; planRev: PlanRev }>
+  | Readonly<{ kind: 'endgame-opened'; episode: number; base: Sha; handoverSha256: Sha256Hex }>
+  | Readonly<{ kind: 'endgame-fix'; command: CommandId; closes: readonly EndgameRef[]; commit: Sha; note: string }>
+  | Readonly<{ kind: 'endgame-landed'; job: JobId; old: Sha; head: Sha }>
+  | Readonly<{ kind: 'endgame-reviewed'; job: JobId; from: Sha; to: Sha; findings: readonly FindingId[] }>
+  | Readonly<{ kind: 'endgame-left'; episode: number; cause: EndgameLeftCause }>;
+
+/** What an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
+export type EndgameRef = FindingId | ObligationId | UnitId;
+export const ENDGAME_LEFT_CAUSES = ['planned-unit', 'complete'] as const;
+export type EndgameLeftCause = (typeof ENDGAME_LEFT_CAUSES)[number];
 
 /** A mutation smoke's per-target verdicts (D2, Q15), each list ascending by lane then test id. */
 export type SmokeVerdict = Readonly<{ killed: readonly TestRef[]; survived: readonly TestRef[]; inconclusive: readonly TestRef[] }>;
@@ -1458,6 +1478,8 @@ const obligationR: Read<ObligationId> = (v, p) => obligationId(v, p);
 const laneR: Read<LaneId> = (v, p) => laneId(v, p);
 const laneRevR: Read<LaneRev> = (v, p) => laneRev(v, p);
 const planRevR: Read<PlanRev> = (v, p) => planRev(v, p);
+/** dev.82: an endgame fix's target: `F-<n>` a finding, `I-<n>` an obligation, anything else a unit. */
+const endgameRefR: Read<EndgameRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : typeof v === 'string' && v.startsWith('I-') ? obligationId(v, p) : unitId(v, p));
 const revisionBaseR: Read<RevisionBase> = (v, p) => (v === 0 ? 0 : planRev(v, p));
 
 const holder: Read<Holder> = tagged('type', {
@@ -2311,6 +2333,19 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
     kind: f.get('kind', literal('arc-completed')), planRev: f.get('planRev', planRevR), head: f.get('head', shaR), highWater: f.get('highWater', positive),
     units: f.get('units', sortedBy(unitR, (u) => u)),
   })),
+  'endgame-entered': object((f): Fact => ({ kind: f.get('kind', literal('endgame-entered')), episode: f.get('episode', positive), planRev: f.get('planRev', planRevR) })),
+  'endgame-opened': object((f): Fact => ({
+    kind: f.get('kind', literal('endgame-opened')), episode: f.get('episode', positive), base: f.get('base', shaR), handoverSha256: f.get('handoverSha256', sha256R),
+  })),
+  'endgame-fix': object((f): Fact => ({
+    kind: f.get('kind', literal('endgame-fix')), command: f.get('command', cmdR), closes: f.get('closes', arrayOf(endgameRefR, { nonEmpty: true })),
+    commit: f.get('commit', shaR), note: f.get('note', nonBlank),
+  })),
+  'endgame-landed': object((f): Fact => ({ kind: f.get('kind', literal('endgame-landed')), job: f.get('job', jobR), old: f.get('old', shaR), head: f.get('head', shaR) })),
+  'endgame-reviewed': object((f): Fact => ({
+    kind: f.get('kind', literal('endgame-reviewed')), job: f.get('job', jobR), from: f.get('from', shaR), to: f.get('to', shaR), findings: f.get('findings', arrayOf(findingR)),
+  })),
+  'endgame-left': object((f): Fact => ({ kind: f.get('kind', literal('endgame-left')), episode: f.get('episode', positive), cause: f.get('cause', oneOf(ENDGAME_LEFT_CAUSES)) })),
 };
 
 export const fact: Read<Fact> = tagged('kind', {

@@ -1904,3 +1904,54 @@ All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
   cause, its evidence and the brief. `resume <unit>` restores the decision before the park (the lanes outcome), so the
   build's fix round runs with the brief as its note. The source is spent, so it is not diagnosed again. `rerun` does not
   apply after the park: the lanes attempt is no longer the unit's latest attempt.
+
+
+### dev.82 E1 core: the phase, episodes, the worklist and the open step
+
+The phase is computed, never stored (`src/endgame/phase.ts`). A unit is finding-raised when it was added after the
+arc's first plan revision and its origin is not `planned` or its spec in force has a non-empty `repairs`; the
+classifier refuses an `origin` edit of a unit already planned. A holistic arc is in the endgame when every unit that is not finding-raised is retired, cut or superseded and
+every milestone had its checkpoint (a walk of it ended `reported` or `bring-up-failed`, or its progress is `abandoned`,
+and an audit triggered by it completed). Otherwise, and always without the holistic layer, it is in the body. The
+`Phase` union is `{kind: 'body', planned, milestones}` or `{kind: 'endgame', step: settling | open | closing, episode}`.
+
+Facts (additive, `HolisticFact`), folded into `HolisticFold.endgame` (one `EndgameEpisode` each):
+
+```ts
+| { kind: 'endgame-entered'; episode: number; planRev: PlanRev }
+| { kind: 'endgame-opened'; episode: number; base: Sha; handoverSha256: Sha256Hex }
+| { kind: 'endgame-fix'; command: CommandId; closes: (FindingId | ObligationId | UnitId)[]; commit: Sha; note: string }
+| { kind: 'endgame-landed'; job: JobId; old: Sha; head: Sha }
+| { kind: 'endgame-reviewed'; job: JobId; from: Sha; to: Sha; findings: FindingId[] }
+| { kind: 'endgame-left'; episode: number; cause: 'planned-unit' | 'complete' }
+```
+
+The fold refuses an `entered` while an episode is open or out of number order, a second `opened`, a `left` naming
+another episode, and a fix, landing or review outside an opened episode. The scheduler writes `entered` (no completion
+active) and `left{planned-unit}` on the predicate's edge each tick, before the holistic jobs, and `left{complete}` right
+after `arc-completed`. `endgame-left` is quiet for sealing (`isWork`). `fix`, `landed` and `reviewed` are written by the
+endgame commands, the landing and the review job.
+
+Settling: no deflake unit is minted and no polish unit admitted (the refusal reason says so). Admission gains the
+constraint `{type: 'endgame'}` (wait reason `admission-hold:endgame`) for an active finding-raised unit with no dispatch
+record that was in the plan when the episode entered. `AdmitInput.endgame` carries the held set. Dispatched units
+finish. A unit admitted during the episode (an architect's or a checkpoint's apply) runs. The final audit is owed once the arc is in
+the endgame and no unit runs (an active, dispatched unit whose unmerged dependencies all run), active P1s or not.
+
+Open: once the episode settled (nothing running, no walk or audit due or running) with a non-empty required worklist,
+the holistic job `holistic:endgame` creates branch `roadmap/<arc>/endgame` and worktree `<worktreeRoot>/<arc>/endgame`
+at the integration tip (`worktree.create`, parent `arc`, key `worktree:endgame`; an existing one is kept). It writes
+`<runDir>/endgame/handover-<episode>.md`, records `endgame-opened` with its hash, and raises one non-blocking `endgame`
+item (subject the arc, evidence the handover). Past `ENDGAME_BY_HAND = 10` required entries, the recommendation suggests
+`resume <unit>` or a repair unit by apply. With an empty required worklist the episode never opens. Unit id `endgame` is
+reserved.
+
+The worklist is derived (`src/endgame/worklist.ts`). Required entries: active P1 findings, active findings over an
+obligation, non-exempt obligations observed not held on the integration head, and finding-raised units not settled.
+Optional entries: the other active findings and the polish proposals refused since the episode entered. Completion gains
+`endgame-open` before `generation-not-quiescent`: an opened episode at step `open` (required entries, or the endgame
+branch holds work the integration head does not: its tip is no ancestor of the head), or at `closing` with `closingSettled` false.
+
+`close-admissions` is removed. Its CLI form is gone. An earlier release's command file still reads and is rejected. An
+`admissions-closed` fact still reads, with a `ROADMAP_UPGRADE` warning, and has no effect. `HolisticFold.draining` and
+the `new-finding-draining` raise are gone, but the reason still reads.

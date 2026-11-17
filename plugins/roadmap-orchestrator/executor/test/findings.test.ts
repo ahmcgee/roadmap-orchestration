@@ -212,16 +212,14 @@ describe('needs-user items and instrumentation', () => {
     assert.match(due[0]!.content.summary, /F-1 is owned by unit u1/, 'only the P1');
   });
 
-  it('findings.draining: a P1 or P2 opened while draining raises new-finding-draining once its audit ended; a P3, or one opened before, does not', () => {
+  it('findings.draining (dev.82: close-admissions removed): an earlier release\'s admissions-closed makes no P1 or P2 raise new-finding-draining, its audit running or ended', () => {
     const audit = (kind: 'audit-started' | 'audit-ended'): LogRecord => fact(kind === 'audit-started'
       ? { kind, job: 'audit-1', triggers: [{ type: 'final' }], generation: 1, lenses: ['invariants'], integrationSha: B1, planRev: 1, ledgerSha256: null, obligationsSha256: null, visionSha256: V, owners: [], priorFindings: [], highWater: 1 }
       : { kind, job: 'audit-1', covered: [{ lens: 'invariants', from: B2, to: B1 }], findings: ['F-2', 'F-3', 'F-4'], suppressed: 0, outcome: 'completed' });
     const base = [plan(1), opened(1, { source: { type: 'job', job: 'baseline-1' } }), fact({ kind: 'admissions-closed', command: 'cmd-00000000000000aa' }), audit('audit-started'), opened(2), opened(3, { severity: 'P2' }),
       opened(4, { severity: 'P3', lens: 'vision', visionClauses: ['V-1'], obligation: null })];
     assert.deepEqual(findingItemsDue(folded(base), new Date(AT)), [], 'the audit is still running');
-    const due = findingItemsDue(folded([...base, audit('audit-ended')]), new Date(AT));
-    assert.deepEqual(due.map((d) => [d.reason, d.parent, d.content.blocking]), [['new-finding-draining', { type: 'job', job: 'audit-1' }, true]]);
-    assert.match(due[0]!.content.summary, /F-2, F-3 \(P1 or P2\)/);
+    assert.deepEqual(findingItemsDue(folded([...base, audit('audit-ended')]), new Date(AT)), [], 'the endgame worklist carries late findings instead');
   });
 
   it('findings.metrics: lens, severity, gateHadPassed, disposition, merged and time to resolve, per finding', () => {

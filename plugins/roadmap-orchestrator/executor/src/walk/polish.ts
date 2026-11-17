@@ -8,7 +8,7 @@ import { referenceCoverageReasons } from './report.ts';
 // Due (`polishDue`): the first walk, in log order, that ended `reported` with an applied proposal (its proposals less its
 // `dropped`, the last round's) carried by no unit of the plan and not refused. Each such proposal is refused
 // (`polish-refused{proposal, reasons}`, settled: never applied) when
-//   - the arc is draining (admissions closed);
+//   - the arc is in the endgame (dev.82, src/endgame/phase.ts): the refusal is an optional worklist entry;
 //   - it is not from its milestone's latest round (a later walk of the milestone ended as a round since);
 //   - its systems do not cover every milestone reference (src/walk/report.ts `coversReference`);
 //   - the admit path or the classifier refuses its unit admitted alone.
@@ -18,7 +18,9 @@ import { referenceCoverageReasons } from './report.ts';
 // `plan-applied{source: walk{job}}` with proposer `walk{job}` (src/input/classify.ts `polishRows`); a commit the arc moved
 // under is retried at the next run. The rounds brake treats a refused proposal as settled (src/walk/milestones.ts).
 // Crash labels: `polish.after-refused` (a refusal written, the revision not yet), `polish.after-revision`.
-import { join } from 'node:path';
+import { dirname,join } from 'node:path';
+import { repairsReader } from '../endgame/open.ts';
+import { phaseKind } from '../endgame/phase.ts';
 import { type FencedCommitContext,type RevisionVerdict,commitUnderFence,evaluateRevision } from '../commands/apply.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { WalkFact } from '../core/events.ts';
@@ -89,10 +91,9 @@ function evaluate(ctx: PolishContext, current: InputFiles, m: Milestone, job: Wa
 }
 
 /** Why `p`, of walk `w` on `m`, is refused before its unit is admitted (see the header); empty when it is not. */
-function preReasons(view: JournalView, w: WalkRecord, m: Milestone, p: Proposed): readonly string[] {
+function preReasons(view: JournalView, w: WalkRecord, m: Milestone, p: Proposed, endgame: boolean): readonly string[] {
   const reasons = [...referenceCoverageReasons(systemsMapInForce(view.planApplied()), p.unit.systems, m.references)];
-  const draining = view.holistic().draining;
-  if (draining !== null) reasons.push(`the arc is draining (admissions closed by ${draining.command}): no polish unit is admitted`);
+  if (endgame) reasons.push('the arc is in the endgame: no polish unit is admitted (the proposal is an optional worklist entry)');
   const latest = walksOf(view, m.id).filter((x) => x.ended !== null && x.ended.outcome !== 'abandoned').at(-1);
   if (latest !== undefined && latest.job !== w.job) reasons.push(`it is from ${w.job} (round ${w.round}); ${m.id}'s latest round is ${latest.job} (round ${latest.round})`);
   return reasons;
@@ -120,8 +121,9 @@ export async function applyPolish(ctx: PolishContext): Promise<PolishOutcome> {
     crashPoint('polish.after-refused');
   };
   const alone: Proposed[] = [];
+  const endgame = phaseKind(view, inForce.plan, repairsReader({ ...ctx, planDir: absPath(dirname(ctx.planFile)) })).kind === 'endgame';
   for (const p of due.proposals) {
-    const pre = preReasons(view, due.walk, m, p);
+    const pre = preReasons(view, due.walk, m, p, endgame);
     const verdict = pre.length > 0 ? { kind: 'rejected' as const, reasons: pre } : evaluate(ctx, current, m, due.walk.job, [p]);
     if (verdict.kind === 'rejected') refuse(p, verdict.reasons);
     else alone.push(p);
