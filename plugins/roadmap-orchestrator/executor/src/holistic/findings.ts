@@ -20,10 +20,10 @@
 //   that obligation (`p1Blocking`): at admission (src/schedule/ready.ts), before green and before the ff
 //   (src/pipeline/integrate.ts `findingBlocking`).
 // - **Needs-user items (durable, derived).** A parked owner's P1 escalates at the park deadline (`finding-p1-escalated`,
-//   blocking; dev.13: a milestone's escalations raise the same reason, src/walk/milestones.ts `walkItemsDue`); a P1 or P2
-//   opened while draining raises `new-finding-draining` (blocking) once its audit ended. Both are
-//   derived from the log (`findingItemsDue`) and raised once each (`raiseFindingItems`), so a crash between the finding
-//   and its item loses nothing.
+//   blocking; dev.13: a milestone's escalations raise the same reason, src/walk/milestones.ts `walkItemsDue`). It is
+//   derived from the log (`findingItemsDue`) and raised once (`raiseFindingItems`), so a crash between the finding
+//   and its item loses nothing. (dev.82: `new-finding-draining` is no longer raised: `close-admissions` was removed and
+//   the endgame's worklist carries the findings opened late, src/endgame/worklist.ts.)
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
 //   timeToResolveMs}`, over the log's events (their times).
 
@@ -278,12 +278,11 @@ export function batchable(findings: readonly FindingState[], units: readonly Rep
 // ---------------------------------------------------------------------------------------------------
 // Needs-user items (durable: derived from the log, raised once each)
 
-export type FindingItem = Readonly<{ parent: Parent; reason: Extract<NeedsUserReason, 'finding-p1-escalated' | 'new-finding-draining'>; content: NeedsUserContent }>;
+export type FindingItem = Readonly<{ parent: Parent; reason: Extract<NeedsUserReason, 'finding-p1-escalated'>; content: NeedsUserContent }>;
 
 /**
  * The items due at `now`: a `finding-p1-escalated` per park of an owner holding an active P1, once the park is
- * PARK_ESCALATE_MS old (parented by the park's stage attempt); a `new-finding-draining` per job that opened a P1 or P2
- * while draining, once an audit job ended (parented by the job).
+ * PARK_ESCALATE_MS old (parented by the park's stage attempt).
  */
 export function findingItemsDue(view: JournalView, now: Date): readonly FindingItem[] {
   const fold = view.holistic();
@@ -308,28 +307,6 @@ export function findingItemsDue(view: JournalView, now: Date): readonly FindingI
         options: [], evidence: [],
       },
     });
-  }
-  const draining = fold.draining;
-  if (draining !== null) {
-    const byJob = new Map<JobId, FindingId[]>();
-    for (const f of fold.findings) {
-      if ((f.severity !== 'P1' && f.severity !== 'P2') || !isActive(f) || f.openedSeq <= draining.seq || f.source.type !== 'job') continue;
-      byJob.set(f.source.job, [...(byJob.get(f.source.job) ?? []), f.id]);
-    }
-    for (const [job, ids] of byJob) {
-      const audit = fold.audits.find((a) => a.started.job === job);
-      if (audit !== undefined && audit.ended === null) continue;
-      out.push({
-        parent: { type: 'job', job },
-        reason: 'new-finding-draining',
-        content: {
-          blocking: true, subject: { type: 'findings', findings: ids }, reason: 'new-finding-draining',
-          summary: `${job} opened ${ids.join(', ')} (P1 or P2) while the arc is draining (close-admissions ${draining.command}): no new unit is admitted to repair ${ids.length > 1 ? 'them' : 'it'}.`,
-          recommendation: 'Decide: admit a repair with `roadmap apply` (an architect admit reopens admissions), or rule the finding, then acknowledge this item.',
-          options: [], evidence: [],
-        },
-      });
-    }
   }
   return out;
 }

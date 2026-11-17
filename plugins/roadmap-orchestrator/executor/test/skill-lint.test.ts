@@ -28,7 +28,7 @@ const PLACEHOLDERS: Readonly<Record<string, string>> = {
 /** Every command kind, so a kind added to `Command` fails typecheck here until reference.md documents it. */
 const KINDS: { readonly [K in Command['command']]: true } = {
   console: true, tui: true, version: true, start: true, status: true, watch: true, stop: true, pause: true, ack: true, resume: true, sweep: true, apply: true,
-  'resolve-edge': true, 'run-only': true, reverse: true, steer: true, dismiss: true, note: true, witness: true, 'merge-in': true, rerun: true, audit: true, 'close-admissions': true,
+  'resolve-edge': true, 'run-only': true, reverse: true, steer: true, dismiss: true, note: true, witness: true, 'merge-in': true, rerun: true, audit: true,
   gc: true, 'phase0-check': true, 'corpus-pin': true, brief: true, pr: true, 'chain-status': true, answer: true,
   'witness-check': true, 'resume-arc': true, 'inputs-export': true,  demo: true, withdraw: true, push: true,
 };

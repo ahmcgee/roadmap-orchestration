@@ -83,6 +83,12 @@ const HOLISTIC_FACTS: { readonly [K in HolisticFactKind]: object } = {
   'admissions-closed': { kind: 'admissions-closed', command: CMD },
   'docs-published': { kind: 'docs-published', pub: 'docs-2', source: 'close-out', commit: B },
   'arc-completed': { kind: 'arc-completed', planRev: 6, head: A, highWater: 120, units: ['u1', 'u2'] },
+  'endgame-entered': { kind: 'endgame-entered', episode: 1, planRev: 6 },
+  'endgame-opened': { kind: 'endgame-opened', episode: 1, base: A, handoverSha256: H },
+  'endgame-fix': { kind: 'endgame-fix', command: CMD, closes: ['F-1', 'I-2', 'u1'], commit: B, note: 'rounds totals half-even' },
+  'endgame-landed': { kind: 'endgame-landed', job: 'batch-1', old: A, head: B },
+  'endgame-reviewed': { kind: 'endgame-reviewed', job: 'review-1', from: A, to: B, findings: ['F-2'] },
+  'endgame-left': { kind: 'endgame-left', episode: 1, cause: 'complete' },
 };
 
 const OBLIGATIONS = {

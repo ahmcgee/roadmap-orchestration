@@ -1643,7 +1643,10 @@ export type CommandBody =
   | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string }>
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ type: 'audit' }>
-  /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
+  /**
+   * `roadmap close-admissions` (M3), removed in dev.82 (the endgame replaces it): kept so an earlier release's command file still
+   * reads; applying one is rejected (src/commands/apply.ts). Scope ∅.
+   */
   | Readonly<{ type: 'close-admissions' }>
   /**
    * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
@@ -1807,7 +1810,7 @@ export const NEEDS_USER_REASONS = [
   // repeat park on one target.
   'park-escalated', 'env-blocked',
   // M3, blocking: a must-hold obligation not held at the baseline (A6); a parked owner's P1 at the park deadline;
-  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act an audit
+  // a new P1 or P2 while draining (no longer raised since dev.82, `close-admissions` removed; kept so an old item reads); a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
   // dev.59, blocking: a red during a root-ordered lanes rerun (`roadmap rerun`): the root's claim did not hold.
@@ -1840,10 +1843,13 @@ export const NEEDS_USER_REASONS = [
   'revision-notice', 'waste-finding',
   // dev.44: automatic origin publication failed or diverged. Informational; the arc continues.
   'push-failed', 'push-diverged', 'walkthrough-mcp',
+  // dev.82, non-blocking: the endgame opened (src/endgame/open.ts): its worklist, branch, worktree and handover for the architect.
+  'endgame',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged', 'walkthrough-mcp',
+  'endgame',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

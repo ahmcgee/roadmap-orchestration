@@ -514,6 +514,8 @@ export function classify(input: ClassifyInput): Classified {
     if (was === undefined) continue;
     if (!same(was.reenters, unit.reenters)) reasons.push(`unit ${unit.id}: \`reenters\` is set when a unit is added, never after`);
     if (!same(was.carries, unit.carries)) reasons.push(`unit ${unit.id}: \`carries\` is set when a unit is added, never after`);
+    // dev.82: origin decides whether a unit is finding-raised (src/endgame/phase.ts), so it is as durable as the unit.
+    if ((was.origin ?? 'planned') !== (unit.origin ?? 'planned')) reasons.push(`unit ${unit.id}: \`origin\` is set when a unit is added, never after`);
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
@@ -1198,11 +1200,6 @@ function corpusRows(input: ClassifyInput, inputs: NextInputs, changes: PlanChang
     const record = sha(c.phase0.bytes);
     if (input.proposer.type !== 'apply') architectOnly('the Phase-0 record');
     else if (record !== null) changes.push({ type: 'phase0', sha256: record });
-    const before = new Set((input.revision.corpus?.phase0.value.debt ?? []).filter((d) => d.disposition.type === 'promote').map((d) => canonicalJson(d)));
-    const promoted = (inputs.corpus.phase0?.debt ?? []).filter((d) => d.disposition.type === 'promote' && !before.has(canonicalJson(d)));
-    if (input.view.holistic().draining !== null && promoted.length > 0) {
-      reasons.push(`the arc is draining (close-admissions): a debt item may not be promoted now (${promoted.map((d) => d.id).join(', ')})`);
-    }
   }
 }
 

@@ -62,7 +62,7 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 // `needs-user/`; an item is acknowledged once the log holds its ack fact, as the executor reads it.
 //
 // M3 (§2.4 additions; the holistic keys are vacuous in an arc without the layer):
-//   run.state     `draining` (a live executor that would run, with admissions closed); in a holistic arc `complete`
+//   run.state     in a holistic arc `complete` (dev.82: `draining` only for a stop's drain; `close-admissions` was removed)
 //                 only while its `arc-completed` is active (A20), and `completion.unmet` names what the completion
 //                 predicate lacks now
 //   target        the obligations' cut line, the next milestone (R13: the future obligation with the fewest
@@ -172,6 +172,8 @@ import { type GateAnswerView,latestGateAnswer } from './pipeline/gate.ts';
 import { observations } from './pipeline/lanes.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
 import { repairUnits,specFacts } from './pipeline/reproduce.ts';
+import { repairsReader } from './endgame/open.ts';
+import { endgameHeld } from './endgame/phase.ts';
 import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
 import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
 import { cpuCapacity,fastSuiteCapacity,isDirty,poolUnits } from './resources/pool.ts';
@@ -792,6 +794,8 @@ type Inputs = Readonly<{
   spec: SpecFactsOf;
   /** The derivation's clock (ms): what every elapsed time and bound is as of. */
   now: number;
+  /** dev.82: the units the endgame holds at admission (src/endgame/phase.ts `endgameHeld`). */
+  endgame: ReadonlySet<UnitId>;
 }>;
 
 const NO_WAIT: Omit<WaitingFor, 'deps' | 'milestones' | 'edges' | 'admission'> = { resources: null, envBlocked: false, drainFor: [] };
@@ -818,7 +822,7 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   const routing = x.routing;
   if (next?.kind === 'admission' && routing !== null) {
     const a = admitter(routing, x.spec)({
-      view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
+      view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view), endgame: x.endgame,
       // Status has no tick history: a host-pressure hold reads as waiting until its 30-min bound (src/host/pressure.ts), as of
       // the derivation's clock.
       pressure: { ticks: [], nowMs: x.now },
@@ -924,13 +928,11 @@ function runStateOf(view: JournalView, lines: readonly UnitCore[], owner: OwnerS
   if (owner.state === 'alive') {
     const c = view.control();
     if (c.stop !== null) return stopAborts(c) ? 'stopping' : 'draining';
-    // §2.10: admissions closed (`close-admissions`) and nothing held, parked or blocked: the arc drains.
-    const running: ArcState = h.draining === null ? 'running' : 'draining';
-    if (lines.some(moving)) return running;
+    if (lines.some(moving)) return 'running';
     if (lines.some((l) => l.state === 'held')) return 'held';
     if (blocking.length > 0) return 'parked';
     if (lines.some((l) => !unitSettled(view, l.unit)) || view.residues().length > 0) return 'blocked';
-    return running;
+    return 'running';
   }
   if (rejection !== null) return 'refused';
   // A holistic arc is complete only through its `arc-completed` (§2.10: obligations, coverage and quiescence too), while active (A20).
@@ -1032,6 +1034,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
   const now = timing?.clock ?? Date.now();
   const inputs: Inputs | null = plan === null ? null : {
     runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec, now,
+    endgame: record === null ? new Set() : endgameHeld(view, plan, repairsReader({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) })),
   };
   const times = { starts: passes.attemptStarts, intents: passes.intentTimes };
   const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, times, now));

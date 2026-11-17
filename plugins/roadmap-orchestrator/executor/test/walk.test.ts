@@ -409,7 +409,7 @@ describe('polish and compare (src/walk/polish.ts, src/walk/compare.ts)', () => {
         ...v, control: () => ({ pausedAll: false, pausedUnits: [] }), runOnly: () => null, backendParks: () => [],
         unit: () => ({ approval: null, pressureHold: null, decided: null }),
       } as unknown as JournalView;
-      const out = admit({ view, plan: plan(), unit, stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } });
+      const out = admit({ view, plan: plan(), unit, stage, blocking: [], drains: [], tripped: [], endgame: new Set(), pressure: { ticks: [], nowMs: 0 } });
       return out.kind === 'admit' ? 'admit' : out.constraints.map((c) => canonicalJson(c));
     };
     assert.deepEqual(at(viewOf({}), p1, 'candidate'), ['{"decision":null,"type":"compare"}']);

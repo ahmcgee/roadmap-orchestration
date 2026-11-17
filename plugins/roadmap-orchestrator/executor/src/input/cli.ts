@@ -71,7 +71,6 @@ export type Command =
   | Readonly<{ command: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string; run: RunLocator }>
   /** Request a fresh whole-campaign audit. */
   | Readonly<{ command: 'audit'; run: RunLocator }>
-  | Readonly<{ command: 'close-admissions'; run: RunLocator }>
   /** dev.81 (C3a): take back pending mutation `target` (a queued apply, say) before it applies. */
   | Readonly<{ command: 'withdraw'; target: CommandId; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
@@ -360,11 +359,6 @@ export function parseCommand(argv: readonly string[]): Command {
       positionals(p, command, 0);
       return { command, run: locator(p, command) };
     }
-    case 'close-admissions': {
-      const p = parseRest(rest, LOCATOR, command);
-      positionals(p, command, 0);
-      return { command, run: locator(p, command) };
-    }
     case 'withdraw': {
       const p = parseRest(rest, LOCATOR, command);
       return { command, target: arg(command, '<command-id>', commandId, onePositional(p, command, '<command-id>')), run: locator(p, command) };
@@ -465,7 +459,7 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release, push`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release, push`,
       );
   }
 }

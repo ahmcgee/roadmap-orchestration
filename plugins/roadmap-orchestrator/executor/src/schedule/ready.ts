@@ -153,7 +153,7 @@ export function findingBlock(view: JournalView, unit: UnitId, repairs: ReadonlyS
  * findings for their target scope; M4b rev 3 (RC-11): a host-pressure hold (`UnitState.pressureHold`) until `pressureHoldWaits` releases it.
  */
 export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFactsOf): Admit {
-  return ({ view, plan, unit, stage, blocking, drains, tripped, pressure }: AdmitInput): Admission => {
+  return ({ view, plan, unit, stage, blocking, drains, tripped, pressure, endgame }: AdmitInput): Admission => {
     const c: AdmissionConstraint[] = [];
     const pack = packReviewHold(view, plan);
     // An ended fact can precede its item's raise (a crash boundary); the scheduler settles items before admission.
@@ -189,6 +189,7 @@ export function admitter(routing: (unit: UnitId) => RoutingTable, specOf: SpecFa
     // dev.17 (propagation): no unit linking a propagation unit's target, or whose design breaks touch its files, approves first.
     const starved = view.unit(unit.id).pressureHold;
     if (starved !== null && pressureHoldWaits(Date.parse(starved.at), pressure)) c.push({ type: 'host-pressure', inv: starved.inv });
+    if (endgame.has(unit.id)) c.push({ type: 'endgame' });
     for (const b of blocking) if (b.subject === 'host' || (b.subject === 'arc' && b.reason === 'plan-defect') || ADMISSION_BLOCKING.includes(b.reason)) c.push({ type: 'blocking-item', id: b.id, reason: b.reason });
     return c.length === 0 ? { kind: 'admit' } : { kind: 'wait', constraints: c };
   };

@@ -162,6 +162,11 @@ export type AdmissionConstraint =
    * cut: its spec links the target, or its design record's breaks touch a file the propagation re-witnesses (`stale`, those
    * files). src/holistic/propagation.ts `propagationHolds`.
    */
+  /**
+   * dev.82: in the endgame, a finding-raised unit with no dispatch record is held: it is a worklist entry for the architect
+   * (src/endgame/phase.ts `endgameHeld`).
+   */
+  | Readonly<{ type: 'endgame' }>
 ;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
@@ -179,6 +184,8 @@ export type AdmitInput = Readonly<{
   drains: readonly Readonly<{ command: CommandId; scope: CommandScope }>[];
   tripped: readonly ProbeTarget[];
   pressure: PressureNow;
+  /** dev.82: the units the endgame holds (src/endgame/phase.ts `endgameHeld`); empty in the body. */
+  endgame: ReadonlySet<UnitId>;
 }>;
 
 /** Re-checked at every admission boundary, for new and running tasks alike (F13); src/schedule/ready.ts, step 2. */

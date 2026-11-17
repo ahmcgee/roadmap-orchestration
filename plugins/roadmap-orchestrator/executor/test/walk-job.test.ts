@@ -52,7 +52,7 @@ function steeringContext(r: ArcRun) {
 function readyNow(r: ArcRun): readonly string[] {
   const { ctx } = walkContext(r);
   return ready({
-    view: r.journal.view, plan: planOf(r), blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: Date.now() },
+    view: r.journal.view, plan: planOf(r), blocking: [], drains: [], tripped: [], endgame: new Set(), pressure: { ticks: [], nowMs: Date.now() },
     routing: (u) => ctx.routing(u).table, spec: specFacts(ctx),
   }).map((x) => x.unit.id);
 }
