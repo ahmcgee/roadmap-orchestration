@@ -91,6 +91,12 @@ export async function runEndgameJob(ctx: LandingContext, due: EndgameJobDue): Pr
     if (at === null) throw new Error(`${job}: ${endgameBranch(ctx.plan().arc)} does not exist`);
     return at;
   };
+  // A job a restart cut short after its landing or review was recorded only ends.
+  const episode = openEpisode(view);
+  const landed = episode?.landings.find((l) => l.job === job);
+  if (landed !== undefined) return end('landed', `landed ${landed.old}..${landed.head}`);
+  const reviewed = episode?.reviews.find((r) => r.job === job);
+  if (reviewed !== undefined) return end('reviewed', `reviewed; findings ${reviewed.findings.join(', ') || 'none'}`);
   switch (due.request.type) {
     case 'land': {
       const out = await landEndgame(ctx, job, head(), (tip) => landingRepairs(ctx, due.episode, tip));

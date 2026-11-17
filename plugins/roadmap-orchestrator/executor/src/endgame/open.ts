@@ -79,14 +79,15 @@ export function endgameNow(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null
 }
 
 /**
- * WS-5: whether `episode` owes an independent review: none of its reviews reached a head holding the endgame branch's tip
- * (each review covers `base..head`, so one that holds the tip covers every endgame commit; the executor's own later
- * publications, a close-out say, owe none).
+ * WS-5: whether `episode` owes an independent review: the endgame branch holds commits of its own (its tip is not the
+ * episode's base) and none of its reviews reached a head holding that tip (each review covers `base..head`, so one that
+ * holds the tip covers every endgame commit; the executor's own later publications, a close-out say, owe none). An episode
+ * whose worklist emptied without a commit (a dismissal, a re-entered unit merging) owes none.
  */
 export function reviewDue(ctx: Pick<StageContext, 'repo' | 'plan'>, episode: EndgameEpisode): boolean {
   const tip = refTarget(ctx.repo, endgameBranch(ctx.plan().arc));
   if (tip === null) throw new Error(`endgame episode ${episode.episode} opened, but ${endgameBranch(ctx.plan().arc)} does not exist`);
-  return !episode.reviews.some((r) => isAncestor(ctx.repo, tip, r.to));
+  return tip !== episode.opened?.base && !episode.reviews.some((r) => isAncestor(ctx.repo, tip, r.to));
 }
 
 /**

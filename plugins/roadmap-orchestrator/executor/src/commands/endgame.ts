@@ -90,7 +90,6 @@ async function fix(ctx: CommandContext, id: CommandId, episode: EndgameEpisode, 
     }
     ctx.journal.fact({ kind: 'endgame-fix', command: id, closes: act.closes, commit: act.commit, note: act.note });
   }
-  syncFindings(ctx.journal, repairUnits(ctx), endgameFixes(ctx));
   const verified = [`fix ${act.commit} recorded, closing ${act.closes.join(', ')}`];
   const uncut = units.filter((u) => ctx.journal.view.unit(u).status !== 'cut');
   if (uncut.length > 0) {
@@ -106,6 +105,8 @@ async function fix(ctx: CommandContext, id: CommandId, episode: EndgameEpisode, 
       break;
     }
   }
+  // After the cut: a unit it cut no longer owns what it repaired, so the fix does.
+  syncFindings(ctx.journal, repairUnits(ctx), endgameFixes(ctx));
   return { kind: 'applied', verified };
 }
 
