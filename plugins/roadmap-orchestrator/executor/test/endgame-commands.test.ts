@@ -5,102 +5,24 @@
 // the arc is in the endgame with r1 held; the scheduler's entry and the open step (src/endgame/open.ts) made it episode 1,
 // with the endgame branch and worktree at the integration head.
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
-import { applyCommand } from '../src/commands/apply.ts';
-import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
-import { INTEGRATION_SLOT, type Sha, findingId, jobId, sha, unitId } from '../src/core/ids.ts';
-import type { CommandBody, EndgameAct } from '../src/core/records.ts';
+import { INTEGRATION_SLOT } from '../src/core/ids.ts';
 import { endgameJobDue, runEndgameJob } from '../src/endgame/jobs.ts';
-import { closingSettled, endgameNow, endgameOpen, endgameWorktree, openEndgame, repairsReader, reviewDue } from '../src/endgame/open.ts';
+import { closingSettled, endgameNow, endgameOpen, repairsReader, reviewDue } from '../src/endgame/open.ts';
 import { endgameHeld, openEpisode } from '../src/endgame/phase.ts';
 import { publishedHeads } from '../src/holistic/coverage.ts';
-import { openFinding } from '../src/holistic/findings.ts';
 import { requirePlanInForce } from '../src/input/inforce.ts';
 import { resourceTable } from '../src/resources/reserve.ts';
-import { type HolisticContexts, holisticContexts } from '../src/schedule/scheduler.ts';
-import { addUnit, completingArc, wired } from './fixtures/sched-m3-common.ts';
+import { F1, R1, endgame, endgameArc, fixAndLand, head, runDue } from './fixtures/endgame-arc.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { type ArcDescriptor, type ArcRun, appendSteps, applyBody, contextFor } from './fixtures/unit-common.ts';
+import { type ArcRun, appendSteps } from './fixtures/unit-common.ts';
 import { git } from './helpers/repo.ts';
 
 const T = { timeout: SCENARIO_TIMEOUT_MS };
-const F1 = findingId('F-1');
-const R1 = unitId('r1');
-
-type Json = Record<string, unknown>;
-type EndgameRun = Readonly<{
-  d: ArcDescriptor; r: ArcRun; h: HolisticContexts; worktree: string;
-  /** Commits `files` on the endgame branch (in its worktree). */
-  commit: (files: Readonly<Record<string, string>>, message: string) => Sha;
-  /** Applies one command now, as the scheduler would: its receipt. */
-  command: (body: CommandBody) => Promise<Readonly<{ state: string; reason?: string; verified?: readonly string[] }>>;
-}>;
-
-const head = (d: ArcDescriptor): Sha => sha(git(d.repo, 'rev-parse', 'main'));
-const endgame = (act: EndgameAct): CommandBody => ({ type: 'endgame', act });
-
-async function endgameArc(): Promise<EndgameRun> {
-  const d = completingArc();
-  const r = contextFor(d);
-  const w = wired(r);
-  const h = holisticContexts(w);
-  const command = async (body: CommandBody): Promise<Readonly<{ state: string; reason?: string; verified?: readonly string[] }>> => {
-    const file = submitCommand(r.ctx.runDir, r.journal.view.arc, body);
-    await applyCommand(w.commands, file);
-    const receipt = terminalReceipt(r.ctx.runDir, file.id);
-    if (receipt === null) throw new Error(`${file.id} has no terminal receipt`);
-    return receipt;
-  };
-  openFinding(r.journal, {
-    lens: 'drift', severity: 'P1', obligation: null, visionClauses: [], claim: 'add() drops the carry', cause: 'carry', evidence: [{ path: 'src/add.js', blob: null }],
-    mutant: null, source: { type: 'job', job: jobId('audit', 1) }, gateHadPassed: true,
-  });
-  addUnit(d, 'r1');
-  const planDir = join(d.planPath, '..');
-  const spec = JSON.parse(readFileSync(join(planDir, 'r1.json'), 'utf8')) as Json;
-  writeFileSync(join(planDir, 'r1.json'), JSON.stringify({ ...spec, repairs: ['F-1'] }));
-  const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json & { units: Json[] };
-  writeFileSync(d.planPath, JSON.stringify({ ...plan, units: plan.units.map((u) => (u['id'] === 'u1' ? { ...u, cut: { reason: 'the endgame test needs no planned work' } } : u)) }));
-  const applied = await command(applyBody(d));
-  assert.equal(applied.state, 'applied', JSON.stringify(applied));
-  const inForce = () => requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
-  assert.deepEqual([...endgameHeld(r.journal.view, inForce(), repairsReader(h.audit))], [R1], 'r1 is held before the entry');
-  r.journal.fact({ kind: 'endgame-entered', episode: 1, planRev: r.journal.view.planApplied()!.rev });
-  await openEndgame(h.audit, h.laneEnv);
-  const worktree = endgameWorktree(inForce().worktreeRoot, inForce().arc);
-  const commit = (files: Readonly<Record<string, string>>, message: string): Sha => {
-    for (const [path, text] of Object.entries(files)) {
-      mkdirSync(dirname(join(worktree, path)), { recursive: true });
-      writeFileSync(join(worktree, path), text);
-    }
-    git(worktree, 'add', '-A');
-    git(worktree, 'commit', '-q', '-m', message);
-    return sha(git(worktree, 'rev-parse', 'HEAD'));
-  };
-  return { d, r, h, worktree, commit, command };
-}
 
 const finding = (r: ArcRun, id: string) => r.journal.view.holistic().findings.find((f) => f.id === id)!;
 const episodeOf = (r: ArcRun) => openEpisode(r.journal.view)!;
 const endgameFfs = (r: ArcRun) => r.journal.view.opsOf('integration.ff').filter((i) => i.expect.subject?.type === 'endgame');
-
-/** Runs the endgame job due now to its end; it must be one. */
-async function runDue(e: EndgameRun): Promise<void> {
-  const due = endgameJobDue(e.h.audit, e.h.laneEnv);
-  assert.ok(due !== null, 'an endgame job is due');
-  await runEndgameJob(e.h.audit, due);
-}
-
-/** Records a fix of F-1 that closes r1 too (so nothing but F-1's landing is left), and lands it. */
-async function fixAndLand(e: EndgameRun): Promise<Sha> {
-  const fix = e.commit({ 'src/carry.js': 'export const carry = (a, b) => a + b;\n' }, 'keep the carry');
-  assert.equal((await e.command(endgame({ type: 'fix', closes: [F1, R1], commit: fix, note: 'add() keeps the carry' }))).state, 'applied');
-  assert.equal((await e.command(endgame({ type: 'land' }))).state, 'applied');
-  await runDue(e);
-  return fix;
-}
 
 describe('the endgame commands (dev.82, WS-5)', () => {
   test('endgame.fix-resolves-on-landing: a recorded fix fixes its finding on the endgame branch; the landing publishes the head by an endgame ff and resolves it', T, async () => {
