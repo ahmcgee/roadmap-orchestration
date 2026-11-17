@@ -1,5 +1,5 @@
 import type { Metadata, ViewEnvelope } from '../../src/console/view-protocol.ts';
-import { pulseShape, shellShape, graphShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, effortShape, effortScopeShape, resourcesShape, resourceDetailShape, resourceReasonsShape } from '../../src/console/view-shapes.ts';
+import { pulseShape, shellShape, graphShape, endgameShape, unitShape, unitSummaryShape, invocationShape, milestoneShape, metadataShape, activityShape, activityChangesShape, activityDetailShape, timelineShape, intervalsShape, holdsShape, holisticShape, attentionShape, requestShape, effortShape, effortScopeShape, resourcesShape, resourceDetailShape, resourceReasonsShape } from '../../src/console/view-shapes.ts';
 import { ApiError } from './prepared-read.ts';
 /** `failures`: failed loads in a row; `retry`: the timer of the next attempt, after 1, 2, 4, 8, then every 15 seconds; `code`: the
  * last failure's API code ('' for none). `endedAt`/`tookMs`: when the last load ended and how long it took, which pace the next
@@ -45,7 +45,7 @@ export class ViewStore {
   frozen(path:string){if(path.startsWith('resources/details/booking-')&&!path.includes('cursor='))return false;return path.startsWith('resources')||['activity','timeline','timeline/intervals','timeline/holds','holistic','attention','effort'].includes(path.split('?')[0]!);}
   keyVersion(path:string):string|null {
     if(!this.metadata)return null;
-    const key=path.startsWith('resources/details/effort-')?'effort':path.startsWith('resources')?'resources':path.startsWith('effort?')?'effort':path.startsWith('attention')||path.startsWith('requests/')?'attention':path.startsWith('timeline')?'timeline':path.startsWith('holistic')?'holistic':path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
+    const key=path.startsWith('resources/details/effort-')?'effort':path.startsWith('resources')?'resources':path.startsWith('effort?')?'effort':path.startsWith('attention')||path.startsWith('requests/')?'attention':path.startsWith('timeline')?'timeline':path.startsWith('holistic')?'holistic':path.startsWith('activity')?'activity':path==='shell'?'shell':path==='graph'?'graph':path==='endgame'?'endgame':path.startsWith('milestones/')?'graph':path.startsWith('units/')||path.startsWith('invocations/')?'activity':null;
     return key?this.metadata.viewVersions[key]:JSON.stringify(this.metadata.viewVersions);
   }
   entry(path:string) {let e=this.entries.get(path);if(!e){e={value:null,error:'',code:'',loading:false,version:null,failures:0};this.entries.set(path,e);}return e;}
@@ -103,7 +103,7 @@ export class ViewStore {
         const query=identity?`${path.includes('?')?'&':'?'}epoch=${encodeURIComponent(identity.epoch)}${mark}`:'';
         const raw=await this.read(`/arcs/${encodeURIComponent(this.arc)}/${path}${query}`,c.signal);
         if(c.signal.aborted||generation!==this.generation)return;
-        const check=path.startsWith('resources/details/effort-')?effortScopeShape:path.startsWith('resources/details/')?resourceDetailShape:path.startsWith('resources/reasons?')?resourceReasonsShape:path.startsWith('resources?')?resourcesShape:path.startsWith('effort?')?effortShape:path.startsWith('attention?')?attentionShape:path.startsWith('requests/')?requestShape:path.startsWith('timeline/intervals?')?intervalsShape:path.startsWith('timeline/holds?')?holdsShape:path.startsWith('timeline?')?timelineShape:path.startsWith('holistic?')?holisticShape:path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
+        const check=path.startsWith('resources/details/effort-')?effortScopeShape:path.startsWith('resources/details/')?resourceDetailShape:path.startsWith('resources/reasons?')?resourceReasonsShape:path.startsWith('resources?')?resourcesShape:path.startsWith('effort?')?effortShape:path.startsWith('attention?')?attentionShape:path.startsWith('requests/')?requestShape:path.startsWith('timeline/intervals?')?intervalsShape:path.startsWith('timeline/holds?')?holdsShape:path.startsWith('timeline?')?timelineShape:path.startsWith('holistic?')?holisticShape:path.split('?')[0]==='activity'?activityShape:path.startsWith('activity/changes?')?activityChangesShape:path.startsWith('activity/')?activityDetailShape:path==='shell'?shellShape:path==='graph'?graphShape:path==='endgame'?endgameShape:path.startsWith('units/')?path.includes('section=summary')?unitSummaryShape:unitShape:path.startsWith('milestones/')?milestoneShape:path.startsWith('invocations/')?invocationShape:(v:unknown)=>!!v;
         if(!check(raw.data))throw error('Malformed view or UI schema mismatch; reload required');
         const entity=decodeURIComponent(path.split('?')[0]!.split('/')[1]??'');
         if(path.startsWith('units/')&&raw.data.unit.id!==entity||path.startsWith('milestones/')&&raw.data.id!==entity||path.startsWith('invocations/')&&raw.data.invocation.routeId!==entity)throw error('Selected detail identity mismatch','conflict');
@@ -114,7 +114,7 @@ export class ViewStore {
         this.admit(raw,false,true);
         entry.value=raw;entry.error='';entry.code='';entry.failures=0;
         // Initial SSE notice arriving during the read is deduplicated by the actual content version.
-        entry.version=path==='shell'||path==='graph'||path.startsWith('timeline')||path.startsWith('holistic')||path.startsWith('attention?')||path.startsWith('effort?')||path.startsWith('resources?')?raw.data.viewVersion:version??this.keyVersion(path);
+        entry.version=path==='shell'||path==='graph'||path==='endgame'||path.startsWith('timeline')||path.startsWith('holistic')||path.startsWith('attention?')||path.startsWith('effort?')||path.startsWith('resources?')?raw.data.viewVersion:version??this.keyVersion(path);
         this.error='';
         this.entries.delete(path);this.entries.set(path,entry);
         let bytes=0;for(const value of this.entries.values())bytes+=JSON.stringify(value.value).length*2;

@@ -1589,6 +1589,23 @@ test('supervision stays on one header line and is red only for an active run wit
   }
 });
 
+test('dev.82: the header names the arc\'s phase on the supervision line: the body, the endgame\'s step with its required entries, or closed out', () => {
+  const d = observed();
+  const phases = [
+    [{ kind: 'body', planned: [], milestones: [] }, 'PHASE body'],
+    [{ kind: 'endgame', step: 'settling', episode: 1, required: 0, optional: 0, handover: null }, 'PHASE endgame settling'],
+    [{ kind: 'endgame', step: 'open', episode: 1, required: 3, optional: 1, handover: '/tmp/h.md' }, 'PHASE endgame open (3 required)'],
+    [{ kind: 'closed-out' }, 'PHASE closed out'],
+  ] as const;
+  for (const [phase, words] of phases) {
+    const ui = new ViewState();
+    ui.accept({ ...d, status: { ...d.status, phase: phase as never } });
+    const header = ui.renderFrame(160, 35, true).filter((r) => plain(r).includes('SUPERVISION'));
+    assert.equal(header.length, 1);
+    assert.ok(plain(header[0]!).includes(words), `${plain(header[0]!)} names ${words}`);
+  }
+});
+
 test('progress counts only units that can still merge: cut and superseded units leave the denominator and are shown beside it', () => {
   const d = observed(); const ui = new ViewState();
   const units = d.status.units.map((u) => u.unit);

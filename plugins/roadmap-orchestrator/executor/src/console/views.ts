@@ -21,7 +21,9 @@ export function versioned<T extends object>(data: T, scope: Scope): T & View {
 export function shellView(e: Envelope): ShellView {
   const s = e.data.display.status, bounds = arcBounds(e), terminal = arcTerminal(e.data);
   const countsByState: Record<string, number> = {};
-  for (const u of s.units) countsByState[u.state] = (countsByState[u.state] ?? 0) + 1;
+  // dev.82: a unit held for the endgame is counted as handed over, not as on hold.
+  const handedOver = new Set((s.endgame?.units ?? []).filter(u => u.relation === 'handed-over').map(u => String(u.unit)));
+  for (const u of s.units) { const state = handedOver.has(String(u.unit)) ? 'handed-over' : u.state; countsByState[state] = (countsByState[state] ?? 0) + 1; }
   const blocking = e.data.requests.filter(r => r.blocking).length;
   return versioned({
     identity: {arc: String(e.arc), direction: e.data.plan?.direction.trim() ? {text: e.data.plan.direction.trim().slice(0, 600), truncated: e.data.plan.direction.trim().length > 600} : null},
