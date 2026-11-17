@@ -1853,6 +1853,8 @@ export const NEEDS_USER_REASONS = [
   'revision-notice', 'waste-finding',
   // dev.44: automatic origin publication failed or diverged. Informational; the arc continues.
   'push-failed', 'push-diverged', 'walkthrough-mcp',
+  // dev.82 (E2), blocking: a unit's diagnosis put its repeated failure's cause outside the unit (pre-build `diagnosed-external`).
+  'diagnosed-external',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [

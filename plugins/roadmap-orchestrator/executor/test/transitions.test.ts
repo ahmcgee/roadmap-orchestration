@@ -91,6 +91,9 @@ const ROWS: readonly Row[] = [
   ['pre-build', 'interrupted', {}, 'hold', 'hold', {}],
   // dev.70: a build's M4 diagnosis attempt closes without a decision; the fold holds nothing for it (events.ts `isDiagnosed`)
   ['pre-build', 'diagnosed', {}, 'hold', 'hold', {}],
+  // dev.82 (E2): a diagnosis that put the cause outside the unit parks it, uncharged, for the root; even at two charges
+  ['pre-build', 'diagnosed-external', {}, 'park:diagnosed-external', 'park', {}],
+  ['pre-build', 'diagnosed-external', { counters: { chargeableFailures: 2 } }, 'park:diagnosed-external', 'park', {}],
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park (a dev.11 record only,
   // scaffolding: no longer recorded since 2026-10-16).
   // A routing change that moved a started implementer's seat (dispatch.ts): park, uncharged, at any dispatching stage.
@@ -286,7 +289,7 @@ describe('transitions', () => {
   it('transitions.park-class: every park row has its class (A7); an operator park writes it, a retryable one its stated targets', () => {
     const CLASS: Readonly<Record<string, ParkClass>> = {
       'pre-build redirect': 'design', 'pre-build infeasible': 'design', 'pre-build scope-widened': 'design', 'pre-build refusal': 'design',
-      'pre-build malformed': 'design', 'pre-build process-fault': 'retryable', 'pre-build routing-changed': 'env', 'pre-build read-denied': 'env',
+      'pre-build malformed': 'design', 'pre-build process-fault': 'retryable', 'pre-build routing-changed': 'env', 'pre-build read-denied': 'env', 'pre-build diagnosed-external': 'env',
       'build spec-wrong':'design', 'build refusal': 'design', 'build malformed': 'design', 'build process-fault': 'retryable', 'build routing-changed': 'env', 'build lost': 'retryable',
       'build occupied': 'env', 'build cleanup-failed': 'retryable', 'build witness-lane-missing': 'env', 'lanes witness-lane-missing': 'env', 'lanes plan-defect': 'env', 'lanes rerun-red': 'env',
       'salvage unmerged': 'env', 'salvage commit-failed': 'retryable', 'salvage cleanup-failed': 'retryable', 'teardown cleanup-failed': 'retryable',

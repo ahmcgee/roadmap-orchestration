@@ -1,10 +1,10 @@
-// Eval path triggers: verifier covers the unit gate mode; pre-build and campaignAudit have small
-// independent dev sets. Walkthrough and polish are experienceVerdict eval modes. Shared schemas,
+// Eval path triggers: verifier covers the unit gate mode; pre-build, campaignAudit and diagnosis (the verifier's
+// diagnosis mode, dev.82) have small independent dev sets. Walkthrough and polish are experienceVerdict eval modes. Shared schemas,
 // routing, method modules and backend changes trigger the affected live-role evaluations.
 import { spawnSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
 
-export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier' | 'pre-build' | 'campaignAudit';
+export type EvalRole = 'gate' | 'walkthrough' | 'polishJudge' | 'verifier' | 'pre-build' | 'campaignAudit' | 'diagnosis';
 
 const SHARED = ['src/prompts/inputs.ts', 'src/prompts/schemas.ts', 'src/routing/**', 'src/backends/argv.ts', 'src/backends/claude.ts', 'evals/roles/*.ts'] as const;
 /** The polish judge's modules under src/walk/: they trigger it alone. */
@@ -19,6 +19,8 @@ export const TRIGGERS: Readonly<Record<Exclude<EvalRole, 'gate'>, readonly strin
   ],
   'pre-build': ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/pipeline/stages.ts', 'evals/roles/surface/**', ...SHARED],
   campaignAudit: ['src/prompts/campaignAudit/**', 'src/prompts/method/**', 'src/holistic/audit.ts', 'evals/roles/surface/**', ...SHARED],
+  // dev.82 (E2): the verifier's diagnosis mode, its evidence block (surface.ts, stages.ts) and the repeated red it reads (lanes.ts).
+  diagnosis: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/pipeline/stages.ts', 'src/pipeline/lanes.ts', 'evals/roles/diagnosis/**', ...SHARED],
 };
 
 /** Paths a role's globs match that do not trigger it. */

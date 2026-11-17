@@ -725,8 +725,8 @@ test('roles.walk-triggers: walkthrough paths trigger the walkthrough eval; the b
   for (const p of ['src/walk/walk.ts', 'src/walk/report.ts', 'src/walk/milestones.ts']) assert.deepEqual(triggeredRoles([p]), ['walkthrough'], p);
   for (const p of ['src/walk/bringup.ts', 'src/backends/mcp.ts']) assert.deepEqual(triggeredRoles([p]), ['walkthrough', 'polishJudge'], p);
   assert.deepEqual(triggeredRoles(['evals/roles/walkthrough/ledgerly/web/pages/entries.js']), ['walkthrough', 'polishJudge']);
-  assert.deepEqual(triggeredRoles(['src/backends/argv.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit']);
-  assert.deepEqual(triggeredRoles(['evals/roles/run.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit']);
+  assert.deepEqual(triggeredRoles(['src/backends/argv.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit', 'diagnosis']);
+  assert.deepEqual(triggeredRoles(['evals/roles/run.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit', 'diagnosis']);
   assert.deepEqual(triggeredRoles(['evals/roles/gate/arc.ts', 'evals/roles/gen/plant.ts']), ['verifier']);
   for (const p of ['src/walk/compare.ts', 'src/walk/polish.ts', 'evals/roles/polish/arc.ts']) assert.deepEqual(triggeredRoles([p]), ['polishJudge'], p);
 });

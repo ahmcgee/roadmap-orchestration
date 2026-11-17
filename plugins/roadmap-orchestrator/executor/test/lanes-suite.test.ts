@@ -176,12 +176,12 @@ test('lanes.fast-suite-base-red: a fast suite lane red on the unit\'s base alone
   assert.equal(run.journal.view.unit(U1).counters.chargeableFailures, 0);
 
   // A later attempt on the same base reuses the base's verdict: lint runs again on the unit's commit (the spec lane's pass
-  // is reused, F1a), never on the base.
+  // is reused, F1a), never on the base. dev.82 (E2): its red repeats the first attempt's confirmed red, so it runs once, no rerun.
   const second = started(await lanes(run.ctx, run.unit, salvaged));
   assert.equal(second.outcome.kind, 'base-red');
   const onBase = laneSpawns(run).filter((s) => s.at === run.base);
   assert.ok(onBase.length > 0 && onBase.every((s) => s.lane === 'lint' && s.set === 'suite' && s.attempt === first.attempt), 'the base ran under the first attempt only');
-  assert.deepEqual(laneSpawns(run).filter((s) => s.attempt === second.attempt).map((s) => [s.lane, s.at]), [['lint', salvaged], ['lint', salvaged]]);
+  assert.deepEqual(laneSpawns(run).filter((s) => s.attempt === second.attempt).map((s) => [s.lane, s.at]), [['lint', salvaged]]);
   assert.ok(!laneSpawns(run).some((s) => s.lane === 'same' || s.lane === 'e2e'));
   assert.deepEqual(fastCheckouts(run), []);
 });

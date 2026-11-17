@@ -559,7 +559,25 @@ export type PolishJudgeInputs = Readonly<{
  */
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
 export type ReviewBrief = Readonly<{ target: UnitTargetInput; vision: VisionInput | null;  spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
-export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build' | 'diagnosis'; brief: ReviewBrief}>;
+/**
+ * dev.82 (E2): what the executor already knows about a diagnosis's repeated failure, given before the history so the
+ * diagnosis starts from it (src/pipeline/surface.ts `diagnosisEvidence`). `trigger`: the sources that made it due
+ * (`attempts:...`, `repeat-red:<lane>:<failure>`). `failures`: what each red lane of the unit's latest completed lanes attempt
+ * printed (as a fix round reads it). `baseComparison`: that attempt's comparisons of its red lanes on the diff base alone.
+ * `environment`: the probe targets with a tripped breaker, the arc's outstanding retryable parks, and each red lane's host
+ * signatures. `knownDefects`: the plan's. `flaky`: the flaky ledger's keys on those lanes.
+ */
+export type DiagnosisEvidence = Readonly<{
+  trigger: readonly string[];
+  failures: readonly LaneFailureText[];
+  baseComparison: readonly Readonly<{ lane: LaneId; base: Sha; result: 'pass' | 'fail'; evidence: AbsPath }>[];
+  environment: Readonly<{ tripped: readonly string[]; retryableParks: readonly string[]; hostSuspected: readonly string[] }>;
+  knownDefects: readonly string[];
+  flaky: readonly string[];
+}>;
+/** dev.82 (E2): a diagnosis's brief: the review brief and the evidence block. */
+export type DiagnosisBrief = ReviewBrief & Readonly<{ evidence: DiagnosisEvidence }>;
+export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build'; brief: ReviewBrief}> | Readonly<{mode: 'diagnosis'; brief: DiagnosisBrief}>;
 
 export type ExperienceInputs = Readonly<{mode: 'walkthrough'; brief: WalkthroughInputs}> | Readonly<{mode: 'polish'; brief: PolishJudgeInputs}>;
 export type RoleInputs = {

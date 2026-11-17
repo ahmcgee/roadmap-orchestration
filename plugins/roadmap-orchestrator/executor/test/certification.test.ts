@@ -8,7 +8,7 @@ import { resourceTable } from '../src/resources/reserve.ts';
 import { readCalls } from './helpers/scenario.ts';
 import { events,intents } from './fixtures/invoke-specs.ts';
 import { BUILD_REPORT,admitAll,planCheckStep,setupUnit,started } from './fixtures/stage-common.ts';
-import { U1,gateStep,codexStep,contextFor,mulBuild,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { U1,diagnosisStep,codexStep,contextFor,mulBuild,setupArc,stepUntil } from './fixtures/unit-common.ts';
 
 const T = { timeout: 300_000 };
 
@@ -17,7 +17,7 @@ test('certification: three reds free, fourth charged, allowance resets, twelfth 
     const acts = [{type: 'commit' as const, message: 'repair attempt', files: {'src/attempt.js': `export const attempt = ${i};\n`}}];
     return i < 7 ? codexStep(acts, {argv: ['exec', 'resume']}) : {as: 'claude' as const, expect: {argv: [i === 7 ? '--session-id' : '--resume'], argvLacks: ['--tools']}, acts: [...acts, {type: 'emit' as const, value: BUILD_REPORT}]};
   });
-  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), mulBuild(), ...repairs.slice(0, 7), gateStep({decision: 'approve'}), ...repairs.slice(7)],
+  const d = setupArc({steps: [planCheckStep({decision: 'approve'}), mulBuild(), ...repairs.slice(0, 7), diagnosisStep({brief: 'Alternate the repair until both lanes hold.'}), ...repairs.slice(7)],
     // Alternate distinct reds: this exercises the ordinary certification allowance, independently of
     // repeated-red base comparison (a confirmed repeat follows regression/base-red instead).
     units: [{ id: 'u1', lanes: [0, 1].map((parity) => ({ id: `red-${parity}`, argv: ['node', '-e',

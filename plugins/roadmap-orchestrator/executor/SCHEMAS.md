@@ -656,7 +656,7 @@ export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly
 ```ts
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
-  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
+  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null; cause?: DiagnosisCause }>;
 ```
 
 ### RevisionSource (`src/core/events.ts`)
@@ -1099,7 +1099,8 @@ service. Hold blocks promotion/restart until release (`src/demo/records.ts`).
 Gate adds approval fingerprint, `diffShown:{inlined,notInlined}`, `largeDiff:{overflow}|null`, review/standingReview and
 designEstimate|null. Recovery consumes those identities, never a newer tip or plan.
 
-Verifier inputs are `{mode:'gate',brief:GateInputs}` or `{mode:'pre-build'|'diagnosis',brief:ReviewBrief}`. GateInputs
+Verifier inputs are `{mode:'gate',brief:GateInputs}`, `{mode:'pre-build',brief:ReviewBrief}` or (dev.82 E2)
+`{mode:'diagnosis',brief:DiagnosisBrief}`. GateInputs
 includes systemNotes, touches, standing, method, spec/intent/nonGoals, cited contracts/index/target/direction, selected
 and standing obligations, bounded diff/claims, laneLedger/evidence, systems/reach/traits/reachTraits, priorRound,
 checks/escalation/largeDiff/milestones, undeclaredContracts and proportional review. ReviewBrief is `{target,vision,spec,intent,nonGoals,contracts,systems,method,history,standing}`; history supplies
@@ -1108,7 +1109,8 @@ diagnosis failures where applicable. No model identity is a role input.
 | Role | Strict output |
 |---|---|
 | verifier gate | GateOutput decision, findings/directives/reasons/premises and gate review/coverage fields |
-| verifier pre-build/diagnosis | The same GateOutput schema; code converts findings into standing items and keeps a diagnosis/failure note |
+| verifier pre-build | The same GateOutput schema; code converts findings into standing items and keeps a failure note |
+| verifier diagnosis | DiagnosisOutput `{cause,evidence,brief,reasons}` (dev.82 E2); code keeps the brief as the note and records the cause |
 | campaignAudit | LensOutput findings/reasons/premises plus requests[] `{op:'request',summary,evidence,dismisses:F-n|null,counterEvidence:string|null}`; dismissal requests require counter-evidence and root action |
 | experienceVerdict | `{final:true,mode:'walkthrough',verdict:{final,journeys,findings,polish,premises,reasons}}` or `{final:true,mode:'polish',verdict:{final,decision:keep|drop,evidence,reasons,premises}}` |
 | packReview | `{findings,dispositions,reasons,premises}`; findings bind severity/target/claim/evidence `{path,line}`; delta review dispositions name prior job/index |
@@ -1865,3 +1867,40 @@ All additive; no table, fold or residue change.
   `pre-build`, nothing charged) and records the brief as a note (`JournalView.notes` entries' `command` is
   `CommandId | JobId`). Otherwise code opens a `witness` P1 (`source: {type: 'job', job}`) naming the culprit.
 - Phase 0 advisory `consider-batch{lane, resources}`: a candidate-cadence, non-external arc lane with resources.
+
+### dev.82 E2: diagnosis on a repeated red
+
+All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
+
+- **Triggers, once per source** (`src/pipeline/surface.ts` `diagnosisSources`, `diagnosisPending`). A diagnosis is due from
+  each source that has no `review-triggered{marker: 'M4'}` of the unit yet. There are two sources:
+  - `attempts:8-builds-or-20-judged`, the attempt counts. Every diagnosis before dev.82 has it.
+  - `repeat-red:<lane>:<failure>`, one per red lane record of the unit's latest completed lanes attempt with
+    `repeat !== null`, when that attempt ended `red`, `regression` or `witnesses-missing`. `<failure>` is the record's
+    failure signature hash.
+
+  The diagnosis runs inside the build's step, before the build (`stages.ts` `diagnose`, unit.ts `diagnosedBuild`). Only
+  the attempts source is the Claude fallback (`diagnosed`): a repeated red's diagnosis moves no build.
+- **`repeatOf` on lanes-stage suite lanes** (`src/pipeline/lanes.ts`). A red of a lanes-stage fast suite series at the
+  salvage SHA (root `<evidence>/_suite`) repeats the unit's earlier confirmed red of that suite lane, as a spec lane's
+  does. Its history is the unit's lanes-stage `_suite` executions and every lanes-stage suite reuse. The diff-base series
+  (`_base`) and the candidate's suite never repeat. The spec lanes' rule is unchanged.
+- **Verifier inputs** (`src/prompts/inputs.ts`). Diagnosis mode takes `DiagnosisBrief = ReviewBrief & {evidence:
+  DiagnosisEvidence}`. `DiagnosisEvidence` is `{trigger: string[], failures: LaneFailureText[], baseComparison: {lane,
+  base, result, evidence}[], environment: {tripped: string[], retryableParks: string[], hostSuspected: string[]},
+  knownDefects: string[], flaky: string[]}`. All of it is read from the latest completed lanes attempt, the park schedule,
+  the plan and the flaky ledger. The verifier module's own schema stays `GATE_SCHEMA`; diagnosis calls pass
+  `DIAGNOSIS_SCHEMA`.
+- **`DiagnosisOutput`** (`src/prompts/schemas.ts`, strict): `{cause: 'unit'|'base'|'environment'|'unknown'
+  (DIAGNOSIS_CAUSES), evidence: string[], brief: string, reasons: string[] (non-empty)}`. A `base` or `environment` cause
+  with empty `evidence` is malformed. The kept note (`BRIEF_INPUT`) is `brief`. `items` is one entry, `{id: '<inv>:cause',
+  text, evidence}`. An unanswered diagnosis keeps the no-answer note and no cause.
+- **`review-completed.cause?: DiagnosisCause`**: only on `mode: 'diagnosis'` (the reader refuses it elsewhere). It is
+  absent when the diagnosis gave no usable answer, and on every diagnosis before dev.82.
+- **Pre-build outcome `diagnosed-external`**, appended to `STAGE_OUTCOME_KINDS['pre-build']`, and **needs-user reason
+  `diagnosed-external`**, appended to `NEEDS_USER_REASONS`, blocking. The diagnosis attempt closes with it when the latest
+  diagnosis's cause is `base` or `environment` and no entry runs the build; under a steer entry it closes `diagnosed`.
+  Row `park('diagnosed-external', 'env')`: uncharged, operator env. The build does not run. The item's summary carries the
+  cause, its evidence and the brief. `resume <unit>` restores the decision before the park (the lanes outcome), so the
+  build's fix round runs with the brief as its note. The source is spent, so it is not diagnosed again. `rerun` does not
+  apply after the park: the lanes attempt is no longer the unit's latest attempt.

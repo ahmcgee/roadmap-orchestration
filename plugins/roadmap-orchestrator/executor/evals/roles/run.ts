@@ -1,6 +1,8 @@
 import { runSurface } from './surface/run.ts';
+import { runDiagnosis } from './diagnosis/run.ts';
 // Role eval dispatcher. `verifier` runs gate mode; `pre-build` and `campaignAudit` use the
-// three-cell surface dev sets. --dry-run on either new set performs no backend calls.
+// three-cell surface dev sets; `diagnosis` (dev.82) the verifier's diagnosis mode on its own dev set. --dry-run on any of
+// them performs no backend calls.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -57,7 +59,7 @@ export function parseRun(argv: readonly string[]): RunOptions {
       cap: { type: 'string' }, 'trial-cap': { type: 'string' }, 'read-only': { type: 'boolean', default: false }, baseline: { type: 'string' },
     },
   });
-  if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(the gate's options; another role's: node evals/roles/run.ts walkthrough|polishJudge|verifier|pre-build|campaignAudit --help)`);
+  if (positionals.length !== 1 || positionals[0] !== 'gate') throw new Error(`${USAGE}\n(the gate's options; another role's: node evals/roles/run.ts walkthrough|polishJudge|verifier|pre-build|campaignAudit|diagnosis --help)`);
   if (values.set !== 'dev' && values.set !== 'holdout') throw new Error(USAGE);
   const int = intOption;
   const usd = usdOption;
@@ -126,7 +128,7 @@ export async function run(o: RunOptions, log: (line: string) => void = (l) => pr
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   const role = argv.find((a): a is EvalRole => (Object.keys(TRIGGERS) as readonly string[]).includes(a)) ?? 'gate';
-  const fail = role === 'pre-build' || role === 'campaignAudit' ? !(await runSurface(argv)) : role === 'walkthrough' ? walkFailed(await runWalk(parseWalkRun(argv)))
+  const fail = role === 'pre-build' || role === 'campaignAudit' ? !(await runSurface(argv)) : role === 'diagnosis' ? !(await runDiagnosis(argv)) : role === 'walkthrough' ? walkFailed(await runWalk(parseWalkRun(argv)))
     : role === 'polishJudge' ? polishFailed(await runPolish(parsePolishRun(argv)))
     : role === 'verifier' ? failed(await run(parseRun(argv.map((a) => a === 'verifier' ? 'gate' : a))))
     : failed(await run(parseRun(argv)));
