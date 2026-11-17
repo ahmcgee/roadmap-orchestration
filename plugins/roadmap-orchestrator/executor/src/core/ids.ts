@@ -295,7 +295,7 @@ export const divergenceIdOf = D.of;
  * baseline witness, (M4a) a pack review, (dev.13) a milestone walkthrough.
  * `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'walk', 'compare'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'walk', 'compare', 'witness'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);

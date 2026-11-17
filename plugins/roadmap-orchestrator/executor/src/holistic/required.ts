@@ -8,7 +8,7 @@ import type { JournalView } from '../core/interfaces.ts';
 import { type SpecM1, specObligations, specRepairs, specWitnesses } from '../core/records.ts';
 import { deliverers, delivers } from '../input/lineage.ts';
 import { unmergedOf } from './blocking.ts';
-import { type ObligationDef, type Obligations, type PlanDefect, type WitnessRecord, isExempt, isMustHold } from './types.ts';
+import { type ObligationDef, type Obligations, type PlanDefect, type WitnessRecord, deferredLane, isExempt, isMustHold } from './types.ts';
 
 /** Why a test id is required: a target the unit delivers or repairs, or a must-hold it declares and must keep (preservation). */
 export type WitnessRole = 'target' | 'preservation';
@@ -99,7 +99,7 @@ export function requiredWitnesses(view: JournalView, obligations: Obligations, u
     if (targets.has(id) || !binding(o) || !isMustHold(o, latchedInTree)) continue;
     rows.push(...obligationRows(o, 'preservation'));
   }
-  return [...new Map(rows.filter((r) => !obligations.lanes.some((l) => l.id === r.lane && l.witnessClass === 'external')).map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));
+  return [...new Map(rows.filter((r) => !obligations.lanes.some((l) => l.id === r.lane && deferredLane(l))).map((r) => [rowKey(r), r])).values()].sort((a, b) => compareRows(a, b));
 }
 
 function compareRows(a: RequiredWitness, b: RequiredWitness): number {

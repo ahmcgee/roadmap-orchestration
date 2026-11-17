@@ -304,6 +304,7 @@ function closureOf(events: readonly Event[], read: (sha: Sha256Hex, ext: string)
         break;
       case 'noted':
       case 'steered':
+      case 'batch-reopened':
         input(f.brief, BRIEF_INPUT, by);
         break;
       case 'finding-opened':

@@ -175,6 +175,13 @@ export type Reporter = (typeof REPORTERS)[number];
  */
 export type ArcLaneDef = LaneDef & Readonly<{ reporter: Reporter; witnessClass?: 'external'; testPaths?: readonly RepoPattern[] }>;
 
+/**
+ * dev.82 (E3): an arc lane whose proof follows publication, never in the merge path: an external-class lane (attested by
+ * the root, `roadmap witness`) or a `batch`-cadence one (the batch witness, src/pipeline/batchlanes.ts). A unit's required
+ * witnesses, the candidate's held-claims brake and a docs publication's brake leave its obligations out.
+ */
+export const deferredLane = (l: ArcLaneDef): boolean => l.witnessClass === 'external' || l.cadence === 'batch';
+
 export const ACTIVATIONS = ['future', 'must-hold'] as const;
 export type Activation = (typeof ACTIVATIONS)[number];
 

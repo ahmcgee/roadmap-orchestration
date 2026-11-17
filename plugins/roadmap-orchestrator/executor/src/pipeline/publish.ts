@@ -84,7 +84,7 @@ import { standing } from '../git/worktree.ts';
 import { selectObligations } from '../holistic/impact.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { brakesOn,obligationEffects } from '../holistic/table.ts';
-import { type ArcLaneDef,type Obligations,isExempt,parseObligations } from '../holistic/types.ts';
+import { type ArcLaneDef,type Obligations,deferredLane,isExempt,parseObligations } from '../holistic/types.ts';
 import {
 OBLIGATIONS_INPUT,
 RENDER_INPUT,
@@ -256,10 +256,10 @@ export function docsSelection(
   return selectObligations({ obligations, systemsMap: null, units: [], closure: [], changedPaths: [], revised: revisedObligations(changes), latched, delivers: () => false });
 }
 
-/** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order. */
+/** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.82). */
 function witnessLanes(obligations: Obligations, selected: ReadonlySet<ObligationId>): readonly ArcLaneDef[] {
   const needed = new Set(obligations.obligations.flatMap((o) => (selected.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
-  return obligations.lanes.filter((l) => needed.has(l.id));
+  return obligations.lanes.filter((l) => needed.has(l.id) && !deferredLane(l));
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -352,7 +352,7 @@ function verdictReason(
   if (red !== undefined) return `suite lane ${red.lane} is ${red.verdict} on the docs candidate (evidence ${red.dir})`;
   if (obligations === null || selected.size === 0) return null;
   const records = new Map(series.runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
-  selected = new Set([...selected].filter((id) => !obligations.lanes.some((l) => l.witnessClass === 'external' && obligations.obligations.some((o) => o.id === id && o.witness?.lane === l.id))));
+  selected = new Set([...selected].filter((id) => !obligations.lanes.some((l) => deferredLane(l) && obligations.obligations.some((o) => o.id === id && o.witness?.lane === l.id))));
   const effects = obligationEffects({
     obligations: obligations.obligations, selected, latched, completing: new Set(),
     verdict: (_o, witness) => {

@@ -87,7 +87,7 @@ import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, re
 import { observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
 import { deliverers, delivers } from '../input/lineage.ts';
-import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
+import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, deferredLane, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { runnerFiles } from '../runner/files.ts';
@@ -443,7 +443,7 @@ export type Claims = Readonly<{
   /** The obligations its units' specs declare they repair (a finding repair: its finding's obligation). */
   repairs: ReadonlySet<ObligationId>;
   latched: ReadonlySet<ObligationId>;
-  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order. */
+  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.82). */
   lanes: readonly ArcLaneDef[];
 }>;
 
@@ -470,7 +470,7 @@ export function claimsOf(
   const chosen = new Set(selected);
   const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(deliverers(view, o), published, units)).map((o) => o.id));
   const needed = new Set(obligations.obligations.flatMap((o) => (chosen.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
-  return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id)) };
+  return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id) && !deferredLane(l)) };
 }
 
 /** A unit candidate's claims at tip `tip` for its approved commit `head` (`selected`, gate.ts: what its approval selects). */
@@ -508,7 +508,7 @@ export function gradeTree(
   claims: Claims, runs: readonly JourneyRun[], completing: ReadonlySet<ObligationId>, repairs: ReadonlySet<ObligationId>, p1: ReadonlySet<ObligationId>,
 ): TreeGrade {
   const records = new Map(runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
-  const external = new Set(claims.obligations.lanes.filter((l) => l.witnessClass === 'external').map((l) => l.id));
+  const external = new Set(claims.obligations.lanes.filter(deferredLane).map((l) => l.id));
   const defs = claims.obligations.obligations;
   const externalIds = new Set(defs.filter((o) => external.has(o.witness?.lane!)).map((o) => o.id));
   claims = { ...claims, selected: new Set([...claims.selected].filter((id) => !externalIds.has(id))) };
@@ -526,7 +526,7 @@ export function gradeTree(
   // non-exempt child holds. Not its effect: a held future child completing here is `latch`, one delivered elsewhere
   // `measured`, and neither is `discharged` (paid m3 run 7: a repair of a latched parent split into such children).
   const holds = (o: ObligationDef): boolean => {
-    if (externalIds.has(o.id)) return true; // Root evidence follows publication, including a split parent's external leaves.
+    if (externalIds.has(o.id)) return true; // Deferred evidence (the root's, the batch witness's) follows publication, a split parent's deferred leaves included.
     if (o.state.type !== 'split') return o.witness !== null && verdict(o, o.witness) === 'held';
     return o.state.children.every((c) => {
       const child = byId.get(c);

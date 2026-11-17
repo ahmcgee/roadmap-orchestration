@@ -67,7 +67,7 @@ import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerLog,latestAnswers,refQuestions,unappliedOf } from '../answers.ts';
 import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
-import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
+import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type ResourceName,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { type SpecM1,specForces,specRepairs,specWitnesses } from '../core/records.ts';
@@ -167,7 +167,9 @@ export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-
 export type RepairDeliveredElsewhere = Readonly<{ kind: 'repair-delivered-elsewhere'; unit: UnitId; obligation: ObligationId; units: readonly UnitId[] }>;
 
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }> | RepairDeliveredElsewhere;
+export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }> | RepairDeliveredElsewhere | ConsiderBatch;
+/** dev.82 (E3): a candidate-cadence arc lane that names a shared resource or environment: consider `batch` cadence. Advisory only. */
+export type ConsiderBatch = Readonly<{ kind: 'consider-batch'; lane: LaneId; resources: readonly ResourceName[] }>;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -217,7 +219,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input), ...repairsDeliveredElsewhere(input)];
+  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input), ...repairsDeliveredElsewhere(input), ...considerBatch(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -762,4 +764,15 @@ function proofAdvisories(input: Phase0Input): readonly Phase0Advisory[] {
     if (units.length > 1 && !spans) out.push({kind: 'spanning-proof', obligation: o.id, lane: lane.id, units: units.map((u) => u.id)});
     return out;
   });
+}
+
+/**
+ * dev.82 (E3): each candidate-cadence arc lane naming resources (a declared resource or environment, which other lanes and
+ * units share): every candidate selecting its obligations would reserve them in the merge path. A `batch` lane proves the
+ * obligation after merge instead (src/pipeline/batchlanes.ts, the batch witness).
+ */
+function considerBatch(input: Phase0Input): readonly ConsiderBatch[] {
+  const obligations = visionAndObligations(input).obligations;
+  if (obligations === null) return [];
+  return obligations.lanes.flatMap((l) => (l.cadence === 'candidate' && l.witnessClass !== 'external' && l.resources.length > 0 ? [{ kind: 'consider-batch' as const, lane: l.id, resources: l.resources }] : []));
 }

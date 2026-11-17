@@ -1584,7 +1584,7 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
 }
 
 /** A job's kinds of journey series: the baseline's, an audit's lanes, a re-witness (an audit's or a checkpoint's), a batch point's (dev.17). */
-export type JobSeriesKind = 'checkout' | 'lanes' | 'rewitness' | 'batch';
+export type JobSeriesKind = 'checkout' | 'lanes' | 'rewitness' | 'batch' | 'probe';
 
 /**
  * The checkout of a job's next journey series of kind `what`: `<worktreeRoot>/<arc>/<job>.<what>-<n>`, n one past the
