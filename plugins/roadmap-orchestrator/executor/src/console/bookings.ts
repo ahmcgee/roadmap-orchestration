@@ -18,7 +18,7 @@ export function bookingSummaries(events: readonly Event[]): Booking[] {
       }
       if (edge !== 'reserve' && edge !== 'reclaim') continue;
       const h = intent.expect.holder;
-      const holder = {type: h.type, id: 'unit' in h ? h.unit : h.type === 'job' ? h.job : h.type === 'docs' ? h.pub : h.type === 'sweep' ? h.command : `${h.finding}:${h.attempt}`, ...('unit' in h ? {unitId: h.unit} : {})};
+      const holder = {type: h.type, id: 'unit' in h ? h.unit : h.type === 'job' ? h.job : h.type === 'docs' ? h.pub : h.type === 'sweep' ? h.command : h.type === 'endgame' ? h.job : `${h.finding}:${h.attempt}`, ...('unit' in h ? {unitId: h.unit} : {})};
       const row: Booking = {id: sha256Hex(`${ev.op}:${resource}`), resource: parsed.type === 'instance' ? parsed.pool : parsed.name,
         instance: parsed.type === 'instance' ? resource : null, holder, startedAt: ev.at, endedAt: null, state: 'holding', startSeq: ev.seq, endSeq: null};
       rows.push(row); active.set(resource, row);

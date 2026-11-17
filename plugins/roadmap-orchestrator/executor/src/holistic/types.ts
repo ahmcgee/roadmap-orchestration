@@ -641,7 +641,7 @@ export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
  * failed bring-up of a walk or the demo). A walkthrough finding names its milestone (`finding-opened.milestone`) and may
  * have no obligation.
  */
-export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'pre-build', 'walkthrough'] as const;
+export const FINDING_LENSES = [...LENS_KINDS, 'witness', 'pre-build', 'walkthrough', 'endgame-review'] as const;
 export type FindingLens = (typeof FINDING_LENSES)[number];
 /** `fixed-on-branch` (R5): the owner's gate approved. `resolved` and `ruled` are terminal. */
 export const FINDING_STATES = ['open', 'owned', 'fixed-on-branch', 'resolved', 'ruled'] as const;
@@ -671,10 +671,14 @@ export type FindingRuledBy =
  */
 export const FINDING_DISPOSITIONS = ['dismissed', 'deferred', 'accepted', 'released'] as const;
 export type FindingDisposition = (typeof FINDING_DISPOSITIONS)[number];
-/** A `finding-transition`'s target. */
+/**
+ * A `finding-transition`'s target. dev.82 (WS-5): owned or fixed-on-branch by an endgame fix (`endgame`, its `roadmap
+ * endgame fix` command) rather than a unit: fixed on the endgame branch once recorded, resolved once a landing holds it.
+ */
 export type FindingTo =
   | Readonly<{ state: 'open' }>
   | Readonly<{ state: 'owned' | 'fixed-on-branch'; unit: UnitId }>
+  | Readonly<{ state: 'owned' | 'fixed-on-branch'; endgame: CommandId }>
   | Readonly<{ state: 'resolved' }>
   | Readonly<{ state: 'ruled'; disposition: FindingDisposition; by: FindingRuledBy }>;
 
@@ -702,10 +706,17 @@ export const findingSource: Read<FindingSource> = tagged('type', {
   demo: object((f): FindingSource => ({ type: f.get('type', literal('demo')), sha: f.get('sha', shaR) })),
 });
 export const mutantRef: Read<MutantRef> = object((f) => ({ patchSha256: f.get('patchSha256', sha256R), lane: f.get('lane', (v, p) => laneId(v, p)) }));
+/** An owned or fixed-on-branch move's owner: a unit, or (dev.82) an endgame fix's command; exactly one. */
+function ownerOf(f: Fields): Readonly<{ unit: UnitId }> | Readonly<{ endgame: CommandId }> {
+  const endgame = f.optional('endgame', (v, p) => commandId(v, p));
+  if (endgame === undefined) return { unit: f.get('unit', (v, p) => unitId(v, p)) };
+  if (f.optional('unit', (v, p) => unitId(v, p)) !== undefined) throw new SchemaError(`${f.path}.unit`, 'absent beside an endgame owner', 'unit');
+  return { endgame };
+}
 export const findingTo: Read<FindingTo> = tagged('state', {
   open: object((f): FindingTo => ({ state: f.get('state', literal('open')) })),
-  owned: object((f): FindingTo => ({ state: f.get('state', literal('owned')), unit: f.get('unit', (v, p) => unitId(v, p)) })),
-  'fixed-on-branch': object((f): FindingTo => ({ state: f.get('state', literal('fixed-on-branch')), unit: f.get('unit', (v, p) => unitId(v, p)) })),
+  owned: object((f): FindingTo => ({ state: f.get('state', literal('owned')), ...ownerOf(f) })),
+  'fixed-on-branch': object((f): FindingTo => ({ state: f.get('state', literal('fixed-on-branch')), ...ownerOf(f) })),
   resolved: object((f): FindingTo => ({ state: f.get('state', literal('resolved')) })),
   ruled: object((f): FindingTo => {
     const out = {

@@ -420,7 +420,7 @@ type M4aFactOf<K extends Fact['kind']> = Omit<Extract<Fact, { kind: K }>, 'kind'
 /** M4a: a pack review job: its kept inputs' fact, and its end (null while running). */
 export type PackReviewState = Readonly<{ started: M4aFactOf<'pack-review-started'>; ended: M4aFactOf<'pack-review-ended'> | null }>;
 
-/** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move. */
+/** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move (null: an endgame fix's, or none). */
 export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
   state: FindingStateName;
   owner: UnitId | null;
@@ -468,7 +468,8 @@ export type HolisticFold = Readonly<{
 
 /**
  * dev.82: one endgame episode: entered at `seq` under plan rev `planRev`, opened once (its branch's base and the handover's
- * hash), its recorded fixes, landings and reviews, and how it was left (null while open).
+ * hash), its recorded fixes, landings and reviews, and how it was left (null while open). WS-5: the units `resume` released
+ * from the endgame's hold, the commands' requests and the endgame jobs (each started, and ended or null while it runs).
  */
 export type EndgameEpisode = Readonly<{
   episode: number;
@@ -479,6 +480,14 @@ export type EndgameEpisode = Readonly<{
   landings: readonly (Omit<FactOf<'endgame-landed'>, 'kind'> & Seq)[];
   reviews: readonly (Omit<FactOf<'endgame-reviewed'>, 'kind'> & Seq)[];
   left: Readonly<{ cause: EndgameLeftCause; seq: number }> | null;
+  released: readonly (Omit<FactOf<'endgame-released'>, 'kind'> & Seq)[];
+  requests: readonly (Omit<FactOf<'endgame-requested'>, 'kind'> & Seq)[];
+  jobs: readonly EndgameJobState[];
+}>;
+/** dev.82 (WS-5): an endgame job: its start, and its end (null while it runs). */
+export type EndgameJobState = Readonly<{
+  started: Omit<FactOf<'endgame-job-started'>, 'kind'> & Seq;
+  ended: (Omit<FactOf<'endgame-job-ended'>, 'kind' | 'job'> & Seq) | null;
 }>;
 
 /** M4a rev 3: a lane a series reused (F1a), keyed `(parent, lane)`. */
@@ -1593,7 +1602,8 @@ export class Fold implements JournalView {
         if (history === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
         const x = history.at(-1)!.finding;
         if (!FINDING_MOVES[x.state].includes(f.to.state)) fail(`finding ${f.id} moves ${x.state} → ${f.to.state}`);
-        const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? f.to.unit : f.to.state === 'open' ? null : x.owner;
+        // dev.82 (WS-5): an endgame fix owns no unit.
+        const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? ('unit' in f.to ? f.to.unit : null) : f.to.state === 'open' ? null : x.owner;
         history.push({ seq, finding: { ...x, state: f.to.state, owner, last: f.to } });
         return;
       }
@@ -1678,6 +1688,10 @@ export class Fold implements JournalView {
       case 'endgame-landed':
       case 'endgame-reviewed':
       case 'endgame-left':
+      case 'endgame-released':
+      case 'endgame-requested':
+      case 'endgame-job-started':
+      case 'endgame-job-ended':
         this.#endgameFact(f, seq, fail);
         return;
       case 'docs-published': {
@@ -1698,7 +1712,10 @@ export class Fold implements JournalView {
 
   /**
    * dev.82: an endgame fact. One episode at a time: `entered` numbers the next and needs none open; `opened` once, of the open
-   * one; a fix, a landing or a review only inside an opened episode; `left` closes the open one.
+   * one; a fix, a landing or a review only inside an opened episode; `left` closes the open one. WS-5: a release in any open
+   * episode, once per unit; a request, and a job's start and end, inside an opened one: one job at a time, its id the next
+   * `endgame-<n>` (or the running one's, a landing or review written while it runs), a command's request served once; no
+   * episode is left while a job runs.
    */
   #endgameFact(f: EndgameFact, seq: number, fail: (detail: string) => never): void {
     const last = this.#endgame.at(-1);
@@ -1706,21 +1723,45 @@ export class Fold implements JournalView {
     if (f.kind === 'endgame-entered') {
       if (open !== null) fail(`endgame episode ${f.episode} entered while episode ${open.episode} is open`);
       if (f.episode !== this.#endgame.length + 1) fail(`endgame episode ${f.episode} entered; the next episode is ${this.#endgame.length + 1}`);
-      this.#endgame.push({ episode: f.episode, planRev: f.planRev, seq, opened: null, fixes: [], landings: [], reviews: [], left: null });
+      this.#endgame.push({ episode: f.episode, planRev: f.planRev, seq, opened: null, fixes: [], landings: [], reviews: [], left: null, released: [], requests: [], jobs: [] });
       return;
     }
     if (open === null) return fail(`${f.kind} outside an endgame episode`);
     const replace = (next: EndgameEpisode): void => void (this.#endgame[this.#endgame.length - 1] = next);
+    const running = open.jobs.find((j) => j.ended === null) ?? null;
     switch (f.kind) {
+      case 'endgame-released':
+        if (open.released.some((r) => r.unit === f.unit)) fail(`unit ${f.unit} released from endgame episode ${open.episode} twice`);
+        return replace({ ...open, released: [...open.released, { unit: f.unit, command: f.command, seq }] });
+      case 'endgame-requested':
+        if (open.opened === null) fail(`endgame-requested in endgame episode ${open.episode}, which has not opened`);
+        if (open.requests.some((r) => r.command === f.command)) fail(`command ${f.command} requested twice in endgame episode ${open.episode}`);
+        return replace({ ...open, requests: [...open.requests, { command: f.command, request: f.request, seq }] });
+      case 'endgame-job-started': {
+        if (open.opened === null) fail(`endgame-job-started in endgame episode ${open.episode}, which has not opened`);
+        if (running !== null) fail(`endgame job ${f.job} started while ${running.started.job} runs`);
+        this.#openJob(f.job, fail);
+        if (f.command !== null && open.jobs.some((j) => j.started.command === f.command)) fail(`command ${f.command}'s request served twice`);
+        const { kind: _k, ...rest } = f;
+        return replace({ ...open, jobs: [...open.jobs, { started: { ...rest, seq }, ended: null }] });
+      }
+      case 'endgame-job-ended': {
+        if (running === null || running.started.job !== f.job) return fail(`endgame-job-ended of ${f.job}, which is not running`);
+        const { kind: _k, job: _j, ...rest } = f;
+        return replace({ ...open, jobs: open.jobs.map((j) => (j === running ? { ...j, ended: { ...rest, seq } } : j)) });
+      }
       case 'endgame-opened':
         if (f.episode !== open.episode) fail(`endgame-opened names episode ${f.episode}; episode ${open.episode} is open`);
         if (open.opened !== null) fail(`endgame episode ${open.episode} opened twice`);
         return replace({ ...open, opened: { base: f.base, handoverSha256: f.handoverSha256, seq } });
       case 'endgame-left':
         if (f.episode !== open.episode) fail(`endgame-left names episode ${f.episode}; episode ${open.episode} is open`);
+        if (running !== null) fail(`endgame episode ${open.episode} left while job ${running.started.job} runs`);
         return replace({ ...open, left: { cause: f.cause, seq } });
       default: {
         if (open.opened === null) fail(`${f.kind} in endgame episode ${open.episode}, which has not opened`);
+        // WS-5: a landing or a review is its running job's.
+        if (f.kind !== 'endgame-fix' && running?.started.job !== f.job) fail(`${f.kind} of ${f.job}, which is not the running endgame job`);
         const { kind: _k, ...rest } = f;
         if (f.kind === 'endgame-fix') return replace({ ...open, fixes: [...open.fixes, { ...(rest as Omit<FactOf<'endgame-fix'>, 'kind'>), seq }] });
         if (f.kind === 'endgame-landed') return replace({ ...open, landings: [...open.landings, { ...(rest as Omit<FactOf<'endgame-landed'>, 'kind'>), seq }] });

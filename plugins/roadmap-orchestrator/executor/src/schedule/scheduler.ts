@@ -233,6 +233,7 @@ const firstHolder: Read<FirstHolder> = tagged('type', {
   docs: object((f): FirstHolder => ({ type: f.get('type', literal('docs')), pub: f.get('pub', jobIdOfKind('docs')) })),
   batch: object((f): FirstHolder => ({ type: f.get('type', literal('batch')), finding: f.get('finding', findingId), attempt: f.get('attempt', positive) })),
   job: object((f): FirstHolder => ({ type: f.get('type', literal('job')), job: f.get('job', jobIdOf) })),
+  endgame: object((f): FirstHolder => ({ type: f.get('type', literal('endgame')), job: f.get('job', jobIdOfKind('endgame')) })),
 });
 
 export const schedFile: Read<SchedFile> = object((f) => ({

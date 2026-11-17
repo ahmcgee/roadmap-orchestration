@@ -218,9 +218,12 @@ describe('endgame: the episode fold', () => {
   const fix = fact({ kind: 'endgame-fix', command: commandId('cmd-0000000000000009'), closes: ['F-1'], commit: A, note: 'n' });
   const base = new Log([U1]).records;
 
+  const started = (job: string): LogRecord => fact({ kind: 'endgame-job-started', job, command: null, request: { type: 'land' } });
+  const ended = (job: string): LogRecord => fact({ kind: 'endgame-job-ended', job, outcome: 'landed', detail: 'landed' });
+
   it('episodes number in order, open once, and record fixes, landings and reviews only while opened', () => {
     const log = new Log([U1]);
-    log.add(entered(1), opened(1), fix, fact({ kind: 'endgame-landed', job: 'batch-1', old: A, head: A }), left(1), entered(2));
+    log.add(entered(1), opened(1), fix, started('endgame-1'), fact({ kind: 'endgame-landed', job: 'endgame-1', old: A, head: A }), ended('endgame-1'), left(1), entered(2));
     const [first, second] = log.view().holistic().endgame;
     assert.deepEqual([first!.episode, first!.opened?.base, first!.fixes.length, first!.landings.length, first!.left?.cause], [1, A, 1, 1, 'planned-unit']);
     assert.deepEqual([second!.episode, second!.opened, second!.left], [2, null, null]);
@@ -235,6 +238,20 @@ describe('endgame: the episode fold', () => {
     refuses([...base, entered(1), fix], 3, /endgame-fix in endgame episode 1, which has not opened/);
     refuses([...base, entered(1), left(1), fix], 4, /outside an endgame episode/);
     refuses([...base, entered(1), left(2)], 3, /endgame-left names episode 2; episode 1 is open/);
+  });
+
+  it('WS-5: a landing is its running job\'s; one job at a time, numbered in order; no episode is left while one runs; a release once per unit', () => {
+    const landed = (job: string): LogRecord => fact({ kind: 'endgame-landed', job, old: A, head: A });
+    const released = fact({ kind: 'endgame-released', unit: U1, command: commandId('cmd-0000000000000009') });
+    refuses([...base, entered(1), opened(1), landed('endgame-1')], 4, /not the running endgame job/);
+    refuses([...base, entered(1), opened(1), started('endgame-1'), started('endgame-2')], 5, /started while endgame-1 runs/);
+    refuses([...base, entered(1), opened(1), started('endgame-2')], 4, /the next endgame job is endgame-1/);
+    refuses([...base, entered(1), opened(1), started('endgame-1'), left(1)], 5, /left while job endgame-1 runs/);
+    refuses([...base, entered(1), released, released], 4, /released from endgame episode 1 twice/);
+    const log = new Log([U1]);
+    log.add(entered(1), released, opened(1), started('endgame-1'), landed('endgame-1'), ended('endgame-1'));
+    const [e] = log.view().holistic().endgame;
+    assert.deepEqual([e!.released.map((r) => r.unit), e!.jobs.map((j) => [j.started.job, j.ended?.outcome])], [[U1], [['endgame-1', 'landed']]]);
   });
 });
 

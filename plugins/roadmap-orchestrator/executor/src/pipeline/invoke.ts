@@ -219,7 +219,7 @@ export function chargeOf(subject: SpawnSubject): Charge | null {
     case 'backend':
       return { ...(subject.prompt === undefined ? {} : { prompt: subject.prompt }), routingRev: subject.routingRev, subject: { type: 'seat', ...unitSeatRef(subject.role, subject.tier), unit: subject.unit, attempt: subject.attempt } };
     case 'arc-backend':
-      return { ...(subject.prompt === undefined ? {} : { prompt: subject.prompt }), routingRev: subject.routingRev, subject: { type: 'job', role: subject.role, tier: subject.tier, job: subject.job, attempt: subject.attempt } };
+      return { ...(subject.prompt === undefined ? {} : { prompt: subject.prompt }), routingRev: subject.routingRev, subject: { type: 'job', ...(subject.role === 'verifier' ? { role: subject.role, tier: subject.tier } : { role: subject.role, tier: subject.tier }), job: subject.job, attempt: subject.attempt } };
     case 'smoke':
       return subject.target.type === 'backend' ? { routingRev: subject.target.routingRev, subject: { type: 'smoke', backend: subject.target.backend } } : null;
     case 'lane':

@@ -1407,6 +1407,8 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     case 'start':
       return { type: 'architect', command: null };
     case 'command':
+    // dev.82 (WS-5): the cut of the units an endgame fix closes is the architect's fix command, applied by code.
+    case 'endgame':
       return { type: 'architect', command: source.command };
     case 'executor':
       return { type: 'executor' };

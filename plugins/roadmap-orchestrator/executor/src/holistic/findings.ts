@@ -28,8 +28,8 @@
 //   timeToResolveMs}`, over the log's events (their times).
 
 import { canonicalJson } from '../core/json.ts';
-import type { Event, HolisticFact, Parent } from '../core/events.ts';
-import { type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds } from '../core/ids.ts';
+import type { EndgameRef, Event, HolisticFact, Parent } from '../core/events.ts';
+import { type CommandId, type FindingId, type JobId, type LaneId, type NeedsUserId, type ObligationId, type Sha, type Sha256Hex, type UnitId, type VisionClauseId, canonicalIds } from '../core/ids.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
 import type { NeedsUserContent, NeedsUserReason, RepairRef } from '../core/records.ts';
 import type { FindingState } from '../core/state.ts';
@@ -210,28 +210,52 @@ export type RepairProgress =
 /** A unit whose spec repairs something, in plan order (src/pipeline/reproduce.ts `repairUnits`). */
 export type RepairUnit = Readonly<{ unit: UnitId; repairs: readonly RepairRef[]; progress: RepairProgress }>;
 
-type Target = Readonly<{ state: 'open' }> | Readonly<{ state: 'owned' | 'fixed-on-branch' | 'resolved'; unit: UnitId }>;
+/**
+ * dev.82 (WS-5): an endgame fix as ownership reads it: its command, what it closes, its record's seq, and whether a landing
+ * holds its commit (src/endgame/fixes.ts `endgameFixes`).
+ */
+export type EndgameFixProgress = Readonly<{ command: CommandId; closes: readonly EndgameRef[]; seq: number; landed: boolean }>;
 
-/** The state a finding should be in given the repairing units, or null for one that is not active (never touched). */
-function targetOf(f: FindingState, all: readonly FindingState[], units: readonly RepairUnit[]): Target | null {
+/** Who owns a finding: a repairing unit, or (dev.82) an endgame fix. */
+type Owner = Readonly<{ unit: UnitId }> | Readonly<{ endgame: CommandId }>;
+type Target = Readonly<{ state: 'open' }> | (Readonly<{ state: 'owned' | 'fixed-on-branch' | 'resolved' }> & Owner);
+
+const ownerKey = (o: Owner): string => ('unit' in o ? `unit:${o.unit}` : `endgame:${o.endgame}`);
+/** The owner of `f`'s latest owned or fixed-on-branch move, as a key, or null. */
+const ownerOfFinding = (f: FindingState): string | null =>
+  (f.state === 'owned' || f.state === 'fixed-on-branch') && f.last !== null && (f.last.state === 'owned' || f.last.state === 'fixed-on-branch') ? ownerKey(f.last) : null;
+
+/**
+ * The state a finding should be in given the repairing units and the endgame fixes, or null for one that is not active
+ * (never touched): resolved by a unit's publication, else by a landed fix; owned by a live repairing unit; else fixed on
+ * the endgame branch by a fix recorded since it opened; else open. A fix closes the finding it names, and a witness
+ * finding over an obligation it names.
+ */
+function targetOf(f: FindingState, all: readonly FindingState[], units: readonly RepairUnit[], fixes: readonly EndgameFixProgress[]): Target | null {
   if (!isActive(f)) return null;
   const direct = (u: RepairUnit): boolean => u.repairs.includes(f.id);
   const byObligation = (u: RepairUnit): boolean => f.lens === 'witness' && f.obligation !== null && repairedObligations(all, u.repairs).has(f.obligation);
   const publisher = units.find((u) => u.progress.kind === 'published' && u.progress.seq > f.openedSeq && (direct(u) || byObligation(u)));
   if (publisher !== undefined) return { state: 'resolved', unit: publisher.unit };
+  const closes = (x: EndgameFixProgress): boolean => x.seq > f.openedSeq && (x.closes.includes(f.id) || (f.lens === 'witness' && f.obligation !== null && x.closes.includes(f.obligation)));
+  const landed = fixes.find((x) => x.landed && closes(x));
+  if (landed !== undefined) return { state: 'resolved', endgame: landed.command };
   const owner = units.find((u) => direct(u) && (u.progress.kind === 'working' || u.progress.kind === 'approved'));
   if (owner !== undefined) return { state: owner.progress.kind === 'approved' ? 'fixed-on-branch' : 'owned', unit: owner.unit };
+  const fix = fixes.find(closes);
+  if (fix !== undefined) return { state: 'fixed-on-branch', endgame: fix.command };
   return { state: 'open' };
 }
 
 /** The legal moves (FINDING_MOVES) from `f` to `target`, each a `finding-transition` target. */
 function movesTo(f: FindingState, target: Target): readonly FindingTo[] {
   const at = f.state;
-  const owner = f.owner;
   if (target.state === 'open') return at === 'open' ? [] : [{ state: 'open' }];
-  const u = target.unit;
-  const own: FindingTo = { state: 'owned', unit: u };
-  const fixed: FindingTo = { state: 'fixed-on-branch', unit: u };
+  const by: Owner = 'unit' in target ? { unit: target.unit } : { endgame: target.endgame };
+  const owner = ownerOfFinding(f);
+  const u = ownerKey(by);
+  const own: FindingTo = { state: 'owned', ...by };
+  const fixed: FindingTo = { state: 'fixed-on-branch', ...by };
   switch (target.state) {
     case 'owned':
       if (at === 'owned') return owner === u ? [] : [{ state: 'open' }, own];
@@ -246,10 +270,12 @@ function movesTo(f: FindingState, target: Target): readonly FindingTo[] {
   }
 }
 
-/** Every transition the repairing units call for, per finding in id order. Pure; each list follows FINDING_MOVES. */
-export function ownershipMoves(findings: readonly FindingState[], units: readonly RepairUnit[]): readonly Readonly<{ id: FindingId; to: readonly FindingTo[] }>[] {
+/** Every transition the repairing units and the endgame fixes call for, per finding in id order. Pure; each list follows FINDING_MOVES. */
+export function ownershipMoves(
+  findings: readonly FindingState[], units: readonly RepairUnit[], fixes: readonly EndgameFixProgress[],
+): readonly Readonly<{ id: FindingId; to: readonly FindingTo[] }>[] {
   return findings.flatMap((f) => {
-    const target = targetOf(f, findings, units);
+    const target = targetOf(f, findings, units, fixes);
     if (target === null) return [];
     const to = movesTo(f, target);
     for (let i = 0, state = f.state; i < to.length; state = to[i]!.state, i++) {
@@ -260,8 +286,8 @@ export function ownershipMoves(findings: readonly FindingState[], units: readonl
 }
 
 /** Writes what `ownershipMoves` calls for; re-runnable (a restart writes only what is still missing). */
-export function syncFindings(journal: Journal, units: readonly RepairUnit[]): void {
-  for (const m of ownershipMoves(journal.view.holistic().findings, units)) {
+export function syncFindings(journal: Journal, units: readonly RepairUnit[], fixes: readonly EndgameFixProgress[]): void {
+  for (const m of ownershipMoves(journal.view.holistic().findings, units, fixes)) {
     for (const to of m.to) journal.fact({ kind: 'finding-transition', id: m.id, to });
   }
 }

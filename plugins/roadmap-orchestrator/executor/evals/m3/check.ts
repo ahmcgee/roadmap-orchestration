@@ -117,7 +117,7 @@ const obligation = (run: Run, id: string) => {
 };
 
 /** A published integration.ff: its intent, the seq of its done, and whose it was. */
-type Publication = Readonly<{ op: OpId; seq: number; old: string; new: string; subject: 'docs' | 'batch' | 'unit'; unit: UnitId | null; pub: string | null }>;
+type Publication = Readonly<{ op: OpId; seq: number; old: string; new: string; subject: 'docs' | 'batch' | 'endgame' | 'unit'; unit: UnitId | null; pub: string | null }>;
 
 function publications(run: Run): readonly Publication[] {
   const intents = new Map(ffIntents(run).map((i) => [i.op, i]));

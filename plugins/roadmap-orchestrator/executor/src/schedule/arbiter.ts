@@ -37,15 +37,18 @@ import { retryableParks, trippedTargets } from '../park/schedule.ts';
 import { canonicalJson } from '../core/json.ts';
 import { allocate, envBlocked, overlaps } from '../resources/pool.ts';
 import {
-  type AcquiringHolder, type BatchHolder, type DocsHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder, publicationOwner, holderUnits,
+  type AcquiringHolder, type BatchHolder, type DocsHolder, type EndgameHolder, type JobHolder, type ResourceContext, type UnitAcquiringHolder, reserve, resourceTable, sameHolder, publicationOwner, holderUnits,
 } from '../resources/reserve.ts';
 import { type Acquire, type CandidateEntry, type Grant, type Rank, type ResourceRequest, compareRank } from './types.ts';
 
 /** A units' waiter as `status` shows it, in the order the arbiter serves them. */
 export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: ResourceRequest; rank: Rank; envBlocked: boolean; pressureBlocked: boolean; queuedAt: number; reasons?: readonly WaitReason[] }>;
 
-/** A job's holder that waits before every unit: a docs publication's slot, a repair batch's slot (M3 B2), or a job's lanes. */
-export type FirstHolder = DocsHolder | BatchHolder | JobHolder;
+/**
+ * A job's holder that waits before every unit: a docs publication's slot, a repair batch's slot (M3 B2), a job's lanes, or
+ * (dev.82) an endgame landing's slot.
+ */
+export type FirstHolder = DocsHolder | BatchHolder | JobHolder | EndgameHolder;
 
 /**
  * Waits for `request` under a job's holder, served before every unit's waiter (A7). `onBlocked` runs at each
@@ -92,6 +95,7 @@ function parentOf(holder: AcquiringHolder): Parent {
     case 'docs':
       return { type: 'job', job: holder.pub };
     case 'job':
+    case 'endgame':
       return { type: 'job', job: holder.job };
     case 'batch':
       throw new Error(`${canonicalJson(holder)}: a batch holder's parent is its job, given to acquireFirst`);
@@ -196,7 +200,7 @@ export function createArbiter(ctx: ResourceContext): Arbiter {
 
   const acquireFirst: AcquireFirst = (request, holder, signal, onBlocked = () => {}, parent) => {
     if (first.some((w) => sameHolder(w.holder, holder))) throw new Error(`${canonicalJson(holder)} already waits`);
-    if ((holder.type === 'docs' || holder.type === 'batch') && !(request.publication && request.named.length === 0 && request.pools.length === 0 && request.cpu === 0)) {
+    if ((holder.type === 'docs' || holder.type === 'batch' || holder.type === 'endgame') && !(request.publication && request.named.length === 0 && request.pools.length === 0 && request.cpu === 0)) {
       throw new Error(`a ${holder.type} holder waits for integration-slot alone, not ${canonicalJson(request)}`);
     }
     if ((holder.type === 'batch') !== (parent !== undefined)) throw new Error(`${canonicalJson(holder)}: a parent is given exactly for a batch holder`);
