@@ -18,8 +18,6 @@ export type DiagnosisCase = Readonly<{
     cause: 'environment';
     /** A path every passing answer's evidence cites. */
     cites: string;
-    /** Path prefixes of production code the brief must not propose to change. */
-    production: readonly string[];
   }>;
 }>;
 
@@ -97,5 +95,5 @@ export const DEV: readonly DiagnosisCase[] = [{
   ].join('\n'),
   intent: 'A signed-in user reaches their profile page.',
   contract: 'The directory owns accounts and their state; the app owns only its client registration.',
-  expect: { cause: 'environment', cites: 'estate-dump/accounts.json', production: ['src/'] },
+  expect: { cause: 'environment', cites: 'estate-dump/accounts.json' },
 }];

@@ -1,6 +1,6 @@
 // dev.83 (E2): the diagnosis role eval's harness, free: the dev case lays out a repository whose lane really fails on the head
 // and the base, the prompt renders its evidence, the reference answer conforms to the schema and passes the mechanical grade,
-// a code-change answer fails it, and the dry run makes no backend call.
+// a code-change answer fails it, a brief that names production code to forbid editing it still passes, and the dry run makes no backend call.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,12 +27,12 @@ test('roles.diagnosis-grade: the reference answer conforms and passes; a code-ch
   const c = DEV[0]!;
   const expected = referenceAnswer(c, 'expected');
   assert.equal(schemaViolation(DIAGNOSIS_SCHEMA, expected), null);
-  assert.deepEqual(gradeDiagnosis(c, expected), { pass: true, void: null, checks: { cause: true, cites: true, noCodeChange: true } });
-  assert.deepEqual(gradeDiagnosis(c, referenceAnswer(c, 'code')).checks, { cause: false, cites: false, noCodeChange: false });
+  assert.deepEqual(gradeDiagnosis(c, expected), { pass: true, void: null, checks: { cause: true, cites: true } });
+  assert.deepEqual(gradeDiagnosis(c, referenceAnswer(c, 'code')).checks, { cause: false, cites: false });
   const e = expected as Record<string, unknown>;
   assert.equal(gradeDiagnosis(c, { ...e, cause: 'base' }).pass, false);
   assert.equal(gradeDiagnosis(c, { ...e, evidence: ['the lane is red on the base'] }).pass, false);
-  assert.equal(gradeDiagnosis(c, { ...e, brief: 'Restore the account, then retry src/signin.js unchanged.' }).checks?.noCodeChange, false);
+  assert.equal(gradeDiagnosis(c, { ...e, brief: 'Do not edit src/signin.js; the estate team must unlock journey-user.' }).pass, true, 'prose is not graded');
   assert.notEqual(gradeDiagnosis(c, { ...e, cause: 'environment', evidence: [] }).void, null, 'an external cause without evidence is malformed: void');
 });
 

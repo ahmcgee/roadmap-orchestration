@@ -1,7 +1,13 @@
 // The diagnosis role eval (dev.83, E2): the production verifier prompt in diagnosis mode, its schema (DIAGNOSIS_SCHEMA) and
-// backend argv, over the dev set's generated repositories (dev.ts). Graded mechanically: the cause, the evidence citing the
-// estate dump, and a brief that proposes no production-code path. --dry-run renders and grades the reference answer for free;
-// --fake expected|code grades a canned answer without a call.
+// backend argv, over the dev set's generated repositories (dev.ts). Graded mechanically on structured fields, two checks:
+// - cause: the answer's `cause` is the case's. This is what code acts on: `base` or `environment` closes the attempt as the
+//   uncharged `diagnosed-external` park and no fix build runs (surface.ts `diagnosisOutcome`), so the right external cause is
+//   itself "the diagnosis does not send the builder to change production code".
+// - cites: some `evidence` entry names the path the cause rests on (the estate dump). Evidence entries are free-text
+//   observations, not bare paths, so this is presence of the path, not a check of what the entry says about it.
+// The `brief` and `reasons` are prose and are not graded: a substring check cannot tell "edit src/x" from "do not edit src/x"
+// (dev.83's first run failed a correct answer on exactly that), and the rule is that evals assert values, not wording.
+// --dry-run renders and grades the reference answer for free; --fake expected|code grades a canned answer without a call.
 import { execFile, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -99,13 +105,13 @@ export function referenceAnswer(c: DiagnosisCase, kind: 'expected' | 'code'): un
     : { cause: 'unit', evidence: ['src/signin.js:9'], brief: 'Relax the state check in src/signin.js so a locked account may sign in.', reasons: ['The check rejects the journey user.'] };
 }
 
-export type DiagnosisChecks = Readonly<{ cause: boolean; cites: boolean; noCodeChange: boolean }>;
-/** The mechanical grade: the expected cause, evidence citing the dump, and a brief naming no production-code path. */
+export type DiagnosisChecks = Readonly<{ cause: boolean; cites: boolean }>;
+/** The mechanical grade (header): the expected cause and evidence citing the dump. */
 export function gradeDiagnosis(c: DiagnosisCase, answer: unknown): Readonly<{ pass: boolean; void: string | null; checks: DiagnosisChecks | null }> {
   try {
     const out = validateDiagnosisOutput(answer);
-    const checks = { cause: out.cause === c.expect.cause, cites: out.evidence.some((e) => e.includes(c.expect.cites)), noCodeChange: !c.expect.production.some((p) => out.brief.includes(p)) };
-    return { pass: checks.cause && checks.cites && checks.noCodeChange, void: null, checks };
+    const checks = { cause: out.cause === c.expect.cause, cites: out.evidence.some((e) => e.includes(c.expect.cites)) };
+    return { pass: checks.cause && checks.cites, void: null, checks };
   } catch (error) {
     // A malformed model answer voids the trial; programming and harness errors stay loud.
     if (!(error instanceof SchemaError)) throw error;
