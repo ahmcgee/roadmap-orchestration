@@ -22,7 +22,7 @@
 //
 // The early stop. M5 grades dev.13's evidence, not convergence (m1's job; run 5, 2026-10-20, spent 85 minutes of audit
 // tail after its last walk and demo). Every owner poll while a turn runs, at every turn end and every ANSWER_POLL_MS (or
-// watch event) of a wait, the driver evaluates log.ts's stop rule (`evidenceComplete`, and since dev.82 `endgameSettled`:
+// watch event) of a wait, the driver evaluates log.ts's stop rule (`evidenceComplete`, and since dev.83 `endgameSettled`:
 // the endgame entered and the arc completed, so check.ts can grade the endgame's closing step) over the run dir of the
 // arc under test (the fail-fast's arc). Once it holds, the turn is killed (or the wait ends), the run ends `evidence-complete` with
 // the moment and the rule's detail in `report.evidence`, and the end-of-run steps below stop the held arc.

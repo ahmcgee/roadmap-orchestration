@@ -601,7 +601,7 @@ tr.timeline-runs p{margin:8px 12px;}
 .drawer-full.command-detail>.drawer-body{padding-top:8px;}
 .drawer-full.command-detail .log-sources{margin:8px 0;}
 .drawer-body>section.check-output{border-bottom:0;padding-block:0;}
-/* dev.82: the arc's phase, the line map's idiom at header size: three discs on the track (body, endgame, closed out), the
+/* dev.83: the arc's phase, the line map's idiom at header size: three discs on the track (body, endgame, closed out), the
    ones behind filled ink, the current one ringed, the step and what it waits on named beside it. */
 .phase-track{display:flex;align-items:center;gap:10px;min-width:0;color:var(--ink);text-decoration:none;white-space:nowrap;border-radius:var(--radius-md);padding:4px 8px;margin:0 -8px;}a.phase-track:hover{background:var(--hover);}a.phase-track[aria-current=page]{background:var(--band-selected);}
 .phase-steps{position:relative;display:flex;gap:12px;}.phase-steps::before{content:'';position:absolute;left:4px;right:4px;top:4px;height:2px;background:var(--track);}

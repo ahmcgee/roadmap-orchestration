@@ -462,12 +462,12 @@ export type HolisticFold = Readonly<{
   certificates: readonly CertificateState[];
   /** M4a rev 3 (D2): mutation smoke runs, in log order. */
   smokeRuns: readonly SmokeRunState[];
-  /** dev.82: the endgame's episodes, in order (src/endgame/phase.ts); at most the last is open (not left). */
+  /** dev.83: the endgame's episodes, in order (src/endgame/phase.ts); at most the last is open (not left). */
   endgame: readonly EndgameEpisode[];
 }>;
 
 /**
- * dev.82: one endgame episode: entered at `seq` under plan rev `planRev`, opened once (its branch's base and the handover's
+ * dev.83: one endgame episode: entered at `seq` under plan rev `planRev`, opened once (its branch's base and the handover's
  * hash), its recorded fixes, landings and reviews, and how it was left (null while open). WS-5: the units `resume` released
  * from the endgame's hold, the commands' requests and the endgame jobs (each started, and ended or null while it runs).
  */
@@ -484,7 +484,7 @@ export type EndgameEpisode = Readonly<{
   requests: readonly (Omit<FactOf<'endgame-requested'>, 'kind'> & Seq)[];
   jobs: readonly EndgameJobState[];
 }>;
-/** dev.82 (WS-5): an endgame job: its start, and its end (null while it runs). */
+/** dev.83 (WS-5): an endgame job: its start, and its end (null while it runs). */
 export type EndgameJobState = Readonly<{
   started: Omit<FactOf<'endgame-job-started'>, 'kind'> & Seq;
   ended: (Omit<FactOf<'endgame-job-ended'>, 'kind' | 'job'> & Seq) | null;
@@ -502,7 +502,7 @@ export type SmokeRunState = M4aFactOf<'smoke-ran'>;
 function isWork(record: Event): boolean {
   if (record.type === 'fact') {
     const k = record.fact.kind;
-    // dev.82: `endgame-left` follows `arc-completed` when the arc completes in the endgame.
+    // dev.83: `endgame-left` follows `arc-completed` when the arc completes in the endgame.
     return !['executor-started', 'containment-mode', 'tail-discarded', 'arc-completed', 'docs-published', 'probe', 'backend-park', 'meter', 'usage-unavailable', 'endgame-left'].includes(k);
   }
   if (record.type === 'intent') return record.parent.type === 'stage' || record.parent.type === 'job' || record.parent.type === 'command' || record.kind === 'revision.commit';
@@ -750,7 +750,7 @@ export class Fold implements JournalView {
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #surfaceFacts: import('./events.ts').SurfaceFact[] = [];
-  /** `command`: the note's command, or (dev.82) the batch witness job whose `batch-reopened` carries the brief. */
+  /** `command`: the note's command, or (dev.83) the batch witness job whose `batch-reopened` carries the brief. */
   readonly #noted: Readonly<{unit: UnitId; command: CommandId | JobId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
@@ -772,7 +772,7 @@ export class Fold implements JournalView {
   readonly #propagationFacts: PropagationFactAt[] = [];
   /** dev.13: per milestone, the seq of the latest `plan-applied` whose milestones change lists it in `rewalk`. */
   readonly #rewalkSeqs = new Map<MilestoneId, number>();
-  /** dev.82: the endgame's episodes (each replaced whole as it changes). */
+  /** dev.83: the endgame's episodes (each replaced whole as it changes). */
   readonly #endgame: EndgameEpisode[] = [];
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
   // M4a rev 3
@@ -1602,7 +1602,7 @@ export class Fold implements JournalView {
         if (history === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
         const x = history.at(-1)!.finding;
         if (!FINDING_MOVES[x.state].includes(f.to.state)) fail(`finding ${f.id} moves ${x.state} → ${f.to.state}`);
-        // dev.82 (WS-5): an endgame fix owns no unit.
+        // dev.83 (WS-5): an endgame fix owns no unit.
         const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? ('unit' in f.to ? f.to.unit : null) : f.to.state === 'open' ? null : x.owner;
         history.push({ seq, finding: { ...x, state: f.to.state, owner, last: f.to } });
         return;
@@ -1676,10 +1676,10 @@ export class Fold implements JournalView {
         return;
       }
       case 'admissions-closed':
-        // dev.82: `close-admissions` was removed (the endgame replaces it); an earlier release's fact is read and has no effect.
+        // dev.83: `close-admissions` was removed (the endgame replaces it); an earlier release's fact is read and has no effect.
         if (!legacyAdmissionsClosedWarned) {
           legacyAdmissionsClosedWarned = true;
-          process.emitWarning(`reading admissions-closed (${f.command}, before dev.82) as no effect: close-admissions was removed; the endgame replaces it (further occurrences are not repeated)`, { code: 'ROADMAP_UPGRADE' });
+          process.emitWarning(`reading admissions-closed (${f.command}, before dev.83) as no effect: close-admissions was removed; the endgame replaces it (further occurrences are not repeated)`, { code: 'ROADMAP_UPGRADE' });
         }
         return;
       case 'endgame-entered':
@@ -1711,7 +1711,7 @@ export class Fold implements JournalView {
   }
 
   /**
-   * dev.82: an endgame fact. One episode at a time: `entered` numbers the next and needs none open; `opened` once, of the open
+   * dev.83: an endgame fact. One episode at a time: `entered` numbers the next and needs none open; `opened` once, of the open
    * one; a fix, a landing or a review only inside an opened episode; `left` closes the open one. WS-5: a release in any open
    * episode, once per unit; a request, and a job's start and end, inside an opened one: one job at a time, its id the next
    * `endgame-<n>` (or the running one's, a landing or review written while it runs), a command's request served once; no

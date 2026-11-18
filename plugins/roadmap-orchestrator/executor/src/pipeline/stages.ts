@@ -692,11 +692,11 @@ function pinOnce(ctx: StageContext, unit: PlanUnit): void {
 }
 
 /**
- * The diagnosis a build's step runs first when one is due (surface.ts `diagnosisPending`: the attempt counts, or dev.82 E2 a
+ * The diagnosis a build's step runs first when one is due (surface.ts `diagnosisPending`: the attempt counts, or dev.83 E2 a
  * repeated red), or null. A diagnosis is an annotation, delivered as build memory (and, for the attempt counts', a Claude
  * fallback). It runs under a pre-build attempt of its own, inside the build's step (unit.ts `diagnosedBuild`), and closes
  * `diagnosed` (dev.70): it decides nothing, so the round the build was given (a decided round, or a steer entry's) stays the
- * unit's next stage whatever interrupts it. dev.82 (E2): a diagnosis that put the cause outside the unit closes
+ * unit's next stage whatever interrupts it. dev.83 (E2): a diagnosis that put the cause outside the unit closes
  * `diagnosed-external` instead (`diagnosisOutcome`), an uncharged park; the build does not run. A crash that leaves the
  * attempt open is recorded by the unit driver the same way (unit.ts `consumeRecorded`).
  */
@@ -845,7 +845,7 @@ export async function buildRead(
     return { ...record(ctx, parent, 'lost-tree-effects'), run };
   }
   const v = verdictOf(ctx, parent, called);
-  // dev.82 (E5c): the runner's deadline ended the round and no pressure ruling called it starved (`verdictOf` reads that
+  // dev.83 (E5c): the runner's deadline ended the round and no pressure ruling called it starved (`verdictOf` reads that
   // first): what it left is salvaged and verified like a report's, uncharged (`window-spent`).
   if (v.kind === 'process-fault' && called.kind === 'result' && spentWindow(called)) {
     const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
@@ -888,7 +888,7 @@ export async function buildRead(
   return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v, called));
 }
 
-/** dev.82 (E5c): whether a closed call's runner ended it at its deadline (exit.json `cause`). */
+/** dev.83 (E5c): whether a closed call's runner ended it at its deadline (exit.json `cause`). */
 function spentWindow(called: Extract<BackendCallOutcome, { kind: 'result' }>): boolean {
   const exit = runnerFiles(called.invDir, called.inv).read('exit.json');
   if (exit === null) throw new Error(`${called.inv}: a closed build call without exit.json`);
@@ -1401,7 +1401,7 @@ function lanesAttemptAt(ctx: StageContext, previous: StageParent): Sha | null {
 }
 
 /**
- * dev.82 (E2): the red lane records of the unit's latest completed lanes attempt (its spec series, then its fast suite at the
+ * dev.83 (E2): the red lane records of the unit's latest completed lanes attempt (its spec series, then its fast suite at the
  * salvage SHA), with that attempt; empty when it ran nothing.
  */
 export function latestLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ attempt: number | null; reds: readonly LaneRecord[] }> {

@@ -161,7 +161,7 @@ async function runCommand(command: Command, hostDir: AbsPath): Promise<void> {
       return submit(command.run, hostDir, { type: 'demo', act: command.act });
     case 'push':
       return submit(command.run, hostDir, { type: 'push' });
-    // dev.82 (WS-5): a fix without --commit records the endgame branch's head as it stands now.
+    // dev.83 (WS-5): a fix without --commit records the endgame branch's head as it stands now.
     case 'endgame': {
       const { act } = command;
       if (act.type !== 'fix') return submit(command.run, hostDir, { type: 'endgame', act });

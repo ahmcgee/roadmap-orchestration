@@ -56,7 +56,7 @@ import { inUnitSystems,systemTraits,systemsForPatterns } from '../input/systems.
 //  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
 //                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
 //  15. milestones (every arc, every mode; dev.13) milestones on a plan without `holistic`: `milestones-need-holistic`.
-//  (dev.82, E4) shared estate mutation (advisory): a pool the active lanes of two or more live units name, one of them on a
+//  (dev.83, E4) shared estate mutation (advisory): a pool the active lanes of two or more live units name, one of them on a
 //                  `persistent` system, held `exclusive` by none of those lanes: `shared-estate-mutation`.
 //  16. lane topology (every arc, every mode; dev.17) every system a lane lists declared by the repo config's systems map, every
 //                  lane a spec forces a suite lane of the plan (`plan-invalid{schema}`, `laneTopologyRows`).
@@ -169,7 +169,7 @@ export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-
 export type RepairDeliveredElsewhere = Readonly<{ kind: 'repair-delivered-elsewhere'; unit: UnitId; obligation: ObligationId; units: readonly UnitId[] }>;
 
 /**
- * dev.82 (E4), advisory: pool `pool` is named by active spec lanes of two or more live, unsettled units (`units`), at least
+ * dev.83 (E4), advisory: pool `pool` is named by active spec lanes of two or more live, unsettled units (`units`), at least
  * one on a system with the `persistent` trait (`mutators`), and no lane naming it holds it `exclusive`: a mutator may
  * change state the other units' lanes read through their own instances at the same time.
  */
@@ -177,7 +177,7 @@ export type SharedEstateMutation = Readonly<{ kind: 'shared-estate-mutation'; po
 
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
 export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }> | RepairDeliveredElsewhere | SharedEstateMutation | ConsiderBatch;
-/** dev.82 (E3): a candidate-cadence arc lane that names a shared resource or environment: consider `batch` cadence. Advisory only. */
+/** dev.83 (E3): a candidate-cadence arc lane that names a shared resource or environment: consider `batch` cadence. Advisory only. */
 export type ConsiderBatch = Readonly<{ kind: 'consider-batch'; lane: LaneId; resources: readonly ResourceName[] }>;
 
 /**
@@ -755,7 +755,7 @@ function repairsDeliveredElsewhere(input: Phase0Input): readonly RepairDelivered
   }));
 }
 
-/** dev.82 (E4): each pool `SharedEstateMutation` names. Needs the systems map (the trait lives there). */
+/** dev.83 (E4): each pool `SharedEstateMutation` names. Needs the systems map (the trait lives there). */
 function sharedEstateMutations(input: Phase0Input): readonly SharedEstateMutation[] {
   const map = input.config?.systemsMap;
   if (map === undefined) return [];
@@ -791,7 +791,7 @@ function proofAdvisories(input: Phase0Input): readonly Phase0Advisory[] {
 }
 
 /**
- * dev.82 (E3): each candidate-cadence arc lane naming resources (a declared resource or environment, which other lanes and
+ * dev.83 (E3): each candidate-cadence arc lane naming resources (a declared resource or environment, which other lanes and
  * units share): every candidate selecting its obligations would reserve them in the merge path. A `batch` lane proves the
  * obligation after merge instead (src/pipeline/batchlanes.ts, the batch witness).
  */

@@ -150,7 +150,7 @@ export const resourceReasonsShape=object({...base,filters:resourceFilters,bounds
 export const resourcesShape:Check=v=>resourcesBase(v)&&((v as any).rows as unknown[]).every((r:unknown)=>((v as any).section==='schedule'?resourceBooking:(v as any).section==='cpu'?resourceCpu:(v as any).section==='waiting'?resourceWait:resourceNowRow)(r));
 export const resourceDetailShape:Check=v=>resourceDetailBase(v)&&((v as any).rows as unknown[]).every((r:unknown)=>((v as any).evidence==='ownership'?resourceBooking:(v as any).evidence==='calls'?resourceCall:resourceWait)(r));
 
-// dev.82: the Endgame view.
+// dev.83: the Endgame view.
 const endgameRef = object({id: str, detail: nullable(detail)});
 const endgameEpisode = object({
   episode: nat, planRev: nat, enteredAt: nullable(date), state: oneOf('open', 'reversed', 'complete'), leftAt: nullable(date),

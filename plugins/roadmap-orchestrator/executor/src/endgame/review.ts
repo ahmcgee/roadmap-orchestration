@@ -1,4 +1,4 @@
-// The endgame's independent review (dev.82, WS-5; DESIGN-1.0.md §2.10): the one review the architect's hand-made endgame
+// The endgame's independent review (dev.83, WS-5; DESIGN-1.0.md §2.10): the one review the architect's hand-made endgame
 // work gets, since no gate saw it. A verifier session in `endgame` mode (src/prompts/verifier/, `EndgameReviewBrief`) on the
 // verifier's `high` seat (src/pipeline/dispatch.ts `jobSeat`), run by the endgame job `job` (src/endgame/jobs.ts), never in
 // the architect's session:

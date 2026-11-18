@@ -322,7 +322,7 @@ test('roles.checkout-tree-act: checkoutTree commits exactly the given commit\'s 
 });
 
 test('roles.triggers: gate paths trigger the gate eval; shared paths (routing) the walkthrough, polish-judge and verifier evals too; unrelated paths none', () => {
-  // dev.82 (E2): the verifier's diagnosis mode has its own eval, triggered by the verifier prompt and the shared paths.
+  // dev.83 (E2): the verifier's diagnosis mode has its own eval, triggered by the verifier prompt and the shared paths.
   assert.deepEqual(triggeredRoles(['src/prompts/verifier/claude-opus-5-5.ts']), ['verifier', 'pre-build', 'diagnosis']);
   assert.deepEqual(triggeredRoles(['src/git/boundeddiff.ts', 'README.md']), ['verifier']);
   assert.deepEqual(triggeredRoles(['src/routing/classes.ts']), ['verifier', 'walkthrough', 'polishJudge', 'pre-build', 'campaignAudit', 'diagnosis']);

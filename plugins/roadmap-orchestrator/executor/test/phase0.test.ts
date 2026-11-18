@@ -368,7 +368,7 @@ describe('phase0 check --from-ref (K20)', () => {
   });
 });
 
-describe('phase0 advisories (dev.82)', () => {
+describe('phase0 advisories (dev.83)', () => {
   it('phase0.consider-batch: a candidate-cadence arc lane naming a shared resource is advised toward batch; a batch one is not', T, async () => {
     const a = await corpusArc();
     const tool = { argv: ['true'], cwd: '.', env: { set: {}, pass: [] } };

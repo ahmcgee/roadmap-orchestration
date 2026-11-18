@@ -60,7 +60,7 @@ export function milestoneReasons(e: Envelope, membership = milestoneMembership(e
  *                    `walk-started`, or a campaign audit's `stage-outcome`), each `I-n` through the findings naming it
  *   audit            origin `repair` resolving to no one milestone: the job that raised its latest finding (`audit-N`, `walk-N`)
  *   hardening        everything else: planned work in no milestone, and a repair no job raised
- *   endgame          (dev.82) a unit the endgame took over (status `endgame.units`: held and handed over, released by
+ *   endgame          (dev.83) a unit the endgame took over (status `endgame.units`: held and handed over, released by
  *                    `resume`, or closed by a fix), or one whose lineage root it took over, whatever raised it; it
  *                    wins over the kinds above
  * Order: the milestone-attached groups in plan order (design, then repair, then polish), Hardening, each audit job newest

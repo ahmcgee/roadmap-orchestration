@@ -2,7 +2,7 @@ import { link, loadError, pluralise, route, SignalMark, Time } from './shared.ts
 import { useView } from './view-state.ts';
 import type { DetailRef, EndgameEntry, EndgameEpisodeView, EndgameRef, EndgameView, ShellPhase } from '../../src/console/view-protocol.ts';
 
-// dev.82: the Endgame view. The arc's last stretch, where the architect finishes by hand what findings raised: what must
+// dev.83: the Endgame view. The arc's last stretch, where the architect finishes by hand what findings raised: what must
 // hold before it closes, what is left, what was fixed and landed, and what the architect was handed. Read only.
 const short = (sha: string) => sha.slice(0, 10);
 const kindWords: Record<EndgameEntry['kind'], string> = {finding: 'Finding', obligation: 'Obligation', unit: 'Unit', 'polish-refused': 'Polish proposal'};

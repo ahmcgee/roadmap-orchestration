@@ -442,7 +442,7 @@ export type LensInputs = Readonly<{
   /**
    * The range this call reviews: from the lens's watermark to `diff.to`, the audited SHA or, for an outstanding range
    * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment
-   * (src/git/boundeddiff.ts). dev.82: `base`, the arc's coverage base; a range from a later watermark is the part no
+   * (src/git/boundeddiff.ts). dev.83: `base`, the arc's coverage base; a range from a later watermark is the part no
    * completed pass covered (base→`diff.from` was), and the call answers for it alone, reading the rest for context.
    */
   range: Readonly<{ audited: Sha; base: Sha; diff: BoundedDiff }>;
@@ -561,7 +561,7 @@ export type PolishJudgeInputs = Readonly<{
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
 export type ReviewBrief = Readonly<{ target: UnitTargetInput; vision: VisionInput | null;  spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
 /**
- * dev.82 (E2): what the executor already knows about a diagnosis's repeated failure, given before the history so the
+ * dev.83 (E2): what the executor already knows about a diagnosis's repeated failure, given before the history so the
  * diagnosis starts from it (src/pipeline/surface.ts `diagnosisEvidence`). `trigger`: the sources that made it due
  * (`attempts:...`, `repeat-red:<lane>:<failure>`). `failures`: what each red lane of the unit's latest completed lanes attempt
  * printed (as a fix round reads it). `baseComparison`: that attempt's comparisons of its red lanes on the diff base alone.
@@ -576,10 +576,10 @@ export type DiagnosisEvidence = Readonly<{
   knownDefects: readonly string[];
   flaky: readonly string[];
 }>;
-/** dev.82 (E2): a diagnosis's brief: the review brief and the evidence block. */
+/** dev.83 (E2): a diagnosis's brief: the review brief and the evidence block. */
 export type DiagnosisBrief = ReviewBrief & Readonly<{ evidence: DiagnosisEvidence }>;
 /**
- * dev.82 (WS-5): what the endgame review reads (src/endgame/review.ts). `range`: the endgame's own commits on the
+ * dev.83 (WS-5): what the endgame review reads (src/endgame/review.ts). `range`: the endgame's own commits on the
  * integration head, from the episode's base to the head, and `diff` that range bounded. `fixes`: the architect's recorded
  * fixes (what each closes, its commit and note). `publications`: each head published in the range, a unit's or a batch's
  * marked `gated` (its gate approved it), an endgame landing's or a docs publication's not. `findings`: the active findings,

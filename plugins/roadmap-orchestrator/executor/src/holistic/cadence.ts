@@ -1,4 +1,4 @@
-// Campaign audits run at reached milestones, on root request, and over the final outstanding range. dev.82: the final audit
+// Campaign audits run at reached milestones, on root request, and over the final outstanding range. dev.83: the final audit
 // is the endgame's (src/endgame/phase.ts): owed once the arc is in the endgame and no unit runs, active P1s or not (they are
 // worklist entries), and again whenever the integration head moved past its watermark, except while an opened episode's
 // step is `open` (`deferred`): the architect's landings and repair merges there arm nothing, and the audit runs at
@@ -55,7 +55,7 @@ export type Cadence = Readonly<{
   owed: readonly AuditTrigger[];
   due: boolean;
   plan: AuditPlan | null;
-  /** dev.82: the final audit would be owed, but the opened episode's step is `open`: it runs at `closing`. */
+  /** dev.83: the final audit would be owed, but the opened episode's step is `open`: it runs at `closing`. */
   deferred: boolean;
 }>;
 

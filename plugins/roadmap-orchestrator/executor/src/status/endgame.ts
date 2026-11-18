@@ -1,4 +1,4 @@
-// dev.82: where the arc is (`Status.phase`) and what the endgame recorded (`Status.endgame`), read through the scheduler's
+// dev.83: where the arc is (`Status.phase`) and what the endgame recorded (`Status.endgame`), read through the scheduler's
 // read-only contexts, so status and the executor read one rule (src/endgame/open.ts `endgameNow`, `reviewDue`,
 // src/schedule/scheduler.ts `obligationsOn`).
 //
@@ -43,7 +43,7 @@ export type EndgameExit = Readonly<{
   review: boolean;
   /** The endgame branch landed and the final audit's invariants coverage reached the integration head. */
   audit: boolean;
-  /** dev.82: the final audit is owed but waits for the `closing` step (src/holistic/cadence.ts `deferred`). */
+  /** dev.83: the final audit is owed but waits for the `closing` step (src/holistic/cadence.ts `deferred`). */
   auditAtClosing: boolean;
   /** The endgame branch landed, every obligation holds on the head, and no closing batch witness is owed. */
   obligations: boolean;

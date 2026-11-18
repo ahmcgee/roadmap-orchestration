@@ -21,7 +21,7 @@ export function versioned<T extends object>(data: T, scope: Scope): T & View {
 export function shellView(e: Envelope): ShellView {
   const s = e.data.display.status, bounds = arcBounds(e), terminal = arcTerminal(e.data);
   const countsByState: Record<string, number> = {};
-  // dev.82: a unit held for the endgame is counted as handed over, not as on hold.
+  // dev.83: a unit held for the endgame is counted as handed over, not as on hold.
   const handedOver = new Set((s.endgame?.units ?? []).filter(u => u.relation === 'handed-over').map(u => String(u.unit)));
   for (const u of s.units) { const state = handedOver.has(String(u.unit)) ? 'handed-over' : u.state; countsByState[state] = (countsByState[state] ?? 0) + 1; }
   const blocking = e.data.requests.filter(r => r.blocking).length;
@@ -41,7 +41,7 @@ export function graphView(e: Envelope): GraphView {
   const units: GraphView['units'] = s.units.map(u => {
     const identity = identities.get(u.unit)!;
     return {id: String(u.unit), title: identity.title.slice(0, 96), titleTruncated: identity.title.length > 96,
-      // dev.82: a unit held for the endgame is handed over to the architect, not stalled.
+      // dev.83: a unit held for the endgame is handed over to the architect, not stalled.
       signal: endgameOf.get(String(u.unit))?.relation === 'handed-over' ? 'pending' : unitSignal(u.state),
       state: u.state, stage: u.stage, stageFinished: stageFinished(steps.get(u.unit), u.stage), systems: identity.systems, lineageRef: u.lineage || u.supersededBy ? String(u.unit) : null,
       origin: u.origin, supersededBy: u.supersededBy === null ? null : String(u.supersededBy), carriedBy: u.carriedBy.map(String), endgame: endgameOf.get(String(u.unit)) ?? null};

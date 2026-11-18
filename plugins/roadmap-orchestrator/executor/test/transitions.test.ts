@@ -91,7 +91,7 @@ const ROWS: readonly Row[] = [
   ['pre-build', 'interrupted', {}, 'hold', 'hold', {}],
   // dev.70: a build's M4 diagnosis attempt closes without a decision; the fold holds nothing for it (events.ts `isDiagnosed`)
   ['pre-build', 'diagnosed', {}, 'hold', 'hold', {}],
-  // dev.82 (E2): a diagnosis that put the cause outside the unit parks it, uncharged, for the root; even at two charges
+  // dev.83 (E2): a diagnosis that put the cause outside the unit parks it, uncharged, for the root; even at two charges
   ['pre-build', 'diagnosed-external', {}, 'park:diagnosed-external', 'park', {}],
   ['pre-build', 'diagnosed-external', { counters: { chargeableFailures: 2 } }, 'park:diagnosed-external', 'park', {}],
   // Paid M4b run 5: an approve from a session refused a read: one uncharged retry, then an env park (a dev.11 record only,
@@ -116,7 +116,7 @@ const ROWS: readonly Row[] = [
   ['build', 'lost', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'park:build-lost', 'park', {}],
   ['build', 'lost-tree-effects', {}, 'quiesce', 'advance', {}],
   ['build', 'lost-tree-effects', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'quiesce', 'advance', {}],
-  // dev.82 (E5c): a round its window ran out on is salvaged and verified like a lost one with tree effects, uncharged.
+  // dev.83 (E5c): a round its window ran out on is salvaged and verified like a lost one with tree effects, uncharged.
   ['build', 'window-spent', {}, 'quiesce', 'advance', {}],
   ['build', 'window-spent', { counters: { 'retries.build': 1, chargeableFailures: 2 } }, 'quiesce', 'advance', {}],
   ['build', 'occupied', {}, 'park:occupancy-unlabelled', 'park', {}],

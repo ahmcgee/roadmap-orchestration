@@ -22,7 +22,7 @@
 // - **Needs-user items (durable, derived).** A parked owner's P1 escalates at the park deadline (`finding-p1-escalated`,
 //   blocking; dev.13: a milestone's escalations raise the same reason, src/walk/milestones.ts `walkItemsDue`). It is
 //   derived from the log (`findingItemsDue`) and raised once (`raiseFindingItems`), so a crash between the finding
-//   and its item loses nothing. (dev.82: `new-finding-draining` is no longer raised: `close-admissions` was removed and
+//   and its item loses nothing. (dev.83: `new-finding-draining` is no longer raised: `close-admissions` was removed and
 //   the endgame's worklist carries the findings opened late, src/endgame/worklist.ts.)
 // - **Instrumentation.** `findingMetrics`: per finding `{lens, severity, gateHadPassed, disposition, merged,
 //   timeToResolveMs}`, over the log's events (their times).
@@ -211,12 +211,12 @@ export type RepairProgress =
 export type RepairUnit = Readonly<{ unit: UnitId; repairs: readonly RepairRef[]; progress: RepairProgress }>;
 
 /**
- * dev.82 (WS-5): an endgame fix as ownership reads it: its command, what it closes, its record's seq, and whether a landing
+ * dev.83 (WS-5): an endgame fix as ownership reads it: its command, what it closes, its record's seq, and whether a landing
  * holds its commit (src/endgame/fixes.ts `endgameFixes`).
  */
 export type EndgameFixProgress = Readonly<{ command: CommandId; closes: readonly EndgameRef[]; seq: number; landed: boolean }>;
 
-/** Who owns a finding: a repairing unit, or (dev.82) an endgame fix. */
+/** Who owns a finding: a repairing unit, or (dev.83) an endgame fix. */
 type Owner = Readonly<{ unit: UnitId }> | Readonly<{ endgame: CommandId }>;
 type Target = Readonly<{ state: 'open' }> | (Readonly<{ state: 'owned' | 'fixed-on-branch' | 'resolved' }> & Owner);
 

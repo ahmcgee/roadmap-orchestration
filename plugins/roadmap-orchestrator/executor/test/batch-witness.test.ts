@@ -1,4 +1,4 @@
-// dev.82 (E3): arc witness lanes at `batch` cadence (src/pipeline/batchlanes.ts, the batch witness; holistic/types.ts
+// dev.83 (E3): arc witness lanes at `batch` cadence (src/pipeline/batchlanes.ts, the batch witness; holistic/types.ts
 // `deferredLane`), over real arcs (real git, real processes, fake witness lanes scripted per tree): a unit delivering an
 // obligation on a batch arc lane merges without running it; the merge count makes the witness due; green latches; a red
 // bisects over the published heads and reopens the culprit deliverer or opens a P1 naming the culprit.
@@ -10,7 +10,9 @@ import { keptInput } from '../src/input/inforce.ts';
 import { DEFAULT_BATCH_EVERY, batchEveryOf } from '../src/input/plan.ts';
 import { deferredLane, parseObligations } from '../src/holistic/types.ts';
 import { batchWitnessDue, runBatchWitness } from '../src/pipeline/batchlanes.ts';
+import { laneEnvId } from '../src/pipeline/lanes.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
+import { obligationVerdicts, obligationsOn, unattestedOn } from '../src/schedule/scheduler.ts';
 import { holisticArc, obligationsJson } from './fixtures/brake-common.ts';
 import { wire } from './fixtures/publish-common.ts';
 import { BUILD_REPORT, admitAll, planCheckStep, SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
@@ -106,6 +108,25 @@ test('batch witness: a red must-hold obligation bisects over the published heads
     assert.ok(finding.claim.includes(`first red at ${heads[5]}, published by u6`), finding.claim);
     assert.ok(r.journal.view.ciFacts().some((f) => f.kind === 'batch-witness-ended' && f.job === 'witness-1'));
     assert.ok(!r.journal.view.ciFacts().some((f) => f.kind === 'batch-reopened'));
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('batch witness: a batch arc lane is local to the one head reader: unobserved (never unattested) until a batch witness observes it on the head, then discharged', T, async () => {
+  const { r, ctx } = arc(1, { '*': { outcomes: { t1: 'pass' } } });
+  try {
+    const head = publish(r, 'u1');
+    const env = (lane: Parameters<typeof laneEnvId>[1]) => laneEnvId(ctx, lane);
+    assert.deepEqual([...obligationVerdicts(ctx, head, env)], [{ obligation: 'I-1', lane: 'journey', verdict: 'unobserved' }]);
+    assert.equal(obligationsOn(ctx, head, env), 'unobserved', 'a close-out (every arc lane) or the closing batch witness can observe it: no external-witness wait');
+    assert.deepEqual(unattestedOn(ctx, head, env), [], 'no attestation is owed for a batch lane');
+    const due = batchWitnessDue(ctx, 'closing')!;
+    assert.deepEqual([due.head, due.lanes], [head, ['journey']]);
+    assert.deepEqual(await runBatchWitness(ctx, due), { kind: 'ended' });
+    assert.equal(batchWitnessDue(ctx, 'closing'), null);
+    assert.deepEqual([...obligationVerdicts(ctx, head, env)], [{ obligation: 'I-1', lane: 'journey', verdict: 'held' }]);
+    assert.equal(obligationsOn(ctx, head, env), 'discharged', 'its batch witness observation discharges it on the head');
   } finally {
     r.journal.close();
   }

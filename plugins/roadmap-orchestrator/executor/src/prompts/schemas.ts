@@ -416,7 +416,7 @@ export function validateGateOutput(value: unknown): GateOutput {
 }
 
 /**
- * dev.82 (E2): the verifier's diagnosis answer. `cause` (events.ts `DiagnosisCause`) is what code acts on: `base` or
+ * dev.83 (E2): the verifier's diagnosis answer. `cause` (events.ts `DiagnosisCause`) is what code acts on: `base` or
  * `environment` parks the unit uncharged; `evidence`, the paths, lines and observations the cause rests on (an external
  * cause cites at least one); `brief`, the note the next build receives; `reasons`, the account behind it.
  */
@@ -432,7 +432,7 @@ export function validateDiagnosisOutput(value: unknown): DiagnosisOutput {
 }
 
 /**
- * dev.82 (WS-5): the verifier's endgame review answer (src/endgame/review.ts): its findings, each opened as an
+ * dev.83 (WS-5): the verifier's endgame review answer (src/endgame/review.ts): its findings, each opened as an
  * `endgame-review` finding of its severity (only a P1 holds the arc), with the paths, lines and experiments it rests on
  * (at least one), and its reasons.
  */

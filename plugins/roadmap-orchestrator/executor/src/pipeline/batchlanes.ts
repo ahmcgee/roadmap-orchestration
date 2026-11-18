@@ -13,7 +13,7 @@
 // audit a witness P1 over no obligation. Either names the lane (`finding-opened.lane`), so a repair of it forces the lane at
 // its own lanes stage (src/pipeline/stages.ts `forcedLanes`). The walk and the audit go on: their findings include it.
 //
-// The batch witness (dev.82, E3): an arc lane of cadence `batch` (`batchArcLanes`) is a deferred lane (holistic/types.ts
+// The batch witness (dev.83, E3): an arc lane of cadence `batch` (`batchArcLanes`) is a deferred lane (holistic/types.ts
 // `deferredLane`): no unit's required witnesses, candidate brake or docs publication runs it, so a unit delivering its
 // obligation merges without it. It runs as a job `witness-<n>` on the integration head (`batchWitnessDue`):
 //
@@ -110,7 +110,7 @@ export async function runBatchPoint(
 }
 
 // ---------------------------------------------------------------------------------------------------
-// The batch witness (dev.82, E3; see the header)
+// The batch witness (dev.83, E3; see the header)
 
 /** The arc lanes the batch witness runs: cadence `batch`, run on this host (an external-class lane is the root's to attest). */
 export const batchArcLanes = (obligations: Obligations): readonly ArcLaneDef[] => obligations.lanes.filter((l) => l.cadence === 'batch' && l.witnessClass !== 'external');

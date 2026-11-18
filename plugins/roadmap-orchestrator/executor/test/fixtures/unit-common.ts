@@ -232,7 +232,7 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
   };
 }
 
-/** dev.82 (E2): a diagnosis answer (schemas.ts `DiagnosisOutput`); default a unit cause with `brief` as the note. */
+/** dev.83 (E2): a diagnosis answer (schemas.ts `DiagnosisOutput`); default a unit cause with `brief` as the note. */
 export type DiagnosisAnswer = Readonly<{ brief: string; cause?: 'unit' | 'base' | 'environment' | 'unknown'; evidence?: readonly string[]; reasons?: readonly string[] }>;
 
 /** The verifier's diagnosis call (the same acting judge as the gate) the fake Claude answers after `before`. */

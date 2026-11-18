@@ -237,7 +237,7 @@ function haltNeedsUser(ctx: StageContext, unit: PlanUnit, kind: 'park' | 'stop',
   };
 }
 
-/** dev.82 (E2): what a `diagnosed-external` park's diagnosis said: its cause, the evidence the cause rests on, and its brief. */
+/** dev.83 (E2): what a `diagnosed-external` park's diagnosis said: its cause, the evidence the cause rests on, and its brief. */
 function diagnosisText(ctx: StageContext, unit: UnitId): string {
   const review = ctx.journal.view.surfaceFacts().findLast((f) => f.kind === 'review-completed' && f.unit === unit && f.mode === 'diagnosis');
   if (review?.kind !== 'review-completed' || review.cause === undefined || review.note === null) throw new Error(`unit ${unit} parked diagnosed-external without an answered diagnosis`);
@@ -514,7 +514,7 @@ async function runEntry(ctx: StageContext, unit: PlanUnit, entry: EntryPoint): P
 
 /**
  * A build's step: its diagnosis when one is due (stages.ts `diagnose`), then the build with `input`, read before the
- * diagnosis, which decides nothing. dev.82 (E2): a diagnosis that parks (`diagnosed-external`) or is cut short ends the step.
+ * diagnosis, which decides nothing. dev.83 (E2): a diagnosis that parks (`diagnosed-external`) or is cut short ends the step.
  */
 async function diagnosedBuild(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<StageDone<'pre-build' | 'build'> | Cancelled> {
   const diagnosis = await diagnose(ctx, unit);
@@ -621,7 +621,7 @@ async function after(ctx: StageContext, unit: PlanUnit, done: StageDone<OutcomeS
  * dev.70: an open pre-build attempt of a unit whose next stage is a build is that build's M4 diagnosis (stages.ts `diagnose`
  * opens it inside the build's step, under a decided round or a steer entry alike). Its call is read as the live build
  * reads it (`runReview`, which records the review once) and the attempt closes `diagnosed`, deciding nothing: the entry or
- * decision that led to the build still does. dev.82 (E2): or `diagnosed-external`, as live (surface.ts `diagnosisOutcome`). An arc cut short on 1.0.0-dev.69 or earlier is adopted the same way; there the
+ * decision that led to the build still does. dev.83 (E2): or `diagnosed-external`, as live (surface.ts `diagnosisOutcome`). An arc cut short on 1.0.0-dev.69 or earlier is adopted the same way; there the
  * live build recorded `approve`, which the fold refuses under a steer entry (the field crash of 2026-11-12).
  * Any other open attempt at a stage that is not the unit's next is a state no stage produces: it throws, and the caller
  * parks the unit (`executor-fault`).

@@ -1,4 +1,4 @@
-// The diagnosis role's dev set (dev.82, E2): one synthetic case, a repeated red whose cause is the environment's data. A journey
+// The diagnosis role's dev set (dev.83, E2): one synthetic case, a repeated red whose cause is the environment's data. A journey
 // lane fails sign-in with one stable line; four fix builds each changed the client identifier in config; the lane is red on
 // the base too; a read-only dump of the test estate's account table holds one stale row. The key (`expect`) stays in the
 // harness, outside the prompt. A holdout set comes later, from field-derived cases.

@@ -168,7 +168,7 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
   };
 };
 
-/** dev.82 (E2): a diagnosis's evidence block, every value distinct so the render test finds each. */
+/** dev.83 (E2): a diagnosis's evidence block, every value distinct so the render test finds each. */
 const DIAGNOSIS_EVIDENCE: DiagnosisEvidence = {
   trigger: ['repeat-red:EV-LANE:' + 'e'.repeat(64)],
   failures: [{ lane: laneId('ev-lane'), signature: 'EV-SIGNATURE-LINE', specific: true, excerpt: ['EV-EXCERPT-LINE'] }],
@@ -509,7 +509,7 @@ describe('prompts', () => {
 
   it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const pre = SAMPLES.verifier[0]; if (pre.mode !== 'pre-build') throw new Error('the first verifier sample is pre-build'); const brief = {...pre.brief, history: [], vision: null}; const text = mod.render(mode === 'diagnosis' ? {mode, brief: {...brief, evidence: DIAGNOSIS_EVIDENCE}} : {mode, brief}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
 
-  it('dev.82 (WS-5): the endgame review renders every input, only in endgame mode, and answers its own strict schema', () => {
+  it('dev.83 (WS-5): the endgame review renders every input, only in endgame mode, and answers its own strict schema', () => {
     const brief: EndgameReviewBrief = {
       vision: null, range: { from: sha('a'.repeat(40)), to: sha('b'.repeat(40)) }, diff: shown(sha('a'.repeat(40)), sha('b'.repeat(40)), 'EG-DIFF-LINE'),
       fixes: [{ command: 'cmd-00000000000000e1', closes: ['F-7'], commit: sha('c'.repeat(40)), note: 'EG-FIX-NOTE' }],
@@ -536,7 +536,7 @@ describe('prompts', () => {
     assert.throws(() => validateEndgameReviewOutput({ ...answer, reasons: [] }), SchemaError);
   });
 
-  it('dev.82 (E2): a diagnosis renders every evidence input, only in diagnosis mode, and answers its own strict schema', () => {
+  it('dev.83 (E2): a diagnosis renders every evidence input, only in diagnosis mode, and answers its own strict schema', () => {
     const values = ['repeat-red:EV-LANE', 'ev-lane', 'EV-SIGNATURE-LINE', 'EV-EXCERPT-LINE', 'ev-base-lane', 'e'.repeat(40), '/run/evidence/EV-BASE-DIR', 'EV-TRIPPED-TARGET', 'EV-RETRYABLE-PARK', 'EV-HOST-SIGNATURE', 'EV-KNOWN-DEFECT', 'EV-FLAKY-KEY'];
     for (const model of MODEL_IDS) {
       if (support('verifier', model).type === 'unsupported') continue;

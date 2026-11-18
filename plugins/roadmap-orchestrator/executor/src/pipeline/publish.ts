@@ -256,7 +256,7 @@ export function docsSelection(
   return selectObligations({ obligations, systemsMap: null, units: [], closure: [], changedPaths: [], revised: revisedObligations(changes), latched, delivers: () => false });
 }
 
-/** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.82). */
+/** The arc lanes that witness the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.83). */
 function witnessLanes(obligations: Obligations, selected: ReadonlySet<ObligationId>): readonly ArcLaneDef[] {
   const needed = new Set(obligations.obligations.flatMap((o) => (selected.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
   return obligations.lanes.filter((l) => needed.has(l.id) && !deferredLane(l));

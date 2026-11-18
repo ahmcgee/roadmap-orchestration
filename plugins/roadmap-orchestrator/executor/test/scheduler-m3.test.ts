@@ -6,11 +6,11 @@ import { cadence } from '../src/holistic/cadence.ts';
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.co-repairer-after and classify.co-repairer-after (dev.82
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.co-repairer-after and classify.co-repairer-after (dev.83
 // E5b), sched.declined-request-quiescent,
 // sched.close-out-declines-request (run 10), complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
 // sched.no-verdict-escalation, sched.stop-kills-lens, the M3 command and item rules (commands.audit,
-// needsuser.m3-blocking), and dev.82's endgame (endgame.settle-vacuous, endgame.open-close; `close-admissions` removed, its
+// needsuser.m3-blocking), and dev.83's endgame (endgame.settle-vacuous, endgame.open-close; `close-admissions` removed, its
 // draining test with it).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -456,7 +456,7 @@ describe('repair batches in the scheduler (R7)', () => {
     }
   });
 
-  test('sched.co-repairer-after (dev.82 E5b): two repairs of one finding joined through `after` would deadlock (the dependency held at its candidate for the dependent, the dependent waiting on its merge); an adopted plan raises one blocking arc plan-defect naming both and the edge, and nothing is admitted', T, async () => {
+  test('sched.co-repairer-after (dev.83 E5b): two repairs of one finding joined through `after` would deadlock (the dependency held at its candidate for the dependent, the dependent waiting on its merge); an adopted plan raises one blocking arc plan-defect naming both and the edge, and nothing is admitted', T, async () => {
     const { d } = holisticArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/'))],
       units: [
@@ -487,7 +487,7 @@ describe('repair batches in the scheduler (R7)', () => {
     }
   });
 
-  test('classify.co-repairer-after (dev.82 E5b): an apply joining two direct repairers of one finding through `after` (here through a third unit) is refused, naming the finding and the path; dropping the edge applies', T, async () => {
+  test('classify.co-repairer-after (dev.83 E5b): an apply joining two direct repairers of one finding through `after` (here through a third unit) is refused, naming the finding and the path; dropping the edge applies', T, async () => {
     const { d } = holisticArc({
       steps: [],
       units: [
@@ -543,7 +543,7 @@ describe('repair batches in the scheduler (R7)', () => {
   });
 });
 
-describe('the endgame (dev.82, src/endgame/)', () => {
+describe('the endgame (dev.83, src/endgame/)', () => {
   test('endgame.settle-vacuous: the last planned unit merged enters episode 1 before the final audit; an empty worklist never opens it; it is left `complete` after arc-completed', T, async () => {
     const r = contextFor(completingArc());
     try {
@@ -604,7 +604,7 @@ describe('the endgame (dev.82, src/endgame/)', () => {
 });
 
 describe('the M3 commands and items', () => {
-  test('close-admissions (removed in dev.82): an earlier release\'s queued command is rejected and writes nothing', T, async () => {
+  test('close-admissions (removed in dev.83): an earlier release\'s queued command is rejected and writes nothing', T, async () => {
     const r = contextFor(completingArc());
     try {
       const out = await applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'close-admissions' }));
@@ -730,13 +730,13 @@ describe(`matrix row ${TERMINAL_SNAPSHOT}`, () => {
 });
 
 
-test('root dismissal unblocks the close-out publication and completion (dev.82: the final audit no longer waits for it)', T, async () => {
+test('root dismissal unblocks the close-out publication and completion (dev.83: the final audit no longer waits for it)', T, async () => {
   const d = completingArc();
   const r = contextFor(d);
   try {
     await runUnit(r.ctx, r.unit('u1'), admitAll);
     openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: obligationId('I-1'), visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [{path: 'src/mul.js', blob: null}], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: true});
-    assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true, 'dev.82: in the endgame an active P1 is a worklist entry and does not hold the final audit');
+    assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true, 'dev.83: in the endgame an active P1 is a worklist entry and does not hold the final audit');
     const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 't1 passes on integration; src/mul.js retains multiplication'});
     assert.equal((await applyCommand(commandContextFor(r), cmd)).kind, 'applied');
     assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true);

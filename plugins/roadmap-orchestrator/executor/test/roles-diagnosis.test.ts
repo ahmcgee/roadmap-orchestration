@@ -1,4 +1,4 @@
-// dev.82 (E2): the diagnosis role eval's harness, free: the dev case lays out a repository whose lane really fails on the head
+// dev.83 (E2): the diagnosis role eval's harness, free: the dev case lays out a repository whose lane really fails on the head
 // and the base, the prompt renders its evidence, the reference answer conforms to the schema and passes the mechanical grade,
 // a code-change answer fails it, and the dry run makes no backend call.
 import assert from 'node:assert/strict';

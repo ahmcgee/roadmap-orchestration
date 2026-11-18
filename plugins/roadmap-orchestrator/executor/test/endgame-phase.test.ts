@@ -1,4 +1,4 @@
-// dev.82: the arc's phase (src/endgame/phase.ts) over folded logs built here record by record: the finding-raised predicate,
+// dev.83: the arc's phase (src/endgame/phase.ts) over folded logs built here record by record: the finding-raised predicate,
 // body and endgame (a planned unit open, a milestone without its checkpoint, every planned unit settled, a planned unit
 // added back), the units the endgame holds and the running ones, an episode's step, the episode fold's refusals, and the
 // classifier's origin row over a real arc.

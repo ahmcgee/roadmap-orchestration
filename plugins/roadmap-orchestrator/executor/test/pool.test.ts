@@ -2,7 +2,7 @@ import { systemName } from '../src/core/ids.ts';
 // Pools, `@cpu` tokens and the M2 holders (src/resources/{pool,reserve}.ts): all-or-none requests in lock order,
 // the instance binding persisted into residue recipes and replayed by a retry's reclaim, the over-capacity rows
 // and the legacy reading of a declared `cpu`, the publication holder; dev.81: capacity read live (res.capacity-live) and
-// the `@fast-suite` pool (res.fast-suites); dev.82: pools held whole by a lane's `exclusive` (res.exclusive).
+// the `@fast-suite` pool (res.fast-suites); dev.83: pools held whole by a lane's `exclusive` (res.exclusive).
 import assert from 'node:assert/strict';
 import { readFileSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -96,7 +96,7 @@ describe('res.instance-binding-persisted', () => {
   it('RESOURCE_INSTANCE_<POOL> reaches the probe and teardown, is recorded in the residue recipe, and a retry replays it', T, async () => {
     assert.equal(instanceEnvVar(resourceName('my-pool')), 'RESOURCE_INSTANCE_MY_POOL');
     assert.deepEqual(instanceEnv([DB, poolInstance(ESTATE, 2), cpuToken(1), INTEGRATION_SLOT]), { RESOURCE_INSTANCE_ESTATE: '2' });
-    // dev.82 (E4): a pool held whole (`exclusive`) binds no one instance; each instance's own commands bind it (res.exclusive).
+    // dev.83 (E4): a pool held whole (`exclusive`) binds no one instance; each instance's own commands bind it (res.exclusive).
     assert.deepEqual(instanceEnv([poolInstance(ESTATE, 1), poolInstance(ESTATE, 2)]), {});
 
     const r = newRun();
@@ -237,7 +237,7 @@ describe('res.fast-suites', () => {
   });
 });
 
-// dev.82 (E4): a mutator of a shared estate holds its pool whole; readers take one instance each.
+// dev.83 (E4): a mutator of a shared estate holds its pool whole; readers take one instance each.
 describe('res.exclusive', () => {
   const whole = (r: Partial<ResourceRequest> = {}): ResourceRequest => req({ pools: [ESTATE], exclusive: [ESTATE], ...r });
 

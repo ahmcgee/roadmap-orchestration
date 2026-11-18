@@ -13,7 +13,7 @@
 // M3 (A4): a docs publication's `ff` (subject `docs{pub}`, no fingerprint) moves integration from T to its
 // `docs.commit` commit, whose one parent is T (`publicationProblem`); `planDocsFf` plans it. M3 (B2): a repair batch's
 // `ff` (subject `batch{job}`) moves integration from T to the last merge of its chain (`planBatchFf`): its provenance is
-// a first-parent chain of two-parent merges from the new tip back to T, one per member. dev.82 (WS-5): an endgame landing's
+// a first-parent chain of two-parent merges from the new tip back to T, one per member. dev.83 (WS-5): an endgame landing's
 // `ff` (subject `endgame{job}`) moves integration from T to the endgame branch's head, a strict descendant of T
 // (`planEndgameFf`): the architect's commits on the endgame branch, tested as they stand (no merge is made).
 import { crashPoint } from '../core/crash.ts';
@@ -63,7 +63,7 @@ export function provenanceProblem(repo: AbsPath, next: Sha, tip: Sha, unitCommit
 /**
  * The provenance an `ff` must carry, per what it publishes: a unit's merge [T, approved unit commit]; a docs
  * publication's commit, whose one parent is T; a batch's chain: at least two merges, each with two parents, whose first
- * parents lead from the new tip back to T; (dev.82) an endgame landing's head: a strict descendant of T.
+ * parents lead from the new tip back to T; (dev.83) an endgame landing's head: a strict descendant of T.
  */
 export function publicationProblem(repo: AbsPath, expect: OpExpect['integration.ff']): string | null {
   const { old, new: next } = expect;
@@ -181,7 +181,7 @@ export function planBatchFf(repo: AbsPath, integration: RefName, candidate: Inte
 }
 
 /**
- * dev.82 (WS-5): an endgame landing's `ff`: integration from T to `head`, the endgame branch's head its lanes tested, a
+ * dev.83 (WS-5): an endgame landing's `ff`: integration from T to `head`, the endgame branch's head its lanes tested, a
  * strict descendant of T (the caller refuses anything else before testing). Integration advanced past T is `unpublished`
  * (the landing is stale: the architect merges the new tip in), moved anywhere else `foreign-mover`.
  */

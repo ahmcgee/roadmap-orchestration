@@ -3,7 +3,7 @@
 //
 //   named resource       `{name, probe, teardown}`        its own single instance, the name
 //   estate pool          `{name, pool:{size}, ...}`        instances `<name>#1..size`; a request takes one, or
-//                                                          (dev.82, E4) every one for a pool it names `exclusive`
+//                                                          (dev.83, E4) every one for a pool it names `exclusive`
 //   `@cpu`               `plan.capacity.cpu`               tokens `@cpu#1..N`, N default availableParallelism()
 //   `@fast-suite`        `plan.capacity.fastSuites`        (dev.81, C4) tokens `@fast-suite#1..M`, one per lanes-stage
 //                                                          suite lane run (`fastSuite` requests); M default
@@ -22,10 +22,10 @@
 //
 // Instance binding (F7): every workload of a holder gets `RESOURCE_INSTANCE_<POOL>=<n>` per pool instance it
 // holds (`instanceEnv`). The same map is in its probes' and teardowns' recipes, so a residue's recorded teardown
-// replays the exact binding. dev.82 (E4): a holder of a whole pool (`exclusive`) binds no instance of it for its
+// replays the exact binding. dev.83 (E4): a holder of a whole pool (`exclusive`) binds no instance of it for its
 // workloads; each instance's own probe and teardown binds that instance (`instanceBinding`).
 //
-// Shared estates (dev.82, E4): readers of a pool take one instance each, so its size caps them; a lane naming the pool in
+// Shared estates (dev.83, E4): readers of a pool take one instance each, so its size caps them; a lane naming the pool in
 // `exclusive` (a mutator) takes every instance or none, so it runs alone against every reader and every other mutator.
 // The arbiter keeps a lower rank from overtaking a blocked higher one on the pool, so a waiting mutator is not starved.
 import { availableParallelism } from 'node:os';
@@ -117,12 +117,12 @@ export function instanceEnv(units: readonly ResourceUnit[]): Readonly<Record<str
     if (p.type === 'instance') held.set(p.pool, [...held.get(p.pool) ?? [], p.n]);
   }
   const env: Record<string, string> = {};
-  // dev.82 (E4): a pool held whole (several instances: `exclusive`) has no one instance to bind.
+  // dev.83 (E4): a pool held whole (several instances: `exclusive`) has no one instance to bind.
   for (const [pool, ns] of held) if (ns.length === 1) env[instanceEnvVar(pool)] = String(ns[0]);
   return env;
 }
 
-/** dev.82 (E4): the binding of `instance`'s own probe or teardown: the holder's `instances`, with its own pool bound to it. */
+/** dev.83 (E4): the binding of `instance`'s own probe or teardown: the holder's `instances`, with its own pool bound to it. */
 export function instanceBinding(instances: Readonly<Record<string, string>>, instance: ResourceUnit): Readonly<Record<string, string>> {
   const p = parseResourceUnit(instance);
   return p.type === 'instance' ? { ...instances, [instanceEnvVar(p.pool)]: String(p.n) } : instances;
@@ -207,7 +207,7 @@ export function allocate(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: 
  */
 export function envBlocked(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: PlanM1, request: ResourceRequest): boolean {
   if (request.named.some((n) => isDirty(entryOf(table, n)))) return true;
-  // dev.82 (E4): a pool taken whole needs every instance healthy.
+  // dev.83 (E4): a pool taken whole needs every instance healthy.
   return request.pools.some((p) => (request.exclusive?.includes(p) === true ? poolUnits(plan, p).some((u) => isDirty(entryOf(table, u))) : poolUnits(plan, p).every((u) => isDirty(entryOf(table, u)))));
 }
 
@@ -254,7 +254,7 @@ export function overCapacity(
 }
 
 /**
- * dev.82 (E4): each lane `exclusive` entry of `plan`'s suite lanes and `specs`' active lanes that names no declared pool
+ * dev.83 (E4): each lane `exclusive` entry of `plan`'s suite lanes and `specs`' active lanes that names no declared pool
  * (a named resource or an environment has one instance, which every request already takes alone), as `plan-invalid`
  * rows. The lane reader already refuses an entry the lane's `resources` lack.
  */

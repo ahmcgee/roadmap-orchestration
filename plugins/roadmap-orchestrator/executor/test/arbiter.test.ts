@@ -1,7 +1,7 @@
 // The arbiter (src/schedule/arbiter.ts) over a real journal, with synthetic ranks: rank order, disjoint-only
 // backfill, environment-blocked waiters set aside, cancellation holding nothing, a fresh arbiter after a restart,
 // and a randomized interleaving (fixed seed) checking that no two holders ever share a unit and that no grant
-// overtakes a higher-ranked active waiter it overlaps. dev.81: arbiter.fast-suites (C4). dev.82: arbiter.exclusive-drains-readers (E4).
+// overtakes a higher-ranked active waiter it overlaps. dev.81: arbiter.fast-suites (C4). dev.83: arbiter.exclusive-drains-readers (E4).
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -134,7 +134,7 @@ describe('arbiter.backfill-no-overtake', () => {
   });
 });
 
-// dev.82 (E4): a mutator (`exclusive`) waiting on readers of a shared estate pool is not starved by later readers.
+// dev.83 (E4): a mutator (`exclusive`) waiting on readers of a shared estate pool is not starved by later readers.
 describe('arbiter.exclusive-drains-readers', () => {
   it('a waiting mutator holds back later readers of its pool until the readers holding it drain, then holds the pool whole; readers follow it', T, async () => {
     const r = newRun();

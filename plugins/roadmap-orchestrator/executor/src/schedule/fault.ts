@@ -5,7 +5,7 @@
 //   shared state   the unit's publication holds the integration slot (candidate through ff and snapshot); one of the
 //                  task's own ops is open on shared state (`OP_CLASS` `shared`: a spec patch, the durable half of the
 //                  revision fence a machine patch holds; a candidate merge, an ff, a snapshot, a docs commit, a revision,
-//                  a needs-user raise, a command); an endgame job whose landing holds the slot (dev.82). The
+//                  a needs-user raise, a command); an endgame job whose landing holds the slot (dev.83). The
 //                  fault crashes the executor as before (the supervisor restarts it, 3 an hour). So does a fault the
 //                  wrapper cannot attribute: a throw in the scheduler loop never reaches a wrapper, and a broken journal
 //                  writer refuses the fault's own record. The in-process half of the fence is released by its holder's
@@ -17,7 +17,7 @@
 //                  cleaned. Then a unit parks `executor-fault` at the stage it was in (its open attempt, or the stage it
 //                  was about to start): uncharged, operator env, the stack in the fact's detail and in a non-blocking
 //                  needs-user; `resume <unit>` re-enters that stage. A restart replays the park, never the throw. An arc
-//                  job (`JOB_FAULT_TRACKS`: audit, walk, baseline; dev.82, the batch witness and the endgame jobs: a
+//                  job (`JOB_FAULT_TRACKS`: audit, walk, baseline; dev.83, the batch witness and the endgame jobs: a
 //                  landing, review or lane run) ends faulted the same way: a non-blocking needs-user (parent `arc`,
 //                  reason `executor-fault`), and the holistic track is not asked again while that item is open
 //                  (`jobFaultOpen`): acknowledging it makes the job due again (an endgame job, still running in its

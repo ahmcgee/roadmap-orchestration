@@ -289,8 +289,8 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
     case 'audit':
       return requestAudit(ctx, command.id, body.whole === true);
     case 'close-admissions':
-      // dev.82: removed; an earlier release's queued command file still reads, and is refused.
-      return { kind: 'rejected', reason: 'close-admissions was removed in 1.0.0-dev.82: the endgame replaces it (src/endgame/phase.ts)' };
+      // dev.83: removed; an earlier release's queued command file still reads, and is refused.
+      return { kind: 'rejected', reason: 'close-admissions was removed in 1.0.0-dev.83: the endgame replaces it (src/endgame/phase.ts)' };
     case 'demo':
       return actOnDemo(ctx, command.id, body.act);
     // dev.81 (C3a): take back a pending mutation (src/commands/withdraw.ts).
@@ -298,7 +298,7 @@ async function effectOf(ctx: CommandContext, command: CommandFile): Promise<Effe
       return withdraw(ctx, command.id, body.command);
     case 'push':
       return requestPush(ctx, command.id);
-    // dev.82 (WS-5): the endgame's commands (src/commands/endgame.ts).
+    // dev.83 (WS-5): the endgame's commands (src/commands/endgame.ts).
     case 'endgame':
       return endgame(ctx, command.id, body.act);
   }
@@ -534,7 +534,7 @@ async function resume(ctx: CommandContext, id: CommandId, target: Extract<Comman
       if (!paused && u.status === 'retired') return { kind: 'rejected', reason: `unit ${target.unit} is merged` };
       if (!paused && u.status === 'cut') return { kind: 'rejected', reason: `unit ${target.unit} is cut` };
       if (!paused && u.status === 'superseded') return { kind: 'rejected', reason: `unit ${target.unit} is superseded by ${u.supersededBy}; resume that unit` };
-      // dev.82 (WS-5): a unit the endgame holds at admission goes back into the pipeline (`endgame-released`).
+      // dev.83 (WS-5): a unit the endgame holds at admission goes back into the pipeline (`endgame-released`).
       const released = releaseHeld(ctx, id, target.unit);
       if (released !== null) return released.kind === 'applied' ? { kind: 'applied', verified: [...released.verified, ...unpause()] } : released;
       const verified: string[] = [];

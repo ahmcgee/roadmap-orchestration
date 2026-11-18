@@ -24,7 +24,7 @@ export type ShellView = View & {
   attention: {total: number; blocking: number; informational: number};
   /** The arc's recorded start and end (null while it runs); the last event's time is the notice's `lastEventAt`. */
   availableRange: {from: string | null; to: string | null};
-  /** dev.82: where the arc is (status `phase`): in the body, the planned units still open and the milestones awaiting their
+  /** dev.83: where the arc is (status `phase`): in the body, the planned units still open and the milestones awaiting their
    * checkpoint; in the endgame, its step and worklist counts; `episodes`: how many were recorded (the Endgame view exists
    * once one was). */
   phase: ShellPhase;
@@ -43,7 +43,7 @@ export type GraphView = View & {
    * edges are re-pointed to and a shown one is placed beside (D2). */
   units: {id: string; title: string; titleTruncated: boolean; signal: Signal; state: string; stage: string; stageFinished: boolean; systems: string[]; lineageRef: string | null;
     origin: 'planned' | 'repair' | 'polish' | 'deflake'; supersededBy: string | null; carriedBy: string[];
-    /** dev.82: what the endgame did with it (status `endgame.units`): held at admission and handed over to the architect,
+    /** dev.83: what the endgame did with it (status `endgame.units`): held at admission and handed over to the architect,
      * sent back in by `resume`, or closed by a fix (its command and commit); null when the endgame never took it over. */
     endgame: GraphEndgame | null}[];
   /** `signal`: running only while its walkthrough runs or is due on a live arc; a stopped arc runs nothing.
@@ -58,7 +58,7 @@ export type GraphView = View & {
   focus: {activeIds: string[]; firstUncleared: string | null};
 };
 export type GraphEndgame = {relation: 'handed-over' | 'released' | 'closed'; command: string | null; commit: string | null};
-/** dev.82: one worklist entry. `fixes`: the open episode's fixes naming it (landed or not); `closed`: no longer on the
+/** dev.83: one worklist entry. `fixes`: the open episode's fixes naming it (landed or not); `closed`: no longer on the
  * worklist, closed by those fixes. `detail`: the entry's page (a unit's drawer, a finding's opening event), or none. */
 export type EndgameEntry = {kind: 'finding' | 'obligation' | 'unit' | 'polish-refused'; id: string; required: boolean; closed: boolean; text: string;
   severity: string | null; detail: DetailRef | null; fixes: {command: string; commit: string; landed: boolean}[]};
@@ -74,7 +74,7 @@ export type EndgameEpisodeView = {
   jobs: {job: string; request: string; command: string | null; startedAt: string | null; outcome: string | null; detail: string | null}[];
   released: EndgameRef[];
 };
-/** dev.82: the Endgame view: the phase, the endgame branch and its range, the exit checklist (null unless an opened episode
+/** dev.83: the Endgame view: the phase, the endgame branch and its range, the exit checklist (null unless an opened episode
  * is open), the worklist, the audited range, the current episode (the open one, else the latest) and the earlier ones. */
 export type EndgameView = View & {
   phase: ShellPhase;

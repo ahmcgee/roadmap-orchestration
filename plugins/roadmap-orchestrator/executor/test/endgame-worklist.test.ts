@@ -1,10 +1,10 @@
-// dev.82: the endgame's worklist (src/endgame/worklist.ts) over a folded log: required membership (active P1s, active findings
+// dev.83: the endgame's worklist (src/endgame/worklist.ts) over a folded log: required membership (active P1s, active findings
 // over an obligation, obligations not held on the head, finding-raised units not settled) and optional (other active
-// findings, polish proposals refused since the episode entered).
+// findings, obligations on an external lane unattested at the head, polish proposals refused since the episode entered).
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { type Fact, type LogRecord, prevHash, serializeEvent } from '../src/core/events.ts';
-import { type UnitId, commandId, findingId, obligationId, planRev, sha, sha256, systemName, unitId } from '../src/core/ids.ts';
+import { type UnitId, commandId, findingId, laneId, obligationId, planRev, sha, sha256, systemName, unitId } from '../src/core/ids.ts';
 import { Fold } from '../src/core/state.ts';
 import { absPath, branchName, planPath, repoPath } from '../src/core/values.ts';
 import { openEpisode } from '../src/endgame/phase.ts';
@@ -47,8 +47,10 @@ function fold(records: readonly LogRecord[]): Fold {
   return f;
 }
 
+const NONE = { notHeld: [], unattested: [] };
+
 describe('endgame: the worklist', () => {
-  it('required: active P1s, active findings over an obligation, obligations not held, finding-raised units not settled; optional: the rest', () => {
+  it('required: active P1s, active findings over an obligation, obligations not held, finding-raised units not settled; optional: the rest, an unattested external obligation included', () => {
     const records = [
       fact({ kind: 'plan-applied', rev: planRev(1), command: null, planSha256: H, specs: { u1: H }, changes: [], ...appliedFields(1, null), visionSha256: V }),
       opened(1, 'P1', null), opened(2, 'P2', 'I-2'), opened(3, 'P3', null), opened(4, 'P1', null),
@@ -64,7 +66,7 @@ describe('endgame: the worklist', () => {
     const view = fold(records);
     // u2 repairs F-1 (a planned unit whose spec repairs: finding-raised); u1 does not.
     const repairsOf = (u: PlanUnit) => (u.id === U2 ? [findingId('F-1')] : []);
-    const list = worklist(view, PLAN, repairsOf, [obligationId('I-3')], openEpisode(view));
+    const list = worklist(view, PLAN, repairsOf, { notHeld: [obligationId('I-3')], unattested: [{ obligation: obligationId('I-4'), lane: laneId('L-ci') }] }, openEpisode(view));
     assert.deepEqual(list.required, [
       { type: 'finding', finding: 'F-1', severity: 'P1', obligation: null, evidence: ['src/f1.js'] },
       { type: 'finding', finding: 'F-2', severity: 'P2', obligation: 'I-2', evidence: ['src/f2.js'] },
@@ -74,9 +76,10 @@ describe('endgame: the worklist', () => {
     ]);
     assert.deepEqual(list.optional, [
       { type: 'finding', finding: 'F-3', severity: 'P3', obligation: null, evidence: ['src/f3.js'] },
+      { type: 'attestation', obligation: 'I-4', lane: 'L-ci' },
       { type: 'polish-refused', proposal: 'X-2', reasons: ['the arc is in the endgame'] },
     ]);
-    assert.deepEqual(worklist(view, PLAN, () => [], [], null).optional.map((e) => e.type), ['finding'], 'no episode: no refused proposal is an entry');
-    assert.deepEqual(worklist(view, PLAN, () => [], [], null).required.map((e) => (e.type === 'unit' ? e.unit : e.type)), ['finding', 'finding', R1], 'u2 repairs nothing: planned');
+    assert.deepEqual(worklist(view, PLAN, () => [], NONE, null).optional.map((e) => e.type), ['finding'], 'no episode: no refused proposal is an entry');
+    assert.deepEqual(worklist(view, PLAN, () => [], NONE, null).required.map((e) => (e.type === 'unit' ? e.unit : e.type)), ['finding', 'finding', R1], 'u2 repairs nothing: planned');
   });
 });

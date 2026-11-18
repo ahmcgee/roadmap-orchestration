@@ -11,7 +11,7 @@ export function graphData(e:ViewEnvelope<GraphView>,showWithdrawn=false) {
   const hidden=showWithdrawn?new Set<string>():withdrawn;
   /** What an edge end at `id` shows: itself, its live successor when it is hidden, or null (the edge is dropped). */
   const live=(id:string):string|null=>{let at:string|null=id;for(const seen=new Set<string>();at!==null&&hidden.has(at);at=successorOf(at)){if(seen.has(at))throw new Error(`withdrawn units succeed each other in a cycle through ${at}`);seen.add(at);}return at;};
-  // dev.82: a unit the endgame took over says so: handed over to the architect, sent back in, or closed by a fix.
+  // dev.83: a unit the endgame took over says so: handed over to the architect, sent back in, or closed by a fix.
   const word=(u:GraphView['units'][number])=>u.endgame?.relation==='handed-over'?'Handed over':u.endgame?.relation==='closed'?`Closed by fix ${u.endgame.commit?.slice(0,10)??''}`.trim():u.endgame?.relation==='released'?`Resumed: ${stateWords(u.state)}`:stateWords(u.state);
   const units=e.data.units.filter(u=>!hidden.has(u.id)).map(u=>({...u,state:word(u),stage:stageWords(u.stage),successor:withdrawn.has(u.id)&&!hidden.has(u.id)?successorOf(u.id):null}));
   const milestones=e.data.milestones.map(g=>({...g,units:g.memberIds.filter(id=>!hidden.has(id))}));

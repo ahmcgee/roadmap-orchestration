@@ -116,7 +116,7 @@ export type Holder =
   | Readonly<{ type: 'batch'; finding: FindingId; attempt: number }>
   /** M3 (G4): a durable job's lanes (audit, baseline, docs and batch lanes); a failed cleanup leaves a job-owned residue. */
   | Readonly<{ type: 'job'; job: JobId }>
-  /** dev.82: an endgame landing's `integration-slot` holder, `job` its `endgame-<n>` (src/pipeline/integrate.ts `landEndgame`). */
+  /** dev.83: an endgame landing's `integration-slot` holder, `job` its `endgame-<n>` (src/pipeline/integrate.ts `landEndgame`). */
   | Readonly<{ type: 'endgame'; job: JobId }>;
 /** The holders that may take `reclaim`: a sweep, a probe reclaiming the arc's own residue, or a job re-running its lane over its own residue (G4). */
 export const RECLAIM_HOLDERS = ['sweep', 'retry', 'job'] as const satisfies readonly Holder['type'][];
@@ -186,7 +186,7 @@ export type Dev6MutantSubject = Readonly<{ purpose: 'mutant'; finding: FindingId
  */
 export type SpawnSubject =
   | (Readonly<{ purpose: 'backend'; prompt?: PromptSize; routingRev: RoutingRev; unit: UnitId; attempt: number }> & UnitSeatRef)
-  /** dev.82: on the verifier's `high` seat for the endgame review (`JobSeatRef`). */
+  /** dev.83: on the verifier's `high` seat for the endgame review (`JobSeatRef`). */
   | (Readonly<{ purpose: 'arc-backend'; prompt?: PromptSize; routingRev: RoutingRev; job: JobId; attempt: number }> & JobSeatRef)
   /** dev.17: `identity` on a suite lane's journey (a batch point's, a publication's), so a batch point finds its clean passes. */
   | Readonly<{ purpose: 'journey'; lane: LaneId; laneRev: LaneRev; at: Sha; owner: LaneOwner; redRev?: RedRev; identity?: LaneIdentity }>
@@ -318,7 +318,7 @@ export type BatchCandidate = Readonly<{
 
 /**
  * What an `ff` publishes besides a unit (M3): a docs publication, or a repair batch (every member's fingerprint re-checked);
- * dev.82: the endgame branch's head, landed by `job` (`endgame-<n>`), a descendant of the tip it moves from.
+ * dev.83: the endgame branch's head, landed by `job` (`endgame-<n>`), a descendant of the tip it moves from.
  */
 export type FfSubject = Readonly<{ type: 'docs'; pub: JobId }> | Readonly<{ type: 'batch'; job: JobId }> | Readonly<{ type: 'endgame'; job: JobId }>;
 /**
@@ -346,7 +346,7 @@ export type RevisionSource =
   | Readonly<{ type: 'split'; unit: UnitId; inv: InvocationId }>
   /** dev.17 (flaky ledger): the code-applied revision admitting deflake units for the flakes the ledger holds (src/pipeline/deflake.ts). */
   | Readonly<{ type: 'deflake' }>
-  /** dev.82: the cut of the units endgame fix `command` closes (src/commands/endgame.ts): it only cuts them. */
+  /** dev.83: the cut of the units endgame fix `command` closes (src/commands/endgame.ts): it only cuts them. */
   | Readonly<{ type: 'endgame'; command: CommandId }>
   /** dev.17 (propagation): the code-applied revision minting the propagation units of the stale set plan rev `rev` recorded. */
 ;
@@ -454,7 +454,7 @@ export type AbortRecord = Readonly<{ type: 'abort'; op: OpId; reason: Readonly<{
 export type MeterSubject =
   | (Readonly<{ type: 'seat'; unit: UnitId; attempt: number }> & UnitSeatRef)
   | Readonly<{ type: 'smoke'; backend: Backend }>
-  /** M3: a job's lens or checkpoint call, charged to the arc seat of its role (dev.82: the endgame review's, the verifier's `high`). */
+  /** M3: a job's lens or checkpoint call, charged to the arc seat of its role (dev.83: the endgame review's, the verifier's `high`). */
   | (Readonly<{ type: 'job'; job: JobId; attempt: number }> & JobSeatRef);
 
 // ---------------------------------------------------------------------------------------------------
@@ -480,11 +480,11 @@ export const STAGE_OUTCOME_KINDS = {
   reproduce: ['checkout-residue', 'reproduced', 'not-reproduced', 'inapplicable', 'blocked', 'interrupted', 'cleanup-failed', 'executor-fault', 'env-unavailable'],
   // dev.70: `diagnosed` closes the pre-build attempt a build opens for its M4 diagnosis (src/pipeline/stages.ts `diagnose`): an
   // annotation, so it decides nothing and holds nothing (the unit's decision, interruption and entry stay as they were).
-  // dev.82 (E2): `diagnosed-external` closes it when the diagnosis put the cause outside the unit (`DiagnosisCause` base or
+  // dev.83 (E2): `diagnosed-external` closes it when the diagnosis put the cause outside the unit (`DiagnosisCause` base or
   // environment): an uncharged operator env park, whose resume restores the decision before it (the build's round).
   'pre-build': ['checkout-residue', 'approve', 'interrupted', 'executor-fault', 'diagnosed', 'diagnosed-external'],
   // 2026-10-15 (arc feedback #3): `witness-lane-missing` (a required witness item names no arc lane in force), at build and lanes.
-  // dev.82 (E5c): `window-spent`, a round the runner's deadline ended (not ruled starved): its work salvaged, uncharged.
+  // dev.83 (E5c): `window-spent`, a round the runner's deadline ended (not ruled starved): its work salvaged, uncharged.
   build: ['checkout-residue', 'spec-wrong',
     'success', 'refusal', 'malformed', 'process-fault', 'lost', 'lost-tree-effects', 'occupied', 'cleanup-failed', 'interrupted', 'routing-changed', 'witness-lane-missing', 'context-exceeded', 'executor-fault',
     'window-spent',
@@ -807,31 +807,31 @@ export type CiFact =
   /** dev.81 (A3): `roadmap push`: the last pushed head counts as settled, so the CI ref advances to the wanted head now. */
   | Readonly<{ kind: 'push-requested'; command: CommandId }>
   /**
-   * dev.82 (E3): the batch witness `job` (`witness-<n>`, src/pipeline/batchlanes.ts) opens over the integration head `head`
+   * dev.83 (E3): the batch witness `job` (`witness-<n>`, src/pipeline/batchlanes.ts) opens over the integration head `head`
    * for its batch arc lanes `lanes` (ascending), and ends once every red obligation is attributed.
    */
   | Readonly<{ kind: 'batch-witness-started'; job: JobId; head: Sha; lanes: readonly LaneId[] }>
   | Readonly<{ kind: 'batch-witness-ended'; job: JobId }>
   /**
-   * dev.82 (E3): the batch witness `job` bisected `obligation`'s red to the publication `culprit`, whose unit is a deliverer
+   * dev.83 (E3): the batch witness `job` bisected `obligation`'s red to the publication `culprit`, whose unit is a deliverer
    * of it: `unit`, its lineage head, reopens (uncharged, as `external-reopened` does) with the kept brief `brief`.
    */
   | Readonly<{ kind: 'batch-reopened'; job: JobId; unit: UnitId; obligation: ObligationId; culprit: Sha; brief: Sha256Hex }>;
 
 export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly string[] }>;
 /**
- * dev.82 (E2): where a diagnosis puts a repeated failure's cause: the unit's own change, the base it builds on, the
+ * dev.83 (E2): where a diagnosis puts a repeated failure's cause: the unit's own change, the base it builds on, the
  * environment its lanes run against, or not known. `base` and `environment` park the unit uncharged (`diagnosed-external`).
  */
 export const DIAGNOSIS_CAUSES = ['unit', 'base', 'environment', 'unknown'] as const;
 export type DiagnosisCause = (typeof DIAGNOSIS_CAUSES)[number];
-/** dev.82 (E2): a diagnosis cause outside the unit. */
+/** dev.83 (E2): a diagnosis cause outside the unit. */
 export const externalCause = (cause: DiagnosisCause): boolean => cause === 'base' || cause === 'environment';
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
   /**
-   * dev.82 (E2): `cause`, a diagnosis's answered cause (on a diagnosis only; absent when it gave no usable answer, and on
-   * every diagnosis before dev.82).
+   * dev.83 (E2): `cause`, a diagnosis's answered cause (on a diagnosis only; absent when it gave no usable answer, and on
+   * every diagnosis before dev.83).
    */
   | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null; cause?: DiagnosisCause }>;
 /** Background publication to origin; successful outcomes explicitly settle the named notices (dev.44). */
@@ -1025,7 +1025,7 @@ export type AuditInputs = Readonly<{
    */
   diffBudget: number;
   /**
-   * dev.82: each lens reads from the arc's base (a pending `audit --whole` request), not from its coverage watermark.
+   * dev.83: each lens reads from the arc's base (a pending `audit --whole` request), not from its coverage watermark.
    * Absent (audits started before it, and every other audit): from the watermark.
    */
   whole?: true;
@@ -1071,7 +1071,7 @@ export type HolisticFact =
   | Readonly<{
     kind: 'audit-ended'; job: JobId; covered: readonly CoveredRange[]; findings: readonly FindingId[]; suppressed: number; outcome: 'completed' | 'abandoned';
     refused: readonly LensRefusal[];
-    /** dev.82: an `abandoned` audit's lens backend whose park abandoned it (absent: another cause, or written before dev.82). */
+    /** dev.83: an `abandoned` audit's lens backend whose park abandoned it (absent: another cause, or written before dev.83). */
     parked?: Backend;
   }>
   /** A later passing baseline settles exactly the named baseline items. */
@@ -1093,16 +1093,19 @@ export type HolisticFact =
     kind: 'lanes-rerun'; unit: UnitId; command: CommandId; attempt: number; lane: LaneId; at: Sha; cause: RerunCause; evidence: string;
     by: Readonly<{ role: 'root'; routingRev: RoutingRev }>;
   }>
-  /** dev.82: `whole`, the root's `audit --whole` (absent: false). */
+  /** dev.83: `whole`, the root's `audit --whole` (absent: false). */
   | Readonly<{ kind: 'audit-requested'; command: CommandId; whole?: true }>
   | Readonly<{ kind: 'admissions-closed'; command: CommandId }>
   | Readonly<{ kind: 'docs-published'; pub: JobId; source: 'close-out'; commit: Sha }>
-  /** A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. */
-  | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[] }>
+  /**
+   * A20: active while the plan rev and the integration head are unchanged; `units` the merged units, ascending. dev.83:
+   * `settles`, every `external-witness-owed` item raised before it, ascending (absent: none), which it supersedes.
+   */
+  | Readonly<{ kind: 'arc-completed'; planRev: PlanRev; head: Sha; highWater: number; units: readonly UnitId[]; settles?: readonly NeedsUserId[] }>
   | EndgameFact;
 
 /**
- * dev.82 (src/endgame/phase.ts): the endgame's episodes. The phase is computed; only an episode's edges and acts are journaled.
+ * dev.83 (src/endgame/phase.ts): the endgame's episodes. The phase is computed; only an episode's edges and acts are journaled.
  * `entered` and `left` are written by the scheduler on the phase predicate's edge (`left{complete}` after `arc-completed`);
  * `opened` once the episode settled with a required worklist (the endgame branch and worktree made, the handover kept by hash).
  * `fix`, `landed` and `reviewed` are the architect's recorded fixes, the endgame head's landings and the review job's verdicts.
@@ -1115,14 +1118,14 @@ export type EndgameFact =
   | Readonly<{ kind: 'endgame-reviewed'; job: JobId; from: Sha; to: Sha; findings: readonly FindingId[] }>
   | Readonly<{ kind: 'endgame-left'; episode: number; cause: EndgameLeftCause }>
   /**
-   * dev.82 (WS-5): `roadmap resume <unit>` of a unit the endgame holds at admission: it goes back into the pipeline (any
+   * dev.83 (WS-5): `roadmap resume <unit>` of a unit the endgame holds at admission: it goes back into the pipeline (any
    * open episode, opened or still settling).
    */
   | Readonly<{ kind: 'endgame-released'; unit: UnitId; command: CommandId }>
-  /** dev.82 (WS-5): `roadmap endgame land|review|run|checkpoint`, recorded for the scheduler to serve (src/endgame/jobs.ts). */
+  /** dev.83 (WS-5): `roadmap endgame land|review|run|checkpoint`, recorded for the scheduler to serve (src/endgame/jobs.ts). */
   | Readonly<{ kind: 'endgame-requested'; command: CommandId; request: EndgameRequest }>
   /**
-   * dev.82 (WS-5): an endgame job `job` (`endgame-<n>`) serving `command`'s request (null: the closing step's own review),
+   * dev.83 (WS-5): an endgame job `job` (`endgame-<n>`) serving `command`'s request (null: the closing step's own review),
    * and its end. A started job without its end resumes as the same job.
    */
   | Readonly<{ kind: 'endgame-job-started'; job: JobId; command: CommandId | null; request: EndgameJobRequest }>
@@ -1465,7 +1468,7 @@ const resR: Read<ResourceName> = (v, p) => resourceName(v, p);
 export const resourceRequest: Read<ResourceRequest> = object((f) => {
   const basis = f.optional('cpuBasis', cpuBasis);
   const fastSuite = f.optional('fastSuite', literal(true));
-  // dev.82 (E4): additive; absent on lines written before it (none taken whole).
+  // dev.83 (E4): additive; absent on lines written before it (none taken whole).
   const exclusive = f.optional('exclusive', arrayOf(resR, { nonEmpty: true }));
   return { named: f.get('named', arrayOf(resR)), pools: f.get('pools', arrayOf(resR)), cpu: f.get('cpu', nat), publication: f.get('publication', bool), ...(basis === undefined ? {} : { cpuBasis: basis }), ...(fastSuite === undefined ? {} : { fastSuite }), ...(exclusive === undefined ? {} : { exclusive }) };
 });
@@ -2307,7 +2310,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
       throw new SchemaError(`${f.path}.lane`, 'absent (only a batch lane red names one: a walk job\'s walkthrough P1, an audit job\'s witness P1)', lane);
     }
     if (out.lens === 'vision' && out.severity === 'P1') throw new SchemaError(`${f.path}.severity`, 'P2 or P3 for a vision-lens finding', out.severity);
-    // dev.82 (WS-5): the endgame review's findings come from its endgame job.
+    // dev.83 (WS-5): the endgame review's findings come from its endgame job.
     if ((out.lens === 'endgame-review') !== (out.source.type === 'job' && parseJobId(out.source.job).kind === 'endgame')) {
       throw new SchemaError(`${f.path}.source`, out.lens === 'endgame-review' ? 'the endgame-<n> review job' : 'not an endgame job (it opens only endgame-review findings)', out.source);
     }
@@ -2357,7 +2360,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   'review-triggered': object((f): Fact => ({ kind: f.get('kind', literal('review-triggered')), unit: f.get('unit', unitR), marker: f.get('marker', oneOf(['M1', 'M2', 'M3', 'M4', 'always'] as const)), source: f.get('source', str), specRev: f.get('specRev', (v, p) => specRev(v, p)) })),
   'review-completed': object((f): Fact => {
     const out = { kind: f.get('kind', literal('review-completed')), unit: f.get('unit', unitR), mode: f.get('mode', oneOf(['pre-build', 'diagnosis'] as const)), specRev: f.get('specRev', (v, p) => specRev(v, p)), planRev: f.get('planRev', (v, p) => planRev(v, p)), inv: f.get('inv', invR), items: f.get('items', arrayOf(object((g) => ({ id: g.get('id', str), text: g.get('text', str), evidence: g.get('evidence', arrayOf(str)) })))), note: f.get('note', nullable(sha256R)) };
-    // dev.82 (E2): only a diagnosis answers a cause.
+    // dev.83 (E2): only a diagnosis answers a cause.
     const cause = f.optional('cause', oneOf(DIAGNOSIS_CAUSES));
     if (cause !== undefined && out.mode !== 'diagnosis') throw new SchemaError(`${f.path}.cause`, 'absent outside a diagnosis', cause);
     return cause === undefined ? out : { ...out, cause };
@@ -2385,6 +2388,7 @@ const HOLISTIC_FACT_READERS: { readonly [K in HolisticFactKind]: Read<Fact> } = 
   'arc-completed': object((f): Fact => ({
     kind: f.get('kind', literal('arc-completed')), planRev: f.get('planRev', planRevR), head: f.get('head', shaR), highWater: f.get('highWater', positive),
     units: f.get('units', sortedBy(unitR, (u) => u)),
+    ...(() => { const settles = f.optional('settles', sortedBy((v, p) => needsUserId(v, p), (id) => id, { nonEmpty: true })); return settles === undefined ? {} : { settles }; })(),
   })),
   'endgame-entered': object((f): Fact => ({ kind: f.get('kind', literal('endgame-entered')), episode: f.get('episode', positive), planRev: f.get('planRev', planRevR) })),
   'endgame-opened': object((f): Fact => ({

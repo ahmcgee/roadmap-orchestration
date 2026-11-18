@@ -6,7 +6,7 @@ import { systemName } from '../src/core/ids.ts';
 // the one whose diff leaves the reference untouched → the kept tweak lands → round 2 sees it and the milestone settles at
 // the bound), polish.classify (the classifier's polish rows), checkpoint.walk-trigger (a walk with an unweighed finding is
 // a checkpoint trigger whose session reads the walk's evidence; one with nothing new is none), polish.endgame-refused
-// (dev.82: in the endgame a proposal is refused, no unit admitted), and the polish and compare crash cells
+// (dev.83: in the endgame a proposal is refused, no unit admitted), and the polish and compare crash cells
 // (polish.crash.<label>, compare.crash.<label>).
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -117,7 +117,7 @@ test('polish.system-coverage: admission rechecks every reference, refusing missi
   }
 });
 
-test('polish.endgame-refused: in the endgame (dev.82) a walk\'s admissible proposal is refused for the endgame alone; no polish unit is admitted', T, async () => {
+test('polish.endgame-refused: in the endgame (dev.83) a walk\'s admissible proposal is refused for the endgame alone; no polish unit is admitted', T, async () => {
   const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')) });
   const r = contextFor(d);
   try {

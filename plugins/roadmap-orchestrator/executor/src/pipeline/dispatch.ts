@@ -578,11 +578,11 @@ export function arcSeat(ctx: StageContext, role: ArcRole): Readonly<{ seat: ArcS
   return { seat: seatRef(role, 'arc') as ArcSeatRef, triple, routingRev: routing.rev };
 }
 
-/** The role a job may call: an arc role, or (dev.82) the verifier for the endgame review. */
+/** The role a job may call: an arc role, or (dev.83) the verifier for the endgame review. */
 export type JobRole = ArcRole | 'verifier';
 
 /**
- * A job call's seat: an arc role's `arc` seat (`arcSeat`), or (dev.82) the verifier's `high` seat under the arc's routing,
+ * A job call's seat: an arc role's `arc` seat (`arcSeat`), or (dev.83) the verifier's `high` seat under the arc's routing,
  * for the endgame review (src/endgame/review.ts): the strongest unit judgment seat, as no gate saw the code it reviews.
  */
 export function jobSeat(ctx: StageContext, role: JobRole): Readonly<{ seat: JobSeatRef; triple: ClaudeTriple; routingRev: RoutingRev }> {
@@ -672,7 +672,7 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
  */
 export type ActingJudgeCallSpec = Readonly<{
   job: JobId;
-  /** dev.82: or the verifier, the endgame review acting in a checkout of the integration head. */
+  /** dev.83: or the verifier, the endgame review acting in a checkout of the integration head. */
   role: WalkRole | 'verifier';
   attempt: number;
   system: string;

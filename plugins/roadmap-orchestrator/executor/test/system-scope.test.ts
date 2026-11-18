@@ -108,7 +108,7 @@ test('system overlap is advisory, including when units share an entire system', 
 });
 
 
-test('shared-estate-mutation (dev.82 E4): a pool the lanes of two units name, one on a persistent system, none holding it exclusive, is advisory', async () => {
+test('shared-estate-mutation (dev.83 E4): a pool the lanes of two units name, one on a persistent system, none holding it exclusive, is advisory', async () => {
   type Json = Record<string, unknown>;
   const arc = await corpusArc({ config: { chain: { k: 1 }, systemsMap: { systems: { app: { paths: ['src/**'], traits: ['persistent'] }, tests: { paths: ['test/**'] } } } } });
   const tool = { argv: ['true'], cwd: '.', env: { set: {}, pass: [] } };

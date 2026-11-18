@@ -3,11 +3,11 @@ import { boundedDiffText, bullets, documentsXml, laneFailuresText, targetDocumen
 import type { DiagnosisEvidence, EndgameReviewBrief, PromptModule, ReviewBrief } from '../inputs.ts';
 import { methodModules } from '../method/index.ts';
 import { GATE_SCHEMA } from '../schemas.ts';
-// dev.82 (E2; written against "Prompting Claude Opus 5.5" and "Prompting best practices" alone: plain prose that says why, the
+// dev.83 (E2; written against "Prompting Claude Opus 5.5" and "Prompting best practices" alone: plain prose that says why, the
 // known evidence before the history, the ask last): a diagnosis answers its own schema (schemas.ts `DIAGNOSIS_SCHEMA`, which
 // surface.ts passes in place of GATE_SCHEMA for that mode). <evidence> carries what the executor already knows, so the
 // diagnosis starts from the failure, the base comparison and the environment rather than from a directory listing.
-// dev.82 (WS-5; written against the same two guides alone): the endgame review is the one review the architect's hand-made
+// dev.83 (WS-5; written against the same two guides alone): the endgame review is the one review the architect's hand-made
 // endgame work gets, since no gate saw it, so its whole brief (what it is, why, what blocks) lives in the endgame mode's
 // message and the system text the gate shares is unchanged. It answers its own schema (`ENDGAME_REVIEW_SCHEMA`), passed by
 // src/endgame/review.ts in place of GATE_SCHEMA. Only a P1 holds the arc, so the message says what a P1 is.

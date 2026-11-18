@@ -1,4 +1,4 @@
-// The arc's phase (dev.82; DESIGN-1.0.md §2.10): the body, while planned work or a milestone checkpoint remains, then the
+// The arc's phase (dev.83; DESIGN-1.0.md §2.10): the body, while planned work or a milestone checkpoint remains, then the
 // endgame, where the executor raises no new unit and the architect finishes what findings raised, by hand.
 //
 // - **Finding-raised** (`findingRaised`, the one predicate): a unit added after the arc's first plan revision whose origin is

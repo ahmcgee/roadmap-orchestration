@@ -4,7 +4,7 @@
 // that activate only after preparation); `effectiveDependency` resolves one edge at run time, where an edge
 // moves to the head only once the head's preparation recorded an outcome. Arc feedback 2026-10-15: `holdCycle`, the
 // cycle of approved repairs each held at its candidate by a finding another of them owns (src/schedule/scheduler.ts).
-// dev.82 (E5b): `joinedCoRepairers`, two direct repairers of one finding joined through `after`, which never batch: the
+// dev.83 (E5b): `joinedCoRepairers`, two direct repairers of one finding joined through `after`, which never batch: the
 // classifier refuses them, and the scheduler raises an adopted plan's as a blocking plan-defect.
 import { type FindingId, type UnitId, canonicalIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
@@ -88,11 +88,11 @@ export function holdCycle(blocked: ReadonlyMap<UnitId, Readonly<{ finding: Findi
   return cycle === null ? null : canonicalIds(cycle.slice(0, -1).map((u) => blocked.get(u)!.finding));
 }
 
-/** dev.82 (E5b): two direct repairers of one finding, `path` from the dependent (first) to its dependency (last). */
+/** dev.83 (E5b): two direct repairers of one finding, `path` from the dependent (first) to its dependency (last). */
 export type CoRepairEdge = Readonly<{ finding: FindingId; path: readonly UnitId[] }>;
 
 /**
- * dev.82 (E5b): the co-repairers joined through `after`. Each approved direct repairer of a finding is held at its
+ * dev.83 (E5b): the co-repairers joined through `after`. Each approved direct repairer of a finding is held at its
  * candidate until every other one waits there (R7), so a co-repairer that depends on another (transitively, over
  * `graph`'s edges through `open` units) waits on a merge that never comes. `repairers`: each finding's live direct
  * repairers. Each joined pair once, by its shortest dependency path.
@@ -121,7 +121,7 @@ export function coRepairEdges(graph: ReadonlyMap<UnitId, readonly UnitId[]>, rep
 }
 
 /**
- * dev.82 (E5b): `coRepairEdges` over `units` (a plan's): the live repairers are the units neither cut nor terminal nor
+ * dev.83 (E5b): `coRepairEdges` over `units` (a plan's): the live repairers are the units neither cut nor terminal nor
  * published, by the findings `repairsOf` names (obligation repairs never batch).
  */
 export function joinedCoRepairers(view: JournalView, units: readonly PlanUnit[], repairsOf: (u: PlanUnit) => readonly RepairRef[]): readonly CoRepairEdge[] {
@@ -135,7 +135,7 @@ export function joinedCoRepairers(view: JournalView, units: readonly PlanUnit[],
   return coRepairEdges(effectiveGraph(units), new Map([...repairers].filter(([, us]) => us.length > 1)), (u) => open.has(u));
 }
 
-/** dev.82 (E5b): one joined pair in a sentence. */
+/** dev.83 (E5b): one joined pair in a sentence. */
 export function coRepairText(e: CoRepairEdge): string {
   return `${e.path[0]} and ${e.path.at(-1)} both repair ${e.finding} directly, and ${e.path[0]} depends on ${e.path.at(-1)} through \`after\` (${e.path.join(' → ')}): `
     + `${e.path.at(-1)} is held at its candidate until ${e.path[0]} waits there too, which waits on its merge`;

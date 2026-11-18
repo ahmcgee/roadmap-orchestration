@@ -171,7 +171,7 @@ function goodLog(over: Partial<M5Log> = {}): M5Log {
 
 const NO_ENDGAME: EndgameLog = { entered: [], opened: [], fixes: [], landings: [], reviews: [], checkpoints: [] };
 /**
- * dev.82: MS-2's loop in the endgame: episode 1 opens on SHA 6, a fix (SHA 7) lands, the closing review covers 6..7, the
+ * dev.83: MS-2's loop in the endgame: episode 1 opens on SHA 6, a fix (SHA 7) lands, the closing review covers 6..7, the
  * final audit's invariants coverage reaches 7, the arc completes.
  */
 const ENDGAME: Pick<M5Log, 'endgame' | 'audits' | 'completed'> = {
@@ -334,7 +334,7 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     const [f] = goodLog().findings;
     assert.match(repairLoopVerdict(goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] })).detail, /F-1 .* is fixed-on-branch/);
     assert.match(repairLoopVerdict(goodLog({ findings: [] })).detail, /no walkthrough finding on a milestone/);
-    // dev.82: the loop in the endgame: fixed by an endgame fix, resolved once its landing published, then re-walked.
+    // dev.83: the loop in the endgame: fixed by an endgame fix, resolved once its landing published, then re-walked.
     const byHand = goodLog({
       ...ENDGAME,
       findings: [{ ...f!, transitions: [{ seq: 182, to: { state: 'fixed-on-branch', endgame: 'cmd-1' } }, { seq: 191, to: { state: 'resolved' } }] }] as M5Log['findings'],

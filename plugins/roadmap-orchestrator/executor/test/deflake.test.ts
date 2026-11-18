@@ -13,7 +13,7 @@ import { applyPlanEdit } from './fixtures/checkpoint-common.ts';
 // deflake.verification-budget (runs × the lane's measured median against the verification budget),
 // deflake.verification-budget-repair (an approve over it repaired through the pre-build's repair turn), deflake.verify-runs (a
 // deflake unit's verification runs its lane that many times, every run passing), deflake.stochastic (a k-of-n lane never
-// flakes), the deflake revision's crash cells (deflake.crash.<label>), and deflake.endgame-none (dev.82: in the endgame the
+// flakes), the deflake revision's crash cells (deflake.crash.<label>), and deflake.endgame-none (dev.83: in the endgame the
 // ledger's ask mints nothing).
 import assert from 'node:assert/strict';
 import { existsSync,readFileSync,writeFileSync } from 'node:fs';
@@ -539,7 +539,7 @@ test('split.deflake-refused: root apply cannot split an executor-minted deflake 
   } finally {r.journal.close();}
 });
 
-test('deflake.endgame-none: in the endgame (dev.82) a flake the ledger asks a deflake unit for mints none; the job has nothing to do', T, async () => {
+test('deflake.endgame-none: in the endgame (dev.83) a flake the ledger asks a deflake unit for mints none; the job has nothing to do', T, async () => {
   const e = await endgameArc();
   const { r, h } = e;
   try {

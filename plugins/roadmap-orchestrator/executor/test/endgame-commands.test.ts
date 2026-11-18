@@ -1,4 +1,4 @@
-// dev.82 (WS-5): the endgame commands over a real arc (real git, real lanes, the fake Claude for the review): a fix records
+// dev.83 (WS-5): the endgame commands over a real arc (real git, real lanes, the fake Claude for the review): a fix records
 // and resolves its finding once landed; a unit a fix closes is cut; a landing of a non-descendant is refused; a red landing
 // moves nothing; `resume <unit>` releases a unit the endgame holds; and a P1 the closing step's review opens returns the
 // step to `open`. WS-7, the exit rules: an entered episode not yet opened holds completion while its required worklist is
@@ -33,7 +33,7 @@ const finding = (r: ArcRun, id: string) => r.journal.view.holistic().findings.fi
 const episodeOf = (r: ArcRun) => openEpisode(r.journal.view)!;
 const endgameFfs = (r: ArcRun) => r.journal.view.opsOf('integration.ff').filter((i) => i.expect.subject?.type === 'endgame');
 
-describe('the endgame commands (dev.82, WS-5)', () => {
+describe('the endgame commands (dev.83, WS-5)', () => {
   test('endgame.fix-resolves-on-landing: a recorded fix fixes its finding on the endgame branch; the landing publishes the head by an endgame ff and resolves it', T, async () => {
     const e = await endgameArc();
     try {

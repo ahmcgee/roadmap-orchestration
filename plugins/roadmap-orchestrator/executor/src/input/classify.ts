@@ -59,7 +59,7 @@ export type Proposer =
   | Readonly<{ type: 'compare'; unit: UnitId }>
   /** dev.17 (flaky ledger): the code-applied deflake revision (src/pipeline/deflake.ts): it only admits deflake units. */
   | Readonly<{ type: 'deflake' }>
-  /** dev.82 (WS-5): the cut of `units`, which endgame fix `command` closes (src/commands/endgame.ts): it only cuts them. */
+  /** dev.83 (WS-5): the cut of `units`, which endgame fix `command` closes (src/commands/endgame.ts): it only cuts them. */
   | Readonly<{ type: 'endgame'; command: CommandId; units: readonly UnitId[] }>;
 
 /** The revision's inputs beyond plan and specs, parsed (what renders and the payload are built from). */
@@ -516,14 +516,14 @@ export function classify(input: ClassifyInput): Classified {
     if (was === undefined) continue;
     if (!same(was.reenters, unit.reenters)) reasons.push(`unit ${unit.id}: \`reenters\` is set when a unit is added, never after`);
     if (!same(was.carries, unit.carries)) reasons.push(`unit ${unit.id}: \`carries\` is set when a unit is added, never after`);
-    // dev.82: origin decides whether a unit is finding-raised (src/endgame/phase.ts), so it is as durable as the unit.
+    // dev.83: origin decides whether a unit is finding-raised (src/endgame/phase.ts), so it is as durable as the unit.
     if ((was.origin ?? 'planned') !== (unit.origin ?? 'planned')) reasons.push(`unit ${unit.id}: \`origin\` is set when a unit is added, never after`);
     if (was.cut !== undefined && unit.cut === undefined) reasons.push(`unit ${unit.id} is cut; a cut is final`);
     if (was.cut === undefined && unit.cut !== undefined) {
       cutNow.add(unit.id);
       const refusal = proposer.type === 'compare' && proposer.unit === unit.id ? droppedCutRefusal(view, unit)
         : cutRefusal(view, unit.id);
-      // dev.82 (WS-5): an endgame fix is the architect's recorded reason for the units it closes.
+      // dev.83 (WS-5): an endgame fix is the architect's recorded reason for the units it closes.
       const authorization = (proposer.type === 'apply' && proposer.reason?.trim()) || proposer.type === 'compare' || (proposer.type === 'endgame' && proposer.units.includes(unit.id)) ? null : 'cut needs apply --reason';
       if (refusal !== null) reasons.push(refusal);
       if (authorization !== null) reasons.push(authorization);
@@ -605,7 +605,7 @@ export function classify(input: ClassifyInput): Classified {
     if (cycle !== null) reasons.push(`the unit graph has a cycle once each re-entered unit stands for its lineage's head: ${cycle.join(' → ')}`);
     else {
       knownDefectRows(view, cur, plan, specs, cutNow, changes, reasons);
-      // dev.82 (E5b): two direct repairers of one finding joined through `after` never batch (src/schedule/graph.ts).
+      // dev.83 (E5b): two direct repairers of one finding joined through `after` never batch (src/schedule/graph.ts).
       for (const e of joinedCoRepairers(view, plan.units, (u) => { const s = specs.get(u.id); return s === undefined ? [] : specRepairs(s); })) {
         reasons.push(`co-repairer-after: ${coRepairText(e)}; drop the edge, or fold the two into one unit`);
       }
@@ -966,7 +966,7 @@ function droppedCutRefusal(view: JournalView, unit: PlanUnit): string | null {
  *   carries, the proposal is of the unit's milestone, and the unit is the proposal's own (its id and scope).
  * - The polish revision (`walk{job}`) only adds such units: any other change is refused.
  * - The compare's cut (`compare{unit}`) only cuts that unit (`droppedCutRefusal` holds the rest).
- * - dev.82 (WS-5): the endgame fix's cut (`endgame{command, units}`) only cuts the units the fix closes.
+ * - dev.83 (WS-5): the endgame fix's cut (`endgame{command, units}`) only cuts the units the fix closes.
  */
 function polishRows(view: JournalView, cur: PlanM1, plan: PlanM1, proposer: Proposer, changes: readonly PlanChange[], reasons: string[]): void {
   const curIds = new Set(cur.units.map((u) => u.id));
@@ -1411,7 +1411,7 @@ export function commandScope(sc: ScopeContext): ScopeOf {
       case 'merge-in':
       case 'rerun':
         return unitsScope([body.unit]);
-      // dev.82 (WS-5): an endgame fix cuts the units it closes; every other endgame act is a request.
+      // dev.83 (WS-5): an endgame fix cuts the units it closes; every other endgame act is a request.
       case 'endgame': {
         const units = body.act.type === 'fix' ? endgameUnits(body.act.closes) : [];
         return units.length === 0 ? NONE : unitsScope(units);

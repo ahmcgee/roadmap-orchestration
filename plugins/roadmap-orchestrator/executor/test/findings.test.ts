@@ -166,7 +166,7 @@ describe('ruling and ownership', () => {
     assert.deepEqual([...repairedObligations(owned, ['F-1', 'F-3', 'I-2'] as never)].sort(), ['I-1', 'I-2'], 'a finding over no obligation repairs none');
   });
 
-  it('findings.endgame-fix (dev.82): a recorded endgame fix fixes a finding on the endgame branch; a landing holding it resolves it; a live unit owner comes first', () => {
+  it('findings.endgame-fix (dev.83): a recorded endgame fix fixes a finding on the endgame branch; a landing holding it resolves it; a live unit owner comes first', () => {
     const view = folded([plan(1), opened(1), opened(2, { lens: 'witness', obligation: 'I-2' })]);
     const f = view.holistic().findings;
     const C = 'cmd-00000000000000e1' as never;
@@ -228,7 +228,7 @@ describe('needs-user items and instrumentation', () => {
     assert.match(due[0]!.content.summary, /F-1 is owned by unit u1/, 'only the P1');
   });
 
-  it('findings.draining (dev.82: close-admissions removed): an earlier release\'s admissions-closed makes no P1 or P2 raise new-finding-draining, its audit running or ended', () => {
+  it('findings.draining (dev.83: close-admissions removed): an earlier release\'s admissions-closed makes no P1 or P2 raise new-finding-draining, its audit running or ended', () => {
     const audit = (kind: 'audit-started' | 'audit-ended'): LogRecord => fact(kind === 'audit-started'
       ? { kind, job: 'audit-1', triggers: [{ type: 'final' }], generation: 1, lenses: ['invariants'], integrationSha: B1, planRev: 1, ledgerSha256: null, obligationsSha256: null, visionSha256: V, owners: [], priorFindings: [], highWater: 1 }
       : { kind, job: 'audit-1', covered: [{ lens: 'invariants', from: B2, to: B1 }], findings: ['F-2', 'F-3', 'F-4'], suppressed: 0, outcome: 'completed' });

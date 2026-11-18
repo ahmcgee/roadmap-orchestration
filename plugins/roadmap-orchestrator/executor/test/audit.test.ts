@@ -185,7 +185,7 @@ describe('the audit job', () => {
       assert.deepEqual(owed(cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane))), [], 'publications do not trigger rolling audits');
       requestAudit(r);
       assert.equal((await runAudit(ctx)).kind, 'ended');
-      assert.deepEqual(ended(r)[1]!.covered, [{lens: 'invariants', from: S1, to: S2}], 'dev.82: the second audit covers only what the first left');
+      assert.deepEqual(ended(r)[1]!.covered, [{lens: 'invariants', from: S1, to: S2}], 'dev.83: the second audit covers only what the first left');
       const calls = auditCalls(r, 'audit-2');
       assert.equal(calls.length, 1);
       assert.ok(calls[0]!.stdin.includes(rangeTag(S1, S2, S2)), 'its lens call is attached S1→S2 alone');
@@ -196,7 +196,7 @@ describe('the audit job', () => {
     }
   });
 
-  test('audit.incremental-whole (dev.82): `audit --whole` reads the whole range again; a later request with nothing new past the watermark asks no lens', T, async () => {
+  test('audit.incremental-whole (dev.83): `audit --whole` reads the whole range again; a later request with nothing new past the watermark asks no lens', T, async () => {
     const { d } = auditArc({
       steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/')), lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')],
       units: [{ id: 'u1', obligations: ['I-1'] }, { id: 'u2', obligations: ['I-1'] }, { id: 'u3', obligations: ['I-1'] }], ...I1, mapping: mapped(['I-1']),
@@ -292,7 +292,7 @@ describe('the audit job', () => {
     }
   });
 
-  test('audit.park-resume-due (dev.82): an audit abandoned because its lens backend parked is due again as soon as the backend is resumed; another abandonment keeps the wait', T, async () => {
+  test('audit.park-resume-due (dev.83): an audit abandoned because its lens backend parked is due again as soon as the backend is resumed; another abandonment keeps the wait', T, async () => {
     const { d } = auditArc({
       steps: [
         { as: 'claude', unit: 'audit-1', lens: 'invariants', expect: {}, acts: [{ type: 'usageLimit' }] },
@@ -328,7 +328,7 @@ describe('the audit job', () => {
     const { ctx, w } = auditContext(r);
     const stop = ticking(w);
     try {
-      // dev.82: the docs edge covers what the ruling published, so only `--whole` has the lens read it.
+      // dev.83: the docs edge covers what the ruling published, so only `--whole` has the lens read it.
       const asked = requestAudit(r, null, true);
       const ruling = applyCommand(w.commands, submitRule(r, ruleRecord(r, 'C-2', API_OP), true));
       await reached(barrier, 'lane', 120_000);
@@ -379,7 +379,7 @@ describe('coverage', () => {
       release(d.scenarioDir, 'lens');
       const out = await audit;
       assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
-      assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from: D1, to: S1}], 'dev.82: from the watermark the docs edge set');
+      assert.deepEqual(ended(r)[0]!.covered, [{lens: 'invariants', from: D1, to: S1}], 'dev.83: from the watermark the docs edge set');
       assert.deepEqual(watermarks(ctx, L2), [['invariants', D2, false]], 'the gap closed: the kept edge applies');
     } finally {
       stop();

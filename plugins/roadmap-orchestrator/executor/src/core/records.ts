@@ -910,7 +910,7 @@ export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: re
  * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
  * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
  * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build`,
- * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check), `candidate` or (dev.82) `batch` (proof after
+ * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check), `candidate` or (dev.83) `batch` (proof after
  * merge at the batch witness, src/pipeline/batchlanes.ts); a suite lane any (`batch` only in a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
  */
 export type LaneKind = 'spec' | 'suite' | 'arc';
@@ -990,7 +990,7 @@ export type LaneDef = Readonly<{
    */
   readsComments?: true;
   /**
-   * dev.82 (E4): pools among `resources` the lane holds whole, every instance or none (src/resources/pool.ts): it mutates a
+   * dev.83 (E4): pools among `resources` the lane holds whole, every instance or none (src/resources/pool.ts): it mutates a
    * shared estate, so it runs alone against the pool's readers (one instance each) and other mutators. Non-empty and unique
    * when present; each a declared pool (`exclusiveProblems`). Absent: none.
    */
@@ -1655,12 +1655,12 @@ export type CommandBody =
    */
   | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string }>
   /**
-   * `roadmap audit [--whole]`: request a campaign audit. dev.82: it reads what no completed pass covered under the vision in
+   * `roadmap audit [--whole]`: request a campaign audit. dev.83: it reads what no completed pass covered under the vision in
    * force; `whole` (absent on commands written before it: false) reads the whole range from the arc's base again.
    */
   | Readonly<{ type: 'audit'; whole?: true }>
   /**
-   * `roadmap close-admissions` (M3), removed in dev.82 (the endgame replaces it): kept so an earlier release's command file still
+   * `roadmap close-admissions` (M3), removed in dev.83 (the endgame replaces it): kept so an earlier release's command file still
    * reads; applying one is rejected (src/commands/apply.ts). Scope ∅.
    */
   | Readonly<{ type: 'close-admissions' }>
@@ -1679,18 +1679,18 @@ export type CommandBody =
   /** `roadmap push` (dev.81, A3): the last pushed CI head counts as settled, so the CI ref advances now. Control, scope ∅. */
   | Readonly<{ type: 'push' }>
   /**
-   * `roadmap endgame fix|run|land|checkpoint|review` (dev.82, WS-5; src/commands/endgame.ts): a recorded fix, or a request the
+   * `roadmap endgame fix|run|land|checkpoint|review` (dev.83, WS-5; src/commands/endgame.ts): a recorded fix, or a request the
    * scheduler serves (src/endgame/jobs.ts). Scope: a fix that closes units, those units; anything else ∅.
    */
   | Readonly<{ type: 'endgame'; act: EndgameAct }>;
 
-/** dev.82 (WS-5): what an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
+/** dev.83 (WS-5): what an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
 export type EndgameRef = FindingId | ObligationId | UnitId;
 export const endgameRef: Read<EndgameRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : typeof v === 'string' && v.startsWith('I-') ? obligationId(v, p) : unitId(v, p));
 /** The units among what an endgame fix closes. */
 export const endgameUnits = (closes: readonly EndgameRef[]): readonly UnitId[] => closes.filter((r): r is UnitId => !r.startsWith('F-') && !r.startsWith('I-'));
 /**
- * dev.82 (WS-5): what an endgame command asks of the scheduler: land the endgame head, review the endgame's range now, run
+ * dev.83 (WS-5): what an endgame command asks of the scheduler: land the endgame head, review the endgame's range now, run
  * lanes (ascending) at the endgame head, or one more walk round of a milestone at the integration head (served by the walk
  * itself, src/walk/milestones.ts: no endgame job).
  */
@@ -1706,7 +1706,7 @@ export const endgameRequest: Read<EndgameRequest> = tagged('type', {
   checkpoint: object((f): EndgameRequest => ({ type: f.get('type', literal('checkpoint')), milestone: f.get('milestone', (v, p) => milestoneId(v, p)) })),
 });
 /**
- * dev.82 (WS-5): an endgame command's act. A fix: what it `closes` (each once), its `commit` on the endgame branch after the
+ * dev.83 (WS-5): an endgame command's act. A fix: what it `closes` (each once), its `commit` on the endgame branch after the
  * episode's base (the CLI resolves the branch's head when `--commit` is absent), its one-line `note`.
  */
 export type EndgameAct = Readonly<{ type: 'fix'; closes: readonly EndgameRef[]; commit: Sha; note: string }> | EndgameRequest;
@@ -1868,7 +1868,7 @@ export const NEEDS_USER_REASONS = [
   // repeat park on one target.
   'park-escalated', 'env-blocked',
   // M3, blocking: a must-hold obligation not held at the baseline (A6); a parked owner's P1 at the park deadline;
-  // a new P1 or P2 while draining (no longer raised since dev.82, `close-admissions` removed; kept so an old item reads); a steer's park; a mutant not reproduced; an owner-only act an audit
+  // a new P1 or P2 while draining (no longer raised since dev.83, `close-admissions` removed; kept so an old item reads); a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
   // dev.59, blocking: a red during a root-ordered lanes rerun (`roadmap rerun`): the root's claim did not hold.
@@ -1901,14 +1901,17 @@ export const NEEDS_USER_REASONS = [
   'revision-notice', 'waste-finding',
   // dev.44: automatic origin publication failed or diverged. Informational; the arc continues.
   'push-failed', 'push-diverged', 'walkthrough-mcp',
-  // dev.82 (E2), blocking: a unit's diagnosis put its repeated failure's cause outside the unit (pre-build `diagnosed-external`).
+  // dev.82, non-blocking: everything the arc needs to complete holds but external lanes' attestations at the head (the
+  // close-out done or nothing to change); the item names the obligations and the `roadmap witness --at <head>` to submit.
+  'external-witness-owed',
+  // dev.83 (E2), blocking: a unit's diagnosis put its repeated failure's cause outside the unit (pre-build `diagnosed-external`).
   'diagnosed-external',
-  // dev.82, non-blocking: the endgame opened (src/endgame/open.ts): its worklist, branch, worktree and handover for the architect.
+  // dev.83, non-blocking: the endgame opened (src/endgame/open.ts): its worklist, branch, worktree and handover for the architect.
   'endgame',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged', 'walkthrough-mcp',
+  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged', 'walkthrough-mcp', 'external-witness-owed',
   'endgame',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];

@@ -1,7 +1,7 @@
 import { runSurface } from './surface/run.ts';
 import { runDiagnosis } from './diagnosis/run.ts';
 // Role eval dispatcher. `verifier` runs gate mode; `pre-build` and `campaignAudit` use the
-// three-cell surface dev sets; `diagnosis` (dev.82) the verifier's diagnosis mode on its own dev set. --dry-run on any of
+// three-cell surface dev sets; `diagnosis` (dev.83) the verifier's diagnosis mode on its own dev set. --dry-run on any of
 // them performs no backend calls.
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

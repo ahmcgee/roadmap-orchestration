@@ -54,7 +54,7 @@ export type ResourceRequest = Readonly<{
    */
   fastSuite?: true;
   /**
-   * dev.82 (E4): pools of `pools` this request takes whole, every instance or none (a lane's `exclusive`: a mutator of a
+   * dev.83 (E4): pools of `pools` this request takes whole, every instance or none (a lane's `exclusive`: a mutator of a
    * shared estate). Absent: none.
    */
   exclusive?: readonly ResourceName[];
@@ -169,7 +169,7 @@ export type AdmissionConstraint =
    * files). src/holistic/propagation.ts `propagationHolds`.
    */
   /**
-   * dev.82: in the endgame, a finding-raised unit with no dispatch record is held: it is a worklist entry for the architect
+   * dev.83: in the endgame, a finding-raised unit with no dispatch record is held: it is a worklist entry for the architect
    * (src/endgame/phase.ts `endgameHeld`).
    */
   | Readonly<{ type: 'endgame' }>
@@ -190,7 +190,7 @@ export type AdmitInput = Readonly<{
   drains: readonly Readonly<{ command: CommandId; scope: CommandScope }>[];
   tripped: readonly ProbeTarget[];
   pressure: PressureNow;
-  /** dev.82: the units the endgame holds (src/endgame/phase.ts `endgameHeld`); empty in the body. */
+  /** dev.83: the units the endgame holds (src/endgame/phase.ts `endgameHeld`); empty in the body. */
   endgame: ReadonlySet<UnitId>;
 }>;
 

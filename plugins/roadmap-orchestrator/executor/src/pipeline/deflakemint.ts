@@ -12,7 +12,7 @@
 //      items), the outcomes it may reach, the flakes it fixes, and the earlier deflake units of its keys (a second deflake
 //      is told of the first). A lane no longer defined anywhere is never minted for (the job waits). The commit is `plan-applied{source:
 //      deflake}`, proposer `deflake` (src/input/classify.ts `deflakeRows`); a commit the arc moved under is retried at the
-//      next run. Not in the endgame (dev.82, src/endgame/phase.ts): the executor raises no new unit there.
+//      next run. Not in the endgame (dev.83, src/endgame/phase.ts): the executor raises no new unit there.
 //      Its systems (`deflakeSystems`), the first available: lane systems, flaky test-file membership, owner unit
 //      systems, then every mapped system. Dependency closure participates. All-system deflakes are admitted normally;
 //      salvage and transient validation protect repository paths independently of the declared systems.
@@ -62,7 +62,7 @@ const recurringRaised = (view: JournalView, runDir: AbsPath, r: Recurring): bool
 
 type DueContext = Readonly<{ runDir: AbsPath; planFile: AbsPath; journal: Readonly<{ view: JournalView }> }>;
 
-/** What is due: no mint in the endgame (dev.82, src/endgame/phase.ts); recurring items not raised yet. */
+/** What is due: no mint in the endgame (dev.83, src/endgame/phase.ts); recurring items not raised yet. */
 function due(ctx: DueContext, plan: PlanM1): Readonly<{ mint: readonly MintGroup[]; recurring: readonly Recurring[] }> {
   const view = ctx.journal.view;
   const d = deflakeDue(view, plan);

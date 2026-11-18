@@ -1,4 +1,4 @@
-// dev.82: the endgame as the console shows it, projected from status `phase` and `endgame` (src/status/endgame.ts) and the
+// dev.83: the endgame as the console shows it, projected from status `phase` and `endgame` (src/status/endgame.ts) and the
 // journal's finding facts. Read only, like every view.
 //   shellPhase    the header's phase track: body (what still holds the endgame off), endgame (its step) or closed out
 //   endgameView   the Endgame view: the exit checklist, the worklist (required, optional, then entries the open episode's
@@ -58,6 +58,7 @@ export function endgameView(e: Envelope): EndgameView {
       case 'finding': { const f = opened.get(String(w.finding)); return {kind: 'finding', id: String(w.finding), required, closed: false, severity: w.severity,
         text: `${f?.claim ?? ''}${w.obligation === null ? '' : ` (over ${w.obligation})`}`, detail: detail(String(w.finding)), fixes: fixesOf(String(w.finding))}; }
       case 'obligation': return {kind: 'obligation', id: String(w.obligation), required, closed: false, severity: null, text: statements.get(String(w.obligation)) ?? 'Not held on the integration head', detail: null, fixes: fixesOf(String(w.obligation))};
+      case 'attestation': return {kind: 'obligation', id: String(w.obligation), required, closed: false, severity: null, text: `No attestation at the integration head on external lane ${w.lane}: submit roadmap witness ${w.obligation} --at <head>`, detail: null, fixes: []};
       case 'unit': return {kind: 'unit', id: String(w.unit), required, closed: false, severity: null, text: s.units.find(u => String(u.unit) === String(w.unit))?.state === 'awaiting-admission' ? 'Handed over: held at admission' : 'Finding-raised work still open', detail: detail(String(w.unit)), fixes: fixesOf(String(w.unit))};
       case 'polish-refused': return {kind: 'polish-refused', id: String(w.proposal), required, closed: false, severity: null, text: w.reasons.join('; '), detail: null, fixes: []};
     }

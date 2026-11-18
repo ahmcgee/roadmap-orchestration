@@ -273,7 +273,7 @@ describe('re-pin (the corpus edit class)', () => {
 });
 
 describe('Phase-0 record edits and the census', () => {
-  it('classify.phase0-edit: a record edit is exactly {phase0}, touching no unit; a new promote after an earlier release\'s admissions-closed is no longer refused (dev.82)', T, async () => {
+  it('classify.phase0-edit: a record edit is exactly {phase0}, touching no unit; a new promote after an earlier release\'s admissions-closed is no longer refused (dev.83)', T, async () => {
     const { a, j } = await arcInForce();
     try {
       editPhase0(a, (r) => ({ ...r, curation: [{ tier: 'structural', what: 'merged two restatements', files: ['0010_Overview.md'], rules: ['T-1'] }] }));

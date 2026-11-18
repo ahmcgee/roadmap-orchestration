@@ -114,7 +114,7 @@ test('audit.requests: a resumed audit re-admits finding and arc requests without
   } finally { r.journal.close(); }
 });
 
-test('audit.requests-across-passes (dev.82): a later pass asking again for a request an earlier pass raised (the same finding, or an arc request with the same summary) raises nothing, answered or not; a new one is raised', T, async () => {
+test('audit.requests-across-passes (dev.83): a later pass asking again for a request an earlier pass raised (the same finding, or an arc request with the same summary) raises nothing, answered or not; a new one is raised', T, async () => {
   const job2 = jobId('audit', 2);
   const r = setup([[request('F-1', 'Dismiss the false regression'), request(null, 'Review the plan')], []]);
   try {
@@ -136,7 +136,7 @@ test('audit.requests-across-passes (dev.82): a later pass asking again for a req
   } finally { r.journal.close(); }
 });
 
-test('audit.requests-floor (dev.82): at a final audit a request to dismiss a finding below the endgame worklist\'s required line (not P1, no obligation) raises nothing; one over a P1 still does', T, async () => {
+test('audit.requests-floor (dev.83): at a final audit a request to dismiss a finding below the endgame worklist\'s required line (not P1, no obligation) raises nothing; one over a P1 still does', T, async () => {
   const r = setup([[request('F-3', 'Dismiss the cosmetic note'), request('F-1', 'Dismiss the false regression')], []], [{ type: 'final' }]);
   try {
     openFinding(r.journal, {

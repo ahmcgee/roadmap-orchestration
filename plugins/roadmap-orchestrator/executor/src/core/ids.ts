@@ -292,7 +292,7 @@ export const divergenceIdOf = D.of;
 
 /**
  * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
- * baseline witness, (M4a) a pack review, (dev.13) a milestone walkthrough, (dev.82) an endgame job (a landing, a review or a
+ * baseline witness, (M4a) a pack review, (dev.13) a milestone walkthrough, (dev.83) an endgame job (a landing, a review or a
  * lane run of the endgame branch, src/endgame/jobs.ts).
  * `<kind>-<n>`, numbered per kind.
  */

@@ -313,7 +313,7 @@ test('steer-diagnosis.startup: a recorded attempt that cannot be read parks its 
   }
 });
 
-// dev.82 (E2): a repeated red makes the diagnosis due before the fix build, once per source; it moves no build to Claude, and a
+// dev.83 (E2): a repeated red makes the diagnosis due before the fix build, once per source; it moves no build to Claude, and a
 // cause outside the unit parks it uncharged until `resume` runs the fix round.
 //
 //   steer-diagnosis.repeat-red          a second red of a lane with the same signature: diagnosed before the fix build, once

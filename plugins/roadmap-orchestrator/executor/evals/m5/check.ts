@@ -19,7 +19,7 @@
 //   milestones-settled the driver's stop rule (log.ts `evidenceComplete`) holds over the run dir's log and plan in force:
 //                      every milestone passed, the demo promoted after the last pass and on the latest round's walked SHA,
 //                      no walk, compare or walk-originated unit pending, every polish unit judged or cut. Completion is
-//                      m1's to grade (dev.82: the stop waits for it once the arc entered the endgame, log.ts
+//                      m1's to grade (dev.83: the stop waits for it once the arc entered the endgame, log.ts
 //                      `endgameSettled`, so endgame-range can grade the closing step)
 //   milestones-planned the arc's first plan in force has the M5 shape (shape.ts `planShape`): a browser milestone whose
 //                      units all run after its design unit, and a dependent milestone at least one of whose units
@@ -32,13 +32,13 @@
 //                      (`<runDir>/evidence/jobs/<walk-n>/`) holds a PNG file (by its signature, anywhere below it)
 //   plant-caught       the plant (layout.ts PLANT) never shipped through a miss: a finding of any judge whose claim or cause
 //                      speaks of the overflow (PLANT_WORDS) of the planted book (PLANT_ANCHOR) reached `resolved` from `fixed-on-branch` of a unit whose
-//                      publication came first (dev.82: or of an endgame fix an endgame landing published first), or the plant was gone at the first browser walk's SHA (`/` rendered at 320
+//                      publication came first (dev.83: or of an endgame fix an endgame landing published first), or the plant was gone at the first browser walk's SHA (`/` rendered at 320
 //                      CSS px in Chromium, reflow.ts, no wider than the viewport), crediting any finding that named it
 //                      (run 5: the vision lens, its fix folded into an undispatched unit's spec); it fails only
 //                      when the plant was live at that walk and no resolved finding names it
 //   repair-loop        the walk → repair → re-walk loop on any milestone: a walkthrough finding reached `resolved` from
 //                      `fixed-on-branch` of a unit whose publication came first (or of an endgame fix an endgame landing
-//                      published first: the last milestone's loop falls in the endgame, dev.82), and a walk of its milestone started after
+//                      published first: the last milestone's loop falls in the endgame, dev.83), and a walk of its milestone started after
 //                      that passed it: wrote the milestone's `milestone-passed`, or (a non-blocking finding: the milestone
 //                      passed before the repair) ended `reported` with no finding (the plant's loop is the case plant-caught names)
 //   plant-repaired     at the arc's latest integrated head (the verified ref's latest published `integration.ff`; the
@@ -56,7 +56,7 @@
 //   no-model-ids       no model id in the run dir (launch inputs and captured backend output aside) or the ref (M4a's)
 //   host-released      every arc the driver found holding the host at the end was stopped and cleared; none holds it now
 //   profile            the arc's first `plan-applied` resolved under the report's profile
-//   endgame-range      (dev.82) an endgame episode opened, at least one `endgame fix` was recorded and something landed, and
+//   endgame-range      (dev.83) an endgame episode opened, at least one `endgame fix` was recorded and something landed, and
 //                      every endgame landing (`endgame-landed` old..head) lies in an independent review's range (its `from`
 //                      an ancestor of the landing's old, its `to` holding the landing's head) and in a completed audit's
 //                      invariants coverage (a covered `to` holding the head). Skipped (passes, saying so) when episodes
@@ -174,7 +174,7 @@ export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (
 type Repair = Readonly<{ kind: 'resolved'; seq: number; by: string; via: 'publication' | 'landing'; pub: number }> | Readonly<{ kind: 'not'; detail: string }>;
 
 /**
- * Whether finding `f` reached `resolved` after `fixed-on-branch` of a unit whose publication came first, or (dev.82) of an
+ * Whether finding `f` reached `resolved` after `fixed-on-branch` of a unit whose publication came first, or (dev.83) of an
  * endgame fix an endgame landing after it published first.
  */
 function repairOf(f: FindingLog, log: M5Log): Repair {
@@ -268,7 +268,7 @@ export function demoServingVerdict(log: M5Log, seen: readonly DemoSeen[], final:
 }
 
 /**
- * dev.82 (see the header): the endgame exercised and its closing step run over its range. `ancestor(a, b)`: commit `a` is
+ * dev.83 (see the header): the endgame exercised and its closing step run over its range. `ancestor(a, b)`: commit `a` is
  * `b` or an ancestor of it, in the product.
  */
 export function endgameRangeVerdict(log: M5Log, ancestor: (a: string, b: string) => boolean): Verdict {

@@ -50,7 +50,7 @@ import { laneEvidenceGlobs,transientViolations } from '../../src/git/transient.t
 //   checkpoint and pack-review calls; a judgment's one repair turn resumes its own fresh session), meter-covers-calls (unit and arc calls), no-model-ids
 //
 // The non-exercised list names what this run's journal shows no trace of, from: rule, reverse, steer, merge-in,
-// reproduction, batch repair, owner-request, real go, literal partial bundle (dev.82 removed `close-admissions`, and with
+// reproduction, batch repair, owner-request, real go, literal partial bundle (dev.83 removed `close-admissions`, and with
 // it the draining branch: the endgame replaces it). The paid
 // run takes none of them (the fake story takes the literal partial bundle); each has a fake integrated test.
 import { existsSync,readFileSync,readdirSync,statSync } from 'node:fs';

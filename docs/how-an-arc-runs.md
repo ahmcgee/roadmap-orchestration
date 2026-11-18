@@ -319,6 +319,8 @@ the same container are reachable.
   or `systems` match. A pass latches a future obligation once every deliverer's published merge is in that commit. A
   fail reopens each delivering unit (its lineage head) with a brief listing the publications between the
   obligation's last pass (or the arc start) and the attested commit: the suspects.
+- Completion reads an external-lane obligation the same way `status` and the audit do: from the latest attestation
+  at the head's lane inputs. A pass discharges it. No attestation, or a fail, leaves `obligations-not-discharged`.
 
 ## 7. Finish by hand: the endgame
 
@@ -357,10 +359,16 @@ with is planned work whatever it repairs. A milestone has had its checkpoint whe
 
 **The worklist** is derived from the log and the plan, never stored.
 
-- Required: active P1 findings, active findings over an obligation, non-exempt obligations observed not held on the
-  integration head, and finding-raised units not yet retired, cut or superseded.
-- Optional: every other active finding (the close-out settlement banks or releases them) and the polish proposals
-  refused since the episode entered.
+- Required: active P1 findings, active findings over an obligation, non-exempt obligations not held on the
+  integration head (observed red, or attested failed), and finding-raised units not yet retired, cut or superseded.
+- Optional: every other active finding (the close-out settlement banks or releases them), obligations on an external
+  lane with no attestation at the head, and the polish proposals refused since the episode entered. An unattested
+  external obligation never holds the episode open: nothing on the endgame branch can discharge it. The handover
+  names the `roadmap witness` to submit, and once nothing else holds completion the `external-witness-owed` item asks
+  for it (section 8).
+- Completion, the worklist, the exit checklist and `status` all read one verdict per obligation on the head. A local
+  lane's verdict, a batch-cadence lane's included, comes from its observation there. An external lane's verdict comes
+  from the root's latest attestation at the head's lane inputs.
 
 **Open.** Once the episode has settled (nothing running, no walk or audit due) with a non-empty required worklist,
 the executor creates branch `roadmap/<arc>/endgame` and worktree `<worktreeRoot>/<arc>/endgame` at the integration
@@ -431,6 +439,16 @@ left `complete` after `arc-completed`.
 
 Close-out follows the endgame, or the body directly when no episode opened. Final audit, witnesses, batch lanes,
 document publication and snapshots settle before completion.
+
+The close-out runs only when it can change something: its document publication is due, or a local arc lane has no
+observation on the head (its lanes run there, with the batch lanes fresh). Once it is done, or there is nothing to
+change, and only external lanes lack an attestation at the head, the arc starts nothing more. It raises one
+non-blocking `external-witness-owed` item per head that names each obligation and lane and gives the
+`roadmap witness <I-n> --at <head>` to submit. The arc completes on the next idle tick after every pass lands, and that
+completion closes the item. An attested fail reopens the deliverers instead, and the stale item stays open until a
+later completion or an ack. A batch-cadence arc lane is local: the closing batch witness or the close-out observes it,
+so it never needs an attestation. While an opened episode owes the closing batch witness, `endgame-open` holds
+completion and no close-out starts.
 
 A revision publishes rendered documents only where they differ from the integration tip, and never `constraints.md`
 alone: a ruling-only revision takes effect at once through the ledger in force but makes no docs commit (each one

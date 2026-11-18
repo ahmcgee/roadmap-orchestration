@@ -183,7 +183,7 @@ describe('bin/roadmap', () => {
 });
 
 describe('cli: M3 forms', () => {
-  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, gc; close-admissions is gone (dev.82: the endgame replaces it)', () => {
+  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, gc; close-admissions is gone (dev.83: the endgame replaces it)', () => {
     assert.throws(() => parseCommand(['rule', 'rulings/C-7.json']), /unknown command/);
     assert.deepEqual(parseCommand(['note', 'u1', '--brief', 'b.md']), {command: 'note', unit: 'u1', brief: 'b.md', run: HOST});
     assert.deepEqual(parseCommand(['reverse', 'D-3', ...EXPLICIT]), { command: 'reverse', divergence: 'D-3', run: EXPLICIT_RUN });
@@ -262,7 +262,7 @@ describe('cli: M3 forms', () => {
   });
 });
 
-it('dev.82 (WS-5): the endgame forms parse; a fix without --commit leaves it to submission; malformed acts are refused naming the command', () => {
+it('dev.83 (WS-5): the endgame forms parse; a fix without --commit leaves it to submission; malformed acts are refused naming the command', () => {
   assert.deepEqual(parseCommand(['endgame', 'fix', '--closes', 'F-3', '--note', 'n']), { command: 'endgame', act: { type: 'fix', closes: ['F-3'], commit: null, note: 'n' }, run: HOST });
   assert.deepEqual(parseCommand(['endgame', 'land', ...EXPLICIT]), { command: 'endgame', act: { type: 'land' }, run: EXPLICIT_RUN });
   const refuses = (args: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(args), (err: unknown) => err instanceof CliError && message.test(err.message), args.join(' '));

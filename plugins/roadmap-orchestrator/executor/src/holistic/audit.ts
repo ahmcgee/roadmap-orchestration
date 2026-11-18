@@ -465,10 +465,10 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
     if ('requests' in output) for (const request of (output as import('../prompts/schemas.ts').CampaignAuditOutput).requests) {
       const target = request.dismisses === null ? undefined : ctx.journal.view.holistic().findings.find((f) => f.id === request.dismisses);
-      // dev.82: at the final boundary a request about a finding below the endgame's required line raises nothing; the
+      // dev.83: at the final boundary a request about a finding below the endgame's required line raises nothing; the
       // close-out settlement settles that finding (src/holistic/closeout.ts).
       if (final && target !== undefined && !requiredFinding(target)) continue;
-      // dev.82: one item per request across every audit pass, open or answered: a request names its finding (stable
+      // dev.83: one item per request across every audit pass, open or answered: a request names its finding (stable
       // across passes), an arc request its summary. A whole-range pass asking again raises nothing.
       const raised = ctx.journal.view.opsOf('needsuser.raise').some((i) => {
         if (i.parent.type !== 'job' || parseJobId(i.parent.job).kind !== 'audit') return false;
@@ -508,7 +508,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const heads = new Set(publishedHeads(ctx.journal.view).map((h) => h.head));
   /** How far each lens's reported chunks reach. */
   const reached = new Map<LensKind, Sha>();
-  // dev.82: incremental. A lens reads from its watermark at the capture (what no completed pass under the vision in force
+  // dev.83: incremental. A lens reads from its watermark at the capture (what no completed pass under the vision in force
   // covered: an abandoned pass's reported chunks included, so it resumes where it stopped), or from the arc's base for an
   // `audit --whole` request. A lens whose watermark already is the audited SHA past the base has nothing to read: no call.
   const rangeFrom = (lens: LensKind): Sha => s.whole === true ? base.head : lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;

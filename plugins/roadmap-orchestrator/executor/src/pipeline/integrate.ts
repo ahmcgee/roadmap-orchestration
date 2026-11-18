@@ -443,7 +443,7 @@ export type Claims = Readonly<{
   /** The obligations its units' specs declare they repair (a finding repair: its finding's obligation). */
   repairs: ReadonlySet<ObligationId>;
   latched: ReadonlySet<ObligationId>;
-  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.82). */
+  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.83). */
   lanes: readonly ArcLaneDef[];
 }>;
 
@@ -1351,7 +1351,7 @@ function batchForeignMove(ctx: StageContext, job: JobId, detail: string): NeedsU
 }
 
 // ---------------------------------------------------------------------------------------------------
-// An endgame landing (dev.82, WS-5; src/endgame/jobs.ts runs it as the endgame job `endgame-<n>`)
+// An endgame landing (dev.83, WS-5; src/endgame/jobs.ts runs it as the endgame job `endgame-<n>`)
 //
 // The repair batch's publication with the endgame branch's head as its candidate: no merge is made, so the head must be a
 // strict descendant of the integration tip T (the architect merges the tip in by hand when units published meanwhile);

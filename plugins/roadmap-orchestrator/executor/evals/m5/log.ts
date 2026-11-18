@@ -12,7 +12,7 @@
 //   - no walk is due: per milestone, its last round's walk (ended `reported` or `bring-up-failed`) admitted units (the
 //     polish units of its applied proposals, the units whose specs repair one of its findings); when one of them landed
 //     and the round is below `walkRounds`, the next round's walk is due, unless that round was abandoned WALK_ATTEMPTS
-//     times (the brake). dev.82: so is it after an endgame checkpoint request of the milestone (`roadmap endgame
+//     times (the brake). dev.83: so is it after an endgame checkpoint request of the milestone (`roadmap endgame
 //     checkpoint`) later than that walk, whatever the rounds. And no author has yet to act on that round: none of its findings is still untouched (no
 //     transition: the checkpoint has not weighed it) and each applied proposal is in a polish unit or refused;
 //   - no walk-originated unit is pending: every polish unit, and every unit whose spec repairs a walkthrough finding, is
@@ -21,7 +21,7 @@
 // This mirrors src/walk/milestones.ts's rounds from the log alone (the rewalk reset of an apply aside), so the stop does
 // not lean on the code under test; check.ts's `milestones-settled` grades the same rule at the end.
 //
-// dev.82, the endgame (`endgameSettled`): the last milestone's repair and polish loop now falls in the endgame, whose
+// dev.83, the endgame (`endgameSettled`): the last milestone's repair and polish loop now falls in the endgame, whose
 // closing step (the independent review and the final audit over the landed range) check.ts's `endgame-range` grades. So
 // the stop also waits for the arc to enter the endgame and then complete (`arc-completed` after the last
 // `endgame-entered`): only completion shows from the log alone that an entered episode will not open, or that an opened
@@ -51,7 +51,7 @@ export type Walk = Readonly<{
 /** A polish unit's compare job (agent D): `abandoned` without a judgment, `interrupted` when a pause, stop or park cut it short. */
 export type CompareLog = Readonly<{ job: string; unit: string; seq: number; abandoned: boolean; interrupted: boolean }>;
 export type FindingLog = Readonly<{ id: string; seq: number; lens: string; milestone: string | null; claim: string; cause: string | null; transitions: readonly Readonly<{ seq: number; to: FindingTo }>[] }>;
-/** dev.82: the endgame facts, every episode's in log order. */
+/** dev.83: the endgame facts, every episode's in log order. */
 export type EndgameLog = Readonly<{
   entered: readonly Readonly<{ seq: number; episode: number }>[];
   opened: readonly Readonly<{ seq: number; episode: number; base: string }>[];
@@ -266,7 +266,7 @@ export function evidenceComplete(log: M5Log, plan: EvidencePlan, repairs: Repair
   };
 }
 
-/** dev.82 (see the header): the arc entered the endgame and completed after its last entry. */
+/** dev.83 (see the header): the arc entered the endgame and completed after its last entry. */
 export function endgameSettled(log: M5Log): Evidence {
   const entered = log.endgame.entered.at(-1);
   if (entered === undefined) return { complete: false, detail: 'the arc has not entered the endgame' };

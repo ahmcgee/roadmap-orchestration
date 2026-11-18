@@ -170,7 +170,7 @@ export const TABLE: Table = {
     'executor-fault': fault,
   },
   // dev.70: `diagnosed` (a build's M4 diagnosis attempt) decides nothing: the build that opened it goes on (events.ts `isDiagnosed`).
-  // dev.82 (E2): a diagnosis that put the cause outside the unit (base or environment) parks it, uncharged, for the root:
+  // dev.83 (E2): a diagnosis that put the cause outside the unit (base or environment) parks it, uncharged, for the root:
   // `resume <unit>` restores the decision before the park, so the build's round runs; `rerun --cause` stays the root's waiver.
   'pre-build': { 'checkout-residue': checkoutResidue, approve: go(build('fresh')), interrupted: hold, 'executor-fault': fault, diagnosed: hold, 'diagnosed-external': park('diagnosed-external', 'env') },
   build: {
@@ -185,7 +185,7 @@ export const TABLE: Table = {
     // lost again. Tree effects: what the workload left is salvaged and verified like a report, uncharged.
     lost: park('build-lost', 'retryable'),
     'lost-tree-effects': go(at('quiesce')),
-    // dev.82 (E5c): the runner's deadline ended the round (its window: a fresh build's deadline, a fix window, the edit
+    // dev.83 (E5c): the runner's deadline ended the round (its window: a fresh build's deadline, a fix window, the edit
     // allowance or a steer's budget) and no pressure ruling called it starved. What it left is salvaged and verified, as for
     // `lost-tree-effects`, uncharged: a spent window is the round's bound, not a fault of the unit or the backend.
     'window-spent': go(at('quiesce')),

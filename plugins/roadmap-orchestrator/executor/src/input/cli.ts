@@ -69,7 +69,7 @@ export type Command =
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
   /** dev.59: the lanes of `unit` again at the commit lanes#`attempt` ran on, its red on `lane` waived for `cause`. */
   | Readonly<{ command: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string; run: RunLocator }>
-  /** Request a campaign audit; `whole` (`--whole`, dev.82) reads the whole range from the arc's base again. */
+  /** Request a campaign audit; `whole` (`--whole`, dev.83) reads the whole range from the arc's base again. */
   | Readonly<{ command: 'audit'; whole: boolean; run: RunLocator }>
   /** dev.81 (C3a): take back pending mutation `target` (a queued apply, say) before it applies. */
   | Readonly<{ command: 'withdraw'; target: CommandId; run: RunLocator }>
@@ -102,12 +102,12 @@ export type Command =
   /** dev.81 (A3): `push`: advance the CI ref now (the last pushed head counts as settled). */
   | Readonly<{ command: 'push'; run: RunLocator }>
   /**
-   * dev.82 (WS-5): `endgame fix|run|land|checkpoint|review`. A fix's `commit` null: the endgame branch's head, which the
+   * dev.83 (WS-5): `endgame fix|run|land|checkpoint|review`. A fix's `commit` null: the endgame branch's head, which the
    * CLI resolves at submission.
    */
   | Readonly<{ command: 'endgame'; act: EndgameCliAct; run: RunLocator }>;
 
-/** dev.82 (WS-5): an endgame act as parsed: a fix (its commit not yet resolved) or a request. */
+/** dev.83 (WS-5): an endgame act as parsed: a fix (its commit not yet resolved) or a request. */
 export type EndgameCliAct = Readonly<{ type: 'fix'; closes: readonly EndgameRef[]; commit: Sha | null; note: string }> | EndgameRequest;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
@@ -474,7 +474,7 @@ export function parseCommand(argv: readonly string[]): Command {
   }
 }
 
-/** dev.82 (WS-5): `endgame fix --closes <ids> [--commit <sha>] --note <line> | run <lanes> | land | checkpoint <milestone> | review`. */
+/** dev.83 (WS-5): `endgame fix --closes <ids> [--commit <sha>] --note <line> | run <lanes> | land | checkpoint <milestone> | review`. */
 function parseEndgame(rest: readonly string[]): Command {
   const [act, ...args] = rest;
   const name = `endgame ${act ?? ''}`;

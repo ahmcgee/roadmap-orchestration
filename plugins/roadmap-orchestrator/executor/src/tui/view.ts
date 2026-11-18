@@ -56,7 +56,7 @@ export function renderView(ui: ViewState, columns: number, rows: number, ascii: 
   });
   const heartbeat = s?.run.heartbeatAt ? elapsed(now - Date.parse(s.run.heartbeatAt)) : 'unavailable';
   const execution = d ? executionSummary(d) : null;
-  // dev.82: the arc's phase (status `phase`): the body, the endgame's step with its required entries, or closed out.
+  // dev.83: the arc's phase (status `phase`): the body, the endgame's step with its required entries, or closed out.
   const phase = s ? s.phase.kind === 'body' ? 'body' : s.phase.kind === 'closed-out' ? 'closed out' : `endgame ${s.phase.step}${s.phase.step === 'settling' ? '' : ` (${s.phase.required} required)`}` : '';
   const status = s ? line(ink('NOW ', 'muted'), ...badge(execution!.state === 'stopped' ? 'STOPPED' : execution!.state, execution!.state), ink('    PHASE ', 'muted'), ink(phase, s.phase.kind === 'endgame' ? 'accent' : 'strong'), ink('    EXECUTOR ', 'muted'), ...badge(s.run.owner.state), ink('    SUPERVISION ', 'muted'), ink(s.supervision.state, s.supervision.state !== 'live' && !['complete', 'refused'].includes(s.run.state) && s.needsUser.some((n) => n.blocking) ? 'fault' : 'strong'), ink('    HEARTBEAT ', 'muted'), ink(heartbeat))
     : line(ink('Waiting for an executor snapshot', 'wait'));

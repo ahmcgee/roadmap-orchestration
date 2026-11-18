@@ -1,4 +1,4 @@
-// dev.82: the endgame in the console, read from a real arc in the endgame (test/fixtures/endgame-arc.ts: real git, real
+// dev.83: the endgame in the console, read from a real arc in the endgame (test/fixtures/endgame-arc.ts: real git, real
 // lanes, the fake Claude for the review), through the observer as the console reads it: the shell's phase, the Endgame
 // view (exit checklist, worklist, fix log, landings, reviews, handover, episode history) and the Graph's Endgame group.
 import assert from 'node:assert/strict';
@@ -20,7 +20,7 @@ import { Observations } from './helpers/observations.ts';
 const T = { timeout: SCENARIO_TIMEOUT_MS };
 const read = (d: ArcDescriptor) => new Observations(absPath(d.hostDir), 'endgame', 'repo').read({ runDir: absPath(d.runDir), arc: arcId(d.arc) });
 
-describe('the endgame in the console (dev.82)', () => {
+describe('the endgame in the console (dev.83)', () => {
   test('console.endgame-held: an opened episode hands r1 over; the Graph draws it in the Endgame group, pending, not on hold', T, async () => {
     const e = await endgameArc();
     try {

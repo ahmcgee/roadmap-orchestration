@@ -152,12 +152,12 @@ export type Holistic = Readonly<{
   /** The obligations file (`roadmap/obligations-m3`); absent: no obligations. */
   obligations?: PlanPath;
   /**
-   * dev.82 (E3): the batch witness's merge count: a `batch` arc lane runs once this many publications landed since its last
+   * dev.83 (E3): the batch witness's merge count: a `batch` arc lane runs once this many publications landed since its last
    * observation (src/pipeline/batchlanes.ts `batchWitnessDue`); absent: `DEFAULT_BATCH_EVERY`.
    */
   batchEvery?: number;
 }>;
-/** dev.82 (E3): the default `holistic.batchEvery`. */
+/** dev.83 (E3): the default `holistic.batchEvery`. */
 export const DEFAULT_BATCH_EVERY = 5;
 /** The batch witness's merge count in force. */
 export const batchEveryOf = (plan: PlanM1): number => plan.holistic?.batchEvery ?? DEFAULT_BATCH_EVERY;
@@ -781,7 +781,7 @@ const knownDefect: Read<KnownDefect> = object((f) => ({
  */
 export function reservedUnitIdReason(id: UnitId): string | null {
   return /^batch-\d+$/.test(id) || id === 'jobs' || id === 'mutants' || id === 'endgame'
-    ? `unit id ${id} is reserved (batch-<n>, jobs and mutants name repair batches and job or mutant evidence; dev.82: endgame names the endgame's branch and worktree); choose another id`
+    ? `unit id ${id} is reserved (batch-<n>, jobs and mutants name repair batches and job or mutant evidence; dev.83: endgame names the endgame's branch and worktree); choose another id`
     : null;
 }
 

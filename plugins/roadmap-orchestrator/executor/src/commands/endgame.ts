@@ -1,4 +1,4 @@
-// The endgame commands (dev.82, WS-5; DESIGN-1.0.md §2.10): what the architect uses to finish an opened endgame episode's
+// The endgame commands (dev.83, WS-5; DESIGN-1.0.md §2.10): what the architect uses to finish an opened endgame episode's
 // worklist by hand on the endgame branch (src/endgame/open.ts), and `resume <unit>`'s release of a unit the endgame holds.
 //
 // - `roadmap endgame fix --closes <id>[,<id>...] [--commit <sha>] --note "<line>"`: the one way to record a fix. The commit

@@ -1,4 +1,4 @@
-// The diagnosis role eval (dev.82, E2): the production verifier prompt in diagnosis mode, its schema (DIAGNOSIS_SCHEMA) and
+// The diagnosis role eval (dev.83, E2): the production verifier prompt in diagnosis mode, its schema (DIAGNOSIS_SCHEMA) and
 // backend argv, over the dev set's generated repositories (dev.ts). Graded mechanically: the cause, the evidence citing the
 // estate dump, and a brief that proposes no production-code path. --dry-run renders and grades the reference answer for free;
 // --fake expected|code grades a canned answer without a call.

@@ -70,7 +70,7 @@ export type PublicationHolder = Extract<Holder, { type: 'publication' }>;
 export type DocsHolder = Extract<Holder, { type: 'docs' }>;
 export type JobHolder = Extract<Holder, { type: 'job' }>;
 export type BatchHolder = Extract<Holder, { type: 'batch' }>;
-/** dev.82 (WS-5): an endgame landing's slot holder (src/pipeline/integrate.ts `landEndgame`). */
+/** dev.83 (WS-5): an endgame landing's slot holder (src/pipeline/integrate.ts `landEndgame`). */
 export type EndgameHolder = Extract<Holder, { type: 'endgame' }>;
 /** The holders that reserve through a request (and so through the arbiter). */
 export type AcquiringHolder = StageHolder | PublicationHolder | DocsHolder | BatchHolder | JobHolder | EndgameHolder;

@@ -38,7 +38,7 @@
 //                revision was aborted, and its source re-evaluates).
 //   batch        (B2) a repair batch's slot (src/pipeline/integrate.ts): its batch ff published → left held for
 //                `finishBatch`; otherwise abandoned (`abandonBatch`: its job's checkouts removed, the slot released).
-//   endgame      (dev.82) an endgame landing's slot, likewise: published → left for `finishLanding`, else `abandonLanding`.
+//   endgame      (dev.83) an endgame landing's slot, likewise: published → left for `finishLanding`, else `abandonLanding`.
 import type { Holder, IntentOf, Parent } from '../core/events.ts';
 import { type ResourceInstance, type ResourceUnit, compareResourceUnits } from '../core/ids.ts';
 import type { Disposition, Reconciler } from '../core/interfaces.ts';
@@ -144,7 +144,7 @@ async function settleHolder(ctx: ResourceContext, holder: Exclude<Holder, SweepH
       if (batchHolderPublished(ctx.journal.view, holder)) return;
       return abandonBatch(ctx, holder);
     case 'endgame':
-      // dev.82 (WS-5): likewise an endgame landing's, until `finishLanding`.
+      // dev.83 (WS-5): likewise an endgame landing's, until `finishLanding`.
       if (landingPublished(ctx.journal.view, holder.job)) return;
       return abandonLanding(ctx, holder);
   }

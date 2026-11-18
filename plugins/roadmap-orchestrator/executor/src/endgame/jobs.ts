@@ -1,4 +1,4 @@
-// The endgame's jobs (dev.82, WS-5): what the scheduler's holistic slot runs for an opened episode, one at a time, each a
+// The endgame's jobs (dev.83, WS-5): what the scheduler's holistic slot runs for an opened episode, one at a time, each a
 // durable job `endgame-<n>` (`endgame-job-started` … `endgame-job-ended`; a started job without its end resumes as the
 // same job after a restart: a landing recovery abandoned lands again, a run runs again in a fresh checkout).
 //

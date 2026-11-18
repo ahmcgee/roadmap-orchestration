@@ -1,4 +1,4 @@
-// The endgame's handover (dev.82): what the architect needs to finish the worklist by hand, rendered once per opened episode
+// The endgame's handover (dev.83): what the architect needs to finish the worklist by hand, rendered once per opened episode
 // and kept by hash (src/endgame/open.ts). Agent-facing plain text:
 //   - the endgame branch, its base and worktree;
 //   - each worklist entry, required then optional, with its evidence paths;
@@ -26,6 +26,8 @@ function entryLine(e: WorklistEntry): string {
       return `finding ${e.finding} ${e.severity}${e.obligation === null ? '' : ` obligation ${e.obligation}`} evidence: ${e.evidence.length === 0 ? 'none' : e.evidence.join(', ')}`;
     case 'obligation':
       return `obligation ${e.obligation} not held on the integration head`;
+    case 'attestation':
+      return `obligation ${e.obligation}: external lane ${e.lane} has no attestation at the integration head; once CI has a result for the final head, submit \`roadmap witness ${e.obligation} --at <head> --result <pass|fail> --evidence <url|file>\` (the arc raises one \`external-witness-owed\` item naming the head when nothing else holds completion)`;
     case 'unit':
       return `unit ${e.unit}`;
     case 'polish-refused':

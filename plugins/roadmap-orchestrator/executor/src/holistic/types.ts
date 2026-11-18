@@ -176,7 +176,7 @@ export type Reporter = (typeof REPORTERS)[number];
 export type ArcLaneDef = LaneDef & Readonly<{ reporter: Reporter; witnessClass?: 'external'; testPaths?: readonly RepoPattern[] }>;
 
 /**
- * dev.82 (E3): an arc lane whose proof follows publication, never in the merge path: an external-class lane (attested by
+ * dev.83 (E3): an arc lane whose proof follows publication, never in the merge path: an external-class lane (attested by
  * the root, `roadmap witness`) or a `batch`-cadence one (the batch witness, src/pipeline/batchlanes.ts). A unit's required
  * witnesses, the candidate's held-claims brake and a docs publication's brake leave its obligations out.
  */
@@ -672,7 +672,7 @@ export type FindingRuledBy =
 export const FINDING_DISPOSITIONS = ['dismissed', 'deferred', 'accepted', 'released'] as const;
 export type FindingDisposition = (typeof FINDING_DISPOSITIONS)[number];
 /**
- * A `finding-transition`'s target. dev.82 (WS-5): owned or fixed-on-branch by an endgame fix (`endgame`, its `roadmap
+ * A `finding-transition`'s target. dev.83 (WS-5): owned or fixed-on-branch by an endgame fix (`endgame`, its `roadmap
  * endgame fix` command) rather than a unit: fixed on the endgame branch once recorded, resolved once a landing holds it.
  */
 export type FindingTo =
@@ -706,7 +706,7 @@ export const findingSource: Read<FindingSource> = tagged('type', {
   demo: object((f): FindingSource => ({ type: f.get('type', literal('demo')), sha: f.get('sha', shaR) })),
 });
 export const mutantRef: Read<MutantRef> = object((f) => ({ patchSha256: f.get('patchSha256', sha256R), lane: f.get('lane', (v, p) => laneId(v, p)) }));
-/** An owned or fixed-on-branch move's owner: a unit, or (dev.82) an endgame fix's command; exactly one. */
+/** An owned or fixed-on-branch move's owner: a unit, or (dev.83) an endgame fix's command; exactly one. */
 function ownerOf(f: Fields): Readonly<{ unit: UnitId }> | Readonly<{ endgame: CommandId }> {
   const endgame = f.optional('endgame', (v, p) => commandId(v, p));
   if (endgame === undefined) return { unit: f.get('unit', (v, p) => unitId(v, p)) };

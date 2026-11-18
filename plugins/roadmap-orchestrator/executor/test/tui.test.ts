@@ -1589,7 +1589,7 @@ test('supervision stays on one header line and is red only for an active run wit
   }
 });
 
-test('dev.82: the header names the arc\'s phase on the supervision line: the body, the endgame\'s step with its required entries, or closed out', () => {
+test('dev.83: the header names the arc\'s phase on the supervision line: the body, the endgame\'s step with its required entries, or closed out', () => {
   const d = observed();
   const phases = [
     [{ kind: 'body', planned: [], milestones: [] }, 'PHASE body'],

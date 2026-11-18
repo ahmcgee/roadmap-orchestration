@@ -1,4 +1,4 @@
-// dev.82 (WS-7): an endgame landing interrupted and recovered, over the real endgame arc (test/fixtures/endgame-arc.ts).
+// dev.83 (WS-7): an endgame landing interrupted and recovered, over the real endgame arc (test/fixtures/endgame-arc.ts).
 // The landing is the repair batch's publication with the endgame head as its candidate (src/pipeline/integrate.ts
 // `landEndgame`), so it is crashed where the batch's crash cells cross the ff (test/batch.test.ts: `ff.act-start`, before
 // the CAS; `ff.act-end`, after it) and after `endgame-landed` (`snapshot.act-end`, in `finishLanding`). The recovery engine
@@ -53,7 +53,7 @@ async function crashChild(label: string, d: ArcDescriptor): Promise<void> {
   assertFired(trigger);
 }
 
-describe('an interrupted endgame landing (dev.82)', () => {
+describe('an interrupted endgame landing (dev.83)', () => {
   for (const [label, expected] of Object.entries(CELLS)) {
     test(`endgame.land-crash.${label}: recovery ${expected.after === 'abandoned' ? 'abandons the landing (nothing moves) and the resumed job lands' : 'keeps the published head and the resumed job finishes the landing'}; endgame-landed is recorded once`, T, async () => {
       const setup = await endgameArc();
@@ -113,7 +113,7 @@ describe('an interrupted endgame landing (dev.82)', () => {
   }
 });
 
-describe('endgame job faults (dev.82)', () => {
+describe('endgame job faults (dev.83)', () => {
   test('endgame.fault-contained: a throw in an endgame or batch witness job holding only its own state ends it faulted (a non-blocking executor-fault item the holistic track waits on); one whose landing holds the slot crashes', T, async () => {
     const e = await endgameArc();
     try {

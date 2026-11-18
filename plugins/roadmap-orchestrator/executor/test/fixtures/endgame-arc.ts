@@ -1,4 +1,4 @@
-// dev.82: an arc in the endgame over real git, as the scheduler leaves it, shared by the endgame tests over a real arc
+// dev.83: an arc in the endgame over real git, as the scheduler leaves it, shared by the endgame tests over a real arc
 // (test/endgame-commands.test.ts, test/endgame-recovery.test.ts, test/deflake.test.ts), the console's Endgame view tests
 // (test/console-endgame.test.ts) and the landing's crash child (endgame-land-child.ts). The arc (`endgameArc`): u1 planned, F-1 a P1 the audit found, r1 admitted
 // to repair it, then u1 cut, so the arc is in the endgame with r1 held; the scheduler's entry and the open step

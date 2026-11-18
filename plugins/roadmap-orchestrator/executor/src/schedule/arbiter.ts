@@ -46,7 +46,7 @@ export type WaiterView = Readonly<{ holder: UnitAcquiringHolder; request: Resour
 
 /**
  * A job's holder that waits before every unit: a docs publication's slot, a repair batch's slot (M3 B2), a job's lanes, or
- * (dev.82) an endgame landing's slot.
+ * (dev.83) an endgame landing's slot.
  */
 export type FirstHolder = DocsHolder | BatchHolder | JobHolder | EndgameHolder;
 

@@ -1,4 +1,4 @@
-// The endgame's recorded fixes as the findings store reads them (dev.82, WS-5): each `endgame-fix` of every episode, landed
+// The endgame's recorded fixes as the findings store reads them (dev.83, WS-5): each `endgame-fix` of every episode, landed
 // once a landing of its episode (`endgame-landed`) holds its commit. src/holistic/findings.ts `targetOf` then moves a finding
 // the fix names to fixed-on-branch (owner the fix's command), and to resolved once landed.
 import type { JournalView } from '../core/interfaces.ts';

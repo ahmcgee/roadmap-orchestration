@@ -302,7 +302,7 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     assert.equal(third.ledger[0]!.repeat?.attempt, 2);
   });
 
-  test('redlane.suite-repeat (dev.82, E2): a lanes-stage fast suite lane repeats the unit\'s confirmed red as a spec lane does; its diff-base series and a candidate\'s never repeat', T, async () => {
+  test('redlane.suite-repeat (dev.83, E2): a lanes-stage fast suite lane repeats the unit\'s confirmed red as a spec lane does; its diff-base series and a candidate\'s never repeat', T, async () => {
     const counter = join(tmpDir('rev3-count'), 'n');
     const run = unitRun([seqLane('suite-broken', counter, ['SignInError: the directory refused the fixture account'])]);
     const defs = specLanes(run);

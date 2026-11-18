@@ -8,7 +8,7 @@ import { referenceCoverageReasons } from './report.ts';
 // Due (`polishDue`): the first walk, in log order, that ended `reported` with an applied proposal (its proposals less its
 // `dropped`, the last round's) carried by no unit of the plan and not refused. Each such proposal is refused
 // (`polish-refused{proposal, reasons}`, settled: never applied) when
-//   - the arc is in the endgame (dev.82, src/endgame/phase.ts): the refusal is an optional worklist entry;
+//   - the arc is in the endgame (dev.83, src/endgame/phase.ts): the refusal is an optional worklist entry;
 //   - it is not from its milestone's latest round (a later walk of the milestone ended as a round since);
 //   - its systems do not cover every milestone reference (src/walk/report.ts `coversReference`);
 //   - the admit path or the classifier refuses its unit admitted alone.

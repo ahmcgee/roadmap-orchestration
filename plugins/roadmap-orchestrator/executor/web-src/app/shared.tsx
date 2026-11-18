@@ -10,7 +10,7 @@ export async function get(path: string, signal?: AbortSignal): Promise<any> {
   return preparedRead(api, protocol, path, signal);
 }
 export const tabs = ['graph', 'timeline', 'activity', 'effort', 'resources', 'attention'] as const;
-/** dev.82: the Endgame view is a route of its own, linked from the header's phase track, not a tab. */
+/** dev.83: the Endgame view is a route of its own, linked from the header's phase track, not a tab. */
 export type Tab = typeof tabs[number] | 'endgame';
 const routes: readonly string[] = [...tabs, 'endgame'];
 export function route() {

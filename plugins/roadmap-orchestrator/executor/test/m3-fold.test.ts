@@ -112,7 +112,7 @@ describe('fold: divergences and digests (H11, H12)', () => {
 });
 
 describe('fold: an earlier release\'s admissions-closed, the holistic flag, completion', () => {
-  it('dev.82: admissions-closed (close-admissions removed) still reads and has no effect, once or twice', () => {
+  it('dev.83: admissions-closed (close-admissions removed) still reads and has no effect, once or twice', () => {
     const closed = fact({ kind: 'admissions-closed', command: CMD });
     const f = folded([planApplied(1), closed, fact({ kind: 'admissions-closed', command: CMD2 }), planApplied(2, {}, [{ type: 'unit-added', unit: 'u2' }])]);
     assert.deepEqual(f.holistic().endgame, []);

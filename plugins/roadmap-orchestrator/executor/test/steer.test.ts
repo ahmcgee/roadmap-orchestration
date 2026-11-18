@@ -9,7 +9,7 @@ import { unitId } from '../src/core/ids.ts';
 // the matrix row STEER, recovered by the recovery engine (src/recover/recover.ts).
 // The steer round is a fresh session, so it gets the handover (src/pipeline/handover.ts).
 // Named tests: steer.round-uncharged, steer.resume-vs-park, steer.never-judge, steer.rejections, steer.class,
-// steer.class-write-back, steer.class-architect-edit, steer.crash-cells, steer.window-spent (dev.82 E5c).
+// steer.class-write-back, steer.class-architect-edit, steer.crash-cells, steer.window-spent (dev.83 E5c).
 import assert from 'node:assert/strict';
 import { readFileSync,readdirSync,writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -269,7 +269,7 @@ describe('steer.resume-vs-park', () => {
   });
 });
 
-test('steer.window-spent (dev.82 E5c): a steer round its budget runs out on is `window-spent`, uncharged: what it left in the worktree is salvaged, verified and gated like a report, and the pass goes on', T, async () => {
+test('steer.window-spent (dev.83 E5c): a steer round its budget runs out on is `window-spent`, uncharged: what it left in the worktree is salvaged, verified and gated like a report, and the pass goes on', T, async () => {
   const comment = { 'src/mul.js': `// mul: kept as it is.\n${MUL['src/mul.js']}` };
   const d = setupArc({ steps: [...TO_PARK, codexSteer([{ type: 'dirty', files: comment }, { type: 'hang', ms: 3 * MIN_MS }]), gateStep({ decision: 'approve' })] });
   const r = contextFor(d);

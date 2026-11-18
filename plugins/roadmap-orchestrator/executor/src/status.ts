@@ -62,7 +62,7 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 // `needs-user/`; an item is acknowledged once the log holds its ack fact, as the executor reads it.
 //
 // M3 (§2.4 additions; the holistic keys are vacuous in an arc without the layer):
-//   run.state     in a holistic arc `complete` (dev.82: `draining` only for a stop's drain; `close-admissions` was removed)
+//   run.state     in a holistic arc `complete` (dev.83: `draining` only for a stop's drain; `close-admissions` was removed)
 //                 only while its `arc-completed` is active (A20), and `completion.unmet` names what the completion
 //                 predicate lacks now
 //   target        the obligations' cut line, the next milestone (R13: the future obligation with the fewest
@@ -116,7 +116,7 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 //                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
 //                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge
 //
-// dev.82 (src/status/endgame.ts; every arc):
+// dev.83 (src/status/endgame.ts; every arc):
 //   phase         the body (planned units open, milestones awaiting their checkpoint), the endgame's step with its
 //                 worklist counts and handover, or closed out; also in `status --summary`
 //   endgame       null before the first episode: the endgame branch, the worklist, the four exit conditions, the audited
@@ -592,9 +592,9 @@ export type Status = Readonly<{
   milestones: readonly MilestoneView[];
   /** dev.81 (A3): the CI ref (src/forge/ciref.ts); null before a start recorded a plan. */
   pushes: PushesView | null;
-  /** dev.82: where the arc is: the body, the endgame's step with its worklist counts and handover, or closed out (src/status/endgame.ts). */
+  /** dev.83: where the arc is: the body, the endgame's step with its worklist counts and handover, or closed out (src/status/endgame.ts). */
   phase: PhaseView;
-  /** dev.82: the endgame's branch, worklist, exit conditions, units taken over and episodes; null before the arc's first episode. */
+  /** dev.83: the endgame's branch, worklist, exit conditions, units taken over and episodes; null before the arc's first episode. */
   endgame: EndgameView | null;
 }>;
 
@@ -805,7 +805,7 @@ type Inputs = Readonly<{
   spec: SpecFactsOf;
   /** The derivation's clock (ms): what every elapsed time and bound is as of. */
   now: number;
-  /** dev.82: the units the endgame holds at admission (src/endgame/phase.ts `endgameHeld`). */
+  /** dev.83: the units the endgame holds at admission (src/endgame/phase.ts `endgameHeld`). */
   endgame: ReadonlySet<UnitId>;
 }>;
 
@@ -1418,7 +1418,7 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     case 'start':
       return { type: 'architect', command: null };
     case 'command':
-    // dev.82 (WS-5): the cut of the units an endgame fix closes is the architect's fix command, applied by code.
+    // dev.83 (WS-5): the cut of the units an endgame fix closes is the architect's fix command, applied by code.
     case 'endgame':
       return { type: 'architect', command: source.command };
     case 'executor':

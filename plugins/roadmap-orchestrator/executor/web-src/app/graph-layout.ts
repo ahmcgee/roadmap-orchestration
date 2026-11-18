@@ -14,7 +14,7 @@ export type Point = { x: number; y: number };
 /** A drawn group of units. A milestone band holds exactly its members and its gate; an outside group holds units of no
  * milestone: a milestone's design, repair or polish units beside its band, Hardening units where they sit in the flow
  * (just before the band whose work needs them, or after the last band), then each audit job's repairs, Deflake and
- * (dev.82) the Endgame: the units it took over, the arc's last group. */
+ * (dev.83) the Endgame: the units it took over, the arc's last group. */
 export type Band = { id: string; kind: 'milestone' | 'outside'; label: string; ids: string[]; x: number; y: number; width: number; height: number };
 /** A line-map station: one per milestone, then Hardening, each audit job, Deflake and the Endgame. A milestone's counts are membership
  * (console/milestones.ts), never placement; an outside station counts its own units. `frame` is what selecting it shows:

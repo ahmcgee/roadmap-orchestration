@@ -1,4 +1,4 @@
-// Explicit campaign audit request, coalesced durably with milestone and final triggers. dev.82: `--whole` reads the
+// Explicit campaign audit request, coalesced durably with milestone and final triggers. dev.83: `--whole` reads the
 // whole range from the arc's base; without it a pass reads only what no completed pass covered (src/holistic/audit.ts).
 import type { CommandId } from '../core/ids.ts';
 import type { Journal } from '../core/interfaces.ts';

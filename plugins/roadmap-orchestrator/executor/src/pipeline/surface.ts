@@ -36,15 +36,15 @@ export function diagnosisDue(view: JournalView, unit: UnitId): boolean {
   const counts = view.attemptCounts(unit);
   return counts.builds >= 8 || counts.judged >= 20;
 }
-/** The diagnosis source of the attempt counts (`diagnosisDue`); every diagnosis before dev.82 has it. */
+/** The diagnosis source of the attempt counts (`diagnosisDue`); every diagnosis before dev.83 has it. */
 export const ATTEMPTS_SOURCE = 'attempts:8-builds-or-20-judged';
-/** dev.82 (E2): the latest completed lanes outcomes a repeated red makes a diagnosis due after. */
+/** dev.83 (E2): the latest completed lanes outcomes a repeated red makes a diagnosis due after. */
 const REPEAT_RED_OUTCOMES: readonly string[] = ['red', 'regression', 'witnesses-missing'];
-/** dev.82 (E2): the source a repeated red of `lane` with failure signature `failure` triggers a diagnosis from. */
+/** dev.83 (E2): the source a repeated red of `lane` with failure signature `failure` triggers a diagnosis from. */
 export const repeatRedSource = (lane: LaneId, failure: Sha256Hex): string => `repeat-red:${lane}:${failure}`;
 
 /**
- * dev.82 (E2): the sources a diagnosis of the unit is due from now: the attempt counts (`diagnosisDue`), and each red lane of
+ * dev.83 (E2): the sources a diagnosis of the unit is due from now: the attempt counts (`diagnosisDue`), and each red lane of
  * its latest completed lanes attempt that repeated the unit's earlier red with the same signature (`LaneRecord.repeat`, a spec
  * lane's or a lanes-stage suite lane's) when that attempt ended red, regression or witnesses-missing.
  */
@@ -69,7 +69,7 @@ function triggered(view: JournalView, unit: UnitId): Readonly<{ all: ReadonlySet
   return { all, open };
 }
 
-/** dev.82 (E2): the due sources no diagnosis was triggered from yet: a diagnosis runs once per source. */
+/** dev.83 (E2): the due sources no diagnosis was triggered from yet: a diagnosis runs once per source. */
 export function diagnosisPending(ctx: StageContext, unit: PlanUnit, spec: SpecM1): readonly string[] {
   if (unit.review === 'never') return [];
   const done = triggered(ctx.journal.view, unit.id).all;
@@ -119,11 +119,11 @@ export function methodContext(ctx: StageContext, unit: PlanUnit, spec: SpecM1, t
 export function reviewItems(view: JournalView, unit: UnitId): readonly ReviewItem[] {
   return view.surfaceFacts().flatMap((f) => f.kind === 'review-completed' && f.unit === unit && f.mode === 'pre-build' ? f.items : []);
 }
-/** The diagnosis that moves the unit's remaining default builds to Claude: the attempt counts' (dev.82: never a repeated red's). */
+/** The diagnosis that moves the unit's remaining default builds to Claude: the attempt counts' (dev.83: never a repeated red's). */
 export const diagnosed = (view: JournalView, unit: UnitId): boolean => view.surfaceFacts().some((f) => f.kind === 'review-triggered' && f.unit === unit && f.marker === 'M4' && f.source === ATTEMPTS_SOURCE);
 
 /**
- * dev.82 (E2): how a build's diagnosis attempt closes: `diagnosed-external` when the unit's latest diagnosis put the cause
+ * dev.83 (E2): how a build's diagnosis attempt closes: `diagnosed-external` when the unit's latest diagnosis put the cause
  * outside the unit (base or environment) and no entry runs the build (a steer is the root's own direction, which the
  * diagnosis note informs), else `diagnosed`.
  */
@@ -134,7 +134,7 @@ export function diagnosisOutcome(view: JournalView, unit: UnitId): 'diagnosed' |
 }
 
 /**
- * dev.82 (E2): what the executor already knows about the failures a diagnosis of `trigger` explains (inputs.ts
+ * dev.83 (E2): what the executor already knows about the failures a diagnosis of `trigger` explains (inputs.ts
  * `DiagnosisEvidence`), from the unit's latest completed lanes attempt, the arc's park schedule, the plan and the flaky ledger.
  */
 export function diagnosisEvidence(ctx: StageContext, unit: PlanUnit, spec: SpecM1, trigger: readonly string[]): DiagnosisEvidence {
@@ -159,7 +159,7 @@ export function diagnosisEvidence(ctx: StageContext, unit: PlanUnit, spec: SpecM
 const NO_DIAGNOSIS = 'Independent review returned no usable answer; inspect prior build and lane evidence.';
 
 /**
- * An annotation never holds the unit, including a failed independent review. dev.82 (E2): a diagnosis runs once per source
+ * An annotation never holds the unit, including a failed independent review. dev.83 (E2): a diagnosis runs once per source
  * (`diagnosisPending`) and answers its own schema (`DIAGNOSIS_SCHEMA`): its brief is the note the next build receives, and its
  * cause is recorded for the attempt's outcome (`diagnosisOutcome`).
  */

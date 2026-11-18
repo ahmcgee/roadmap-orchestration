@@ -1,5 +1,5 @@
 // Eval path triggers: verifier covers the unit gate mode; pre-build, campaignAudit and diagnosis (the verifier's
-// diagnosis mode, dev.82) have small independent dev sets. Walkthrough and polish are experienceVerdict eval modes. Shared schemas,
+// diagnosis mode, dev.83) have small independent dev sets. Walkthrough and polish are experienceVerdict eval modes. Shared schemas,
 // routing, method modules and backend changes trigger the affected live-role evaluations.
 import { spawnSync } from 'node:child_process';
 import { matchesGlob } from 'node:path';
@@ -19,7 +19,7 @@ export const TRIGGERS: Readonly<Record<Exclude<EvalRole, 'gate'>, readonly strin
   ],
   'pre-build': ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/pipeline/stages.ts', 'evals/roles/surface/**', ...SHARED],
   campaignAudit: ['src/prompts/campaignAudit/**', 'src/prompts/method/**', 'src/holistic/audit.ts', 'evals/roles/surface/**', ...SHARED],
-  // dev.82 (E2): the verifier's diagnosis mode, its evidence block (surface.ts, stages.ts) and the repeated red it reads (lanes.ts).
+  // dev.83 (E2): the verifier's diagnosis mode, its evidence block (surface.ts, stages.ts) and the repeated red it reads (lanes.ts).
   diagnosis: ['src/prompts/verifier/**', 'src/prompts/method/**', 'src/pipeline/surface.ts', 'src/pipeline/stages.ts', 'src/pipeline/lanes.ts', 'evals/roles/diagnosis/**', ...SHARED],
 };
 

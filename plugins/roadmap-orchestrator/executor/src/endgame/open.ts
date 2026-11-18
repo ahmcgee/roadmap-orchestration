@@ -1,4 +1,4 @@
-// The endgame's steps over the arc as it stands (dev.82; src/endgame/phase.ts has the predicate): the phase with its step and
+// The endgame's steps over the arc as it stands (dev.83; src/endgame/phase.ts has the predicate): the phase with its step and
 // worklist now (`endgameNow`, what completion and status read), the open step (`openDue`, `openEndgame`) and its item.
 //
 // - **Open** (the scheduler's holistic job, once the episode settled: no unit running, no walk or audit due or running, and
@@ -16,7 +16,7 @@
 //   `closingSettled`'s; the scheduler runs them as the endgame's jobs (src/endgame/jobs.ts).
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ArcId, EnvId, ObligationId, Sha, Sha256Hex } from '../core/ids.ts';
+import type { ArcId, EnvId, LaneId, ObligationId, Sha, Sha256Hex } from '../core/ids.ts';
 import { parseOpId } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { durableMkdir, durableWrite } from '../core/fsx.ts';
@@ -70,8 +70,12 @@ export function endgameNow(ctx: Ctx, laneEnv: (lane: ArcLaneDef) => EnvId | null
   const episode = openEpisode(view);
   const head = integrationHeadNow(ctx);
   const notHeld: ObligationId[] = [];
-  for (const v of obligationVerdicts(ctx, head, laneEnv)) if (v.verdict === 'not-held') notHeld.push(v.obligation);
-  const list = worklist(view, plan, repairsOf, notHeld, episode);
+  const unattested: { obligation: ObligationId; lane: LaneId }[] = [];
+  for (const v of obligationVerdicts(ctx, head, laneEnv)) {
+    if (v.verdict === 'not-held') notHeld.push(v.obligation);
+    if (v.verdict === 'unattested') unattested.push({ obligation: v.obligation, lane: v.lane });
+  }
+  const list = worklist(view, plan, repairsOf, { notHeld, unattested }, episode);
   const tip = episode !== null && episode.opened !== null ? refTarget(ctx.repo, endgameBranch(plan.arc)) : null;
   const landed = tip !== null && isAncestor(ctx.repo, tip, head);
   return {
@@ -195,6 +199,8 @@ const describe = (e: WorklistEntry): string => {
       return `${e.finding} (${e.severity}${e.obligation === null ? '' : ` over ${e.obligation}`})`;
     case 'obligation':
       return `${e.obligation} not held on the integration head`;
+    case 'attestation':
+      return `${e.obligation} unattested on external lane ${e.lane}`;
     case 'unit':
       return `unit ${e.unit}`;
     case 'polish-refused':

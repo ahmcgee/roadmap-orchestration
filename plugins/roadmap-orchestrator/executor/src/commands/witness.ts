@@ -78,7 +78,7 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
 /**
  * The deliverer a pass at `at` latches through, or null: every deliverer retired with a published merge `at` contains;
  * the latch names the one whose merge published last (required.ts reads the latching unit's merge). The batch witness
- * (dev.82, src/pipeline/batchlanes.ts) latches by the same rule.
+ * (dev.83, src/pipeline/batchlanes.ts) latches by the same rule.
  */
 export function latchingUnit(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; repo: AbsPath }>, o: ObligationDef, at: Sha): UnitId | null {
   const view = ctx.journal.view;

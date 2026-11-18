@@ -21,7 +21,7 @@ import { externalVerdict } from '../holistic/external.ts';
 //
 // A lane that runs red goes through the red-lane protocol (redlane.ts): a host signature on a busy host
 // waits, holding nothing, for a clear host and reruns; a signature without that evidence is `blocked`; a spec lane's
-// (dev.82: or a lanes-stage suite lane's) red repeating the unit's confirmed earlier red (`repeatOf`) is red without a rerun; any other red gets one diagnostic
+// (dev.83: or a lanes-stage suite lane's) red repeating the unit's confirmed earlier red (`repeatOf`) is red without a rerun; any other red gets one diagnostic
 // rerun (red then green is `flaky`: dev.17, a flake recorded with the tree it was seen on, `observeFlake`, `flakeOn`; a
 // flake of the tip's is the flaky ledger's and forgiven, so the green rerun counts, unless the unit deflakes that lane or
 // the red ran on a saturated host; a flake on the unit's own commit is its red, dev.21, unless it stands as a tip flake;
@@ -316,7 +316,7 @@ export function laneEnv(ctx: StageContext, unit: UnitId, lane: LaneDef, held: re
 }
 
 /**
- * A lane's resources (dev.82, E4: its `exclusive` pools whole), explicit/inherited environments and calibrated `@cpu`
+ * A lane's resources (dev.83, E4: its `exclusive` pools whole), explicit/inherited environments and calibrated `@cpu`
  * tokens; null when nothing. dev.81 (C4):
  * `fastSuite`, a lanes-stage suite lane (the fast suite or its base check, `runLaneSeries`), which also takes one
  * `@fast-suite` token, so the plan's `capacity.fastSuites` caps how many run at once (a candidate's suite is not one).
@@ -715,7 +715,7 @@ function reusedRecord(ctx: StageContext, from: Readonly<{ parent: Parent; inv: I
 }
 
 /**
- * The evidence root of the unit's own series of `set` in stage attempt `parent`: the spec series', or (dev.82, E2) the lanes
+ * The evidence root of the unit's own series of `set` in stage attempt `parent`: the spec series', or (dev.83, E2) the lanes
  * stage's fast suite at the salvage SHA (never its diff-base series, `_base`).
  */
 const unitSeriesRoot = (runDir: AbsPath, parent: StageParent, set: LaneSet): AbsPath => (set === 'spec' ? specSeriesRoot(runDir, parent) : fastSuiteRoot(runDir, parent, 'suite'));
@@ -723,7 +723,7 @@ const unitSeriesRoot = (runDir: AbsPath, parent: StageParent, set: LaneSet): Abs
 /**
  * The unit's lane `lane` of `set` across its series other than `exclude`, in log order: each series that ran it (every
  * spawn of it done; a series a crash cut short mid-lane is unknown and left out) and each that reused it. A spec lane's
- * series are the unit's spec series; a suite lane's (dev.82, E2) are its lanes stages' fast suites at the salvage SHA. A
+ * series are the unit's spec series; a suite lane's (dev.83, E2) are its lanes stages' fast suites at the salvage SHA. A
  * reuse names no series root, so every lanes-stage suite reuse counts, a diff-base series' included: a reused pass ends a
  * repeat's search early, never late.
  */
@@ -840,7 +840,7 @@ export function passedOnInput(ctx: StageContext, lane: LaneDef, now: LaneNow): b
  * red, or itself a repeat), with the same failure signature, and its spawn's lane rev and environment equal to `now`'s.
  * The caller passes only a specific signature, and a suite lane's only from the lanes stage's fast suite at the salvage SHA; the
  * host's state is `classifyRed`'s.
- * dev.82 (E2): a lanes-stage suite lane repeats as a spec lane does, and a repeat makes the unit's diagnosis due
+ * dev.83 (E2): a lanes-stage suite lane repeats as a spec lane does, and a repeat makes the unit's diagnosis due
  * (surface.ts `diagnosisSources`).
  */
 function repeatOf(ctx: StageContext, parent: StageParent, lane: LaneDef, now: LaneIdentity, failure: FailureSignature['failure'], set: LaneSet): RepeatOf | null {
@@ -1063,7 +1063,7 @@ export async function runLaneSeries(
 
   // dev.81 (C4): a lanes-stage suite series' runs each take a `@fast-suite` token (`laneRequest`).
   const fastSuite = set === 'suite' && parent.stage === 'lanes';
-  // The series whose reds may repeat the unit's earlier ones: a spec series (as before dev.82), or (dev.82, E2) the lanes
+  // The series whose reds may repeat the unit's earlier ones: a spec series (as before dev.83), or (dev.83, E2) the lanes
   // stage's fast suite at the salvage SHA (not its diff-base series, nor a candidate's).
   const unitSeries = set === 'spec' || (fastSuite && root === unitSeriesRoot(ctx.runDir, parent, set));
   const attempt = async (lane: LaneDef, which: Which, identity: LaneIdentity, files: readonly RepoPath[] | null, verifyRuns: number | null = null): Promise<Attempt> => {
@@ -1602,7 +1602,7 @@ export async function removeJobCheckouts(ctx: ResourceContext, job: JobId): Prom
 
 /**
  * A job's kinds of journey series: the baseline's, an audit's lanes, a re-witness (an audit's or a checkpoint's), a batch
- * point's (dev.17); dev.82, an endgame landing's on its head and on the tip alone, and an endgame run's. No kind is a
+ * point's (dev.17); dev.83, an endgame landing's on its head and on the tip alone, and an endgame run's. No kind is a
  * prefix of another (`jobSeriesCheckout` counts by prefix).
  */
 export type JobSeriesKind = 'checkout' | 'lanes' | 'rewitness' | 'batch' | 'probe' | 'head' | 'tip' | 'run';
