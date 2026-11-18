@@ -65,13 +65,15 @@ function checkpointed(view: JournalView, plan: PlanM1, m: Milestone, audited: Re
   return milestoneProgress(view, plan, m, []).kind === 'abandoned';
 }
 
+/** Whether the arc runs the holistic layer: only such an arc reaches the endgame (see the header). */
+const holisticArc = (view: JournalView, plan: PlanM1): boolean => view.holistic().on && plan.holistic !== undefined;
+
 /** The phase's kind now (see the header). */
 export function phaseKind(view: JournalView, plan: PlanM1, repairsOf: RepairsOf): PhaseKind {
   const planned = plan.units.filter((u) => !TERMINAL.includes(view.unit(u.id).status) && !findingRaised(view, u, repairsOf(u))).map((u) => u.id);
   const audited = auditedMilestones(view.holistic());
   const milestones = milestonesOf(plan).filter((m) => !checkpointed(view, plan, m, audited)).map((m) => m.id);
-  const holistic = view.holistic().on && plan.holistic !== undefined;
-  return holistic && planned.length === 0 && milestones.length === 0 ? { kind: 'endgame' } : { kind: 'body', planned, milestones };
+  return holisticArc(view, plan) && planned.length === 0 && milestones.length === 0 ? { kind: 'endgame' } : { kind: 'body', planned, milestones };
 }
 
 /** The open episode (entered, not left), or null. */
@@ -87,7 +89,8 @@ export function openEpisode(view: JournalView): EndgameEpisode | null {
  * admit) is the way back into the pipeline and runs. Empty in the body.
  */
 export function endgameHeld(view: JournalView, plan: PlanM1, repairsOf: RepairsOf): ReadonlySet<UnitId> {
-  if (phaseKind(view, plan, repairsOf).kind !== 'endgame') return new Set();
+  // Without the layer the arc never leaves the body: no spec in force is read.
+  if (!holisticArc(view, plan) || phaseKind(view, plan, repairsOf).kind !== 'endgame') return new Set();
   // Before the scheduler writes the episode's entry, every unit is one the entry will find.
   const open = openEpisode(view);
   const entered = open?.seq ?? Number.POSITIVE_INFINITY;
