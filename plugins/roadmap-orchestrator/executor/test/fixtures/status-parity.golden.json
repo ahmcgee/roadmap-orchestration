@@ -508,7 +508,19 @@
       "ciHead": null,
       "pending": "<sha>",
       "settleBy": null
-    }
+    },
+    "phase": {
+      "kind": "body",
+      "planned": [
+        "u1",
+        "u2",
+        "u3"
+      ],
+      "milestones": [
+        "MS-1"
+      ]
+    },
+    "endgame": null
   },
   "summary": {
     "arc": "<arc>",
@@ -518,6 +530,17 @@
       "state": "none"
     },
     "planRev": 1,
+    "phase": {
+      "kind": "body",
+      "planned": [
+        "u1",
+        "u2",
+        "u3"
+      ],
+      "milestones": [
+        "MS-1"
+      ]
+    },
     "progress": {
       "total": 3,
       "merged": 0,
