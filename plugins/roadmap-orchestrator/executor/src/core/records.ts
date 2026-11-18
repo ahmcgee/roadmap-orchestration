@@ -1840,10 +1840,13 @@ export const NEEDS_USER_REASONS = [
   'revision-notice', 'waste-finding',
   // dev.44: automatic origin publication failed or diverged. Informational; the arc continues.
   'push-failed', 'push-diverged', 'walkthrough-mcp',
+  // dev.82, non-blocking: everything the arc needs to complete holds but external lanes' attestations at the head (the
+  // close-out done or nothing to change); the item names the obligations and the `roadmap witness --at <head>` to submit.
+  'external-witness-owed',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
-  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged', 'walkthrough-mcp',
+  'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged', 'walkthrough-mcp', 'external-witness-owed',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

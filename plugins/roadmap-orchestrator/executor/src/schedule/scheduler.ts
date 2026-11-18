@@ -114,10 +114,12 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
 // no outstanding audit range or owed trigger; the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
-// change; every non-exempt obligation held on the head. With only quiescence, the close-out and the obligations left,
+// change; every non-exempt obligation held on the head (an external lane's by the root's attestation at the head's lane
+// inputs, `obligationsOn`). With only quiescence, the close-out and the obligations left,
 // the close-out settlement runs first (src/holistic/closeout.ts `settleCloseOut`: P2 finding debt and P3 releases). The close-out (A8, `publishCloseOut`) runs once all but
 // itself and the obligations hold (its lanes witness every arc lane on the head it publishes, or on the head alone
-// when nothing changes). Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
+// when nothing changes), and only while it can change something: its publication due, or a local lane unwitnessed on
+// the head. dev.82: with only external attestations missing, the arc waits and raises one `external-witness-owed`. Then, for every arc, `arc-completed{planRev, head, highWater, units}` (once while active) and
 // the terminal snapshot (parent `arc`, G8), so `gc` can seal it, and the run ends `complete`. The completion stays active while the plan rev and the
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import { cpuBasis } from '../core/cpu.ts';
@@ -131,7 +133,7 @@ import { crashPoint } from '../core/crash.ts';
 import { type IntentOf,type Parent,probeTargetKey } from '../core/events.ts';
 import { atomicJson,canonicalJson } from '../core/fsx.ts';
 import {
-type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
+type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId,type LaneId,type NeedsUserId,type ObligationId,type OpId,type ResourceName,type Sha,type UnitId,arcId,commandId,findingId,
 invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId,
 } from '../core/ids.ts';
 import type { Containment,Journal,JournalView } from '../core/interfaces.ts';
@@ -151,7 +153,8 @@ import { coverageOf } from '../holistic/coverage.ts';
 import { isActive,raiseFindingItems } from '../holistic/findings.ts';
 import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
-import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
+import { externalVerdict } from '../holistic/external.ts';
+import { type ArcLaneDef,type ObligationDef,type ObservationVerdict,isExempt,laneRevOf } from '../holistic/types.ts';
 import { beat } from '../host/heartbeat.ts';
 import { PressureTicks,readHostCpuAt,HOST_SCHEDSTAT,readHostMemory } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
@@ -471,31 +474,49 @@ export function dischargingObservation(
   return dischargingObservationReader(ctx, store, laneEnv)(tree, lane);
 }
 
+type HeadContext = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath }>;
+
 /**
- * Every non-exempt obligation (split parents through their children) on `head`: held, one not observed there, or one not
- * held. §2.8's reuse rule, strict: a witness counts only from the observation of its lane on the head's tree at the lane's
- * revision in the executor's environment (`laneEnv`: all four keys, its record's hash checked); another environment's
- * observation does not discharge.
+ * Each non-exempt witnessed obligation (split parents through their children) with its lane and its verdict on `head`,
+ * null when nothing witnesses it there. A local lane's verdict is §2.8's reuse rule, strict: the observation of its lane
+ * on the head's tree at the lane's revision in the executor's environment (`laneEnv`: all four keys, its record's hash
+ * checked); another environment's observation does not discharge. An external lane's (`witnessClass: external`, never run
+ * here) is the root's latest attestation at the head's lane inputs (`externalVerdict`, as `status`, the audit and the
+ * gate's views read it); a `witnessed` fact on that lane never counts.
  */
-export function obligationsOn(
-  ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath }>, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null,
-): 'discharged' | 'unobserved' | 'not-held' {
+function headVerdicts(ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null): readonly Readonly<{ o: ObligationDef; lane: ArcLaneDef; verdict: ObservationVerdict | null }>[] {
   const { obligations } = holisticInForce(ctx);
-  if (obligations === null) return 'discharged';
+  if (obligations === null) return [];
   const tree = revParse(ctx.repo, `${head}^{tree}`);
   const store = observations(ctx);
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const observationOn = dischargingObservationReader(ctx, store, laneEnv);
-  let unobserved = false;
-  for (const o of obligations.obligations) {
-    if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
+  return obligations.obligations.flatMap((o) => {
+    if (isExempt(o) || o.state.type === 'split' || o.witness === null) return [];
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
+    if (lane.witnessClass === 'external') return [{ o, lane, verdict: externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o) }];
     const found = observationOn(tree, lane);
-    if (found === null) unobserved = true;
-    else if (witnessVerdict(found.record, o.witness) !== 'held') return 'not-held';
-  }
-  return unobserved ? 'unobserved' : 'discharged';
+    return [{ o, lane, verdict: found === null ? null : witnessVerdict(found.record, o.witness) }];
+  });
+}
+
+/**
+ * Every obligation on `head` (`headVerdicts`): all held (`discharged`); one not held; else one unwitnessed on a local lane
+ * (`unobserved`: a close-out's lanes on the head can observe it); else only external lanes unattested (`unattested`: only
+ * the root's `roadmap witness` can).
+ */
+export function obligationsOn(ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null): 'discharged' | 'unobserved' | 'unattested' | 'not-held' {
+  const verdicts = headVerdicts(ctx, head, laneEnv);
+  if (verdicts.some((v) => v.verdict === 'not-held')) return 'not-held';
+  const missing = verdicts.filter((v) => v.verdict === null);
+  if (missing.length === 0) return 'discharged';
+  return missing.every((v) => v.lane.witnessClass === 'external') ? 'unattested' : 'unobserved';
+}
+
+/** The obligations on `head` whose external lane has no attestation at its inputs there, with their lanes. */
+export function unattestedOn(ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null): readonly Readonly<{ obligation: ObligationId; lane: LaneId }>[] {
+  return headVerdicts(ctx, head, laneEnv).flatMap((v) => (v.verdict === null && v.lane.witnessClass === 'external' ? [{ obligation: v.o.id, lane: v.lane.id }] : []));
 }
 
 /** A8: the close-out at `head`: done (the head is the latest close-out's commit), nothing to change, or due. */
@@ -1213,6 +1234,24 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     trackRetrying('deflake', 'deflake', async () => ((await applyDeflake(h.revision)).kind === 'applied' ? PROGRESS : WAIT));
   };
 
+  /**
+   * dev.82: the close-out done (or nothing to change) and only external lanes unattested on `head`: one non-blocking
+   * `external-witness-owed` item per head, naming the obligations and lanes and the attestation that discharges them.
+   */
+  const raiseExternalOwed = (head: Sha): void => {
+    const marker = `External witness owed at ${head}:`;
+    if (view().needsUser().some((n) => { const item = readNeedsUser(runDir, n.id); return item?.reason === 'external-witness-owed' && item.summary.startsWith(marker); })) return;
+    const owed = unattestedOn(x.stage, head, h.laneEnv);
+    if (owed.length === 0) throw new Error(`the external witness owed at ${head} names no unattested obligation`);
+    const names = owed.map((o) => `${o.obligation} (lane ${o.lane})`).join(', ');
+    raiseNeedsUser(journal, runDir, {
+      blocking: false, subject: { type: 'arc' }, reason: 'external-witness-owed',
+      summary: `${marker} ${names} ${owed.length === 1 ? 'has' : 'have'} no attestation at the head's lane inputs. Everything else the arc needs to complete holds; it waits for the attestations and does not rerun the close-out.`,
+      recommendation: `When CI has a result for ${head}, attest each: ${owed.map((o) => `\`roadmap witness ${o.obligation} --at ${head} --result <pass|fail> --evidence <url|file>\``).join('; ')}. A pass for every one completes the arc on its next idle tick; a fail reopens its deliverers.`,
+      options: [], evidence: [absPath(join(runDir, 'events.jsonl'))],
+    }, { type: 'arc' });
+  };
+
   /** A8: the close-out publication (or, with nothing to change, every arc lane on the head), as a job. */
   const startCloseOut = (): void => {
     if (!due('closeout')) return;
@@ -1261,21 +1300,26 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const ended = async (blocking: readonly BlockingItem[]): Promise<SchedulerEnd | null> => {
     // One observation store for this call's reads of the obligations on the head: only a `witnessed` fact changes it, and
     // nothing here writes one.
-    const next = withObservationReads((): 'none' | 'complete' | 'close-out' => {
+    const next = withObservationReads((): 'none' | 'complete' | 'close-out' | 'unattested' => {
       const blockers: CompletionBlocker[] = [];
       // A failing clause outside the close-out's leaves nothing to settle, end or close out: the rest are not evaluated.
       for (const b of failingClauses(h, { blocking: blocking.length, pending: 0 })) {
         if (!(CLOSE_OUT_BLOCKERS as readonly string[]).includes(b)) return 'none';
         blockers.push(b);
       }
-      const notHeld = (): boolean => obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv) === 'not-held';
+      const onHead = obligationsOn(x.stage, integrationHeadNow(x.stage), h.laneEnv);
       // Run 10 (E, F): nothing but the close-out left, the close-out settlement first (unanswered requests declined, open
       // P2/P3 findings with no obligation banked); what it wrote is read again next time round.
-      if (view().holistic().on && !notHeld() && settleCloseOut(h.revision)) return 'none';
+      if (view().holistic().on && onHead !== 'not-held' && settleCloseOut(h.revision)) return 'none';
       if (blockers.length === 0) return 'complete';
-      return blockers.every((b) => b === 'close-out' || b === 'obligations-not-discharged') && !notHeld() ? 'close-out' : 'none';
+      if (onHead === 'not-held' || !blockers.every((b) => b === 'close-out' || b === 'obligations-not-discharged')) return 'none';
+      // dev.82: the close-out runs only when it can change something: its publication is due, or a local lane is
+      // unwitnessed on the head (its lanes run there). With it done (or nothing to change) and only external lanes
+      // unattested, only the root's attestation can discharge them: the arc waits and says so, never rerunning it.
+      return blockers.includes('close-out') || onHead === 'unobserved' ? 'close-out' : 'unattested';
     });
     if (next === 'close-out') startCloseOut();
+    if (next === 'unattested') raiseExternalOwed(integrationHeadNow(x.stage));
     if (next !== 'complete') return null;
     if (view().holistic().completion?.active !== true) {
       promoteFinal(x.stage, integrationHeadNow(x.stage));

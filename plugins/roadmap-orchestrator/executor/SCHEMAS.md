@@ -1803,3 +1803,23 @@ The field figure was atlas2 m6: 11.63 MB, of which work rows were 6.09 MB (13,99
 1.16 MB and two receipts' `verified` 2.42 MB. The fixture measurement (real-shape fixture, 81 KB, 33.7% work) did not
 reproduce it. `test/status-wire.test.ts` checks that a retired unit's printed bytes stay flat as its runs grow. The summary
 is unchanged.
+
+### dev.82: completion over external witness lanes
+
+- The completion predicate's obligation clause (`obligations-not-discharged`, `src/schedule/scheduler.ts`
+  `obligationsOn`) reads each non-exempt witnessed obligation's verdict on the integration head from one reader
+  (`headVerdicts`). A local lane's comes from its discharging observation (§2.8 strict reuse, unchanged). An external
+  lane's (`witnessClass: external`) comes from the root's latest `external-witness` at the head's lane inputs
+  (`externalVerdict`, the reader `status`, the audit and the gate's obligation views already used). A `witnessed` fact
+  on an external lane (a mutant run, say) never discharges. No attestation, or a fail, at the head leaves the clause
+  failing. `obligationsOn` returns `discharged | not-held | unobserved | unattested`: `unobserved` means a local lane
+  lacks an observation, `unattested` means only external lanes lack one.
+- The close-out starts only when it can change something: its publication is due (`close-out`), or a local lane is
+  `unobserved` on the head. With the close-out done (or nothing to change) and the obligations only `unattested`, the
+  scheduler starts nothing. It raises one non-blocking `external-witness-owed` needs-user (subject `arc`, parent `arc`)
+  per head. Its summary starts `External witness owed at <head>:` and names each obligation and lane; its
+  recommendation gives the `roadmap witness <I-n> --at <head>` to submit. The arc completes on the idle tick after
+  every pass lands.
+- `NeedsUserReason` adds `external-witness-owed` (appended; in `NON_BLOCKING_M3_REASONS`). No record changes shape and
+  `SCHEMA_VERSION` is unchanged. A dev.81 arc stuck in the close-out loop (every unit settled, close-out done at H,
+  passes attested at H) completes on its first idle pass on dev.82 with no new job.

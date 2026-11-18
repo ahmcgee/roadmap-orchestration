@@ -300,10 +300,18 @@ the same container are reachable.
   or `systems` match. A pass latches a future obligation once every deliverer's published merge is in that commit. A
   fail reopens each delivering unit (its lineage head) with a brief listing the publications between the
   obligation's last pass (or the arc start) and the attested commit: the suspects.
+- Completion reads an external-lane obligation the same way `status` and the audit do: from the latest attestation
+  at the head's lane inputs. A pass discharges it. No attestation, or a fail, leaves `obligations-not-discharged`.
 
 ## 7. Close out and check in
 
 Final audit, witnesses, batch lanes, document publication and snapshots settle before completion.
+
+The close-out runs only when it can change something: its document publication is due, or a local arc lane has no
+observation on the head (its lanes run there, with the batch lanes fresh). Once it is done, or there is nothing to
+change, and only external lanes lack an attestation at the head, the arc starts nothing more. It raises one
+non-blocking `external-witness-owed` item per head that names each obligation and lane and gives the
+`roadmap witness <I-n> --at <head>` to submit. The arc completes on the next idle tick after every pass lands.
 
 A revision publishes rendered documents only where they differ from the integration tip, and never `constraints.md`
 alone: a ruling-only revision takes effect at once through the ledger in force but makes no docs commit (each one
