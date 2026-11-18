@@ -1,7 +1,7 @@
 // Observe real records the previous release (dev.58) wrote with the new detached service; no runtime-schema bump or migration.
 // dev.59 pass 3 added derived status fields (units[].lineageAttempts, carries, carriedBy; milestones[].members, withdrawn,
-// live, merged), and dev.81 more (units[].origin, repairs; top-level pushes; the built-in host.pools['@fast-suite']): the
-// status is identical to the previous release's apart from them, and they read their documented values.
+// live, merged), dev.81 more (units[].origin, repairs; top-level pushes; the built-in host.pools['@fast-suite']), and
+// dev.83 top-level phase and endgame: the status is identical to the previous release's apart from them, and they read their documented values.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -21,17 +21,18 @@ const PREVIOUS_REF = 'a789d43d';
 const DEV59_UNIT = ['lineageAttempts', 'carries', 'carriedBy', 'origin', 'repairs'] as const;
 const DEV59_MILESTONE = ['members', 'withdrawn', 'live', 'merged'] as const;
 type Json = Record<string, unknown>;
-/** `status` without dev.59's (and dev.81's) additive fields, those fields per unit and milestone, and dev.81's top-level ones. */
-function splitDev59(status: Json): Readonly<{ rest: Json; units: readonly Json[]; milestones: readonly Json[]; dev81: Json }> {
+/** `status` without dev.59's (and later) additive fields, those fields per unit and milestone, and dev.81's and dev.83's top-level ones. */
+function splitDev59(status: Json): Readonly<{ rest: Json; units: readonly Json[]; milestones: readonly Json[]; dev81: Json; dev83: Json }> {
   const pick = (o: Json, keys: readonly string[]): readonly [Json, Json] =>
     [Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k))), Object.fromEntries(keys.map((k) => [k, o[k]]))];
   const units = (status['units'] as Json[]).map((u) => pick(u, DEV59_UNIT));
   const milestones = (status['milestones'] as Json[]).map((m) => pick(m, DEV59_MILESTONE));
-  const { pushes, host, ...others } = status; const { pools, ...hostRest } = host as Json;
+  const { pushes, phase, endgame, host, ...others } = status; const { pools, ...hostRest } = host as Json;
   const { '@fast-suite': fastSuite, ...poolsRest } = pools as Json;
   return {
     rest: { ...others, host: { ...hostRest, pools: poolsRest }, units: units.map(([r]) => r), milestones: milestones.map(([r]) => r) },
     units: units.map(([, a]) => a), milestones: milestones.map(([, a]) => a), dev81: { pushes, fastSuite },
+    dev83: { phase, endgame },
   };
 }
 function contents(root: string): Record<string, string> {
@@ -65,6 +66,9 @@ test('dev.58 records are adopted read-only by the console with identical canonic
   const prior = splitDev59(portableStatus(wireStatus(f.full as never)) as Json);
   assert.deepEqual(now.rest, prior.rest);
   assert.deepEqual(prior.dev81, { pushes: undefined, fastSuite: undefined });
+  assert.deepEqual(prior.dev83, { phase: undefined, endgame: undefined });
+  // dev.83: no episode has opened, so the arc is in its body, with every planned unit and milestone, and has no endgame view.
+  assert.deepEqual(now.dev83, { phase: { kind: 'body', planned: ['u1', 'u2', 'u3'], milestones: ['MS-1'] }, endgame: null });
   // dev.81: nothing was ever pushed, so the CI ref has no head and the local integration head is pending with no settle timer;
   // the fixture's plan sets no capacity.fastSuites, so the built-in pool is the host default, idle and clean.
   const { readHostFingerprint } = await import('../../src/host/sample.ts');
