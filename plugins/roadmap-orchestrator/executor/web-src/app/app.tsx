@@ -71,8 +71,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
   return <Clock.Provider value={clock}><div className="shell">
     <a className="skip" href="#content" onClick={ev=>{ev.preventDefault();document.getElementById('content')?.focus();}}>Skip to content</a>
     <header className="arc-bar">
-      <ArcIdentity arc={arc} shell={p} zone={zone}/>
-      {p&&arc&&<PhaseTrack arc={arc} phase={p.phase}/>}
+      <div className="arc-lead"><ArcIdentity arc={arc} shell={p} zone={zone}/>{p&&arc&&<PhaseTrack arc={arc} phase={p.phase}/>}</div>
       {p&&<><span className="arc-state">{stateWords(p.lifecycle.state)}</span>{day!==null&&<span className="arc-day">day {Math.floor(day)}</span>}{!p.lifecycle.endedAt&&store?.metadata?.lastEventAt&&<span className="arc-last"><Time at={store.metadata.lastEventAt} prefix="Last activity "/></span>}</>}
       <div className="progress-group"><div className="progress-strip" aria-label={p?`${counts.passed??0} of ${total} units merged`:'Unit progress not recorded'}>{(['passed','active','held','failed','pending','withdrawn'] as Signal[]).map(state=>counts[state]?<span key={state} className={`progress-${state}`} style={{width:`${counts[state]!/Math.max(1,total??1)*100}%`}} title={`${counts[state]} ${state}`}/>:null)}</div><span className="progress-count">{p&&<>{counts.passed??0}/{total}<span> merged</span></>}</span></div>
       {p&&<span className="recorded-spend" title="Recorded spend">{money(p.spend.costUsd)}</span>}

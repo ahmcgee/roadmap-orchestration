@@ -12,7 +12,8 @@ const requestWords: Record<string, string> = {land: 'Landing', review: 'Review',
 export const stepWords = (p: ShellPhase): string => p.kind === 'body' ? 'Body' : p.kind === 'closed-out' ? 'Closed out'
   : p.step === 'settling' ? 'Endgame: settling' : p.step === 'open' ? 'Endgame: open' : 'Endgame: closing';
 
-/** What the phase is waiting on, in words: in the body what holds the endgame off, in the endgame what is left. */
+/** What the phase is waiting on, in words: in the body what holds the endgame off, in the endgame what is left. The
+ * header's title and accessible label, and the Endgame view; the header itself shows `phaseBrief`. */
 export function phaseDetail(p: ShellPhase): string {
   if (p.kind === 'body') {
     const parts = [p.planned ? `${pluralise(p.planned, 'planned unit')} open` : '', p.milestones ? `${pluralise(p.milestones, 'milestone')} awaiting ${p.milestones === 1 ? 'its' : 'their'} checkpoint` : ''].filter(Boolean);
@@ -23,12 +24,26 @@ export function phaseDetail(p: ShellPhase): string {
   return p.required ? `${pluralise(p.required, 'required entry', 'required entries')} left` : p.step === 'closing' ? 'Review, audit and witnesses before close-out' : 'Fixes waiting to land';
 }
 
-/** The header's phase track: Body, Endgame, Closed out, with the current one marked and named. */
+/** The header's phase, compact and complete: the station's name and a short phrase that never needs an ellipsis, so the
+ * phase track never takes width from the progress strip. Null once closed out. */
+export function phaseBrief(p: ShellPhase): {step: string; brief: string | null} {
+  if (p.kind === 'body') {
+    const parts = [p.planned ? pluralise(p.planned, 'unit') : '', p.milestones ? pluralise(p.milestones, 'milestone') : ''].filter(Boolean);
+    return {step: 'Body', brief: parts.length ? `${parts.join(', ')} to go` : 'all settled'};
+  }
+  if (p.kind === 'closed-out') return {step: 'Closed out', brief: null};
+  const left = p.required ? `${p.required} required left` : p.step === 'open' ? 'fixes to land' : null;
+  return {step: 'Endgame', brief: left ? `${p.step} · ${left}` : p.step};
+}
+
+/** The header's phase track: Body, Endgame, Closed out, with the current one marked and named; the full sentence is its
+ * title and accessible label. */
 export function PhaseTrack({arc, phase}: {arc: string; phase: ShellPhase}) {
   const at = phase.kind === 'body' ? 0 : phase.kind === 'endgame' ? 1 : 2;
   const steps = ['Body', 'Endgame', 'Closed out'];
+  const {step, brief} = phaseBrief(phase);
   const track = <span className="phase-steps" aria-hidden="true">{steps.map((s, i) => <span key={s} className="phase-step" data-at={i === at ? 'current' : i < at ? 'past' : 'next'}/>)}</span>;
-  const words = <span className="phase-words"><strong>{stepWords(phase)}</strong><span>{phaseDetail(phase)}</span></span>;
+  const words = <span className="phase-words"><strong>{step}</strong>{brief !== null && <span>{brief}</span>}</span>;
   const label = `Arc phase: ${stepWords(phase)}. ${phaseDetail(phase)}.`;
   return phase.episodes > 0
     ? <a className="phase-track" href={link(arc, 'endgame')} aria-label={`${label} Open the endgame`} aria-current={route().tab === 'endgame' ? 'page' : undefined} title={label}>{track}{words}</a>
