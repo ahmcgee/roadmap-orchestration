@@ -60,13 +60,16 @@ export function milestoneReasons(e: Envelope, membership = milestoneMembership(e
  *                    `walk-started`, or a campaign audit's `stage-outcome`), each `I-n` through the findings naming it
  *   audit            origin `repair` resolving to no one milestone: the job that raised its latest finding (`audit-N`, `walk-N`)
  *   hardening        everything else: planned work in no milestone, and a repair no job raised
+ *   endgame          (dev.83) a unit the endgame took over (status `endgame.units`: held and handed over, released by
+ *                    `resume`, or closed by a fix), or one whose lineage root it took over, whatever raised it; it
+ *                    wins over the kinds above
  * Order: the milestone-attached groups in plan order (design, then repair, then polish), Hardening, each audit job newest
- * first, Deflake.
+ * first, Deflake, then the Endgame, the arc's last group.
  */
-export type OutsideGroup = OutsideGroupOf<'design' | 'milestone-repair' | 'polish', {milestone: string}> | OutsideGroupOf<'audit', {job: string}> | OutsideGroupOf<'hardening' | 'deflake', {}>;
+export type OutsideGroup = OutsideGroupOf<'design' | 'milestone-repair' | 'polish', {milestone: string}> | OutsideGroupOf<'audit', {job: string}> | OutsideGroupOf<'hardening' | 'deflake' | 'endgame', {}>;
 type OutsideGroupOf<K extends string, X> = {kind: K; id: string; label: string; ids: string[]} & X;
 type StatusLine = Envelope['data']['display']['status']['units'][number];
-type GroupKey = {kind: 'design' | 'milestone-repair' | 'polish'; milestone: string} | {kind: 'audit'; job: string; seq: number} | {kind: 'hardening' | 'deflake'};
+type GroupKey = {kind: 'design' | 'milestone-repair' | 'polish'; milestone: string} | {kind: 'audit'; job: string; seq: number} | {kind: 'hardening' | 'deflake' | 'endgame'};
 export function outsideGroups(e: Envelope, membership: Membership): OutsideGroup[] {
   const s = e.data.display.status, plan = e.data.plan, lines = new Map(s.units.map(u => [String(u.unit), u]));
   const planUnits = new Map((plan?.units ?? []).map(u => [String(u.id), u]));
@@ -91,6 +94,7 @@ export function outsideGroups(e: Envelope, membership: Membership): OutsideGroup
     const latest = found.filter(f => f.job !== null).sort((a, b) => b.seq - a.seq)[0];
     return latest === undefined ? {kind: 'hardening'} : {kind: 'audit', job: latest.job!, seq: latest.seq};
   };
+  const endgame = new Set((s.endgame?.units ?? []).map(u => String(u.unit)));
   const keyOf = (root: string): GroupKey => {
     const line = lines.get(root)!;
     if (line.origin === 'deflake') return {kind: 'deflake'};
@@ -100,7 +104,7 @@ export function outsideGroups(e: Envelope, membership: Membership): OutsideGroup
   };
   const groups = new Map<string, {key: GroupKey; ids: string[]}>();
   for (const id of membership.none.ids) {
-    const key = keyOf(rootOf(id)), gid = key.kind === 'audit' ? `audit:${key.job}` : 'milestone' in key ? `${key.kind}:${key.milestone}` : key.kind;
+    const key: GroupKey = endgame.has(id) || endgame.has(rootOf(id)) ? {kind: 'endgame'} : keyOf(rootOf(id)), gid = key.kind === 'audit' ? `audit:${key.job}` : 'milestone' in key ? `${key.kind}:${key.milestone}` : key.kind;
     const g = groups.get(gid) ?? {key, ids: []};
     if (key.kind === 'audit' && g.key.kind === 'audit' && key.seq > g.key.seq) g.key = key;
     g.ids.push(id); groups.set(gid, g);
@@ -116,6 +120,8 @@ export function outsideGroups(e: Envelope, membership: Membership): OutsideGroup
   for (const g of audits) out.push({kind: 'audit', id: g.id, label: g.job, job: g.job, ids: g.ids});
   const deflake = groups.get('deflake');
   if (deflake) out.push({kind: 'deflake', id: 'deflake', label: 'Deflake', ids: deflake.ids});
+  const last = groups.get('endgame');
+  if (last) out.push({kind: 'endgame', id: 'endgame', label: 'Endgame', ids: last.ids});
   if (out.reduce((n, g) => n + g.ids.length, 0) !== membership.none.ids.length) throw new Error('a unit of no milestone fell outside every Graph group');
   return out;
 }

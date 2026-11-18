@@ -13,7 +13,7 @@ type ResourceInstance,
 type ResourceName,type RoutingRev,type RulingId,type SeatRev,type Sha,type Sha256Hex,type SpecRev,type SystemName,type UnitId,type WitnessItemId,arcId,clauseId,
 commandId,divergenceId,edgeId,findingId,
 buildSessionNameOf,idsAscending,
-implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,needsUserId,
+implementerSessionId,invocationIdOf,jobIdOf,judgmentSessionId,laneId,type MilestoneId,milestoneId,needsUserId,
 obligationId,opIdOf,parseInvocationId,planRev,
 
 resourceInstance,resourceName,routingRev,rulingId,seatRev,sha,sha256,specRev,
@@ -910,14 +910,14 @@ export type LaneEnv = Readonly<{ set: Readonly<Record<string, string>>; pass: re
  * lanes stage; `unit` at the lanes stage; `candidate` on the candidate merge in the integration slot (and, a suite lane of
  * a lower cadence, there too); `batch` never in the merge path: at the publication retiring a milestone's last unit,
  * before its walk, at a no-milestone holistic arc's cadence audits, and always at the close-out. A spec lane is `build`,
- * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check) or `candidate`; a suite lane any (`batch` only in
- * a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
+ * `unit` or `candidate`; an arc lane `build` (the builder runs it as its witness check), `candidate` or (dev.83) `batch` (proof after
+ * merge at the batch witness, src/pipeline/batchlanes.ts); a suite lane any (`batch` only in a holistic arc, the plan reader). `fast`/`estate` (`tier`) is the dev.16 form, read through `laneCadenceDefault`.
  */
 export type LaneKind = 'spec' | 'suite' | 'arc';
 export const LANE_CADENCES = ['build', 'unit', 'candidate', 'batch'] as const;
 export type LaneCadence = (typeof LANE_CADENCES)[number];
 /** The cadences each kind of lane may declare. */
-export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit', 'candidate'], suite: LANE_CADENCES, arc: ['build', 'candidate'] };
+export const KIND_CADENCES: { readonly [K in LaneKind]: readonly LaneCadence[] } = { spec: ['build', 'unit', 'candidate'], suite: LANE_CADENCES, arc: ['build', 'candidate', 'batch'] };
 /** Whether a lane of cadence `c` runs at or before the point of cadence `at` (the ladder). */
 export const cadenceAtOrBefore = (c: LaneCadence, at: LaneCadence): boolean => LANE_CADENCES.indexOf(c) <= LANE_CADENCES.indexOf(at);
 
@@ -989,6 +989,12 @@ export type LaneDef = Readonly<{
    * docs-only change never carries its earlier pass over: it runs again (src/pipeline/docsonly.ts). Absent: it does not.
    */
   readsComments?: true;
+  /**
+   * dev.83 (E4): pools among `resources` the lane holds whole, every instance or none (src/resources/pool.ts): it mutates a
+   * shared estate, so it runs alone against the pool's readers (one instance each) and other mutators. Non-empty and unique
+   * when present; each a declared pool (`exclusiveProblems`). Absent: none.
+   */
+  exclusive?: readonly ResourceName[];
 }>;
 
 export const laneEnv: Read<LaneEnv> = object((f) => {
@@ -1044,7 +1050,13 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
   const noRerunPatterns = f.optional('noRerunPatterns', arrayOf(str, { nonEmpty: true }));
   const environment = f.optional('environment', resource);
   const readsComments = f.optional('readsComments', literal(true));
+  const exclusive = f.optional('exclusive', arrayOf(resource, { nonEmpty: true }));
   assertUnique(out.resources, (r) => r, `${f.path}.resources`);
+  if (exclusive !== undefined) {
+    assertUnique(exclusive, (r) => r, `${f.path}.exclusive`);
+    const unleased = exclusive.filter((r) => !out.resources.includes(r));
+    if (unleased.length > 0) throw new SchemaError(`${f.path}.exclusive`, 'resources of this lane', unleased);
+  }
   if (systems !== undefined) assertUnique(systems, (s) => s, `${f.path}.systems`);
   if (testArgv !== undefined && testArgv.filter((a) => a === TEST_FILES_TOKEN).length !== 1) {
     throw new SchemaError(`${f.path}.testArgv`, `one element exactly ${TEST_FILES_TOKEN}`, testArgv);
@@ -1064,6 +1076,7 @@ function laneFields(f: Fields, kind: LaneKind | null): LaneDef {
     ...(stoch === undefined ? {} : { stochastic: stoch }), ...(environment === undefined ? {} : { environment }),
     ...(readsComments === undefined ? {} : { readsComments }),
     ...(noRerunPatterns === undefined ? {} : { noRerunPatterns }),
+    ...(exclusive === undefined ? {} : { exclusive }),
   };
 }
 /** A lane declared as `kind` (see `laneFields`). */
@@ -1641,9 +1654,15 @@ export type CommandBody =
    * (`RERUN_CAUSES`). Scope {u}.
    */
   | Readonly<{ type: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string }>
-  /** Request a fresh whole-campaign audit. */
-  | Readonly<{ type: 'audit' }>
-  /** `roadmap close-admissions` (M3): latch `draining`. Scope ∅. */
+  /**
+   * `roadmap audit [--whole]`: request a campaign audit. dev.83: it reads what no completed pass covered under the vision in
+   * force; `whole` (absent on commands written before it: false) reads the whole range from the arc's base again.
+   */
+  | Readonly<{ type: 'audit'; whole?: true }>
+  /**
+   * `roadmap close-admissions` (M3), removed in dev.83 (the endgame replaces it): kept so an earlier release's command file still
+   * reads; applying one is rejected (src/commands/apply.ts). Scope ∅.
+   */
   | Readonly<{ type: 'close-admissions' }>
   /**
    * `roadmap demo up|down|hold|release` (dev.13): the owner's act on the demo (src/demo/promote.ts). `hold` freezes promotion,
@@ -1658,7 +1677,47 @@ export type CommandBody =
    */
   | Readonly<{ type: 'withdraw'; command: CommandId }>
   /** `roadmap push` (dev.81, A3): the last pushed CI head counts as settled, so the CI ref advances now. Control, scope ∅. */
-  | Readonly<{ type: 'push' }>;
+  | Readonly<{ type: 'push' }>
+  /**
+   * `roadmap endgame fix|run|land|checkpoint|review` (dev.83, WS-5; src/commands/endgame.ts): a recorded fix, or a request the
+   * scheduler serves (src/endgame/jobs.ts). Scope: a fix that closes units, those units; anything else ∅.
+   */
+  | Readonly<{ type: 'endgame'; act: EndgameAct }>;
+
+/** dev.83 (WS-5): what an endgame fix closes: a finding (`F-<n>`), an obligation (`I-<n>`) or a unit (any other id). */
+export type EndgameRef = FindingId | ObligationId | UnitId;
+export const endgameRef: Read<EndgameRef> = (v, p) => (typeof v === 'string' && v.startsWith('F-') ? findingId(v, p) : typeof v === 'string' && v.startsWith('I-') ? obligationId(v, p) : unitId(v, p));
+/** The units among what an endgame fix closes. */
+export const endgameUnits = (closes: readonly EndgameRef[]): readonly UnitId[] => closes.filter((r): r is UnitId => !r.startsWith('F-') && !r.startsWith('I-'));
+/**
+ * dev.83 (WS-5): what an endgame command asks of the scheduler: land the endgame head, review the endgame's range now, run
+ * lanes (ascending) at the endgame head, or one more walk round of a milestone at the integration head (served by the walk
+ * itself, src/walk/milestones.ts: no endgame job).
+ */
+export type EndgameRequest =
+  | Readonly<{ type: 'land' }>
+  | Readonly<{ type: 'review' }>
+  | Readonly<{ type: 'run'; lanes: readonly LaneId[] }>
+  | Readonly<{ type: 'checkpoint'; milestone: MilestoneId }>;
+export const endgameRequest: Read<EndgameRequest> = tagged('type', {
+  land: object((f): EndgameRequest => ({ type: f.get('type', literal('land')) })),
+  review: object((f): EndgameRequest => ({ type: f.get('type', literal('review')) })),
+  run: object((f): EndgameRequest => ({ type: f.get('type', literal('run')), lanes: f.get('lanes', sortedBy((v, p) => laneId(v, p), (l) => l, { nonEmpty: true })) })),
+  checkpoint: object((f): EndgameRequest => ({ type: f.get('type', literal('checkpoint')), milestone: f.get('milestone', (v, p) => milestoneId(v, p)) })),
+});
+/**
+ * dev.83 (WS-5): an endgame command's act. A fix: what it `closes` (each once), its `commit` on the endgame branch after the
+ * episode's base (the CLI resolves the branch's head when `--commit` is absent), its one-line `note`.
+ */
+export type EndgameAct = Readonly<{ type: 'fix'; closes: readonly EndgameRef[]; commit: Sha; note: string }> | EndgameRequest;
+const endgameAct: Read<EndgameAct> = (value, path) => {
+  if (new Fields(value, path).get('type', str) !== 'fix') return endgameRequest(value, path);
+  return object((f): EndgameAct => {
+    const closes = f.get('closes', arrayOf(endgameRef, { nonEmpty: true }));
+    assertUnique(closes, (r) => r, `${f.path}.closes`);
+    return { type: f.get('type', literal('fix')), closes, commit: f.get('commit', (v, p) => sha(v, p)), note: f.get('note', nonBlank) };
+  })(value, path);
+};
 
 /** dev.59: why the root says a lanes red is not the tree's (`roadmap rerun --cause`): the estate it runs against, or the infrastructure. */
 export const RERUN_CAUSES = ['estate', 'infra'] as const;
@@ -1750,13 +1809,15 @@ export const commandBody: Read<CommandBody> = tagged('type', {
     type: f.get('type', literal('rerun')), unit: f.get('unit', unit), attempt: f.get('attempt', positive), lane: f.get('lane', (v, p) => laneId(v, p)),
     cause: f.get('cause', oneOf(RERUN_CAUSES)), evidence: f.get('evidence', nonBlank),
   })),
-  audit: object((f): CommandBody => ({
-    type: f.get('type', literal('audit')),
-  })),
+  audit: object((f): CommandBody => {
+    const whole = f.optional('whole', literal(true));
+    return { type: f.get('type', literal('audit')), ...(whole === undefined ? {} : { whole }) };
+  }),
   'close-admissions': object((f): CommandBody => ({ type: f.get('type', literal('close-admissions')) })),
   demo: object((f): CommandBody => ({ type: f.get('type', literal('demo')), act: f.get('act', oneOf(DEMO_ACTS)) })),
   withdraw: object((f): CommandBody => ({ type: f.get('type', literal('withdraw')), command: f.get('command', cmdId) })),
   push: object((f): CommandBody => ({ type: f.get('type', literal('push')) })),
+  endgame: object((f): CommandBody => ({ type: f.get('type', literal('endgame')), act: f.get('act', endgameAct) })),
 });
 
 export const commandFile: Read<CommandFile> = object((f) => ({
@@ -1807,7 +1868,7 @@ export const NEEDS_USER_REASONS = [
   // repeat park on one target.
   'park-escalated', 'env-blocked',
   // M3, blocking: a must-hold obligation not held at the baseline (A6); a parked owner's P1 at the park deadline;
-  // a new P1 or P2 while draining; a steer's park; a mutant not reproduced; an owner-only act an audit
+  // a new P1 or P2 while draining (no longer raised since dev.83, `close-admissions` removed; kept so an old item reads); a steer's park; a mutant not reproduced; an owner-only act an audit
   // requested (A16); a second design park on one lineage (OR-Q1).
   'obligation-baseline', 'finding-p1-escalated', 'new-finding-draining', 'steered', 'not-reproduced', 'owner-request', 'respec-second',
   // dev.59, blocking: a red during a root-ordered lanes rerun (`roadmap rerun`): the root's claim did not hold.
@@ -1843,10 +1904,15 @@ export const NEEDS_USER_REASONS = [
   // dev.82, non-blocking: everything the arc needs to complete holds but external lanes' attestations at the head (the
   // close-out done or nothing to change); the item names the obligations and the `roadmap witness --at <head>` to submit.
   'external-witness-owed',
+  // dev.83 (E2), blocking: a unit's diagnosis put its repeated failure's cause outside the unit (pre-build `diagnosed-external`).
+  'diagnosed-external',
+  // dev.83, non-blocking: the endgame opened (src/endgame/open.ts): its worklist, branch, worktree and handover for the architect.
+  'endgame',
 ] as const;
 /** The reasons from M3 on raised non-blocking; every other one is raised blocking. */
 export const NON_BLOCKING_M3_REASONS = [
   'executor-fault', 'deflake-parked', 'flake-recurring', 'apply-dropped',  'revision-notice', 'waste-finding', 'push-failed', 'push-diverged', 'walkthrough-mcp', 'external-witness-owed',
+  'endgame',
 ] as const satisfies readonly NeedsUserReason[];
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number];
 

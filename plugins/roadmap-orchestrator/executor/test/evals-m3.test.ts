@@ -238,7 +238,7 @@ test('evals-m3.setup-valid: setup lays out a valid holistic corpus arc whose wit
   assert.equal(steps.filter((s) => s.unit === undefined).length, 2, 'the one start smokes Claude and Codex');
   assert.equal(steps.filter((s) => s.unit !== undefined && !/^(audit|ckpt|review|flow)-/.test(s.unit)).length, 12, 'three calls for each of four units');
   assert.equal(steps.filter((s) => s.unit?.startsWith('review-') === true).length, 1, 'one pack review call (the corpus arc\'s, before the first admission)');
-  assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 2, 'one requested campaign audit and final coverage');
+  assert.equal(steps.filter((s) => s.unit?.startsWith('audit-') === true).length, 3, 'one requested campaign audit, the endgame\'s final audit with the P1 active, and the final audit again on the repair\'s head');
   assert.equal(steps.filter((s) => s.unit?.startsWith('ckpt-') === true).length, 0, 'no checkpoint seat');
 });
 

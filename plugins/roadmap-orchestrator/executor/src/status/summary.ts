@@ -33,6 +33,8 @@ export function summarize(s: StatusCore, events: readonly Event[], plan: PlanM1 
   for (const u of s.units) states[u.state] = (states[u.state] ?? 0) + 1;
   return {
     arc: s.arc, state: s.run.state, stop: s.run.stop, supervision: s.supervision, planRev: s.plan?.rev ?? null,
+    // dev.83: the body (what holds the endgame off), the endgame's step with its worklist counts and handover, or closed out.
+    phase: s.phase,
     progress: { total: s.units.length, merged: s.units.filter((u) => u.state === 'merged').length, states,
       held: s.nowTrue.length, remaining: s.notYetTrue.length },
     spend: { costUsd: totalUsd, expectedUsd: expected?.arcUsd ?? null,

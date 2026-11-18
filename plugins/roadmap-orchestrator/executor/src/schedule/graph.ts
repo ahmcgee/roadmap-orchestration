@@ -4,8 +4,11 @@
 // that activate only after preparation); `effectiveDependency` resolves one edge at run time, where an edge
 // moves to the head only once the head's preparation recorded an outcome. Arc feedback 2026-10-15: `holdCycle`, the
 // cycle of approved repairs each held at its candidate by a finding another of them owns (src/schedule/scheduler.ts).
+// dev.83 (E5b): `joinedCoRepairers`, two direct repairers of one finding joined through `after`, which never batch: the
+// classifier refuses them, and the scheduler raises an adopted plan's as a blocking plan-defect.
 import { type FindingId, type UnitId, canonicalIds } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
+import type { RepairRef } from '../core/records.ts';
 import type { PlanUnit } from '../input/plan.ts';
 
 export type GraphUnit = Pick<PlanUnit, 'id' | 'after' | 'reenters'>;
@@ -83,6 +86,59 @@ export function findCycle(graph: ReadonlyMap<UnitId, readonly UnitId[]>): readon
 export function holdCycle(blocked: ReadonlyMap<UnitId, Readonly<{ finding: FindingId; owner: UnitId }>>): readonly FindingId[] | null {
   const cycle = findCycle(new Map([...blocked].map(([u, b]) => [u, [b.owner]])));
   return cycle === null ? null : canonicalIds(cycle.slice(0, -1).map((u) => blocked.get(u)!.finding));
+}
+
+/** dev.83 (E5b): two direct repairers of one finding, `path` from the dependent (first) to its dependency (last). */
+export type CoRepairEdge = Readonly<{ finding: FindingId; path: readonly UnitId[] }>;
+
+/**
+ * dev.83 (E5b): the co-repairers joined through `after`. Each approved direct repairer of a finding is held at its
+ * candidate until every other one waits there (R7), so a co-repairer that depends on another (transitively, over
+ * `graph`'s edges through `open` units) waits on a merge that never comes. `repairers`: each finding's live direct
+ * repairers. Each joined pair once, by its shortest dependency path.
+ */
+export function coRepairEdges(graph: ReadonlyMap<UnitId, readonly UnitId[]>, repairers: ReadonlyMap<FindingId, readonly UnitId[]>, open: (u: UnitId) => boolean): readonly CoRepairEdge[] {
+  const out: CoRepairEdge[] = [];
+  for (const [finding, units] of [...repairers].sort(([a], [b]) => a.localeCompare(b))) {
+    const co = new Set(units);
+    for (const from of [...co].sort()) {
+      const via = new Map<UnitId, UnitId>();
+      const queue: UnitId[] = [from];
+      for (let at = queue.shift(); at !== undefined; at = queue.shift()) {
+        for (const d of graph.get(at) ?? []) {
+          if (d === from || via.has(d) || !open(d)) continue;
+          via.set(d, at);
+          if (co.has(d)) {
+            const path = [d];
+            for (let p = at; p !== from; p = via.get(p)!) path.unshift(p);
+            out.push({ finding, path: [from, ...path] });
+          } else queue.push(d);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * dev.83 (E5b): `coRepairEdges` over `units` (a plan's): the live repairers are the units neither cut nor terminal nor
+ * published, by the findings `repairsOf` names (obligation repairs never batch).
+ */
+export function joinedCoRepairers(view: JournalView, units: readonly PlanUnit[], repairsOf: (u: PlanUnit) => readonly RepairRef[]): readonly CoRepairEdge[] {
+  const published = new Set(view.publications().map((p) => p.unit));
+  const open = new Set(units.filter((u) => u.cut === undefined && !published.has(u.id) && !['retired', 'cut', 'superseded'].includes(view.unit(u.id).status)).map((u) => u.id));
+  const repairers = new Map<FindingId, UnitId[]>();
+  for (const u of units) {
+    if (!open.has(u.id)) continue;
+    for (const r of repairsOf(u)) if (r.startsWith('F-')) repairers.set(r as FindingId, [...repairers.get(r as FindingId) ?? [], u.id]);
+  }
+  return coRepairEdges(effectiveGraph(units), new Map([...repairers].filter(([, us]) => us.length > 1)), (u) => open.has(u));
+}
+
+/** dev.83 (E5b): one joined pair in a sentence. */
+export function coRepairText(e: CoRepairEdge): string {
+  return `${e.path[0]} and ${e.path.at(-1)} both repair ${e.finding} directly, and ${e.path[0]} depends on ${e.path.at(-1)} through \`after\` (${e.path.join(' → ')}): `
+    + `${e.path.at(-1)} is held at its candidate until ${e.path[0]} waits there too, which waits on its merge`;
 }
 
 /**

@@ -5,8 +5,9 @@ import { systemName } from '../src/core/ids.ts';
 // approved, its candidate held for its compare → the judge keeps one and drops another (cut `polish-dropped`), code drops
 // the one whose diff leaves the reference untouched → the kept tweak lands → round 2 sees it and the milestone settles at
 // the bound), polish.classify (the classifier's polish rows), checkpoint.walk-trigger (a walk with an unweighed finding is
-// a checkpoint trigger whose session reads the walk's evidence; one with nothing new is none), and the polish and compare
-// crash cells (polish.crash.<label>, compare.crash.<label>).
+// a checkpoint trigger whose session reads the walk's evidence; one with nothing new is none), polish.endgame-refused
+// (dev.83: in the endgame a proposal is refused, no unit admitted), and the polish and compare crash cells
+// (polish.crash.<label>, compare.crash.<label>).
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -14,7 +15,10 @@ import { describe, test } from 'node:test';
 import type { Fact } from '../src/core/events.ts';
 import type { UnitId } from '../src/core/ids.ts';
 import { readJournal } from '../src/core/log.ts';
-import { evaluateRevision } from '../src/commands/apply.ts';
+import { applyCommand, evaluateRevision } from '../src/commands/apply.ts';
+import { submitCommand, terminalReceipt } from '../src/commands/queue.ts';
+import { repairsReader } from '../src/endgame/open.ts';
+import { phaseKind } from '../src/endgame/phase.ts';
 import { inForceFiles, requirePlanInForce, revisionInForce } from '../src/input/inforce.ts';
 import { milestonesOf, parsePlan } from '../src/input/plan.ts';
 import { repairUnits } from '../src/pipeline/reproduce.ts';
@@ -24,6 +28,7 @@ import type { Gate } from '../src/pipeline/unit.ts';
 import { holisticContexts } from '../src/schedule/scheduler.ts';
 import { compareEvidenceDir, runCompare, tweakOf } from '../src/walk/compare.ts';
 import { milestoneProgress } from '../src/walk/milestones.ts';
+import { validateWalkthroughOutput } from '../src/prompts/schemas.ts';
 import { applyPolish } from '../src/walk/polish.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { assertFired, writeTrigger } from './helpers/crash.ts';
@@ -32,7 +37,8 @@ import { git, tmpDir } from './helpers/repo.ts';
 import { type Step, readCalls } from './helpers/scenario.ts';
 import { moduleFiles, unitSteps } from './fixtures/audit-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { type ArcRun, appendSteps, contextFor } from './fixtures/unit-common.ts';
+import { wired } from './fixtures/sched-m3-common.ts';
+import { type ArcRun, appendSteps, applyBody, contextFor } from './fixtures/unit-common.ts';
 import { ACTING_ARGV, KEEP_FILES, milestoneJson, polishSteps, proposal, unitInForce, walkAnswer, walkArc, walkContext, walkStep } from './fixtures/walk-common.ts';
 import { COMPARE_JOB, POLISH_REVISION, crashCells } from './matrix.ts';
 
@@ -108,6 +114,46 @@ test('polish.system-coverage: admission rechecks every reference, refusing missi
       assert.match(reason, unmapped ? /reference extra maps to no system/ : /reference extra requires systems other/);
       assert.equal(r.journal.view.planApplied()!.rev, 1, 'no revision admitted a partial reference cover');
     } finally { r.journal.close(); }
+  }
+});
+
+test('polish.endgame-refused: in the endgame (dev.83) a walk\'s admissible proposal is refused for the endgame alone; no polish unit is admitted', T, async () => {
+  const d = walkArc({ steps: unitSteps('u1', moduleFiles('mul', '*')) });
+  const r = contextFor(d);
+  try {
+    // u1 (MS-1's member) merged and the other planned units cut, MS-1 walked as a round and its milestone audit completed:
+    // the endgame.
+    assert.deepEqual(await run(r, 'u1', () => Promise.resolve(true)), { kind: 'merged' });
+    const plan = JSON.parse(readFileSync(d.planPath, 'utf8')) as Json & { units: Json[] };
+    writeFileSync(d.planPath, JSON.stringify({ ...plan, units: plan.units.map((u) => (u['id'] === 'u1' ? u : { ...u, cut: { reason: 'the endgame test needs no more planned work' } })) }));
+    const file = submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d));
+    await applyCommand(wired(r).commands, file);
+    assert.equal(terminalReceipt(r.ctx.runDir, file.id)?.state, 'applied', JSON.stringify(terminalReceipt(r.ctx.runDir, file.id)));
+    // The proposal as a walk records it: its spec read off the walkthrough's answer.
+    const proposed = validateWalkthroughOutput(walkAnswer({ polish: [proposal(d, 'tw-late', 'A tweak the last round proposed.')] })).polish[0]!;
+    const at = git(d.repo, 'rev-parse', 'main');
+    r.journal.fact({ kind: 'walk-started', job: 'walk-1' as never, milestone: 'MS-1' as never, round: 1, sha: at as never, ports: {} });
+    r.journal.fact({ kind: 'polish-proposed', id: 'X-1' as never, job: 'walk-1' as never, milestone: 'MS-1' as never,
+      journey: 'J-1' as never, evidence: ['/kept/shot.png'], text: proposed.text,
+      unit: proposed.unit });
+    r.journal.fact({ kind: 'walk-ended', job: 'walk-1' as never, outcome: 'reported', findings: [], proposals: ['X-1' as never], dropped: [] });
+    const applied = r.journal.view.planApplied()!;
+    r.journal.fact({
+      kind: 'audit-started', job: 'audit-1' as never, triggers: [{ type: 'milestone', milestone: 'MS-1' as never }], generation: 1, lenses: ['invariants'], integrationSha: at as never,
+      planRev: applied.rev, ledgerSha256: null, obligationsSha256: null, visionSha256: applied.visionSha256, owners: [], priorFindings: [], highWater: 1, diffBudget: 24000,
+    } as never);
+    r.journal.fact({ kind: 'audit-ended', job: 'audit-1' as never, refused: [], covered: [], findings: [], suppressed: 0, outcome: 'completed' } as never);
+    assert.equal(phaseKind(r.journal.view, planOf(r), repairsReader(polishContext(r).h)).kind, 'endgame');
+
+    assert.deepEqual(await ticking(r, applyPolish), { kind: 'applied', admitted: [], refused: ['X-1'] });
+    const [refusal] = factsOf(r, 'polish-refused');
+    assert.equal(refusal!.reasons.length, 1, `the endgame is the only reason: ${refusal!.reasons.join('; ')}`);
+    assert.match(refusal!.reasons[0]!, /endgame/);
+    assert.equal(r.journal.view.planApplied()!.rev, applied.rev, 'no revision admitted a polish unit');
+    assert.equal(planOf(r).units.some((u) => u.origin === 'polish'), false);
+    assert.deepEqual(await ticking(r, applyPolish), { kind: 'none' }, 'the refused proposal is settled');
+  } finally {
+    r.journal.close();
   }
 });
 

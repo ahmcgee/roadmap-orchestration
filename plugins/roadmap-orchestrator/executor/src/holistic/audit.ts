@@ -13,7 +13,7 @@ import { freshJudgmentSession } from '../backends/argv.ts';
 import { crashPoint } from '../core/crash.ts';
 import type { AuditInputs,LensRefusal,Parent } from '../core/events.ts';
 import { captureUnderFence } from '../core/fence.ts';
-import { type FindingId,type JobId,type LaneId,type NeedsUserId,type ObligationId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,parseInvocationId,parseJobId } from '../core/ids.ts';
+import { type EnvId,type FindingId,type JobId,type LaneId,type NeedsUserId,type ObligationId,type Sha,type Sha256Hex,type UnitId,type VisionClauseId,canonicalIds,parseInvocationId,parseJobId } from '../core/ids.ts';
 
 import { auditDiffBudgetOf } from '../core/projections.ts';
 import { DEFAULT_BOUNDS } from '../core/records.ts';
@@ -32,7 +32,7 @@ import { runBatchPoint } from '../pipeline/batchlanes.ts';
 import {
 type BackendCallOutcome,type JobParent,type RepairTurn,type StageContext,arcSeat,callArcRole,isRepairTurnOf,minutesMs,recordedArcCall,repairTurnOf,runOp,unitBranch,verdictOf,
 } from '../pipeline/dispatch.ts';
-import { type JourneyEnd,arcJourneyLane,dirtySnapshot,jobSeriesCheckout,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
+import { type JourneyEnd,arcJourneyLane,dirtySnapshot,jobSeriesCheckout,laneEnvId,observedViews,removeJobCheckouts,runJourneySeries } from '../pipeline/lanes.ts';
 import { architecture,docAt,inMs,judgmentEntry,ledgerDir,targetDirs } from '../pipeline/stages.ts';
 import { judgmentRepairDirective } from '../prompts/directives.ts';
 import { promptFor,renderPrompt } from '../prompts/index.ts';
@@ -42,14 +42,16 @@ import { evidenceSnapshotOp,worktreeCreateOp,worktreeRemoveOp } from '../recover
 import { probe } from '../resources/probe.ts';
 import { type JobHolder,type Reservation,cleanup,heldReservation,run } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
+import type { Backend } from '../routing/types.ts';
 
 import { type Clock,cadence,integrationHeadNow } from './cadence.ts';
-import { coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
+import { type CoverageBase,coverageBase,lensCoverage,publishedHeads } from './coverage.ts';
 import { externalAttestation,externalVerdict } from './external.ts';
 import { type FindingDraft,admitMutant,isActive,openFinding,witnessFindingDraft } from './findings.ts';
 import { chunkEnd,LENS_DIFF_BUDGET } from './lensdiff.ts';
+import { requiredFinding } from '../endgame/worklist.ts';
 import { verdictOf as witnessVerdict } from './observe.ts';
-import { FINDING_MOVES,type FindingEvidence,type LensKind,type MutantRef,type Obligations,type ObservationVerdict,type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision } from './types.ts';
+import { type ArcLaneDef,FINDING_MOVES,type FindingEvidence,type LensKind,type MutantRef,type Obligations,type ObservationVerdict,type Vision,type WitnessRecord,isExempt,isMustHold,parseObligations,parseVision } from './types.ts';
 
 /** What an audit needs: a stage context (processes, resources, routing), the arbiter's first-served waits, a clock. */
 export type AuditContext = StageContext & Readonly<{ acquireFirst: AcquireFirst; clock: Clock }>;
@@ -165,7 +167,7 @@ function ownersOf(ctx: StageContext): readonly Readonly<{ unit: UnitId; head: Sh
 /** The capture (H2): the cadence's plan and the revisions in force, written as `audit-started`; null when none is due. */
 function capture(ctx: AuditContext): Started | null {
   const view = ctx.journal.view;
-  const c = cadence(ctx, ctx.clock);
+  const c = cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane));
   if (c === null || c.plan === null) return null;
   const applied = view.planApplied();
   if (applied === null || applied.visionSha256 === undefined || applied.payloadSha256 === undefined) throw new Error('an audit outside a holistic revision in force');
@@ -184,6 +186,7 @@ function capture(ctx: AuditContext): Started | null {
     priorFindings: canonicalIds(view.holistic().findings.map((f) => f.id)),
     highWater: view.highWater(),
     diffBudget: LENS_DIFF_BUDGET,
+    ...(c.plan.whole ? { whole: true as const } : {}),
   };
   const seq = ctx.journal.fact({ kind: 'audit-started', ...inputs });
   return { ...inputs, seq };
@@ -217,7 +220,7 @@ const lensDiffDir = (ctx: StageContext, job: JobId, attempt: number): AbsPath =>
  * this call covers and the owners' branch diffs, each attached within the budget (the owners sharing theirs), their
  * unshown files written under `diffDir`.
  */
-function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): import('../prompts/inputs.ts').RoleInputs['campaignAudit'] {
+function lensInputs(ctx: StageContext, s: Started, r: Recorded, base: CoverageBase, chunk: Chunk, checkout: AbsPath, diffDir: AbsPath): import('../prompts/inputs.ts').RoleInputs['campaignAudit'] {
   const sha = s.integrationSha;
   const budget = budgetOf(s);
   const share = Math.floor(budget / Math.max(1, s.owners.length));
@@ -226,7 +229,7 @@ function lensInputs(ctx: StageContext, s: Started, r: Recorded, lens: LensKind, 
     vision: visionInputOf(r.vision, r.advances),
     method: {traits: [...new Set(Object.values(mapInForce(ctx.journal.view)?.systems ?? {}).flatMap((x) => x.traits))], markers: ctx.plan().units.some((unit) => proofNotLocal(ctx, unit)) ? ['M2'] : [], unitKind: 'campaign', ui: hasMilestones(ctx.plan()), expensiveLanes: ctx.plan().suite.lanes.some((l) => (l as {cost?: string}).cost === 'expensive')},
     obligations: r.obligations === null ? [] : observedViews(ctx, r.obligations, r.obligations.obligations, sha),
-    range: { audited: sha, diff: attach(chunk.from, chunk.to, budget, 'range') },
+    range: { audited: sha, base: base.head, diff: attach(chunk.from, chunk.to, budget, 'range') },
     owners: s.owners.map((o) => ({ unit: o.unit, head: o.head, diff: attach(diffBase(ctx.repo, sha, o.head), o.head, share, `owner-${o.unit}`) })),
     priorFindings: findingViews(ctx.journal.view.holistic().findings, s.priorFindings),
     contracts: ctx.plan().contracts.map((c) => docAt(ctx, sha, c)),
@@ -386,7 +389,7 @@ const LOST_CALL_REISSUES = 2;
 export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   let s = running(ctx);
   if (s === null) {
-    const c = cadence(ctx, ctx.clock);
+    const c = cadence(ctx, ctx.clock, (lane) => laneEnvId(ctx, lane));
     if (c === null || c.plan === null) return { kind: 'none' };
     const skip = skipReason(ctx);
     if (skip !== null) return { kind: 'skipped', reason: skip, owed: null };
@@ -425,6 +428,8 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   let made = false;
   const covered: LensKind[] = [];
   let outcome: 'completed' | 'abandoned' = 'completed';
+  /** The lens backend whose park abandoned the audit, if one did. */
+  let parked: Backend | null = null;
   const order = s.lenses;
   /**
    * One call of `lens` as `attempt` over `chunk`: the recorded one consumed, else asked (lazily making the checkout): fresh,
@@ -444,7 +449,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
       }
       if (repair !== null && repair.turn.cwd !== checkout) throw new Error(`${job}: a refused lens call ran in ${repair.turn.cwd}, not the audit's checkout ${checkout}`);
       const diffDir = lensDiffDir(ctx, job, attempt);
-      const inputs = lensInputs(ctx, s, r, lens, chunk, checkout, diffDir);
+      const inputs = lensInputs(ctx, s, r, base, chunk, checkout, diffDir);
       called = await withCpu(ctx, job, () => callArcRole(ctx, {
         job, role: 'campaignAudit', attempt, system: prompt.system, cwd: checkout, evidenceDirs: [ledgerDir(ctx), diffDir, ...targetDirs(inputs.target)],
         deadlineAt: inMs(minutesMs(ctx.plan().limits?.judgmentDeadlineMin ?? DEFAULT_BOUNDS.judgmentDeadlineMin)),
@@ -455,17 +460,23 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     }
     return { read: readLens(ctx, job, called), called };
   };
+  const final = s.triggers.some((x) => x.type === 'final');
   /** Admits a report's drafts (each finding opened at once); returns the refused ones, recorded in the tally. */
   const admitReport = (lens: LensKind, attempt: number, output: LensOutput): readonly LensRefusal[] => {
     if ('requests' in output) for (const request of (output as import('../prompts/schemas.ts').CampaignAuditOutput).requests) {
       const target = request.dismisses === null ? undefined : ctx.journal.view.holistic().findings.find((f) => f.id === request.dismisses);
+      // dev.83: at the final boundary a request about a finding below the endgame's required line raises nothing; the
+      // close-out settlement settles that finding (src/holistic/closeout.ts).
+      if (final && target !== undefined && !requiredFinding(target)) continue;
+      // dev.83: one item per request across every audit pass, open or answered: a request names its finding (stable
+      // across passes), an arc request its summary. A whole-range pass asking again raises nothing.
       const raised = ctx.journal.view.opsOf('needsuser.raise').some((i) => {
-        if (i.parent.type !== 'job' || i.parent.job !== job) return false;
+        if (i.parent.type !== 'job' || parseJobId(i.parent.job).kind !== 'audit') return false;
         const item = readNeedsUser(ctx.runDir, i.expect.id);
-        return target === undefined ? item?.summary === request.summary
-          : item?.subject.type === 'findings' && item.subject.findings.includes(target.id);
+        if (item?.reason !== 'owner-request') return false;
+        return target === undefined ? item.summary === request.summary
+          : item.subject.type === 'findings' && item.subject.findings.includes(target.id);
       });
-      // Finding duplicates need no further action: the first request already blocks on that finding.
       if (raised) continue;
       // A root decision may land while the audit is running. Surface its stale request without reopening a blocker.
       const blocking = target === undefined || isActive(target);
@@ -497,11 +508,17 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   const heads = new Set(publishedHeads(ctx.journal.view).map((h) => h.head));
   /** How far each lens's reported chunks reach. */
   const reached = new Map<LensKind, Sha>();
-  const previous = ctx.journal.view.holistic().audits.filter((a) => a.started.seq < s.seq).at(-1);
-  const rangeFrom = (lens: LensKind): Sha => previous?.ended?.outcome === 'abandoned' ? lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark : base.head;
+  // dev.83: incremental. A lens reads from its watermark at the capture (what no completed pass under the vision in force
+  // covered: an abandoned pass's reported chunks included, so it resumes where it stopped), or from the arc's base for an
+  // `audit --whole` request. A lens whose watermark already is the audited SHA past the base has nothing to read: no call.
+  const rangeFrom = (lens: LensKind): Sha => s.whole === true ? base.head : lensCoverage(ctx.journal.view.holistic(), base, lens, s.seq).watermark;
   let further = 0;
   for (const [i, lens] of order.entries()) {
     let from = rangeFrom(lens);
+    if (from === s.integrationSha && from !== base.head) {
+      covered.push(lens);
+      continue;
+    }
     let attempt = i + 1;
     let read: LensRead;
     for (;;) {
@@ -545,7 +562,10 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
     }
     if (read.kind !== 'reported') {
       outcome = 'abandoned';
-      if (read.kind === 'parked') break;
+      if (read.kind === 'parked') {
+        parked = triple.backend;
+        break;
+      }
       continue;
     }
     covered.push(lens);
@@ -562,7 +582,7 @@ export async function runAudit(ctx: AuditContext): Promise<AuditOutcome> {
   }).sort((a, b) => (a.lens < b.lens ? -1 : 1));
   const findings = canonicalIds(t.ids);
   jobStageOutcome(ctx.journal, job, 'campaign-audit', s.triggers.find((t) => t.type === 'milestone')?.milestone ?? null, outcome === 'abandoned' ? 'abandoned' : (findings.length === 0 ? 'pass' : 'revise'), findings);
-  ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused });
+  ctx.journal.fact({ kind: 'audit-ended', job, covered: ranges, findings, suppressed: t.suppressed, outcome, refused: t.refused, ...(parked === null ? {} : { parked }) });
   crashPoint('audit.after-ended');
 
   // 6: the race: the cited P1s re-witnessed on the head that moved meanwhile.
@@ -607,9 +627,12 @@ export async function rewitnessP1s(ctx: AuditContext, job: JobId): Promise<reado
   });
 }
 
-/** Whether an audit is due or running now (the scheduler's question before it calls `runAudit`). */
-export function auditPending(ctx: AuditContext): boolean {
+/**
+ * Whether an audit is due or running now (the scheduler's question before it calls `runAudit`); `laneEnv` as `cadence`
+ * takes it (a reader outside the executor passes the recorded one).
+ */
+export function auditPending(ctx: AuditContext, laneEnv: (lane: ArcLaneDef) => EnvId | null): boolean {
   if (running(ctx) !== null) return true;
-  const c = cadence(ctx, ctx.clock);
+  const c = cadence(ctx, ctx.clock, laneEnv);
   return c !== null && c.plan !== null;
 }

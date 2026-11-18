@@ -60,11 +60,14 @@ The stages:
 4. **Publish.** An approved unit is tested again on top of the current integration branch. Only that exact green
    commit is fast-forwarded. The remote branch, which CI tests, advances to the latest head once CI has settled on
    the one before. `main` is never pushed.
-5. **Judge.** When a milestone's units have merged, a reviewer walks the product as a user would. Whole-campaign
-   audits look for broken invariants, hollow tests and drift from the documents.
+5. **Judge.** When a milestone's units have merged, a reviewer walks the product as a user would. Campaign
+   audits, each reading what landed since the last, look for broken invariants, hollow tests and drift from the documents.
 6. **Supervise.** Throughout, the architect watches for events that need a decision, revises the plan through
    versioned edits, and brings you only the questions that are yours.
-7. **Close out.** The architect prepares a stacked pull request and presents a brief and a demo. The next arc
+7. **Endgame.** Once the planned units and milestone checkpoints are done, the executor raises no new unit. The
+   architect fixes what the findings raised by hand on one endgame branch, which the executor tests and lands. An
+   independent review and a final audit cover it, and a P1 from either sends the architect back to fix.
+8. **Close out.** The architect prepares a stacked pull request and presents a brief and a demo. The next arc
    starts only within the bound you set.
 
 Go deeper:

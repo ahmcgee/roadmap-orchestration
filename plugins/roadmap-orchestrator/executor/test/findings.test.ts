@@ -142,28 +142,44 @@ describe('ruling and ownership', () => {
     const records = [plan(1), opened(1), opened(2, { lens: 'witness', obligation: 'I-2' }), opened(3, { severity: 'P2', obligation: null })];
     const view = folded(records);
     const f = view.holistic().findings;
-    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'working' }), unitOf('u2', ['F-1'], { kind: 'working' })]),
+    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'working' }), unitOf('u2', ['F-1'], { kind: 'working' })], []),
       [{ id: 'F-1', to: [{ state: 'owned', unit: 'u1' }] }], 'the first in plan order owns it');
-    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'approved' })]), [{ id: 'F-1', to: [{ state: 'owned', unit: 'u1' }, { state: 'fixed-on-branch', unit: 'u1' }] }]);
-    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'published', seq: 99 })]),
+    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'approved' })], []), [{ id: 'F-1', to: [{ state: 'owned', unit: 'u1' }, { state: 'fixed-on-branch', unit: 'u1' }] }]);
+    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'published', seq: 99 })], []),
       [{ id: 'F-1', to: [{ state: 'owned', unit: 'u1' }, { state: 'fixed-on-branch', unit: 'u1' }, { state: 'resolved' }] }]);
     // A witness P1 resolves by any repair of its obligation published after it opened; nothing else does.
-    assert.deepEqual(ownershipMoves(f, [unitOf('u2', ['I-2'], { kind: 'published', seq: 99 })]),
+    assert.deepEqual(ownershipMoves(f, [unitOf('u2', ['I-2'], { kind: 'published', seq: 99 })], []),
       [{ id: 'F-2', to: [{ state: 'owned', unit: 'u2' }, { state: 'fixed-on-branch', unit: 'u2' }, { state: 'resolved' }] }]);
-    assert.deepEqual(ownershipMoves(f, [unitOf('u2', ['I-2'], { kind: 'published', seq: 1 })]), [], 'a publication before the finding opened resolves nothing');
-    assert.deepEqual(ownershipMoves(f, [unitOf('u2', ['I-1'], { kind: 'published', seq: 99 })]), [], 'an invariants P1 is resolved only by a repair naming it');
+    assert.deepEqual(ownershipMoves(f, [unitOf('u2', ['I-2'], { kind: 'published', seq: 1 })], []), [], 'a publication before the finding opened resolves nothing');
+    assert.deepEqual(ownershipMoves(f, [unitOf('u2', ['I-1'], { kind: 'published', seq: 99 })], []), [], 'an invariants P1 is resolved only by a repair naming it');
 
     const owned = folded([...records, move(1, { state: 'owned', unit: 'u1' }), move(3, { state: 'owned', unit: 'u2' }), move(3, { state: 'fixed-on-branch', unit: 'u2' })]).holistic().findings;
-    assert.deepEqual(ownershipMoves(owned, [unitOf('u1', ['F-1'], { kind: 'gone' }), unitOf('u2', ['F-3'], { kind: 'working' })]), [
+    assert.deepEqual(ownershipMoves(owned, [unitOf('u1', ['F-1'], { kind: 'gone' }), unitOf('u2', ['F-3'], { kind: 'working' })], []), [
       { id: 'F-1', to: [{ state: 'open' }] },
       { id: 'F-3', to: [{ state: 'owned', unit: 'u2' }] },
     ], 'a cut owner releases it; a voided approval takes it back to owned');
-    assert.deepEqual(ownershipMoves(owned, [unitOf('u1', ['F-1'], { kind: 'gone' }), unitOf('u2', ['F-1'], { kind: 'working' })]),
+    assert.deepEqual(ownershipMoves(owned, [unitOf('u1', ['F-1'], { kind: 'gone' }), unitOf('u2', ['F-1'], { kind: 'working' })], []),
       [{ id: 'F-1', to: [{ state: 'open' }, { state: 'owned', unit: 'u2' }] }, { id: 'F-3', to: [{ state: 'open' }] }],
       'ownership passes to the next live repairer; a finding no unit repairs any more is open');
     assert.deepEqual(batchable(owned, [unitOf('u1', ['F-1'], { kind: 'approved' }), unitOf('u2', ['F-1'], { kind: 'approved' })]), [{ finding: 'F-1', units: ['u1', 'u2'] }]);
     assert.deepEqual(batchable(owned, [unitOf('u1', ['F-1'], { kind: 'approved' }), unitOf('u2', ['F-1'], { kind: 'working' })]), []);
     assert.deepEqual([...repairedObligations(owned, ['F-1', 'F-3', 'I-2'] as never)].sort(), ['I-1', 'I-2'], 'a finding over no obligation repairs none');
+  });
+
+  it('findings.endgame-fix (dev.83): a recorded endgame fix fixes a finding on the endgame branch; a landing holding it resolves it; a live unit owner comes first', () => {
+    const view = folded([plan(1), opened(1), opened(2, { lens: 'witness', obligation: 'I-2' })]);
+    const f = view.holistic().findings;
+    const C = 'cmd-00000000000000e1' as never;
+    const fix = (closes: readonly string[], landed: boolean) => ({ command: C, closes: closes as never, seq: 99, landed });
+    const byFix = [{ state: 'owned', endgame: C }, { state: 'fixed-on-branch', endgame: C }];
+    assert.deepEqual(ownershipMoves(f, [], [fix(['F-1'], false)]), [{ id: 'F-1', to: byFix }]);
+    assert.deepEqual(ownershipMoves(f, [], [fix(['F-1', 'I-2'], true)]), [{ id: 'F-1', to: [...byFix, { state: 'resolved' }] }, { id: 'F-2', to: [...byFix, { state: 'resolved' }] }]);
+    assert.deepEqual(ownershipMoves(f, [unitOf('u1', ['F-1'], { kind: 'working' })], [fix(['F-1'], false)]), [{ id: 'F-1', to: [{ state: 'owned', unit: 'u1' }] }]);
+    assert.deepEqual(ownershipMoves(f, [], [{ ...fix(['F-1'], true), seq: 1 }]), [], 'a fix recorded before the finding opened closes nothing');
+    const fixed = folded([plan(1), opened(1), move(1, { state: 'owned', endgame: C }), move(1, { state: 'fixed-on-branch', endgame: C })]).holistic().findings;
+    assert.equal(fixed[0]!.owner, null, 'an endgame fix owns no unit');
+    assert.deepEqual(ownershipMoves(fixed, [], [fix(['F-1'], false)]), [], 'already fixed on the endgame branch by it');
+    assert.deepEqual(ownershipMoves(fixed, [], [fix(['F-1'], true)]), [{ id: 'F-1', to: [{ state: 'resolved' }] }]);
   });
 });
 
@@ -212,16 +228,14 @@ describe('needs-user items and instrumentation', () => {
     assert.match(due[0]!.content.summary, /F-1 is owned by unit u1/, 'only the P1');
   });
 
-  it('findings.draining: a P1 or P2 opened while draining raises new-finding-draining once its audit ended; a P3, or one opened before, does not', () => {
+  it('findings.draining (dev.83: close-admissions removed): an earlier release\'s admissions-closed makes no P1 or P2 raise new-finding-draining, its audit running or ended', () => {
     const audit = (kind: 'audit-started' | 'audit-ended'): LogRecord => fact(kind === 'audit-started'
       ? { kind, job: 'audit-1', triggers: [{ type: 'final' }], generation: 1, lenses: ['invariants'], integrationSha: B1, planRev: 1, ledgerSha256: null, obligationsSha256: null, visionSha256: V, owners: [], priorFindings: [], highWater: 1 }
       : { kind, job: 'audit-1', covered: [{ lens: 'invariants', from: B2, to: B1 }], findings: ['F-2', 'F-3', 'F-4'], suppressed: 0, outcome: 'completed' });
     const base = [plan(1), opened(1, { source: { type: 'job', job: 'baseline-1' } }), fact({ kind: 'admissions-closed', command: 'cmd-00000000000000aa' }), audit('audit-started'), opened(2), opened(3, { severity: 'P2' }),
       opened(4, { severity: 'P3', lens: 'vision', visionClauses: ['V-1'], obligation: null })];
     assert.deepEqual(findingItemsDue(folded(base), new Date(AT)), [], 'the audit is still running');
-    const due = findingItemsDue(folded([...base, audit('audit-ended')]), new Date(AT));
-    assert.deepEqual(due.map((d) => [d.reason, d.parent, d.content.blocking]), [['new-finding-draining', { type: 'job', job: 'audit-1' }, true]]);
-    assert.match(due[0]!.content.summary, /F-2, F-3 \(P1 or P2\)/);
+    assert.deepEqual(findingItemsDue(folded([...base, audit('audit-ended')]), new Date(AT)), [], 'the endgame worklist carries late findings instead');
   });
 
   it('findings.metrics: lens, severity, gateHadPassed, disposition, merged and time to resolve, per finding', () => {

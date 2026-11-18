@@ -3,7 +3,7 @@ import { failureSignature, maskFailureLine } from './redlane.ts';
 import { candidateRed } from './candidate-red.ts';
 import { captureUnderFence } from '../core/fence.ts';
 import { openNeedsUser,reopenRecommendation,raiseNeedsUser,raisedWithReason,readNeedsUser } from '../needsuser.ts';
-import { methodContext,runReview,diagnosisDue,diagnosed } from './surface.ts';
+import { methodContext,runReview,diagnosisOutcome,diagnosisPending } from './surface.ts';
 import { systemsMapInForce } from '../input/systems.ts';
 import { protectedPathsInForce } from '../input/protected.ts';
 // Unit stages from optional pre-build annotation through certification. All effects are journaled;
@@ -90,7 +90,7 @@ import { type BackendCallOutcome,type BackendCallSpec,type BackendVerdict,type C
 
 import { handoverOf,lineageOf,unmetClauses } from './handover.ts';
 import { invocationDir,quiescent } from './invoke.ts';
-import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRuntime,laneSummaryIn,lastLaneSeriesCost,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
+import { type LaneRecord,type LaneRuntime,type Series,type VerificationTree,builderSuiteLanes,dirtyPaths,dirtySnapshot,laneOrder,laneRecordIn,laneRuntime,laneSummaryIn,lastLaneSeriesCost,mapInForce,presentCheckouts,removeCheckout,removeVerificationTree,runLaneSeries,seriesEntry,seriesOrder,specSeriesRoot,stageSuiteLanes } from './lanes.ts';
 
 import {
 type DecidedRound,type PreparedRound,type RoundCall,type RoundInput,callRound,cleanAfterMergeIn,decidedRound,laneFixRound,prepareRound,
@@ -684,25 +684,37 @@ export type BuildDone = StageDone<'build'> & Readonly<{ run: BuildRun | null }>;
 const activeBuildLanes = (spec: SpecM1): readonly BuildLane[] =>
   buildLanes(spec).filter((l): l is SpecM1['lanes'][number] & BuildLane => l.state === 'active' && l.cadence === 'build');
 
+/** The unit's dispatch, pinned on its first build (or that build's diagnosis) when no pre-build pinned it. */
+function pinOnce(ctx: StageContext, unit: PlanUnit): void {
+  if (ctx.journal.view.unit(unit.id).risk !== null) return;
+  const loaded = loadUnitSpec(ctx, unit);
+  pinDispatch(ctx, unit, {rev: loaded.spec.rev, sha256: loaded.sha256});
+}
+
+/**
+ * The diagnosis a build's step runs first when one is due (surface.ts `diagnosisPending`: the attempt counts, or dev.83 E2 a
+ * repeated red), or null. A diagnosis is an annotation, delivered as build memory (and, for the attempt counts', a Claude
+ * fallback). It runs under a pre-build attempt of its own, inside the build's step (unit.ts `diagnosedBuild`), and closes
+ * `diagnosed` (dev.70): it decides nothing, so the round the build was given (a decided round, or a steer entry's) stays the
+ * unit's next stage whatever interrupts it. dev.83 (E2): a diagnosis that put the cause outside the unit closes
+ * `diagnosed-external` instead (`diagnosisOutcome`), an uncharged park; the build does not run. A crash that leaves the
+ * attempt open is recorded by the unit driver the same way (unit.ts `consumeRecorded`).
+ */
+export async function diagnose(ctx: StageContext, unit: PlanUnit): Promise<StageDone<'pre-build'> | Cancelled | null> {
+  pinOnce(ctx, unit);
+  if (diagnosisPending(ctx, unit, loadUnitSpec(ctx, unit).spec).length === 0) return null;
+  const reviewParent = at(start(ctx, unit.id, 'pre-build'), 'pre-build');
+  const entered = await enterJudgment(ctx, reviewParent);
+  if (isCancelled(entered)) return entered;
+  await runReview(ctx, unit, reviewParent, 'diagnosis');
+  await releaseJudgment(ctx, reviewParent);
+  const cancelled = cancelledNow(ctx);
+  if (cancelled !== null) { record(ctx, reviewParent, 'interrupted'); return cancelled; }
+  return record(ctx, reviewParent, diagnosisOutcome(ctx.journal.view, unit.id));
+}
+
 export async function build(ctx: StageContext, unit: PlanUnit, input: RoundInput): Promise<BuildDone | Cancelled> {
-  if (ctx.journal.view.unit(unit.id).risk === null) {
-    const loaded = loadUnitSpec(ctx, unit);
-    pinDispatch(ctx, unit, {rev: loaded.spec.rev, sha256: loaded.sha256});
-  }
-  // A diagnosis is an annotation, delivered as build memory and a Claude fallback. It runs under a pre-build attempt of its
-  // own, inside this build's step, and closes `diagnosed` (dev.70): it decides nothing, so the round this build was given
-  // (a decided round, or a steer entry's) stays the unit's next stage whatever interrupts it. A crash that leaves
-  // the attempt open is recorded by the unit driver the same way (unit.ts `consumeRecorded`).
-  if (diagnosisDue(ctx.journal.view, unit.id) && !diagnosed(ctx.journal.view, unit.id) && unit.review !== 'never') {
-    const reviewParent = at(start(ctx, unit.id, 'pre-build'), 'pre-build');
-    const entered = await enterJudgment(ctx, reviewParent);
-    if (isCancelled(entered)) return entered;
-    await runReview(ctx, unit, reviewParent, 'diagnosis');
-    await releaseJudgment(ctx, reviewParent);
-    const cancelled = cancelledNow(ctx);
-    if (cancelled !== null) { record(ctx, reviewParent, 'interrupted'); return cancelled; }
-    record(ctx, reviewParent, 'diagnosed');
-  }
+  pinOnce(ctx, unit);
   const parent = at(start(ctx, unit.id, 'build'), 'build');
   const entered = await enter(ctx, stageHolder(parent), buildEntry(ctx, unit));
   if (isCancelled(entered)) return entered;
@@ -833,6 +845,12 @@ export async function buildRead(
     return { ...record(ctx, parent, 'lost-tree-effects'), run };
   }
   const v = verdictOf(ctx, parent, called);
+  // dev.83 (E5c): the runner's deadline ended the round and no pressure ruling called it starved (`verdictOf` reads that
+  // first): what it left is salvaged and verified like a report's, uncharged (`window-spent`).
+  if (v.kind === 'process-fault' && called.kind === 'result' && spentWindow(called)) {
+    const run: BuildRun = { inv: called.inv, invDir: called.invDir, worktree, branch, workDir: workDir(ctx.runDir, parent), reservation: held };
+    return { ...record(ctx, parent, 'window-spent'), run };
+  }
   let malformed = false;
   if (v.kind === 'success') {
     try {
@@ -868,6 +886,13 @@ export async function buildRead(
   // Lost again after its retry, with no effect on the tree.
   if (called.kind === 'lost') return failed(record(ctx, parent, 'lost', null, { backend: backendOf(called), failed: [], environment: null }));
   return failed(v.kind === 'success' ? record(ctx, parent, 'malformed') : verdictKind(ctx, parent, v, called));
+}
+
+/** dev.83 (E5c): whether a closed call's runner ended it at its deadline (exit.json `cause`). */
+function spentWindow(called: Extract<BackendCallOutcome, { kind: 'result' }>): boolean {
+  const exit = runnerFiles(called.invDir, called.inv).read('exit.json');
+  if (exit === null) throw new Error(`${called.inv}: a closed build call without exit.json`);
+  return exit.cause === 'deadline';
 }
 
 /** The unit's latest merge-in: the conflicted one a resolve round resolves. */
@@ -1366,16 +1391,39 @@ export function fastSuiteLanes(ctx: StageContext, spec: SpecM1, salvaged: Sha): 
   return fastSuiteLaneReader(ctx)(spec, salvaged);
 }
 
+/** The salvage SHA lanes attempt `previous` verified, or null when it parked before running anything (a missing witness lane, say). */
+function lanesAttemptAt(ctx: StageContext, previous: StageParent): Sha | null {
+  const path = verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, previous.unit, previous.attempt);
+  const created = ctx.journal.view.opsOfParent('worktree.create', previous).find((i) => matchesVerificationPath(i.expect.path, path, previous.attempt));
+  if (created === undefined) return null;
+  if (created.expect.checkout.type !== 'detached') throw new Error(`lanes ${previous.unit}#${previous.attempt}: no detached verification checkout`);
+  return created.expect.checkout.at;
+}
+
+/**
+ * dev.83 (E2): the red lane records of the unit's latest completed lanes attempt (its spec series, then its fast suite at the
+ * salvage SHA), with that attempt; empty when it ran nothing.
+ */
+export function latestLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1): Readonly<{ attempt: number | null; reds: readonly LaneRecord[] }> {
+  const attempt = ctx.journal.view.completedLanes(unit.id);
+  if (attempt === null) return { attempt, reds: [] };
+  const previous: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
+  const at = lanesAttemptAt(ctx, previous);
+  if (at === null) return { attempt, reds: [] };
+  const reds = (lanes: readonly LaneDef[], set: 'spec' | 'suite', root: AbsPath): readonly LaneRecord[] => lanes.flatMap((lane) => {
+    const record = laneRecordIn(ctx, previous, lane, set, at, root);
+    return record !== null && isRed(record.verdict) ? [record] : [];
+  });
+  return { attempt, reds: [...reds(spec.lanes, 'spec', specSeriesRoot(ctx.runDir, previous)), ...reds([...regenerateLanes(ctx.plan()), ...ctx.plan().suite.lanes], 'suite', fastSuiteRoot(ctx.runDir, previous, 'suite'))] };
+}
+
 /** Reds in the unit's latest completed lanes attempt, excluding holds and the suite's diagnostic base run. */
 export function previousLaneReds(ctx: StageContext, unit: PlanUnit, spec: SpecM1, attempt = ctx.journal.view.completedLanes(unit.id)): Readonly<{ spec: ReadonlySet<LaneId>; suite: ReadonlySet<LaneId> }> {
   if (attempt === null) return { spec: new Set(), suite: new Set() };
   const previous: StageParent = { type: 'stage', unit: unit.id, stage: 'lanes', attempt };
-  const path = verificationWorktree(ctx.plan().worktreeRoot, ctx.plan().arc, unit.id, previous.attempt);
-  const created = ctx.journal.view.opsOfParent('worktree.create', previous).find((i) => matchesVerificationPath(i.expect.path, path, previous.attempt));
   // A completed attempt may park before running anything (for example a missing witness lane).
-  if (created === undefined) return { spec: new Set(), suite: new Set() };
-  if (created.expect.checkout.type !== 'detached') throw new Error(`lanes ${unit.id}#${previous.attempt}: no detached verification checkout`);
-  const at = created.expect.checkout.at;
+  const at = lanesAttemptAt(ctx, previous);
+  if (at === null) return { spec: new Set(), suite: new Set() };
   const reds = (lanes: readonly LaneDef[], set: 'spec' | 'suite', root: AbsPath): ReadonlySet<LaneId> => new Set(lanes.filter((lane) => {
     const record = laneSummaryIn(ctx, previous, lane, set, at, root);
     return record !== null && isRed(record.verdict);

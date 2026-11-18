@@ -232,6 +232,18 @@ export function gateStep(a: GateAnswer, expect: Expect = {}, before: readonly Cl
   };
 }
 
+/** dev.83 (E2): a diagnosis answer (schemas.ts `DiagnosisOutput`); default a unit cause with `brief` as the note. */
+export type DiagnosisAnswer = Readonly<{ brief: string; cause?: 'unit' | 'base' | 'environment' | 'unknown'; evidence?: readonly string[]; reasons?: readonly string[] }>;
+
+/** The verifier's diagnosis call (the same acting judge as the gate) the fake Claude answers after `before`. */
+export function diagnosisStep(a: DiagnosisAnswer, expect: Expect = {}, before: readonly ClaudeAct[] = []): Step {
+  return {
+    as: 'claude',
+    expect: { ...GATE, ...expect, argv: [...(GATE.argv ?? []), ...(expect.argv ?? [])], stdinContains: ['<mode>diagnosis</mode>', ...(expect.stdinContains ?? [])] },
+    acts: [...before, { type: 'emit', value: { cause: a.cause ?? 'unit', evidence: [...(a.evidence ?? ['fixture:1'])], brief: a.brief, reasons: [...(a.reasons ?? ['The repeated failure is explained.'])] } }],
+  };
+}
+
 /**
  * dev.17: a finding as a live gate writes it: `defect` (a blocking one's `incorrect-behaviour` unless the test names one, else
  * null), `reraises` and `hunk` (null) where the test leaves them out. A test of the defect refusal passes `defect: null`.

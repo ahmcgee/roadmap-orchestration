@@ -442,9 +442,10 @@ export type LensInputs = Readonly<{
   /**
    * The range this call reviews: from the lens's watermark to `diff.to`, the audited SHA or, for an outstanding range
    * over the budget, an earlier published head (one chunk; src/holistic/lensdiff.ts), with its bounded attachment
-   * (src/git/boundeddiff.ts).
+   * (src/git/boundeddiff.ts). dev.83: `base`, the arc's coverage base; a range from a later watermark is the part no
+   * completed pass covered (base→`diff.from` was), and the call answers for it alone, reading the rest for context.
    */
-  range: Readonly<{ audited: Sha; diff: BoundedDiff }>;
+  range: Readonly<{ audited: Sha; base: Sha; diff: BoundedDiff }>;
   /** Branch diffs of parked or in-flight owners of open findings (the w33 P1s were already fixed on one), bounded together. */
   owners: readonly Readonly<{ unit: UnitId; head: Sha; diff: BoundedDiff }>[];
   priorFindings: readonly FindingView[];
@@ -559,7 +560,42 @@ export type PolishJudgeInputs = Readonly<{
  */
 /** The verifier's inputs: the unit, the certified tree `since` and the salvage SHA `at` the hunks lie between, and the hunks. */
 export type ReviewBrief = Readonly<{ target: UnitTargetInput; vision: VisionInput | null;  spec: RenderedSpec; intent: string; nonGoals: readonly string[]; contracts: readonly DocText[]; systems: readonly SystemName[]; method: import('./method/index.ts').MethodContext; history: readonly string[]; standing: readonly import('../core/events.ts').ReviewItem[] }>;
-export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build' | 'diagnosis'; brief: ReviewBrief}>;
+/**
+ * dev.83 (E2): what the executor already knows about a diagnosis's repeated failure, given before the history so the
+ * diagnosis starts from it (src/pipeline/surface.ts `diagnosisEvidence`). `trigger`: the sources that made it due
+ * (`attempts:...`, `repeat-red:<lane>:<failure>`). `failures`: what each red lane of the unit's latest completed lanes attempt
+ * printed (as a fix round reads it). `baseComparison`: that attempt's comparisons of its red lanes on the diff base alone.
+ * `environment`: the probe targets with a tripped breaker, the arc's outstanding retryable parks, and each red lane's host
+ * signatures. `knownDefects`: the plan's. `flaky`: the flaky ledger's keys on those lanes.
+ */
+export type DiagnosisEvidence = Readonly<{
+  trigger: readonly string[];
+  failures: readonly LaneFailureText[];
+  baseComparison: readonly Readonly<{ lane: LaneId; base: Sha; result: 'pass' | 'fail'; evidence: AbsPath }>[];
+  environment: Readonly<{ tripped: readonly string[]; retryableParks: readonly string[]; hostSuspected: readonly string[] }>;
+  knownDefects: readonly string[];
+  flaky: readonly string[];
+}>;
+/** dev.83 (E2): a diagnosis's brief: the review brief and the evidence block. */
+export type DiagnosisBrief = ReviewBrief & Readonly<{ evidence: DiagnosisEvidence }>;
+/**
+ * dev.83 (WS-5): what the endgame review reads (src/endgame/review.ts). `range`: the endgame's own commits on the
+ * integration head, from the episode's base to the head, and `diff` that range bounded. `fixes`: the architect's recorded
+ * fixes (what each closes, its commit and note). `publications`: each head published in the range, a unit's or a batch's
+ * marked `gated` (its gate approved it), an endgame landing's or a docs publication's not. `findings`: the active findings,
+ * one line each. `checkout`: the detached checkout of the head the session works in; `evidenceDir` where it saves evidence.
+ */
+export type EndgameReviewBrief = Readonly<{
+  vision: VisionInput | null;
+  range: Readonly<{ from: Sha; to: Sha }>;
+  diff: BoundedDiff;
+  fixes: readonly Readonly<{ command: string; closes: readonly string[]; commit: Sha; note: string }>[];
+  publications: readonly Readonly<{ head: Sha; what: string; gated: boolean }>[];
+  findings: readonly string[];
+  checkout: AbsPath;
+  evidenceDir: AbsPath;
+}>;
+export type VerifierInputs = Readonly<{mode: 'gate'; brief: GateInputs}> | Readonly<{mode: 'pre-build'; brief: ReviewBrief}> | Readonly<{mode: 'diagnosis'; brief: DiagnosisBrief}> | Readonly<{mode: 'endgame'; brief: EndgameReviewBrief}>;
 
 export type ExperienceInputs = Readonly<{mode: 'walkthrough'; brief: WalkthroughInputs}> | Readonly<{mode: 'polish'; brief: PolishJudgeInputs}>;
 export type RoleInputs = {

@@ -1,5 +1,5 @@
 import { ciReasons,lanePlacementReasons } from '../input/ci.ts';
-import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
+import { inUnitSystems,systemTraits,systemsForPatterns } from '../input/systems.ts';
 // The shared Phase-0 startup rows (M4a "`roadmap phase0 check`", step C1): one rule, run by `start` (src/preflight/
 // checks.ts), `apply` (src/commands/apply.ts) and `roadmap phase0 check` (src/commands/phase0.ts, both modes).
 // Synchronous: git runs as spawnSync reads.
@@ -56,6 +56,8 @@ import { inUnitSystems,systemsForPatterns } from '../input/systems.ts';
 //  14. design first (advisory, never a rejection; every arc, every mode; dev.13) a live unit of a milestone that does not run
 //                  after the milestone's design unit, transitively: `milestone-unit-before-design{milestone, unit, design}`.
 //  15. milestones (every arc, every mode; dev.13) milestones on a plan without `holistic`: `milestones-need-holistic`.
+//  (dev.83, E4) shared estate mutation (advisory): a pool the active lanes of two or more live units name, one of them on a
+//                  `persistent` system, held `exclusive` by none of those lanes: `shared-estate-mutation`.
 //  16. lane topology (every arc, every mode; dev.17) every system a lane lists declared by the repo config's systems map, every
 //                  lane a spec forces a suite lane of the plan (`plan-invalid{schema}`, `laneTopologyRows`).
 //                  `walk-tools-missing` (the bring-up programs and the walkthrough MCP servers) is not one of these rows: its
@@ -67,7 +69,7 @@ import { existsSync,readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerLog,latestAnswers,refQuestions,unappliedOf } from '../answers.ts';
 import { type ArcRef,chainBack,committedAcks,completedHeadOf,previousIncomplete,questionClosure,quotaOf } from '../chain.ts';
-import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
+import { type ArcId,type DebtId,type LaneId,type ObligationId,type MilestoneId,type ResourceName,type UnitId,DOCS_SYSTEM,phaseQuestionSeq,sha } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { canonicalJson,sha256Hex } from '../core/json.ts';
 import { type SpecM1,specForces,specRepairs,specWitnesses } from '../core/records.ts';
@@ -166,8 +168,17 @@ export type MilestoneUnitBeforeDesign = Readonly<{ kind: 'milestone-unit-before-
  */
 export type RepairDeliveredElsewhere = Readonly<{ kind: 'repair-delivered-elsewhere'; unit: UnitId; obligation: ObligationId; units: readonly UnitId[] }>;
 
+/**
+ * dev.83 (E4), advisory: pool `pool` is named by active spec lanes of two or more live, unsettled units (`units`), at least
+ * one on a system with the `persistent` trait (`mutators`), and no lane naming it holds it `exclusive`: a mutator may
+ * change state the other units' lanes read through their own instances at the same time.
+ */
+export type SharedEstateMutation = Readonly<{ kind: 'shared-estate-mutation'; pool: ResourceName; units: readonly UnitId[]; mutators: readonly UnitId[] }>;
+
 /** A Phase-0 advisory: never a refusal (rows 10, 13, 14; dev.26: existing plan defects in APPLY). */
-export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }> | RepairDeliveredElsewhere;
+export type Phase0Advisory = Readonly<{kind: 'vacuous-future-witness'; obligation: ObligationId; files: readonly RepoPath[]}> | Readonly<{kind: 'spanning-proof'; obligation: ObligationId; lane: LaneId; units: readonly UnitId[]}> | Readonly<{ kind: 'derived-unregenerated'; outputs: readonly RepoPattern[]; units: readonly UnitId[] }> | Readonly<{kind: 'system-overlap'; units: readonly [UnitId, UnitId]; systems: readonly import('../core/ids.ts').SystemName[]}> | MilestoneUnitBeforeDesign | Row<'plan-defect'> | Readonly<{ kind: 'lanes-differ-only-env-set'; lanes: readonly [string, string] }> | RepairDeliveredElsewhere | SharedEstateMutation | ConsiderBatch;
+/** dev.83 (E3): a candidate-cadence arc lane that names a shared resource or environment: consider `batch` cadence. Advisory only. */
+export type ConsiderBatch = Readonly<{ kind: 'consider-batch'; lane: LaneId; resources: readonly ResourceName[] }>;
 
 /**
  * The rows found, and on a clean re-derivation the source the pin read (its files are what a start or apply keeps).
@@ -217,7 +228,7 @@ export function phase0Rows(input: Phase0Input, mode: Phase0Mode): Phase0Outcome 
   const { plan } = input;
   rows.push(...milestonesNeedHolisticRows(plan));
   rows.push(...laneTopologyRows(input));
-  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input), ...repairsDeliveredElsewhere(input)];
+  const advisories: Phase0Advisory[] = [...systemOverlap(input), ...derivedUnregenerated(input), ...milestoneUnitsBeforeDesign(plan), ...nearDuplicateLanes(input), ...proofAdvisories(input), ...repairsDeliveredElsewhere(input), ...sharedEstateMutations(input), ...considerBatch(input)];
   const defects = planDefects(input, mode);
   if (!mode.defects && defects.length > 0) advisories.push({ kind: 'plan-defect', defects });
   if (plan.target !== 'corpus') {
@@ -744,6 +755,21 @@ function repairsDeliveredElsewhere(input: Phase0Input): readonly RepairDelivered
   }));
 }
 
+/** dev.83 (E4): each pool `SharedEstateMutation` names. Needs the systems map (the trait lives there). */
+function sharedEstateMutations(input: Phase0Input): readonly SharedEstateMutation[] {
+  const map = input.config?.systemsMap;
+  if (map === undefined) return [];
+  const live = new Map(input.plan.units.filter((u) => isLive(input.plan, u) && !input.settled.has(u.id)).map((u) => [u.id, u] as const));
+  const lanes = parsedSpecs(input).filter((s) => live.has(s.unit)).flatMap((s) => s.lanes.filter((l) => l.state === 'active').map((lane) => ({ unit: s.unit, lane })));
+  return input.plan.resources.filter((r) => r.pool !== undefined).flatMap((r): SharedEstateMutation[] => {
+    const naming = lanes.filter((x) => x.lane.resources.includes(r.name));
+    if (naming.some((x) => x.lane.exclusive?.includes(r.name) === true)) return [];
+    const units = [...new Set(naming.map((x) => x.unit))].sort();
+    const mutators = units.filter((u) => systemTraits(map, live.get(u)!.systems).includes('persistent'));
+    return units.length < 2 || mutators.length === 0 ? [] : [{ kind: 'shared-estate-mutation', pool: r.name, units, mutators }];
+  });
+}
+
 /** Read-only proof smells, never verdicts: existing future-test files may already pass; multi-unit delivery needs a spanning lane. */
 function proofAdvisories(input: Phase0Input): readonly Phase0Advisory[] {
   const obligations = visionAndObligations(input).obligations;
@@ -762,4 +788,15 @@ function proofAdvisories(input: Phase0Input): readonly Phase0Advisory[] {
     if (units.length > 1 && !spans) out.push({kind: 'spanning-proof', obligation: o.id, lane: lane.id, units: units.map((u) => u.id)});
     return out;
   });
+}
+
+/**
+ * dev.83 (E3): each candidate-cadence arc lane naming resources (a declared resource or environment, which other lanes and
+ * units share): every candidate selecting its obligations would reserve them in the merge path. A `batch` lane proves the
+ * obligation after merge instead (src/pipeline/batchlanes.ts, the batch witness).
+ */
+function considerBatch(input: Phase0Input): readonly ConsiderBatch[] {
+  const obligations = visionAndObligations(input).obligations;
+  if (obligations === null) return [];
+  return obligations.lanes.flatMap((l) => (l.cadence === 'candidate' && l.witnessClass !== 'external' && l.resources.length > 0 ? [{ kind: 'consider-batch' as const, lane: l.id, resources: l.resources }] : []));
 }

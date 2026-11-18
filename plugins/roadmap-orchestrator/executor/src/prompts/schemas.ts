@@ -6,7 +6,7 @@ import { type SystemName,systemName } from '../core/ids.ts';
 import { type ClauseId,type FailureModeId,type FindingId,type JourneyId,type LaneId,type ObligationId,type ReviewFindingId,type Sha,type UnitId,type VisionClauseId,answerIds,clauseId,findingId,journeyId,laneId,obligationId,reviewFindingId,sha,unitId,visionClauseId } from '../core/ids.ts';
 import { type JsonValue } from '../core/json.ts';
 import { type NoteDef,SPEC_SCHEMA,specM1 } from '../core/records.ts';
-import type { BuilderCheck } from '../core/events.ts';
+import { type BuilderCheck,type DiagnosisCause,DIAGNOSIS_CAUSES,externalCause } from '../core/events.ts';
 import { type ReviewDispute,reviewDispute } from '../core/review.ts';
 import { Fields,type Read,SchemaError,arrayOf,assertUnique,envName,int,literal,nullable,object,oneOf,str,tagged,text } from '../core/validate.ts';
 import { type RepoPath,type RepoPattern,matchesPattern,repoPath,repoPattern } from '../core/values.ts';
@@ -413,6 +413,43 @@ export const gateOutput: Read<GateOutput> = object((f): GateOutput => {
 
 export function validateGateOutput(value: unknown): GateOutput {
   return gateOutput(value, 'gate');
+}
+
+/**
+ * dev.83 (E2): the verifier's diagnosis answer. `cause` (events.ts `DiagnosisCause`) is what code acts on: `base` or
+ * `environment` parks the unit uncharged; `evidence`, the paths, lines and observations the cause rests on (an external
+ * cause cites at least one); `brief`, the note the next build receives; `reasons`, the account behind it.
+ */
+export type DiagnosisOutput = Readonly<{ cause: DiagnosisCause; evidence: readonly string[]; brief: string; reasons: readonly string[] }>;
+export const DIAGNOSIS_SCHEMA: Schema = sObj({ cause: sEnum(DIAGNOSIS_CAUSES), evidence: sArr(S_STR), brief: S_STR, reasons: sArr(S_STR, 1) });
+const diagnosisOutput: Read<DiagnosisOutput> = object((f) => {
+  const out = { cause: f.get('cause', oneOf(DIAGNOSIS_CAUSES)), evidence: f.get('evidence', arrayOf(str)), brief: f.get('brief', str), reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })) };
+  if (externalCause(out.cause) && out.evidence.length === 0) throw new SchemaError(`${f.path}.evidence`, `at least one item for a cause outside the unit (${out.cause})`, out.evidence);
+  return out;
+});
+export function validateDiagnosisOutput(value: unknown): DiagnosisOutput {
+  return diagnosisOutput(value, 'diagnosis');
+}
+
+/**
+ * dev.83 (WS-5): the verifier's endgame review answer (src/endgame/review.ts): its findings, each opened as an
+ * `endgame-review` finding of its severity (only a P1 holds the arc), with the paths, lines and experiments it rests on
+ * (at least one), and its reasons.
+ */
+export type EndgameReviewFinding = Readonly<{ severity: FindingSeverity; text: string; path: string | null; evidence: readonly string[] }>;
+export type EndgameReviewOutput = Readonly<{ findings: readonly EndgameReviewFinding[]; reasons: readonly string[] }>;
+export const ENDGAME_REVIEW_SCHEMA: Schema = sObj({
+  findings: sArr(sObj({ severity: sEnum(LENS_SEVERITIES), text: S_STR, path: sNullable(S_STR), evidence: sArr(S_STR, 1) })),
+  reasons: sArr(S_STR, 1),
+});
+const endgameReviewOutput: Read<EndgameReviewOutput> = object((f) => ({
+  findings: f.get('findings', arrayOf(object((g) => ({
+    severity: g.get('severity', oneOf(LENS_SEVERITIES)), text: g.get('text', nonBlank), path: g.get('path', nullable(str)), evidence: g.get('evidence', arrayOf(str, { nonEmpty: true })),
+  })))),
+  reasons: f.get('reasons', arrayOf(str, { nonEmpty: true })),
+}));
+export function validateEndgameReviewOutput(value: unknown): EndgameReviewOutput {
+  return endgameReviewOutput(value, 'endgame review');
 }
 
 /** How a cluster map covers a diff's paths: the paths no cluster matches, and those more than one does (with their ids). */

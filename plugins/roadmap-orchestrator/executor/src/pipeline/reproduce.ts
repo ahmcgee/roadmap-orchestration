@@ -39,6 +39,7 @@ import { mutantPatchPath,patchedTree } from '../git/mutant.ts';
 import { mutantLaneDir } from '../git/snapshot.ts';
 import { removedSince } from '../git/worktree.ts';
 import { type RepairProgress,type RepairUnit,isActive,repairedObligations,ruleFinding,syncFindings } from '../holistic/findings.ts';
+import { endgameFixes } from '../endgame/fixes.ts';
 import { verdictOf } from '../holistic/observe.ts';
 import { type SpecLinks,specLinksOf } from '../holistic/staleset.ts';
 import { type ArcLaneDef,type MutantRef,type ObservationVerdict,type WitnessRecord,type WitnessRef,laneRevOf,witnessRecord } from '../holistic/types.ts';
@@ -511,5 +512,5 @@ function codeDismissals(ctx: StageContext): readonly FindingId[] {
 export function syncRepairs(ctx: StageContext): void {
   if (!ctx.journal.view.holistic().findings.some(isActive)) return;
   for (const id of codeDismissals(ctx)) ruleFinding(ctx.journal, id, 'dismissed', { type: 'code', reason: 'not-reproduced' });
-  syncFindings(ctx.journal, repairUnits(ctx));
+  syncFindings(ctx.journal, repairUnits(ctx), endgameFixes(ctx));
 }

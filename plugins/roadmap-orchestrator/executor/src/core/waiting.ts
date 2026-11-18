@@ -2,7 +2,7 @@
 import { resourceName } from './ids.ts';
 import { type Read, Fields, SchemaError, nat, object } from './validate.ts';
 
-export const ADMISSION_HOLDS = ['paused', 'drain', 'run-only', 'backend-parked', 'breaker', 'base-red', 'blocking-item', 'finding-blocked', 'known-defect', 'host-pressure', 'compare', 'deflake', 'dependency', 'contingent-edge', 'milestone', 'baseline', 'pack-review', 'repair-batch'] as const;
+export const ADMISSION_HOLDS = ['paused', 'drain', 'run-only', 'backend-parked', 'breaker', 'base-red', 'blocking-item', 'finding-blocked', 'known-defect', 'host-pressure', 'compare', 'deflake', 'dependency', 'contingent-edge', 'milestone', 'baseline', 'pack-review', 'repair-batch', 'endgame'] as const;
 export type AdmissionHold = typeof ADMISSION_HOLDS[number];
 /**
  * dev.81: `fast-suite-tokens` (C4: every `@fast-suite` token is held) and `resource-unhealthy` (C3c: the request names an

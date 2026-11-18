@@ -5,7 +5,7 @@
 //   shared state   the unit's publication holds the integration slot (candidate through ff and snapshot); one of the
 //                  task's own ops is open on shared state (`OP_CLASS` `shared`: a spec patch, the durable half of the
 //                  revision fence a machine patch holds; a candidate merge, an ff, a snapshot, a docs commit, a revision,
-//                  a needs-user raise, a command); a checkpoint job with a docs publication or a batch on the slot. The
+//                  a needs-user raise, a command); an endgame job whose landing holds the slot (dev.83). The
 //                  fault crashes the executor as before (the supervisor restarts it, 3 an hour). So does a fault the
 //                  wrapper cannot attribute: a throw in the scheduler loop never reaches a wrapper, and a broken journal
 //                  writer refuses the fault's own record. The in-process half of the fence is released by its holder's
@@ -17,9 +17,13 @@
 //                  cleaned. Then a unit parks `executor-fault` at the stage it was in (its open attempt, or the stage it
 //                  was about to start): uncharged, operator env, the stack in the fact's detail and in a non-blocking
 //                  needs-user; `resume <unit>` re-enters that stage. A restart replays the park, never the throw. An arc
-//                  job (`JOB_FAULT_TRACKS`: audit, walk, checkpoint, baseline) ends faulted the same way: a non-blocking
-//                  needs-user (parent `arc`, reason `executor-fault`), and the holistic track is not asked again while
-//                  that item is open (`jobFaultOpen`): acknowledging it makes the job due again.
+//                  job (`JOB_FAULT_TRACKS`: audit, walk, baseline; dev.83, the batch witness and the endgame jobs: a
+//                  landing, review or lane run) ends faulted the same way: a non-blocking needs-user (parent `arc`,
+//                  reason `executor-fault`), and the holistic track is not asked again while that item is open
+//                  (`jobFaultOpen`): acknowledging it makes the job due again (an endgame job, still running in its
+//                  episode, resumes). Off the list: the jobs that write a revision (pack review, polish, compare), the
+//                  batch and the close-out (shared state by their nature), and the endgame's open step (its ops are the
+//                  arc's, no job's).
 import { crashPoint } from '../core/crash.ts';
 import type { Holder, IntentRecord, OpKind, OutcomeStage, Parent } from '../core/events.ts';
 import { type JobKind, type UnitId, invocationId, parseJobId } from '../core/ids.ts';
@@ -62,6 +66,8 @@ export const JOB_FAULT_TRACKS: Readonly<Record<string, Readonly<{ name: string; 
   'holistic:audit': { name: 'audit', kinds: ['audit'] },
   'holistic:walk': { name: 'milestone walk', kinds: ['walk'] },
   'holistic:baseline': { name: 'baseline', kinds: ['baseline'] },
+  'holistic:witness': { name: 'batch witness', kinds: ['witness'] },
+  'holistic:endgame-job': { name: 'endgame', kinds: ['endgame'] },
 };
 
 /** Whose fault: a unit's task, or an arc job's (its work's job kinds). */
@@ -91,7 +97,7 @@ function sharedHeld(view: JournalView, scope: FaultScope): string | null {
     if (status.state === 'free' || status.state === 'cleanup-failed') continue;
     const h = status.holder;
     if (scope.type === 'unit' && h.type === 'publication' && h.unit === scope.unit) return `its publication holds ${resource}`;
-    if (scope.type === 'job' && scope.kinds.includes('ckpt') && (h.type === 'docs' || h.type === 'batch')) return `a ${h.type} publication holds ${resource}`;
+    if (scope.type === 'job' && h.type === 'endgame' && scope.kinds.includes('endgame')) return `its landing holds ${resource}`;
   }
   return null;
 }

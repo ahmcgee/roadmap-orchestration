@@ -181,7 +181,9 @@ describe('lanes.cadence', () => {
     assert.deepEqual(lanePlacementReasons(later, { id: 'u1' } as never), [], 'local candidate lanes keep their delivering unit attribution');
     assert.match(lanePlacementReasons({ ...later, placement: 'cross-system' }, { id: 'u1' } as never).join(), /except in a spike/);
     assert.deepEqual(lanePlacementReasons(later, { id: 'u1', spike: { question: 'Does it work?' } } as never), []);
-    assert.throws(() => laneDefOf('arc')({...LANE, cadence: 'batch'}, 'l'), /cadence/);
+    assert.equal(laneDefOf('arc')({...LANE, cadence: 'batch'}, 'l').cadence, 'batch', 'dev.83: an arc lane may run at the batch witness');
+    assert.throws(() => laneDefOf('arc')({...LANE, cadence: 'unit'}, 'l'), /cadence/);
+    assert.throws(() => laneDefOf('spec')({...LANE, cadence: 'batch'}, 'l'), /cadence/);
     assert.equal(laneDefOf('suite')({...LANE, cadence: 'batch'}, 'l').cadence, 'batch');
     assert.equal(laneDef({...LANE, cadence: 'build'}, 'l').cadence, 'build');
     assert.throws(() => laneDefOf('spec')(LANE, 'l'), /cadence/);

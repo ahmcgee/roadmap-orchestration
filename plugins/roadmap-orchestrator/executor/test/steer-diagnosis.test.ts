@@ -27,6 +27,7 @@ import { absPath } from '../src/core/values.ts';
 import { consumeRecovered } from '../src/executor.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { invocationDir,killWorkload } from '../src/pipeline/invoke.ts';
+import { diagnosed } from '../src/pipeline/surface.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { STEER_DIRECTIVE } from '../src/prompts/directives.ts';
 import { recover } from '../src/recover/recover.ts';
@@ -34,7 +35,7 @@ import { faultUnit } from '../src/schedule/fault.ts';
 import { bytesSha256 } from '../src/spec/spec.ts';
 import { recoveryContext } from './fixtures/rec-common.ts';
 import { BUILD_REPORT,SCENARIO_TIMEOUT_MS,admitAll,planCheckStep } from './fixtures/stage-common.ts';
-import { type ArcDescriptor,type ArcRun,MUL_LANE,U1,commandContextFor,contextFor,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
+import { type ArcDescriptor,type ArcRun,MUL_LANE,U1,codexStep,commandContextFor,contextFor,diagnosisStep,gateStep,mulBuild,outcomes,setupArc,stepUntil } from './fixtures/unit-common.ts';
 import { barrierDir,reached,release } from './helpers/barrier.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { fixture,runFixture } from './helpers/proc.ts';
@@ -46,7 +47,7 @@ const BRIEF = 'STEER-BRIEF-MARKER: find the cause and fix it.';
 const NOTE = 'DIAGNOSIS-NOTE-MARKER: the repeated red needs a narrow restart experiment.';
 const TO_PARK: readonly Step[] = [planCheckStep({ decision: 'approve' }), mulBuild(), gateStep({ decision: 'escalate' }), gateStep({ decision: 'escalate' })];
 /** The verifier's diagnosis call, then the steer round (a diagnosed unit's builds are Claude's), then the pass's gate. */
-const diagnosis = gateStep({ decision: 'approve', reasons: [NOTE] });
+const diagnosis = diagnosisStep({ brief: NOTE });
 const steerRound: Step = { as: 'claude', expect: { argvLacks: ['--resume'], stdinContains: [STEER_DIRECTIVE, BRIEF, NOTE] }, acts: [{ type: 'emit', value: BUILD_REPORT }] };
 
 /** The unit's M4 diagnosis is due: no fixture arc reaches 8 builds or 20 judged attempts by itself (as test/agent-surface.test.ts). */
@@ -213,7 +214,7 @@ describe('steer-diagnosis.recovery: an open diagnosis attempt under a steer entr
 
   for (const [how, crash] of [['redone', { label: 'spawn.after-runner-exit', occurrence: 1 }], ['reconciled', { label: 'spawn.after-result', occurrence: 1 }], ['adopted', 'mid-call']] as const) {
     test(`steer-diagnosis.recovery call closed by recovery (${how}): its result is consumed, closed \`diagnosed\``, T, async () => {
-      const call = how === 'adopted' ? gateStep({ decision: 'approve', reasons: [NOTE] }, {}, [{ type: 'barrier', name: 'b1', timeoutMs: 120_000 }]) : diagnosis;
+      const call = how === 'adopted' ? diagnosisStep({ brief: NOTE }, {}, [{ type: 'barrier', name: 'b1', timeoutMs: 120_000 }]) : diagnosis;
       const { r, attempt, before } = await crashedInDiagnosis(await parkedAndSteered([call, steerRound, gateStep({ decision: 'approve' })]), crash);
       try {
         const spawned = r.journal.view.opsOfUnit('proc.spawn', U1).at(-1)!;
@@ -307,6 +308,99 @@ test('steer-diagnosis.startup: a recorded attempt that cannot be read parks its 
     assert.ok(item !== undefined && item !== null && item.subject.type === 'unit' && item.subject.unit === 'u1', 'the park\'s item names the unit');
     assert.match(item.summary, /without its backend result/);
     assert.equal(r.journal.view.unit(r.unit('u2').id).status, 'active', 'the other unit is untouched and the startup returned');
+  } finally {
+    r.journal.close();
+  }
+});
+
+// dev.83 (E2): a repeated red makes the diagnosis due before the fix build, once per source; it moves no build to Claude, and a
+// cause outside the unit parks it uncharged until `resume` runs the fix round.
+//
+//   steer-diagnosis.repeat-red          a second red of a lane with the same signature: diagnosed before the fix build, once
+//   steer-diagnosis.repeat-red-other    a second red with another signature: no diagnosis
+//   steer-diagnosis.diagnosed-external  an environment cause parks the unit uncharged; `resume` runs the fix round
+
+const REPEAT_NOTE = 'REPEAT-NOTE-MARKER: rename nothing; the refusal names the account.';
+const EXTERNAL_NOTE = 'EXTERNAL-NOTE-MARKER: the fixture account row is stale; change no code.';
+/**
+ * A spec lane green on the base (no src/mul.js) and red on the unit with one stable line naming `src/word.txt`'s word ('fixture'
+ * while no build wrote one): a red that repeats until a build changes the word, and a regression against the base.
+ */
+const SIGNIN_LANE = { id: 'signin', argv: ['node', '-e', "const fs=require('node:fs'); if (!fs.existsSync('src/mul.js')) process.exit(0); const w=fs.existsSync('src/word.txt') ? fs.readFileSync('src/word.txt','utf8').trim() : 'fixture'; console.error('SignInError: the directory refused the ' + w + ' account'); process.exit(1);"] };
+/**
+ * A fix round's build: the implementer's session resumed, its change left uncommitted, so the salvage commit is not the head
+ * the fake's honest checks name (a check passing at the salvage head would read as an environment divergence).
+ */
+const fixBuild = (files: Readonly<Record<string, string>>, stdinContains: readonly string[] = []): Step => codexStep([{ type: 'dirty', files }], { argv: ['exec', 'resume'], stdinContains });
+const repeatArc = (steps: readonly Step[]): ArcDescriptor => setupArc({ steps: [planCheckStep({ decision: 'approve' }), mulBuild(), ...steps], units: [{ id: 'u1', lanes: [SIGNIN_LANE] }], suite: [] });
+const builds = (d: ArcDescriptor): number => outcomes(d).filter((o) => o.startsWith('build:')).length;
+const m4 = (r: ArcRun) => r.journal.view.surfaceFacts().flatMap((f) => (f.kind === 'review-triggered' && f.marker === 'M4' ? [f] : []));
+
+test('steer-diagnosis.repeat-red: a second red of a lane with the same signature makes the diagnosis due before the fix build, once; the fallback stays with the attempt counts', T, async () => {
+  const d = repeatArc([
+    fixBuild({ 'src/attempt.js': 'one\n' }),
+    diagnosisStep({ brief: REPEAT_NOTE }, { stdinContains: ['repeat-red:signin:', 'SignInError: the directory refused the fixture account'] }),
+    fixBuild({ 'src/attempt.js': 'two\n' }, [REPEAT_NOTE]),
+    fixBuild({ 'src/attempt.js': 'three\n' }),
+  ]);
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'build' && builds(d) === 4);
+    const all = outcomes(d);
+    assert.deepEqual(all.filter((o) => o.startsWith('lanes:')), ['lanes:red', 'lanes:regression', 'lanes:regression'], 'the second and third reds repeat the first against a green base');
+    assert.equal(all[all.indexOf('pre-build:diagnosed') - 1], 'lanes:regression', 'diagnosed right after the second red, before its fix build');
+    assert.equal(all[all.indexOf('pre-build:diagnosed') + 1], 'build:success');
+    assert.equal(diagnosisCalls(d).length, 1, 'once per source: the third red repeats the same signature');
+    assert.equal(m4(r).length, 1);
+    assert.match(m4(r)[0]!.source, /^repeat-red:signin:[0-9a-f]{64}$/);
+    const review = reviews(r)[0];
+    assert.equal(review?.kind === 'review-completed' ? review.cause : null, 'unit');
+    assert.equal(diagnosed(r.journal.view, U1), false, 'a repeated red\'s diagnosis is no Claude fallback');
+    assert.equal(readCalls(d.scenarioPath).filter((c) => c.as === 'claude' && !c.stdin.includes('<mode>')).length, 0, 'every build stayed on its codex seat');
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null), 'every call matched its step: the fix build carried the diagnosis brief');
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('steer-diagnosis.repeat-red-other: a second red with another failure signature makes no diagnosis due', T, async () => {
+  const d = repeatArc([fixBuild({ 'src/word.txt': 'second\n' }), fixBuild({ 'src/word.txt': 'third\n' })]);
+  const r = contextFor(d);
+  try {
+    await stepUntil(r, 'u1', (f) => f.stage === 'build' && builds(d) === 3);
+    assert.deepEqual(outcomes(d).filter((o) => o.startsWith('lanes:') || o.startsWith('pre-build:')), ['pre-build:approve', 'lanes:red', 'lanes:regression']);
+    assert.deepEqual([diagnosisCalls(d).length, m4(r).length], [0, 0]);
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null));
+  } finally {
+    r.journal.close();
+  }
+});
+
+test('steer-diagnosis.diagnosed-external: an environment cause parks the unit uncharged with an item naming its evidence and brief; resume runs the fix round with the brief', T, async () => {
+  const d = repeatArc([
+    fixBuild({ 'src/attempt.js': 'one\n' }),
+    diagnosisStep({ cause: 'environment', evidence: ['fixtures/accounts.json:3'], brief: EXTERNAL_NOTE }),
+    fixBuild({ 'src/attempt.js': 'two\n' }, [EXTERNAL_NOTE]),
+  ]);
+  const r = contextFor(d);
+  try {
+    const parked = await runUnit(r.ctx, r.unit('u1'), admitAll);
+    if (parked.kind !== 'parked') throw new Error(`not parked: ${JSON.stringify(parked)}`);
+    assert.equal(parked.needsUser.reason, 'diagnosed-external');
+    assert.ok(parked.needsUser.summary.includes('fixtures/accounts.json:3') && parked.needsUser.summary.includes(EXTERNAL_NOTE), parked.needsUser.summary);
+    const closing = outcomeFacts(r).at(-1)!;
+    assert.deepEqual([closing.stage, closing.outcome, closing.class, closing.chargeable, closing.park], ['pre-build', 'diagnosed-external', 'park', false, { class: 'operator', kind: 'env' }]);
+    assert.equal(r.journal.view.unit(U1).status, 'park-pending');
+    const before = counters(r);
+    await command(r, { type: 'resume', target: { type: 'unit', unit: U1 } });
+    const restored = r.journal.view.unit(U1).decided;
+    assert.deepEqual([restored?.stage, restored?.outcome], ['lanes', 'regression'], 'resume restores the decision the diagnosis held');
+    await stepUntil(r, 'u1', (f) => f.stage === 'build');
+    const all = outcomes(d);
+    assert.equal(all[all.indexOf('pre-build:diagnosed-external') + 1], 'build:success', 'the fix round ran');
+    assert.deepEqual(counters(r), before, 'the park and the resume charged nothing');
+    assert.equal(diagnosisCalls(d).length, 1, 'never diagnosed again for the same source');
+    assert.ok(readCalls(d.scenarioPath).every((c) => c.step !== null), 'the fix build carried the diagnosis brief');
   } finally {
     r.journal.close();
   }

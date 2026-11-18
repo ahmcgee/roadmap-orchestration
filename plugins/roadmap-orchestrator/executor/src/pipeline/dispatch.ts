@@ -71,7 +71,7 @@ import { OWNER_ENV,ownerLabel } from '../resources/teardown.ts';
 import type { ResolvedRouting } from '../routing/layers.ts';
 
 import {
-type ArcRole,type ArcSeatRef,
+type ArcRole,type ArcSeatRef,type JobSeatRef,
 type Backend,CLAUDE_EFFORTS,CLAUDE_MODELS,CODEX_EFFORTS,CODEX_MODELS,
 type JudgmentRole,type JudgmentSeat,
 RISK_TIERS,
@@ -578,6 +578,22 @@ export function arcSeat(ctx: StageContext, role: ArcRole): Readonly<{ seat: ArcS
   return { seat: seatRef(role, 'arc') as ArcSeatRef, triple, routingRev: routing.rev };
 }
 
+/** The role a job may call: an arc role, or (dev.83) the verifier for the endgame review. */
+export type JobRole = ArcRole | 'verifier';
+
+/**
+ * A job call's seat: an arc role's `arc` seat (`arcSeat`), or (dev.83) the verifier's `high` seat under the arc's routing,
+ * for the endgame review (src/endgame/review.ts): the strongest unit judgment seat, as no gate saw the code it reviews.
+ */
+export function jobSeat(ctx: StageContext, role: JobRole): Readonly<{ seat: JobSeatRef; triple: ClaudeTriple; routingRev: RoutingRev }> {
+  if (role !== 'verifier') return arcSeat(ctx, role);
+  const routing = ctx.routing(null);
+  const triple = routing.table.verifier.high;
+  // Startup refuses every Codex judgment seat (unsupported-routing), so this is a bug if it happens.
+  if (triple.backend !== 'claude') throw new Error(`the verifier seat high resolves to ${triple.backend}; judgment is Claude only`);
+  return { seat: { role: 'verifier', tier: 'high' }, triple, routingRev: routing.rev };
+}
+
 /**
  * One arc-role call of a job. `attempt` is the call's place among the job's calls of `role` (1-based): the key a
  * resumed job finds it by (`recordedArcCall`) and its meter subject's attempt. `cwd` is the tree the session reads.
@@ -656,7 +672,8 @@ export async function callArcRole(ctx: StageContext, spec: ArcCallSpec): Promise
  */
 export type ActingJudgeCallSpec = Readonly<{
   job: JobId;
-  role: WalkRole;
+  /** dev.83: or the verifier, the endgame review acting in a checkout of the integration head. */
+  role: WalkRole | 'verifier';
   attempt: number;
   system: string;
   rendered: string;
@@ -678,7 +695,7 @@ export type ActingJudgeCallSpec = Readonly<{
  * schema and prompt are, and named by path.
  */
 export async function callActingJudge(ctx: StageContext, spec: ActingJudgeCallSpec): Promise<BackendCallOutcome> {
-  const seat = arcSeat(ctx, spec.role);
+  const seat = jobSeat(ctx, spec.role);
   return callJobRole(ctx, spec, seat, actingJudgeCall(ctx, spec, seat.triple));
 }
 
@@ -716,8 +733,8 @@ export const MCP_CONFIG_INPUT = 'mcp.json';
 
 /** The spawn of a job's arc-role call `c` (a judgment or an acting judge), shared by `callArcRole` and `callActingJudge`. */
 async function callJobRole(
-  ctx: StageContext, spec: Readonly<{ job: JobId; role: ArcRole; attempt: number; rendered: string; prompt: PromptSize | null; cwd: AbsPath; deadlineAt: IsoTime; session: JudgmentSession }>,
-  { seat, routingRev }: ReturnType<typeof arcSeat>, c: Extract<BackendCall, { kind: 'claude-judgment' | 'claude-acting-judge' }>,
+  ctx: StageContext, spec: Readonly<{ job: JobId; role: JobRole; attempt: number; rendered: string; prompt: PromptSize | null; cwd: AbsPath; deadlineAt: IsoTime; session: JudgmentSession }>,
+  { seat, routingRev }: ReturnType<typeof jobSeat>, c: Extract<BackendCall, { kind: 'claude-judgment' | 'claude-acting-judge' }>,
 ): Promise<BackendCallOutcome> {
   const { session } = spec;
   const schemaPath = inputFile(ctx.runDir, `${c.schemaText}\n`, 'schema.json');
@@ -746,7 +763,7 @@ async function callJobRole(
  * again): its result, or lost; null when the job made none. An open one is a bug here: recovery settles every open
  * spawn before a job resumes.
  */
-export function recordedArcCall(ctx: StageContext, job: JobId, role: ArcRole, attempt: number): BackendCallOutcome | null {
+export function recordedArcCall(ctx: StageContext, job: JobId, role: JobRole, attempt: number): BackendCallOutcome | null {
   const spawn = ctx.journal.view.spawnsOfJob(job).filter((i) => {
     const s = i.expect.subject;
     return s.purpose === 'arc-backend' && s.job === job && s.role === role && s.attempt === attempt;

@@ -1,7 +1,7 @@
 // The arbiter (src/schedule/arbiter.ts) over a real journal, with synthetic ranks: rank order, disjoint-only
 // backfill, environment-blocked waiters set aside, cancellation holding nothing, a fresh arbiter after a restart,
 // and a randomized interleaving (fixed seed) checking that no two holders ever share a unit and that no grant
-// overtakes a higher-ranked active waiter it overlaps. dev.81: arbiter.fast-suites (C4).
+// overtakes a higher-ranked active waiter it overlaps. dev.81: arbiter.fast-suites (C4). dev.83: arbiter.exclusive-drains-readers (E4).
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -130,6 +130,35 @@ describe('arbiter.backfill-no-overtake', () => {
     assert.equal(sharesNamed.box.grant, null, 'queue is hi\'s now');
     assert.deepEqual(sharesPool.box.grant, { kind: 'granted', units: [poolInstance(ESTATE, 2)] });
     assert.deepEqual(sharesCpu.box.grant, { kind: 'granted', units: ['@cpu#2'] });
+    journal.close();
+  });
+});
+
+// dev.83 (E4): a mutator (`exclusive`) waiting on readers of a shared estate pool is not starved by later readers.
+describe('arbiter.exclusive-drains-readers', () => {
+  it('a waiting mutator holds back later readers of its pool until the readers holding it drain, then holds the pool whole; readers follow it', T, async () => {
+    const r = newRun();
+    const { ctx, journal } = openPoolRun(r);
+    const arb = createArbiter(ctx);
+    const reader = (u: string, seq: number) => wait(arb, req({ pools: [ESTATE] }), holderOf(u), rank(u, seq));
+    const first = reader('r1', 1);
+    await first.done;
+    assert.deepEqual(first.box.grant, { kind: 'granted', units: [poolInstance(ESTATE, 1)] });
+    const mutator = wait(arb, req({ pools: [ESTATE], exclusive: [ESTATE] }), holderOf('m'), rank('m', 2));
+    const late = reader('r2', 3);
+    const disjoint = wait(arb, req({ named: [DB] }), holderOf('disjoint'), rank('disjoint', 4));
+    await disjoint.done;
+    await tick();
+    assert.deepEqual([mutator.box.grant, late.box.grant], [null, null], 'estate#2 is free, but the later reader may not pass the mutator');
+    release(ctx, holderOf('r1'));
+    arb.wake();
+    await mutator.done;
+    assert.deepEqual(mutator.box.grant, { kind: 'granted', units: [poolInstance(ESTATE, 1), poolInstance(ESTATE, 2)] });
+    assert.equal(late.box.grant, null);
+    release(ctx, holderOf('m'));
+    arb.wake();
+    await late.done;
+    assert.deepEqual(late.box.grant, { kind: 'granted', units: [poolInstance(ESTATE, 1)] });
     journal.close();
   });
 });

@@ -183,7 +183,7 @@ describe('bin/roadmap', () => {
 });
 
 describe('cli: M3 forms', () => {
-  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, close-admissions, gc', () => {
+  it('cli.m3-forms: rule, reverse, steer, merge-in, audit, gc; close-admissions is gone (dev.83: the endgame replaces it)', () => {
     assert.throws(() => parseCommand(['rule', 'rulings/C-7.json']), /unknown command/);
     assert.deepEqual(parseCommand(['note', 'u1', '--brief', 'b.md']), {command: 'note', unit: 'u1', brief: 'b.md', run: HOST});
     assert.deepEqual(parseCommand(['reverse', 'D-3', ...EXPLICIT]), { command: 'reverse', divergence: 'D-3', run: EXPLICIT_RUN });
@@ -194,9 +194,10 @@ describe('cli: M3 forms', () => {
       command: 'steer', unit: 'u1', brief: 'b.md', budgetMin: 45, class: 'summit', resume: true, run: HOST,
     });
     assert.deepEqual(parseCommand(['merge-in', 'u1']), { command: 'merge-in', unit: 'u1', run: HOST });
-    assert.deepEqual(parseCommand(['audit']), { command: 'audit', run: HOST });
+    assert.deepEqual(parseCommand(['audit']), { command: 'audit', whole: false, run: HOST });
+    assert.deepEqual(parseCommand(['audit', '--whole']), { command: 'audit', whole: true, run: HOST });
     assert.throws(() => parseCommand(['audit', '--lens', 'vision,drift,vision']), /lens/);
-    assert.deepEqual(parseCommand(['close-admissions', ...EXPLICIT]), { command: 'close-admissions', run: EXPLICIT_RUN });
+    assert.throws(() => parseCommand(['close-admissions', ...EXPLICIT]), /unknown command "close-admissions"/);
     assert.deepEqual(parseCommand(['gc', '--repo', '/r']), { command: 'gc', repo: '/r', keep: null, dryRun: false });
     assert.deepEqual(parseCommand(['gc', '--repo', '/r', '--keep', '3', '--dry-run']), { command: 'gc', repo: '/r', keep: 3, dryRun: true });
   });
@@ -214,7 +215,6 @@ describe('cli: M3 forms', () => {
     refuses(['merge-in'], /merge-in: <unit> is required/);
     refuses(['audit', '--lens', 'style'], /lens/);
     refuses(['audit', 'now'], /unexpected argument/);
-    refuses(['close-admissions', 'now'], /unexpected argument/);
     refuses(['gc'], /gc: --repo <path> is required/);
     refuses(['gc', '--repo', '/r', '--keep', '-1'], /needs a value|positive integer/);
     refuses(['gc', '--repo', '/r', '--arc', 'arc-1'], /unknown option --arc/);
@@ -234,9 +234,14 @@ describe('cli: M3 forms', () => {
       [['merge-in', 'u1'], { type: 'merge-in', unit: 'u1' }],
       [['rerun', 'u1/lanes#7/mul', '--cause', 'infra', '--evidence', 'runner disk full 10:02'], { type: 'rerun', unit: 'u1', attempt: 7, lane: 'mul', cause: 'infra', evidence: 'runner disk full 10:02' }],
       [['audit'], { type: 'audit' }],
-      [['close-admissions'], { type: 'close-admissions' }],
+      [['audit', '--whole'], { type: 'audit', whole: true }],
       [['withdraw', 'cmd-0123456789abcdef'], { type: 'withdraw', command: 'cmd-0123456789abcdef' }],
       [['push'], { type: 'push' }],
+      [['endgame', 'fix', '--closes', 'F-1,I-2,u1', '--commit', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '--note', 'rounds half-even'], { type: 'endgame', act: { type: 'fix', closes: ['F-1', 'I-2', 'u1'], commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', note: 'rounds half-even' } }],
+      [['endgame', 'run', 'mul,journey'], { type: 'endgame', act: { type: 'run', lanes: ['journey', 'mul'] } }],
+      [['endgame', 'land'], { type: 'endgame', act: { type: 'land' } }],
+      [['endgame', 'checkpoint', 'MS-1'], { type: 'endgame', act: { type: 'checkpoint', milestone: 'MS-1' } }],
+      [['endgame', 'review'], { type: 'endgame', act: { type: 'review' } }],
     ];
     for (const [args, body] of cases) {
       const exit = await roadmap([...args, '--repo', repo, '--arc', 'arc-1']);
@@ -255,6 +260,21 @@ describe('cli: M3 forms', () => {
     assert.equal(gc.code, 78, gc.stderr);
     assert.deepEqual(JSON.parse(gc.stdout), { refused: { kind: 'no-arcs', runtime: join(empty, '.git', 'roadmap-runtime') } });
   });
+});
+
+it('dev.83 (WS-5): the endgame forms parse; a fix without --commit leaves it to submission; malformed acts are refused naming the command', () => {
+  assert.deepEqual(parseCommand(['endgame', 'fix', '--closes', 'F-3', '--note', 'n']), { command: 'endgame', act: { type: 'fix', closes: ['F-3'], commit: null, note: 'n' }, run: HOST });
+  assert.deepEqual(parseCommand(['endgame', 'land', ...EXPLICIT]), { command: 'endgame', act: { type: 'land' }, run: EXPLICIT_RUN });
+  const refuses = (args: readonly string[], message: RegExp): void => assert.throws(() => parseCommand(args), (err: unknown) => err instanceof CliError && message.test(err.message), args.join(' '));
+  refuses(['endgame'], /endgame: expected the act fix, run, land, checkpoint or review/);
+  refuses(['endgame', 'fix', '--note', 'n'], /endgame fix: --closes <ids> is required/);
+  refuses(['endgame', 'fix', '--closes', 'F-1'], /endgame fix: --note <line> is required/);
+  refuses(['endgame', 'fix', '--closes', 'F-1,F-1', '--note', 'n'], /names an id twice/);
+  refuses(['endgame', 'fix', '--closes', 'F-1', '--note', '  '], /one non-empty line/);
+  refuses(['endgame', 'fix', '--closes', 'F-1', '--note', 'n', '--commit', 'HEAD'], /endgame fix/);
+  refuses(['endgame', 'run'], /endgame run: <lanes> is required/);
+  refuses(['endgame', 'land', 'now'], /unexpected argument/);
+  refuses(['endgame', 'checkpoint'], /endgame checkpoint: <milestone> is required/);
 });
 
 it('dismiss requires a named finding and non-empty counter-evidence', () => {

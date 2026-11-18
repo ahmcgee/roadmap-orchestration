@@ -37,7 +37,7 @@ export function cpuStageGroups(work: readonly WorkRun[]) {
 // D2/D6: scheduler job waiters are served before unit waiters; age never defines priority.
 export function resourceQueue(host: Pick<import('../status.ts').HostView, 'queue' | 'jobQueue'>) {
   return [
-    ...host.jobQueue.map(q => ({ ...q, label: q.holder.type === 'job' ? q.holder.job : q.holder.type === 'docs' ? q.holder.pub : `batch:${q.holder.finding}:${q.holder.attempt}`, unit: undefined })),
+    ...host.jobQueue.map(q => ({ ...q, label: q.holder.type === 'job' ? q.holder.job : q.holder.type === 'docs' ? q.holder.pub : q.holder.type === 'endgame' ? q.holder.job : `batch:${q.holder.finding}:${q.holder.attempt}`, unit: undefined })),
     ...host.queue.map(q => ({ ...q, label: q.unit, unit: q.unit })),
   ];
 }

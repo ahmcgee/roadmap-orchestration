@@ -34,7 +34,7 @@ presentCheckouts,removeCheckout,reserveNow,runJourneySeries,runLaneSeries,
 seriesLedger,seriesOrder,seriesTree,specSeriesRoot,suiteJourneyLane,
 } from '../src/pipeline/lanes.ts';
 import { readRedClass } from '../src/pipeline/redlane.ts';
-import { holisticInForce,lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
+import { fastSuiteRoot,holisticInForce,lanes,loadUnitSpec } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
 import { worktreeCreateOp } from '../src/recover/ops.ts';
 import type { Acquire } from '../src/schedule/types.ts';
@@ -300,6 +300,31 @@ describe('the red class and the repeat skip (F2, F3)', () => {
     const third = await series(run, 3, specLanes(run), moved);
     assert.equal(laneSpawns(run, 'broken', 3).length, 1);
     assert.equal(third.ledger[0]!.repeat?.attempt, 2);
+  });
+
+  test('redlane.suite-repeat (dev.83, E2): a lanes-stage fast suite lane repeats the unit\'s confirmed red as a spec lane does; its diff-base series and a candidate\'s never repeat', T, async () => {
+    const counter = join(tmpDir('rev3-count'), 'n');
+    const run = unitRun([seqLane('suite-broken', counter, ['SignInError: the directory refused the fixture account'])]);
+    const defs = specLanes(run);
+    /** The lane as a suite series of stage attempt `attempt` runs it, under the root `which` names, straight through `runLaneSeries`. */
+    const suite = (attempt: number, at: Sha, which: 'suite' | 'base', stage: 'lanes' | 'candidate' = 'lanes'): Promise<Series> => {
+      const parent: StageParent = { type: 'stage', unit: U1, stage, attempt };
+      const checkout = { path: absPath(join(tmpDir('rev3-suite'), 'tree')), checkout: { type: 'detached', at } } as const;
+      return runLaneSeries(run.ctx, parent, seriesOrder(defs), 'suite', checkout, fastSuiteRoot(run.ctx.runDir, parent, which), runtime(run.ctx), false);
+    };
+    const first = await suite(1, run.base, 'suite');
+    assert.equal(first.end.kind, 'red');
+    assert.equal(laneSpawns(run, 'suite-broken', 1).length, 2, 'the first red: a diagnostic rerun');
+    const moved = commit(run, { 'src/other.js': 'export const other = 1;\n' });
+    const second = await suite(2, moved, 'suite');
+    assert.equal(laneSpawns(run, 'suite-broken', 2).length, 1, 'a repeat: no rerun');
+    const earlier = laneSpawns(run, 'suite-broken', 1)[0]!;
+    assert.deepEqual(second.ledger[0]!.repeat, { attempt: 1, inv: `${earlier.op}#${earlier.ordinal}` });
+    assert.equal(second.ledger[0]!.failure, first.ledger[0]!.failure, 'the same signature');
+    await suite(3, moved, 'base');
+    assert.equal(laneSpawns(run, 'suite-broken', 3).length, 2, 'the diff base\'s red: a diagnostic rerun, never a repeat');
+    await suite(4, moved, 'suite', 'candidate');
+    assert.equal(laneSpawns(run, 'suite-broken', 4).length, 2, 'a candidate\'s suite red: a diagnostic rerun, never a repeat');
   });
 
   test('redlane.repeat-needs-specific-signature / redlane.intermittent-identical-summary-reruns: a summary line of generic words and numbers is never a repeat', T, async () => {

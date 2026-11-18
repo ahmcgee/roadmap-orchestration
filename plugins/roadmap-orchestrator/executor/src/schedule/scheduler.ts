@@ -40,9 +40,9 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 //
 // Faults (1.0.0-dev.17, src/schedule/fault.ts): a task's throw is classified by what the task holds, read from the log.
 // Confined to the unit's own state, it parks the unit `executor-fault` at its stage (`faultUnit`) and the arc goes on; an
-// audit, walk, checkpoint or baseline job's ends the job faulted (`faultJob`), and the holistic track waits until its
-// item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any other job's,
-// or the loop's own throw crashes the run.
+// audit, walk, baseline, batch witness or endgame job's ends the job faulted (`faultJob`), and the holistic track waits
+// until its item is acknowledged (`jobFaultOpen`). Holding shared state (the integration slot, an open shared op), any
+// other job's, or the loop's own throw crashes the run.
 //
 // Start and restart (G2): settle interrupted pack reviews and milestone walks, finish a published repair batch
 // (`finishBatch`: recovery leaves its slot held), a terminal snapshot the ref lacks is published (G8), and a task is
@@ -70,7 +70,10 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // due or running; the code-applied polish revision (`applyPolish`, src/walk/polish.ts) while a walk's
 // applied proposals are unsettled, and a polish unit's compare or a dropped tweak's cut (`runCompare`, src/walk/compare.ts)
 // while one is due or running; the cadence audit (`runAudit`, B5) while one is due or running (one audit at a time, its clock
-// `processClock`). A job that waits on a condition a command changes (skipped for a
+// `processClock`); dev.83, the endgame's open step (`openEndgame`, src/endgame/open.ts) once its episode settled with a
+// required worklist; dev.83 (WS-5), an endgame job (`runEndgameJob`, src/endgame/jobs.ts: a landing, review or lane run
+// requested by an endgame command, or the closing step's review) before the batch witness, which the closing step also
+// asks for. Before the holistic jobs, each tick writes the endgame episode's edge (`endgameEdge`). A job that waits on a condition a command changes (skipped for a
 // parked backend or a paused arc, an interrupted call, nothing due) is not asked again for HOLISTIC_RETRY_MS. One whose
 // lane gave no verdict is retried on the retryable-park backoff (`noVerdictDelayMs`: 1, 2, 4, 8, 16, then every 30
 // minutes) and, once its episode is PARK_ESCALATE_MS old, raises one non-blocking `park-escalated` parented by the job
@@ -112,7 +115,8 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // no blocking needs-user, no pending command; no close-out). A holistic arc ends
 // `complete` when every unit is merged, cut or
 // superseded; no blocking item; no pending command; no own-arc residue; no baseline owed; no audit running or due,
-// no outstanding audit range or owed trigger; the latest generation
+// no outstanding audit range or owed trigger; no milestone walk pending; no opened endgame episode unsettled (dev.83,
+// `endgame-open`); the latest generation
 // quiescent under the vision in force; the close-out publication done (the head is its commit) or nothing to
 // change; every non-exempt obligation held on the head (an external lane's by the root's attestation at the head's lane
 // inputs, `obligationsOn`). With only quiescence, the close-out and the obligations left,
@@ -124,6 +128,9 @@ import { raiseWasteFindings } from '../flow/waste.ts';
 // head are those it recorded (A20); an admitting apply or a reopen invalidates it, and the arc runs again.
 import { cpuBasis } from '../core/cpu.ts';
 import { orderingOf,wakeOrdering } from '../park/ordering.ts';
+import { endgameJobDue,runEndgameJob } from '../endgame/jobs.ts';
+import { endgameNow,endgameOpen,openDue,openEndgame,raiseEndgameItem,repairsReader } from '../endgame/open.ts';
+import { endgameHeld,openEpisode,phaseKind } from '../endgame/phase.ts';
 
 import { dirname,join } from 'node:path';
 import type { CommandContext } from '../commands/apply.ts';
@@ -137,7 +144,7 @@ type ArcId,type CommandId,type EnvId,type FindingId,type InvocationId,type JobId
 invocationId,jobIdOf,jobIdOfKind,parseJobId,resourceName,unitId,
 } from '../core/ids.ts';
 import type { Containment,Journal,JournalView } from '../core/interfaces.ts';
-import { type CommandFile,type NeedsUserContent,STAGES,type Stage } from '../core/records.ts';
+import { type CommandFile,type NeedsUserContent,STAGES,type Stage,specRepairs } from '../core/records.ts';
 import { type Read,arrayOf,bool,literal,nat,object,oneOf,positive,tagged,version } from '../core/validate.ts';
 import { type AbsPath,absPath,isoTimeOf } from '../core/values.ts';
 import { SCHEMA_VERSION,type SchemaVersion } from '../core/version.ts';
@@ -154,7 +161,7 @@ import { isActive,raiseFindingItems } from '../holistic/findings.ts';
 import { type Observation,type ObservationStore,reuse,verdictOf as witnessVerdict } from '../holistic/observe.ts';
 import { packReviewHolds,packReviewPending,runPackReview,settlePackReviews } from '../holistic/packreview.ts';
 import { externalVerdict } from '../holistic/external.ts';
-import { type ArcLaneDef,type ObligationDef,type ObservationVerdict,isExempt,laneRevOf } from '../holistic/types.ts';
+import { type ArcLaneDef,isExempt,laneRevOf } from '../holistic/types.ts';
 import { beat } from '../host/heartbeat.ts';
 import { PressureTicks,readHostCpuAt,HOST_SCHEDSTAT,readHostMemory } from '../host/pressure.ts';
 import { commandScope } from '../input/classify.ts';
@@ -164,6 +171,7 @@ import { type BlockingItem,blockingItems,holdsUnit,openBlocking,raiseNeedsUser,r
 import type { ProberHandle } from '../park/probe.ts';
 import { raiseDue as raiseScheduleDue,trippedTargets } from '../park/schedule.ts';
 import { baselineDue,localLanes,runBaseline } from '../pipeline/baseline.ts';
+import { batchWitnessDue,runBatchWitness } from '../pipeline/batchlanes.ts';
 import { applyDeflake,deflakeJobPending,raiseDeflakeParked } from '../pipeline/deflakemint.ts';
 import { type StageContext,runOp } from '../pipeline/dispatch.ts';
 import { type BatchOutcome,batchRepairs,findingBlocking,finishBatch,heldBatch,publishBatch } from '../pipeline/integrate.ts';
@@ -184,7 +192,7 @@ import { applyPolish,polishDue } from '../walk/polish.ts';
 import { raiseWalkItems,runWalk,settleWalks,walkPending } from '../walk/walk.ts';
 import type { Arbiter,FirstHolder } from './arbiter.ts';
 import { faultJob,faultUnit,jobFaultOpen } from './fault.ts';
-import { holdCycle } from './graph.ts';
+import { coRepairText,holdCycle,joinedCoRepairers } from './graph.ts';
 import { admitter,findingBlock,nextStage,rankOf,readyDecisions } from './ready.ts';
 import { ADMISSION_STAGES,type AdmissionConstraint,type AdmissionStage,type CommandScope,PARK_ESCALATE_MS,PROBE_BACKOFF_MIN,type ResourceRequest,type TaskState } from './types.ts';
 
@@ -231,6 +239,7 @@ const firstHolder: Read<FirstHolder> = tagged('type', {
   docs: object((f): FirstHolder => ({ type: f.get('type', literal('docs')), pub: f.get('pub', jobIdOfKind('docs')) })),
   batch: object((f): FirstHolder => ({ type: f.get('type', literal('batch')), finding: f.get('finding', findingId), attempt: f.get('attempt', positive) })),
   job: object((f): FirstHolder => ({ type: f.get('type', literal('job')), job: f.get('job', jobIdOf) })),
+  endgame: object((f): FirstHolder => ({ type: f.get('type', literal('endgame')), job: f.get('job', jobIdOfKind('endgame')) })),
 });
 
 export const schedFile: Read<SchedFile> = object((f) => ({
@@ -407,7 +416,7 @@ const CLOSE_OUT_BLOCKERS = ['generation-not-quiescent', 'close-out', 'obligation
 /** Why a holistic arc is not `complete` now: each condition of §2.10 that fails, in this order. */
 export const COMPLETION_BLOCKERS = [
   'units-open', 'blocking-items', 'pending-commands', 'residues', 'baseline-owed', 'audit-pending', 'coverage-outstanding', 'audit-owed',
-  'walk-pending', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
+  'audit-at-closing', 'walk-pending', 'endgame-open', 'generation-not-quiescent', 'close-out', 'obligations-not-discharged',
 ] as const;
 export type CompletionBlocker = (typeof COMPLETION_BLOCKERS)[number];
 
@@ -476,47 +485,62 @@ export function dischargingObservation(
 
 type HeadContext = Readonly<{ journal: Readonly<{ view: JournalView }>; runDir: AbsPath; repo: AbsPath }>;
 
+/** An obligation's verdict on a head: held or not held there, or no verdict yet on a local lane (`unobserved`) or an external one (`unattested`). */
+export type HeadVerdict = 'held' | 'not-held' | 'unobserved' | 'unattested';
+
 /**
- * Each non-exempt witnessed obligation (split parents through their children) with its lane and its verdict on `head`,
- * null when nothing witnesses it there. A local lane's verdict is §2.8's reuse rule, strict: the observation of its lane
- * on the head's tree at the lane's revision in the executor's environment (`laneEnv`: all four keys, its record's hash
- * checked); another environment's observation does not discharge. An external lane's (`witnessClass: external`, never run
- * here) is the root's latest attestation at the head's lane inputs (`externalVerdict`, as `status`, the audit and the
- * gate's views read it); a `witnessed` fact on that lane never counts.
+ * The one reader of an obligation's verdict on `head`, which completion (`obligationsOn`), the external-witness item
+ * (`unattestedOn`), the endgame's worklist and exit check (src/endgame/open.ts) and `status` all read: each non-exempt
+ * witnessed obligation (split parents through their children) with its lane, in the obligations' order, read lazily. A
+ * local lane's verdict (a batch-cadence one included: its batch witness or the close-out observes it) is §2.8's reuse
+ * rule, strict: the observation of its lane on the head's tree at the lane's revision in the executor's environment
+ * (`laneEnv`: all four keys, its record's hash checked), else `unobserved`; any verdict there but `held` (a `partial`, an
+ * `unwitnessed`) is `not-held`; another environment's observation does not discharge. An external lane's (`witnessClass: external`, never run here) is the root's latest attestation at the
+ * head's lane inputs (`externalVerdict`, as the audit and the gate's views read it), else `unattested`; a `witnessed`
+ * fact on that lane never counts.
  */
-function headVerdicts(ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null): readonly Readonly<{ o: ObligationDef; lane: ArcLaneDef; verdict: ObservationVerdict | null }>[] {
+export function* obligationVerdicts(
+  ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null,
+): Generator<Readonly<{ obligation: ObligationId; lane: LaneId; verdict: HeadVerdict }>, void, undefined> {
   const { obligations } = holisticInForce(ctx);
-  if (obligations === null) return [];
+  if (obligations === null) return;
   const tree = revParse(ctx.repo, `${head}^{tree}`);
   const store = observations(ctx);
   const lanes = new Map(obligations.lanes.map((l) => [l.id, l]));
   const observationOn = dischargingObservationReader(ctx, store, laneEnv);
-  return obligations.obligations.flatMap((o) => {
-    if (isExempt(o) || o.state.type === 'split' || o.witness === null) return [];
+  for (const o of obligations.obligations) {
+    if (isExempt(o) || o.state.type === 'split' || o.witness === null) continue;
     const lane = lanes.get(o.witness.lane);
     if (lane === undefined) throw new Error(`obligation ${o.id} is witnessed on lane ${o.witness.lane}, which the obligations in force do not have`);
-    if (lane.witnessClass === 'external') return [{ o, lane, verdict: externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o) }];
+    if (lane.witnessClass === 'external') {
+      const attested = externalVerdict(ctx.repo, ctx.journal.view, tree, lane, o);
+      yield { obligation: o.id, lane: lane.id, verdict: attested === null ? 'unattested' : attested === 'held' ? 'held' : 'not-held' };
+      continue;
+    }
     const found = observationOn(tree, lane);
-    return [{ o, lane, verdict: found === null ? null : witnessVerdict(found.record, o.witness) }];
-  });
+    yield { obligation: o.id, lane: lane.id, verdict: found === null ? 'unobserved' : witnessVerdict(found.record, o.witness) === 'held' ? 'held' : 'not-held' };
+  }
 }
 
 /**
- * Every obligation on `head` (`headVerdicts`): all held (`discharged`); one not held; else one unwitnessed on a local lane
- * (`unobserved`: a close-out's lanes on the head can observe it); else only external lanes unattested (`unattested`: only
- * the root's `roadmap witness` can).
+ * Every obligation on `head` (`obligationVerdicts`): all held (`discharged`); one not held (the first stops the read);
+ * else one unwitnessed on a local lane (`unobserved`: a close-out's lanes on the head can observe it); else only external
+ * lanes unattested (`unattested`: only the root's `roadmap witness` can).
  */
 export function obligationsOn(ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null): 'discharged' | 'unobserved' | 'unattested' | 'not-held' {
-  const verdicts = headVerdicts(ctx, head, laneEnv);
-  if (verdicts.some((v) => v.verdict === 'not-held')) return 'not-held';
-  const missing = verdicts.filter((v) => v.verdict === null);
-  if (missing.length === 0) return 'discharged';
-  return missing.every((v) => v.lane.witnessClass === 'external') ? 'unattested' : 'unobserved';
+  let unobserved = false;
+  let unattested = false;
+  for (const v of obligationVerdicts(ctx, head, laneEnv)) {
+    if (v.verdict === 'not-held') return 'not-held';
+    if (v.verdict === 'unobserved') unobserved = true;
+    if (v.verdict === 'unattested') unattested = true;
+  }
+  return unobserved ? 'unobserved' : unattested ? 'unattested' : 'discharged';
 }
 
 /** The obligations on `head` whose external lane has no attestation at its inputs there, with their lanes. */
 export function unattestedOn(ctx: HeadContext, head: Sha, laneEnv: (lane: ArcLaneDef) => EnvId | null): readonly Readonly<{ obligation: ObligationId; lane: LaneId }>[] {
-  return headVerdicts(ctx, head, laneEnv).flatMap((v) => (v.verdict === null && v.lane.witnessClass === 'external' ? [{ obligation: v.o.id, lane: v.lane.id }] : []));
+  return [...obligationVerdicts(ctx, head, laneEnv)].flatMap((v) => (v.verdict === 'unattested' ? [{ obligation: v.obligation, lane: v.lane }] : []));
 }
 
 /** A8: the close-out at `head`: done (the head is the latest close-out's commit), nothing to change, or due. */
@@ -556,13 +580,18 @@ function* failingClauses(h: HolisticContexts, input: Readonly<{ blocking: number
   if (view.residues().length > 0) yield 'residues';
   if (!fold.on || holistic === undefined) return;
   if (baselineOwed(ctx) !== null) yield 'baseline-owed';
-  if (auditPending(ctx)) yield 'audit-pending';
-  const c = cadence(ctx, ctx.clock);
+  if (auditPending(ctx, h.laneEnv)) yield 'audit-pending';
+  const c = cadence(ctx, ctx.clock, h.laneEnv);
   if (c === null) throw new Error('a holistic arc without a cadence');
-  if (coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) yield 'coverage-outstanding';
+  // dev.83: in the endgame's `open` step the final audit waits for `closing` (src/holistic/cadence.ts `deferred`): the
+  // outstanding coverage reads `audit-at-closing`, so nothing reads as stuck.
+  if (!c.deferred && coverageOf(fold, c.base, ['invariants'] as const, c.head).some((x) => x.outstanding)) yield 'coverage-outstanding';
   if (c.owed.length > 0) yield 'audit-owed';
+  if (c.deferred) yield 'audit-at-closing';
   // dev.13: a milestone walk due or running, or a round still open (src/walk/milestones.ts).
   if (hasMilestones(plan) && walksPending(view, plan, repairUnits(ctx))) yield 'walk-pending';
+  // dev.83: an opened endgame episode not settled (src/endgame/open.ts `endgameOpen`).
+  if (endgameOpen(ctx, h.laneEnv)) yield 'endgame-open';
   const g = Math.max(0, ...fold.audits.map((a) => a.started.generation));
   const vision = view.planApplied()?.visionSha256;
   if (vision === undefined) throw new Error('a holistic arc whose plan in force records no vision');
@@ -624,7 +653,9 @@ function completeArc(ctx: StageContext): void {
   const applied = view.planApplied();
   if (applied === null) throw new Error(`arc ${view.arc} completes with no plan in force; a start records it before anything runs`);
   const merged = ctx.plan().units.filter((u) => view.unit(u.id).status === 'retired').map((u) => u.id).sort();
-  ctx.journal.fact({ kind: 'arc-completed', planRev: applied.rev, head: integrationHeadNow(ctx), highWater: view.highWater(), units: merged });
+  // dev.83: the completion supersedes every external-witness-owed item raised before it (the attestations it asked for landed).
+  const settles = view.opsOf('needsuser.raise').filter((i) => i.parent.type === 'arc' && view.doneOf(i.op) !== null && readNeedsUser(ctx.runDir, i.expect.id)?.reason === 'external-witness-owed').map((i) => i.expect.id).sort();
+  ctx.journal.fact({ kind: 'arc-completed', planRev: applied.rev, head: integrationHeadNow(ctx), highWater: view.highWater(), units: merged, ...(settles.length === 0 ? {} : { settles }) });
   crashPoint('complete.after-fact');
 }
 
@@ -774,6 +805,19 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       recommendation: `Export the inputs and ${ALL_WITHDRAWN_WAYS_OUT}; apply it with --resolves naming this item.`, options: [], evidence: [],
     }, { type: 'arc' });
     process.emitWarning(`milestone ${milestone} adopted with no live member, raised as a blocking plan-defect`, { code: 'ROADMAP_UPGRADE' });
+  }
+  // dev.83 adoption (E5b; temporary scaffolding): co-repairers joined through `after` never batch, and the classifier now
+  // refuses them; an adopted plan holding them is the root's blocking item, once while open.
+  const joined = holistic() ? joinedCoRepairers(view(), plan().units, (u) => specRepairs(loadUnitSpec(x.stage, u).spec)) : [];
+  if (joined.length > 0) {
+    const summary = `${joined.map(coRepairText).join('. ')}.`;
+    if (!openBlocking(view()).some((id) => readNeedsUser(runDir, id)?.summary === summary)) {
+      raiseNeedsUser(journal, runDir, {
+        blocking: true, subject: { type: 'arc' }, reason: 'plan-defect', summary,
+        recommendation: 'Export the inputs, drop each `after` edge named (or fold the two repairs into one unit) and apply the corrected revision with --resolves naming this item.', options: [], evidence: [],
+      }, { type: 'arc' });
+    }
+    process.emitWarning('co-repairers joined through `after` adopted, raised as a blocking plan-defect', { code: 'ROADMAP_UPGRADE' });
   }
 
   const tasks = new Map<UnitId, Task>();
@@ -965,6 +1009,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
   const admissionInput = (blocking: readonly BlockingItem[], mutations: ReturnType<typeof pendingMutations>) => ({
     view: view(), plan: plan(), blocking, drains: mutations.map((m) => ({ command: m.command.id, scope: m.scope })), tripped: trippedTargets(view()),
     pressure: { ticks: pressure.ticks(), nowMs: Date.now(), memory: pressure.memory() },
+    endgame: endgameHeld(view(), plan(), repairsReader(x.stage)),
   });
 
   const admissionWaits = new Map<string, WaitAccumulator>();
@@ -1170,6 +1215,26 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     lastTick = Date.now();
     raiseFindingItems(journal, runDir, new Date());
     raiseWalkItems(x.stage, new Date());
+    raiseEndgameItem(x.stage, h.laneEnv);
+  };
+
+  /**
+   * dev.83 (src/endgame/phase.ts): the episode facts on the phase predicate's edge, each tick before the holistic jobs: the
+   * endgame with no open episode (and no completion active) enters the next; the body with one open leaves it.
+   */
+  const endgameEdge = (): void => {
+    if (!holistic()) return;
+    const v = view();
+    const open = openEpisode(v);
+    const kind = phaseKind(v, plan(), repairsReader(x.stage)).kind;
+    if (kind === 'endgame' && open === null && v.holistic().completion?.active !== true) {
+      const applied = v.planApplied();
+      if (applied === null) throw new Error('the endgame entered with no plan in force');
+      journal.fact({ kind: 'endgame-entered', episode: v.holistic().endgame.length + 1, planRev: applied.rev });
+    } else if (kind === 'body' && open !== null && open.jobs.every((j) => j.ended !== null)) {
+      // WS-5: an episode is left between its jobs, never under one.
+      journal.fact({ kind: 'endgame-left', episode: open.episode, cause: 'planned-unit' });
+    }
   };
 
   // -------------------------------------------------------------------------------------------------
@@ -1182,6 +1247,10 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
     // 1.0.0-dev.17: an arc job that faulted waits for its item's acknowledgement (src/schedule/fault.ts `jobFaultOpen`).
     if (due('holistic') && !jobFaultOpen(view(), runDir)) {
       const job = baselineOwed(x.stage);
+      const endgameJob = endgameJobDue(h.audit, h.laneEnv);
+      // dev.83 (WS-5): the endgame's closing step also runs the batch arc lanes whose obligations are unobserved on the head.
+      const closing = (): boolean => { const p = endgameNow(h.audit, h.laneEnv).phase; return p.kind === 'endgame' && p.step === 'closing'; };
+      const witness = batchWitnessDue(h.audit, 'merges') ?? (closing() ? batchWitnessDue(h.audit, 'closing') : null);
       if (packReviewPending(h.revision)) {
         trackRetrying('holistic:packreview', 'holistic', async () => ((await runPackReview(h.revision)).kind === 'ended' ? PROGRESS : WAIT));
       } else if (job !== null) {
@@ -1203,11 +1272,27 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
           const out = await runCompare(h.revision);
           return out.kind === 'judged' || (out.kind === 'cut' && out.committed) ? PROGRESS : WAIT;
         });
-      } else if (auditPending(h.audit)) {
+      } else if (endgameJob !== null) {
+        // dev.83 (WS-5): an endgame request (land, review, run) or the closing step's review (src/endgame/jobs.ts).
+        trackRetrying('holistic:endgame-job', 'holistic', async () => {
+          const out = await runEndgameJob(h.audit, endgameJob);
+          return out.kind === 'no-verdict' ? { kind: 'no-verdict', job: out.job, detail: out.detail } : PROGRESS;
+        });
+      } else if (witness !== null) {
+        trackRetrying('holistic:witness', 'holistic', async () => {
+          const out = await runBatchWitness(h.audit, witness);
+          return out.kind === 'no-verdict' ? { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) } : PROGRESS;
+        });
+      } else if (auditPending(h.audit, h.laneEnv)) {
         trackRetrying('holistic:audit', 'holistic', async () => {
           const out = await runAudit(h.audit);
           if (out.kind === 'incomplete') return { kind: 'no-verdict', job: out.job, detail: endDetail(out.end) };
           return out.kind === 'ended' ? PROGRESS : WAIT;
+        });
+      } else if (openDue(h.audit, h.laneEnv)) {
+        trackRetrying('holistic:endgame', 'holistic', async () => {
+          await openEndgame(h.audit, h.laneEnv);
+          return PROGRESS;
         });
       }
     }
@@ -1326,6 +1411,9 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       writeDesired(x.stage);
     }
     completeArc(x.stage);
+    // dev.83: the open episode ends with the arc (after `arc-completed`, so a crash between them never enters another).
+    const episode = openEpisode(view());
+    if (episode !== null) journal.fact({ kind: 'endgame-left', episode: episode.episode, cause: 'complete' });
     if (view().holistic().completion !== null) await terminalSnapshot(x.stage);
     return { kind: 'complete', units: summary() };
   };
@@ -1443,6 +1531,7 @@ export async function schedule(x: SchedulerContext): Promise<SchedulerEnd> {
       const blocking = blockingItems(runDir, view());
       const batch = batchPlan();
       const holds: Holds = { arc: holistic() ? arcHolds(h, blocking, jobs.has('holistic:baseline')) : [], batch: batch.held };
+      endgameEdge();
       startHolistic(holds, batch);
       startDeflake();
       if (tasks.size === 0 && jobs.size === 0 && mutations.length === 0) {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { commandId,jobId,sha } from '../src/core/ids.ts';
+import type { AuditTrigger } from '../src/holistic/types.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { openFinding } from '../src/holistic/findings.ts';
 import { LENS_DIFF_BUDGET } from '../src/holistic/lensdiff.ts';
@@ -10,7 +11,7 @@ import { validateCampaignAuditOutput } from '../src/prompts/schemas.ts';
 import { recover } from '../src/recover/recover.ts';
 import { auditArc,auditContext } from './fixtures/audit-common.ts';
 import { SCENARIO_TIMEOUT_MS } from './fixtures/stage-common.ts';
-import { type ArcRun,contextFor } from './fixtures/unit-common.ts';
+import { type ArcRun,appendSteps,contextFor } from './fixtures/unit-common.ts';
 import { assertFired,writeTrigger } from './helpers/crash.ts';
 import { runFixture } from './helpers/proc.ts';
 import { git,tmpDir } from './helpers/repo.ts';
@@ -23,7 +24,7 @@ const request = (dismisses: string | null, summary: string) => ({
   counterEvidence: dismisses === null ? null : 'The restart test retains the committed write',
 });
 
-function setup(reports: readonly (readonly ReturnType<typeof request>[])[]) {
+function setup(reports: readonly (readonly ReturnType<typeof request>[])[], triggers?: readonly AuditTrigger[]) {
   const { d } = auditArc({
     steps: reports.map((requests) => ({
       as: 'claude', unit: JOB, expect: {}, acts: [{ type: 'emit', value: {
@@ -44,7 +45,7 @@ function setup(reports: readonly (readonly ReturnType<typeof request>[])[]) {
   const payload = keptPayload(r.ctx.runDir, applied.payloadSha256!);
   // Adopt a recorded multi-lens job, as an audit started before the single campaign seat does.
   r.journal.fact({
-    kind: 'audit-started', job: JOB, triggers: [{ type: 'requested', command }], generation: 1,
+    kind: 'audit-started', job: JOB, triggers: triggers ?? [{ type: 'requested', command }], generation: 1,
     lenses: ['invariants', 'vision'], integrationSha: sha(git(d.repo, 'rev-parse', 'main')), planRev: applied.rev,
     ledgerSha256: payload.manifest.rulings.ledgerSha256, obligationsSha256: applied.obligationsSha256!,
     visionSha256: applied.visionSha256!, owners: [], priorFindings: r.journal.view.holistic().findings.map((f) => f.id),
@@ -110,5 +111,40 @@ test('audit.requests: a resumed audit re-admits finding and arc requests without
     assert.equal(readCalls(d.scenarioPath).length, 2, 'recorded reports are consumed without another backend call');
     assert.deepEqual(await runAudit(ctx), { kind: 'none' });
     assert.deepEqual(r.journal.view.openIntents(), []);
+  } finally { r.journal.close(); }
+});
+
+test('audit.requests-across-passes (dev.83): a later pass asking again for a request an earlier pass raised (the same finding, or an arc request with the same summary) raises nothing, answered or not; a new one is raised', T, async () => {
+  const job2 = jobId('audit', 2);
+  const r = setup([[request('F-1', 'Dismiss the false regression'), request(null, 'Review the plan')], []]);
+  try {
+    const { ctx } = auditContext(r);
+    const first = await runAudit(ctx);
+    assert.ok(first.kind === 'ended' && first.outcome === 'completed', JSON.stringify(first));
+    const raised = requestsOf(r);
+    assert.equal(raised.length, 2);
+    r.journal.fact({ kind: 'needs-user-acked', id: raised.find((n) => n.subject.type === 'arc')!.id, command: commandId('cmd-2222222222222222'), choice: null });
+    appendSteps(r.d, [{ as: 'claude', unit: job2, expect: {}, acts: [{ type: 'emit', value: {
+      findings: [], reasons: ['Checked the campaign'], premises: [],
+      requests: [request('F-1', 'The persistence finding is a false positive'), request(null, 'Review the plan'), request(null, 'Review the scope')],
+    } }] }]);
+    r.journal.fact({ kind: 'audit-requested', command: commandId('cmd-3333333333333333') });
+    const second = await runAudit(ctx);
+    assert.ok(second.kind === 'ended' && second.job === job2, JSON.stringify(second));
+    const items = r.journal.view.opsOf('needsuser.raise').filter((i) => i.parent.type === 'job' && i.parent.job === job2).map((i) => readNeedsUser(r.ctx.runDir, i.expect.id)!);
+    assert.deepEqual(items.map((n) => [n.reason, n.summary]), [['owner-request', 'Review the scope']], 'F-1 open, the plan answered: only the new request');
+  } finally { r.journal.close(); }
+});
+
+test('audit.requests-floor (dev.83): at a final audit a request to dismiss a finding below the endgame worklist\'s required line (not P1, no obligation) raises nothing; one over a P1 still does', T, async () => {
+  const r = setup([[request('F-3', 'Dismiss the cosmetic note'), request('F-1', 'Dismiss the false regression')], []], [{ type: 'final' }]);
+  try {
+    openFinding(r.journal, {
+      lens: 'invariants', severity: 'P2', obligation: null, visionClauses: [], claim: 'a cosmetic note', cause: 'note: cosmetic',
+      evidence: [], mutant: null, source: { type: 'job', job: jobId('baseline', 1) }, gateHadPassed: false,
+    });
+    const out = await runAudit(auditContext(r).ctx);
+    assert.ok(out.kind === 'ended' && out.outcome === 'completed', JSON.stringify(out));
+    assert.deepEqual(requestsOf(r).map((n) => n.subject), [{ type: 'findings', findings: ['F-1'] }]);
   } finally { r.journal.close(); }
 });

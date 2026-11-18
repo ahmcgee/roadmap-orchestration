@@ -177,6 +177,11 @@ M5 drives a real architect session rather than scripting its plan. The plant is 
 book's condition data; at 320 CSS px it causes horizontal page overflow. `reflow.ts` renders the recorded SHA;
 plant-repaired requires a fitting page **and** the planted book/title/URL still present. Plant-caught distinguishes a
 resolved finding from prevention before the first walk; upstream prevention is not evidence that the walk caught it.
+Since dev.83 the last milestone's repair and polish loop falls in the endgame, where the architect fixes by hand and
+asks for a re-walk with `roadmap endgame checkpoint`. A fix that an endgame landing published counts as a repair. The
+driver's early stop also waits for the arc to complete after it entered the endgame. `endgame-range` then checks that an
+episode opened, a fix was recorded, and every landing sits in a review's range and an audit's coverage. It is skipped
+when no episode opened because the worklist was empty.
 Run walk-browser and evals-m5-reflow free tests serially on this host.
 
 ## Background observer

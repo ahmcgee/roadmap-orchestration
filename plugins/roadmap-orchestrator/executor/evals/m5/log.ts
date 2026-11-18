@@ -1,5 +1,5 @@
 // The arc under test's log as M5 reads it (`logOf`, shared by the driver and check.ts), and the driver's stop rule over
-// it (`evidenceComplete`).
+// it (`evidenceComplete`, then `endgameSettled`).
 //
 // The stop rule. M5 proves dev.13 (milestones, design-first, the node, walks, the walk → repair → re-walk loop, polish,
 // the demo), not arc convergence (m1's job): once that evidence is complete the rest of the arc is audit tail, so the
@@ -12,13 +12,20 @@
 //   - no walk is due: per milestone, its last round's walk (ended `reported` or `bring-up-failed`) admitted units (the
 //     polish units of its applied proposals, the units whose specs repair one of its findings); when one of them landed
 //     and the round is below `walkRounds`, the next round's walk is due, unless that round was abandoned WALK_ATTEMPTS
-//     times (the brake). And no author has yet to act on that round: none of its findings is still untouched (no
+//     times (the brake). dev.83: so is it after an endgame checkpoint request of the milestone (`roadmap endgame
+//     checkpoint`) later than that walk, whatever the rounds. And no author has yet to act on that round: none of its findings is still untouched (no
 //     transition: the checkpoint has not weighed it) and each applied proposal is in a polish unit or refused;
 //   - no walk-originated unit is pending: every polish unit, and every unit whose spec repairs a walkthrough finding, is
 //     published or cut (followed to its lineage head: a unit re-entered is carried on by the unit re-entering it);
 //   - every polish unit has its `tweak-judged`, or was cut.
 // This mirrors src/walk/milestones.ts's rounds from the log alone (the rewalk reset of an apply aside), so the stop does
 // not lean on the code under test; check.ts's `milestones-settled` grades the same rule at the end.
+//
+// dev.83, the endgame (`endgameSettled`): the last milestone's repair and polish loop now falls in the endgame, whose
+// closing step (the independent review and the final audit over the landed range) check.ts's `endgame-range` grades. So
+// the stop also waits for the arc to enter the endgame and then complete (`arc-completed` after the last
+// `endgame-entered`): only completion shows from the log alone that an entered episode will not open, or that an opened
+// one's review and audit found no P1 that returns it to open.
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Event, Fact, IntentOf, TweakDecision, TweakReason, WalkOutcome } from '../../src/core/events.ts';
@@ -44,6 +51,18 @@ export type Walk = Readonly<{
 /** A polish unit's compare job (agent D): `abandoned` without a judgment, `interrupted` when a pause, stop or park cut it short. */
 export type CompareLog = Readonly<{ job: string; unit: string; seq: number; abandoned: boolean; interrupted: boolean }>;
 export type FindingLog = Readonly<{ id: string; seq: number; lens: string; milestone: string | null; claim: string; cause: string | null; transitions: readonly Readonly<{ seq: number; to: FindingTo }>[] }>;
+/** dev.83: the endgame facts, every episode's in log order. */
+export type EndgameLog = Readonly<{
+  entered: readonly Readonly<{ seq: number; episode: number }>[];
+  opened: readonly Readonly<{ seq: number; episode: number; base: string }>[];
+  fixes: readonly Readonly<{ seq: number; command: string; commit: string }>[];
+  landings: readonly Readonly<{ seq: number; job: string; old: string; head: string }>[];
+  reviews: readonly Readonly<{ seq: number; job: string; from: string; to: string }>[];
+  /** `roadmap endgame checkpoint <milestone>` requests. */
+  checkpoints: readonly Readonly<{ seq: number; milestone: string }>[];
+}>;
+/** A completed audit's `audit-ended`: its covered ranges. */
+export type AuditLog = Readonly<{ seq: number; job: string; covered: readonly Readonly<{ lens: string; from: string; to: string }>[] }>;
 export type M5Log = Readonly<{
   /** Each unit's first `dispatch` fact. */
   firstDispatch: ReadonlyMap<string, number>;
@@ -58,6 +77,10 @@ export type M5Log = Readonly<{
   /** The proposals the code-applied polish revision refused (`polish-refused`). */
   refused: readonly string[];
   demos: readonly Readonly<{ seq: number; milestone: string; sha: string }>[];
+  endgame: EndgameLog;
+  audits: readonly AuditLog[];
+  /** The seq of each `arc-completed`. */
+  completed: readonly number[];
 }>;
 
 export function logOf(events: readonly Event[]): M5Log {
@@ -72,6 +95,9 @@ export function logOf(events: readonly Event[]): M5Log {
   const tweaks: M5Log['tweaks'][number][] = [];
   const refused: string[] = [];
   const demos: M5Log['demos'][number][] = [];
+  const endgame = { entered: [], opened: [], fixes: [], landings: [], reviews: [], checkpoints: [] } as { -readonly [K in keyof EndgameLog]: EndgameLog[K][number][] };
+  const audits: AuditLog[] = [];
+  const completed: number[] = [];
   for (const e of events) {
     if (e.type === 'intent' && e.kind === 'integration.ff') ffs.set(e.op, e);
     if (e.type === 'done' && e.kind === 'integration.ff' && e.outcome.kind === 'published') {
@@ -129,11 +155,35 @@ export function logOf(events: readonly Event[]): M5Log {
       case 'demo-promoted':
         demos.push({ seq: e.seq, milestone: f.milestone, sha: f.sha });
         break;
+      case 'endgame-entered':
+        endgame.entered.push({ seq: e.seq, episode: f.episode });
+        break;
+      case 'endgame-opened':
+        endgame.opened.push({ seq: e.seq, episode: f.episode, base: f.base });
+        break;
+      case 'endgame-fix':
+        endgame.fixes.push({ seq: e.seq, command: f.command, commit: f.commit });
+        break;
+      case 'endgame-landed':
+        endgame.landings.push({ seq: e.seq, job: f.job, old: f.old, head: f.head });
+        break;
+      case 'endgame-reviewed':
+        endgame.reviews.push({ seq: e.seq, job: f.job, from: f.from, to: f.to });
+        break;
+      case 'endgame-requested':
+        if (f.request.type === 'checkpoint') endgame.checkpoints.push({ seq: e.seq, milestone: f.request.milestone });
+        break;
+      case 'audit-ended':
+        if (f.outcome === 'completed') audits.push({ seq: e.seq, job: f.job, covered: f.covered.map((c) => ({ lens: c.lens, from: c.from, to: c.to })) });
+        break;
+      case 'arc-completed':
+        completed.push(e.seq);
+        break;
       default:
         break;
     }
   }
-  return { firstDispatch, publications, walks: [...walks.values()], passed, findings: [...findings.values()], tweaks, compares: [...compares.values()], refused, demos };
+  return { firstDispatch, publications, walks: [...walks.values()], passed, findings: [...findings.values()], tweaks, compares: [...compares.values()], refused, demos, endgame, audits, completed };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -192,9 +242,12 @@ export function evidenceComplete(log: M5Log, plan: EvidencePlan, repairs: Repair
     const unplaced = applied.filter((p) => !polishUnits.some((u) => u.polish!.proposal === p) && !log.refused.includes(p));
     if (unplaced.length > 0) missing.push(`${last.job}'s proposal ${unplaced.join(', ')} in no polish unit yet`);
     const admitted = plan.units.filter((u) => (u.polish !== undefined && applied.includes(u.polish.proposal)) || repairsOf(u.id).some((r) => last.findings.includes(r))).map((u) => u.id as string);
-    if (last.round < walkRounds && admitted.some(landed)) {
-      const tries = walks.filter((w) => w.seq > last.seq && w.round === last.round + 1 && w.outcome === 'abandoned' && w.interrupted !== true).length;
-      if (tries < WALK_ATTEMPTS) missing.push(`${m.id} round ${last.round + 1}'s walk is due (${admitted.filter(landed).join(', ')} landed after ${last.job})`);
+    const asked = Math.max(0, ...log.endgame.checkpoints.filter((c) => c.milestone === m.id).map((c) => c.seq));
+    const tries = (after: number): number => walks.filter((w) => w.seq > after && w.round === last.round + 1 && w.outcome === 'abandoned' && w.interrupted !== true).length;
+    if (asked > last.seq) {
+      if (tries(asked) < WALK_ATTEMPTS) missing.push(`${m.id} round ${last.round + 1}'s walk is due (endgame checkpoint at seq ${asked} after ${last.job})`);
+    } else if (last.round < walkRounds && admitted.some(landed)) {
+      if (tries(last.seq) < WALK_ATTEMPTS) missing.push(`${m.id} round ${last.round + 1}'s walk is due (${admitted.filter(landed).join(', ')} landed after ${last.job})`);
     }
   }
 
@@ -211,6 +264,16 @@ export function evidenceComplete(log: M5Log, plan: EvidencePlan, repairs: Repair
     detail: `${milestones.map((m, i) => `${m.id} passed at seq ${passes[i]!.seq}`).join(', ')}; demo promoted at seq ${log.demos.at(-1)!.seq}; `
       + `${walkOriginated.length} walk-originated unit(s) settled (${walkOriginated.join(', ') || 'none'}); ${log.walks.length} walk(s), ${log.tweaks.length} tweak(s) judged`,
   };
+}
+
+/** dev.83 (see the header): the arc entered the endgame and completed after its last entry. */
+export function endgameSettled(log: M5Log): Evidence {
+  const entered = log.endgame.entered.at(-1);
+  if (entered === undefined) return { complete: false, detail: 'the arc has not entered the endgame' };
+  const done = log.completed.find((seq) => seq > entered.seq);
+  const opened = log.endgame.opened.some((o) => o.episode === entered.episode);
+  if (done === undefined) return { complete: false, detail: `endgame episode ${entered.episode} ${opened ? 'opened' : 'entered'} at seq ${entered.seq}; the arc has not completed` };
+  return { complete: true, detail: `endgame episode ${entered.episode} ${opened ? 'opened' : 'entered, never opened'}; arc-completed at seq ${done}` };
 }
 
 // ---------------------------------------------------------------------------------------------------

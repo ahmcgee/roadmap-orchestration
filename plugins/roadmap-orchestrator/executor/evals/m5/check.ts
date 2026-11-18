@@ -19,7 +19,8 @@
 //   milestones-settled the driver's stop rule (log.ts `evidenceComplete`) holds over the run dir's log and plan in force:
 //                      every milestone passed, the demo promoted after the last pass and on the latest round's walked SHA,
 //                      no walk, compare or walk-originated unit pending, every polish unit judged or cut. Completion is
-//                      m1's to grade: M5 stops the arc before its audit tail
+//                      m1's to grade (dev.83: the stop waits for it once the arc entered the endgame, log.ts
+//                      `endgameSettled`, so endgame-range can grade the closing step)
 //   milestones-planned the arc's first plan in force has the M5 shape (shape.ts `planShape`): a browser milestone whose
 //                      units all run after its design unit, and a dependent milestone at least one of whose units
 //                      descends (through `after`) from a unit of another, upstream, milestone (those are its held units)
@@ -31,12 +32,13 @@
 //                      (`<runDir>/evidence/jobs/<walk-n>/`) holds a PNG file (by its signature, anywhere below it)
 //   plant-caught       the plant (layout.ts PLANT) never shipped through a miss: a finding of any judge whose claim or cause
 //                      speaks of the overflow (PLANT_WORDS) of the planted book (PLANT_ANCHOR) reached `resolved` from `fixed-on-branch` of a unit whose
-//                      publication came first, or the plant was gone at the first browser walk's SHA (`/` rendered at 320
+//                      publication came first (dev.83: or of an endgame fix an endgame landing published first), or the plant was gone at the first browser walk's SHA (`/` rendered at 320
 //                      CSS px in Chromium, reflow.ts, no wider than the viewport), crediting any finding that named it
 //                      (run 5: the vision lens, its fix folded into an undispatched unit's spec); it fails only
 //                      when the plant was live at that walk and no resolved finding names it
 //   repair-loop        the walk → repair → re-walk loop on any milestone: a walkthrough finding reached `resolved` from
-//                      `fixed-on-branch` of a unit whose publication came first, and a walk of its milestone started after
+//                      `fixed-on-branch` of a unit whose publication came first (or of an endgame fix an endgame landing
+//                      published first: the last milestone's loop falls in the endgame, dev.83), and a walk of its milestone started after
 //                      that passed it: wrote the milestone's `milestone-passed`, or (a non-blocking finding: the milestone
 //                      passed before the repair) ended `reported` with no finding (the plant's loop is the case plant-caught names)
 //   plant-repaired     at the arc's latest integrated head (the verified ref's latest published `integration.ff`; the
@@ -54,11 +56,17 @@
 //   no-model-ids       no model id in the run dir (launch inputs and captured backend output aside) or the ref (M4a's)
 //   host-released      every arc the driver found holding the host at the end was stopped and cleared; none holds it now
 //   profile            the arc's first `plan-applied` resolved under the report's profile
+//   endgame-range      (dev.83) an endgame episode opened, at least one `endgame fix` was recorded and something landed, and
+//                      every endgame landing (`endgame-landed` old..head) lies in an independent review's range (its `from`
+//                      an ancestor of the landing's old, its `to` holding the landing's head) and in a completed audit's
+//                      invariants coverage (a covered `to` holding the head). Skipped (passes, saying so) when episodes
+//                      entered, none opened and the arc completed: the required worklist was empty, nothing to do by hand
 import { existsSync, openSync, readFileSync, readSync, closeSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { type ArcRef, arcsWithRefs, completedHeadOf, readArcRef } from '../../src/chain.ts';
-import { arcId, type JobId } from '../../src/core/ids.ts';
+import { arcId, type JobId, type Sha } from '../../src/core/ids.ts';
 import { type AbsPath, absPath } from '../../src/core/values.ts';
+import { isAncestor } from '../../src/git/ff.ts';
 import { git, gitCommonDir } from '../../src/git/git.ts';
 import { jobEvidenceRoot } from '../../src/git/snapshot.ts';
 import { readClaim } from '../../src/host/lock.ts';
@@ -151,7 +159,7 @@ export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (
   const problems: string[] = [];
   for (const f of candidates) {
     const r = repairOf(f, log);
-    if (r.kind === 'resolved') return { pass: true, detail: `${f.id} (${f.lens}: ${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}` };
+    if (r.kind === 'resolved') return { pass: true, detail: `${f.id} (${f.lens}: ${f.claim}) resolved at seq ${r.seq} by ${r.by}'s ${r.via} at seq ${r.pub}` };
     problems.push(r.detail);
   }
   const first = log.walks.filter((w) => w.milestone === browser.id).sort((a, b) => a.seq - b.seq)[0];
@@ -162,15 +170,26 @@ export async function plantCaughtVerdict(shape: PlanShape, log: M5Log, reflow: (
   return { pass: false, detail: `the plant was live at ${first.job} (/ ${at.scrollWidth} px wide at ${at.viewport} px) and no resolved finding names it${problems.length > 0 ? `: ${problems.join('; ')}` : ''} (walkthrough findings: ${log.findings.filter((f) => f.lens === 'walkthrough').map((f) => `${f.id}: ${f.claim}`).join(' | ') || 'none'})` };
 }
 
-type Repair = Readonly<{ kind: 'resolved'; seq: number; unit: string; pub: number }> | Readonly<{ kind: 'not'; detail: string }>;
+/** `by` the unit (`via` its publication) or `endgame fix <command>` (`via` an endgame landing), published at seq `pub`. */
+type Repair = Readonly<{ kind: 'resolved'; seq: number; by: string; via: 'publication' | 'landing'; pub: number }> | Readonly<{ kind: 'not'; detail: string }>;
 
-/** Whether finding `f` reached `resolved` after `fixed-on-branch` of a unit whose publication came first. */
+/**
+ * Whether finding `f` reached `resolved` after `fixed-on-branch` of a unit whose publication came first, or (dev.83) of an
+ * endgame fix an endgame landing after it published first.
+ */
 function repairOf(f: FindingLog, log: M5Log): Repair {
   const resolved = f.transitions.findLast((t) => t.to.state === 'resolved');
   const fixed = f.transitions.filter((t) => resolved === undefined || t.seq < resolved.seq).findLast((t) => t.to.state === 'fixed-on-branch');
-  const unit = fixed !== undefined && fixed.to.state === 'fixed-on-branch' ? fixed.to.unit : null;
-  const pub = unit === null ? undefined : log.publications.find((p) => p.unit === unit && (resolved === undefined || p.seq < resolved.seq));
-  if (resolved !== undefined && pub !== undefined) return { kind: 'resolved', seq: resolved.seq, unit: unit!, pub: pub.seq };
+  const before = (seq: number): boolean => resolved === undefined || seq < resolved.seq;
+  if (fixed !== undefined && fixed.to.state === 'fixed-on-branch' && 'endgame' in fixed.to) {
+    const by = `endgame fix ${fixed.to.endgame}`;
+    const landing = log.endgame.landings.find((l) => l.seq > fixed.seq && before(l.seq));
+    if (resolved !== undefined && landing !== undefined) return { kind: 'resolved', seq: resolved.seq, by, via: 'landing', pub: landing.seq };
+    return { kind: 'not', detail: `${f.id} (${f.claim}) is ${f.transitions.at(-1)?.to.state ?? 'open'} (fixed by ${by}, ${landing === undefined ? 'unlanded' : 'landed'})` };
+  }
+  const unit = fixed !== undefined && fixed.to.state === 'fixed-on-branch' && 'unit' in fixed.to ? fixed.to.unit : null;
+  const pub = unit === null ? undefined : log.publications.find((p) => p.unit === unit && before(p.seq));
+  if (resolved !== undefined && pub !== undefined) return { kind: 'resolved', seq: resolved.seq, by: unit!, via: 'publication', pub: pub.seq };
   return { kind: 'not', detail: `${f.id} (${f.claim}) is ${f.transitions.at(-1)?.to.state ?? 'open'}${unit === null ? '' : ` (fixed on ${unit}'s branch, ${pub === undefined ? 'unpublished' : 'published'})`}` };
 }
 
@@ -192,9 +211,9 @@ export function repairLoopVerdict(log: M5Log): Verdict {
     const rewalk = log.walks.find((w) => w.milestone === f.milestone && w.seq > r.seq && passes(w));
     if (rewalk !== undefined) {
       const how = log.passed.some((p) => p.job === rewalk.job) ? 'passed the milestone' : 'reported no finding (the milestone had passed before the repair)';
-      return { pass: true, detail: `${f.milestone}: ${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.unit}'s publication at seq ${r.pub}; ${rewalk.job} (round ${rewalk.round}) re-walked it and ${how}` };
+      return { pass: true, detail: `${f.milestone}: ${f.id} (${f.claim}) resolved at seq ${r.seq} by ${r.by}'s ${r.via} at seq ${r.pub}; ${rewalk.job} (round ${rewalk.round}) re-walked it and ${how}` };
     }
-    problems.push(`${f.id} on ${f.milestone} resolved at seq ${r.seq} by ${r.unit}, and no later walk of ${f.milestone} passed it`);
+    problems.push(`${f.id} on ${f.milestone} resolved at seq ${r.seq} by ${r.by}, and no later walk of ${f.milestone} passed it`);
   }
   return { pass: false, detail: problems.length === 0 ? 'no walkthrough finding on a milestone' : problems.join('; ') };
 }
@@ -246,6 +265,28 @@ export function demoServingVerdict(log: M5Log, seen: readonly DemoSeen[], final:
   const urls = [...new Set(seen.map((s) => demoUrl(s.demo)).filter((w) => w !== null))];
   if (urls.length > 1) problems.push(`the demo moved: ${urls.join(' → ')}`);
   return verdict(problems, `${log.demos.length} promotion(s), the latest ${last.milestone}@${last.sha}; ${url} answered ${final.probe?.status}`);
+}
+
+/**
+ * dev.83 (see the header): the endgame exercised and its closing step run over its range. `ancestor(a, b)`: commit `a` is
+ * `b` or an ancestor of it, in the product.
+ */
+export function endgameRangeVerdict(log: M5Log, ancestor: (a: string, b: string) => boolean): Verdict {
+  const { entered, opened, fixes, landings, reviews } = log.endgame;
+  if (opened.length === 0) {
+    const last = entered.at(-1);
+    const done = last === undefined ? undefined : log.completed.find((seq) => seq > last.seq);
+    if (last !== undefined && done !== undefined) return { pass: true, detail: `skipped: endgame episode(s) ${entered.map((e) => e.episode).join(', ')} entered and none opened (the required worklist was empty); the arc completed at seq ${done}` };
+    return { pass: false, detail: last === undefined ? 'the arc never entered the endgame' : `endgame episode ${last.episode} entered at seq ${last.seq}, never opened, and the arc did not complete` };
+  }
+  const problems: string[] = [];
+  if (fixes.length === 0) problems.push('no endgame fix was recorded');
+  if (landings.length === 0) problems.push('nothing landed from the endgame branch');
+  for (const l of landings) {
+    if (!reviews.some((r) => ancestor(r.from, l.old) && ancestor(l.head, r.to))) problems.push(`no endgame review covers ${l.job}'s landing ${l.old}..${l.head} (reviews: ${reviews.map((r) => `${r.job} ${r.from}..${r.to}`).join(', ') || 'none'})`);
+    if (!log.audits.some((a) => a.covered.some((c) => c.lens === 'invariants' && ancestor(l.head, c.to)))) problems.push(`no completed audit's invariants coverage reaches ${l.job}'s landed head ${l.head}`);
+  }
+  return verdict(problems, `episode(s) ${opened.map((o) => o.episode).join(', ')} opened; ${fixes.length} fix(es); ${landings.map((l) => `${l.job} ${l.old}..${l.head}`).join(', ')} landed, each in a review's range (${reviews.map((r) => r.job).join(', ')}) and an audit's coverage`);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -366,6 +407,7 @@ export const CRITERIA: readonly Grade[] = [
   ['no-model-ids', (run) => modelIdHits(run.product, run.ref === null ? [] : [run.ref])],
   ['host-released', (run) => hostReleasedVerdict(run.report.released, readClaim(absPath(run.report.hostDir)), run.product)],
   ['profile', profile],
+  ['endgame-range', (run) => endgameRangeVerdict(needLog(run), (a, b) => a === b || isAncestor(run.product, a as Sha, b as Sha))],
 ];
 
 export async function check(dir: string): Promise<CheckResult> {

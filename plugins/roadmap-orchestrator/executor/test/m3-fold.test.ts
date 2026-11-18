@@ -111,13 +111,12 @@ describe('fold: divergences and digests (H11, H12)', () => {
   });
 });
 
-describe('fold: draining, the holistic flag, completion', () => {
-  it('close-admissions latches draining once; an architect admit reopens it', () => {
+describe('fold: an earlier release\'s admissions-closed, the holistic flag, completion', () => {
+  it('dev.83: admissions-closed (close-admissions removed) still reads and has no effect, once or twice', () => {
     const closed = fact({ kind: 'admissions-closed', command: CMD });
-    assert.equal(folded([planApplied(1), closed]).holistic().draining?.command, CMD);
-    refuses([planApplied(1), closed, fact({ kind: 'admissions-closed', command: CMD2 })], 3, /already draining/);
-    assert.equal(folded([planApplied(1), closed, planApplied(2, {}, [{ type: 'unit-added', unit: 'u2' }])]).holistic().draining, null);
-    assert.notEqual(folded([planApplied(1), closed, planApplied(2, {}, [{ type: 'order' }])]).holistic().draining, null);
+    const f = folded([planApplied(1), closed, fact({ kind: 'admissions-closed', command: CMD2 }), planApplied(2, {}, [{ type: 'unit-added', unit: 'u2' }])]);
+    assert.deepEqual(f.holistic().endgame, []);
+    assert.equal(f.planApplied()?.rev, 2);
   });
 
   it('holistic is on while the plan in force records a vision, and a revision may not drop it (A5)', () => {

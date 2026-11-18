@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1740" height="540" viewBox="0 0 1740 540" role="img" aria-labelledby="title desc">
 <title id="title">How an arc runs</title>
-<desc id="desc">Three lanes. The owner confirms the vision, answers questions and acknowledges the brief. The architect plans the arc, supervises it and closes it out. The executor reviews the plan, builds and certifies each unit (fix rounds until tests and gate pass, one more uncharged round when an escalation raises new findings), publishes the tested head (the remote CI ref advances once CI has settled on the head before), then judges milestones and audits the campaign. Events and findings flow up to the architect; revisions and steering flow down. Numbers match the steps in the README.</desc>
+<desc id="desc">Three lanes. The owner confirms the vision, answers questions and acknowledges the brief. The architect plans the arc, supervises it, fixes the endgame by hand and closes it out. The executor reviews the plan, builds and certifies each unit (fix rounds until tests and gate pass, one more uncharged round when an escalation raises new findings), publishes the tested head (the remote CI ref advances once CI has settled on the head before), then judges milestones and audits the campaign. Once the planned units and milestone checkpoints are done, the endgame starts: the executor settles, raises no new unit and hands the remaining findings over; the architect fixes them on one endgame branch, which the executor tests, lands and has reviewed. Events and findings flow up to the architect; revisions and steering flow down. Numbers match the steps in the README.</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" fill="none" stroke="#334155" stroke-width="1.6"/></marker>
 </defs>
@@ -18,13 +18,13 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#172b45;text-anchor:middle}
 .msg{stroke-dasharray:6 5}
 .both{marker-start:url(#arrow)}
 </style>
-<rect width="1200" height="540" fill="#fff"/>
+<rect width="1740" height="540" fill="#fff"/>
 <text x="30" y="40" class="title">How an arc runs</text>
 
 <!-- lanes -->
-<rect x="30" y="65" width="1140" height="105" rx="6" class="lane"/>
-<rect x="30" y="185" width="1140" height="125" rx="6" class="lane"/>
-<rect x="30" y="325" width="1140" height="185" rx="6" class="lane"/>
+<rect x="30" y="65" width="1680" height="105" rx="6" class="lane"/>
+<rect x="30" y="185" width="1680" height="125" rx="6" class="lane"/>
+<rect x="30" y="325" width="1680" height="185" rx="6" class="lane"/>
 <text x="55" y="118" class="lane-label" transform="rotate(-90 55 118)">OWNER</text>
 <text x="55" y="248" class="lane-label" transform="rotate(-90 55 248)">ARCHITECT</text>
 <text x="55" y="418" class="lane-label" transform="rotate(-90 55 418)">EXECUTOR</text>
@@ -34,19 +34,22 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#172b45;text-anchor:middle}
 <text x="215" y="124" class="name">Confirm the vision</text>
 <rect x="505" y="88" width="230" height="60" rx="10" class="box owner"/>
 <text x="620" y="124" class="name">Answer questions</text>
-<rect x="910" y="88" width="230" height="60" rx="10" class="box owner"/>
-<text x="1025" y="124" class="name">Acknowledge the brief</text>
+<rect x="1450" y="88" width="230" height="60" rx="10" class="box owner"/>
+<text x="1565" y="124" class="name">Acknowledge the brief</text>
 
 <!-- architect -->
 <rect x="100" y="212" width="230" height="72" rx="10" class="box architect"/>
 <text x="215" y="243" class="name">1 · Plan</text>
 <text x="215" y="264" class="what">Target rules, units, proof</text>
-<rect x="455" y="212" width="330" height="72" rx="10" class="box architect"/>
-<text x="620" y="243" class="name">6 · Supervise</text>
-<text x="620" y="264" class="what">Watch, decide, revise the plan</text>
-<rect x="910" y="212" width="230" height="72" rx="10" class="box architect"/>
-<text x="1025" y="243" class="name">7 · Close out</text>
-<text x="1025" y="264" class="what">Pull request, brief, demo</text>
+<rect x="455" y="212" width="685" height="72" rx="10" class="box architect"/>
+<text x="797" y="243" class="name">6 · Supervise</text>
+<text x="797" y="264" class="what">Watch, decide, revise the plan</text>
+<rect x="1180" y="212" width="230" height="72" rx="10" class="box architect"/>
+<text x="1295" y="243" class="name">7 · Endgame</text>
+<text x="1295" y="264" class="what">Fix findings by hand</text>
+<rect x="1450" y="212" width="230" height="72" rx="10" class="box architect"/>
+<text x="1565" y="243" class="name">8 · Close out</text>
+<text x="1565" y="264" class="what">Pull request, brief, demo</text>
 
 <!-- executor -->
 <rect x="100" y="368" width="230" height="72" rx="10" class="box executor"/>
@@ -61,13 +64,18 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#172b45;text-anchor:middle}
 <rect x="910" y="368" width="230" height="72" rx="10" class="box executor"/>
 <text x="1025" y="399" class="name">5 · Judge</text>
 <text x="1025" y="420" class="what">Milestone walks, campaign audit</text>
+<rect x="1180" y="368" width="230" height="72" rx="10" class="box executor"/>
+<text x="1295" y="399" class="name">7 · Endgame</text>
+<text x="1295" y="420" class="what">Settle, then land and review</text>
 
 <!-- sequence -->
 <path d="M330 248H453" class="edge"/>
-<path d="M785 248H908" class="edge"/>
+<path d="M1140 248H1178" class="edge"/>
+<path d="M1410 248H1448" class="edge"/>
 <path d="M330 404H368" class="edge"/>
 <path d="M600 404H638" class="edge"/>
 <path d="M870 404H908" class="edge"/>
+<path d="M1140 404H1178" class="edge"/>
 
 <!-- fix rounds -->
 <path d="M545 440V472H425V442" class="edge"/>
@@ -84,5 +92,11 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#172b45;text-anchor:middle}
 <text x="583" y="330" class="note" style="text-anchor:start">revisions and steering</text>
 <path d="M1025 366V286" class="edge msg"/>
 <text x="1038" y="330" class="note" style="text-anchor:start">evidence</text>
-<path d="M1025 210V150" class="edge msg"/>
+<path d="M1255 366V286" class="edge msg"/>
+<text x="1243" y="330" class="note" style="text-anchor:end">handover</text>
+<path d="M1335 284V366" class="edge msg"/>
+<text x="1348" y="330" class="note" style="text-anchor:start">fixes, requests</text>
+<path d="M1410 420H1565V286" class="edge msg"/>
+<text x="1578" y="330" class="note" style="text-anchor:start">evidence</text>
+<path d="M1565 210V150" class="edge msg"/>
 </svg>

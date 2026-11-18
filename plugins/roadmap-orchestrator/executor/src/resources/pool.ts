@@ -2,7 +2,8 @@
 // grant it, and whether it can ever be granted.
 //
 //   named resource       `{name, probe, teardown}`        its own single instance, the name
-//   estate pool          `{name, pool:{size}, ...}`        instances `<name>#1..size`; a request takes one
+//   estate pool          `{name, pool:{size}, ...}`        instances `<name>#1..size`; a request takes one, or
+//                                                          (dev.83, E4) every one for a pool it names `exclusive`
 //   `@cpu`               `plan.capacity.cpu`               tokens `@cpu#1..N`, N default availableParallelism()
 //   `@fast-suite`        `plan.capacity.fastSuites`        (dev.81, C4) tokens `@fast-suite#1..M`, one per lanes-stage
 //                                                          suite lane run (`fastSuite` requests); M default
@@ -21,7 +22,12 @@
 //
 // Instance binding (F7): every workload of a holder gets `RESOURCE_INSTANCE_<POOL>=<n>` per pool instance it
 // holds (`instanceEnv`). The same map is in its probes' and teardowns' recipes, so a residue's recorded teardown
-// replays the exact binding.
+// replays the exact binding. dev.83 (E4): a holder of a whole pool (`exclusive`) binds no instance of it for its
+// workloads; each instance's own probe and teardown binds that instance (`instanceBinding`).
+//
+// Shared estates (dev.83, E4): readers of a pool take one instance each, so its size caps them; a lane naming the pool in
+// `exclusive` (a mutator) takes every instance or none, so it runs alone against every reader and every other mutator.
+// The arbiter keeps a lower rank from overtaking a blocked higher one on the pool, so a waiting mutator is not starved.
 import { availableParallelism } from 'node:os';
 import { RECLAIM_HOLDERS } from '../core/events.ts';
 import {
@@ -77,15 +83,19 @@ const isPool = (plan: PlanM1, name: ResourceName): boolean => environmentOf(plan
  * are named, and `integration-slot` makes it a publication. Environments powering any requested resource join the
  * named set. `cpu` tokens and their optional recorded basis are the caller's.
  */
-export function requestOf(plan: PlanM1, names: readonly ResourceName[], cpu: number, cpuBasis?: CpuBasis): ResourceRequest {
+export function requestOf(plan: PlanM1, names: readonly ResourceName[], cpu: number, cpuBasis?: CpuBasis, exclusive: readonly ResourceName[] = []): ResourceRequest {
   if (new Set(names).size !== names.length) throw new Error(`duplicate resources in ${JSON.stringify(names)}`);
   const declared = [...new Set([...names.filter((n) => n !== INTEGRATION_SLOT), ...resourceEnvironments(plan, names)])];
+  const pools = declared.filter((n) => isPool(plan, n)).sort();
+  const whole = exclusive.filter((n) => !pools.includes(n));
+  if (whole.length > 0) throw new Error(`exclusive ${JSON.stringify(whole)} names no requested pool of ${JSON.stringify(names)}; plan load refuses it (exclusiveProblems)`);
   return {
     named: declared.filter((n) => !isPool(plan, n)).sort(),
-    pools: declared.filter((n) => isPool(plan, n)).sort(),
+    pools,
     cpu,
     ...(cpuBasis === undefined ? {} : { cpuBasis }),
     publication: names.includes(INTEGRATION_SLOT),
+    ...(exclusive.length === 0 ? {} : { exclusive: [...exclusive].sort() }),
   };
 }
 
@@ -101,15 +111,21 @@ export const instanceEnvVar = (pool: ResourceName): string => `RESOURCE_INSTANCE
  * into the launch env; probe and teardown recipes carry it (src/resources/teardown.ts).
  */
 export function instanceEnv(units: readonly ResourceUnit[]): Readonly<Record<string, string>> {
-  const env: Record<string, string> = {};
+  const held = new Map<ResourceName, number[]>();
   for (const u of units) {
     const p = parseResourceUnit(u);
-    if (p.type !== 'instance') continue;
-    const name = instanceEnvVar(p.pool);
-    if (Object.hasOwn(env, name)) throw new Error(`two instances of pool ${p.pool} in one holder's set: ${JSON.stringify(units)}`);
-    env[name] = String(p.n);
+    if (p.type === 'instance') held.set(p.pool, [...held.get(p.pool) ?? [], p.n]);
   }
+  const env: Record<string, string> = {};
+  // dev.83 (E4): a pool held whole (several instances: `exclusive`) has no one instance to bind.
+  for (const [pool, ns] of held) if (ns.length === 1) env[instanceEnvVar(pool)] = String(ns[0]);
   return env;
+}
+
+/** dev.83 (E4): the binding of `instance`'s own probe or teardown: the holder's `instances`, with its own pool bound to it. */
+export function instanceBinding(instances: Readonly<Record<string, string>>, instance: ResourceUnit): Readonly<Record<string, string>> {
+  const p = parseResourceUnit(instance);
+  return p.type === 'instance' ? { ...instances, [instanceEnvVar(p.pool)]: String(p.n) } : instances;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -162,6 +178,12 @@ export function allocate(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: 
   }
   for (const pool of request.pools) {
     const all = poolUnits(plan, pool);
+    if (request.exclusive?.includes(pool) === true) {
+      const held = all.filter((u) => !free(entryOf(table, u)));
+      if (held.length > 0) busy.push(...held);
+      else units.push(...all);
+      continue;
+    }
     const first = all.find((u) => free(entryOf(table, u)));
     if (first === undefined) busy.push(...all);
     else units.push(first);
@@ -185,7 +207,8 @@ export function allocate(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: 
  */
 export function envBlocked(table: ReadonlyMap<ResourceUnit, ResourceEntry>, plan: PlanM1, request: ResourceRequest): boolean {
   if (request.named.some((n) => isDirty(entryOf(table, n)))) return true;
-  return request.pools.some((p) => poolUnits(plan, p).every((u) => isDirty(entryOf(table, u))));
+  // dev.83 (E4): a pool taken whole needs every instance healthy.
+  return request.pools.some((p) => (request.exclusive?.includes(p) === true ? poolUnits(plan, p).some((u) => isDirty(entryOf(table, u))) : poolUnits(plan, p).every((u) => isDirty(entryOf(table, u)))));
 }
 
 /** Two requests compete: a shared named resource, a shared pool (`@cpu` and `@fast-suite` included), or both publications. */
@@ -209,8 +232,8 @@ export type OverCapacity = Readonly<{
  * Every request of `plan` over total capacity, as `plan-invalid` rows (src/preflight/checks.ts wires it).
  * `capacity.cpu`: the `@cpu` pool's size (`cpuCapacity`). `specs`: the units' loaded specs (their lanes).
  *
- * Only `@cpu` can be exceeded: a request takes one instance per pool and a pool has at least one, and a
- * judgment takes a single token. So the rows are a build's `unit.cpu ?? 4` and each active lane's cost (suite
+ * Only `@cpu` can be exceeded: a request takes one instance per pool (or, `exclusive`, all of them) and a pool has at
+ * least one, and a judgment takes a single token. So the rows are a build's `unit.cpu ?? 4` and each active lane's cost (suite
  * lanes with unit null) against `capacity.cpu`.
  */
 export function overCapacity(
@@ -228,4 +251,20 @@ export function overCapacity(
     for (const lane of specs.get(unit.id)?.lanes ?? []) if (lane.state === 'active') check(unit.id, lane.id, laneCpu(lane));
   }
   return rows.map((problem) => ({ kind: 'plan-invalid', problem }));
+}
+
+/**
+ * dev.83 (E4): each lane `exclusive` entry of `plan`'s suite lanes and `specs`' active lanes that names no declared pool
+ * (a named resource or an environment has one instance, which every request already takes alone), as `plan-invalid`
+ * rows. The lane reader already refuses an entry the lane's `resources` lack.
+ */
+export function exclusiveProblems(plan: PlanM1, specs: ReadonlyMap<UnitId, SpecM1>): readonly Readonly<{ kind: 'plan-invalid'; problem: Readonly<{ type: 'schema'; field: string; detail: string }> }>[] {
+  const pools = new Set(plan.resources.filter((r) => r.pool !== undefined && environmentOf(plan, r.name) === null).map((r) => r.name));
+  const rows = (where: string, lane: LaneDef) => (lane.exclusive ?? []).filter((n) => !pools.has(n)).map((n) => ({
+    kind: 'plan-invalid' as const, problem: { type: 'schema' as const, field: `${where}.lanes.${lane.id}.exclusive`, detail: `${n} is not a declared pool: only a pool's instances can be held whole` },
+  }));
+  return [
+    ...plan.suite.lanes.flatMap((l) => rows('plan.suite', l)),
+    ...plan.units.flatMap((u) => (specs.get(u.id)?.lanes ?? []).filter((l) => l.state === 'active').flatMap((l) => rows(`unit ${u.id}`, l))),
+  ];
 }

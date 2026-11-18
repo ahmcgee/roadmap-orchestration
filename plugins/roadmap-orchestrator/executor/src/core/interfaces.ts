@@ -173,7 +173,7 @@ export interface JournalView {
   /** dev.17: every `flake-observed` fact, in log order, with its seq (the flaky ledger, src/pipeline/deflake.ts). */
   flakes(): readonly FlakeAt[];
   /** dev.17: every propagation fact (stale sets, stale re-opens, refused propagations), in log order, with its seq and time. */
-  notes(unit: UnitId): readonly Readonly<{ command: CommandId; brief: Sha256Hex; seq: number }>[];
+  notes(unit: UnitId): readonly Readonly<{ command: CommandId | JobId; brief: Sha256Hex; seq: number }>[];
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[];
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[];
   propagationFacts(): readonly PropagationFactAt[];

@@ -6,7 +6,7 @@ import { systemName } from '../src/core/ids.ts';
 // criterion, and the driver's stop rule (log.ts), on synthetic logs and on paid run 5's log trimmed to what the rule reads
 // (evals/m5/testdata/run5-log.json). The real-browser reflow oracle is test/serial/evals-m5-reflow.test.ts.
 // Named tests: evals-m5.setup-valid, evals-m5.plan-shape, evals-m5.log-of, evals-m5.criterion.<name>, evals-m5.stop-rule,
-// evals-m5.stop-rule-run5, evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
+// evals-m5.stop-rule-endgame, evals-m5.stop-rule-run5, evals-m5.owner-code-answers, evals-m5.check-without-arc, evals-m5.check-arc-under-test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync,mkdirSync,readFileSync,readdirSync,writeFileSync } from 'node:fs';
@@ -15,13 +15,13 @@ import { describe,test } from 'node:test';
 import {
 PLANT_ANCHOR,PLANT_WORDS,check,demoServingVerdict,
 designFirstVerdict,isPng,milestonesPlannedVerdict,nodeHeldVerdict,
-plantCaughtVerdict,plantRepairedVerdict,polishBoundedVerdict,repairLoopVerdict,
+endgameRangeVerdict,plantCaughtVerdict,plantRepairedVerdict,polishBoundedVerdict,repairLoopVerdict,
 sessionStoppedVerdict,
 walkScreenshotsVerdict,
 } from '../evals/m5/check.ts';
 import { SKILL_SATISFIED,SLICE_ANSWER,codeAnswer,initialPrompt } from '../evals/m5/driver.ts';
 import { CORPUS_ROOT,DESIGN_SKILL,PLANT,VISION_DOC } from '../evals/m5/layout.ts';
-import { type EvidencePlan,type M5Log,type Repairs,evidenceComplete,logOf } from '../evals/m5/log.ts';
+import { type EndgameLog,type EvidencePlan,type M5Log,type Repairs,endgameSettled,evidenceComplete,logOf } from '../evals/m5/log.ts';
 import type { Reflow } from '../evals/m5/reflow.ts';
 import { CLAUSES,setup } from '../evals/m5/setup.ts';
 import { planShape } from '../evals/m5/shape.ts';
@@ -164,9 +164,26 @@ function goodLog(over: Partial<M5Log> = {}): M5Log {
     compares: [{ job: 'compare-1', unit: 'polish-x1', seq: 93, abandoned: false, interrupted: false }, { job: 'compare-2', unit: 'polish-x2', seq: 94, abandoned: false, interrupted: false }],
     refused: [],
     demos: [{ seq: 101, milestone: 'MS-1', sha: SHA('4') }, { seq: 151, milestone: 'MS-2', sha: SHA('6') }],
+    endgame: NO_ENDGAME, audits: [], completed: [],
     ...over,
   };
 }
+
+const NO_ENDGAME: EndgameLog = { entered: [], opened: [], fixes: [], landings: [], reviews: [], checkpoints: [] };
+/**
+ * dev.83: MS-2's loop in the endgame: episode 1 opens on SHA 6, a fix (SHA 7) lands, the closing review covers 6..7, the
+ * final audit's invariants coverage reaches 7, the arc completes.
+ */
+const ENDGAME: Pick<M5Log, 'endgame' | 'audits' | 'completed'> = {
+  endgame: {
+    entered: [{ seq: 160, episode: 1 }], opened: [{ seq: 170, episode: 1, base: SHA('6') }], fixes: [{ seq: 180, command: 'cmd-1', commit: SHA('7') }],
+    landings: [{ seq: 190, job: 'endgame-1', old: SHA('6'), head: SHA('7') }], reviews: [{ seq: 200, job: 'endgame-2', from: SHA('6'), to: SHA('7') }], checkpoints: [],
+  },
+  audits: [{ seq: 210, job: 'audit-9', covered: [{ lens: 'invariants', from: SHA('6'), to: SHA('7') }] }],
+  completed: [220],
+};
+/** SHA 1 … 7 in a line: `a` is `b` or an ancestor of it. */
+const inLine = (a: string, b: string): boolean => a[0]! <= b[0]!;
 
 describe('the criteria over the log (evals/m5/check.ts)', () => {
   test('evals-m5.criterion.design-first: the reference published before any MS-1 unit dispatched; a unit dispatched first, or a missing reference dir, fails', () => {
@@ -317,6 +334,41 @@ describe('the criteria over the log (evals/m5/check.ts)', () => {
     const [f] = goodLog().findings;
     assert.match(repairLoopVerdict(goodLog({ findings: [{ ...f!, transitions: f!.transitions.slice(0, 2) }] })).detail, /F-1 .* is fixed-on-branch/);
     assert.match(repairLoopVerdict(goodLog({ findings: [] })).detail, /no walkthrough finding on a milestone/);
+    // dev.83: the loop in the endgame: fixed by an endgame fix, resolved once its landing published, then re-walked.
+    const byHand = goodLog({
+      ...ENDGAME,
+      findings: [{ ...f!, transitions: [{ seq: 182, to: { state: 'fixed-on-branch', endgame: 'cmd-1' } }, { seq: 191, to: { state: 'resolved' } }] }] as M5Log['findings'],
+      walks: [...goodLog().walks, { job: 'walk-4', milestone: 'MS-1', round: 3, sha: SHA('7'), seq: 230, outcome: 'reported', findings: [], proposals: [], dropped: [] }],
+      passed: [...goodLog().passed, { seq: 235, milestone: 'MS-1', job: 'walk-4' }],
+    });
+    const landed = repairLoopVerdict(byHand);
+    assert.ok(landed.pass, landed.detail);
+    assert.match(landed.detail, /F-1 .* resolved at seq 191 by endgame fix cmd-1's landing at seq 190; walk-4 \(round 3\) re-walked it and passed the milestone/);
+    const unlanded = goodLog({ ...byHand, endgame: { ...ENDGAME.endgame, landings: [] } });
+    assert.match(repairLoopVerdict(unlanded).detail, /F-1 .* is resolved \(fixed by endgame fix cmd-1, unlanded\)/);
+  });
+
+  test('evals-m5.criterion.endgame-range: an opened episode with a fix and a landing each in a review\'s range and an audit\'s coverage passes; no fix, no landing, a landing no review or audit covers, or an episode never opened without completion fails; none opened with the arc completed is skipped', () => {
+    const ok = endgameRangeVerdict(goodLog(ENDGAME), inLine);
+    assert.ok(ok.pass, ok.detail);
+    assert.match(ok.detail, /episode\(s\) 1 opened; 1 fix\(es\); endgame-1 6{40}\.\.7{40} landed/);
+    const fails = (over: Partial<EndgameLog>, why: RegExp, rest: Partial<M5Log> = {}) => {
+      const v = endgameRangeVerdict(goodLog({ ...ENDGAME, endgame: { ...ENDGAME.endgame, ...over }, ...rest }), inLine);
+      assert.equal(v.pass, false, v.detail);
+      assert.match(v.detail, why);
+    };
+    fails({ fixes: [] }, /no endgame fix was recorded/);
+    fails({ landings: [] }, /nothing landed from the endgame branch/);
+    // A review from a later base than the landing's old (the reversed-episode gap) does not cover it.
+    fails({ reviews: [{ seq: 200, job: 'endgame-2', from: SHA('7'), to: SHA('7') }] }, /no endgame review covers endgame-1's landing/);
+    fails({ reviews: [{ seq: 200, job: 'endgame-2', from: SHA('6'), to: SHA('6') }] }, /no endgame review covers endgame-1's landing/);
+    fails({}, /no completed audit's invariants coverage reaches endgame-1's landed head/, { audits: [{ seq: 210, job: 'audit-9', covered: [{ lens: 'invariants', from: SHA('5'), to: SHA('6') }] }] });
+    fails({}, /no completed audit's invariants coverage reaches/, { audits: [{ seq: 210, job: 'audit-9', covered: [{ lens: 'drift', from: SHA('6'), to: SHA('7') }] }] });
+    const skipped = endgameRangeVerdict(goodLog({ ...ENDGAME, endgame: { ...NO_ENDGAME, entered: [{ seq: 160, episode: 1 }] } }), inLine);
+    assert.ok(skipped.pass, skipped.detail);
+    assert.match(skipped.detail, /^skipped: endgame episode\(s\) 1 entered and none opened \(the required worklist was empty\); the arc completed at seq 220/);
+    fails({ ...NO_ENDGAME, entered: [{ seq: 160, episode: 1 }] }, /endgame episode 1 entered at seq 160, never opened, and the arc did not complete/, { completed: [] });
+    fails(NO_ENDGAME, /the arc never entered the endgame/);
   });
 });
 
@@ -375,6 +427,27 @@ describe('the stop rule (evals/m5/log.ts)', () => {
     assert.ok(evidenceComplete(goodLog(), planWith({ units: [...EVIDENCE_PLAN.units, unit('audit-fix', { origin: 'repair' })] }), new Map([...REPAIRS, ['audit-fix', ['F-50']]])).complete);
   });
 
+  test('evals-m5.stop-rule-endgame: an endgame checkpoint request after a milestone\'s last walk makes its next round due (unless braked); the stop then waits for the endgame entered and the arc completed after it', () => {
+    const checkpoint = (seq: number) => ({ ...NO_ENDGAME, checkpoints: [{ seq, milestone: 'MS-2' }] });
+    const due = evidenceComplete(goodLog({ endgame: checkpoint(160) }), EVIDENCE_PLAN, REPAIRS);
+    assert.equal(due.complete, false);
+    assert.match(due.detail, /MS-2 round 2's walk is due \(endgame checkpoint at seq 160 after walk-3\)/);
+    assert.ok(evidenceComplete(goodLog({ endgame: checkpoint(100) }), EVIDENCE_PLAN, REPAIRS).complete, 'a request before the last walk was served by it');
+    const failed = (job: string, seq: number) => ({ ...goodLog().walks[2]!, job, round: 2, seq, outcome: 'abandoned' as const });
+    assert.ok(evidenceComplete(goodLog({ endgame: checkpoint(160), walks: [...goodLog().walks, failed('walk-5', 165), failed('walk-6', 170)] }), EVIDENCE_PLAN, REPAIRS).complete, 'the brake');
+
+    assert.match(endgameSettled(goodLog()).detail, /the arc has not entered the endgame/);
+    assert.equal(endgameSettled(goodLog()).complete, false);
+    const open = endgameSettled(goodLog({ ...ENDGAME, completed: [] }));
+    assert.equal(open.complete, false);
+    assert.match(open.detail, /endgame episode 1 opened at seq 160; the arc has not completed/);
+    assert.equal(endgameSettled(goodLog({ ...ENDGAME, completed: [150] })).complete, false, 'a completion before the entry is not this one');
+    const done = endgameSettled(goodLog(ENDGAME));
+    assert.ok(done.complete, done.detail);
+    assert.match(done.detail, /endgame episode 1 opened; arc-completed at seq 220/);
+    assert.match(endgameSettled(goodLog({ ...ENDGAME, endgame: { ...NO_ENDGAME, entered: [{ seq: 160, episode: 1 }] } })).detail, /entered, never opened; arc-completed at seq 220/);
+  });
+
   test('evals-m5.stop-rule-run5: on paid run 5\'s log (trimmed) the rule first holds at seq 7449, MS-2\'s demo promotion at 08:12:49, 85 minutes before arc-completed; its repair loop is F-34 by headings', () => {
     const run5 = JSON.parse(readFileSync(new URL('../evals/m5/testdata/run5-log.json', import.meta.url), 'utf8')) as { plan: EvidencePlan; repairs: Record<string, readonly string[]>; events: readonly Event[] };
     const repairs: Repairs = new Map(Object.entries(run5.repairs));
@@ -409,6 +482,16 @@ describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
       fact(12, { kind: 'tweak-judged', unit: 'p', decision: 'keep', reason: 'judged' }),
       fact(13, { kind: 'demo-promoted', milestone: 'MS-1', sha: SHA('1') }),
       fact(14, { kind: 'polish-refused', proposal: 'X-2', reasons: ['no reference touched'] }),
+      fact(15, { kind: 'endgame-entered', episode: 1, planRev: 3 }),
+      fact(16, { kind: 'endgame-opened', episode: 1, base: SHA('1'), handoverSha256: 'e'.repeat(64) }),
+      fact(17, { kind: 'endgame-fix', command: 'cmd-1', closes: ['F-1'], commit: SHA('2'), note: 'n' }),
+      fact(18, { kind: 'endgame-requested', command: 'cmd-2', request: { type: 'land' } }),
+      fact(19, { kind: 'endgame-landed', job: 'endgame-1', old: SHA('1'), head: SHA('2') }),
+      fact(20, { kind: 'endgame-reviewed', job: 'endgame-2', from: SHA('1'), to: SHA('2'), findings: [] }),
+      fact(21, { kind: 'endgame-requested', command: 'cmd-3', request: { type: 'checkpoint', milestone: 'MS-1' } }),
+      fact(22, { kind: 'audit-ended', job: 'audit-1', covered: [{ lens: 'invariants', from: SHA('1'), to: SHA('2') }], findings: [], suppressed: 0, outcome: 'completed' }),
+      fact(23, { kind: 'audit-ended', job: 'audit-2', covered: [], findings: [], suppressed: 0, outcome: 'abandoned' }),
+      fact(24, { kind: 'arc-completed', planRev: 3, head: SHA('2'), highWater: 23, units: [] }),
     ];
     const log = logOf(events);
     assert.deepEqual([...log.firstDispatch], [['design', 1]]);
@@ -419,6 +502,13 @@ describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
     assert.deepEqual(log.findings, [{ id: 'F-1', seq: 8, lens: 'walkthrough', milestone: 'MS-1', claim: 'faint', cause: 'contrast', transitions: [{ seq: 10, to: { state: 'resolved' } }] }]);
     assert.deepEqual(log.tweaks, [{ seq: 12, unit: 'p', decision: 'keep', reason: 'judged' }]);
     assert.deepEqual(log.demos, [{ seq: 13, milestone: 'MS-1', sha: SHA('1') }]);
+    assert.deepEqual(log.endgame, {
+      entered: [{ seq: 15, episode: 1 }], opened: [{ seq: 16, episode: 1, base: SHA('1') }], fixes: [{ seq: 17, command: 'cmd-1', commit: SHA('2') }],
+      landings: [{ seq: 19, job: 'endgame-1', old: SHA('1'), head: SHA('2') }], reviews: [{ seq: 20, job: 'endgame-2', from: SHA('1'), to: SHA('2') }],
+      checkpoints: [{ seq: 21, milestone: 'MS-1' }],
+    });
+    assert.deepEqual(log.audits, [{ seq: 22, job: 'audit-1', covered: [{ lens: 'invariants', from: SHA('1'), to: SHA('2') }] }]);
+    assert.deepEqual(log.completed, [24]);
   });
 
   test('evals-m5.criterion.png: a PNG is told by its signature, not its name', () => {
@@ -444,7 +534,7 @@ describe('the log and the files (evals/m5/log.ts, check.ts)', () => {
     assert.match(by['session-stopped']!.detail, /ended stalled/);
     assert.match(by['milestones-planned']!.detail, /no plan in force/);
     assert.match(by['milestones-settled']!.detail, /threw: the product has no run dir with a plan in force/);
-    for (const name of ['design-first', 'node-held', 'walk-screenshots', 'plant-caught', 'repair-loop', 'plant-repaired', 'polish-bounded', 'demo-serving', 'skill-vendored', 'profile']) assert.equal(by[name]!.pass, false, name);
+    for (const name of ['design-first', 'node-held', 'walk-screenshots', 'plant-caught', 'repair-loop', 'plant-repaired', 'polish-bounded', 'demo-serving', 'skill-vendored', 'profile', 'endgame-range']) assert.equal(by[name]!.pass, false, name);
   });
 
   test('evals-m5.check-arc-under-test: of two arcs, the first started whose first plan has the M5 shape is graded; a later shell-only arc (sorting first by name) is not', T, async () => {

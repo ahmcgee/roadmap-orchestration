@@ -65,7 +65,7 @@ after(() => {
 
 /** The admission the scheduler would give `stage` of u1 now, over the test's tick history. */
 const admission = (r: ArcRun, stage: 'pre-build' | 'lanes'): Admission => admitter((u) => r.ctx.routing(u).table, specFacts(r.ctx))({
-  view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage, blocking: [], drains: [], tripped: [], pressure: { ticks: ticks.ticks(), nowMs: Date.now() },
+  view: r.journal.view, plan: r.ctx.plan(), unit: r.unit('u1'), stage, blocking: [], drains: [], tripped: [], endgame: new Set(), pressure: { ticks: ticks.ticks(), nowMs: Date.now() },
 });
 /** The real admitter at every admission boundary; chains always run. */
 const admitted = (r: ArcRun): Gate => (next) => Promise.resolve(next.kind === 'chain' || admission(r, next.stage as 'lanes').kind === 'admit');

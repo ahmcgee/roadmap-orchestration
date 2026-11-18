@@ -656,7 +656,7 @@ export type ReviewItem = Readonly<{ id: string; text: string; evidence: readonly
 ```ts
 export type SurfaceFact =
   | Readonly<{ kind: 'review-triggered'; unit: UnitId; marker: 'M1' | 'M2' | 'M3' | 'M4' | 'always'; source: string; specRev: SpecRev }>
-  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null }>;
+  | Readonly<{ kind: 'review-completed'; unit: UnitId; mode: 'pre-build' | 'diagnosis'; specRev: SpecRev; planRev: PlanRev; inv: InvocationId; items: readonly ReviewItem[]; note: Sha256Hex | null; cause?: DiagnosisCause }>;
 ```
 
 ### RevisionSource (`src/core/events.ts`)
@@ -1033,7 +1033,8 @@ The journal plus runner CPU records rebuild observations after restart (`src/res
 op makes a fault fatal; so does a throw outside a supported task wrapper or a failed settlement. Unit-confined faults
 run `settleFaulted`: kill/quiesce invocations, reconcile own ops, abort a repeated faulty act, clean reservations, then
 record uncharged operator-env `executor-fault` with stack. Resume re-enters the stage; restart replays the park.
-Only audit/walk/baseline jobs have job containment; their non-blocking item holds that track until arc resume closes it.
+Only audit/walk/baseline jobs (dev.83: and the batch witness and endgame jobs) have job containment; their non-blocking
+item holds that track until arc resume closes it.
 Shared-state faults go through supervisor recovery, bounded at three crashes/hour.
 
 ## Finding record
@@ -1099,7 +1100,8 @@ service. Hold blocks promotion/restart until release (`src/demo/records.ts`).
 Gate adds approval fingerprint, `diffShown:{inlined,notInlined}`, `largeDiff:{overflow}|null`, review/standingReview and
 designEstimate|null. Recovery consumes those identities, never a newer tip or plan.
 
-Verifier inputs are `{mode:'gate',brief:GateInputs}` or `{mode:'pre-build'|'diagnosis',brief:ReviewBrief}`. GateInputs
+Verifier inputs are `{mode:'gate',brief:GateInputs}`, `{mode:'pre-build',brief:ReviewBrief}` or (dev.83 E2)
+`{mode:'diagnosis',brief:DiagnosisBrief}`. GateInputs
 includes systemNotes, touches, standing, method, spec/intent/nonGoals, cited contracts/index/target/direction, selected
 and standing obligations, bounded diff/claims, laneLedger/evidence, systems/reach/traits/reachTraits, priorRound,
 checks/escalation/largeDiff/milestones, undeclaredContracts and proportional review. ReviewBrief is `{target,vision,spec,intent,nonGoals,contracts,systems,method,history,standing}`; history supplies
@@ -1108,7 +1110,8 @@ diagnosis failures where applicable. No model identity is a role input.
 | Role | Strict output |
 |---|---|
 | verifier gate | GateOutput decision, findings/directives/reasons/premises and gate review/coverage fields |
-| verifier pre-build/diagnosis | The same GateOutput schema; code converts findings into standing items and keeps a diagnosis/failure note |
+| verifier pre-build | The same GateOutput schema; code converts findings into standing items and keeps a failure note |
+| verifier diagnosis | DiagnosisOutput `{cause,evidence,brief,reasons}` (dev.83 E2); code keeps the brief as the note and records the cause |
 | campaignAudit | LensOutput findings/reasons/premises plus requests[] `{op:'request',summary,evidence,dismisses:F-n|null,counterEvidence:string|null}`; dismissal requests require counter-evidence and root action |
 | experienceVerdict | `{final:true,mode:'walkthrough',verdict:{final,journeys,findings,polish,premises,reasons}}` or `{final:true,mode:'polish',verdict:{final,decision:keep|drop,evidence,reasons,premises}}` |
 | packReview | `{findings,dispositions,reasons,premises}`; findings bind severity/target/claim/evidence `{path,line}`; delta review dispositions name prior job/index |
@@ -1823,3 +1826,340 @@ is unchanged.
 - `NeedsUserReason` adds `external-witness-owed` (appended; in `NON_BLOCKING_M3_REASONS`). No record changes shape and
   `SCHEMA_VERSION` is unchanged. A dev.81 arc stuck in the close-out loop (every unit settled, close-out done at H,
   passes attested at H) completes on its first idle pass on dev.82 with no new job.
+
+### dev.83 E5b: co-repairers joined through `after`
+
+No record change. Two live direct repairers of one finding (specs naming the same `F-n` in `repairs`; neither cut,
+terminal nor published) where one depends on the other through `after` (transitively over the effective graph, through
+units still open) never batch: R7 holds the dependency at its candidate until the dependent waits there too, and the
+dependent waits on its merge (`src/schedule/graph.ts` `joinedCoRepairers`). The classifier refuses such a revision
+(reason `co-repairer-after: …`, naming the finding and the dependency path). An adopted plan holding a pair raises one
+blocking arc `plan-defect` item at scheduler start, once while open (temporary scaffolding).
+
+### dev.83 E5c: `window-spent`
+
+`STAGE_OUTCOME_KINDS.build` gains `window-spent` (additive). A build call that ended `process-fault` with exit.json
+`cause: 'deadline'`, and that no pressure ruling called starved, records `window-spent` instead of `process-fault`, for
+every round kind (fresh, fix, resume, resolve, steer). Row `go(at('quiesce'))`, uncharged, as `lost-tree-effects`: the
+reservation stays held and what the round left is salvaged, verified and gated like a report.
+
+### dev.83 E4: pools held whole (`exclusive`)
+
+All additive; no table, fold or residue change.
+
+- `LaneDef.exclusive?: ResourceName[]` (suite, spec and arc lanes): non-empty, unique, each among the lane's own
+  `resources`, else the lane reader refuses it. Each must be a declared pool: plan load and apply refuse a suite or spec
+  lane's that is not as `plan-invalid{schema}` at `<where>.lanes.<lane>.exclusive` (`src/resources/pool.ts`
+  `exclusiveProblems`). Arc lanes' resources are not checked at plan load (as before), so `requestOf` fails loud on one.
+- `ResourceRequest.exclusive?: ResourceName[]` (sorted, a subset of `pools`; `laneRequest` carries the lane's). The
+  `resourceRequest` reader accepts it (absent on lines written before dev.83). `allocate` grants every instance of such a
+  pool or none; busy names the held instances. Readers still take one instance each, so the pool's size caps them, and a
+  mutator serialises against every reader and every other mutator. `envBlocked`: a pool taken whole is environment-blocked
+  while any of its instances is dirty. `overlaps` is unchanged, so a waiting mutator is never overtaken by a lower-ranked
+  reader of its pool.
+- Instance binding: `instanceEnv` binds `RESOURCE_INSTANCE_<POOL>` only for a pool held by one instance; a holder of a
+  whole pool's workloads get no binding for it. Probes and teardowns run per instance held, each bound to its own instance
+  (`instanceBinding`), and each instance's residue recipe records that binding.
+- Phase 0 advisory `shared-estate-mutation{pool, units, mutators}`: a declared pool the active spec lanes of two or more
+  live, unsettled units name, at least one of them (`mutators`) on a system with the `persistent` trait, and no lane naming
+  it holds it `exclusive`. Needs the repo config's systems map.
+
+
+### dev.83 E3: arc witness lanes at batch cadence
+
+- `KIND_CADENCES.arc` gains `batch`. `deferredLane(l)` (`src/holistic/types.ts`): `witnessClass: 'external'` or cadence
+  `batch`. A deferred lane's rows leave a unit's required witnesses (`requiredWitnesses`); its obligations leave the
+  held-claims grade of a candidate or a batch (`gradeTree`) and a docs publication's brake; `Claims.lanes` and a docs
+  publication's witness lanes never include one. The baseline, cadence audits and the close-out still run a batch lane.
+- Plan: `holistic.batchEvery?: number` (positive; absent: 5, `DEFAULT_BATCH_EVERY`).
+- Job kind `witness` (`witness-<n>`), the batch witness (`src/pipeline/batchlanes.ts`). Due when a batch arc lane has
+  `batchEvery` publications (`publishedHeads`) after the head of the last `batch-witness-started` naming it (none: every
+  publication), or on request at the endgame's closing step (`batchWitnessDue(ctx, 'closing')`: the lanes with an
+  obligation unobserved on the head's tree); `runBatchWitness` runs it.
+- Fact `batch-witness-started{job, head, lanes}` (lanes non-empty, ascending) opens the job (`nextJobId('witness')`; a
+  second open one fails the fold). Fact `batch-witness-ended{job}` closes it. A started job without its end is due again
+  as itself.
+- Grading on `head`: a future obligation every deliverer of which is retired with its merge in `head` (`latchingUnit`)
+  latches when held (`obligation-latched` with `head`'s tree); a must-hold or latched one not held, or a delivered
+  future one not held, is red. A red one is bisected over the first publication's `old`, then the published heads up to
+  `head`; each probe runs the lane alone under the job (`witness-<n>.probe-<k>` checkouts, reuse on).
+- Fact `batch-reopened{job, unit, obligation, culprit: Sha, brief: Sha256Hex}`: the culprit's publishers include a member
+  of a retired deliverer's lineage. The fold reopens `unit` as `external-reopened` does (status `active`, stage
+  `pre-build`, nothing charged) and records the brief as a note (`JournalView.notes` entries' `command` is
+  `CommandId | JobId`). Otherwise code opens a `witness` P1 (`source: {type: 'job', job}`) naming the culprit.
+- Phase 0 advisory `consider-batch{lane, resources}`: a candidate-cadence, non-external arc lane with resources.
+
+### dev.83 E2: diagnosis on a repeated red
+
+All additive, read-time defaults; `SCHEMA_VERSION` stays 2.
+
+- **Triggers, once per source** (`src/pipeline/surface.ts` `diagnosisSources`, `diagnosisPending`). A diagnosis is due from
+  each source that has no `review-triggered{marker: 'M4'}` of the unit yet. There are two sources:
+  - `attempts:8-builds-or-20-judged`, the attempt counts. Every diagnosis before dev.83 has it.
+  - `repeat-red:<lane>:<failure>`, one per red lane record of the unit's latest completed lanes attempt with
+    `repeat !== null`, when that attempt ended `red`, `regression` or `witnesses-missing`. `<failure>` is the record's
+    failure signature hash.
+
+  The diagnosis runs inside the build's step, before the build (`stages.ts` `diagnose`, unit.ts `diagnosedBuild`). Only
+  the attempts source is the Claude fallback (`diagnosed`): a repeated red's diagnosis moves no build.
+- **`repeatOf` on lanes-stage suite lanes** (`src/pipeline/lanes.ts`). A red of a lanes-stage fast suite series at the
+  salvage SHA (root `<evidence>/_suite`) repeats the unit's earlier confirmed red of that suite lane, as a spec lane's
+  does. Its history is the unit's lanes-stage `_suite` executions and every lanes-stage suite reuse. The diff-base series
+  (`_base`) and the candidate's suite never repeat. The spec lanes' rule is unchanged.
+- **Verifier inputs** (`src/prompts/inputs.ts`). Diagnosis mode takes `DiagnosisBrief = ReviewBrief & {evidence:
+  DiagnosisEvidence}`. `DiagnosisEvidence` is `{trigger: string[], failures: LaneFailureText[], baseComparison: {lane,
+  base, result, evidence}[], environment: {tripped: string[], retryableParks: string[], hostSuspected: string[]},
+  knownDefects: string[], flaky: string[]}`. All of it is read from the latest completed lanes attempt, the park schedule,
+  the plan and the flaky ledger. The verifier module's own schema stays `GATE_SCHEMA`; diagnosis calls pass
+  `DIAGNOSIS_SCHEMA`.
+- **`DiagnosisOutput`** (`src/prompts/schemas.ts`, strict): `{cause: 'unit'|'base'|'environment'|'unknown'
+  (DIAGNOSIS_CAUSES), evidence: string[], brief: string, reasons: string[] (non-empty)}`. A `base` or `environment` cause
+  with empty `evidence` is malformed. The kept note (`BRIEF_INPUT`) is `brief`. `items` is one entry, `{id: '<inv>:cause',
+  text, evidence}`. An unanswered diagnosis keeps the no-answer note and no cause.
+- **`review-completed.cause?: DiagnosisCause`**: only on `mode: 'diagnosis'` (the reader refuses it elsewhere). It is
+  absent when the diagnosis gave no usable answer, and on every diagnosis before dev.83.
+- **Pre-build outcome `diagnosed-external`**, appended to `STAGE_OUTCOME_KINDS['pre-build']`, and **needs-user reason
+  `diagnosed-external`**, appended to `NEEDS_USER_REASONS`, blocking. The diagnosis attempt closes with it when the latest
+  diagnosis's cause is `base` or `environment` and no entry runs the build; under a steer entry it closes `diagnosed`.
+  Row `park('diagnosed-external', 'env')`: uncharged, operator env. The build does not run. The item's summary carries the
+  cause, its evidence and the brief. `resume <unit>` restores the decision before the park (the lanes outcome), so the
+  build's fix round runs with the brief as its note. The source is spent, so it is not diagnosed again. `rerun` does not
+  apply after the park: the lanes attempt is no longer the unit's latest attempt.
+
+
+### dev.83 E1 core: the phase, episodes, the worklist and the open step
+
+The phase is computed, never stored (`src/endgame/phase.ts`). A unit is finding-raised when it was added after the
+arc's first plan revision and its origin is not `planned` or its spec in force has a non-empty `repairs`; the
+classifier refuses an `origin` edit of a unit already planned. A holistic arc is in the endgame when every unit that is not finding-raised is retired, cut or superseded and
+every milestone had its checkpoint (a walk of it ended `reported` or `bring-up-failed`, or its progress is `abandoned`,
+and an audit triggered by it completed). Otherwise, and always without the holistic layer, it is in the body. The
+`Phase` union is `{kind: 'body', planned, milestones}` or `{kind: 'endgame', step: settling | open | closing, episode}`.
+
+Facts (additive, `HolisticFact`), folded into `HolisticFold.endgame` (one `EndgameEpisode` each):
+
+```ts
+| { kind: 'endgame-entered'; episode: number; planRev: PlanRev }
+| { kind: 'endgame-opened'; episode: number; base: Sha; handoverSha256: Sha256Hex }
+| { kind: 'endgame-fix'; command: CommandId; closes: (FindingId | ObligationId | UnitId)[]; commit: Sha; note: string }
+| { kind: 'endgame-landed'; job: JobId; old: Sha; head: Sha }
+| { kind: 'endgame-reviewed'; job: JobId; from: Sha; to: Sha; findings: FindingId[] }
+| { kind: 'endgame-left'; episode: number; cause: 'planned-unit' | 'complete' }
+```
+
+The fold refuses an `entered` while an episode is open or out of number order, a second `opened`, a `left` naming
+another episode, and a fix, landing or review outside an opened episode. The scheduler writes `entered` (no completion
+active) and `left{planned-unit}` on the predicate's edge each tick, before the holistic jobs, and `left{complete}` right
+after `arc-completed`. `endgame-left` is quiet for sealing (`isWork`). `fix`, `landed` and `reviewed` are written by the
+endgame commands, the landing and the review job.
+
+Settling: no deflake unit is minted and no polish unit admitted (the refusal reason says so). Admission gains the
+constraint `{type: 'endgame'}` (wait reason `admission-hold:endgame`) for an active finding-raised unit with no dispatch
+record that was in the plan when the episode entered. `AdmitInput.endgame` carries the held set. Dispatched units
+finish. A unit admitted during the episode (an architect's or a checkpoint's apply) runs. The final audit is owed once the arc is in
+the endgame and no unit runs (an active, dispatched unit whose unmerged dependencies all run), active P1s or not.
+
+Open: once the episode settled (nothing running, no walk or audit due or running) with a non-empty required worklist,
+the holistic job `holistic:endgame` creates branch `roadmap/<arc>/endgame` and worktree `<worktreeRoot>/<arc>/endgame`
+at the integration tip (`worktree.create`, parent `arc`, key `worktree:endgame`; an existing one is kept). It writes
+`<runDir>/endgame/handover-<episode>.md`, records `endgame-opened` with its hash, and raises one non-blocking `endgame`
+item (subject the arc, evidence the handover). Past `ENDGAME_BY_HAND = 10` required entries, the recommendation suggests
+`resume <unit>` or a repair unit by apply. With an empty required worklist the episode never opens, unless a landing no
+review reached exists (see "dev.83 review range" below). Unit id `endgame` is reserved.
+
+The worklist is derived (`src/endgame/worklist.ts`). Required entries: active P1 findings, active findings over an
+obligation, non-exempt obligations not held on the integration head (observed red, or attested failed), and
+finding-raised units not settled. Optional entries: the other active findings, the obligations on an external lane with
+no attestation at the head, and the polish proposals refused since the episode entered. See "dev.83 one head reader" below
+for the verdicts and the `attestation` entry. Completion gains
+`endgame-open` before `generation-not-quiescent`: an entered episode not yet opened with required entries (WS-7), an
+opened episode at step `open` (required entries, or the endgame branch holds work the integration head does not: its tip
+is no ancestor of the head), or at `closing` with `closingSettled` false.
+
+`close-admissions` is removed. Its CLI form is gone. An earlier release's command file still reads and is rejected. An
+`admissions-closed` fact still reads, with a `ROADMAP_UPGRADE` warning, and has no effect. `HolisticFold.draining` and
+the `new-finding-draining` raise are gone, but the reason still reads.
+
+### dev.83 E1 commands: fix, land, review, run, checkpoint, resume
+
+`CommandBody` gains `{type: 'endgame', act: EndgameAct}` (`src/commands/endgame.ts`; CLI `roadmap endgame
+fix|run|land|checkpoint|review`). `EndgameAct` is a fix `{type: 'fix', closes: EndgameRef[] (non-empty, unique), commit:
+Sha, note: string (non-blank)}` or an `EndgameRequest`: `{type: 'land'} | {type: 'review'} | {type: 'run', lanes: LaneId[]
+(ascending, non-empty)} | {type: 'checkpoint', milestone: MilestoneId}`. `EndgameRef` (`F-<n>`, `I-<n>`, else a unit id)
+and both readers live in `records.ts`; `events.ts` re-exports the types. The CLI resolves a fix's commit from the endgame
+branch's head when `--commit` is absent. Scope: a fix that closes units, those units; every other act ∅. Every act is
+rejected without an opened episode.
+
+- **fix**: the commit must be on `roadmap/<arc>/endgame` after the episode's base; each F-id an active finding, each I-id
+  an obligation in force, each unit in the plan and neither retired, cut nor superseded. A named unit's cut is evaluated
+  before the fact (proposer `{type: 'endgame', command, units}`, which only cuts those units and authorizes their cut), so
+  a unit that may not be cut rejects the command. Then `endgame-fix`, then the cut committed under the fence (source
+  `{type: 'endgame', command}`, `RevisionSource` additive; `status` reads it as the architect's command; cut reason
+  `closed by endgame fix <command>`), then the findings' moves. A re-run finds its fact and commits what is missing.
+- **requests**: `endgame-requested{command, request}`, once per command. `land` is rejected unless the endgame branch's
+  head strictly descends from the integration head; `run` unless every lane is a suite lane or an arc lane in force;
+  `checkpoint` unless the milestone is in the plan and a round of it was walked. A checkpoint request after a milestone's
+  last round makes one more round's walk due (`src/walk/milestones.ts` `checkpointAsked`), whatever `walkRounds` allows.
+- **resume <unit>** of a unit `endgameHeld` holds writes `endgame-released{unit, command}` (any open episode), and the hold
+  drops for it. Without an open episode yet it is rejected (the entry comes at the next tick).
+
+Facts (additive `EndgameFact`, folded into `EndgameEpisode.released | requests | jobs`):
+
+```ts
+| { kind: 'endgame-released'; unit: UnitId; command: CommandId }
+| { kind: 'endgame-requested'; command: CommandId; request: EndgameRequest }
+| { kind: 'endgame-job-started'; job: JobId /* endgame-<n> */; command: CommandId | null; request: land | review | run }
+| { kind: 'endgame-job-ended'; job: JobId; outcome: 'landed' | 'refused' | 'red' | 'no-verdict' | 'reviewed' | 'ran'; detail: string }
+```
+
+The fold refuses a second release of a unit in an episode, a request or a job before the episode opened, a command
+requested or served twice, a second job while one runs (job ids are the next `endgame-<n>`), an end of a job not
+running, and `endgame-left` while a job runs (the scheduler leaves an episode only between its jobs). `endgame-landed`
+and `endgame-reviewed` name the running job, an `endgame-<n>` (`JOB_KINDS` gains `endgame`).
+
+Jobs (`src/endgame/jobs.ts`), in the scheduler's holistic slot (track `holistic:endgame-job`, before the batch witness and
+the audit), one at a time: a started job without its end resumes as the same job; else the first unserved request; else,
+at the closing step, the review when `reviewDue`, unless the verifier's backend is parked. A no-verdict end takes the
+retryable-park backoff.
+
+- **Landing** (`src/pipeline/integrate.ts` `landEndgame`): holder `Holder{type: 'endgame', job}` (additive; a first holder
+  served before every unit, slot alone, parent `job{job}`), candidate the endgame head itself (no merge), refused when it is
+  not a strict descendant of the tip before or after the slot wait. Lanes under `job{job}` in
+  `<worktreeRoot>/<arc>/<job>.head-<n>` (`jobSeriesCheckout`, one per attempt): the plan's suite lanes the head's diff
+  on the tip selects, and the arc lanes of
+  every active non-exempt obligation (never a deferred lane), graded as a batch (the brake, the episode's fixes not held by
+  the tip as repairs); not clean, the tip alone in `<job>.tip-<n>`. Red moves nothing (`detail` names the lanes and
+  obligations, and whether the tip alone is red too). Green: `integration.ff` with `FfSubject{type: 'endgame', job}`
+  (`publicationProblem`: the new head strictly descends from the old; never redone by recovery), then `finishLanding`:
+  `endgame-landed`, the findings' moves, the snapshot (parent the job), the slot released. Recovery keeps a published
+  endgame holder's slot for `finishLanding` and abandons any other. `PublishedHead.subject` gains `'endgame'` (counted at
+  its intent's seq, `pub` the job).
+- **Review** (`src/endgame/review.ts`): the verifier in `endgame` mode (`VerifierInputs` gains `{mode: 'endgame', brief:
+  EndgameReviewBrief}`) as an acting judge on the verifier's `high` seat under the arc's routing (`JobSeatRef`: the
+  `arc-backend` spawn subject and the `job` meter subject accept `{role: 'verifier', tier: 'high'}` beside the arc
+  seats), in `<worktreeRoot>/<arc>/<job>.review` at the integration head, evidence in the job's dir. It answers
+  `ENDGAME_REVIEW_SCHEMA` `{findings: {severity: P1|P2|P3, text, path: string|null, evidence: string[] (≥1)}[], reasons:
+  string[] (≥1)}`, with one repair turn. Each finding opens as lens `endgame-review` (`FINDING_LENSES`, additive; only
+  from an `endgame-<n>` job) over no obligation, then `endgame-reviewed{job, from, to: head, findings}` (`from`: the
+  episode's base, or see "dev.83 review range").
+- **Run**: the named lanes as a journey series at the endgame head in `<job>.run-<n>`, observations reused by a later landing.
+
+Findings: `FindingTo` gains `{state: 'owned' | 'fixed-on-branch', endgame: CommandId}` (an owner of either a `unit` or an
+`endgame` fix, never both). `ownershipMoves` reads the fixes (`src/endgame/fixes.ts`): a unit's publication resolves
+first, then a fix a landing holds (its commit an ancestor of a landing's head), then a live repairing unit owns, then an
+unlanded fix fixes on the endgame branch. A fix closes a finding it names, and a witness finding over an obligation it
+names, recorded after the finding opened. `FindingState.owner` is null for an endgame owner.
+
+Closing: `closingSettled` holds when no endgame job runs, no review is due (`reviewDue`: the endgame branch's tip is not
+its base and no review of the episode reached a head holding it, or a landing's head no review reached) and no closing
+batch witness is due
+(`batchWitnessDue(ctx, 'closing')`, which the scheduler then runs). A P1 the review or the final audit opens is a required
+entry, so the step returns to `open`. Only P1s hold; there is no review round limit.
+
+### dev.83 surfaces: status `phase` and `endgame`, the console and the TUI
+
+Read-time only; no record change (`src/status/endgame.ts`, read through the scheduler's read-only contexts).
+
+- `Status.phase: PhaseView`, also in `status --summary` as `phase`: `{kind: 'body', planned: UnitId[], milestones:
+  MilestoneId[]}` (the planned units still open and the milestones awaiting their checkpoint), `{kind: 'endgame', step,
+  episode, required, optional, handover: AbsPath | null}` (the worklist's counts; the handover once opened) or `{kind:
+  'closed-out'}` (an active `arc-completed`). Without the holistic layer an arc stays in the body until it completes.
+- `Status.endgame: EndgameView | null` (null before the first episode): `{branch, worktree, tip, landed, worklist, exit,
+  audited, units, episodes}`. `exit` (null unless an opened episode is open) is `{worklist, review, audit, obligations}`:
+  no required entry; no review owed (`reviewDue`); the branch landed and the invariants coverage reached the head; the
+  branch landed, obligations discharged on the head and no closing batch witness owed. `audited` is the invariants lens's
+  `{from: coverage base, to: watermark}`. `units` are `{unit, relation: handed-over | released | closed, command, commit}`:
+  held now (`endgameHeld`), sent back by `resume`, or closed by a fix (the latest fix naming it wins). `episodes` mirror
+  `EndgameEpisode` with each fix's `landed` (a landing's head holds its commit), the jobs' requests and outcomes, and
+  `opened.item` (the `endgame` item's id and recommendation) and `opened.sizeGuard` (the handover, matching its hash,
+  lists more than `ENDGAME_BY_HAND` required entries).
+- Console (`CONSOLE_UI_SCHEMA` unchanged): `ShellView.phase` (`ShellPhase`, with `episodes`); `GraphView.units[].endgame`
+  (`{relation, command, commit} | null`); a handed-over unit's signal is `pending` and the shell counts it as
+  `handed-over`; `OutsideGroup` gains kind `endgame` (id `endgame`, last), which takes every unit `Status.endgame.units`
+  names, or whose lineage root it names. A new view `endgame` (route `/arcs/<arc>/endgame`, `ViewVersions.endgame`,
+  `EndgameView`): the exit checklist, the worklist (required, optional, then entries the open episode's fixes closed),
+  the current episode (the open one, else the latest) and the earlier ones, newest first. The handover text is read from
+  the run dir and shown only when its bytes match `handoverSha256` (first 64 KiB).
+- TUI: the supervision line's `PHASE` names `body`, `endgame <step> (<n> required)` or `closed out`.
+
+### dev.83 E1 hardening: landing recovery, fault containment, exit rules
+
+- A landing recovery abandoned (its ff unpublished) is not refused or re-requested: its `endgame-<n>` job is still running
+  in the episode, so it resumes as the same job and lands again, each attempt in fresh checkouts (`<job>.head-<n>`,
+  `<job>.tip-<n>`: a series never certifies one checkout path twice). A resumed run removes the cut-short run's checkout
+  and runs in `<job>.run-<n>`. A job resumed after `endgame-landed` whose landing still holds the slot runs
+  `finishLanding` (snapshot, release) before it ends.
+- `JOB_FAULT_TRACKS` gains `holistic:witness` (kinds `witness`) and `holistic:endgame-job` (kinds `endgame`). An endgame
+  job whose landing holds the slot (`Holder{type: 'endgame'}`) is shared state: its fault crashes the executor.
+- `endgame-open` also holds an entered, unopened episode with required entries; `reviewDue` also owes a review for a
+  landing no review reached (see above).
+
+### dev.83 review range
+
+No record change. A landing is unreviewed (`unreviewedLandings`, `src/endgame/open.ts`) while no review of any episode
+reached a head holding its head. The review owed in an episode runs over `reviewRange`: from the `old` of the earliest
+unreviewed landing of an earlier episode (one a planned unit reversed), else from the episode's base, to the integration
+head; its brief's publications are those from that landing's publication on (else after `endgame-opened`).
+`endgame-reviewed.from` records that start. `reviewDue` holds while the branch tip is not the base and unreviewed, or
+any landing is unreviewed. An entered episode with an empty required worklist opens while an unreviewed landing exists
+(`openDue`, and `endgame-open` holds completion meanwhile), raises no `endgame` item while its required worklist is
+empty, and is at once `closing`, so the closing step's review covers that landing.
+
+### dev.83 final audit
+
+Additive records, read-time defaults; `SCHEMA_VERSION` unchanged.
+
+- **Incremental audits.** Every trigger (milestone, requested, final) reads per lens from its coverage watermark at the
+  audit's capture (`lensCoverage(fold, base, lens, started.seq)`: what no completed pass under the vision in force
+  covered, an abandoned pass's reported chunks and docs edges included) to the audited SHA, chunked as before. This is
+  the abandoned-audit resume, now the one rule. The whole range from the coverage base is read only when nothing under
+  the vision in force was covered (a first audit, or after a vision change resets the watermark), or on an explicit
+  `roadmap audit --whole`. A lens whose watermark already is the audited SHA past the base is not asked (no call, no
+  covered range; the audit still completes). `audit-ended.covered` ranges then chain watermark to watermark, which
+  `lensCoverage` follows unchanged.
+- `CommandBody` `{type: 'audit', whole?: true}` (absent: false); fact `audit-requested{command, whole?: true}`;
+  `AuditInputs.whole?: true` on `audit-started`: a request pending since the last completed audit asked for the whole
+  range (`AuditPlan.whole`). A `--whole` pass abandoned is retried whole.
+- Lens input `range` gains `base: Sha` (the coverage base). The campaignAudit prompt renders
+  `<covered_before from="<base>" to="<range from>"/>` after `<audited_range>` when the range starts past the base; the
+  system text says the call answers for the audited range and reads earlier code in the checkout for context only.
+- **The endgame's final audit.** `cadence` takes the arc lanes' environment (`laneEnv`, as `HolisticContexts.laneEnv`;
+  `auditPending` too). `Cadence.deferred`: the final audit would be owed (endgame, nothing running, no completed audit
+  under the vision or the invariants watermark behind the head) but the open episode has opened and its step is `open`;
+  `final` is then not owed. So the endgame audits once while settling and again at `closing` (or on `roadmap audit`).
+  The step reaches `closing` on the worklist and the landing alone, never on audit coverage.
+- `COMPLETION_BLOCKERS` gains `audit-at-closing` after `audit-owed`: yielded while `deferred`, in place of
+  `coverage-outstanding`. `EndgameExit.auditAtClosing: boolean` (status), and the console's exit-checklist audit label
+  says it runs once the worklist is empty and the branch landed.
+- `audit-ended.parked?: Backend` (only on `abandoned`): the lens backend whose park abandoned the audit. Such an audit
+  is due again as soon as that backend is not parked (`resume --backend` or a passing probe), without
+  `AUDIT_RETRY_MIN`; any other abandonment keeps the wait. Absent on audits ended before dev.83: the wait applies.
+- **Owner requests across passes.** An audit raises no `owner-request` item for a request any audit job's earlier
+  item already carries, open or acknowledged: a dismissal request by its finding id (stable across passes), any other
+  by its exact summary. The per-request item stays (one per request, acknowledged on its own).
+- **Severity floor.** At an audit with a `final` trigger, a request to dismiss a finding below the endgame worklist's
+  required line (`requiredFinding`: not P1 and over no obligation) raises nothing; the close-out settlement settles such
+  findings (a `corpus` arc banks P2 as debt and releases P3; any arc completes with them open, as they hold nothing).
+
+### dev.83 one head reader: external attestations in the endgame
+
+- One reader of an obligation's verdict on a head, `obligationVerdicts` (`src/schedule/scheduler.ts`), replaces
+  dev.82's `headVerdicts`. Completion (`obligationsOn`), the `external-witness-owed` item (`unattestedOn`), the
+  endgame's worklist and its exit check, and `status` all read it. It yields `{obligation, lane, verdict}` lazily in the
+  obligations' order, with `verdict: held | not-held | unobserved | unattested`. A local lane (a `batch`-cadence one
+  included) is `unobserved` without a discharging observation. An external lane is `unattested` without an attestation
+  at the head's lane inputs. Any observed verdict but `held` (`partial`, `unwitnessed`) is `not-held`, as before dev.82.
+  dev.82's reader counted such an observation as discharged.
+- A batch arc lane is local. The closing batch witness or the close-out, which runs every arc lane, observes it, so
+  `obligationsOn` reads `unobserved` and no attestation is owed. While an opened episode's closing step owes the batch
+  witness, `endgame-open` holds completion before the close-out clauses, so no close-out starts.
+- `WorklistEntry` adds `{type: 'attestation', obligation, lane}`: an optional entry for an obligation on an external lane
+  with no attestation at the head. It never holds an episode open or makes the open step due, and the `endgame` item does
+  not count it among the required entries. An attested fail is a required `obligation` entry, and an attested pass
+  lists nothing. The handover line names the `roadmap witness <I-n> --at <head>` to submit. The console shows the entry
+  as an `obligation` entry that is not required (no console schema change).
+- `arc-completed` adds `settles?: NeedsUserId[]` (ascending, written only when non-empty; absent reads as none). It lists
+  every `external-witness-owed` item raised before it, and `supersededItems` supersedes those items, so the completion
+  closes the item the attestations answered. Each completion lists every item raised before it, so a later completion
+  never reopens one. An attested fail reopens the deliverers. The stale item then stays open until the next completion
+  or a `roadmap ack`. No `SCHEMA_VERSION` change.

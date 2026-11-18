@@ -3,9 +3,9 @@
 import { posix } from 'node:path';
 import {
 type CommandId,commandId,type FindingId,findingId,type LaneId,type ObligationId,obligationId,type ArcId,type BriefId,type DivergenceId,type EdgeId,type NeedsUserId,type PhaseQuestionId,type ResourceName,type Sha,
-type UnitId,arcId,briefId,divergenceId,edgeId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
+type UnitId,arcId,briefId,divergenceId,edgeId,laneId,milestoneId,needsUserId,phaseQuestionId,resourceName,sha,unitId,
 } from '../core/ids.ts';
-import { journalNeedsUserIds,parseFailureRef,DEMO_ACTS,RERUN_CAUSES,type DemoAct,type PauseTarget,type RerunCause,type ResumeTarget } from '../core/records.ts';
+import { journalNeedsUserIds,parseFailureRef,DEMO_ACTS,RERUN_CAUSES,type DemoAct,type EndgameRef,type EndgameRequest,endgameRef,type PauseTarget,type RerunCause,type ResumeTarget } from '../core/records.ts';
 import { oneOf } from '../core/validate.ts';
 import { type AbsPath,absPath } from '../core/values.ts';
 import { type BuildClass,type ProfileName,backend,buildClass,profileName } from '../routing/types.ts';
@@ -69,9 +69,8 @@ export type Command =
   | Readonly<{ command: 'merge-in'; unit: UnitId; run: RunLocator }>
   /** dev.59: the lanes of `unit` again at the commit lanes#`attempt` ran on, its red on `lane` waived for `cause`. */
   | Readonly<{ command: 'rerun'; unit: UnitId; attempt: number; lane: LaneId; cause: RerunCause; evidence: string; run: RunLocator }>
-  /** Request a fresh whole-campaign audit. */
-  | Readonly<{ command: 'audit'; run: RunLocator }>
-  | Readonly<{ command: 'close-admissions'; run: RunLocator }>
+  /** Request a campaign audit; `whole` (`--whole`, dev.83) reads the whole range from the arc's base again. */
+  | Readonly<{ command: 'audit'; whole: boolean; run: RunLocator }>
   /** dev.81 (C3a): take back pending mutation `target` (a queued apply, say) before it applies. */
   | Readonly<{ command: 'withdraw'; target: CommandId; run: RunLocator }>
   /** M3 (A20, H5): prunes sealed arcs of `repo` and the host dir, keeping the last `keep` (null: the default). A CLI action, not a command. */
@@ -101,7 +100,15 @@ export type Command =
   | Readonly<{ command: 'inputs-export'; repo: string; arc: ArcId; out: string }>
   | Readonly<{ command: 'demo'; act: DemoAct; run: RunLocator }>
   /** dev.81 (A3): `push`: advance the CI ref now (the last pushed head counts as settled). */
-  | Readonly<{ command: 'push'; run: RunLocator }>;
+  | Readonly<{ command: 'push'; run: RunLocator }>
+  /**
+   * dev.83 (WS-5): `endgame fix|run|land|checkpoint|review`. A fix's `commit` null: the endgame branch's head, which the
+   * CLI resolves at submission.
+   */
+  | Readonly<{ command: 'endgame'; act: EndgameCliAct; run: RunLocator }>;
+
+/** dev.83 (WS-5): an endgame act as parsed: a fix (its commit not yet resolved) or a request. */
+export type EndgameCliAct = Readonly<{ type: 'fix'; closes: readonly EndgameRef[]; commit: Sha | null; note: string }> | EndgameRequest;
 
 /** What `phase0 check` reads: a plan file in the working tree, or every input by the digests `refs/roadmap/<arc>` recorded (K20). */
 export type Phase0Source = Readonly<{ type: 'plan'; plan: string }> | Readonly<{ type: 'ref'; arc: ArcId }>;
@@ -356,14 +363,9 @@ export function parseCommand(argv: readonly string[]): Command {
       return { command, unit: ref.unit, attempt: ref.attempt, lane: ref.lane, cause, evidence, run: locator(p, command) };
     }
     case 'audit': {
-      const p = parseRest(rest, LOCATOR, command);
+      const p = parseRest(rest, { ...LOCATOR, whole: 'switch' }, command);
       positionals(p, command, 0);
-      return { command, run: locator(p, command) };
-    }
-    case 'close-admissions': {
-      const p = parseRest(rest, LOCATOR, command);
-      positionals(p, command, 0);
-      return { command, run: locator(p, command) };
+      return { command, whole: p.flags.has('whole'), run: locator(p, command) };
     }
     case 'withdraw': {
       const p = parseRest(rest, LOCATOR, command);
@@ -456,6 +458,8 @@ export function parseCommand(argv: readonly string[]): Command {
       positionals(p, command, 0);
       return { command, run: locator(p, command) };
     }
+    case 'endgame':
+      return parseEndgame(rest);
     case 'demo': {
       const [act, ...args] = rest;
       if (!(DEMO_ACTS as readonly (string | undefined)[]).includes(act)) throw new CliError(`demo: expected the act up, down, hold or release, got ${JSON.stringify(act ?? '')}`);
@@ -465,8 +469,49 @@ export function parseCommand(argv: readonly string[]): Command {
     }
     default:
       throw new CliError(
-        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, close-admissions, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release, push`,
+        `unknown command ${JSON.stringify(command ?? '')}; expected one of --version, start, status, watch, stop, pause, ack, resume, sweep, apply, resolve-edge, run-only, reverse, steer, note, witness, dismiss, merge-in, rerun, audit, gc, phase0 check, corpus pin, brief, pr, chain status, answer, witness-check, resume-arc, inputs export, demo up, demo down, demo hold, demo release, push, endgame fix, endgame run, endgame land, endgame checkpoint, endgame review`,
       );
+  }
+}
+
+/** dev.83 (WS-5): `endgame fix --closes <ids> [--commit <sha>] --note <line> | run <lanes> | land | checkpoint <milestone> | review`. */
+function parseEndgame(rest: readonly string[]): Command {
+  const [act, ...args] = rest;
+  const name = `endgame ${act ?? ''}`;
+  const list = <T>(what: string, read: (v: unknown, path?: string) => T, raw: string): readonly T[] => {
+    const items = raw.split(',').map((s) => arg(name, what, read, s));
+    if (new Set(items).size !== items.length) throw new CliError(`${name}: ${what} names an id twice`);
+    return items;
+  };
+  switch (act) {
+    case 'fix': {
+      const p = parseRest(args, { ...LOCATOR, closes: 'value', commit: 'value', note: 'value' }, name);
+      positionals(p, name, 0);
+      const note = required(p, name, 'note', '<line>');
+      if (note.trim() === '' || note.includes('\n')) throw new CliError(`${name}: --note <line> is one non-empty line`);
+      const commit = value(p, 'commit');
+      return {
+        command: 'endgame', act: { type: 'fix', closes: list('--closes', (v, path = '--closes') => endgameRef(v, path), required(p, name, 'closes', '<ids>')), commit: commit === undefined ? null : arg(name, '--commit', sha, commit), note },
+        run: locator(p, name),
+      };
+    }
+    case 'run': {
+      const p = parseRest(args, LOCATOR, name);
+      const lanes = [...list('<lanes>', laneId, onePositional(p, name, '<lanes>'))].sort();
+      return { command: 'endgame', act: { type: 'run', lanes }, run: locator(p, name) };
+    }
+    case 'checkpoint': {
+      const p = parseRest(args, LOCATOR, name);
+      return { command: 'endgame', act: { type: 'checkpoint', milestone: arg(name, '<milestone>', milestoneId, onePositional(p, name, '<milestone>')) }, run: locator(p, name) };
+    }
+    case 'land':
+    case 'review': {
+      const p = parseRest(args, LOCATOR, name);
+      positionals(p, name, 0);
+      return { command: 'endgame', act: { type: act }, run: locator(p, name) };
+    }
+    default:
+      throw new CliError(`endgame: expected the act fix, run, land, checkpoint or review, got ${JSON.stringify(act ?? '')}`);
   }
 }
 

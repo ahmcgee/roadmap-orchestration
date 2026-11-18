@@ -4,23 +4,32 @@
 // pass at the head completes; none or a fail stays `obligations-not-discharged`), complete.external-owed-waits (a done
 // close-out never restarts with nothing changed; one `external-witness-owed` item asks for the attestation), and
 // complete.external-field-upgrade (the stuck dev.81 arc, exactly as the field left it, completes on its first idle pass).
+// dev.83: endgame.worklist-external (the endgame's worklist reads the same verdicts: an unattested external obligation
+// is an optional attestation entry, never a required one, an attested fail a required one, a pass none) and
+// complete.external-owed-settles (the completion supersedes the item; the endgame raises no item of its own for it).
+// complete.non-held-verdicts pins the dev.82 reader's hole: every observed verdict but `held` (`partial`, `unwitnessed`,
+// `not-held`) on a local lane, and an attested fail on an external one, holds `obligations-not-discharged` and starts no
+// close-out.
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { describe,test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { POLL_MS,submitCommand } from '../src/commands/queue.ts';
+import { POLL_MS,submitCommand,terminalReceipt } from '../src/commands/queue.ts';
 import { witness } from '../src/commands/witness.ts';
-import { type Sha,commandId,envId,findingId,invocationId,obligationId,sha } from '../src/core/ids.ts';
+import { type Sha,commandId,envId,findingId,invocationId,jobId,obligationId,sha } from '../src/core/ids.ts';
+import { inputShaOf } from '../src/git/reusekey.ts';
+import { systemsMapInForce } from '../src/input/systems.ts';
 import { absPath } from '../src/core/values.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { witnessRecordOf,writeWitnessRecord } from '../src/holistic/witness.ts';
 import { witnessDir } from '../src/git/snapshot.ts';
-import { laneRevOf } from '../src/holistic/types.ts';
-import { readNeedsUser } from '../src/needsuser.ts';
+import { type WitnessTest,laneRevOf } from '../src/holistic/types.ts';
+import { endgameNow,endgameOpen } from '../src/endgame/open.ts';
+import { openNeedsUser,readNeedsUser } from '../src/needsuser.ts';
 import { publishCloseOut } from '../src/pipeline/publish.ts';
 import { holisticInForce } from '../src/pipeline/stages.ts';
 import { runUnit } from '../src/pipeline/unit.ts';
-import { type SchedulerEnd,completionBlockers } from '../src/schedule/scheduler.ts';
+import { type SchedulerEnd,completionBlockers,obligationVerdicts,obligationsOn } from '../src/schedule/scheduler.ts';
 import { status } from '../src/status.ts';
 import { moduleFiles,unitSteps } from './fixtures/audit-common.ts';
 import { checkpointArc } from './fixtures/checkpoint-common.ts';
@@ -202,6 +211,120 @@ describe('completion over external witness lanes', () => {
       assert.deepEqual(statusUnmet(r), []);
     } finally {
       r.journal.close();
+    }
+  });
+
+  test('endgame.worklist-external: unattested at the head, an external obligation is an optional attestation entry that holds no episode; an attested fail is a required obligation entry; a pass lists nothing', T, async () => {
+    const d = externalArc();
+    const r = contextFor(d);
+    try {
+      const H = await upToCloseOut(r);
+      const h = contextsOf(r);
+      const now = () => endgameNow(h.audit, h.laneEnv);
+      assert.equal(now().phase.kind, 'endgame');
+      assert.deepEqual(now().worklist, { required: [], optional: OBLIGATIONS.map((o) => ({ type: 'attestation', obligation: o, lane: 'journey' })) });
+      assert.equal(endgameOpen(h.audit, h.laneEnv), false, 'an attestation owed never holds the endgame open');
+      attestAll(r, H, 'fail');
+      assert.deepEqual(now().worklist, { required: OBLIGATIONS.map((o) => ({ type: 'obligation', obligation: o })), optional: [] }, 'an attested fail at the head is not held');
+      attestAll(r, H, 'pass');
+      assert.deepEqual(now().worklist, { required: [], optional: [] }, 'attested at the head: not on the worklist');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('complete.external-owed-settles: the arc-completed the attestations allow supersedes the external-witness-owed item; no endgame item asks for them too', T, async () => {
+    const d = externalArc();
+    const r = contextFor(d);
+    const s = startHolistic(r);
+    try {
+      await until(() => owedItems(r).length > 0, WAIT_MS, 'the external-witness-owed item');
+      const [item] = owedItems(r);
+      assert.deepEqual(openNeedsUser(r.journal.view).map((n) => n.id), [item!.id], 'the owed item is the only open item: the endgame raised none');
+      const episodes = r.journal.view.holistic().endgame;
+      assert.deepEqual(episodes.map((e) => [e.episode, e.opened, e.left]), [[1, null, null]], 'the endgame entered (episode 1) and, with nothing required, never opened');
+      const docs = r.journal.view.nextJobId('docs');
+      submitAll(r, head(d), 'pass');
+      assert.deepEqual(await endWithin(s.end, WAIT_MS), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+      assert.deepEqual(r.journal.view.holistic().completion?.settles, [item!.id]);
+      assert.deepEqual(openNeedsUser(r.journal.view), [], 'the completion settles it');
+      assert.equal(r.journal.view.nextJobId('docs'), docs, 'the finished close-out did not restart through the endgame episode\'s end');
+      assert.deepEqual(r.journal.view.holistic().endgame.map((e) => e.left?.cause), ['complete']);
+    } finally {
+      if (r.journal.view.holistic().completion === null) {
+        submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' });
+        await s.end.catch(() => undefined);
+      }
+      r.journal.close();
+    }
+  });
+
+  /** The scheduler over `r` across idle ticks: no docs or close-out job, no owed item, not complete; then stopped. */
+  async function idleBlocked(r: ArcRun, why: string): Promise<void> {
+    const docs = r.journal.view.nextJobId('docs');
+    const s = startHolistic(r);
+    try {
+      await sleep(4 * POLL_MS);
+      assert.equal(r.journal.view.nextJobId('docs'), docs, `${why}: no close-out job starts`);
+      assert.deepEqual(owedItems(r), [], `${why}: no attestation is asked for`);
+    } finally {
+      const stop = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'stop' }).id;
+      const end = await endWithin(s.end, WAIT_MS);
+      assert.notEqual(end.kind, 'complete', `${why}: the arc does not complete (${JSON.stringify(end)})`);
+      assert.equal(terminalReceipt(r.ctx.runDir, stop)?.state, 'applied', `${why}: the stop applied, so the next run is not stopped by it (${JSON.stringify(end)})`);
+    }
+  }
+
+  test('complete.non-held-verdicts: on a local lane a partial, unwitnessed (no selected test, or a malformed record) or not-held observation on the head, and on an external lane an attested fail, hold obligations-not-discharged in completion and status; no close-out starts', T, async () => {
+    // A local lane: I-1 on two tests, so one passing alone is partial. Each case is an arc of its own (a stop stays in force
+    // in its log): it completes, then a later run of the lane on the head (the latest observation under its reuse key)
+    // reports the case's verdict.
+    const cases: readonly (readonly [string, readonly WitnessTest[] | null])[] = [
+      ['partial', [{ testId: 't1', selected: 1, outcome: 'pass' }, { testId: 't2', selected: 1, outcome: 'skip' }]],
+      ['unwitnessed', [{ testId: 't1', selected: 0, outcome: 'zero-selected' }, { testId: 't2', selected: 0, outcome: 'zero-selected' }]],
+      ['unwitnessed', null],
+      ['not-held', [{ testId: 't1', selected: 1, outcome: 'pass' }, { testId: 't2', selected: 1, outcome: 'fail' }]],
+    ];
+    for (const [verdict, tests] of cases) {
+      const why = `a ${verdict} observation${tests === null ? ' (malformed)' : ''}`;
+      const d = checkpointArc([...unitSteps('u1', moduleFiles('mul', '*')), lensStep('audit-1', 'vision'), checkpointStep('ckpt-1', NOOP)], {
+        obligations: [{ id: 'I-1', testIds: ['t1', 't2'] }], trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      });
+      let r = contextFor(d);
+      try {
+        assert.deepEqual(await endWithin(startHolistic(r).end, WAIT_MS), { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+        const H = head(d);
+        const lane = holisticInForce(r.ctx).obligations!.lanes.find((l) => l.witnessClass !== 'external')!;
+        const spawn = r.journal.view.opsOf('proc.spawn')[0]!;
+        const run = {
+          lane: lane.id, laneRev: laneRevOf(lane), envId: contextsOf(r).laneEnv(lane)!, treeSha: tree(d, H), inv: invocationId(spawn.op, 1),
+          purpose: 'witness', for: { type: 'job', job: jobId('docs', 1) },
+        } as const;
+        const dir = witnessDir(r.ctx.runDir, run);
+        mkdirSync(dir, { recursive: true });
+        const recordsSha256 = writeWitnessRecord(dir, witnessRecordOf({ lane, envId: run.envId, treeSha: run.treeSha, inv: run.inv, purpose: 'witness' }, tests));
+        r.journal.fact({ kind: 'witnessed', ...run, recordsSha256, inputSha: inputShaOf(absPath(r.d.repo), tree(d, H), lane, systemsMapInForce(r.journal.view.planApplied())) });
+        r.journal.close();
+        r = contextFor(d);
+        const h = contextsOf(r);
+        assert.deepEqual([...obligationVerdicts(h.audit, H, h.laneEnv)].map((v) => v.verdict), ['not-held'], why);
+        assert.equal(obligationsOn(h.audit, H, h.laneEnv), 'not-held', why);
+        assert.deepEqual([blockers(r), statusUnmet(r)], [['obligations-not-discharged'], ['obligations-not-discharged']], why);
+        await idleBlocked(r, why);
+      } finally {
+        r.journal.close();
+      }
+    }
+    // An external lane: `externalVerdict` gives only held or not-held; an attested fail at the head is not held.
+    const e = contextFor(externalArc());
+    try {
+      const H = await upToCloseOut(e);
+      attestAll(e, H, 'fail');
+      assert.equal(obligationsOn(contextsOf(e).audit, H, contextsOf(e).laneEnv), 'not-held');
+      assert.deepEqual([blockers(e), statusUnmet(e)], [['obligations-not-discharged'], ['obligations-not-discharged']]);
+      await idleBlocked(e, 'an attested fail');
+    } finally {
+      e.journal.close();
     }
   });
 });

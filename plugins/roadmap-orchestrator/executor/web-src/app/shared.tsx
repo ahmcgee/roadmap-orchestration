@@ -10,14 +10,16 @@ export async function get(path: string, signal?: AbortSignal): Promise<any> {
   return preparedRead(api, protocol, path, signal);
 }
 export const tabs = ['graph', 'timeline', 'activity', 'effort', 'resources', 'attention'] as const;
-export type Tab = typeof tabs[number];
+/** dev.83: the Endgame view is a route of its own, linked from the header's phase track, not a tab. */
+export type Tab = typeof tabs[number] | 'endgame';
+const routes: readonly string[] = [...tabs, 'endgame'];
 export function route() {
   try {
     const [pathname, search = ''] = location.hash.replace(/^#\/?/, '').split('?');
     const p = pathname!.split('/').map(decodeURIComponent);
     // `.../invocations/<id>/log` is the same invocation's history at full page width.
     const full = p.length === 6 && p[3] === 'invocations' && p[5] === 'log';
-    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || tabs.includes(p[2] as Tab)) && (p.length <= 3 || full || (p.length === 5 && ['units', 'milestones', 'invocations', 'events', 'requests', 'scopes', 'resources'].includes(p[3]!)));
+    const valid = p[0] === 'arcs' && p[1] && (p.length === 2 || routes.includes(p[2]!)) && (p.length <= 3 || full || (p.length === 5 && ['units', 'milestones', 'invocations', 'events', 'requests', 'scopes', 'resources'].includes(p[3]!)));
     return valid ? { arc: p[1]!, tab: (p[2] || 'graph') as Tab, unit: p[3] === 'units' ? p[4]! : p[3] === 'milestones' ? `milestone:${p[4]}` : null, inv: p[3] === 'invocations' ? p[4]! : null, full, event: p[3] === 'events' ? p[4]! : null, request: p[3] === 'requests' ? p[4]! : null, scope: p[3] === 'scopes' ? p[4]! : null, resource: p[3] === 'resources' ? p[4]! : null, query: new URLSearchParams(search), invalid: false } : { arc: null, tab: 'graph' as Tab, unit: null, inv: null, full: false, event: null, request: null, scope: null, resource:null, query: new URLSearchParams(), invalid: location.hash !== '' && location.hash !== '#/' };
   } catch { return { arc: null, tab: 'graph' as Tab, unit: null, inv: null, full: false, event: null, request: null, scope: null, resource:null, query: new URLSearchParams(), invalid: true }; }
 }

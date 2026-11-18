@@ -10,7 +10,7 @@ import { sha256 } from '../core/ids.ts';
 import type { JournalView } from '../core/interfaces.ts';
 import { sha256Hex } from '../core/json.ts';
 import type { CommandBody } from '../core/records.ts';
-import { branchRef } from '../core/values.ts';
+import { type AbsPath, branchRef } from '../core/values.ts';
 import { isAncestor } from '../git/ff.ts';
 import { catFileType, revParse } from '../git/git.ts';
 import { inputShaOf } from '../git/reusekey.ts';
@@ -77,9 +77,10 @@ export function witness(ctx: CommandContext, command: CommandId, body: Extract<C
 
 /**
  * The deliverer a pass at `at` latches through, or null: every deliverer retired with a published merge `at` contains;
- * the latch names the one whose merge published last (required.ts reads the latching unit's merge).
+ * the latch names the one whose merge published last (required.ts reads the latching unit's merge). The batch witness
+ * (dev.83, src/pipeline/batchlanes.ts) latches by the same rule.
  */
-function latchingUnit(ctx: CommandContext, o: ObligationDef, at: Sha): UnitId | null {
+export function latchingUnit(ctx: Readonly<{ journal: Readonly<{ view: JournalView }>; repo: AbsPath }>, o: ObligationDef, at: Sha): UnitId | null {
   const view = ctx.journal.view;
   const merges = published(view);
   const units = deliverers(view, o);

@@ -606,7 +606,7 @@ async function main(): Promise<void> {
   writeFileSync(join(m3Dir, 'convert.ts'), MINI_DIFF.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n'));
 
   const lensInputs: RoleInputs['campaignAudit'] = {
-    vision: MINI_VISION, method: {traits: [], markers: [], unitKind: 'milestone', expensiveLanes: false, ui: false}, obligations: MINI_OBLIGATIONS, range: { audited: HEAD, diff: {
+    vision: MINI_VISION, method: {traits: [], markers: [], unitKind: 'milestone', expensiveLanes: false, ui: false}, obligations: MINI_OBLIGATIONS, range: { audited: HEAD, base: TREE, diff: {
       from: TREE, to: HEAD, dir: absPath(join(m3Dir, 'diff')),
       orientation: {
         stat: { text: ' convert.ts | 2 ++\n 1 file changed, 2 insertions(+)\n', full: true }, moves: { shown: [], more: 0 }, deletions: { shown: [], more: 0, labelled: false },

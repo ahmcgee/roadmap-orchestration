@@ -6,23 +6,23 @@
 // first admission), answered with no finding. Stories are code, not JSON files: the checkpoint's admit op carries the repair
 // spec's text (evals/m3/setup.ts `repairSpecText`, in the admit wire form) and every judgment is validated by the frozen readers here.
 //
-//   story      branch R (regressed), the plan's story, plus the literal partial bundle (A18, G19): after the stale
-//              rejection (ckpt-1, held at the fake barrier `ckpt-1.hold` until the driver's `apply` is applied), ckpt-2
-//              answers the repair admit followed by an invalid op (`twoOpBundleSecondInvalid`), and its repair turn
-//              (2026-10-15: the same session resumed with the reasons) answers it again: rejected invalid, nothing
-//              applied; its one re-evaluation (ckpt-3) admits the repair alone. Then audit-2 (drift: the
-//              vision lens), whose checkpoint is skipped (nothing new since the settled ckpt-3), and audit-3 (final:
-//              both lenses of L) and ckpt-4 no-op.
+//   story      branch R (regressed), the plan's story: tidy regresses I-2; the requested audit-1 waits at the money
+//              barrier while report merges inside it, which puts the arc in the endgame (dev.83, src/endgame/phase.ts),
+//              and opens the I-2 witness P1 (F-1). With no unit running, audit-2 is the endgame's final audit, F-1 still
+//              active; the episode opens on it, and the driver, as the architect, admits the repair by a root apply. The
+//              repair runs and resolves F-1, which empties the worklist: the step is closing, and its final audit (audit-3) reads
+//              only the range the repair published (dev.83: incremental, and nothing armed while the step was open).
 //   prevented  branch P, after paid run 3: tidy's pre-build twice answers `infeasible` with a V-2 vision conflict
 //              (one P3 finding), so tidy parks for design; the park's checkpoint ckpt-1 is held and rejected stale,
 //              its re-evaluation ckpt-2 cuts tidy and admits the repair (repairing the P3). Then audit-1 (drift: the
 //              vision lens), its checkpoint skipped (nothing new); report and the repair merge; audit-2 (final: both
-//              lenses) and ckpt-3 no-op.
+//              lenses) and ckpt-3 no-op. Stale: it predates the root-repair driver (no checkpoint seat runs), fails at
+//              b4db91f7 already (a call after tidy's first pre-build matches no step) and no test runs it.
 //   latent     branch L, after paid run 9: tidy's build rounds through formatAmount before formatDisplay, so I-2's
 //              witness holds on S while `format` still renders through a binary Number (large amounts lose cents).
-//              audit-1's invariants lens opens a P1 over I-2 (F-1); ckpt-1, held, is rejected stale; ckpt-2 admits the
-//              repair (repairing F-1) and leaves the P1 undispositioned. Then audit-2 (drift: the vision lens), its
-//              checkpoint skipped (nothing new); report and the repair merge; audit-3 (final: both lenses) and ckpt-3 no-op.
+//              The requested audit-1's invariants lens opens a P1 over I-2 (F-1) in the body (report is still kept out);
+//              the driver admits the repair by a root apply, and report runs once the repair is dispatched (so the
+//              endgame never holds it). Both merge; audit-2 is the endgame's final audit.
 //
 import { join } from 'node:path';
 import type { JsonValue } from '../../src/core/json.ts';
@@ -81,7 +81,9 @@ const NO_OP = checkpointAnswer({ decision: 'no-op' });
 /** The corpus arc's pack review (M4a), before the first admission: no finding, so nothing holds admission. */
 const PACK_REVIEW = packReviewStep('review-1');
 
-const JOB_STEPS_R: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants')];
+// audit-1 (requested) opens the witness P1 itself; audit-2 is the endgame's final audit with it active; audit-3 is the
+// closing step's final audit, over the range the repair published.
+const JOB_STEPS_R: readonly Step[] = [PACK_REVIEW, lensStep('audit-1', 'invariants'), lensStep('audit-2', 'invariants'), lensStep('audit-3', 'invariants')];
 
 /** tidy's pre-build in branch P, as paid run 3's: infeasible within its scope, citing V-2 (a P3 finding, merged on the re-check). */
 const INFEASIBLE: M1Step = {

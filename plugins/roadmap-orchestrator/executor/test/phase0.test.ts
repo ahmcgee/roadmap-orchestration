@@ -367,3 +367,21 @@ describe('phase0 check --from-ref (K20)', () => {
     await assert.rejects(phase0Check({ repo: a.repo, source: { type: 'ref', arc: arcId('arc-9') } }), /no refs\/roadmap\/arc-9/);
   });
 });
+
+describe('phase0 advisories (dev.83)', () => {
+  it('phase0.consider-batch: a candidate-cadence arc lane naming a shared resource is advised toward batch; a batch one is not', T, async () => {
+    const a = await corpusArc();
+    const tool = { argv: ['true'], cwd: '.', env: { set: {}, pass: [] } };
+    editPlan(a, (p) => ({ ...p, resources: [{ name: 'db', probe: tool, teardown: tool }] }));
+    const withCadence = (cadence: string): void => editJsonFile(join(a.planDir, 'obligations.json'), (o) => ({ ...o, lanes: (o['lanes'] as Json[]).map((l) => ({ ...l, cadence, resources: ['db'] })) }));
+    withCadence('candidate');
+    const report = await check(a);
+    assert.deepEqual(report.rows, []);
+    const lane = (JSON.parse(readFileSync(join(a.planDir, 'obligations.json'), 'utf8')) as { lanes: Json[] }).lanes[0]!['id'];
+    assert.deepEqual(report.advisories.filter((r) => r.kind === 'consider-batch'), [{ kind: 'consider-batch', lane, resources: ['db'] }]);
+    withCadence('batch');
+    const batch = await check(a);
+    assert.deepEqual(batch.rows, []);
+    assert.deepEqual(batch.advisories.filter((r) => r.kind === 'consider-batch'), []);
+  });
+});

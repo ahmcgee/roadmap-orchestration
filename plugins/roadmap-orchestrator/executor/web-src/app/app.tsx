@@ -17,6 +17,7 @@ import { RequestDetail } from './request-detail.tsx';
 import { EventDetail } from './event-detail.tsx';
 import { InvocationDetail } from './invocation.tsx';
 import { Activity, Attention, Effort, Resources, Timeline } from './other-tabs.tsx';
+import { Endgame, PhaseTrack } from './endgame.tsx';
 import type { Signal } from './types.ts';
 type Theme = 'system'|'light'|'dark';
 /** The Arc's identity: its recorded goal leads when the plan records one; the id stays visible as the secondary line. */
@@ -70,7 +71,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
   return <Clock.Provider value={clock}><div className="shell">
     <a className="skip" href="#content" onClick={ev=>{ev.preventDefault();document.getElementById('content')?.focus();}}>Skip to content</a>
     <header className="arc-bar">
-      <ArcIdentity arc={arc} shell={p} zone={zone}/>
+      <div className="arc-lead"><ArcIdentity arc={arc} shell={p} zone={zone}/>{p&&arc&&<PhaseTrack arc={arc} phase={p.phase}/>}</div>
       {p&&<><span className="arc-state">{stateWords(p.lifecycle.state)}</span>{day!==null&&<span className="arc-day">day {Math.floor(day)}</span>}{!p.lifecycle.endedAt&&store?.metadata?.lastEventAt&&<span className="arc-last"><Time at={store.metadata.lastEventAt} prefix="Last activity "/></span>}</>}
       <div className="progress-group"><div className="progress-strip" aria-label={p?`${counts.passed??0} of ${total} units merged`:'Unit progress not recorded'}>{(['passed','active','held','failed','pending','withdrawn'] as Signal[]).map(state=>counts[state]?<span key={state} className={`progress-${state}`} style={{width:`${counts[state]!/Math.max(1,total??1)*100}%`}} title={`${counts[state]} ${state}`}/>:null)}</div><span className="progress-count">{p&&<>{counts.passed??0}/{total}<span> merged</span></>}</span></div>
       {p&&<span className="recorded-spend" title="Recorded spend">{money(p.spend.costUsd)}</span>}
@@ -88,6 +89,7 @@ function Console({zone,setZone,where,selected,listed,retryList,listError,now,the
       {arc&&tab==='attention'&&<Attention arc={arc}/>}
       {arc&&tab==='effort'&&<Effort arc={arc}/>}
       {arc&&tab==='resources'&&<Resources arc={arc}/>}
+      {arc&&tab==='endgame'&&<Endgame arc={arc}/>}
       {(tab==='graph'?!graphInput:!arc)&&(unreachable?<div className="empty" role="alert"><h1>Can't reach the console server.</h1><Button onClick={retryList}>Retry</Button></div>:<div className="empty"><h1>{arc?'Arc observation':'Roadmap'}</h1><p>{arc?error?loadError(error):'Connecting…':listed?'No current arc in this repository.':'Connecting…'}</p></div>)}
     </main>
     {lagLine&&<div className={connection==='connected'?'lag-line':'lag-line lag-line-lost'} role="status" aria-live="polite">{connection==='connected'?'Catching up':'Reconnecting'}. Showing the arc as of <time dateTime={new Date(asOf).toISOString()} title={formatInstant(new Date(asOf).toISOString(),zone)}>{ageWords(lag.ageMs)} ago</time>.</div>}

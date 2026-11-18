@@ -292,10 +292,11 @@ export const divergenceIdOf = D.of;
 
 /**
  * A durable job the arc runs outside any unit: an audit, a checkpoint, a docs publication, a repair batch, the
- * baseline witness, (M4a) a pack review, (dev.13) a milestone walkthrough.
+ * baseline witness, (M4a) a pack review, (dev.13) a milestone walkthrough, (dev.83) an endgame job (a landing, a review or a
+ * lane run of the endgame branch, src/endgame/jobs.ts).
  * `<kind>-<n>`, numbered per kind.
  */
-export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'walk', 'compare'] as const;
+export const JOB_KINDS = ['audit', 'ckpt', 'docs', 'batch', 'baseline', 'review', 'walk', 'compare', 'witness', 'endgame'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 export type JobId = Brand<string, 'JobId'>;
 const JOB = new RegExp(`^(${JOB_KINDS.join('|')})-(${POS})$`);

@@ -68,6 +68,8 @@ function viewOf(o: Readonly<{
     holistic: () => ({
       findings: (o.findings ?? []).map((f) => ({ lens: 'walkthrough', severity: 'P1', state: 'open', ...f })),
       checkpoints: (o.checkpoints ?? []).map((c) => ({ inputs: { seq: c.seq, findings: c.findings, visionSha256: c.vision ?? VISION_IN_FORCE }, decided: { kind: 'no-op' } })),
+      // dev.83 (WS-5): no endgame episode, so no checkpoint request (src/walk/milestones.ts `checkpointAsked`).
+      endgame: [],
     }),
     planApplied: () => ({ visionSha256: VISION_IN_FORCE }),
     rewalkSeq: (m: string) => o.rewalks?.[m] ?? 0,
@@ -409,7 +411,7 @@ describe('polish and compare (src/walk/polish.ts, src/walk/compare.ts)', () => {
         ...v, control: () => ({ pausedAll: false, pausedUnits: [] }), runOnly: () => null, backendParks: () => [],
         unit: () => ({ approval: null, pressureHold: null, decided: null }),
       } as unknown as JournalView;
-      const out = admit({ view, plan: plan(), unit, stage, blocking: [], drains: [], tripped: [], pressure: { ticks: [], nowMs: 0 } });
+      const out = admit({ view, plan: plan(), unit, stage, blocking: [], drains: [], tripped: [], endgame: new Set(), pressure: { ticks: [], nowMs: 0 } });
       return out.kind === 'admit' ? 'admit' : out.constraints.map((c) => canonicalJson(c));
     };
     assert.deepEqual(at(viewOf({}), p1, 'candidate'), ['{"decision":null,"type":"compare"}']);

@@ -23,7 +23,7 @@ export function surfaceInput(role: SurfaceRole, cell: (typeof DEV)[number], dir:
   const spec = {unit: unitId('u1'), rev: specRev(1), markdown: `# Unit\n${cell.spec}\nProof: test/unit.test.js runs in the unit lane.\nSource: src/unit.js`};
   if (role === 'pre-build') return {mode: 'pre-build', brief: {target, vision: null, spec, intent: cell.contract, nonGoals: ['No unrelated behavior'], contracts: [], systems: [systemName('app')], method, history: [], standing: []}};
   const from = sha('a'.repeat(40)), to = sha('b'.repeat(40));
-  return {target, vision: {rev: 1, clauses: [], questions: [], advances: []}, obligations: [], method, range: {audited: to, diff: {
+  return {target, vision: {rev: 1, clauses: [], questions: [], advances: []}, obligations: [], method, range: {audited: to, base: from, diff: {
     from, to, dir: absPath(dir), orientation: {stat: {text: 'fixture', full: true}, moves: {shown: [], more: 0}, deletions: {shown: [], more: 0, labelled: false}, packages: {shown: [], more: 0}, substitutions: [], explained: 0}, inlined: [], text: `src/unit.js:\n${cell.code}\ntest/unit.test.js:\n${cell.tests}`, omitted: {shown: [], more: 0}, notInlined: [], overflow: 0,
   }}, owners: [], priorFindings: [], contracts: [], checkout: absPath(dir)};
 }

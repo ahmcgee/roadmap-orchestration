@@ -37,7 +37,8 @@ export const CPU_COST = { judgment: 1, build: 4, lane: { build: 2, unit: 4, cand
 }>;
 
 /**
- * What one reservation asks for, all-or-none: named resources, one instance per pool request, `@cpu` tokens
+ * What one reservation asks for, all-or-none: named resources, one instance per pool request (every instance of an
+ * `exclusive` one), `@cpu` tokens
  * and `integration-slot` for a publication. Its units are taken in lock order.
  */
 export type ResourceRequest = Readonly<{
@@ -52,6 +53,11 @@ export type ResourceRequest = Readonly<{
    * token (src/pipeline/lanes.ts `laneRequest`), so at most `plan.capacity.fastSuites` of them run at once. Absent: none.
    */
   fastSuite?: true;
+  /**
+   * dev.83 (E4): pools of `pools` this request takes whole, every instance or none (a lane's `exclusive`: a mutator of a
+   * shared estate). Absent: none.
+   */
+  exclusive?: readonly ResourceName[];
 }>;
 
 /** The arbiter's answer to one waiter (src/schedule/arbiter.ts, step 1). */
@@ -162,6 +168,11 @@ export type AdmissionConstraint =
    * cut: its spec links the target, or its design record's breaks touch a file the propagation re-witnesses (`stale`, those
    * files). src/holistic/propagation.ts `propagationHolds`.
    */
+  /**
+   * dev.83: in the endgame, a finding-raised unit with no dispatch record is held: it is a worklist entry for the architect
+   * (src/endgame/phase.ts `endgameHeld`).
+   */
+  | Readonly<{ type: 'endgame' }>
 ;
 
 export type Admission = Readonly<{ kind: 'admit' }> | Readonly<{ kind: 'wait'; constraints: readonly AdmissionConstraint[] }>;
@@ -179,6 +190,8 @@ export type AdmitInput = Readonly<{
   drains: readonly Readonly<{ command: CommandId; scope: CommandScope }>[];
   tripped: readonly ProbeTarget[];
   pressure: PressureNow;
+  /** dev.83: the units the endgame holds (src/endgame/phase.ts `endgameHeld`); empty in the body. */
+  endgame: ReadonlySet<UnitId>;
 }>;
 
 /** Re-checked at every admission boundary, for new and running tasks alike (F13); src/schedule/ready.ts, step 2. */

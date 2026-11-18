@@ -4,6 +4,7 @@ import type { JsonValue } from '../src/core/json.ts';
 import { claudeBuilderRouting } from '../src/routing/eligibility.ts';
 import { runAudit } from '../src/holistic/audit.ts';
 import { cadence } from '../src/holistic/cadence.ts';
+import { laneEnvId } from '../src/pipeline/lanes.ts';
 import { runWalk } from '../src/walk/walk.ts';
 import { walkArc,walkContext,walkStep,walkAnswer } from './fixtures/walk-common.ts';
 import { unitSteps,moduleFiles } from './fixtures/audit-common.ts';
@@ -28,7 +29,7 @@ import { seatTripleOf } from '../src/pipeline/dispatch.ts';
 import { buildTriple } from '../src/pipeline/dispatch.ts';
 import { readNeedsUser } from '../src/needsuser.ts';
 import { diagnosisDue,reviewItems,markers,proofNotLocal,methodContext } from '../src/pipeline/surface.ts';
-import { contextFor,setupArc,gateStep,mulBuild,codexStep,appendSteps,stepUntil,syncInputs,commandContextFor,applyBody } from './fixtures/unit-common.ts';
+import { contextFor,setupArc,diagnosisStep,gateStep,mulBuild,codexStep,appendSteps,stepUntil,syncInputs,commandContextFor,applyBody } from './fixtures/unit-common.ts';
 import { BUILD_REPORT,admitAll,planCheckStep,planCheckRepairStep } from './fixtures/stage-common.ts';
 import { readCalls } from './helpers/scenario.ts';
 
@@ -213,7 +214,7 @@ test('surface.M3: an apply meaning change reviews a cited obligation even when s
 });
 
 test('surface.diagnosis: the M4 signal adds build memory and moves remaining default builds to Claude', {timeout: 120_000}, async () => {
-  const d = setupArc({steps: [gateStep({decision: 'approve', reasons: ['The repeated red needs a narrow restart experiment.']}), {as: 'claude', expect: {argv: ['--model', 'claude-sonnet-5-5'], stdinContains: ['narrow restart experiment']}, acts: [{type: 'commit', message: 'diagnosed build', files: MUL}, {type: 'emit', value: BUILD_REPORT}]}, gateStep({decision: 'approve'})]});
+  const d = setupArc({steps: [diagnosisStep({brief: 'The repeated red needs a narrow restart experiment.'}), {as: 'claude', expect: {argv: ['--model', 'claude-sonnet-5-5'], stdinContains: ['narrow restart experiment']}, acts: [{type: 'commit', message: 'diagnosed build', files: MUL}, {type: 'emit', value: BUILD_REPORT}]}, gateStep({decision: 'approve'})]});
   const r = contextFor(d);
   try {
     const countAttempts = r.journal.view.attemptCounts.bind(r.journal.view);
@@ -244,9 +245,9 @@ test('surface.milestone: one combined experience verdict and one campaign audit,
   const {ctx, w} = walkContext(r);
   const tick = setInterval(() => w.arbiter.wake(), 50);
   try {
-    assert.equal(cadence(ctx, () => 0)?.due, false);
+    assert.equal(cadence(ctx, () => 0, (lane) => laneEnvId(ctx, lane))?.due, false);
     await runUnit(w.stage, r.unit('u1'), admitAll);
-    assert.ok(cadence(ctx, () => 0)?.owed.some((t) => t.type === 'milestone'));
+    assert.ok(cadence(ctx, () => 0, (lane) => laneEnvId(ctx, lane))?.owed.some((t) => t.type === 'milestone'));
     assert.equal((await runWalk(ctx)).kind, 'ended');
     const before = r.journal.view.planApplied()!.rev;
     const audit = await runAudit({...ctx, clock: () => 0});

@@ -38,7 +38,7 @@ export class ConsoleMetadata {
       const attention = hash({identity,requests:e.data.requests});
       const holistic = hash({holistic: s.holistic, audit: s.audit, findings: s.findings, decisions: s.decisionsSince, audits: at(t.audits)});
       entry = {versions: {
-        shell: views.shell(e).viewVersion, graph: views.graph(e).viewVersion,
+        shell: views.shell(e).viewVersion, graph: views.graph(e).viewVersion, endgame: views.endgame(e).viewVersion,
         timeline: hash({identity, invocations, units, parks, stageVersion}),
         activity: hash({identity, journal, invocations, attention, holistic}), holistic,
         effort: hash({identity, invocations, units, stageVersion, waiting, money, parks, queues: [s.host.jobQueue,s.host.queue], milestones: e.data.plan?.milestones ?? []}),

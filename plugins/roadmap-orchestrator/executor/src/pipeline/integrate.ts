@@ -71,12 +71,12 @@ import { crashPoint } from '../core/crash.ts';
 import type { CandidateRedCause, HoldCause, IntentOf, OpOutcome, Parent } from '../core/events.ts';
 import { canonicalJson } from '../core/json.ts';
 import type { Journal, JournalView } from '../core/interfaces.ts';
-import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type ResourceName, type Sha, type UnitId, invocationId, canonicalIds } from '../core/ids.ts';
+import { type FindingId, INTEGRATION_SLOT, type JobId, type LaneId, type ObligationId, type ResourceInstance, type ResourceName, type Sha, type UnitId, invocationId, canonicalIds, parseJobId } from '../core/ids.ts';
 import { type ApprovalFingerprint, type LaneDef, type NeedsUserContent, cadenceAtOrBefore, obligationRevsOf, specRepairs } from '../core/records.ts';
 import { selectedLanes } from '../input/systems.ts';
 import { type AbsPath, absPath, branchRef } from '../core/values.ts';
 import { type CandidateDecision, type CandidateRequest, candidateRef, candidateWorktreeRequest, planBatchCandidate, planCandidate } from '../git/candidate.ts';
-import { planBatchFf, planFf } from '../git/ff.ts';
+import { isAncestor, planBatchFf, planEndgameFf, planFf } from '../git/ff.ts';
 import { jobEvidenceRoot } from '../git/snapshot.ts';
 import { revParse } from '../git/git.ts';
 import { snapshotRequestOf } from '../git/snapshot.ts';
@@ -87,13 +87,13 @@ import { type FindingBlock, p1Blocking, p1Obligations as activeP1Obligations, re
 import { observedVerdict, reuse, verdictOf } from '../holistic/observe.ts';
 import { type ObligationEffect, completes, latches, obligationEffects } from '../holistic/table.ts';
 import { deliverers, delivers } from '../input/lineage.ts';
-import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, isExempt, isMustHold } from '../holistic/types.ts';
+import { type ArcLaneDef, type ObligationDef, type Obligations, type ObservationVerdict, type WitnessRef, deferredLane, isExempt, isMustHold } from '../holistic/types.ts';
 import type { PlanUnit } from '../input/plan.ts';
 import type { FixRound } from '../prompts/inputs.ts';
 import { runnerFiles } from '../runner/files.ts';
 import { invocationDir, killWorkload } from './invoke.ts';
 import {
-  type BatchHolder, type StageHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run, sameHolder,
+  type BatchHolder, type EndgameHolder, type StageHolder, type PublicationHolder, type Reservation, type ResourceContext, cleanup, entryOf, finishCleanup, heldReservation, holderUnits, resourceTable, run, sameHolder,
 } from '../resources/reserve.ts';
 import type { AcquireFirst } from '../schedule/arbiter.ts';
 import type { ResourceRequest } from '../schedule/types.ts';
@@ -101,7 +101,7 @@ import { lineageAttempts, lineageAttemptsText } from './attempts.ts';
 import { type Cancelled, type StageContext, type StageParent, candidateVerificationWorktree, enter, evidenceRoot, isCancelled, runOp, runPrepared, unitBranch, unitWorktree } from './dispatch.ts';
 import { fingerprintHolds, fingerprintValid, selected, unitTip } from './gate.ts';
 import {
-  type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, mapInForce, observations, removeJobCheckouts,
+  type JourneyCheckout, type JourneyEnd, type JourneyRun, type JourneySeries, type Series, arcJourneyLane, arcLaneKey, intact, journeyRed, laneEnvId, laneRuntime, jobSeriesCheckout, mapInForce, observations, removeJobCheckouts,
   removeVerificationTree, runJourneySeries, runLaneSeries, seriesOrder, seriesEntry, standInJourneyLane, suiteJourneyLane, suiteStandIns, witnessRecordPath,
 } from './lanes.ts';
 import { type MutantEnd, mutantAcceptance, syncRepairs } from './reproduce.ts';
@@ -443,7 +443,7 @@ export type Claims = Readonly<{
   /** The obligations its units' specs declare they repair (a finding repair: its finding's obligation). */
   repairs: ReadonlySet<ObligationId>;
   latched: ReadonlySet<ObligationId>;
-  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order. */
+  /** The arc lanes witnessing the selected, non-exempt obligations, in the file's lane order; never a deferred one (dev.83). */
   lanes: readonly ArcLaneDef[];
 }>;
 
@@ -470,7 +470,7 @@ export function claimsOf(
   const chosen = new Set(selected);
   const completing = new Set(obligations.obligations.filter((o) => !isMustHold(o, latched) && !isExempt(o) && completes(deliverers(view, o), published, units)).map((o) => o.id));
   const needed = new Set(obligations.obligations.flatMap((o) => (chosen.has(o.id) && !isExempt(o) && o.witness !== null ? [o.witness.lane] : [])));
-  return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id)) };
+  return { obligations, selected: chosen, completing, repairs, latched, lanes: obligations.lanes.filter((l) => needed.has(l.id) && !deferredLane(l)) };
 }
 
 /** A unit candidate's claims at tip `tip` for its approved commit `head` (`selected`, gate.ts: what its approval selects). */
@@ -508,7 +508,7 @@ export function gradeTree(
   claims: Claims, runs: readonly JourneyRun[], completing: ReadonlySet<ObligationId>, repairs: ReadonlySet<ObligationId>, p1: ReadonlySet<ObligationId>,
 ): TreeGrade {
   const records = new Map(runs.flatMap((r) => (r.record === null ? [] : [[r.lane, r.record] as const])));
-  const external = new Set(claims.obligations.lanes.filter((l) => l.witnessClass === 'external').map((l) => l.id));
+  const external = new Set(claims.obligations.lanes.filter(deferredLane).map((l) => l.id));
   const defs = claims.obligations.obligations;
   const externalIds = new Set(defs.filter((o) => external.has(o.witness?.lane!)).map((o) => o.id));
   claims = { ...claims, selected: new Set([...claims.selected].filter((id) => !externalIds.has(id))) };
@@ -526,7 +526,7 @@ export function gradeTree(
   // non-exempt child holds. Not its effect: a held future child completing here is `latch`, one delivered elsewhere
   // `measured`, and neither is `discharged` (paid m3 run 7: a repair of a latched parent split into such children).
   const holds = (o: ObligationDef): boolean => {
-    if (externalIds.has(o.id)) return true; // Root evidence follows publication, including a split parent's external leaves.
+    if (externalIds.has(o.id)) return true; // Deferred evidence (the root's, the batch witness's) follows publication, a split parent's deferred leaves included.
     if (o.state.type !== 'split') return o.witness !== null && verdict(o, o.witness) === 'held';
     return o.state.children.every((c) => {
       const child = byId.get(c);
@@ -1344,10 +1344,187 @@ const noBatchRedo = (): never => {
 function batchForeignMove(ctx: StageContext, job: JobId, detail: string): NeedsUserContent {
   return {
     blocking: true, subject: { type: 'arc' }, reason: 'foreign-ref-move',
-    summary: `Publication of batch ${job} stopped: ${detail}. Integration only moves forward, and only the executor moves its refs.`,
+    summary: `Publication of ${parseJobId(job).kind === 'endgame' ? 'the endgame landing' : 'batch'} ${job} stopped: ${detail}. Integration only moves forward, and only the executor moves its refs.`,
     recommendation: `Find out who moved it; restore ${ctx.plan().integrationBranch} (or the ref) to a descendant of what the executor published, then acknowledge.`,
     options: [], evidence: [],
   };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// An endgame landing (dev.83, WS-5; src/endgame/jobs.ts runs it as the endgame job `endgame-<n>`)
+//
+// The repair batch's publication with the endgame branch's head as its candidate: no merge is made, so the head must be a
+// strict descendant of the integration tip T (the architect merges the tip in by hand when units published meanwhile);
+// anything else is refused before the slot. `landEndgame` takes `integration-slot` under `endgame{job}` (first of every
+// unit waiter), runs the plan's suite lanes the head's diff on T selects and the arc lanes witnessing every active,
+// non-exempt obligation (never a deferred lane) as a journey series under `job{job}` in a detached checkout of the head
+// (`jobSeriesCheckout`: a fresh path each attempt),
+// and grades it as a batch: the brake over every obligation, the obligations the episode's fixes in T..head close as its
+// repairs, the tip alone when it is not clean. Green: `ff{subject: endgame}` T → head; then `finishLanding`: the
+// `endgame-landed` fact, the findings' moves (a landed fix resolves what it names), the snapshot, the slot released.
+// Red or base-red: nothing moves; the outcome names the lanes and obligations red. Recovery (src/recover/resource.ts): an
+// endgame holder whose ff published keeps the slot for `finishLanding`; any other is abandoned (`abandonLanding`), and the
+// job, still running in its episode, lands again (src/endgame/jobs.ts). Its ff's CAS is never redone (src/recover/ff.ts).
+
+export type LandingContext = StageContext & Readonly<{ acquireFirst: AcquireFirst }>;
+
+export type LandingOutcome =
+  | Readonly<{ kind: 'landed'; job: JobId; old: Sha; head: Sha }>
+  /** Nothing to land, not a descendant of the tip, or the tip moved under it (`detail` says which). */
+  | Readonly<{ kind: 'refused'; job: JobId; detail: string }>
+  | Readonly<{ kind: 'red'; job: JobId; lanes: readonly LaneId[]; obligations: readonly ObligationId[]; baseRed: boolean }>
+  | Readonly<{ kind: 'no-verdict'; job: JobId; end: JourneyEnd }>
+  | Readonly<{ kind: 'foreign-move'; job: JobId; needsUser: NeedsUserContent }>;
+
+/** The endgame `ff` of `job`, if one was begun. */
+const landingFfOf = (view: JournalView, job: JobId): IntentOf<'integration.ff'> | undefined =>
+  view.opsOf('integration.ff').filter((i) => i.expect.subject?.type === 'endgame' && i.expect.subject.job === job).at(-1);
+
+/** Whether `job`'s endgame `ff` published. */
+export function landingPublished(view: JournalView, job: JobId): boolean {
+  const ff = landingFfOf(view, job);
+  const done = ff === undefined ? null : view.doneOf(ff.op);
+  return done !== null && done.kind === 'integration.ff' && done.outcome.kind === 'published';
+}
+
+/** The endgame holder holding the slot now, or null. */
+export function heldLanding(view: JournalView): EndgameHolder | null {
+  const { status } = entryOf(resourceTable(view), INTEGRATION_SLOT);
+  return status.state === 'free' || status.holder.type !== 'endgame' ? null : status.holder;
+}
+
+/** The endgame holder's slot released (no teardown, so its cleanup cannot fail), from whatever state it is in. */
+async function releaseLanding(ctx: ResourceContext, holder: EndgameHolder): Promise<void> {
+  const parent: Parent = { type: 'job', job: holder.job };
+  const { status, pending } = entryOf(resourceTable(ctx.journal.view), INTEGRATION_SLOT);
+  if (pending !== null) throw new Error(`${holder.job}: ${pending.op} is open on ${INTEGRATION_SLOT}`);
+  if (status.state === 'free' || !sameHolder(status.holder, holder)) return;
+  const cleaned = status.state === 'cleaning'
+    ? await finishCleanup(ctx, { state: 'cleaning', holder, resources: [INTEGRATION_SLOT], recipes: new Map() }, parent)
+    : await cleanup(ctx, heldReservation(ctx, holder, status.state === 'reserved' ? 'reserved' : 'running'), parent);
+  if (cleaned.kind !== 'released') throw new Error(`the integration slot of ${holder.job} was not released: ${cleaned.kind}`);
+}
+
+/** Recovery of an endgame holder whose ff did not publish: its checkouts removed, the slot released; the job runs again. */
+export async function abandonLanding(ctx: ResourceContext, holder: EndgameHolder): Promise<void> {
+  await removeJobCheckouts(ctx, holder.job);
+  await releaseLanding(ctx, holder);
+}
+
+/**
+ * After a landing's `ff{published}`, each step only where missing (a restart calls it again): `endgame-landed`, the
+ * findings' moves, the snapshot (parent `job{job}`), the slot released.
+ */
+export async function finishLanding(ctx: StageContext, job: JobId): Promise<LandingOutcome> {
+  const view = ctx.journal.view;
+  const ff = landingFfOf(view, job);
+  if (ff === undefined || !landingPublished(view, job)) throw new Error(`finishLanding: ${job} did not publish`);
+  const { old, new: head } = ff.expect;
+  if (!view.holistic().endgame.some((e) => e.landings.some((l) => l.job === job))) ctx.journal.fact({ kind: 'endgame-landed', job, old, head });
+  syncRepairs(ctx);
+  const parent: Parent = { type: 'job', job };
+  if (!view.opsOf('snapshot.publish').some((i) => canonicalJson(i.parent) === canonicalJson(parent) && view.doneOf(i.op) !== null)) {
+    await runOp(ctx.journal, snapshotPublishOp(ctx.repo), `snapshot:${ctx.plan().arc}`, parent, snapshotRequestOf({
+      view: ctx.journal.view, runDir: ctx.runDir, identity: executorIdentity(), message: `roadmap ${ctx.plan().arc}: snapshot after landing the endgame head ${head} (${job})\n`,
+    }));
+  }
+  await releaseLanding(ctx, { type: 'endgame', job });
+  return { kind: 'landed', job, old, head };
+}
+
+/** An endgame `ff` never asks for a unit's re-check (src/recover/ff.ts never redoes it). */
+const noLandingRedo = (): never => {
+  throw new Error('an endgame ff has no unit to re-check');
+};
+
+/**
+ * Lands `head` (the endgame branch's head, read by the caller) as `job` (see the section header). A landing whose ff
+ * published but was cut short is finished first. `repairs`: the obligations the episode's fixes in T..head close.
+ */
+export async function landEndgame(ctx: LandingContext, job: JobId, head: Sha, repairs: (tip: Sha) => ReadonlySet<ObligationId>): Promise<LandingOutcome> {
+  const held = heldLanding(ctx.journal.view);
+  if (held !== null) {
+    if (held.job !== job) throw new Error(`${job}: the slot is held by the endgame landing ${held.job}`);
+    if (landingPublished(ctx.journal.view, job)) return finishLanding(ctx, job);
+    throw new Error(`${job}: its unpublished slot hold outlived recovery`);
+  }
+  const plan = ctx.plan();
+  const integration = branchRef(plan.integrationBranch);
+  const descent = (tip: Sha): string | null =>
+    head === tip ? `the endgame head ${head} is the integration head: nothing to land`
+      : isAncestor(ctx.repo, tip, head) ? null : `the endgame head ${head} does not descend from the integration head ${tip}: merge ${plan.integrationBranch} into the endgame branch, then land`;
+  const before = descent(integrationTip(ctx));
+  if (before !== null) return { kind: 'refused', job, detail: before };
+  const holder: EndgameHolder = { type: 'endgame', job };
+  const parent: Parent = { type: 'job', job };
+  const grant = await ctx.acquireFirst(BATCH_SLOT, holder, NEVER);
+  if (grant.kind !== 'granted') throw new Error(`${job}: its slot wait was cancelled, and nothing cancels it`);
+  run(ctx, heldReservation(ctx, holder, 'reserved'), parent);
+  const close = async (outcome: LandingOutcome): Promise<LandingOutcome> => {
+    await releaseLanding(ctx, holder);
+    return outcome;
+  };
+  // The tip may have moved while the slot was waited for.
+  const tip = integrationTip(ctx);
+  const moved = descent(tip);
+  if (moved !== null) return close({ kind: 'refused', job, detail: moved });
+
+  const { obligations } = holisticInForce(ctx);
+  const ids = obligations === null ? [] : obligations.obligations.filter((o) => o.state.type === 'active' && !isExempt(o) && o.witness !== null).map((o) => o.id);
+  const fixed = repairs(tip);
+  const claims = claimsOf(ctx, obligations, [], ids, fixed);
+  const owner = { type: 'job', job, acquireFirst: ctx.acquireFirst } as const;
+  const claimed = claims?.lanes ?? [];
+  const suiteLanes = candidateLanes(ctx, tip, head);
+  const standIns = suiteStandIns(suiteLanes, claimed);
+  const standing = new Set([...standIns.values()].map((l) => l.id));
+  const lanes = [
+    ...suiteLanes.map((l) => {
+      const arc = standIns.get(l.id);
+      return arc === undefined ? suiteJourneyLane(l) : standInJourneyLane(arc);
+    }),
+    ...claimed.filter((l) => !standing.has(l.id)).map(arcJourneyLane),
+  ];
+  const suiteRed = (r: JourneyRun): boolean => (r.record === null || standing.has(r.lane)) && journeyRed(r);
+  const onHead = await runJourneySeries(ctx, owner, lanes, { path: jobSeriesCheckout(ctx, job, 'head'), checkout: { type: 'detached', at: head } }, { reuse: true, stop: suiteRed });
+  if (onHead.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: onHead.end });
+  const p1 = p1Obligations(ctx.journal.view);
+  const gradeOn = (series: JourneySeries, on: 'head' | 'tip'): TreeGrade => ({
+    ...withSuite(claims === null ? NO_CLAIMS : on === 'head'
+      ? gradeTree(claims, series.runs, claims.completing, claims.repairs, p1)
+      : gradeTree(claims, series.runs, new Set(), new Set(), p1), series.runs, standing),
+    intact: intact(series),
+  });
+  const grade = gradeOn(onHead, 'head');
+  if (!clean(grade)) {
+    const alone = await runJourneySeries(ctx, owner, lanes, { path: jobSeriesCheckout(ctx, job, 'tip'), checkout: { type: 'detached', at: tip } }, { reuse: true, stop: () => false });
+    if (alone.end.kind !== 'ran') return close({ kind: 'no-verdict', job, end: alone.end });
+    const verdict = brakeVerdict(grade, gradeOn(alone, 'tip'), claims?.repairs ?? new Set());
+    if (verdict.kind !== 'green') {
+      const red = [...new Set([...grade.unexplained, ...grade.background.keys()])].sort();
+      return close({ kind: 'red', job, lanes: red, obligations: grade.red, baseRed: verdict.kind === 'base-red' });
+    }
+  }
+  const ffPlan = planEndgameFf(ctx.repo, integration, tip, head, job);
+  switch (ffPlan.kind) {
+    case 'foreign-mover':
+      return close({ kind: 'foreign-move', job, needsUser: batchForeignMove(ctx, job, `${ffPlan.ref} is at ${ffPlan.observed ?? 'nothing'}, expected ${ffPlan.expected}`) });
+    case 'unpublished':
+      return close({ kind: 'refused', job, detail: `the integration head moved to ${ffPlan.tip} while the landing ran: merge it into the endgame branch, then land` });
+    case 'ff':
+      break;
+  }
+  const ff = await runPrepared(ctx.journal, integrationFfOp(ctx.repo, noLandingRedo), `integration:${plan.arc}`, parent, ffPlan.body);
+  const done = ctx.journal.view.doneOf(ff.op);
+  if (done === null || done.kind !== 'integration.ff') throw new Error(`integration.ff ${ff.op} has no done record`);
+  switch (done.outcome.kind) {
+    case 'published':
+      return finishLanding(ctx, job);
+    case 'unpublished':
+      return close({ kind: 'refused', job, detail: `the integration head moved to ${done.outcome.tip} under the landing's CAS` });
+    case 'recovery-required':
+      return close({ kind: 'foreign-move', job, needsUser: batchForeignMove(ctx, job, `${integration} is at ${done.outcome.observed ?? 'nothing'} after the publication CAS`) });
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------

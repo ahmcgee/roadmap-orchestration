@@ -13,9 +13,10 @@ export const ROW_GAP = 80, COLUMN_GAP = 384;
 export type Point = { x: number; y: number };
 /** A drawn group of units. A milestone band holds exactly its members and its gate; an outside group holds units of no
  * milestone: a milestone's design, repair or polish units beside its band, Hardening units where they sit in the flow
- * (just before the band whose work needs them, or after the last band), then each audit job's repairs and Deflake. */
+ * (just before the band whose work needs them, or after the last band), then each audit job's repairs, Deflake and
+ * (dev.83) the Endgame: the units it took over, the arc's last group. */
 export type Band = { id: string; kind: 'milestone' | 'outside'; label: string; ids: string[]; x: number; y: number; width: number; height: number };
-/** A line-map station: one per milestone, then Hardening, each audit job and Deflake. A milestone's counts are membership
+/** A line-map station: one per milestone, then Hardening, each audit job, Deflake and the Endgame. A milestone's counts are membership
  * (console/milestones.ts), never placement; an outside station counts its own units. `frame` is what selecting it shows:
  * a milestone's members, its gate and the outside groups placed with it; an outside station's units. */
 export type Station = { id: string; kind: 'milestone' | 'outside'; label: string; passed: number; total: number; withdrawn: number; state: string; frame: string[]; groups: string[] };
@@ -90,7 +91,7 @@ export function graphLayout(e: GraphData) {
   const counts = (g: GraphData['groups'][number]) => ({ passed: g.passed, total: g.total, withdrawn: g.withdrawn });
   const everyHardening = m.units.filter(u => hardening(u.id)).map(u => u.id), hardeningGroup = (e.groups ?? []).find(g => g.kind === 'hardening');
   if (hardeningGroup) stations.push({ id: 'hardening', kind: 'outside', label: 'Hardening', ...counts(hardeningGroup), state: 'pending', frame: everyHardening, groups: bands.filter(b => b.id === 'hardening' || b.id.startsWith('lead:')).map(b => b.id) });
-  for (const o of e.groups ?? []) if (o.kind === 'audit' || o.kind === 'deflake') {
+  for (const o of e.groups ?? []) if (o.kind === 'audit' || o.kind === 'deflake' || o.kind === 'endgame') {
     bands.push(group(o.id, 'outside', o.label, o.ids));
     stations.push({ id: o.id, kind: 'outside', label: o.label, ...counts(o), state: 'pending', frame: o.ids, groups: [o.id] });
   }

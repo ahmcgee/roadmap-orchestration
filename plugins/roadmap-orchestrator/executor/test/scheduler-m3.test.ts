@@ -6,12 +6,17 @@ import { cadence } from '../src/holistic/cadence.ts';
 // sched.close-out-then-complete, sched.arc-completed-fact, complete.terminal-snapshot, complete.reopen-invalidates,
 // quiescence.vision-change-reopens (H3), sched.arc-state-predicates (the clauses of `complete`),
 // sched.baseline-before-admission (A6), sched.audit-job-one-at-a-time, sched.design-park-checkpoint and
-// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.declined-request-quiescent,
+// sched.design-park-no-op (OR-Q1), sched.batch-repair and sched.batch-red-fix-round (R7), sched.co-repairer-after and classify.co-repairer-after (dev.83
+// E5b), sched.declined-request-quiescent,
 // sched.close-out-declines-request (run 10), complete.m2-arc, complete.strict-env, sched.no-verdict-backoff and
-// sched.no-verdict-escalation, sched.stop-kills-lens, draining, and the M3 command
-// and item rules (commands.audit, needsuser.m3-blocking).
+// sched.no-verdict-escalation, sched.stop-kills-lens, the M3 command and item rules (commands.audit,
+// needsuser.m3-blocking), and dev.83's endgame (endgame.settle-vacuous, endgame.open-close; `close-admissions` removed, its
+// draining test with it).
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync,readFileSync,writeFileSync } from 'node:fs';
 import { describe,test } from 'node:test';
+import { endgameWorktree,handoverPath } from '../src/endgame/open.ts';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { applyCommand } from '../src/commands/apply.ts';
 import { submitCommand,terminalReceipt } from '../src/commands/queue.ts';
@@ -451,6 +456,70 @@ describe('repair batches in the scheduler (R7)', () => {
     }
   });
 
+  test('sched.co-repairer-after (dev.83 E5b): two repairs of one finding joined through `after` would deadlock (the dependency held at its candidate for the dependent, the dependent waiting on its merge); an adopted plan raises one blocking arc plan-defect naming both and the edge, and nothing is admitted', T, async () => {
+    const { d } = holisticArc({
+      steps: [...unitSteps('u1', moduleFiles('mul', '*')), ...unitSteps('u2', moduleFiles('div', '/'))],
+      units: [
+        { id: 'u1', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'] },
+        { id: 'u2', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'], after: ['u1'], lanes: [{ id: 'div', argv: ['node', '--test', 'test/div.test.js'] }] },
+      ],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
+      mapping: [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'lib', obligations: ['I-2'] }],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      beforeStart: openBefore(witnessDraft('I-2')),
+    });
+    const r = contextFor(d);
+    const s = startHolistic(r);
+    try {
+      const view = () => r.journal.view;
+      const approved = (): boolean => view().unit(unitId('u1')).decided?.outcome === 'approve';
+      await until(() => itemOf(r, 'plan-defect') !== null || approved(), WAIT_MS, 'the plan-defect item, or u1 approved into the deadlock');
+      const id = itemOf(r, 'plan-defect');
+      assert.notEqual(id, null, 'u1 reached its candidate held for u2, which waits on u1: no item');
+      const item = readNeedsUser(r.ctx.runDir, id!)!;
+      assert.deepEqual([item.blocking, item.subject], [true, { type: 'arc' }]);
+      assert.match(item.summary, /\bF-1\b/);
+      assert.match(item.summary, /\bu2\b.*\bu1\b/);
+      assert.equal(view().needsUser().filter((n) => readNeedsUser(r.ctx.runDir, n.id)?.reason === 'plan-defect').length, 1, 'raised once');
+      assert.equal(approved(), false, 'nothing admitted while it is open');
+    } finally {
+      await stopAndClose(r, s);
+    }
+  });
+
+  test('classify.co-repairer-after (dev.83 E5b): an apply joining two direct repairers of one finding through `after` (here through a third unit) is refused, naming the finding and the path; dropping the edge applies', T, async () => {
+    const { d } = holisticArc({
+      steps: [],
+      units: [
+        { id: 'u1', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'] },
+        { id: 'u2', obligations: ['I-1'] },
+        { id: 'u3', origin: 'repair', obligations: ['I-1'], repairs: ['F-1'] },
+      ],
+      obligations: [{ id: 'I-1', testIds: ['t1'] }, { id: 'I-2', testIds: ['t2'] }],
+      mapping: [{ system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'app', obligations: ['I-1'] }, { system: 'lib', obligations: ['I-2'] }],
+      trees: { '*': { outcomes: { t1: 'pass', t2: 'pass' } } },
+      beforeStart: openBefore(witnessDraft('I-2')),
+    });
+    const r = contextFor(d);
+    try {
+      syncInputs(r);
+      const edit = (after: Readonly<Record<string, readonly string[]>>): void => {
+        const p = JSON.parse(readFileSync(d.planPath, 'utf8')) as { units: { id: string; after?: readonly string[] }[] };
+        writeFileSync(d.planPath, JSON.stringify({ ...p, units: p.units.map((u) => ({ ...u, after: after[u.id] ?? [] })) }));
+      };
+      const apply = () => applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)));
+      edit({ u3: ['u2'], u2: ['u1'] });
+      const refused = await apply();
+      assert.equal(refused.kind, 'rejected', JSON.stringify(refused));
+      assert.match(refused.kind === 'rejected' ? refused.reason : '', /co-repairer-after: .*F-1.*\(u3 → u2 → u1\)/);
+      edit({ u3: ['u2'] });
+      const out = await apply();
+      assert.equal(out.kind, 'applied', JSON.stringify(out));
+    } finally {
+      r.journal.close();
+    }
+  });
+
   test('sched.batch-red-fix-round: a red batch records red for each member its own selection attributes, and each member\'s fix round names its red obligation from the batch evidence', T, async () => {
     const { d } = batchArc({ t2: 'fail' });
     const r = contextFor(d);
@@ -474,22 +543,73 @@ describe('repair batches in the scheduler (R7)', () => {
   });
 });
 
-describe('the M3 commands and items', () => {
-  test('draining: close-admissions latches draining once (a second is refused, a re-delivery applies nothing twice); an architect apply that adds a unit reopens admissions', T, async () => {
+describe('the endgame (dev.83, src/endgame/)', () => {
+  test('endgame.settle-vacuous: the last planned unit merged enters episode 1 before the final audit; an empty worklist never opens it; it is left `complete` after arc-completed', T, async () => {
+    const r = contextFor(completingArc());
+    try {
+      await runToComplete(r);
+      const [entered] = factsOf(r, 'endgame-entered');
+      const [audit] = factsOf(r, 'audit-started');
+      const [completed] = factsOf(r, 'arc-completed');
+      const [left] = factsOf(r, 'endgame-left');
+      const retired = facts(r).filter((f) => f.kind === 'stage-outcome' && 'unit' in f && f.class === 'retire').at(-1)!;
+      assert.deepEqual([entered!.episode, entered!.planRev], [1, r.journal.view.planApplied()!.rev]);
+      assert.ok(retired.seq < entered!.seq && entered!.seq < audit!.seq, 'settling: entered once the unit merged, then the final audit');
+      assert.deepEqual(audit!.triggers, [{ type: 'final' }]);
+      assert.deepEqual(factsOf(r, 'endgame-opened'), [], 'no required entry: no branch, worktree or handover');
+      assert.equal(itemOf(r, 'endgame'), null);
+      assert.deepEqual([left!.episode, left!.cause], [1, 'complete']);
+      assert.ok(left!.seq > completed!.seq);
+      await runToComplete(r);
+      assert.equal(factsOf(r, 'endgame-entered').length, 1, 'a restart of a completed arc enters no episode');
+    } finally {
+      r.journal.close();
+    }
+  });
+
+  test('endgame.open-close: the final audit runs over an active P1; the episode opens (branch, worktree, handover, item) and `endgame-open` holds completion; the P1 dismissed, it closes and the arc completes', T, async () => {
     const d = completingArc();
     const r = contextFor(d);
     try {
-      const w = wired(r);
-      const close = submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'close-admissions' });
-      assert.equal((await applyCommand(w.commands, close)).kind, 'applied');
-      assert.equal(r.journal.view.holistic().draining?.command, close.id);
-      assert.equal((await applyCommand(w.commands, close)).kind, 'applied', 're-delivered: the recorded outcome');
-      assert.equal(factsOf(r, 'admissions-closed').length, 1);
-      const again = await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'close-admissions' }));
-      assert.ok(again.kind === 'rejected' && /already draining/.test(again.reason), JSON.stringify(again));
-      addUnit(d, 'u2');
-      assert.equal((await applyCommand(w.commands, submitCommand(r.ctx.runDir, r.journal.view.arc, applyBody(d)))).kind, 'applied');
-      assert.equal(r.journal.view.holistic().draining, null, 'an architect admit reopens admissions');
+      await runUnit(r.ctx, r.unit('u1'), admitAll);
+      openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: obligationId('I-1'), visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [{path: 'src/mul.js', blob: null}], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: true});
+      assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true, 'an active P1 is a worklist entry: it does not hold the final audit');
+      const s = startHolistic(r);
+      await until(() => itemOf(r, 'endgame') !== null, WAIT_MS, 'the endgame item');
+      const [audit] = factsOf(r, 'audit-started');
+      const [opened] = factsOf(r, 'endgame-opened');
+      assert.deepEqual(audit!.triggers, [{ type: 'final' }]);
+      assert.ok(audit!.seq < opened!.seq, 'the final audit, then the open step');
+      const plan = requirePlanInForce(r.ctx.runDir, r.journal.view).plan;
+      assert.deepEqual([opened!.episode, opened!.base], [1, head(d)]);
+      assert.equal(git(d.repo, 'rev-parse', `roadmap/${plan.arc}/endgame`), head(d), 'the endgame branch at the integration tip');
+      assert.ok(existsSync(endgameWorktree(plan.worktreeRoot, plan.arc)), 'its worktree');
+      const handover = handoverPath(r.ctx.runDir, 1);
+      assert.equal(createHash('sha256').update(readFileSync(handover)).digest('hex'), opened!.handoverSha256, 'the handover kept by hash');
+      assert.match(readFileSync(handover, 'utf8'), /finding F-1 P1 obligation I-1 evidence: src\/mul\.js/);
+      const item = readNeedsUser(r.ctx.runDir, itemOf(r, 'endgame')!)!;
+      assert.deepEqual([item.blocking, item.subject, item.evidence], [false, { type: 'arc' }, [handover]]);
+      assert.ok(completionBlockers(contextsOf(r), { blocking: 0, pending: 0 }).includes('endgame-open'));
+      submit(r, { type: 'dismiss', finding: findingId('F-1'), counterEvidence: 't1 passes on integration; src/mul.js retains multiplication' });
+      assert.deepEqual(await s.end, { kind: 'complete', units: [{ unit: 'u1', result: 'merged' }] });
+      const [completed] = factsOf(r, 'arc-completed');
+      const [left] = factsOf(r, 'endgame-left');
+      assert.deepEqual([left!.episode, left!.cause], [1, 'complete']);
+      assert.ok(left!.seq > completed!.seq);
+      assert.equal(factsOf(r, 'endgame-opened').length, 1, 'opened once');
+    } finally {
+      r.journal.close();
+    }
+  });
+});
+
+describe('the M3 commands and items', () => {
+  test('close-admissions (removed in dev.83): an earlier release\'s queued command is rejected and writes nothing', T, async () => {
+    const r = contextFor(completingArc());
+    try {
+      const out = await applyCommand(wired(r).commands, submitCommand(r.ctx.runDir, r.journal.view.arc, { type: 'close-admissions' }));
+      assert.ok(out.kind === 'rejected' && /close-admissions was removed/.test(out.reason), JSON.stringify(out));
+      assert.deepEqual(factsOf(r, 'admissions-closed'), []);
     } finally {
       r.journal.close();
     }
@@ -610,16 +730,16 @@ describe(`matrix row ${TERMINAL_SNAPSHOT}`, () => {
 });
 
 
-test('root dismissal unblocks the final audit, close-out publication and completion', T, async () => {
+test('root dismissal unblocks the close-out publication and completion (dev.83: the final audit no longer waits for it)', T, async () => {
   const d = completingArc();
   const r = contextFor(d);
   try {
     await runUnit(r.ctx, r.unit('u1'), admitAll);
     openFinding(r.journal, {lens: 'invariants', severity: 'P1', obligation: obligationId('I-1'), visionClauses: [], claim: 'false regression', cause: 'false regression', evidence: [{path: 'src/mul.js', blob: null}], mutant: null, source: {type: 'job', job: jobId('baseline', 1)}, gateHadPassed: true});
-    assert.equal(cadence(r.ctx, () => 0)?.due, false, 'the active P1 holds the final audit');
+    assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true, 'dev.83: in the endgame an active P1 is a worklist entry and does not hold the final audit');
     const cmd = submitCommand(r.ctx.runDir, r.journal.view.arc, {type: 'dismiss', finding: findingId('F-1'), counterEvidence: 't1 passes on integration; src/mul.js retains multiplication'});
     assert.equal((await applyCommand(commandContextFor(r), cmd)).kind, 'applied');
-    assert.equal(cadence(r.ctx, () => 0)?.due, true);
+    assert.equal(cadence(r.ctx, () => 0, (lane) => laneEnvId(r.ctx, lane))?.due, true);
     await runToComplete(r);
     assert.equal(r.journal.view.holistic().completion?.active, true);
     assert.equal(factsOf(r, 'docs-published').filter((p) => p.source === 'close-out').length, 1);

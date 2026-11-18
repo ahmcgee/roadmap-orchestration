@@ -12,7 +12,7 @@ import { type FindingStateName,type FindingTo,FINDING_MOVES } from '../holistic/
 import { type Backend,type RiskTier,type Role,type UnitRole,RISK_TIERS } from '../routing/types.ts';
 import {
 type AbortRecord,type AuditInputs,type BackendParkClass,
-type CiFact,type DoneRecord,type Event,type Fact,type FactKind,
+type CiFact,type DoneRecord,type EndgameFact,type EndgameLeftCause,type Event,type Fact,type FactKind,
 type Holder,
 type HolisticFact,
 type IntentOf,type IntentRecord,type JudgmentInputs,type JudgmentStage,type OpKind,type Parent,type ParkRecord,type PlanAppliedFact,type ProbeTarget,
@@ -80,6 +80,7 @@ export type UnitStatus = 'active' | 'held' | 'park-pending' | 'stop-pending' | '
  * The park recovers, and the unit re-runs the parked stage, once every target has passed.
  */
 let legacyWitnessSinceWarned = false;
+let legacyAdmissionsClosedWarned = false;
 
 export type ParkState = Readonly<{ seq: number; at: IsoTime; park: ParkRecord; passed: readonly ProbeTarget[] }>;
 
@@ -419,7 +420,7 @@ type M4aFactOf<K extends Fact['kind']> = Omit<Extract<Fact, { kind: K }>, 'kind'
 /** M4a: a pack review job: its kept inputs' fact, and its end (null while running). */
 export type PackReviewState = Readonly<{ started: M4aFactOf<'pack-review-started'>; ended: M4aFactOf<'pack-review-ended'> | null }>;
 
-/** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move. */
+/** A finding as the log last moved it. `owner`: the unit of its latest `owned` or `fixed-on-branch` move (null: an endgame fix's, or none). */
 export type FindingState = Omit<FactOf<'finding-opened'>, 'kind'> & Readonly<{
   state: FindingStateName;
   owner: UnitId | null;
@@ -454,8 +455,6 @@ export type HolisticFold = Readonly<{
   debt: readonly BankedDebt[];
   /** M4a: the pack reviews, in job order; at most one running (src/holistic/packreview.ts). */
   packReviews: readonly PackReviewState[];
-  /** `close-admissions` latched and no architect admit since (§2.10). */
-  draining: Readonly<{ command: CommandId; seq: number }> | null;
   completion: CompletionState | null;
   /** M4a rev 3 (F1a): lane reuses, in log order. */
   laneReuses: readonly LaneReuseState[];
@@ -463,6 +462,32 @@ export type HolisticFold = Readonly<{
   certificates: readonly CertificateState[];
   /** M4a rev 3 (D2): mutation smoke runs, in log order. */
   smokeRuns: readonly SmokeRunState[];
+  /** dev.83: the endgame's episodes, in order (src/endgame/phase.ts); at most the last is open (not left). */
+  endgame: readonly EndgameEpisode[];
+}>;
+
+/**
+ * dev.83: one endgame episode: entered at `seq` under plan rev `planRev`, opened once (its branch's base and the handover's
+ * hash), its recorded fixes, landings and reviews, and how it was left (null while open). WS-5: the units `resume` released
+ * from the endgame's hold, the commands' requests and the endgame jobs (each started, and ended or null while it runs).
+ */
+export type EndgameEpisode = Readonly<{
+  episode: number;
+  planRev: PlanRev;
+  seq: number;
+  opened: Readonly<{ base: Sha; handoverSha256: Sha256Hex; seq: number }> | null;
+  fixes: readonly (Omit<FactOf<'endgame-fix'>, 'kind'> & Seq)[];
+  landings: readonly (Omit<FactOf<'endgame-landed'>, 'kind'> & Seq)[];
+  reviews: readonly (Omit<FactOf<'endgame-reviewed'>, 'kind'> & Seq)[];
+  left: Readonly<{ cause: EndgameLeftCause; seq: number }> | null;
+  released: readonly (Omit<FactOf<'endgame-released'>, 'kind'> & Seq)[];
+  requests: readonly (Omit<FactOf<'endgame-requested'>, 'kind'> & Seq)[];
+  jobs: readonly EndgameJobState[];
+}>;
+/** dev.83 (WS-5): an endgame job: its start, and its end (null while it runs). */
+export type EndgameJobState = Readonly<{
+  started: Omit<FactOf<'endgame-job-started'>, 'kind'> & Seq;
+  ended: (Omit<FactOf<'endgame-job-ended'>, 'kind' | 'job'> & Seq) | null;
 }>;
 
 /** M4a rev 3: a lane a series reused (F1a), keyed `(parent, lane)`. */
@@ -477,7 +502,8 @@ export type SmokeRunState = M4aFactOf<'smoke-ran'>;
 function isWork(record: Event): boolean {
   if (record.type === 'fact') {
     const k = record.fact.kind;
-    return !['executor-started', 'containment-mode', 'tail-discarded', 'arc-completed', 'docs-published', 'probe', 'backend-park', 'meter', 'usage-unavailable'].includes(k);
+    // dev.83: `endgame-left` follows `arc-completed` when the arc completes in the endgame.
+    return !['executor-started', 'containment-mode', 'tail-discarded', 'arc-completed', 'docs-published', 'probe', 'backend-park', 'meter', 'usage-unavailable', 'endgame-left'].includes(k);
   }
   if (record.type === 'intent') return record.parent.type === 'stage' || record.parent.type === 'job' || record.parent.type === 'command' || record.kind === 'revision.commit';
   return false;
@@ -724,7 +750,8 @@ export class Fold implements JournalView {
   readonly #docsPublished: (Omit<FactOf<'docs-published'>, 'kind'> & Seq)[] = [];
   readonly #divergences: (Omit<FactOf<'divergence'>, 'kind'> & Seq)[] = [];
   readonly #surfaceFacts: import('./events.ts').SurfaceFact[] = [];
-  readonly #noted: Readonly<{unit: UnitId; command: CommandId; brief: Sha256Hex; seq: number}>[] = [];
+  /** `command`: the note's command, or (dev.83) the batch witness job whose `batch-reopened` carries the brief. */
+  readonly #noted: Readonly<{unit: UnitId; command: CommandId | JobId; brief: Sha256Hex; seq: number}>[] = [];
   readonly #steered: (Omit<FactOf<'steered'>, 'kind'> & Seq)[] = [];
   readonly #mergedIn: (Omit<FactOf<'merged-in'>, 'kind'> & Seq)[] = [];
   readonly #lanesReruns: (Omit<FactOf<'lanes-rerun'>, 'kind'> & Seq)[] = [];
@@ -745,7 +772,8 @@ export class Fold implements JournalView {
   readonly #propagationFacts: PropagationFactAt[] = [];
   /** dev.13: per milestone, the seq of the latest `plan-applied` whose milestones change lists it in `rewalk`. */
   readonly #rewalkSeqs = new Map<MilestoneId, number>();
-  #draining: Readonly<{ command: CommandId; seq: number }> | null = null;
+  /** dev.83: the endgame's episodes (each replaced whole as it changes). */
+  readonly #endgame: EndgameEpisode[] = [];
   #completion: (Omit<FactOf<'arc-completed'>, 'kind'> & Seq) | null = null;
   // M4a rev 3
   #executorStarted = 0;
@@ -1038,6 +1066,31 @@ export class Fold implements JournalView {
         this.#ciFacts.push(f);
         const u = this.#units.get(f.unit);
         if (u === undefined) return fail(`external witness reopens unknown unit ${f.unit}`);
+        this.#setUnitState(u, { ...u.state, status: 'active', stage: 'pre-build', decided: null, approval: null, open: null, park: null, entry: null, rerun: null });
+        this.#completion = null;
+        return;
+      }
+      case 'batch-witness-started':
+        if (this.#ciFacts.some((g) => g.kind === 'batch-witness-started' && !this.#ciFacts.some((e) => e.kind === 'batch-witness-ended' && e.job === g.job))) {
+          return fail(`batch witness ${f.job} started while another is open`);
+        }
+        this.#openJob(f.job, fail);
+        this.#ciFacts.push(f);
+        return;
+      case 'batch-witness-ended':
+        if (!this.#ciFacts.some((g) => g.kind === 'batch-witness-started' && g.job === f.job) || this.#ciFacts.some((g) => g.kind === 'batch-witness-ended' && g.job === f.job)) {
+          return fail(`batch witness ${f.job} ended, but it is not open`);
+        }
+        this.#ciFacts.push(f);
+        return;
+      case 'batch-reopened': {
+        if (!this.#ciFacts.some((g) => g.kind === 'batch-witness-started' && g.job === f.job) || this.#ciFacts.some((g) => g.kind === 'batch-witness-ended' && g.job === f.job)) {
+          return fail(`batch witness ${f.job} reopens ${f.unit}, but it is not open`);
+        }
+        this.#ciFacts.push(f);
+        const u = this.#units.get(f.unit);
+        if (u === undefined) return fail(`batch witness reopens unknown unit ${f.unit}`);
+        this.#noted.push({ unit: f.unit, command: f.job, brief: f.brief, seq: at.seq });
         this.#setUnitState(u, { ...u.state, status: 'active', stage: 'pre-build', decided: null, approval: null, open: null, park: null, entry: null, rerun: null });
         this.#completion = null;
         return;
@@ -1549,7 +1602,8 @@ export class Fold implements JournalView {
         if (history === undefined) return fail(`finding-transition of ${f.id}, which was never opened`);
         const x = history.at(-1)!.finding;
         if (!FINDING_MOVES[x.state].includes(f.to.state)) fail(`finding ${f.id} moves ${x.state} → ${f.to.state}`);
-        const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? f.to.unit : f.to.state === 'open' ? null : x.owner;
+        // dev.83 (WS-5): an endgame fix owns no unit.
+        const owner = f.to.state === 'owned' || f.to.state === 'fixed-on-branch' ? ('unit' in f.to ? f.to.unit : null) : f.to.state === 'open' ? null : x.owner;
         history.push({ seq, finding: { ...x, state: f.to.state, owner, last: f.to } });
         return;
       }
@@ -1622,8 +1676,23 @@ export class Fold implements JournalView {
         return;
       }
       case 'admissions-closed':
-        if (this.#draining !== null) fail(`admissions-closed while already draining (since ${this.#draining.command})`);
-        this.#draining = { command: f.command, seq };
+        // dev.83: `close-admissions` was removed (the endgame replaces it); an earlier release's fact is read and has no effect.
+        if (!legacyAdmissionsClosedWarned) {
+          legacyAdmissionsClosedWarned = true;
+          process.emitWarning(`reading admissions-closed (${f.command}, before dev.83) as no effect: close-admissions was removed; the endgame replaces it (further occurrences are not repeated)`, { code: 'ROADMAP_UPGRADE' });
+        }
+        return;
+      case 'endgame-entered':
+      case 'endgame-opened':
+      case 'endgame-fix':
+      case 'endgame-landed':
+      case 'endgame-reviewed':
+      case 'endgame-left':
+      case 'endgame-released':
+      case 'endgame-requested':
+      case 'endgame-job-started':
+      case 'endgame-job-ended':
+        this.#endgameFact(f, seq, fail);
         return;
       case 'docs-published': {
         this.#seeJob(f.pub);
@@ -1637,6 +1706,66 @@ export class Fold implements JournalView {
         const { kind: _k, ...rest } = f;
         this.#completion = { ...rest, seq };
         return;
+      }
+    }
+  }
+
+  /**
+   * dev.83: an endgame fact. One episode at a time: `entered` numbers the next and needs none open; `opened` once, of the open
+   * one; a fix, a landing or a review only inside an opened episode; `left` closes the open one. WS-5: a release in any open
+   * episode, once per unit; a request, and a job's start and end, inside an opened one: one job at a time, its id the next
+   * `endgame-<n>` (or the running one's, a landing or review written while it runs), a command's request served once; no
+   * episode is left while a job runs.
+   */
+  #endgameFact(f: EndgameFact, seq: number, fail: (detail: string) => never): void {
+    const last = this.#endgame.at(-1);
+    const open = last !== undefined && last.left === null ? last : null;
+    if (f.kind === 'endgame-entered') {
+      if (open !== null) fail(`endgame episode ${f.episode} entered while episode ${open.episode} is open`);
+      if (f.episode !== this.#endgame.length + 1) fail(`endgame episode ${f.episode} entered; the next episode is ${this.#endgame.length + 1}`);
+      this.#endgame.push({ episode: f.episode, planRev: f.planRev, seq, opened: null, fixes: [], landings: [], reviews: [], left: null, released: [], requests: [], jobs: [] });
+      return;
+    }
+    if (open === null) return fail(`${f.kind} outside an endgame episode`);
+    const replace = (next: EndgameEpisode): void => void (this.#endgame[this.#endgame.length - 1] = next);
+    const running = open.jobs.find((j) => j.ended === null) ?? null;
+    switch (f.kind) {
+      case 'endgame-released':
+        if (open.released.some((r) => r.unit === f.unit)) fail(`unit ${f.unit} released from endgame episode ${open.episode} twice`);
+        return replace({ ...open, released: [...open.released, { unit: f.unit, command: f.command, seq }] });
+      case 'endgame-requested':
+        if (open.opened === null) fail(`endgame-requested in endgame episode ${open.episode}, which has not opened`);
+        if (open.requests.some((r) => r.command === f.command)) fail(`command ${f.command} requested twice in endgame episode ${open.episode}`);
+        return replace({ ...open, requests: [...open.requests, { command: f.command, request: f.request, seq }] });
+      case 'endgame-job-started': {
+        if (open.opened === null) fail(`endgame-job-started in endgame episode ${open.episode}, which has not opened`);
+        if (running !== null) fail(`endgame job ${f.job} started while ${running.started.job} runs`);
+        this.#openJob(f.job, fail);
+        if (f.command !== null && open.jobs.some((j) => j.started.command === f.command)) fail(`command ${f.command}'s request served twice`);
+        const { kind: _k, ...rest } = f;
+        return replace({ ...open, jobs: [...open.jobs, { started: { ...rest, seq }, ended: null }] });
+      }
+      case 'endgame-job-ended': {
+        if (running === null || running.started.job !== f.job) return fail(`endgame-job-ended of ${f.job}, which is not running`);
+        const { kind: _k, job: _j, ...rest } = f;
+        return replace({ ...open, jobs: open.jobs.map((j) => (j === running ? { ...j, ended: { ...rest, seq } } : j)) });
+      }
+      case 'endgame-opened':
+        if (f.episode !== open.episode) fail(`endgame-opened names episode ${f.episode}; episode ${open.episode} is open`);
+        if (open.opened !== null) fail(`endgame episode ${open.episode} opened twice`);
+        return replace({ ...open, opened: { base: f.base, handoverSha256: f.handoverSha256, seq } });
+      case 'endgame-left':
+        if (f.episode !== open.episode) fail(`endgame-left names episode ${f.episode}; episode ${open.episode} is open`);
+        if (running !== null) fail(`endgame episode ${open.episode} left while job ${running.started.job} runs`);
+        return replace({ ...open, left: { cause: f.cause, seq } });
+      default: {
+        if (open.opened === null) fail(`${f.kind} in endgame episode ${open.episode}, which has not opened`);
+        // WS-5: a landing or a review is its running job's.
+        if (f.kind !== 'endgame-fix' && running?.started.job !== f.job) fail(`${f.kind} of ${f.job}, which is not the running endgame job`);
+        const { kind: _k, ...rest } = f;
+        if (f.kind === 'endgame-fix') return replace({ ...open, fixes: [...open.fixes, { ...(rest as Omit<FactOf<'endgame-fix'>, 'kind'>), seq }] });
+        if (f.kind === 'endgame-landed') return replace({ ...open, landings: [...open.landings, { ...(rest as Omit<FactOf<'endgame-landed'>, 'kind'>), seq }] });
+        return replace({ ...open, reviews: [...open.reviews, { ...(rest as Omit<FactOf<'endgame-reviewed'>, 'kind'>), seq }] });
       }
     }
   }
@@ -1704,9 +1833,6 @@ export class Fold implements JournalView {
     }
     for (const apply of lineages) apply();
     this.#holisticOn = f.visionSha256 !== undefined;
-    // §2.10: an architect admit (an apply that adds units) reopens a draining arc.
-    const architect = f.source.type === 'command';
-    if (architect && f.changes.some((c) => c.type === 'unit-added')) this.#draining = null;
     this.#planApplied = f;
     this.#planRevisions.push({ seq, fact: f });
     if (f.command !== null) this.#appliedBy.set(f.command, f);
@@ -2214,7 +2340,7 @@ export class Fold implements JournalView {
   }
 
   surfaceFacts(): readonly import('./events.ts').SurfaceFact[] { return this.#surfaceFacts; }
-  notes(unit: UnitId): readonly Readonly<{command: CommandId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
+  notes(unit: UnitId): readonly Readonly<{command: CommandId | JobId; brief: Sha256Hex; seq: number}>[] { return this.#noted.filter((n) => n.unit === unit); }
   buildNotes(unit: UnitId, attempt: number): readonly Sha256Hex[] {
     const starts = this.#units.get(unit)?.starts ?? new Map<string, number>();
     const current = starts.get(`build#${attempt}`) ?? this.#lastSeq + 1;
@@ -2267,11 +2393,11 @@ export class Fold implements JournalView {
       lanesReruns: this.#lanesReruns,
       debt: this.#debt,
       packReviews: this.#packReviews.map((r) => ({ started: r.started, ended: r.ended })),
-      draining: this.#draining,
       completion: c === null ? null : { ...c, active },
       laneReuses: this.#laneReuses,
       certificates: this.#certificates,
       smokeRuns: this.#smokeRuns,
+      endgame: this.#endgame,
     };
   }
 

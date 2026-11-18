@@ -14,8 +14,8 @@ import { type ObligationDef } from '../src/holistic/types.ts';
 import { RESOLVE_DIRECTIVE,RESPEC_DIRECTIVE,RESPEC_FRESH_DIRECTIVE,STEER_DIRECTIVE,repeatRedDirective,resolveUnmetDirective,smokeFixDirectives,witnessFixDirectives } from '../src/prompts/directives.ts';
 import { PROMPTS,SONNET_THINK_FIRST,UnsupportedPromptError,promptFor as livePromptFor,promptSize,renderPrompt,support } from '../src/prompts/index.ts';
 import { resourceUnit } from '../src/core/ids.ts';
-import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
-import { BUILD_SCHEMA, EXPERIENCE_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, validateBuildOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
+import { ROLE_INPUTS,type RoleInputs,type GateInputs,type LensInputs,type WalkthroughInputs,type PolishJudgeInputs,type DiagnosisEvidence,type EndgameReviewBrief,UNIT_POLICY,laneCommand,obligationsText,pasted,pastedAs,targetDocument } from '../src/prompts/inputs.ts';
+import { BUILD_SCHEMA, EXPERIENCE_SCHEMA, CLUSTER_REVIEWS, GATE_SCHEMA, ROLE_SCHEMAS, ROLE_VALIDATORS, DIAGNOSIS_SCHEMA, ENDGAME_REVIEW_SCHEMA, validateBuildOutput, validateDiagnosisOutput, validateEndgameReviewOutput, validateDecisionsFile, validateGateOutput, validatePackReviewOutput } from '../src/prompts/schemas.ts';
 import { arcStack,resolveRouting,seatsInForce } from '../src/routing/layers.ts';
 import { FRESH_ROLES,MODEL_IDS,PROFILES,ROLES,type Role,WALK_ROLES,atSeat } from '../src/routing/types.ts';
 
@@ -168,17 +168,27 @@ const partial = (from: Sha, to: Sha, text: string, labelled: boolean): BoundedDi
   };
 };
 
+/** dev.83 (E2): a diagnosis's evidence block, every value distinct so the render test finds each. */
+const DIAGNOSIS_EVIDENCE: DiagnosisEvidence = {
+  trigger: ['repeat-red:EV-LANE:' + 'e'.repeat(64)],
+  failures: [{ lane: laneId('ev-lane'), signature: 'EV-SIGNATURE-LINE', specific: true, excerpt: ['EV-EXCERPT-LINE'] }],
+  baseComparison: [{ lane: laneId('ev-base-lane'), base: sha('e'.repeat(40)), result: 'fail', evidence: absPath('/run/evidence/EV-BASE-DIR') }],
+  environment: { tripped: ['EV-TRIPPED-TARGET'], retryableParks: ['EV-RETRYABLE-PARK'], hostSuspected: ['EV-HOST-SIGNATURE'] },
+  knownDefects: ['EV-KNOWN-DEFECT'],
+  flaky: ['EV-FLAKY-KEY'],
+};
+
 type TestInputs = RoleInputs & {gate: GateInputs; lens: LensInputs; walkthrough: WalkthroughInputs; polishJudge: PolishJudgeInputs};
 const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], TestInputs[R]] } = {
   campaignAudit: [
     {method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false},
-      vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
+      vision: vision(1, 'VISION-A'),  obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, base: SHA_A, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')],
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
     },
     {method: {traits: ['persistent'], markers: ['M2'], unitKind: 'campaign', expensiveLanes: true, ui: true},
       vision: vision(2, 'VISION-B'),  obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
-        audited: SHA_A,
+        audited: SHA_A, base: SHA_B,
         diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
@@ -270,13 +280,13 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
   ],
   lens: [
     {
-      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
+      vision: vision(1, 'VISION-A'), lens: 'invariants', obligations: [observed('I-1', 'OBLIGATION-A', SHA_A)], range: { audited: SHA_B, base: SHA_A, diff: shown(SHA_A, SHA_B, 'RANGE-A') },
       owners: [], priorFindings: [], contracts: [doc('docs/api.md', 'CONTRACT-A')], rulings: [ruling('C-1', 'RULE-A')], index: index('docs/x.md', 'C-7', '/plan/a/rulings.md'),
       target: { kind: 'full', doc: doc('docs/arch.md', 'ARCH-A') }, checkout: absPath('/wt/audit-1'),
     },
     {
       vision: vision(2, 'VISION-B'), lens: 'vision', obligations: [observed('I-2', 'OBLIGATION-B', SHA_B)], range: {
-        audited: SHA_A,
+        audited: SHA_A, base: SHA_B,
         diff: partial(SHA_B, SHA_A, 'RANGE-B', false),
       },
       owners: [{ unit: unitId('u-two'), head: SHA_B, diff: shown(SHA_A, SHA_B, 'OWNER-B') }], priorFindings: [findingView('F-1', 'FINDING-B')], contracts: [doc('docs/b.md', 'CONTRACT-B')],
@@ -302,7 +312,7 @@ const SAMPLES: { readonly [R in keyof TestInputs]: readonly [TestInputs[R], Test
   polishJudge: [polishSample('A'), polishSample('B')],
   verifier: [
     {mode: 'pre-build', brief: {target: {kind: 'full', doc: doc('docs/target-0.md', 'TARGET-0')}, vision: null, spec: spec(1, 'SPEC-A'), intent: 'INTENT-A', nonGoals: ['NON-GOAL-A'], contracts: [], systems: [systemName('app-a')], method: {traits: [], markers: [], unitKind: 'module', expensiveLanes: false, ui: false}, history: [], standing: []}},
-    {mode: 'diagnosis', brief: {target: {kind: 'full', doc: doc('docs/target-1.md', 'TARGET-1')}, vision: null, spec: spec(2, 'SPEC-B'), intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], contracts: [], systems: [systemName('app-b')], method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, history: ['failed build'], standing: []}},
+    {mode: 'diagnosis', brief: {target: {kind: 'full', doc: doc('docs/target-1.md', 'TARGET-1')}, vision: null, spec: spec(2, 'SPEC-B'), intent: 'INTENT-B', nonGoals: ['NON-GOAL-B'], contracts: [], systems: [systemName('app-b')], method: {traits: ['persistent'], markers: ['M2'], unitKind: 'design', expensiveLanes: true, ui: true}, history: ['failed build'], standing: [], evidence: DIAGNOSIS_EVIDENCE}},
   ],
 };
 
@@ -497,7 +507,54 @@ describe('prompts', () => {
     assert.throws(() => promptFor('build', 'claude-haiku-5-5'), (e: unknown) => e instanceof UnsupportedPromptError && /economy, is judgment-only/.test(e.message));
   });
 
-  it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const text = mod.render({mode, brief: {...SAMPLES.verifier[0].brief, history: [], vision: null}}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
+  it('judgment prompts say fresh session, cite C-nn, and grade the contract text itself', () => { for (const mode of ['pre-build', 'diagnosis'] as const) { const mod = promptFor('verifier', 'claude-opus-5-5'); const pre = SAMPLES.verifier[0]; if (pre.mode !== 'pre-build') throw new Error('the first verifier sample is pre-build'); const brief = {...pre.brief, history: [], vision: null}; const text = mod.render(mode === 'diagnosis' ? {mode, brief: {...brief, evidence: DIAGNOSIS_EVIDENCE}} : {mode, brief}); assert.ok(text.includes('<mode>'+mode+'</mode>')); assert.equal(mod.schema, GATE_SCHEMA); assert.doesNotMatch(text, /RULE-A|C-7 first sentence|rulings\.md/); } });
+
+  it('dev.83 (WS-5): the endgame review renders every input, only in endgame mode, and answers its own strict schema', () => {
+    const brief: EndgameReviewBrief = {
+      vision: null, range: { from: sha('a'.repeat(40)), to: sha('b'.repeat(40)) }, diff: shown(sha('a'.repeat(40)), sha('b'.repeat(40)), 'EG-DIFF-LINE'),
+      fixes: [{ command: 'cmd-00000000000000e1', closes: ['F-7'], commit: sha('c'.repeat(40)), note: 'EG-FIX-NOTE' }],
+      publications: [{ head: sha('d'.repeat(40)), what: 'EG-PUBLISHED-UNIT', gated: true }],
+      findings: ['EG-ACTIVE-FINDING'], checkout: absPath('/wt/arc/EG-CHECKOUT'), evidenceDir: absPath('/run/evidence/jobs/EG-EVIDENCE'),
+    };
+    const values = ['a'.repeat(40), 'b'.repeat(40), 'EG-DIFF-LINE', 'cmd-00000000000000e1', 'F-7', 'c'.repeat(40), 'EG-FIX-NOTE', 'd'.repeat(40), 'EG-PUBLISHED-UNIT', 'EG-ACTIVE-FINDING', '/wt/arc/EG-CHECKOUT', '/run/evidence/jobs/EG-EVIDENCE'];
+    for (const model of MODEL_IDS) {
+      if (support('verifier', model).type === 'unsupported') continue;
+      const mod = promptFor('verifier', model);
+      const text = mod.render({ mode: 'endgame', brief });
+      assert.ok(text.includes('<mode>endgame</mode>'), model);
+      for (const v of values) assert.ok(text.includes(v), `verifier/${model}: endgame renders ${v}`);
+      for (const v of ['EG-FIX-NOTE', 'EG-PUBLISHED-UNIT']) assert.ok(!mod.render(SAMPLES.verifier[0]).includes(v), `verifier/${model}: pre-build renders no endgame input`);
+      assert.ok(!mod.system.includes('endgame'), `verifier/${model}: the system text the gate shares is unchanged`);
+    }
+    assertStrict(ENDGAME_REVIEW_SCHEMA, 'endgame');
+    const answer = { findings: [{ severity: 'P1', text: 'The fix rounds half-up.', path: 'src/round.js', evidence: ['src/round.js:4'] }], reasons: ['Read the range.'] };
+    assert.ok(conforms(ENDGAME_REVIEW_SCHEMA, answer));
+    assert.deepEqual(validateEndgameReviewOutput(answer), answer);
+    assert.deepEqual(validateEndgameReviewOutput({ findings: [], reasons: ['sound'] }).findings, []);
+    assert.throws(() => validateEndgameReviewOutput({ ...answer, findings: [{ ...answer.findings[0], evidence: [] }] }), SchemaError, 'a finding cites evidence');
+    assert.throws(() => validateEndgameReviewOutput({ ...answer, findings: [{ ...answer.findings[0], severity: 'blocking' }] }), SchemaError);
+    assert.throws(() => validateEndgameReviewOutput({ ...answer, reasons: [] }), SchemaError);
+  });
+
+  it('dev.83 (E2): a diagnosis renders every evidence input, only in diagnosis mode, and answers its own strict schema', () => {
+    const values = ['repeat-red:EV-LANE', 'ev-lane', 'EV-SIGNATURE-LINE', 'EV-EXCERPT-LINE', 'ev-base-lane', 'e'.repeat(40), '/run/evidence/EV-BASE-DIR', 'EV-TRIPPED-TARGET', 'EV-RETRYABLE-PARK', 'EV-HOST-SIGNATURE', 'EV-KNOWN-DEFECT', 'EV-FLAKY-KEY'];
+    for (const model of MODEL_IDS) {
+      if (support('verifier', model).type === 'unsupported') continue;
+      const mod = promptFor('verifier', model);
+      const diagnosis = mod.render(SAMPLES.verifier[1]);
+      for (const v of values) assert.ok(diagnosis.includes(v), `verifier/${model}: diagnosis renders ${v}`);
+      const preBuild = mod.render(SAMPLES.verifier[0]);
+      for (const v of values) assert.ok(!preBuild.includes(v), `verifier/${model}: pre-build renders no evidence block`);
+    }
+    assertStrict(DIAGNOSIS_SCHEMA, 'diagnosis');
+    const answer = { cause: 'environment', evidence: ['fixtures/accounts.json:3'], brief: 'Restore the account row; change no code.', reasons: ['The base is red too.'] };
+    assert.ok(conforms(DIAGNOSIS_SCHEMA, answer));
+    assert.deepEqual(validateDiagnosisOutput(answer), answer);
+    for (const cause of ['base', 'environment']) assert.throws(() => validateDiagnosisOutput({ ...answer, cause, evidence: [] }), SchemaError, `${cause}: an external cause cites evidence`);
+    for (const cause of ['unit', 'unknown']) assert.equal(validateDiagnosisOutput({ ...answer, cause, evidence: [] }).cause, cause);
+    assert.throws(() => validateDiagnosisOutput({ ...answer, cause: 'estate' }), SchemaError);
+    assert.throws(() => validateDiagnosisOutput({ ...answer, reasons: [] }), SchemaError);
+  });
 
   it('build prompts cover fast lanes, decisions.json, .roadmap/ and estate lanes', () => { for (const model of ['claude-opus-5-5', 'gpt-5.6-luna'] as const) { const mod = promptFor('build', model); assert.ok(mod.system.includes(UNIT_POLICY)); const text = mod.render(SAMPLES.build[1]); assert.match(text, /\/run\/inv\/9-1/); assert.match(text, /cd \/wt\/b && env CI=1 npx tsc --noEmit/); assert.doesNotMatch(text, /RULE-B|C-8 first sentence|rulings\.md/); assert.deepEqual(Object.keys((ROLE_SCHEMAS.build as {properties: object}).properties), ['summary', 'blockers', 'experiments', 'grounding', 'tooBig', 'notes', 'messages', 'checks', 'final']); } });
 

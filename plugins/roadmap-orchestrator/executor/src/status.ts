@@ -62,7 +62,7 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 // `needs-user/`; an item is acknowledged once the log holds its ack fact, as the executor reads it.
 //
 // M3 (§2.4 additions; the holistic keys are vacuous in an arc without the layer):
-//   run.state     `draining` (a live executor that would run, with admissions closed); in a holistic arc `complete`
+//   run.state     in a holistic arc `complete` (dev.83: `draining` only for a stop's drain; `close-admissions` was removed)
 //                 only while its `arc-completed` is active (A20), and `completion.unmet` names what the completion
 //                 predicate lacks now
 //   target        the obligations' cut line, the next milestone (R13: the future obligation with the fewest
@@ -115,6 +115,12 @@ import { type Certification,type WorkRun,certificationReader,workRunsOf } from '
 //   milestones    (dev.13) each plan milestone: its state (src/walk/milestones.ts `milestoneState`), whether its node
 //                 passed, its last round, its walks and its active walkthrough findings, and (dev.59) its members, those
 //                 withdrawn (superseded or cut) and the live ones merged; `edges` adds each node edge
+//
+// dev.83 (src/status/endgame.ts; every arc):
+//   phase         the body (planned units open, milestones awaiting their checkpoint), the endgame's step with its
+//                 worklist counts and handover, or closed out; also in `status --summary`
+//   endgame       null before the first episode: the endgame branch, the worklist, the four exit conditions, the audited
+//                 range, the units taken over and every episode's fixes, landings, reviews and jobs
 import { existsSync,statSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -172,6 +178,9 @@ import { type GateAnswerView,latestGateAnswer } from './pipeline/gate.ts';
 import { observations } from './pipeline/lanes.ts';
 import { arcDebtLedger } from './pipeline/publish.ts';
 import { repairUnits,specFacts } from './pipeline/reproduce.ts';
+import { repairsReader } from './endgame/open.ts';
+import { endgameHeld } from './endgame/phase.ts';
+import { type EndgameView,type PhaseView,endgameOf,phaseOf } from './status/endgame.ts';
 import { judgmentSeat,largeDiffSeat } from './pipeline/transitions.ts';
 import { type RejectionFile,rejectionFile } from './preflight/startup.ts';
 import { cpuCapacity,fastSuiteCapacity,isDirty,poolUnits } from './resources/pool.ts';
@@ -583,6 +592,10 @@ export type Status = Readonly<{
   milestones: readonly MilestoneView[];
   /** dev.81 (A3): the CI ref (src/forge/ciref.ts); null before a start recorded a plan. */
   pushes: PushesView | null;
+  /** dev.83: where the arc is: the body, the endgame's step with its worklist counts and handover, or closed out (src/status/endgame.ts). */
+  phase: PhaseView;
+  /** dev.83: the endgame's branch, worklist, exit conditions, units taken over and episodes; null before the arc's first episode. */
+  endgame: EndgameView | null;
 }>;
 
 /**
@@ -792,6 +805,8 @@ type Inputs = Readonly<{
   spec: SpecFactsOf;
   /** The derivation's clock (ms): what every elapsed time and bound is as of. */
   now: number;
+  /** dev.83: the units the endgame holds at admission (src/endgame/phase.ts `endgameHeld`). */
+  endgame: ReadonlySet<UnitId>;
 }>;
 
 const NO_WAIT: Omit<WaitingFor, 'deps' | 'milestones' | 'edges' | 'admission'> = { resources: null, envBlocked: false, drainFor: [] };
@@ -818,7 +833,7 @@ function idleState(x: Inputs, unit: PlanUnit, u: UnitState): Readonly<{ state: U
   const routing = x.routing;
   if (next?.kind === 'admission' && routing !== null) {
     const a = admitter(routing, x.spec)({
-      view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view),
+      view, plan, unit, stage: next.stage, blocking: x.blocking, drains: x.sched?.drains ?? [], tripped: trippedTargets(view), endgame: x.endgame,
       // Status has no tick history: a host-pressure hold reads as waiting until its 30-min bound (src/host/pressure.ts), as of
       // the derivation's clock.
       pressure: { ticks: [], nowMs: x.now },
@@ -924,13 +939,11 @@ function runStateOf(view: JournalView, lines: readonly UnitCore[], owner: OwnerS
   if (owner.state === 'alive') {
     const c = view.control();
     if (c.stop !== null) return stopAborts(c) ? 'stopping' : 'draining';
-    // §2.10: admissions closed (`close-admissions`) and nothing held, parked or blocked: the arc drains.
-    const running: ArcState = h.draining === null ? 'running' : 'draining';
-    if (lines.some(moving)) return running;
+    if (lines.some(moving)) return 'running';
     if (lines.some((l) => l.state === 'held')) return 'held';
     if (blocking.length > 0) return 'parked';
     if (lines.some((l) => !unitSettled(view, l.unit)) || view.residues().length > 0) return 'blocked';
-    return running;
+    return 'running';
   }
   if (rejection !== null) return 'refused';
   // A holistic arc is complete only through its `arc-completed` (§2.10: obligations, coverage and quiescence too), while active (A20).
@@ -1032,6 +1045,7 @@ function derive(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSna
   const now = timing?.clock ?? Date.now();
   const inputs: Inputs | null = plan === null ? null : {
     runDir, view, plan, sched, alive: owner.state === 'alive', blocking, routing: routing === null ? null : (u) => routing.of(u).table, spec, now,
+    endgame: record === null ? new Set() : endgameHeld(view, plan, repairsReader({ journal: { view }, runDir, planDir: absPath(dirname(record.planFile)) })),
   };
   const times = { starts: passes.attemptStarts, intents: passes.intentTimes };
   const units = inputs === null ? [] : inputs.plan.units.map((u) => unitLine(inputs, u, times, now));
@@ -1404,6 +1418,8 @@ function rulerOf(f: PlanAppliedFact): RuledBy {
     case 'start':
       return { type: 'architect', command: null };
     case 'command':
+    // dev.83 (WS-5): the cut of the units an endgame fix closes is the architect's fix command, applied by code.
+    case 'endgame':
       return { type: 'architect', command: source.command };
     case 'executor':
       return { type: 'executor' };
@@ -1695,7 +1711,7 @@ export function status(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?:
 }
 
 /** The common projection consumed by summary; execution detail is layered on only for full status. */
-export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones' | 'waiting'> & Readonly<{
+export type StatusCore = Pick<Status, 'arc' | 'supervision' | 'run' | 'needsUser' | 'plan' | 'nowTrue' | 'notYetTrue' | 'completion' | 'demo' | 'milestones' | 'waiting' | 'phase'> & Readonly<{
   units: readonly UnitCore[];
   spend: Pick<Status['spend'], 'byRole' | 'bySmoke'>;
 }>;
@@ -1720,6 +1736,10 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
   const repairs = start === null || plan === null ? [] : repairUnits({
     journal: { view }, runDir, planDir: absPath(dirname(start.record.planFile)), plan: () => plan,
   });
+  const contexts = start === null || inForce === null ? null : readOnlyContexts({
+    view, runDir, repo: start.record.repo, hostDir, planFile: start.record.planFile, plan: () => inForce.plan, hostEnv: process.env,
+    routingBase: routingBaseOf(inForce.fact.routingProvenance),
+  });
 
   const core: StatusCore = {
     arc, supervision: supervision(runDir), waiting: d.passes.waiting,
@@ -1730,8 +1750,9 @@ function readCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, d: Derived) {
     completion: completionOf(runDir, d, { d, hostDir, pending: commands.pending.map((c) => c.id) }),
     demo: plan === null || start === null ? null : demoStatus({ view, plan, repairs }, hostDir),
     milestones: start === null || plan === null || !hasMilestones(plan) ? [] : milestoneViews(view, plan, repairs),
+    phase: phaseOf(contexts, view),
   };
-  return { core, d, meter, commands, on, revision, head, obligations, t, repairs, plan, now };
+  return { core, d, meter, commands, on, revision, head, obligations, t, repairs, plan, now, contexts };
 }
 
 export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapshot?: LogSnapshot) {
@@ -1746,7 +1767,7 @@ export function statusCore(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, snapsh
 
 function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Derived, captured?: ReturnType<typeof readCore>): Status {
   const x = captured ?? readCore(runDir, arc, hostDir, derived);
-  const { core, d, meter, commands, on, revision, head, obligations, repairs, plan, now } = x;
+  const { core, d, meter, commands, on, revision, head, obligations, repairs, plan, now, contexts } = x;
   const { view, events, start, inForce } = d;
   const t = x.t.withHistory();
   const fold = view.holistic();
@@ -1832,6 +1853,8 @@ function readStatus(runDir: AbsPath, arc: ArcId, hostDir: AbsPath, derived: Deri
     milestones: core.milestones,
     waiting: core.waiting,
     pushes: plan === null || start === null ? null : pushesOf(view, start.record.repo, plan, now),
+    phase: core.phase,
+    endgame: contexts === null ? null : endgameOf(contexts),
   };
 }
 
